@@ -80,7 +80,7 @@
   },
   "build": {
     "appId": "com.holaboss.workspace",
-    "productName": "Holaboss Workspace",
+    "productName": "Holaboss",
     "directories": {
       "output": "out/release"
     },

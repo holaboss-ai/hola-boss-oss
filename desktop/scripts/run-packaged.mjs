@@ -7,9 +7,9 @@ const explicitBin = (process.env.HOLABOSS_PACKAGED_APP_BIN || "").trim();
 
 const candidates = [
   explicitBin,
-  path.join(root, "out", "release", "mac-arm64", "Holaboss Workspace.app", "Contents", "MacOS", "Holaboss Workspace"),
-  path.join(root, "out", "release", "mac", "Holaboss Workspace.app", "Contents", "MacOS", "Holaboss Workspace"),
-  path.join(root, "out", "release", "win-unpacked", "Holaboss Workspace.exe")
+  path.join(root, "out", "release", "mac-arm64", "Holaboss.app", "Contents", "MacOS", "Holaboss"),
+  path.join(root, "out", "release", "mac", "Holaboss.app", "Contents", "MacOS", "Holaboss"),
+  path.join(root, "out", "release", "win-unpacked", "Holaboss.exe")
 ].filter(Boolean);
 
 async function firstExisting(paths) {

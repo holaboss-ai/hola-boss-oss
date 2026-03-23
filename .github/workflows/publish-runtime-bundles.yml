@@ -132,7 +132,7 @@ jobs:
       RELEASE_TAG: ${{ needs.ensure-runtime-release.outputs.release_tag }}
       RUNTIME_ARTIFACT_NAME: holaboss-runtime-macos-${{ github.sha }}
       DESKTOP_ASSET_PREFIX: holaboss-desktop-macos
-      DESKTOP_RELEASE_ASSET_NAME: Holaboss-Workspace-macos-arm64.dmg
+      DESKTOP_RELEASE_ASSET_NAME: Holaboss-macos-arm64.dmg
       MAC_CERTIFICATE: ${{ secrets.MAC_CERTIFICATE }}
       MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
