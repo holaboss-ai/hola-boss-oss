@@ -68,7 +68,7 @@
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",
     "vite": "^8.0.0",
-    "wait-on": "^8.0.5"
+    "wait-on": "^9.0.4"
   },
   "build": {
     "appId": "com.holaboss.workspace",
