@@ -39,7 +39,7 @@
     "packaged:run:prod:verbose": "cross-env HOLABOSS_VERBOSE_TELEMETRY=1 npm run packaged:run"
   },
   "dependencies": {
-    "@better-auth/electron": "^1.5.5",
+    "@better-auth/electron": "^1.5.6",
     "better-auth": "^1.5.5",
     "better-sqlite3": "^12.8.0",
     "conf": "^15.1.0",
