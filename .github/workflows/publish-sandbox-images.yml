@@ -46,7 +46,7 @@ jobs:
           password: ${{ secrets.GHCR_TOKEN != '' && secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Build and push GHCR toolchain image (arm64)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: runtime/deploy/Dockerfile.toolchain
@@ -59,7 +59,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=sandbox-toolchain-ghcr
 
       - name: Build and push GHCR runtime image (arm64)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: runtime/deploy/Dockerfile
