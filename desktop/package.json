@@ -40,7 +40,7 @@
   },
   "dependencies": {
     "@better-auth/electron": "^1.5.5",
-    "better-auth": "^1.5.5",
+    "better-auth": "^1.5.6",
     "better-sqlite3": "^12.8.0",
     "conf": "^15.1.0",
     "dotenv": "^16.6.1",
