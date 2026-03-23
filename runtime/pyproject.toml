@@ -21,7 +21,7 @@ hb = "sandbox_agent_runtime.hb_cli:main"
 [dependency-groups]
 dev = [
     "pytest>=8.3.5,<9",
-    "pytest-asyncio>=0.26,<1",
+    "pytest-asyncio>=0.26,<2",
 ]
 
 [build-system]
