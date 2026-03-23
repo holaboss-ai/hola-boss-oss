@@ -45,7 +45,7 @@
     "conf": "^15.1.0",
     "dotenv": "^16.6.1",
     "highlight.js": "^11.11.1",
-    "lucide-react": "^0.542.0",
+    "lucide-react": "^1.0.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
