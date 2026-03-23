@@ -29,7 +29,7 @@ jobs:
       release_title: ${{ steps.release_meta.outputs.release_title }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Compute release metadata
         id: release_meta
@@ -77,7 +77,7 @@ jobs:
       ASSET_PREFIX: holaboss-runtime-macos
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -132,7 +132,7 @@ jobs:
       ASSET_PREFIX: holaboss-runtime-linux
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
