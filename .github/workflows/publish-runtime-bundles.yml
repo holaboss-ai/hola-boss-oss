@@ -160,17 +160,19 @@ jobs:
 
       - name: Build unsigned macOS desktop DMG
         if: ${{ env.MAC_CERTIFICATE == '' || env.MAC_CERTIFICATE_PASSWORD == '' || env.APPLE_ID == '' || env.APPLE_APP_SPECIFIC_PASSWORD == '' || env.APPLE_TEAM_ID == '' }}
+        working-directory: desktop
         env:
           HOLABOSS_RUNTIME_TARBALL: ${{ github.workspace }}/out/runtime-artifact/holaboss-runtime-macos-${{ github.sha }}.tar.gz
           GITHUB_TOKEN: ${{ github.token }}
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: |
-          npm --prefix desktop run prepare:runtime
-          npm --prefix desktop run build
-          npm --prefix desktop exec electron-builder -- --projectDir . --mac dmg --arm64 -c.mac.identity=null
+          npm run prepare:runtime
+          npm run build
+          npx electron-builder --projectDir "$PWD" --mac dmg --arm64 -c.mac.identity=null
 
       - name: Build signed and notarized macOS desktop DMG
         if: ${{ env.MAC_CERTIFICATE != '' && env.MAC_CERTIFICATE_PASSWORD != '' && env.APPLE_ID != '' && env.APPLE_APP_SPECIFIC_PASSWORD != '' && env.APPLE_TEAM_ID != '' }}
+        working-directory: desktop
         env:
           HOLABOSS_RUNTIME_TARBALL: ${{ github.workspace }}/out/runtime-artifact/holaboss-runtime-macos-${{ github.sha }}.tar.gz
           GITHUB_TOKEN: ${{ github.token }}
@@ -180,9 +182,9 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ env.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ env.APPLE_TEAM_ID }}
         run: |
-          npm --prefix desktop run prepare:runtime
-          npm --prefix desktop run build
-          npm --prefix desktop exec electron-builder -- --projectDir . --mac dmg --arm64
+          npm run prepare:runtime
+          npm run build
+          npx electron-builder --projectDir "$PWD" --mac dmg --arm64
 
       - name: Upload macOS desktop DMG artifact
         uses: actions/upload-artifact@v4
