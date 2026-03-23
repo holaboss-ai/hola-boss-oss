@@ -31,6 +31,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Compute release metadata
         id: release_meta
@@ -55,6 +57,69 @@ jobs:
           RELEASE_TAG: ${{ steps.release_meta.outputs.release_tag }}
           RELEASE_TITLE: ${{ steps.release_meta.outputs.release_title }}
         run: |
+          notes_path="$(mktemp)"
+          if [ "${GITHUB_REF_NAME}" = "main" ]; then
+            release_pattern='holaboss-[0-9]*'
+          else
+            release_pattern="holaboss-${GITHUB_REF_NAME}-*"
+          fi
+
+          previous_tag="$(
+            git tag --list "${release_pattern}" --sort=-creatordate \
+              | grep -Fxv "${RELEASE_TAG}" \
+              | head -n1 || true
+          )"
+
+          breaking_items="$(mktemp)"
+          change_items="$(mktemp)"
+          trap 'rm -f "${notes_path}" "${breaking_items}" "${change_items}"' EXIT
+
+          range_spec="${GITHUB_SHA}"
+          if [ -n "${previous_tag}" ]; then
+            range_spec="${previous_tag}..${GITHUB_SHA}"
+          fi
+
+          while IFS= read -r subject; do
+            [ -z "${subject}" ] && continue
+            case "${subject}" in
+              *"BREAKING CHANGE"*|*!:*)
+                printf -- "- %s\n" "${subject}" >> "${breaking_items}"
+                ;;
+              *)
+                printf -- "- %s\n" "${subject}" >> "${change_items}"
+                ;;
+            esac
+          done < <(git log --format='%s' "${range_spec}")
+
+          {
+            echo "## Release Notes"
+            echo
+            if [ -n "${previous_tag}" ]; then
+              echo "Compared to \`${previous_tag}\`."
+            else
+              echo "Initial release for this channel."
+            fi
+            echo
+
+            if [ -s "${breaking_items}" ]; then
+              echo "### Breaking"
+              cat "${breaking_items}"
+              echo
+            fi
+
+            echo "### Changes"
+            if [ -s "${change_items}" ]; then
+              cat "${change_items}"
+            else
+              echo "- No user-visible changes captured in commit subjects."
+            fi
+            echo
+            echo "### Assets"
+            echo "- \`Holaboss-macos-arm64.dmg\`: macOS desktop application"
+            echo "- \`holaboss-runtime-macos.tar.gz\`: macOS runtime bundle"
+            echo "- \`holaboss-runtime-linux.tar.gz\`: Linux runtime bundle"
+          } > "${notes_path}"
+
           if ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             prerelease_flag=()
             if [ "${GITHUB_REF_NAME}" != "main" ]; then
@@ -62,7 +127,7 @@ jobs:
             fi
             gh release create "${RELEASE_TAG}" \
               --title "${RELEASE_TITLE}" \
-              --notes "Versioned desktop runtime bundles for ${GITHUB_REF_NAME}." \
+              --notes-file "${notes_path}" \
               --target "${GITHUB_SHA}" \
               "${prerelease_flag[@]}"
           fi
