@@ -10,7 +10,7 @@ dependencies = [
     "mcp>=1.6.0",
     "openai==2.11.0",
     "opencode-ai>=0.1.0a36",
-    "pydantic>=2.9.2,<2.12",
+    "pydantic>=2.9.2,<2.13",
     "PyYAML>=6.0",
     "sqlalchemy>=2.0,<3",
 ]
