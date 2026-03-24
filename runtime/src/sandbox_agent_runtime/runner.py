@@ -92,6 +92,8 @@ _WORKSPACE_MCP_LOG_TAIL_BYTES = 4096
 _OPENCODE_STATE_FILE_NAME = "opencode-sidecar-state.json"
 _OPENCODE_STATE_VERSION = 1
 _OPENCODE_SKILL_MANIFEST_FILE_NAME = ".skill-manifest.json"
+_TS_HARNESS_HOST_NODE_BIN_ENV = "HOLABOSS_RUNTIME_NODE_BIN"
+_TS_HARNESS_HOST_NOT_IMPLEMENTED_EXIT_CODE = 86
 
 
 class RunnerRequest(BaseModel):
@@ -112,6 +114,38 @@ class RunnerOutputEvent(BaseModel):
     event_type: str
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class _HarnessHostModelClientPayload(BaseModel):
+    model_proxy_provider: str
+    api_key: str
+    base_url: str | None = None
+    default_headers: dict[str, str] | None = None
+
+
+class _HarnessHostOpencodeRequest(BaseModel):
+    workspace_id: str
+    workspace_dir: str
+    session_id: str
+    input_id: str
+    instruction: str
+    debug: bool = False
+    harness_session_id: str | None = None
+    persisted_harness_session_id: str | None = None
+    provider_id: str
+    model_id: str
+    mode: str
+    opencode_base_url: str
+    timeout_seconds: int
+    system_prompt: str
+    tools: dict[str, bool]
+    workspace_tool_ids: list[str]
+    workspace_skill_ids: list[str]
+    mcp_servers: list[dict[str, Any]]
+    output_format: dict[str, Any] | None = None
+    workspace_config_checksum: str
+    run_started_payload: dict[str, Any]
+    model_client: _HarnessHostModelClientPayload
 
 
 @dataclass(frozen=True)
@@ -295,6 +329,258 @@ async def _emit_event_with_push(*, event: RunnerOutputEvent, push_client: _PushE
     if push_client is None:
         return
     await _push_event_with_retry(push_client=push_client, event=event)
+
+
+def _runtime_root_dir() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _ts_harness_host_entry_path() -> Path:
+    return _runtime_root_dir() / "harness-host" / "dist" / "index.mjs"
+
+
+def _ts_harness_host_node_bin() -> str:
+    configured = (os.getenv(_TS_HARNESS_HOST_NODE_BIN_ENV) or "").strip()
+    return configured or "node"
+
+
+def _opencode_run_started_payload(
+    *,
+    request: RunnerRequest,
+    runtime_config: _OpencodeRuntimeConfig,
+    mcp_server_id_map: Mapping[str, str],
+    sidecar: _RunningWorkspaceMcpSidecar | None,
+) -> dict[str, Any]:
+    return {
+        "instruction_preview": request.instruction[:120],
+        "provider_id": runtime_config.provider_id,
+        "model_id": runtime_config.model_id,
+        "workspace_tool_ids": list(getattr(runtime_config, "workspace_tool_ids", ())),
+        "workspace_skill_ids": list(getattr(runtime_config, "workspace_skill_ids", ())),
+        "mcp_server_ids": [server.get("name") for server in runtime_config.mcp_servers],
+        "mcp_server_mappings": _mcp_server_mapping_metadata(server_id_map=mcp_server_id_map),
+        "workspace_mcp_sidecar_reused": bool(sidecar.reused) if sidecar is not None else False,
+        "structured_output_enabled": bool(getattr(runtime_config, "output_schema_model", None)),
+        "workspace_config_checksum": runtime_config.workspace_config_checksum,
+    }
+
+
+def _opencode_harness_host_request_payload(
+    *,
+    request: RunnerRequest,
+    workspace_dir: Path,
+    runtime_config: _OpencodeRuntimeConfig,
+    model_client_config: _ModelClientConfig,
+    run_started_payload: dict[str, Any],
+) -> _HarnessHostOpencodeRequest:
+    requested_harness_session_id = _runtime_exec_context_str(request=request, key=_RUNTIME_EXEC_HARNESS_SESSION_ID_KEY)
+    persisted_harness_session_id = _read_workspace_main_session_id(
+        workspace_dir=workspace_dir,
+        harness="opencode",
+    )
+    return _HarnessHostOpencodeRequest(
+        workspace_id=request.workspace_id,
+        workspace_dir=str(workspace_dir),
+        session_id=request.session_id,
+        input_id=request.input_id,
+        instruction=request.instruction,
+        debug=bool(request.debug),
+        harness_session_id=requested_harness_session_id,
+        persisted_harness_session_id=persisted_harness_session_id,
+        provider_id=runtime_config.provider_id,
+        model_id=runtime_config.model_id,
+        mode=runtime_config.mode,
+        opencode_base_url=_opencode_base_url(),
+        timeout_seconds=_opencode_timeout_seconds(),
+        system_prompt=runtime_config.system_prompt,
+        tools=dict(runtime_config.tools),
+        workspace_tool_ids=list(runtime_config.workspace_tool_ids),
+        workspace_skill_ids=list(runtime_config.workspace_skill_ids),
+        mcp_servers=[dict(server) for server in runtime_config.mcp_servers],
+        output_format=runtime_config.output_format,
+        workspace_config_checksum=runtime_config.workspace_config_checksum,
+        run_started_payload=run_started_payload,
+        model_client=_HarnessHostModelClientPayload(
+            model_proxy_provider=model_client_config.model_proxy_provider,
+            api_key=model_client_config.api_key,
+            base_url=model_client_config.base_url,
+            default_headers=model_client_config.default_headers,
+        ),
+    )
+
+
+def _harness_host_run_command(*, command: str, payload: BaseModel) -> tuple[str, ...]:
+    encoded = base64.b64encode(payload.model_dump_json().encode("utf-8")).decode("utf-8")
+    return (
+        _ts_harness_host_node_bin(),
+        str(_ts_harness_host_entry_path()),
+        command,
+        "--request-base64",
+        encoded,
+    )
+
+
+def _parse_harness_host_runner_event(line: str) -> RunnerOutputEvent | None:
+    stripped = line.strip()
+    if not stripped:
+        return None
+    try:
+        return RunnerOutputEvent.model_validate_json(stripped)
+    except Exception as exc:
+        logger.warning("Ignoring invalid harness-host event line error=%s line=%s", exc, stripped[:500])
+        return None
+
+
+async def _read_process_text_stream(stream: asyncio.StreamReader | None) -> str:
+    if stream is None:
+        return ""
+    chunks: list[str] = []
+    while True:
+        chunk = await stream.read(8192)
+        if not chunk:
+            break
+        chunks.append(chunk.decode("utf-8", errors="replace"))
+    return "".join(chunks)
+
+
+async def _try_execute_request_opencode_via_harness_host(
+    *,
+    request: RunnerRequest,
+    workspace_dir: Path,
+    runtime_config: _OpencodeRuntimeConfig,
+    model_client_config: _ModelClientConfig,
+    mcp_server_id_map: Mapping[str, str],
+    sidecar: _RunningWorkspaceMcpSidecar | None,
+    push_client: _PushEventClient | None,
+) -> bool:
+    entry_path = _ts_harness_host_entry_path()
+    if not entry_path.is_file():
+        await _emit_event_with_push(
+            event=RunnerOutputEvent(
+                session_id=request.session_id,
+                input_id=request.input_id,
+                sequence=1,
+                event_type=_EVENT_RUN_FAILED,
+                payload={
+                    "type": "RuntimeError",
+                    "message": f"TypeScript OpenCode harness host entry not found at {entry_path}",
+                },
+            ),
+            push_client=push_client,
+        )
+        return True
+
+    run_started_payload = _opencode_run_started_payload(
+        request=request,
+        runtime_config=runtime_config,
+        mcp_server_id_map=mcp_server_id_map,
+        sidecar=sidecar,
+    )
+    command = _harness_host_run_command(
+        command="run-opencode",
+        payload=_opencode_harness_host_request_payload(
+            request=request,
+            workspace_dir=workspace_dir,
+            runtime_config=runtime_config,
+            model_client_config=model_client_config,
+            run_started_payload=run_started_payload,
+        ),
+    )
+
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=str(_runtime_root_dir()),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as exc:
+        await _emit_event_with_push(
+            event=RunnerOutputEvent(
+                session_id=request.session_id,
+                input_id=request.input_id,
+                sequence=1,
+                event_type=_EVENT_RUN_FAILED,
+                payload={
+                    "type": "RuntimeError",
+                    "message": f"Failed to start TypeScript OpenCode harness host: {exc}",
+                },
+            ),
+            push_client=push_client,
+        )
+        return True
+
+    stderr_task = asyncio.create_task(_read_process_text_stream(process.stderr))
+    saw_event = False
+    terminal_emitted = False
+    last_sequence = 0
+
+    assert process.stdout is not None
+    async for raw_line in process.stdout:
+        event = _parse_harness_host_runner_event(raw_line.decode("utf-8", errors="replace"))
+        if event is None:
+            continue
+        saw_event = True
+        last_sequence = max(last_sequence, int(event.sequence))
+
+        if event.event_type in _TERMINAL_EVENT_TYPES:
+            session_id = event.payload.get("harness_session_id")
+            if isinstance(session_id, str) and session_id.strip():
+                _persist_workspace_main_session_id(
+                    workspace_dir=workspace_dir,
+                    harness="opencode",
+                    session_id=session_id,
+                )
+
+        await _emit_event_with_push(event=event, push_client=push_client)
+        if event.event_type in _TERMINAL_EVENT_TYPES:
+            terminal_emitted = True
+
+    return_code = await process.wait()
+    stderr_text = (await stderr_task).strip()
+
+    if not saw_event and return_code == _TS_HARNESS_HOST_NOT_IMPLEMENTED_EXIT_CODE:
+        failure_message = "TypeScript OpenCode harness host reported unimplemented OpenCode adapter"
+        if stderr_text:
+            failure_message = f"{failure_message}: {stderr_text}"
+        await _emit_event_with_push(
+            event=RunnerOutputEvent(
+                session_id=request.session_id,
+                input_id=request.input_id,
+                sequence=1,
+                event_type=_EVENT_RUN_FAILED,
+                payload={
+                    "type": "RuntimeError",
+                    "message": failure_message,
+                },
+            ),
+            push_client=push_client,
+        )
+        return True
+
+    if terminal_emitted:
+        return True
+
+    failure_message = "TypeScript OpenCode harness host ended before terminal event"
+    if return_code != 0:
+        failure_message = f"TypeScript OpenCode harness host failed with exit code {return_code}"
+    if stderr_text:
+        failure_message = f"{failure_message}: {stderr_text}"
+
+    await _emit_event_with_push(
+        event=RunnerOutputEvent(
+            session_id=request.session_id,
+            input_id=request.input_id,
+            sequence=1 if not saw_event else last_sequence + 1,
+            event_type=_EVENT_RUN_FAILED,
+            payload={
+                "type": "RuntimeError",
+                "message": failure_message,
+            },
+        ),
+        push_client=push_client,
+    )
+    return True
 
 
 def _read_template_id(workspace_yaml_path: Path) -> str | None:
@@ -2119,133 +2405,6 @@ def _opencode_output_format(*, schema_model: type[BaseModel] | None) -> dict[str
     }
 
 
-def _opencode_client_factory(*, base_url: str):
-    from opencode_ai import AsyncOpencode
-
-    return AsyncOpencode(base_url=base_url, http_client=httpx.AsyncClient(trust_env=False))
-
-
-async def _opencode_chat_submit(
-    *,
-    client: Any,
-    session_id: str,
-    model_id: str,
-    provider_id: str,
-    instruction: str,
-    mode: str,
-    system_prompt: str,
-    tools: dict[str, bool],
-    extra_body: dict[str, Any] | None,
-) -> None:
-    chat_kwargs: dict[str, Any] = {
-        "id": session_id,
-        "model_id": model_id,
-        "provider_id": provider_id,
-        "parts": [{"type": "text", "text": instruction}],
-        "mode": mode,
-        "system": system_prompt,
-        "tools": tools,
-        "extra_body": extra_body or None,
-    }
-    session_resource = getattr(client, "session", None)
-    if session_resource is None:
-        raise RuntimeError("OpenCode client session resource is unavailable")
-
-    # Some OpenCode server versions return HTTP 200 with an empty response body for
-    # /session/:id/message. Using raw response avoids strict JSON decoding failures.
-    raw_session_resource = getattr(session_resource, "with_raw_response", None)
-    if raw_session_resource is not None and hasattr(raw_session_resource, "chat"):
-        raw_response = await raw_session_resource.chat(**chat_kwargs)
-        status_code = getattr(raw_response, "status_code", 200)
-        if isinstance(status_code, int) and status_code >= 400:
-            detail = ""
-            text_reader = getattr(raw_response, "text", None)
-            if callable(text_reader):
-                text_value = text_reader()
-                detail = await text_value if asyncio.iscoroutine(text_value) else str(text_value)
-            raise RuntimeError(f"OpenCode chat request failed status={status_code} detail={detail}")
-        return
-
-    await session_resource.chat(**chat_kwargs)
-
-
-async def _opencode_get_mcp_status(*, client: Any) -> dict[str, Any]:
-    response = await client.get("/mcp", cast_to=httpx.Response)
-    payload: Any
-    try:
-        payload = response.json()
-    except Exception:
-        payload = None
-    if not isinstance(payload, dict):
-        return {}
-    return payload
-
-
-async def _opencode_register_mcp_server(*, client: Any, payload: dict[str, Any]) -> None:
-    request_payload = {
-        "name": payload.get("name"),
-        "config": payload.get("config"),
-    }
-    server_name = payload.get("name", "unknown")
-    max_attempts = 5
-    last_error: Exception | None = None
-    for attempt in range(1, max_attempts + 1):
-        try:
-            await client.post("/mcp", cast_to=httpx.Response, body=request_payload)
-        except Exception as exc:
-            last_error = exc
-            if attempt >= max_attempts:
-                break
-            await asyncio.sleep(0.2 * attempt)
-        else:
-            return
-    raise WorkspaceRuntimeConfigError(
-        code="workspace_mcp_registration_failed",
-        message=f"failed to register MCP server '{server_name}' with OpenCode: {last_error}",
-    ) from last_error
-
-
-async def _ensure_opencode_mcp_servers(*, client: Any, mcp_servers: tuple[dict[str, Any], ...]) -> None:
-    if not mcp_servers:
-        return
-
-    # Skip status preflight for now and force registration to avoid hard-failing
-    # on transport-specific GET /mcp accept/header compatibility mismatches.
-    status_payload: dict[str, Any] = {}
-    force_refresh_server_ids = {
-        str(server.get("name")).strip()
-        for server in mcp_servers
-        if isinstance(server.get("name"), str) and bool(server.get("_holaboss_force_refresh"))
-    }
-    for server in mcp_servers:
-        name = server.get("name")
-        if not isinstance(name, str) or not name.strip():
-            continue
-        entry = status_payload.get(name)
-        if name in force_refresh_server_ids:
-            await _opencode_register_mcp_server(client=client, payload=server)
-            continue
-        if entry is None:
-            await _opencode_register_mcp_server(client=client, payload=server)
-            continue
-        if isinstance(entry, dict):
-            status = str(entry.get("status") or "").strip().lower()
-            if status in {"disconnected", "error"}:
-                await _opencode_register_mcp_server(client=client, payload=server)
-                continue
-            existing_config = entry.get("config")
-            desired_config = server.get("config")
-            if (
-                isinstance(existing_config, dict)
-                and isinstance(desired_config, dict)
-                and json.dumps(existing_config, sort_keys=True) != json.dumps(desired_config, sort_keys=True)
-            ):
-                await _opencode_register_mcp_server(client=client, payload=server)
-                continue
-            continue
-        await _opencode_register_mcp_server(client=client, payload=server)
-
-
 def _resolve_opencode_provider_and_model(*, model: str, default_provider_id: str) -> tuple[str, str]:
     provider, model_id = _resolve_model_proxy_provider_and_model_id(
         model_token=model,
@@ -3221,107 +3380,6 @@ def _should_emit_opencode_event(*, event_type: str, payload: dict[str, Any], ins
     return True
 
 
-def _parse_json_output_text(*, text: str) -> Any:
-    candidate = text.strip()
-    if not candidate:
-        raise ValueError("assistant output is empty")
-
-    fenced = re.search(r"```(?:json)?\s*(.*?)\s*```", candidate, flags=re.IGNORECASE | re.DOTALL)
-    if fenced:
-        candidate = fenced.group(1).strip()
-        if not candidate:
-            raise ValueError("assistant output json fence is empty")
-
-    decoder = json.JSONDecoder()
-    if candidate and candidate[0] in "{[":
-        with suppress(ValueError):
-            value, end = decoder.raw_decode(candidate)
-            if candidate[end:].strip() == "":
-                return value
-
-    for index, char in enumerate(candidate):
-        if char not in "{[":
-            continue
-        with suppress(ValueError):
-            value, end = decoder.raw_decode(candidate[index:])
-            if candidate[index + end :].strip() == "":
-                return value
-    raise ValueError("assistant output is not valid JSON")
-
-
-def _validate_structured_output(
-    *,
-    schema_model: type[BaseModel],
-    output_text: str,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    try:
-        parsed = _parse_json_output_text(text=output_text)
-        validated = schema_model.model_validate(parsed)
-        return validated.model_dump(mode="json"), None
-    except Exception as exc:
-        return None, {"type": "StructuredOutputValidationError", "message": str(exc)}
-
-
-async def _opencode_session_exists(*, client: Any, session_id: str) -> bool:
-    """Return True if the given session_id exists in the opencode server.
-
-    Uses GET /session/{id} which returns 404 for non-existent sessions.
-    The /session/{id}/messages endpoint returns 200 regardless of whether
-    the session exists, so it cannot be used for existence checks.
-    """
-    session_url = f"{_opencode_base_url()}/session/{session_id}"
-    try:
-        async with httpx.AsyncClient(trust_env=False) as http_client:
-            resp = await http_client.get(session_url, timeout=5)
-    except Exception:
-        return False
-    else:
-        return resp.status_code == 200
-
-
-async def _opencode_create_session() -> str:
-    """Create a new opencode session and return its ID."""
-    create_url = f"{_opencode_base_url()}/session"
-    async with httpx.AsyncClient(trust_env=False) as http_client:
-        resp = await http_client.post(create_url, json={}, timeout=10)
-        resp.raise_for_status()
-    session_id = resp.json().get("id", "")
-    if not session_id:
-        raise RuntimeError("OpenCode session creation returned empty id")
-    return str(session_id)
-
-
-async def _read_latest_assistant_message(*, client: Any, session_id: str) -> tuple[str, str]:
-    try:
-        messages = await client.session.messages(id=session_id)
-    except Exception:
-        return "", ""
-
-    for message in reversed(list(messages)):
-        info = getattr(message, "info", None)
-        if getattr(info, "role", None) != "assistant":
-            continue
-        parts = getattr(message, "parts", None)
-        if not isinstance(parts, list):
-            continue
-        collected: list[str] = []
-        for part in parts:
-            if str(getattr(part, "type", "")).strip() != "text":
-                continue
-            text = getattr(part, "text", None)
-            if isinstance(text, str) and text:
-                collected.append(text)
-        if collected:
-            message_id = str(getattr(info, "id", "") or "").strip()
-            return message_id, "".join(collected).strip()
-    return "", ""
-
-
-async def _read_latest_assistant_message_text(*, client: Any, session_id: str) -> str:
-    _message_id, text = await _read_latest_assistant_message(client=client, session_id=session_id)
-    return text
-
-
 async def _execute_request_opencode(request: RunnerRequest) -> int:
     push_client = _create_push_event_client(request=request)
     workspace_segment = sanitize_workspace_id(request.workspace_id)
@@ -3501,306 +3559,16 @@ async def _execute_request_opencode(request: RunnerRequest) -> int:
 
             _log_phase("pre_run_total", execution_started_at)
 
-            await _emit_event_with_push(
-                event=RunnerOutputEvent(
-                    session_id=request.session_id,
-                    input_id=request.input_id,
-                    sequence=_next_sequence(),
-                    event_type=_EVENT_RUN_STARTED,
-                    payload={
-                        "instruction_preview": request.instruction[:120],
-                        "provider_id": runtime_config.provider_id,
-                        "model_id": runtime_config.model_id,
-                        "workspace_tool_ids": list(getattr(runtime_config, "workspace_tool_ids", ())),
-                        "workspace_skill_ids": list(getattr(runtime_config, "workspace_skill_ids", ())),
-                        "mcp_server_ids": [server.get("name") for server in runtime_config.mcp_servers],
-                        "mcp_server_mappings": _mcp_server_mapping_metadata(server_id_map=mcp_server_id_map),
-                        "workspace_mcp_sidecar_reused": bool(sidecar.reused) if sidecar is not None else False,
-                        "structured_output_enabled": bool(getattr(runtime_config, "output_schema_model", None)),
-                        "workspace_config_checksum": runtime_config.workspace_config_checksum,
-                    },
-                ),
+            await _try_execute_request_opencode_via_harness_host(
+                request=request,
+                workspace_dir=workspace_dir,
+                runtime_config=runtime_config,
+                model_client_config=model_client_config,
+                mcp_server_id_map=mcp_server_id_map,
+                sidecar=sidecar,
                 push_client=push_client,
             )
-
-            text_snapshots: dict[str, str] = {}
-            tool_snapshots: dict[str, tuple[str, str]] = {}
-            part_type_snapshots: dict[str, str] = {}
-            pending_part_deltas: dict[str, list[tuple[str, str]]] = {}
-            output_fragments: list[str] = []
-            terminal_emitted = False
-            run_started_emitted_at = time.perf_counter()
-            first_stream_event_logged = False
-            timeout_seconds = _opencode_timeout_seconds()
-            base_url = _opencode_base_url()
-
-            async with _opencode_client_factory(base_url=base_url) as client:
-                await _ensure_opencode_mcp_servers(client=client, mcp_servers=runtime_config.mcp_servers)
-                requested_opencode_session_id = _runtime_exec_context_str(
-                    request=request,
-                    key=_RUNTIME_EXEC_HARNESS_SESSION_ID_KEY,
-                )
-                persisted_opencode_session_id = _read_workspace_main_session_id(
-                    workspace_dir=workspace_dir,
-                    harness="opencode",
-                )
-                opencode_session_id = requested_opencode_session_id or persisted_opencode_session_id or ""
-                replacement_reason: str | None = None
-                replacement_from: str | None = None
-
-                if not opencode_session_id:
-                    replacement_reason = "missing_harness_session_id"
-                    opencode_session_id = await _opencode_create_session()
-                elif not await _opencode_session_exists(client=client, session_id=opencode_session_id):
-                    if (
-                        persisted_opencode_session_id
-                        and persisted_opencode_session_id != opencode_session_id
-                        and await _opencode_session_exists(client=client, session_id=persisted_opencode_session_id)
-                    ):
-                        replacement_reason = "workspace_state_recovered"
-                        replacement_from = opencode_session_id
-                        opencode_session_id = persisted_opencode_session_id
-                    else:
-                        replacement_reason = "session_not_found"
-                        replacement_from = opencode_session_id
-                        opencode_session_id = await _opencode_create_session()
-
-                _persist_workspace_main_session_id(
-                    workspace_dir=workspace_dir,
-                    harness="opencode",
-                    session_id=opencode_session_id,
-                )
-                if replacement_reason is not None:
-                    logger.warning(
-                        "OpenCode harness session replaced automatically",
-                        extra={
-                            "event": "sandbox_agent_runtime.opencode.harness_session_replace",
-                            "outcome": "success",
-                            "workspace_id": request.workspace_id,
-                            "session_id": request.session_id,
-                            "input_id": request.input_id,
-                            "reason": replacement_reason,
-                            "requested_harness_session_id": requested_opencode_session_id,
-                            "replacement_from_harness_session_id": replacement_from,
-                            "replacement_to_harness_session_id": opencode_session_id,
-                        },
-                    )
-
-                raw_event_stream = await client.event.list()
-                chat_extra_body: dict[str, Any] = {}
-                if (output_format := getattr(runtime_config, "output_format", None)) is not None:
-                    chat_extra_body["format"] = output_format
-                chat_task = asyncio.create_task(
-                    _opencode_chat_submit(
-                        client=client,
-                        session_id=opencode_session_id,
-                        model_id=runtime_config.model_id,
-                        provider_id=runtime_config.provider_id,
-                        instruction=request.instruction,
-                        mode=runtime_config.mode,
-                        system_prompt=runtime_config.system_prompt,
-                        tools=runtime_config.tools,
-                        extra_body=chat_extra_body,
-                    )
-                )
-                try:
-                    stream_iterator = raw_event_stream.__aiter__()
-                    stream_deadline = asyncio.get_running_loop().time() + timeout_seconds
-                    next_event_task: asyncio.Task[Any] | None = None
-                    while True:
-                        if chat_task.done() and (chat_error := chat_task.exception()) is not None:
-                            terminal_emitted = True
-                            await _emit_event_with_push(
-                                event=RunnerOutputEvent(
-                                    session_id=request.session_id,
-                                    input_id=request.input_id,
-                                    sequence=_next_sequence(),
-                                    event_type=_EVENT_RUN_FAILED,
-                                    payload=_exception_failure_payload(
-                                        chat_error,
-                                        prefix="OpenCode chat request failed",
-                                    ),
-                                ),
-                                push_client=push_client,
-                            )
-                            break
-
-                        remaining = stream_deadline - asyncio.get_running_loop().time()
-                        if remaining <= 0:
-                            raise TimeoutError("timed out waiting for OpenCode stream")
-                        if next_event_task is None:
-                            next_event_task = asyncio.create_task(stream_iterator.__anext__())
-
-                        done, _ = await asyncio.wait(
-                            {next_event_task},
-                            timeout=min(1.0, remaining),
-                            return_when=asyncio.ALL_COMPLETED,
-                        )
-                        if next_event_task not in done:
-                            continue
-
-                        try:
-                            raw_event = next_event_task.result()
-                        except StopAsyncIteration:
-                            break
-                        finally:
-                            next_event_task = None
-
-                        mapped_events = _map_opencode_event(
-                            raw_event=raw_event,
-                            target_session_id=opencode_session_id,
-                            text_snapshots=text_snapshots,
-                            tool_snapshots=tool_snapshots,
-                            part_type_snapshots=part_type_snapshots,
-                            pending_part_deltas=pending_part_deltas,
-                        )
-                        if mapped_events and not first_stream_event_logged:
-                            _log_phase("first_stream_event_after_run_started", run_started_emitted_at)
-                            first_stream_event_logged = True
-                        for event_type, payload in mapped_events:
-                            if not _should_emit_opencode_event(
-                                event_type=event_type,
-                                payload=payload,
-                                instruction=request.instruction,
-                            ):
-                                continue
-
-                            if event_type == _EVENT_OUTPUT_DELTA:
-                                delta = payload.get("delta")
-                                if isinstance(delta, str) and delta:
-                                    output_fragments.append(delta)
-
-                            if (
-                                event_type == _EVENT_RUN_COMPLETED
-                                and (schema_model := getattr(runtime_config, "output_schema_model", None)) is not None
-                            ):
-                                assistant_text = await _read_latest_assistant_message_text(
-                                    client=client,
-                                    session_id=opencode_session_id,
-                                )
-                                if not assistant_text:
-                                    assistant_text = "".join(output_fragments).strip()
-                                structured_output, validation_error = _validate_structured_output(
-                                    schema_model=schema_model,
-                                    output_text=assistant_text,
-                                )
-                                if validation_error is not None:
-                                    await _emit_event_with_push(
-                                        event=RunnerOutputEvent(
-                                            session_id=request.session_id,
-                                            input_id=request.input_id,
-                                            sequence=_next_sequence(),
-                                            event_type=_EVENT_RUN_FAILED,
-                                            payload={
-                                                **validation_error,
-                                                "schema_member_id": getattr(
-                                                    runtime_config, "output_schema_member_id", None
-                                                ),
-                                            },
-                                        ),
-                                        push_client=push_client,
-                                    )
-                                    terminal_emitted = True
-                                    break
-                                payload = {
-                                    **payload,
-                                    "schema_member_id": getattr(runtime_config, "output_schema_member_id", None),
-                                    "structured_output": structured_output,
-                                }
-
-                            await _emit_event_with_push(
-                                event=RunnerOutputEvent(
-                                    session_id=request.session_id,
-                                    input_id=request.input_id,
-                                    sequence=_next_sequence(),
-                                    event_type=event_type,
-                                    payload=payload,
-                                ),
-                                push_client=push_client,
-                            )
-                            terminal_emitted = event_type in _TERMINAL_EVENT_TYPES
-                            if terminal_emitted:
-                                break
-                        if terminal_emitted:
-                            break
-                except TimeoutError:
-                    terminal_emitted = True
-                    await _emit_event_with_push(
-                        event=RunnerOutputEvent(
-                            session_id=request.session_id,
-                            input_id=request.input_id,
-                            sequence=_next_sequence(),
-                            event_type=_EVENT_RUN_FAILED,
-                            payload={
-                                "type": "TimeoutError",
-                                "message": f"OpenCode stream timed out after {timeout_seconds}s",
-                            },
-                        ),
-                        push_client=push_client,
-                    )
-                except Exception as exc:
-                    terminal_emitted = True
-                    await _emit_event_with_push(
-                        event=RunnerOutputEvent(
-                            session_id=request.session_id,
-                            input_id=request.input_id,
-                            sequence=_next_sequence(),
-                            event_type=_EVENT_RUN_FAILED,
-                            payload=_exception_failure_payload(
-                                exc,
-                                prefix="OpenCode run failed",
-                            ),
-                        ),
-                        push_client=push_client,
-                    )
-                finally:
-                    if hasattr(raw_event_stream, "aclose"):
-                        with suppress(Exception):
-                            await raw_event_stream.aclose()
-                    if "next_event_task" in locals() and next_event_task is not None and not next_event_task.done():
-                        next_event_task.cancel()
-                        with suppress(asyncio.CancelledError, Exception):
-                            await next_event_task
-                    if not chat_task.done():
-                        with suppress(asyncio.TimeoutError):
-                            await asyncio.wait_for(chat_task, timeout=2.0)
-                    if not chat_task.done():
-                        chat_task.cancel()
-                    with suppress(asyncio.CancelledError, Exception):
-                        await chat_task
-
-                if terminal_emitted:
-                    return 0
-
-                if chat_task.done() and (chat_error := chat_task.exception()) is not None:
-                    await _emit_event_with_push(
-                        event=RunnerOutputEvent(
-                            session_id=request.session_id,
-                            input_id=request.input_id,
-                            sequence=_next_sequence(),
-                            event_type=_EVENT_RUN_FAILED,
-                            payload=_exception_failure_payload(
-                                chat_error,
-                                prefix="OpenCode chat request failed",
-                            ),
-                        ),
-                        push_client=push_client,
-                    )
-                    return 0
-
-                await _emit_event_with_push(
-                    event=RunnerOutputEvent(
-                        session_id=request.session_id,
-                        input_id=request.input_id,
-                        sequence=_next_sequence(),
-                        event_type=_EVENT_RUN_FAILED,
-                        payload={
-                            "type": "RuntimeError",
-                            "message": "OpenCode stream ended before terminal event",
-                        },
-                    ),
-                    push_client=push_client,
-                )
+            return 0
     except Exception as exc:
         await _emit_event_with_push(
             event=RunnerOutputEvent(

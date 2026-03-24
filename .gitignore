@@ -12,3 +12,9 @@ desktop/*.tsbuildinfo
 desktop/.env
 desktop/.env.*
 desktop/*.local
+runtime/harness-host/node_modules/
+runtime/harness-host/dist/
+runtime/api-server/node_modules/
+runtime/api-server/dist/
+runtime/state-store/node_modules/
+runtime/state-store/dist/

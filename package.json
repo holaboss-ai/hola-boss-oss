@@ -11,6 +11,18 @@
     "desktop:prepare-runtime": "npm --prefix desktop run prepare:runtime",
     "desktop:prepare-runtime:local": "npm --prefix desktop run prepare:runtime:local",
     "desktop:dist:mac:local": "npm --prefix desktop run dist:mac:local",
+    "runtime:harness-host:install": "npm install --prefix runtime/harness-host",
+    "runtime:harness-host:build": "npm --prefix runtime/harness-host run build",
+    "runtime:harness-host:test": "npm --prefix runtime/harness-host run test",
+    "runtime:harness-host:typecheck": "npm --prefix runtime/harness-host run typecheck",
+    "runtime:state-store:install": "npm install --prefix runtime/state-store",
+    "runtime:state-store:build": "npm --prefix runtime/state-store run build",
+    "runtime:state-store:test": "npm --prefix runtime/state-store run test",
+    "runtime:state-store:typecheck": "npm --prefix runtime/state-store run typecheck",
+    "runtime:api-server:install": "npm install --prefix runtime/api-server",
+    "runtime:api-server:build": "npm --prefix runtime/api-server run build",
+    "runtime:api-server:test": "npm --prefix runtime/api-server run test",
+    "runtime:api-server:typecheck": "npm --prefix runtime/api-server run typecheck",
     "runtime:clean": "rm -rf out/runtime-macos out/runtime-root runtime/out",
     "runtime:test": "cd runtime && uv run python -m pytest"
   }

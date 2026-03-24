@@ -162,3 +162,536 @@ def test_get_workspace_recovers_missing_row_from_identity_file(monkeypatch, tmp_
     assert Path(str(row["workspace_path"])) == workspace_root / "workspace-1"
     assert str(row["harness"]) == "opencode"
     assert str(row["status"]) == "active"
+
+
+def test_upsert_binding_delegates_to_ts_state_store_when_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_STATE_STORE", "1")
+
+    def _fake_call(*, operation, payload):
+        assert operation == "upsert-binding"
+        assert payload == {
+            "workspace_id": "workspace-1",
+            "session_id": "session-main",
+            "harness": "opencode",
+            "harness_session_id": "harness-1",
+        }
+        return {
+            "workspace_id": "workspace-1",
+            "session_id": "session-main",
+            "harness": "opencode",
+            "harness_session_id": "harness-1",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        }
+
+    monkeypatch.setattr(state_module, "_ts_state_store_call", _fake_call)
+
+    record = state_module.upsert_binding(
+        workspace_id="workspace-1",
+        session_id="session-main",
+        harness="opencode",
+        harness_session_id="harness-1",
+    )
+
+    assert record.workspace_id == "workspace-1"
+    assert record.session_id == "session-main"
+    assert record.harness_session_id == "harness-1"
+
+
+def test_list_session_messages_delegates_to_ts_state_store_when_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_STATE_STORE", "1")
+
+    def _fake_call(*, operation, payload):
+        assert operation == "list-session-messages"
+        assert payload == {
+            "workspace_id": "workspace-1",
+            "session_id": "session-main",
+        }
+        return [
+            {
+                "id": "m-1",
+                "role": "user",
+                "text": "hello",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "metadata": {},
+            },
+            {
+                "id": "m-2",
+                "role": "assistant",
+                "text": "hi",
+                "created_at": "2026-01-01T00:00:01+00:00",
+                "metadata": {},
+            },
+        ]
+
+    monkeypatch.setattr(state_module, "_ts_state_store_call", _fake_call)
+
+    messages = state_module.list_session_messages(workspace_id="workspace-1", session_id="session-main")
+
+    assert [message["role"] for message in messages] == ["user", "assistant"]
+    assert messages[1]["text"] == "hi"
+
+
+def test_output_event_functions_delegate_to_ts_state_store_when_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_STATE_STORE", "1")
+    captured: list[tuple[str, dict[str, object]]] = []
+
+    def _fake_call(*, operation, payload):
+        captured.append((operation, payload))
+        if operation == "append-output-event":
+            return {"ok": True}
+        if operation == "latest-output-event-id":
+            return 7
+        if operation == "list-output-events":
+            return [
+                {
+                    "id": 7,
+                    "workspace_id": "workspace-1",
+                    "session_id": "session-main",
+                    "input_id": "input-1",
+                    "sequence": 2,
+                    "event_type": "output_delta",
+                    "payload": {"delta": "hi"},
+                    "created_at": "2026-01-01T00:00:01+00:00",
+                }
+            ]
+        raise AssertionError(f"unexpected operation: {operation}")
+
+    monkeypatch.setattr(state_module, "_ts_state_store_call", _fake_call)
+
+    state_module.append_output_event(
+        workspace_id="workspace-1",
+        session_id="session-main",
+        input_id="input-1",
+        sequence=2,
+        event_type="output_delta",
+        payload={"delta": "hi"},
+    )
+    latest_id = state_module.latest_output_event_id(session_id="session-main", input_id="input-1")
+    events = state_module.list_output_events(session_id="session-main", input_id="input-1", after_event_id=6)
+
+    assert captured[0][0] == "append-output-event"
+    assert latest_id == 7
+    assert events == [
+        {
+            "id": 7,
+            "workspace_id": "workspace-1",
+            "session_id": "session-main",
+            "input_id": "input-1",
+            "sequence": 2,
+            "event_type": "output_delta",
+            "payload": {"delta": "hi"},
+            "created_at": "2026-01-01T00:00:01+00:00",
+        }
+    ]
+
+
+def test_workspace_crud_delegates_to_ts_state_store_when_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_STATE_STORE", "1")
+    captured: list[tuple[str, dict[str, object]]] = []
+
+    def _fake_call(*, operation, payload):
+        captured.append((operation, payload))
+        if operation == "create-workspace":
+            return {
+                "id": "workspace-1",
+                "name": "Workspace 1",
+                "status": "provisioning",
+                "harness": "opencode",
+                "main_session_id": "session-main",
+                "error_message": None,
+                "onboarding_status": "not_required",
+                "onboarding_session_id": None,
+                "onboarding_completed_at": None,
+                "onboarding_completion_summary": None,
+                "onboarding_requested_at": None,
+                "onboarding_requested_by": None,
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+                "deleted_at_utc": None,
+            }
+        if operation == "list-workspaces":
+            return [
+                {
+                    "id": "workspace-1",
+                    "name": "Workspace 1",
+                    "status": "provisioning",
+                    "harness": "opencode",
+                    "main_session_id": "session-main",
+                    "error_message": None,
+                    "onboarding_status": "not_required",
+                    "onboarding_session_id": None,
+                    "onboarding_completed_at": None,
+                    "onboarding_completion_summary": None,
+                    "onboarding_requested_at": None,
+                    "onboarding_requested_by": None,
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                    "updated_at": "2026-01-01T00:00:00+00:00",
+                    "deleted_at_utc": None,
+                }
+            ]
+        if operation == "get-workspace":
+            return {
+                "id": "workspace-1",
+                "name": "Workspace 1",
+                "status": "active",
+                "harness": "opencode",
+                "main_session_id": "session-main",
+                "error_message": None,
+                "onboarding_status": "pending",
+                "onboarding_session_id": None,
+                "onboarding_completed_at": None,
+                "onboarding_completion_summary": None,
+                "onboarding_requested_at": None,
+                "onboarding_requested_by": None,
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-02T00:00:00+00:00",
+                "deleted_at_utc": None,
+            }
+        if operation == "update-workspace":
+            return {
+                "id": "workspace-1",
+                "name": "Workspace 1",
+                "status": "active",
+                "harness": "opencode",
+                "main_session_id": "session-main",
+                "error_message": None,
+                "onboarding_status": "pending",
+                "onboarding_session_id": None,
+                "onboarding_completed_at": None,
+                "onboarding_completion_summary": None,
+                "onboarding_requested_at": None,
+                "onboarding_requested_by": None,
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-02T00:00:00+00:00",
+                "deleted_at_utc": None,
+            }
+        if operation == "delete-workspace":
+            return {
+                "id": "workspace-1",
+                "name": "Workspace 1",
+                "status": "deleted",
+                "harness": "opencode",
+                "main_session_id": "session-main",
+                "error_message": None,
+                "onboarding_status": "pending",
+                "onboarding_session_id": None,
+                "onboarding_completed_at": None,
+                "onboarding_completion_summary": None,
+                "onboarding_requested_at": None,
+                "onboarding_requested_by": None,
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-03T00:00:00+00:00",
+                "deleted_at_utc": "2026-01-03T00:00:00+00:00",
+            }
+        raise AssertionError(f"unexpected operation: {operation}")
+
+    monkeypatch.setattr(state_module, "_ts_state_store_call", _fake_call)
+
+    created = state_module.create_workspace(
+        workspace_id="workspace-1",
+        name="Workspace 1",
+        harness="opencode",
+        status="provisioning",
+        main_session_id="session-main",
+    )
+    listed = state_module.list_workspaces()
+    fetched = state_module.get_workspace("workspace-1")
+    updated = state_module.update_workspace("workspace-1", status="active", onboarding_status="pending")
+    deleted = state_module.delete_workspace("workspace-1")
+
+    assert created.id == "workspace-1"
+    assert [item.id for item in listed] == ["workspace-1"]
+    assert fetched is not None
+    assert fetched.status == "active"
+    assert updated.onboarding_status == "pending"
+    assert deleted.status == "deleted"
+    assert [item[0] for item in captured] == [
+        "create-workspace",
+        "list-workspaces",
+        "get-workspace",
+        "update-workspace",
+        "delete-workspace",
+    ]
+
+
+def test_outputs_and_artifacts_delegate_to_ts_state_store_when_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_STATE_STORE", "1")
+
+    def _fake_call(*, operation, payload):
+        if operation == "create-output-folder":
+            return {
+                "id": "folder-1",
+                "workspace_id": "workspace-1",
+                "name": "Drafts",
+                "position": 0,
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+            }
+        if operation == "create-output":
+            return {
+                "id": "output-1",
+                "workspace_id": "workspace-1",
+                "output_type": "document",
+                "title": "Spec Draft",
+                "status": "draft",
+                "module_id": None,
+                "module_resource_id": None,
+                "file_path": None,
+                "html_content": None,
+                "session_id": "session-main",
+                "artifact_id": None,
+                "folder_id": "folder-1",
+                "platform": None,
+                "metadata": {},
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+            }
+        if operation == "create-session-artifact":
+            return {
+                "id": "artifact-1",
+                "session_id": "session-main",
+                "workspace_id": "workspace-1",
+                "artifact_type": "document",
+                "external_id": "doc-1",
+                "platform": "notion",
+                "title": "Generated Doc",
+                "metadata": {},
+                "created_at": "2026-01-01T00:00:00+00:00",
+            }
+        if operation == "list-outputs":
+            return [
+                {
+                    "id": "output-1",
+                    "workspace_id": "workspace-1",
+                    "output_type": "document",
+                    "title": "Spec Draft",
+                    "status": "draft",
+                    "module_id": None,
+                    "module_resource_id": None,
+                    "file_path": None,
+                    "html_content": None,
+                    "session_id": "session-main",
+                    "artifact_id": None,
+                    "folder_id": "folder-1",
+                    "platform": None,
+                    "metadata": {},
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                    "updated_at": "2026-01-01T00:00:00+00:00",
+                }
+            ]
+        if operation == "get-output-counts":
+            return {
+                "total": 1,
+                "by_status": {"draft": 1},
+                "by_platform": {},
+                "by_folder": {"folder-1": 1},
+            }
+        if operation == "list-session-artifacts":
+            return [
+                {
+                    "id": "artifact-1",
+                    "session_id": "session-main",
+                    "workspace_id": "workspace-1",
+                    "artifact_type": "document",
+                    "external_id": "doc-1",
+                    "platform": "notion",
+                    "title": "Generated Doc",
+                    "metadata": {},
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                }
+            ]
+        if operation == "list-sessions-with-artifacts":
+            return [
+                {
+                    "session_id": "session-main",
+                    "status": "WAITING_USER",
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                    "updated_at": "2026-01-01T00:00:01+00:00",
+                    "artifacts": [{"artifact_type": "document", "external_id": "doc-1", "platform": "notion", "title": "Generated Doc"}],
+                }
+            ]
+        raise AssertionError(f"unexpected operation: {operation}")
+
+    monkeypatch.setattr(state_module, "_ts_state_store_call", _fake_call)
+
+    folder = state_module.create_output_folder(workspace_id="workspace-1", name="Drafts")
+    output = state_module.create_output(
+        workspace_id="workspace-1",
+        output_type="document",
+        title="Spec Draft",
+        folder_id="folder-1",
+        session_id="session-main",
+    )
+    artifact = state_module.create_session_artifact(
+        session_id="session-main",
+        workspace_id="workspace-1",
+        artifact_type="document",
+        external_id="doc-1",
+        platform="notion",
+        title="Generated Doc",
+    )
+    outputs = state_module.list_outputs(workspace_id="workspace-1")
+    counts = state_module.get_output_counts(workspace_id="workspace-1")
+    artifacts = state_module.list_session_artifacts(session_id="session-main", workspace_id="workspace-1")
+    sessions = state_module.list_sessions_with_artifacts(workspace_id="workspace-1")
+
+    assert folder["id"] == "folder-1"
+    assert output["folder_id"] == "folder-1"
+    assert artifact["external_id"] == "doc-1"
+    assert counts["total"] == 1
+    assert outputs[0]["title"] == "Spec Draft"
+    assert artifacts[0]["platform"] == "notion"
+    assert sessions[0]["artifacts"][0]["external_id"] == "doc-1"
+
+
+def test_cronjobs_and_task_proposals_delegate_to_ts_state_store_when_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_STATE_STORE", "1")
+
+    def _fake_call(*, operation, payload):
+        if operation == "create-cronjob":
+            return {
+                "id": "job-1",
+                "workspace_id": "workspace-1",
+                "initiated_by": "workspace_agent",
+                "name": "",
+                "cron": "0 9 * * *",
+                "description": "Daily check",
+                "enabled": True,
+                "delivery": {"mode": "announce", "channel": "session_run", "to": None},
+                "metadata": {},
+                "last_run_at": None,
+                "next_run_at": None,
+                "run_count": 0,
+                "last_status": None,
+                "last_error": None,
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+            }
+        if operation == "list-cronjobs":
+            return [
+                {
+                    "id": "job-1",
+                    "workspace_id": "workspace-1",
+                    "initiated_by": "workspace_agent",
+                    "name": "",
+                    "cron": "0 9 * * *",
+                    "description": "Daily check",
+                    "enabled": True,
+                    "delivery": {"mode": "announce", "channel": "session_run", "to": None},
+                    "metadata": {},
+                    "last_run_at": None,
+                    "next_run_at": None,
+                    "run_count": 0,
+                    "last_status": None,
+                    "last_error": None,
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                    "updated_at": "2026-01-01T00:00:00+00:00",
+                }
+            ]
+        if operation == "update-cronjob":
+            return {
+                "id": "job-1",
+                "workspace_id": "workspace-1",
+                "initiated_by": "workspace_agent",
+                "name": "",
+                "cron": "0 9 * * *",
+                "description": "Updated check",
+                "enabled": True,
+                "delivery": {"mode": "announce", "channel": "session_run", "to": None},
+                "metadata": {},
+                "last_run_at": None,
+                "next_run_at": None,
+                "run_count": 0,
+                "last_status": None,
+                "last_error": None,
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:01+00:00",
+            }
+        if operation == "delete-cronjob":
+            return True
+        if operation == "create-task-proposal":
+            return {
+                "proposal_id": "proposal-1",
+                "workspace_id": "workspace-1",
+                "task_name": "Follow up",
+                "task_prompt": "Write a follow-up message",
+                "task_generation_rationale": "User has not replied",
+                "source_event_ids": ["evt-1"],
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "state": "not_reviewed",
+            }
+        if operation == "list-task-proposals":
+            return [
+                {
+                    "proposal_id": "proposal-1",
+                    "workspace_id": "workspace-1",
+                    "task_name": "Follow up",
+                    "task_prompt": "Write a follow-up message",
+                    "task_generation_rationale": "User has not replied",
+                    "source_event_ids": ["evt-1"],
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                    "state": "not_reviewed",
+                }
+            ]
+        if operation == "list-unreviewed-task-proposals":
+            return [
+                {
+                    "proposal_id": "proposal-1",
+                    "workspace_id": "workspace-1",
+                    "task_name": "Follow up",
+                    "task_prompt": "Write a follow-up message",
+                    "task_generation_rationale": "User has not replied",
+                    "source_event_ids": ["evt-1"],
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                    "state": "not_reviewed",
+                }
+            ]
+        if operation == "update-task-proposal-state":
+            return {
+                "proposal_id": "proposal-1",
+                "workspace_id": "workspace-1",
+                "task_name": "Follow up",
+                "task_prompt": "Write a follow-up message",
+                "task_generation_rationale": "User has not replied",
+                "source_event_ids": ["evt-1"],
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "state": "accepted",
+            }
+        raise AssertionError(f"unexpected operation: {operation}")
+
+    monkeypatch.setattr(state_module, "_ts_state_store_call", _fake_call)
+
+    job = state_module.create_cronjob(
+        workspace_id="workspace-1",
+        initiated_by="workspace_agent",
+        cron="0 9 * * *",
+        description="Daily check",
+        delivery={"mode": "announce", "channel": "session_run", "to": None},
+    )
+    jobs = state_module.list_cronjobs(workspace_id="workspace-1")
+    updated_job = state_module.update_cronjob(job_id="job-1", description="Updated check")
+    deleted_job = state_module.delete_cronjob("job-1")
+    proposal = state_module.create_task_proposal(
+        proposal_id="proposal-1",
+        workspace_id="workspace-1",
+        task_name="Follow up",
+        task_prompt="Write a follow-up message",
+        task_generation_rationale="User has not replied",
+        source_event_ids=["evt-1"],
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    proposals = state_module.list_task_proposals(workspace_id="workspace-1")
+    unreviewed = state_module.list_unreviewed_task_proposals(workspace_id="workspace-1")
+    updated_proposal = state_module.update_task_proposal_state(proposal_id="proposal-1", state="accepted")
+
+    assert job["id"] == "job-1"
+    assert jobs[0]["description"] == "Daily check"
+    assert updated_job is not None
+    assert updated_job["description"] == "Updated check"
+    assert deleted_job is True
+    assert proposal["proposal_id"] == "proposal-1"
+    assert proposals[0]["task_name"] == "Follow up"
+    assert unreviewed[0]["state"] == "not_reviewed"
+    assert updated_proposal is not None
+    assert updated_proposal["state"] == "accepted"

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
 import json
+import logging
 import os
 import sqlite3
+import subprocess
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -13,9 +16,14 @@ from uuid import uuid4
 from sandbox_agent_runtime.workspace_scope import SANDBOX_ROOT, WORKSPACE_ROOT, sanitize_workspace_id
 
 _RUNTIME_DB_PATH_ENV = "HOLABOSS_RUNTIME_DB_PATH"
+_TS_STATE_STORE_FLAG_ENV = "HOLABOSS_RUNTIME_USE_TS_STATE_STORE"
+_TS_STATE_STORE_NODE_BIN_ENV = "HOLABOSS_RUNTIME_NODE_BIN"
 _WORKSPACE_RUNTIME_DIRNAME = ".holaboss"
 _WORKSPACE_IDENTITY_FILENAME = "workspace_id"
 _LEGACY_WORKSPACE_METADATA_FILENAME = "workspace.json"
+_TS_STATE_STORE_UNAVAILABLE = object()
+
+logger = logging.getLogger("sandbox_agent_runtime.runtime_local_state")
 
 
 @dataclass(frozen=True)
@@ -66,6 +74,80 @@ class SessionInputRecord:
 
 def utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _ts_state_store_enabled() -> bool:
+    raw = (os.getenv(_TS_STATE_STORE_FLAG_ENV) or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _runtime_root_dir() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _ts_state_store_entry_path() -> Path:
+    return _runtime_root_dir() / "state-store" / "dist" / "cli.mjs"
+
+
+def _ts_state_store_node_bin() -> str:
+    configured = (os.getenv(_TS_STATE_STORE_NODE_BIN_ENV) or "").strip()
+    return configured or "node"
+
+
+def _ts_state_store_request_options() -> dict[str, Any]:
+    harness = (os.getenv("SANDBOX_AGENT_HARNESS") or "").strip()
+    return {
+        "dbPath": str(runtime_db_path()),
+        "workspaceRoot": str(WORKSPACE_ROOT),
+        "sandboxRoot": str(SANDBOX_ROOT),
+        "sandboxAgentHarness": harness or None,
+    }
+
+
+def _ts_state_store_call(*, operation: str, payload: dict[str, Any]) -> Any:
+    if not _ts_state_store_enabled():
+        return _TS_STATE_STORE_UNAVAILABLE
+
+    entry_path = _ts_state_store_entry_path()
+    if not entry_path.is_file():
+        logger.warning("TypeScript state-store entry not found at %s", entry_path)
+        return _TS_STATE_STORE_UNAVAILABLE
+
+    request_payload = {
+        "options": _ts_state_store_request_options(),
+        **payload,
+    }
+    encoded = base64.b64encode(json.dumps(request_payload).encode("utf-8")).decode("utf-8")
+    try:
+        completed = subprocess.run(
+            [_ts_state_store_node_bin(), str(entry_path), operation, "--request-base64", encoded],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=str(_runtime_root_dir()),
+        )
+    except OSError as exc:
+        logger.warning("Failed to invoke TypeScript state-store operation=%s error=%s", operation, exc)
+        return _TS_STATE_STORE_UNAVAILABLE
+
+    if completed.returncode != 0:
+        stderr_text = completed.stderr.strip()
+        logger.warning(
+            "TypeScript state-store operation failed operation=%s return_code=%s stderr=%s",
+            operation,
+            completed.returncode,
+            stderr_text,
+        )
+        return _TS_STATE_STORE_UNAVAILABLE
+
+    stdout = completed.stdout.strip()
+    if not stdout:
+        return None
+    try:
+        return json.loads(stdout)
+    except Exception as exc:
+        logger.warning("Failed to decode TypeScript state-store response operation=%s error=%s", operation, exc)
+        return _TS_STATE_STORE_UNAVAILABLE
 
 
 _WORKSPACE_UPDATE_FIELDS = frozenset({
@@ -574,6 +656,19 @@ def _migrate_workspaces_table(conn: sqlite3.Connection) -> None:
 
 
 def list_workspaces(*, include_deleted: bool = False) -> list[WorkspaceRecord]:
+    ts_result = _ts_state_store_call(
+        operation="list-workspaces",
+        payload={"include_deleted": bool(include_deleted)},
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, list):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store list_workspaces response")
+        return [
+            _workspace_record_from_payload(item)
+            for item in ts_result
+            if isinstance(item, dict)
+        ]
+
     _ensure_workspace_metadata_ready()
     with runtime_db_connection() as conn:
         rows = conn.execute(
@@ -593,6 +688,20 @@ def list_workspaces(*, include_deleted: bool = False) -> list[WorkspaceRecord]:
 
 
 def get_workspace(workspace_id: str, *, include_deleted: bool = False) -> WorkspaceRecord | None:
+    ts_result = _ts_state_store_call(
+        operation="get-workspace",
+        payload={
+            "workspace_id": workspace_id,
+            "include_deleted": bool(include_deleted),
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if ts_result is None:
+            return None
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store get_workspace response")
+        return _workspace_record_from_payload(ts_result)
+
     _ensure_workspace_metadata_ready()
     with runtime_db_connection() as conn:
         row = conn.execute(
@@ -659,6 +768,24 @@ def create_workspace(
     onboarding_session_id: str | None = None,
     error_message: str | None = None,
 ) -> WorkspaceRecord:
+    ts_result = _ts_state_store_call(
+        operation="create-workspace",
+        payload={
+            "workspace_id": workspace_id,
+            "name": name,
+            "harness": harness,
+            "status": status,
+            "main_session_id": main_session_id,
+            "onboarding_status": onboarding_status,
+            "onboarding_session_id": onboarding_session_id,
+            "error_message": error_message,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store create_workspace response")
+        return _workspace_record_from_payload(ts_result)
+
     _ensure_workspace_metadata_ready()
     resolved_workspace_id = workspace_id or str(uuid4())
     now = utc_now_iso()
@@ -690,6 +817,18 @@ def create_workspace(
 
 
 def update_workspace(workspace_id: str, **fields: Any) -> WorkspaceRecord:
+    ts_result = _ts_state_store_call(
+        operation="update-workspace",
+        payload={
+            "workspace_id": workspace_id,
+            "fields": fields,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store update_workspace response")
+        return _workspace_record_from_payload(ts_result)
+
     _ensure_workspace_metadata_ready()
     existing = get_workspace(workspace_id, include_deleted=True)
     if existing is None:
@@ -723,7 +862,149 @@ def update_workspace(workspace_id: str, **fields: Any) -> WorkspaceRecord:
 
 
 def delete_workspace(workspace_id: str) -> WorkspaceRecord:
+    ts_result = _ts_state_store_call(
+        operation="delete-workspace",
+        payload={"workspace_id": workspace_id},
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store delete_workspace response")
+        return _workspace_record_from_payload(ts_result)
+
     return update_workspace(workspace_id, status="deleted", deleted_at_utc=utc_now_iso(), error_message=None)
+
+
+def _session_binding_record_from_payload(data: dict[str, Any]) -> SessionBindingRecord:
+    return SessionBindingRecord(
+        workspace_id=str(data["workspace_id"]),
+        session_id=str(data["session_id"]),
+        harness=str(data["harness"]),
+        harness_session_id=str(data["harness_session_id"]),
+        created_at=str(data["created_at"]),
+        updated_at=str(data["updated_at"]),
+    )
+
+
+def _session_input_record_from_payload(data: dict[str, Any]) -> SessionInputRecord:
+    payload = data.get("payload")
+    if not isinstance(payload, dict):
+        payload = {}
+    return SessionInputRecord(
+        input_id=str(data["input_id"]),
+        session_id=str(data["session_id"]),
+        workspace_id=str(data["workspace_id"]),
+        payload=payload,
+        status=str(data["status"]),
+        priority=int(data["priority"]),
+        available_at=str(data["available_at"]),
+        attempt=int(data["attempt"]),
+        idempotency_key=str(data["idempotency_key"]) if data.get("idempotency_key") is not None else None,
+        claimed_by=str(data["claimed_by"]) if data.get("claimed_by") is not None else None,
+        claimed_until=str(data["claimed_until"]) if data.get("claimed_until") is not None else None,
+        created_at=str(data["created_at"]),
+        updated_at=str(data["updated_at"]),
+    )
+
+
+def _runtime_state_from_payload(data: dict[str, Any]) -> dict[str, Any]:
+    last_error = data.get("last_error")
+    if last_error is not None and not isinstance(last_error, dict):
+        last_error = {"message": str(last_error)}
+    return {
+        "workspace_id": str(data["workspace_id"]),
+        "session_id": str(data["session_id"]),
+        "status": str(data["status"]),
+        "current_input_id": str(data["current_input_id"]) if data.get("current_input_id") is not None else None,
+        "current_worker_id": str(data["current_worker_id"]) if data.get("current_worker_id") is not None else None,
+        "lease_until": str(data["lease_until"]) if data.get("lease_until") is not None else None,
+        "heartbeat_at": str(data["heartbeat_at"]) if data.get("heartbeat_at") is not None else None,
+        "last_error": last_error,
+        "created_at": str(data["created_at"]),
+        "updated_at": str(data["updated_at"]),
+    }
+
+
+def _session_artifact_from_payload(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(data["id"]),
+        "session_id": str(data["session_id"]),
+        "workspace_id": str(data["workspace_id"]),
+        "artifact_type": str(data["artifact_type"]),
+        "external_id": str(data["external_id"]),
+        "platform": str(data["platform"]) if data.get("platform") is not None else None,
+        "title": str(data["title"]) if data.get("title") is not None else None,
+        "metadata": data["metadata"] if isinstance(data.get("metadata"), dict) else {},
+        "created_at": str(data["created_at"]),
+    }
+
+
+def _output_folder_from_payload(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(data["id"]),
+        "workspace_id": str(data["workspace_id"]),
+        "name": str(data["name"]),
+        "position": int(data["position"]),
+        "created_at": str(data["created_at"]) if data.get("created_at") is not None else None,
+        "updated_at": str(data["updated_at"]) if data.get("updated_at") is not None else None,
+    }
+
+
+def _output_from_payload(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(data["id"]),
+        "workspace_id": str(data["workspace_id"]),
+        "output_type": str(data["output_type"]),
+        "title": str(data["title"]) if data.get("title") is not None else "",
+        "status": str(data["status"]) if data.get("status") is not None else "draft",
+        "module_id": str(data["module_id"]) if data.get("module_id") is not None else None,
+        "module_resource_id": str(data["module_resource_id"]) if data.get("module_resource_id") is not None else None,
+        "file_path": str(data["file_path"]) if data.get("file_path") is not None else None,
+        "html_content": str(data["html_content"]) if data.get("html_content") is not None else None,
+        "session_id": str(data["session_id"]) if data.get("session_id") is not None else None,
+        "artifact_id": str(data["artifact_id"]) if data.get("artifact_id") is not None else None,
+        "folder_id": str(data["folder_id"]) if data.get("folder_id") is not None else None,
+        "platform": str(data["platform"]) if data.get("platform") is not None else None,
+        "metadata": data["metadata"] if isinstance(data.get("metadata"), dict) else {},
+        "created_at": str(data["created_at"]) if data.get("created_at") is not None else None,
+        "updated_at": str(data["updated_at"]) if data.get("updated_at") is not None else None,
+    }
+
+
+def _cronjob_from_payload(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(data["id"]),
+        "workspace_id": str(data["workspace_id"]),
+        "initiated_by": str(data["initiated_by"]),
+        "name": str(data.get("name") or ""),
+        "cron": str(data["cron"]),
+        "description": str(data["description"]),
+        "enabled": bool(data.get("enabled")),
+        "delivery": data["delivery"] if isinstance(data.get("delivery"), dict) else {},
+        "metadata": data["metadata"] if isinstance(data.get("metadata"), dict) else {},
+        "last_run_at": str(data["last_run_at"]) if data.get("last_run_at") is not None else None,
+        "next_run_at": str(data["next_run_at"]) if data.get("next_run_at") is not None else None,
+        "run_count": int(data.get("run_count") or 0),
+        "last_status": str(data["last_status"]) if data.get("last_status") is not None else None,
+        "last_error": str(data["last_error"]) if data.get("last_error") is not None else None,
+        "created_at": str(data["created_at"]),
+        "updated_at": str(data["updated_at"]),
+    }
+
+
+def _task_proposal_from_payload(data: dict[str, Any]) -> dict[str, Any]:
+    source_event_ids = data.get("source_event_ids")
+    if not isinstance(source_event_ids, list):
+        source_event_ids = []
+    return {
+        "proposal_id": str(data["proposal_id"]),
+        "workspace_id": str(data["workspace_id"]),
+        "task_name": str(data["task_name"]),
+        "task_prompt": str(data["task_prompt"]),
+        "task_generation_rationale": str(data["task_generation_rationale"]),
+        "source_event_ids": [str(item) for item in source_event_ids if isinstance(item, str)],
+        "created_at": str(data["created_at"]),
+        "state": str(data["state"]),
+    }
 
 
 def upsert_binding(
@@ -733,6 +1014,20 @@ def upsert_binding(
     harness: str,
     harness_session_id: str,
 ) -> SessionBindingRecord:
+    ts_result = _ts_state_store_call(
+        operation="upsert-binding",
+        payload={
+            "workspace_id": workspace_id,
+            "session_id": session_id,
+            "harness": harness,
+            "harness_session_id": harness_session_id,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store upsert_binding response")
+        return _session_binding_record_from_payload(ts_result)
+
     now = utc_now_iso()
     with runtime_db_connection() as conn:
         conn.execute(
@@ -770,6 +1065,20 @@ def upsert_binding(
 
 
 def get_binding(*, workspace_id: str, session_id: str) -> SessionBindingRecord | None:
+    ts_result = _ts_state_store_call(
+        operation="get-binding",
+        payload={
+            "workspace_id": workspace_id,
+            "session_id": session_id,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if ts_result is None:
+            return None
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store get_binding response")
+        return _session_binding_record_from_payload(ts_result)
+
     with runtime_db_connection() as conn:
         row = conn.execute(
             """
@@ -801,6 +1110,21 @@ def enqueue_input(
     priority: int = 0,
     idempotency_key: str | None = None,
 ) -> SessionInputRecord:
+    ts_result = _ts_state_store_call(
+        operation="enqueue-input",
+        payload={
+            "workspace_id": workspace_id,
+            "session_id": session_id,
+            "payload": payload,
+            "priority": int(priority),
+            "idempotency_key": idempotency_key,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store enqueue_input response")
+        return _session_input_record_from_payload(ts_result)
+
     if idempotency_key:
         existing = get_input_by_idempotency_key(idempotency_key)
         if existing is not None:
@@ -835,12 +1159,34 @@ def enqueue_input(
 
 
 def get_input(input_id: str) -> SessionInputRecord | None:
+    ts_result = _ts_state_store_call(
+        operation="get-input",
+        payload={"input_id": input_id},
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if ts_result is None:
+            return None
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store get_input response")
+        return _session_input_record_from_payload(ts_result)
+
     with runtime_db_connection() as conn:
         row = conn.execute("SELECT * FROM agent_session_inputs WHERE input_id = ? LIMIT 1", (input_id,)).fetchone()
     return _row_to_input(row)
 
 
 def get_input_by_idempotency_key(idempotency_key: str) -> SessionInputRecord | None:
+    ts_result = _ts_state_store_call(
+        operation="get-input-by-idempotency-key",
+        payload={"idempotency_key": idempotency_key},
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if ts_result is None:
+            return None
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store get_input_by_idempotency_key response")
+        return _session_input_record_from_payload(ts_result)
+
     with runtime_db_connection() as conn:
         row = conn.execute(
             "SELECT * FROM agent_session_inputs WHERE idempotency_key = ? LIMIT 1",
@@ -850,6 +1196,20 @@ def get_input_by_idempotency_key(idempotency_key: str) -> SessionInputRecord | N
 
 
 def update_input(input_id: str, **fields: Any) -> SessionInputRecord | None:
+    ts_result = _ts_state_store_call(
+        operation="update-input",
+        payload={
+            "input_id": input_id,
+            "fields": fields,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if ts_result is None:
+            return None
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store update_input response")
+        return _session_input_record_from_payload(ts_result)
+
     if not fields:
         return get_input(input_id)
     assignments: list[str] = []
@@ -869,6 +1229,23 @@ def update_input(input_id: str, **fields: Any) -> SessionInputRecord | None:
 
 
 def claim_inputs(*, limit: int, claimed_by: str, lease_seconds: int) -> list[SessionInputRecord]:
+    ts_result = _ts_state_store_call(
+        operation="claim-inputs",
+        payload={
+            "limit": max(1, int(limit)),
+            "claimed_by": claimed_by,
+            "lease_seconds": int(lease_seconds),
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, list):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store claim_inputs response")
+        return [
+            _session_input_record_from_payload(item)
+            for item in ts_result
+            if isinstance(item, dict)
+        ]
+
     now = datetime.now(UTC)
     now_iso = now.isoformat()
     claimed_until_iso = now.replace(microsecond=0).isoformat()
@@ -909,6 +1286,16 @@ def claim_inputs(*, limit: int, claimed_by: str, lease_seconds: int) -> list[Ses
 
 
 def has_available_inputs_for_session(*, session_id: str, workspace_id: str | None = None) -> bool:
+    ts_result = _ts_state_store_call(
+        operation="has-available-inputs-for-session",
+        payload={
+            "session_id": session_id,
+            "workspace_id": workspace_id,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        return bool(ts_result)
+
     now_iso = utc_now_iso()
     query = """
         SELECT input_id FROM agent_session_inputs
@@ -933,6 +1320,20 @@ def ensure_runtime_state(
     status: str = "QUEUED",
     current_input_id: str | None = None,
 ) -> dict[str, Any]:
+    ts_result = _ts_state_store_call(
+        operation="ensure-runtime-state",
+        payload={
+            "workspace_id": workspace_id,
+            "session_id": session_id,
+            "status": status,
+            "current_input_id": current_input_id,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store ensure_runtime_state response")
+        return _runtime_state_from_payload(ts_result)
+
     now = utc_now_iso()
     with runtime_db_connection() as conn:
         conn.execute(
@@ -966,6 +1367,24 @@ def update_runtime_state(
     heartbeat_at: str | None = None,
     last_error: dict[str, Any] | str | None = None,
 ) -> dict[str, Any]:
+    ts_result = _ts_state_store_call(
+        operation="update-runtime-state",
+        payload={
+            "workspace_id": workspace_id,
+            "session_id": session_id,
+            "status": status,
+            "current_input_id": current_input_id,
+            "current_worker_id": current_worker_id,
+            "lease_until": lease_until,
+            "heartbeat_at": heartbeat_at,
+            "last_error": last_error,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store update_runtime_state response")
+        return _runtime_state_from_payload(ts_result)
+
     if heartbeat_at is None:
         heartbeat_at = utc_now_iso()
     serialized_last_error = (
@@ -1012,6 +1431,19 @@ def update_runtime_state(
 
 
 def list_runtime_states(workspace_id: str) -> list[dict[str, Any]]:
+    ts_result = _ts_state_store_call(
+        operation="list-runtime-states",
+        payload={"workspace_id": workspace_id},
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, list):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store list_runtime_states response")
+        return [
+            _runtime_state_from_payload(item)
+            for item in ts_result
+            if isinstance(item, dict)
+        ]
+
     with runtime_db_connection() as conn:
         rows = conn.execute(
             """
@@ -1025,6 +1457,20 @@ def list_runtime_states(workspace_id: str) -> list[dict[str, Any]]:
 
 
 def get_runtime_state(*, session_id: str, workspace_id: str | None = None) -> dict[str, Any] | None:
+    ts_result = _ts_state_store_call(
+        operation="get-runtime-state",
+        payload={
+            "session_id": session_id,
+            "workspace_id": workspace_id,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if ts_result is None:
+            return None
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store get_runtime_state response")
+        return _runtime_state_from_payload(ts_result)
+
     query = """
         SELECT * FROM session_runtime_state
         WHERE session_id = ?
@@ -1050,6 +1496,20 @@ def insert_session_message(
     message_id: str | None = None,
     created_at: str | None = None,
 ) -> None:
+    ts_result = _ts_state_store_call(
+        operation="insert-session-message",
+        payload={
+            "workspace_id": workspace_id,
+            "session_id": session_id,
+            "role": role,
+            "text": text,
+            "message_id": message_id,
+            "created_at": created_at,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        return None
+
     resolved_id = message_id or str(uuid4())
     resolved_created_at = created_at or utc_now_iso()
     with runtime_db_connection() as conn:
@@ -1064,6 +1524,28 @@ def insert_session_message(
 
 
 def list_session_messages(*, workspace_id: str, session_id: str) -> list[dict[str, Any]]:
+    ts_result = _ts_state_store_call(
+        operation="list-session-messages",
+        payload={
+            "workspace_id": workspace_id,
+            "session_id": session_id,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, list):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store list_session_messages response")
+        return [
+            {
+                "id": str(item["id"]),
+                "role": str(item["role"]),
+                "text": str(item["text"]),
+                "created_at": str(item["created_at"]),
+                "metadata": item["metadata"] if isinstance(item.get("metadata"), dict) else {},
+            }
+            for item in ts_result
+            if isinstance(item, dict)
+        ]
+
     with runtime_db_connection() as conn:
         rows = conn.execute(
             """
@@ -1096,6 +1578,21 @@ def append_output_event(
     payload: dict[str, Any],
     created_at: str | None = None,
 ) -> None:
+    ts_result = _ts_state_store_call(
+        operation="append-output-event",
+        payload={
+            "workspace_id": workspace_id,
+            "session_id": session_id,
+            "input_id": input_id,
+            "sequence": int(sequence),
+            "event_type": event_type,
+            "payload": payload,
+            "created_at": created_at,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        return None
+
     resolved_created_at = created_at or utc_now_iso()
     with runtime_db_connection() as conn:
         conn.execute(
@@ -1121,6 +1618,16 @@ def latest_output_event_id(
     session_id: str,
     input_id: str | None = None,
 ) -> int:
+    ts_result = _ts_state_store_call(
+        operation="latest-output-event-id",
+        payload={
+            "session_id": session_id,
+            "input_id": input_id,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        return int(ts_result or 0)
+
     query = """
         SELECT MAX(id) AS max_id
         FROM session_output_events
@@ -1145,6 +1652,33 @@ def list_output_events(
     include_history: bool = True,
     after_event_id: int = 0,
 ) -> list[dict[str, Any]]:
+    ts_result = _ts_state_store_call(
+        operation="list-output-events",
+        payload={
+            "session_id": session_id,
+            "input_id": input_id,
+            "include_history": bool(include_history),
+            "after_event_id": int(after_event_id),
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, list):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store list_output_events response")
+        return [
+            {
+                "id": int(item["id"]),
+                "workspace_id": str(item["workspace_id"]),
+                "session_id": str(item["session_id"]),
+                "input_id": str(item["input_id"]),
+                "sequence": int(item["sequence"]),
+                "event_type": str(item["event_type"]),
+                "payload": item["payload"] if isinstance(item.get("payload"), dict) else {},
+                "created_at": str(item["created_at"]),
+            }
+            for item in ts_result
+            if isinstance(item, dict)
+        ]
+
     query = """
         SELECT id, workspace_id, session_id, input_id, sequence, event_type, payload, created_at
         FROM session_output_events
@@ -1424,6 +1958,25 @@ def create_session_artifact(
     artifact_id: str | None = None,
     created_at: str | None = None,
 ) -> dict[str, Any]:
+    ts_result = _ts_state_store_call(
+        operation="create-session-artifact",
+        payload={
+            "session_id": session_id,
+            "workspace_id": workspace_id,
+            "artifact_type": artifact_type,
+            "external_id": external_id,
+            "platform": platform,
+            "title": title,
+            "metadata": metadata,
+            "artifact_id": artifact_id,
+            "created_at": created_at,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store create_session_artifact response")
+        return _session_artifact_from_payload(ts_result)
+
     resolved_id = artifact_id or str(uuid4())
     resolved_created_at = created_at or utc_now_iso()
     resolved_metadata = metadata or {}
@@ -1456,6 +2009,18 @@ def create_session_artifact(
 
 
 def list_session_artifacts(*, session_id: str, workspace_id: str | None = None) -> list[dict[str, Any]]:
+    ts_result = _ts_state_store_call(
+        operation="list-session-artifacts",
+        payload={
+            "session_id": session_id,
+            "workspace_id": workspace_id,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, list):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store list_session_artifacts response")
+        return [_session_artifact_from_payload(item) for item in ts_result if isinstance(item, dict)]
+
     query = """
         SELECT * FROM session_artifacts
         WHERE session_id = ?
@@ -1471,6 +2036,19 @@ def list_session_artifacts(*, session_id: str, workspace_id: str | None = None) 
 
 
 def list_sessions_with_artifacts(*, workspace_id: str, limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
+    ts_result = _ts_state_store_call(
+        operation="list-sessions-with-artifacts",
+        payload={
+            "workspace_id": workspace_id,
+            "limit": int(limit),
+            "offset": int(offset),
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, list):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store list_sessions_with_artifacts response")
+        return [item for item in ts_result if isinstance(item, dict)]
+
     with runtime_db_connection() as conn:
         rows = conn.execute(
             """
@@ -1518,6 +2096,18 @@ def list_sessions_with_artifacts(*, workspace_id: str, limit: int = 20, offset: 
 
 
 def create_output_folder(*, workspace_id: str, name: str) -> dict[str, Any]:
+    ts_result = _ts_state_store_call(
+        operation="create-output-folder",
+        payload={
+            "workspace_id": workspace_id,
+            "name": name,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store create_output_folder response")
+        return _output_folder_from_payload(ts_result)
+
     resolved_id = str(uuid4())
     now = utc_now_iso()
     with runtime_db_connection() as conn:
@@ -1541,6 +2131,15 @@ def create_output_folder(*, workspace_id: str, name: str) -> dict[str, Any]:
 
 
 def list_output_folders(*, workspace_id: str) -> list[dict[str, Any]]:
+    ts_result = _ts_state_store_call(
+        operation="list-output-folders",
+        payload={"workspace_id": workspace_id},
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, list):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store list_output_folders response")
+        return [_output_folder_from_payload(item) for item in ts_result if isinstance(item, dict)]
+
     with runtime_db_connection() as conn:
         rows = conn.execute(
             """
@@ -1556,6 +2155,21 @@ def list_output_folders(*, workspace_id: str) -> list[dict[str, Any]]:
 def update_output_folder(
     *, folder_id: str, name: str | None = None, position: int | None = None
 ) -> dict[str, Any] | None:
+    ts_result = _ts_state_store_call(
+        operation="update-output-folder",
+        payload={
+            "folder_id": folder_id,
+            "name": name,
+            "position": position,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if ts_result is None:
+            return None
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store update_output_folder response")
+        return _output_folder_from_payload(ts_result)
+
     existing = get_output_folder(folder_id)
     if existing is None:
         return None
@@ -1576,12 +2190,30 @@ def update_output_folder(
 
 
 def get_output_folder(folder_id: str) -> dict[str, Any] | None:
+    ts_result = _ts_state_store_call(
+        operation="get-output-folder",
+        payload={"folder_id": folder_id},
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if ts_result is None:
+            return None
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store get_output_folder response")
+        return _output_folder_from_payload(ts_result)
+
     with runtime_db_connection() as conn:
         row = conn.execute("SELECT * FROM output_folders WHERE id = ? LIMIT 1", (folder_id,)).fetchone()
     return _row_to_output_folder(row) if row is not None else None
 
 
 def delete_output_folder(folder_id: str) -> bool:
+    ts_result = _ts_state_store_call(
+        operation="delete-output-folder",
+        payload={"folder_id": folder_id},
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        return bool(ts_result)
+
     with runtime_db_connection() as conn:
         conn.execute(
             "UPDATE outputs SET folder_id = NULL, updated_at = ? WHERE folder_id = ?", (utc_now_iso(), folder_id)
@@ -1606,6 +2238,29 @@ def create_output(
     metadata: dict[str, Any] | None = None,
     output_id: str | None = None,
 ) -> dict[str, Any]:
+    ts_result = _ts_state_store_call(
+        operation="create-output",
+        payload={
+            "workspace_id": workspace_id,
+            "output_type": output_type,
+            "title": title,
+            "module_id": module_id,
+            "module_resource_id": module_resource_id,
+            "file_path": file_path,
+            "html_content": html_content,
+            "session_id": session_id,
+            "artifact_id": artifact_id,
+            "folder_id": folder_id,
+            "platform": platform,
+            "metadata": metadata,
+            "output_id": output_id,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store create_output response")
+        return _output_from_payload(ts_result)
+
     resolved_id = output_id or str(uuid4())
     now = utc_now_iso()
     with runtime_db_connection() as conn:
@@ -1650,6 +2305,23 @@ def list_outputs(
     limit: int = 50,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
+    ts_result = _ts_state_store_call(
+        operation="list-outputs",
+        payload={
+            "workspace_id": workspace_id,
+            "output_type": output_type,
+            "status": status,
+            "platform": platform,
+            "folder_id": folder_id,
+            "limit": int(limit),
+            "offset": int(offset),
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, list):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store list_outputs response")
+        return [_output_from_payload(item) for item in ts_result if isinstance(item, dict)]
+
     query = "SELECT * FROM outputs WHERE workspace_id = ?"
     params: list[Any] = [workspace_id]
     if output_type:
@@ -1672,6 +2344,17 @@ def list_outputs(
 
 
 def get_output(output_id: str) -> dict[str, Any] | None:
+    ts_result = _ts_state_store_call(
+        operation="get-output",
+        payload={"output_id": output_id},
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if ts_result is None:
+            return None
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store get_output response")
+        return _output_from_payload(ts_result)
+
     with runtime_db_connection() as conn:
         row = conn.execute("SELECT * FROM outputs WHERE id = ? LIMIT 1", (output_id,)).fetchone()
     return _row_to_output(row) if row is not None else None
@@ -1688,6 +2371,26 @@ def update_output(
     metadata: dict[str, Any] | None = None,
     folder_id: str | None = None,
 ) -> dict[str, Any] | None:
+    ts_result = _ts_state_store_call(
+        operation="update-output",
+        payload={
+            "output_id": output_id,
+            "title": title,
+            "status": status,
+            "module_resource_id": module_resource_id,
+            "file_path": file_path,
+            "html_content": html_content,
+            "metadata": metadata,
+            "folder_id": folder_id,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if ts_result is None:
+            return None
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store update_output response")
+        return _output_from_payload(ts_result)
+
     existing = get_output(output_id)
     if existing is None:
         return None
@@ -1723,12 +2426,33 @@ def update_output(
 
 
 def delete_output(output_id: str) -> bool:
+    ts_result = _ts_state_store_call(
+        operation="delete-output",
+        payload={"output_id": output_id},
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        return bool(ts_result)
+
     with runtime_db_connection() as conn:
         cursor = conn.execute("DELETE FROM outputs WHERE id = ?", (output_id,))
     return cursor.rowcount > 0
 
 
 def get_output_counts(*, workspace_id: str) -> dict[str, Any]:
+    ts_result = _ts_state_store_call(
+        operation="get-output-counts",
+        payload={"workspace_id": workspace_id},
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store get_output_counts response")
+        return {
+            "total": int(ts_result.get("total") or 0),
+            "by_status": ts_result.get("by_status") if isinstance(ts_result.get("by_status"), dict) else {},
+            "by_platform": ts_result.get("by_platform") if isinstance(ts_result.get("by_platform"), dict) else {},
+            "by_folder": ts_result.get("by_folder") if isinstance(ts_result.get("by_folder"), dict) else {},
+        }
+
     with runtime_db_connection() as conn:
         rows = conn.execute(
             "SELECT status, platform, folder_id FROM outputs WHERE workspace_id = ?",
@@ -1768,6 +2492,26 @@ def create_cronjob(
     job_id: str | None = None,
     next_run_at: str | None = None,
 ) -> dict[str, Any]:
+    ts_result = _ts_state_store_call(
+        operation="create-cronjob",
+        payload={
+            "workspace_id": workspace_id,
+            "initiated_by": initiated_by,
+            "cron": cron,
+            "description": description,
+            "delivery": delivery,
+            "enabled": enabled,
+            "metadata": metadata,
+            "name": name,
+            "job_id": job_id,
+            "next_run_at": next_run_at,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store create_cronjob response")
+        return _cronjob_from_payload(ts_result)
+
     resolved_id = job_id or str(uuid4())
     now = utc_now_iso()
     with runtime_db_connection() as conn:
@@ -1810,6 +2554,24 @@ def create_task_proposal(
     created_at: str,
     state: str = "not_reviewed",
 ) -> dict[str, Any]:
+    ts_result = _ts_state_store_call(
+        operation="create-task-proposal",
+        payload={
+            "proposal_id": proposal_id,
+            "workspace_id": workspace_id,
+            "task_name": task_name,
+            "task_prompt": task_prompt,
+            "task_generation_rationale": task_generation_rationale,
+            "source_event_ids": source_event_ids,
+            "created_at": created_at,
+            "state": state,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store create_task_proposal response")
+        return _task_proposal_from_payload(ts_result)
+
     with runtime_db_connection() as conn:
         conn.execute(
             """
@@ -1842,12 +2604,32 @@ def create_task_proposal(
 
 
 def get_task_proposal(proposal_id: str) -> dict[str, Any] | None:
+    ts_result = _ts_state_store_call(
+        operation="get-task-proposal",
+        payload={"proposal_id": proposal_id},
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if ts_result is None:
+            return None
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store get_task_proposal response")
+        return _task_proposal_from_payload(ts_result)
+
     with runtime_db_connection() as conn:
         row = conn.execute("SELECT * FROM task_proposals WHERE proposal_id = ? LIMIT 1", (proposal_id,)).fetchone()
     return _row_to_task_proposal(row) if row is not None else None
 
 
 def list_task_proposals(*, workspace_id: str) -> list[dict[str, Any]]:
+    ts_result = _ts_state_store_call(
+        operation="list-task-proposals",
+        payload={"workspace_id": workspace_id},
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, list):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store list_task_proposals response")
+        return [_task_proposal_from_payload(item) for item in ts_result if isinstance(item, dict)]
+
     with runtime_db_connection() as conn:
         rows = conn.execute(
             """
@@ -1861,6 +2643,15 @@ def list_task_proposals(*, workspace_id: str) -> list[dict[str, Any]]:
 
 
 def list_unreviewed_task_proposals(*, workspace_id: str) -> list[dict[str, Any]]:
+    ts_result = _ts_state_store_call(
+        operation="list-unreviewed-task-proposals",
+        payload={"workspace_id": workspace_id},
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, list):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store list_unreviewed_task_proposals response")
+        return [_task_proposal_from_payload(item) for item in ts_result if isinstance(item, dict)]
+
     with runtime_db_connection() as conn:
         rows = conn.execute(
             """
@@ -1874,6 +2665,17 @@ def list_unreviewed_task_proposals(*, workspace_id: str) -> list[dict[str, Any]]
 
 
 def update_task_proposal_state(*, proposal_id: str, state: str) -> dict[str, Any] | None:
+    ts_result = _ts_state_store_call(
+        operation="update-task-proposal-state",
+        payload={"proposal_id": proposal_id, "state": state},
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if ts_result is None:
+            return None
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store update_task_proposal_state response")
+        return _task_proposal_from_payload(ts_result)
+
     with runtime_db_connection() as conn:
         cursor = conn.execute("UPDATE task_proposals SET state = ? WHERE proposal_id = ?", (state, proposal_id))
         if cursor.rowcount <= 0:
@@ -1883,12 +2685,35 @@ def update_task_proposal_state(*, proposal_id: str, state: str) -> dict[str, Any
 
 
 def get_cronjob(job_id: str) -> dict[str, Any] | None:
+    ts_result = _ts_state_store_call(
+        operation="get-cronjob",
+        payload={"job_id": job_id},
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if ts_result is None:
+            return None
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store get_cronjob response")
+        return _cronjob_from_payload(ts_result)
+
     with runtime_db_connection() as conn:
         row = conn.execute("SELECT * FROM cronjobs WHERE id = ? LIMIT 1", (job_id,)).fetchone()
     return _row_to_cronjob(row) if row is not None else None
 
 
 def list_cronjobs(*, workspace_id: str | None = None, enabled_only: bool = False) -> list[dict[str, Any]]:
+    ts_result = _ts_state_store_call(
+        operation="list-cronjobs",
+        payload={
+            "workspace_id": workspace_id,
+            "enabled_only": bool(enabled_only),
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if not isinstance(ts_result, list):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store list_cronjobs response")
+        return [_cronjob_from_payload(item) for item in ts_result if isinstance(item, dict)]
+
     query = "SELECT * FROM cronjobs"
     params: list[Any] = []
     filters: list[str] = []
@@ -1920,6 +2745,30 @@ def update_cronjob(
     last_status: str | None = None,
     last_error: str | None = None,
 ) -> dict[str, Any] | None:
+    ts_result = _ts_state_store_call(
+        operation="update-cronjob",
+        payload={
+            "job_id": job_id,
+            "name": name,
+            "cron": cron,
+            "description": description,
+            "enabled": enabled,
+            "delivery": delivery,
+            "metadata": metadata,
+            "last_run_at": last_run_at,
+            "next_run_at": next_run_at,
+            "run_count": run_count,
+            "last_status": last_status,
+            "last_error": last_error,
+        },
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        if ts_result is None:
+            return None
+        if not isinstance(ts_result, dict):  # pragma: no cover
+            raise RuntimeError("invalid TypeScript state-store update_cronjob response")
+        return _cronjob_from_payload(ts_result)
+
     existing = get_cronjob(job_id)
     if existing is None:
         return None
@@ -1962,6 +2811,13 @@ def update_cronjob(
 
 
 def delete_cronjob(job_id: str) -> bool:
+    ts_result = _ts_state_store_call(
+        operation="delete-cronjob",
+        payload={"job_id": job_id},
+    )
+    if ts_result is not _TS_STATE_STORE_UNAVAILABLE:
+        return bool(ts_result)
+
     with runtime_db_connection() as conn:
         cursor = conn.execute("DELETE FROM cronjobs WHERE id = ?", (job_id,))
     return cursor.rowcount > 0
