@@ -55,12 +55,20 @@ export function TopTabsBar({
   const {
     workspaces,
     selectedWorkspace,
+    templateSourceMode,
+    setTemplateSourceMode,
     selectedTemplateFolder,
+    marketplaceTemplates,
+    selectedMarketplaceTemplate,
+    selectMarketplaceTemplate,
     newWorkspaceName,
     setNewWorkspaceName,
     isLoadingBootstrap,
     isRefreshing,
     isCreatingWorkspace,
+    isLoadingMarketplaceTemplates,
+    canUseMarketplaceTemplates,
+    marketplaceTemplatesError,
     workspaceErrorMessage,
     setupStatus,
     onboardingModeActive,
@@ -244,17 +252,67 @@ export function TopTabsBar({
 
             {createPanelOpen ? (
               <form onSubmit={onCreateWorkspace} className="theme-subtle-surface mt-2 grid gap-2 rounded-[18px] border border-panel-border/45 p-3">
-                <div className="grid gap-2 xl:grid-cols-[minmax(170px,0.9fr)_minmax(220px,1.2fr)_auto]">
+                <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => void chooseTemplateFolder()}
-                    className="theme-control-surface flex min-w-0 items-center gap-2 rounded-[16px] border border-panel-border/45 px-3 py-2 text-left text-[12px] text-text-muted/82 transition hover:border-neon-green/35"
+                    onClick={() => setTemplateSourceMode("local")}
+                    className={`inline-flex h-[38px] items-center justify-center rounded-[14px] border px-3 text-[11px] transition ${
+                      templateSourceMode === "local"
+                        ? "border-neon-green/45 bg-neon-green/10 text-neon-green"
+                        : "border-panel-border/45 text-text-muted hover:border-neon-green/35 hover:text-text-main"
+                    }`}
                   >
-                    <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-text-dim/72">Template</span>
-                    <span className="min-w-0 flex-1 truncate text-text-main">
-                      {selectedTemplateFolder?.templateName || selectedTemplateFolder?.rootPath || "Choose folder"}
-                    </span>
+                    Local folder
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setTemplateSourceMode("marketplace")}
+                    disabled={!canUseMarketplaceTemplates}
+                    className={`inline-flex h-[38px] items-center justify-center rounded-[14px] border px-3 text-[11px] transition ${
+                      templateSourceMode === "marketplace"
+                        ? "border-neon-green/45 bg-neon-green/10 text-neon-green"
+                        : "border-panel-border/45 text-text-muted hover:border-neon-green/35 hover:text-text-main"
+                    } disabled:cursor-not-allowed disabled:opacity-40`}
+                  >
+                    Marketplace
+                  </button>
+                </div>
+
+                <div className="grid gap-2 xl:grid-cols-[minmax(220px,1.1fr)_minmax(220px,1.2fr)_auto]">
+                  {templateSourceMode === "marketplace" ? (
+                    <label className="theme-control-surface flex min-w-0 items-center gap-2 rounded-[16px] border border-panel-border/45 px-3 py-2 text-left text-[12px] text-text-muted/82">
+                      <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-text-dim/72">Template</span>
+                      <select
+                        value={selectedMarketplaceTemplate?.name || ""}
+                        onChange={(event) => selectMarketplaceTemplate(event.target.value)}
+                        disabled={!canUseMarketplaceTemplates || isLoadingMarketplaceTemplates || marketplaceTemplates.length === 0}
+                        className="min-w-0 flex-1 bg-transparent text-[12px] text-text-main outline-none disabled:text-text-dim/50"
+                      >
+                        {isLoadingMarketplaceTemplates ? (
+                          <option value="">Loading templates...</option>
+                        ) : marketplaceTemplates.length ? (
+                          marketplaceTemplates.map((template) => (
+                            <option key={template.name} value={template.name} disabled={template.is_coming_soon}>
+                              {template.is_coming_soon ? `${template.name} (Coming soon)` : template.name}
+                            </option>
+                          ))
+                        ) : (
+                          <option value="">No marketplace templates</option>
+                        )}
+                      </select>
+                    </label>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void chooseTemplateFolder()}
+                      className="theme-control-surface flex min-w-0 items-center gap-2 rounded-[16px] border border-panel-border/45 px-3 py-2 text-left text-[12px] text-text-muted/82 transition hover:border-neon-green/35"
+                    >
+                      <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-text-dim/72">Template</span>
+                      <span className="min-w-0 flex-1 truncate text-text-main">
+                        {selectedTemplateFolder?.templateName || selectedTemplateFolder?.rootPath || "Choose folder"}
+                      </span>
+                    </button>
+                  )}
 
                   <input
                     value={newWorkspaceName}
@@ -265,7 +323,12 @@ export function TopTabsBar({
 
                   <button
                     type="submit"
-                    disabled={!selectedTemplateFolder?.rootPath || isCreatingWorkspace}
+                    disabled={
+                      isCreatingWorkspace ||
+                      (templateSourceMode === "marketplace"
+                        ? !selectedMarketplaceTemplate || selectedMarketplaceTemplate.is_coming_soon
+                        : !selectedTemplateFolder?.rootPath)
+                    }
                     className="inline-flex h-[42px] items-center justify-center gap-2 rounded-[16px] border border-neon-green/40 bg-neon-green/10 px-3 text-[12px] text-neon-green transition hover:bg-neon-green/14 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {isCreatingWorkspace ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
@@ -273,7 +336,19 @@ export function TopTabsBar({
                   </button>
                 </div>
 
-                {selectedTemplateFolder ? (
+                {templateSourceMode === "marketplace" ? (
+                  <div className="text-[11px] text-text-dim/78">
+                    {marketplaceTemplatesError
+                      ? marketplaceTemplatesError
+                      : selectedMarketplaceTemplate
+                        ? selectedMarketplaceTemplate.long_description ||
+                          selectedMarketplaceTemplate.description ||
+                          "Marketplace template selected."
+                        : canUseMarketplaceTemplates
+                          ? "Choose a marketplace template to bootstrap this workspace."
+                          : "Sign in and finish runtime setup to use marketplace templates."}
+                  </div>
+                ) : selectedTemplateFolder ? (
                   <div className="text-[11px] text-text-dim/78">
                     {selectedTemplateFolder.description || selectedTemplateFolder.rootPath || "Template folder selected."}
                   </div>

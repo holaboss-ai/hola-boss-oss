@@ -959,6 +959,11 @@ interface TemplateMetadataPayload {
   long_description: string | null;
   agents: TemplateAgentInfoPayload[];
   views: TemplateViewInfoPayload[];
+  install_count?: number;
+  source?: string;
+  verified?: boolean;
+  author_name?: string;
+  author_id?: string;
 }
 
 interface ResolvedTemplatePayload {
@@ -981,6 +986,18 @@ interface MaterializeTemplateResponsePayload {
   files: MaterializedTemplateFilePayload[];
   file_count: number;
   total_bytes: number;
+}
+
+interface SpotlightItemPayload {
+  label: string;
+  title: string;
+  description: string;
+  template_name: string;
+}
+
+interface TemplateListResponsePayload {
+  templates: TemplateMetadataPayload[];
+  spotlight: SpotlightItemPayload[];
 }
 
 interface WorkspaceRecordPayload {
@@ -1151,7 +1168,10 @@ interface HolabossClientConfigPayload {
 interface HolabossCreateWorkspacePayload {
   holaboss_user_id: string;
   name: string;
-  template_root_path: string;
+  template_root_path?: string | null;
+  template_name?: string | null;
+  template_ref?: string | null;
+  template_commit?: string | null;
 }
 
 interface TemplateFolderSelectionPayload {
@@ -2967,7 +2987,21 @@ async function parseLocalTemplateMetadata(templateRoot: string): Promise<Templat
     long_description: description,
     agents: [],
     views: [],
+    install_count: 0,
+    source: "local",
+    verified: false,
+    author_name: "Local folder",
+    author_id: "_local",
   };
+}
+
+async function listMarketplaceTemplates(): Promise<TemplateListResponsePayload> {
+  await ensureRuntimeBindingReadyForWorkspaceFlow("marketplace_templates");
+  return requestControlPlaneJson<TemplateListResponsePayload>({
+    service: "marketplace",
+    method: "GET",
+    path: "/api/v1/marketplace/templates"
+  });
 }
 
 async function listTaskProposals(workspaceId: string): Promise<TaskProposalListResponsePayload> {
@@ -3089,6 +3123,21 @@ async function materializeLocalTemplate(payload: {
     file_count: files.length,
     total_bytes: totalBytes,
   };
+}
+
+async function materializeMarketplaceTemplate(payload: {
+  holaboss_user_id: string;
+  template_name: string;
+  template_ref?: string | null;
+  template_commit?: string | null;
+}): Promise<MaterializeTemplateResponsePayload> {
+  await ensureRuntimeBindingReadyForWorkspaceFlow("marketplace_template_materialize");
+  return requestControlPlaneJson<MaterializeTemplateResponsePayload>({
+    service: "marketplace",
+    method: "POST",
+    path: "/api/v1/marketplace/templates/materialize",
+    payload
+  });
 }
 
 async function pickTemplateFolder(): Promise<TemplateFolderSelectionPayload> {
@@ -3541,7 +3590,21 @@ async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise
   const runtime = await ensureRuntimeReady();
   const mainSessionId = crypto.randomUUID();
   const harness = workspaceHarness();
-  const materializedTemplate = await materializeLocalTemplate({ template_root_path: payload.template_root_path });
+  const templateRootPath = payload.template_root_path?.trim() || "";
+  const templateName = payload.template_name?.trim() || "";
+  let materializedTemplate: MaterializeTemplateResponsePayload;
+  if (templateRootPath) {
+    materializedTemplate = await materializeLocalTemplate({ template_root_path: templateRootPath });
+  } else if (templateName) {
+    materializedTemplate = await materializeMarketplaceTemplate({
+      holaboss_user_id: payload.holaboss_user_id,
+      template_name: templateName,
+      template_ref: payload.template_ref,
+      template_commit: payload.template_commit
+    });
+  } else {
+    throw new Error("Choose a local folder or a marketplace template first.");
+  }
   const resolvedTemplate = materializedTemplate.template;
   const created = await requestRuntimeJson<WorkspaceResponsePayload>({
     method: "POST",
@@ -6897,6 +6960,7 @@ app.whenReady().then(async () => {
     return config;
   });
   ipcMain.handle("workspace:getClientConfig", () => getHolabossClientConfig());
+  ipcMain.handle("workspace:listMarketplaceTemplates", async () => listMarketplaceTemplates());
   ipcMain.handle("workspace:pickTemplateFolder", async () => pickTemplateFolder());
   ipcMain.handle("workspace:listWorkspaces", async () => listWorkspaces());
   ipcMain.handle("workspace:getWorkspaceRoot", async (_event, workspaceId: string) => workspaceDirectoryPath(workspaceId));
