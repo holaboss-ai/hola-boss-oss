@@ -29,6 +29,9 @@ class ProductRuntimeConfig:
     runtime_mode: str = _DEFAULT_RUNTIME_MODE
     default_provider: str = ""
     holaboss_enabled: bool = False
+    desktop_browser_enabled: bool = False
+    desktop_browser_url: str = ""
+    desktop_browser_auth_token: str = ""
     config_path: str | None = None
     loaded_from_file: bool = False
 
@@ -127,7 +130,9 @@ def _load_runtime_config_payload() -> tuple[dict[str, str], Path]:
     runtime_payload = _as_object(document.get("runtime"))
     providers_payload = _as_object(document.get("providers"))
     integrations_payload = _as_object(document.get("integrations"))
+    capabilities_payload = _as_object(document.get("capabilities"))
     holaboss_integration = _as_object(integrations_payload.get("holaboss"))
+    desktop_browser_capability = _as_object(capabilities_payload.get("desktop_browser"))
     holaboss_provider = _as_object(providers_payload.get(_HOLABOSS_PROXY_PROVIDER))
 
     legacy_payload = _as_object(document.get("holaboss"))
@@ -159,6 +164,12 @@ def _load_runtime_config_payload() -> tuple[dict[str, str], Path]:
         if explicit_holaboss_enabled is not None
         else bool(auth_token or user_id or model_proxy_base_url or default_provider == _HOLABOSS_PROXY_PROVIDER)
     )
+    explicit_desktop_browser_enabled = _normalize_bool(desktop_browser_capability.get("enabled"))
+    desktop_browser_enabled = explicit_desktop_browser_enabled if explicit_desktop_browser_enabled is not None else False
+    desktop_browser_url = _normalize_string(desktop_browser_capability.get("url")) or _normalize_string(
+        desktop_browser_capability.get("mcp_url")
+    )
+    desktop_browser_auth_token = _normalize_string(desktop_browser_capability.get("auth_token"))
     runtime_mode = _normalize_string(runtime_payload.get("mode")) or (
         "product" if holaboss_enabled else _DEFAULT_RUNTIME_MODE
     )
@@ -179,6 +190,11 @@ def _load_runtime_config_payload() -> tuple[dict[str, str], Path]:
     if default_provider:
         normalized["default_provider"] = default_provider
     normalized["holaboss_enabled"] = "true" if holaboss_enabled else "false"
+    normalized["desktop_browser_enabled"] = "true" if desktop_browser_enabled else "false"
+    if desktop_browser_url:
+        normalized["desktop_browser_url"] = desktop_browser_url
+    if desktop_browser_auth_token:
+        normalized["desktop_browser_auth_token"] = desktop_browser_auth_token
     return normalized, path
 
 
@@ -270,6 +286,9 @@ def resolve_product_runtime_config(
         runtime_mode=runtime_mode(),
         default_provider=default_provider(),
         holaboss_enabled=(payload.get("holaboss_enabled", "false") == "true"),
+        desktop_browser_enabled=(payload.get("desktop_browser_enabled", "false") == "true"),
+        desktop_browser_url=payload.get("desktop_browser_url", ""),
+        desktop_browser_auth_token=payload.get("desktop_browser_auth_token", ""),
         config_path=str(path),
         loaded_from_file=loaded_from_file,
     )
@@ -285,12 +304,17 @@ def update_runtime_config(
     runtime_mode_value: str | None = None,
     default_provider_value: str | None = None,
     holaboss_enabled_value: bool | None = None,
+    desktop_browser_enabled_value: bool | None = None,
+    desktop_browser_url_value: str | None = None,
+    desktop_browser_auth_token_value: str | None = None,
 ) -> ProductRuntimeConfig:
     document, path = _load_runtime_config_document()
     runtime_payload = _as_object(document.setdefault("runtime", {}))
     providers_payload = _as_object(document.setdefault("providers", {}))
     integrations_payload = _as_object(document.setdefault("integrations", {}))
+    capabilities_payload = _as_object(document.setdefault("capabilities", {}))
     holaboss_integration = _as_object(integrations_payload.setdefault("holaboss", {}))
+    desktop_browser_capability = _as_object(capabilities_payload.setdefault("desktop_browser", {}))
     holaboss_provider = _as_object(providers_payload.setdefault(_HOLABOSS_PROXY_PROVIDER, {}))
     legacy_payload = _as_object(document.setdefault("holaboss", {}))
 
@@ -318,6 +342,10 @@ def update_runtime_config(
     assign_or_remove(legacy_payload, "sandbox_id", sandbox_id)
     assign_or_remove(legacy_payload, "model_proxy_base_url", model_proxy_base_url)
     assign_or_remove(legacy_payload, "default_model", default_model_value)
+    assign_or_remove(desktop_browser_capability, "url", desktop_browser_url_value)
+    assign_or_remove(desktop_browser_capability, "auth_token", desktop_browser_auth_token_value)
+    if desktop_browser_url_value is not None:
+        desktop_browser_capability.pop("mcp_url", None)
 
     if holaboss_provider and "kind" not in holaboss_provider:
         holaboss_provider["kind"] = "openai_compatible"
@@ -334,6 +362,11 @@ def update_runtime_config(
         and not holaboss_integration.get("sandbox_id")
     ):
         holaboss_integration["enabled"] = False
+
+    if desktop_browser_enabled_value is not None:
+        desktop_browser_capability["enabled"] = bool(desktop_browser_enabled_value)
+    elif not desktop_browser_capability.get("url") and not desktop_browser_capability.get("mcp_url"):
+        desktop_browser_capability["enabled"] = False
 
     _write_runtime_config_document(document, path=path)
     return resolve_product_runtime_config(
@@ -360,6 +393,8 @@ def runtime_config_status() -> dict[str, object]:
         "runtime_mode": config.runtime_mode or None,
         "default_provider": config.default_provider or None,
         "holaboss_enabled": config.holaboss_enabled,
+        "desktop_browser_enabled": config.desktop_browser_enabled,
+        "desktop_browser_url": config.desktop_browser_url or None,
     }
 
 

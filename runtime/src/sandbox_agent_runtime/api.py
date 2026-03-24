@@ -313,6 +313,8 @@ class RuntimeConfigResponse(BaseModel):
     runtime_mode: str | None = None
     default_provider: str | None = None
     holaboss_enabled: bool = False
+    desktop_browser_enabled: bool = False
+    desktop_browser_url: str | None = None
 
 
 class RuntimeStatusResponse(BaseModel):
@@ -322,6 +324,9 @@ class RuntimeStatusResponse(BaseModel):
     opencode_config_present: bool = False
     harness_ready: bool = False
     harness_state: str
+    browser_available: bool = False
+    browser_state: str = "unavailable"
+    browser_url: str | None = None
 
 
 class RuntimeConfigUpdateRequest(BaseModel):
@@ -333,6 +338,8 @@ class RuntimeConfigUpdateRequest(BaseModel):
     runtime_mode: str | None = None
     default_provider: str | None = None
     holaboss_enabled: bool | None = None
+    desktop_browser_enabled: bool | None = None
+    desktop_browser_url: str | None = None
 
 
 class LocalOutputCreateRequest(BaseModel):
@@ -566,6 +573,12 @@ async def _runtime_status_payload() -> RuntimeStatusResponse:
             harness_state = "config_loaded"
         else:
             harness_state = "pending_config"
+    browser_available = bool(config_status.get("desktop_browser_enabled")) and bool(
+        str(config_status.get("desktop_browser_url") or "").strip()
+    )
+    browser_state = "available" if browser_available else "unavailable"
+    if bool(config_status.get("desktop_browser_enabled")) and not browser_available:
+        browser_state = "enabled_unconfigured"
     return RuntimeStatusResponse(
         harness=harness,
         config_loaded=bool(config_status.get("loaded_from_file")),
@@ -573,6 +586,9 @@ async def _runtime_status_payload() -> RuntimeStatusResponse:
         opencode_config_present=opencode_config_present,
         harness_ready=harness_ready,
         harness_state=harness_state,
+        browser_available=browser_available,
+        browser_state=browser_state,
+        browser_url=str(config_status.get("desktop_browser_url") or "") or None,
     )
 
 
@@ -1069,6 +1085,8 @@ async def put_runtime_config(payload: RuntimeConfigUpdateRequest) -> RuntimeConf
             runtime_mode_value=payload.runtime_mode,
             default_provider_value=payload.default_provider,
             holaboss_enabled_value=payload.holaboss_enabled,
+            desktop_browser_enabled_value=payload.desktop_browser_enabled,
+            desktop_browser_url_value=payload.desktop_browser_url,
         )
         if _selected_harness() == "opencode":
             write_opencode_bootstrap_config_if_available()

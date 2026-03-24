@@ -264,6 +264,8 @@ async def test_runtime_config_endpoints_round_trip(monkeypatch: pytest.MonkeyPat
         assert payload["runtime_mode"] == "oss"
         assert payload["default_provider"] == "holaboss_model_proxy"
         assert payload["holaboss_enabled"] is True
+        assert payload["desktop_browser_enabled"] is False
+        assert payload["desktop_browser_url"] is None
         assert payload["config_path"] == str(config_path)
         assert payload["loaded_from_file"] is True
 
@@ -311,6 +313,8 @@ async def test_runtime_config_endpoints_support_oss_direct_provider(
         assert payload["runtime_mode"] == "oss"
         assert payload["default_provider"] == "openai"
         assert payload["holaboss_enabled"] is False
+        assert payload["desktop_browser_enabled"] is False
+        assert payload["desktop_browser_url"] is None
         assert payload["config_path"] == str(config_path)
         assert payload["loaded_from_file"] is True
 
@@ -346,6 +350,8 @@ async def test_runtime_status_reports_pending_config_then_ready(
         assert pending.status_code == 200
         assert pending.json()["harness_state"] == "pending_config"
         assert pending.json()["harness_ready"] is False
+        assert pending.json()["browser_state"] == "unavailable"
+        assert pending.json()["browser_available"] is False
 
         updated = await client.put(
             "/api/v1/runtime/config",
@@ -355,6 +361,7 @@ async def test_runtime_status_reports_pending_config_then_ready(
                 "sandbox_id": "sandbox-1",
                 "model_proxy_base_url": "https://runtime.example/api/v1/model-proxy",
                 "default_model": "openai/gpt-5.1",
+                "desktop_browser_enabled": True,
             },
         )
         assert updated.status_code == 200
@@ -365,6 +372,44 @@ async def test_runtime_status_reports_pending_config_then_ready(
         assert ready.json()["opencode_config_present"] is True
         assert ready.json()["harness_ready"] is True
         assert ready.json()["harness_state"] == "ready"
+        assert ready.json()["browser_state"] == "enabled_unconfigured"
+        assert ready.json()["browser_available"] is False
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_reports_available_desktop_browser_when_url_is_configured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sandbox_root = tmp_path / "sandbox-root"
+    config_path = sandbox_root / "state" / "runtime-config.json"
+    monkeypatch.setenv("HB_SANDBOX_ROOT", str(sandbox_root))
+    monkeypatch.setenv("HOLABOSS_RUNTIME_CONFIG_PATH", str(config_path))
+
+    async def _fake_workspace_mcp_is_ready(*, url: str) -> bool:
+        assert url == "http://127.0.0.1:4096/mcp"
+        return False
+
+    monkeypatch.setattr("sandbox_agent_runtime.api._workspace_mcp_is_ready", _fake_workspace_mcp_is_ready)
+    monkeypatch.setattr("sandbox_agent_runtime.api._ensure_selected_harness_ready", lambda: asyncio.sleep(0, "started"))
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        updated = await client.put(
+            "/api/v1/runtime/config",
+            json={
+                "desktop_browser_enabled": True,
+                "desktop_browser_url": "http://127.0.0.1:8787/api/v1/browser",
+            },
+        )
+        assert updated.status_code == 200
+        assert updated.json()["desktop_browser_enabled"] is True
+        assert updated.json()["desktop_browser_url"] == "http://127.0.0.1:8787/api/v1/browser"
+
+        status = await client.get("/api/v1/runtime/status")
+        assert status.status_code == 200
+        assert status.json()["browser_available"] is True
+        assert status.json()["browser_state"] == "available"
+        assert status.json()["browser_url"] == "http://127.0.0.1:8787/api/v1/browser"
 
 
 @pytest.fixture

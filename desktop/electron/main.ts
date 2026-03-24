@@ -8,7 +8,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import fs from "node:fs/promises";
-import { request as httpRequest } from "node:http";
+import { createServer, request as httpRequest, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import path from "node:path";
 import { URL } from "node:url";
 
@@ -231,6 +231,9 @@ let runtimeStatus: RuntimeStatusPayload = {
   harness: null,
   lastError: ""
 };
+let desktopBrowserServiceServer: HttpServer | null = null;
+let desktopBrowserServiceUrl = "";
+let desktopBrowserServiceAuthToken = "";
 
 const RUNTIME_API_PORT = 5060;
 const RUNTIME_OPENCODE_PORT = 5096;
@@ -1413,6 +1416,302 @@ async function readRuntimeConfigFile(): Promise<Record<string, string>> {
   }
 }
 
+async function readRuntimeConfigDocument(): Promise<Record<string, unknown>> {
+  const configPath = runtimeConfigPath();
+  try {
+    const raw = await fs.readFile(configPath, "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+async function updateDesktopBrowserCapabilityConfig(update: {
+  enabled: boolean;
+  url?: string;
+  authToken?: string;
+}): Promise<void> {
+  const currentDocument = await readRuntimeConfigDocument();
+  const capabilities =
+    typeof currentDocument.capabilities === "object" && currentDocument.capabilities
+      ? { ...(currentDocument.capabilities as Record<string, unknown>) }
+      : {};
+  const desktopBrowser =
+    typeof capabilities.desktop_browser === "object" && capabilities.desktop_browser
+      ? { ...(capabilities.desktop_browser as Record<string, unknown>) }
+      : {};
+
+  desktopBrowser.enabled = update.enabled;
+  if (update.url && update.url.trim()) {
+    desktopBrowser.url = update.url.trim();
+  } else {
+    delete desktopBrowser.url;
+  }
+  if (update.authToken && update.authToken.trim()) {
+    desktopBrowser.auth_token = update.authToken.trim();
+  } else {
+    delete desktopBrowser.auth_token;
+  }
+  delete desktopBrowser.mcp_url;
+
+  capabilities.desktop_browser = desktopBrowser;
+  const nextDocument = {
+    ...currentDocument,
+    capabilities
+  };
+
+  const configPath = runtimeConfigPath();
+  await fs.mkdir(path.dirname(configPath), { recursive: true });
+  await fs.writeFile(configPath, `${JSON.stringify(nextDocument, null, 2)}\n`, "utf-8");
+}
+
+function desktopBrowserServiceTokenFromRequest(request: IncomingMessage): string {
+  const raw = request.headers["x-holaboss-desktop-token"];
+  if (Array.isArray(raw)) {
+    return (raw[0] || "").trim();
+  }
+  return typeof raw === "string" ? raw.trim() : "";
+}
+
+function writeBrowserServiceJson(
+  response: ServerResponse<IncomingMessage>,
+  statusCode: number,
+  payload: unknown
+): void {
+  response.statusCode = statusCode;
+  response.setHeader("content-type", "application/json; charset=utf-8");
+  response.end(`${JSON.stringify(payload)}\n`);
+}
+
+async function readBrowserServiceJsonBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  if (chunks.length === 0) {
+    return {};
+  }
+  const raw = Buffer.concat(chunks).toString("utf-8").trim();
+  if (!raw) {
+    return {};
+  }
+  const parsed = JSON.parse(raw) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Request body must be a JSON object.");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function browserPagePayload(tab: BrowserTabRecord): Record<string, unknown> {
+  const webContents = tab.view.webContents;
+  return {
+    tabId: tab.state.id,
+    url: webContents.getURL() || tab.state.url,
+    title: webContents.getTitle() || tab.state.title,
+    loading: tab.state.loading,
+    initialized: tab.state.initialized,
+    canGoBack: webContents.navigationHistory.canGoBack(),
+    canGoForward: webContents.navigationHistory.canGoForward(),
+    error: tab.state.error || ""
+  };
+}
+
+function serializeBrowserEvalResult(value: unknown): unknown {
+  if (value === undefined) {
+    return null;
+  }
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  try {
+    return JSON.parse(JSON.stringify(value)) as unknown;
+  } catch {
+    return String(value);
+  }
+}
+
+async function navigateActiveBrowserTab(targetUrl: string): Promise<BrowserTabListPayload> {
+  ensureBrowserTabs();
+  const activeTab = getActiveBrowserTab();
+  if (!activeTab) {
+    throw new Error("No active browser tab is available.");
+  }
+
+  try {
+    activeTab.state = { ...activeTab.state, error: "" };
+    await activeTab.view.webContents.loadURL(targetUrl);
+  } catch (error) {
+    activeTab.state = {
+      ...activeTab.state,
+      loading: false,
+      error: error instanceof Error ? error.message : "Failed to load URL."
+    };
+    emitBrowserState();
+    throw error;
+  }
+
+  return getBrowserTabsSnapshot();
+}
+
+async function handleDesktopBrowserServiceRequest(
+  request: IncomingMessage,
+  response: ServerResponse<IncomingMessage>
+): Promise<void> {
+  try {
+    const requestUrl = new URL(request.url || "/", "http://127.0.0.1");
+    const pathname = requestUrl.pathname;
+    const method = (request.method || "GET").toUpperCase();
+
+    if (!desktopBrowserServiceAuthToken || desktopBrowserServiceTokenFromRequest(request) !== desktopBrowserServiceAuthToken) {
+      writeBrowserServiceJson(response, 401, { error: "Unauthorized." });
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/v1/browser/health") {
+      writeBrowserServiceJson(response, 200, { ok: true });
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/v1/browser/tabs") {
+      ensureBrowserTabs();
+      writeBrowserServiceJson(response, 200, getBrowserTabsSnapshot());
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/v1/browser/page") {
+      ensureBrowserTabs();
+      const activeTab = getActiveBrowserTab();
+      if (!activeTab) {
+        writeBrowserServiceJson(response, 409, { error: "No active browser tab is available." });
+        return;
+      }
+      syncBrowserState(activeTab.state.id);
+      writeBrowserServiceJson(response, 200, browserPagePayload(activeTab));
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/v1/browser/navigate") {
+      const payload = await readBrowserServiceJsonBody(request);
+      const targetUrl = typeof payload.url === "string" ? payload.url.trim() : "";
+      if (!targetUrl) {
+        writeBrowserServiceJson(response, 400, { error: "Field 'url' is required." });
+        return;
+      }
+      const snapshot = await navigateActiveBrowserTab(targetUrl);
+      writeBrowserServiceJson(response, 200, snapshot);
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/v1/browser/evaluate") {
+      const payload = await readBrowserServiceJsonBody(request);
+      const expression = typeof payload.expression === "string" ? payload.expression.trim() : "";
+      if (!expression) {
+        writeBrowserServiceJson(response, 400, { error: "Field 'expression' is required." });
+        return;
+      }
+
+      ensureBrowserTabs();
+      const activeTab = getActiveBrowserTab();
+      if (!activeTab) {
+        writeBrowserServiceJson(response, 409, { error: "No active browser tab is available." });
+        return;
+      }
+
+      const result = await activeTab.view.webContents.executeJavaScript(expression);
+      writeBrowserServiceJson(response, 200, {
+        tabId: activeTab.state.id,
+        result: serializeBrowserEvalResult(result)
+      });
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/v1/browser/screenshot") {
+      const payload = await readBrowserServiceJsonBody(request);
+      ensureBrowserTabs();
+      const activeTab = getActiveBrowserTab();
+      if (!activeTab) {
+        writeBrowserServiceJson(response, 409, { error: "No active browser tab is available." });
+        return;
+      }
+
+      const format = payload.format === "jpeg" ? "jpeg" : "png";
+      const qualityRaw = typeof payload.quality === "number" ? payload.quality : 90;
+      const quality = Math.max(0, Math.min(100, Math.round(qualityRaw)));
+      const image = await activeTab.view.webContents.capturePage();
+      const buffer = format === "jpeg" ? image.toJPEG(quality) : image.toPNG();
+      const size = image.getSize();
+
+      writeBrowserServiceJson(response, 200, {
+        tabId: activeTab.state.id,
+        mimeType: format === "jpeg" ? "image/jpeg" : "image/png",
+        width: size.width,
+        height: size.height,
+        base64: buffer.toString("base64")
+      });
+      return;
+    }
+
+    writeBrowserServiceJson(response, 404, { error: "Not found." });
+  } catch (error) {
+    writeBrowserServiceJson(response, 500, {
+      error: error instanceof Error ? error.message : "Browser service request failed."
+    });
+  }
+}
+
+async function startDesktopBrowserService(): Promise<void> {
+  if (desktopBrowserServiceServer) {
+    return;
+  }
+
+  const authToken = randomUUID();
+  const server = createServer((request, response) => {
+    void handleDesktopBrowserServiceRequest(request, response);
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("Failed to resolve desktop browser service address.");
+  }
+
+  desktopBrowserServiceServer = server;
+  desktopBrowserServiceAuthToken = authToken;
+  desktopBrowserServiceUrl = `http://127.0.0.1:${address.port}/api/v1/browser`;
+  await updateDesktopBrowserCapabilityConfig({
+    enabled: true,
+    url: desktopBrowserServiceUrl,
+    authToken,
+  });
+}
+
+async function stopDesktopBrowserService(): Promise<void> {
+  const server = desktopBrowserServiceServer;
+  desktopBrowserServiceServer = null;
+  desktopBrowserServiceUrl = "";
+  desktopBrowserServiceAuthToken = "";
+
+  if (server) {
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve());
+    });
+  }
+
+  await updateDesktopBrowserCapabilityConfig({ enabled: false });
+}
+
 function runtimeModelProxyApiKeyFromConfig(config: Record<string, string>): string {
   return (config.model_proxy_api_key || config.auth_token || "").trim();
 }
@@ -1423,6 +1722,7 @@ function runtimeBindingModelProxyApiKey(binding: RuntimeBindingExchangePayload):
 
 async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
   const current = await readRuntimeConfigFile();
+  const currentDocument = await readRuntimeConfigDocument();
   const next = { ...current };
   const entries: Array<[keyof RuntimeConfigUpdatePayload, string]> = [
     ["authToken", "auth_token"],
@@ -1458,7 +1758,11 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
 
   const configPath = runtimeConfigPath();
   await fs.mkdir(path.dirname(configPath), { recursive: true });
-  await fs.writeFile(configPath, `${JSON.stringify({ holaboss: next }, null, 2)}\n`, "utf-8");
+  const nextDocument = {
+    ...currentDocument,
+    holaboss: next
+  };
+  await fs.writeFile(configPath, `${JSON.stringify(nextDocument, null, 2)}\n`, "utf-8");
   return next;
 }
 
@@ -1887,7 +2191,10 @@ async function provisionRuntimeBindingForAuthenticatedUser(
   });
 }
 
-async function ensureRuntimeBindingReadyForWorkspaceFlow(reason: string): Promise<void> {
+async function ensureRuntimeBindingReadyForWorkspaceFlow(
+  reason: string,
+  options?: { forceRefresh?: boolean }
+): Promise<void> {
   const currentConfig = await readRuntimeConfigFile();
   if (!runtimeConfigIsControlPlaneManaged(currentConfig)) {
     return;
@@ -1902,7 +2209,10 @@ async function ensureRuntimeBindingReadyForWorkspaceFlow(reason: string): Promis
   }
 
   const userId = authUserId(user);
-  const shouldRefresh = runtimeConfigNeedsBindingRefresh(currentConfig, userId) || shouldForceRuntimeBindingRefresh(userId);
+  const shouldRefresh =
+    Boolean(options?.forceRefresh) ||
+    runtimeConfigNeedsBindingRefresh(currentConfig, userId) ||
+    shouldForceRuntimeBindingRefresh(userId);
   if (shouldRefresh) {
     try {
       await provisionRuntimeBindingForAuthenticatedUser(user, {
@@ -2259,6 +2569,9 @@ async function listTaskProposals(workspaceId: string): Promise<TaskProposalListR
 async function enqueueRemoteDemoTaskProposal(
   payload: DemoTaskProposalRequestPayload
 ): Promise<DemoTaskProposalEnqueueResponsePayload> {
+  await ensureRuntimeBindingReadyForWorkspaceFlow("remote_demo_task_proposal", {
+    forceRefresh: true
+  });
   return requestControlPlaneJson<DemoTaskProposalEnqueueResponsePayload>({
     service: "proactive",
     method: "POST",
@@ -3428,6 +3741,8 @@ async function startEmbeddedRuntime() {
       SANDBOX_AGENT_HARNESS: harness,
       HOLABOSS_RUNTIME_WORKFLOW_BACKEND: workflowBackend,
       HOLABOSS_RUNTIME_DB_PATH: runtimeDatabasePath(),
+      PROACTIVE_ENABLE_REMOTE_BRIDGE: "1",
+      PROACTIVE_BRIDGE_BASE_URL: proactiveBaseUrl(),
       PYTHONDONTWRITEBYTECODE: "1"
     },
     stdio: "pipe"
@@ -6324,6 +6639,13 @@ app.whenReady().then(async () => {
   });
 
   createMainWindow();
+  try {
+    await startDesktopBrowserService();
+  } catch (error) {
+    void appendRuntimeLog(
+      `[desktop-browser-service] failed to start: ${error instanceof Error ? error.message : String(error)}\n`
+    );
+  }
   runtimeStatus = {
     ...runtimeStatus,
     status: "starting",
@@ -6349,5 +6671,6 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  void stopDesktopBrowserService();
   void stopEmbeddedRuntime();
 });

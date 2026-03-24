@@ -157,6 +157,35 @@ def test_resolve_product_runtime_config_reads_split_runtime_config_file(
     assert config.config_path == str(config_path)
 
 
+def test_resolve_product_runtime_config_reads_optional_desktop_browser_capability(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config_path = tmp_path / "runtime-config.json"
+    config_path.write_text(
+        json.dumps({
+            "capabilities": {
+                "desktop_browser": {
+                    "enabled": True,
+                    "url": "http://127.0.0.1:8787/api/v1/browser",
+                    "auth_token": "desktop-token",
+                }
+            }
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOLABOSS_RUNTIME_CONFIG_PATH", str(config_path))
+
+    config = product_config.resolve_product_runtime_config(
+        require_auth=False,
+        require_user=False,
+        require_base_url=False,
+    )
+
+    assert config.desktop_browser_enabled is True
+    assert config.desktop_browser_url == "http://127.0.0.1:8787/api/v1/browser"
+    assert config.desktop_browser_auth_token == "desktop-token"
+
+
 def test_resolve_product_runtime_config_reads_runtime_config_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -188,6 +217,27 @@ def test_resolve_product_runtime_config_reads_runtime_config_file(
     assert config.default_model == "openai/gpt-5.1"
     assert config.loaded_from_file is True
     assert config.config_path == str(config_path)
+
+
+def test_update_runtime_config_persists_optional_desktop_browser_capability(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config_path = tmp_path / "runtime-config.json"
+    monkeypatch.setenv("HOLABOSS_RUNTIME_CONFIG_PATH", str(config_path))
+
+    updated = product_config.update_runtime_config(
+        desktop_browser_enabled_value=True,
+        desktop_browser_url_value="http://127.0.0.1:8787/api/v1/browser",
+        desktop_browser_auth_token_value="desktop-token",
+    )
+
+    assert updated.desktop_browser_enabled is True
+    assert updated.desktop_browser_url == "http://127.0.0.1:8787/api/v1/browser"
+    assert updated.desktop_browser_auth_token == "desktop-token"
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["capabilities"]["desktop_browser"]["enabled"] is True
+    assert payload["capabilities"]["desktop_browser"]["url"] == "http://127.0.0.1:8787/api/v1/browser"
+    assert payload["capabilities"]["desktop_browser"]["auth_token"] == "desktop-token"
 
 
 def test_runtime_config_file_overrides_legacy_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
