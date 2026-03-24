@@ -143,6 +143,25 @@ interface RuntimeConfigUpdatePayload {
   controlPlaneBaseUrl?: string | null;
 }
 
+interface AppUpdateStatusPayload {
+  supported: boolean;
+  checking: boolean;
+  available: boolean;
+  currentVersion: string;
+  latestVersion: string | null;
+  releaseTag: string | null;
+  releaseUrl: string | null;
+  downloadUrl: string | null;
+  publishedAt: string | null;
+  dismissedReleaseTag: string | null;
+  lastCheckedAt: string | null;
+  error: string;
+}
+
+interface WorkbenchOpenBrowserPayload {
+  url?: string | null;
+}
+
 interface TemplateAgentInfoPayload {
   role: string;
   description: string;
@@ -208,6 +227,60 @@ interface DemoTaskProposalRequestPayload {
 interface DemoTaskProposalEnqueueResponsePayload {
   accepted: boolean;
   pending_count: number;
+}
+
+interface TaskProposalStateUpdatePayload {
+  proposal: TaskProposalRecordPayload;
+}
+
+interface CronjobDeliveryPayload {
+  mode: string;
+  channel: string;
+  to: string | null;
+}
+
+interface CronjobRecordPayload {
+  id: string;
+  workspace_id: string;
+  initiated_by: string;
+  name: string;
+  cron: string;
+  description: string;
+  enabled: boolean;
+  delivery: CronjobDeliveryPayload;
+  metadata: Record<string, unknown>;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  run_count: number;
+  last_status: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface CronjobListResponsePayload {
+  jobs: CronjobRecordPayload[];
+  count: number;
+}
+
+interface CronjobCreatePayload {
+  workspace_id: string;
+  initiated_by: string;
+  name?: string;
+  cron: string;
+  description: string;
+  enabled?: boolean;
+  delivery: CronjobDeliveryPayload;
+  metadata?: Record<string, unknown>;
+}
+
+interface CronjobUpdatePayload {
+  name?: string;
+  cron?: string;
+  description?: string;
+  enabled?: boolean;
+  delivery?: CronjobDeliveryPayload;
+  metadata?: Record<string, unknown>;
 }
 
 interface SessionRuntimeRecordPayload {
@@ -350,6 +423,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("runtime:setConfig", payload) as Promise<RuntimeConfigPayload>,
     exchangeBinding: (sandboxId: string) =>
       ipcRenderer.invoke("runtime:exchangeBinding", sandboxId) as Promise<RuntimeConfigPayload>,
+    onConfigChange: (listener: (config: RuntimeConfigPayload) => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, config: RuntimeConfigPayload) => listener(config);
+      ipcRenderer.on("runtime:config", wrapped);
+      return () => ipcRenderer.removeListener("runtime:config", wrapped);
+    },
     onStateChange: (listener: (status: RuntimeStatusPayload) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, status: RuntimeStatusPayload) => listener(status);
       ipcRenderer.on("runtime:state", wrapped);
@@ -359,6 +437,24 @@ contextBridge.exposeInMainWorld("electronAPI", {
   ui: {
     setTheme: (theme: string) => ipcRenderer.invoke("ui:setTheme", theme) as Promise<void>
   },
+  appUpdate: {
+    getStatus: () => ipcRenderer.invoke("appUpdate:getStatus") as Promise<AppUpdateStatusPayload>,
+    checkNow: () => ipcRenderer.invoke("appUpdate:checkNow") as Promise<AppUpdateStatusPayload>,
+    dismiss: (releaseTag?: string | null) => ipcRenderer.invoke("appUpdate:dismiss", releaseTag) as Promise<AppUpdateStatusPayload>,
+    openDownload: () => ipcRenderer.invoke("appUpdate:openDownload") as Promise<void>,
+    onStateChange: (listener: (status: AppUpdateStatusPayload) => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, status: AppUpdateStatusPayload) => listener(status);
+      ipcRenderer.on("appUpdate:state", wrapped);
+      return () => ipcRenderer.removeListener("appUpdate:state", wrapped);
+    }
+  },
+  workbench: {
+    onOpenBrowser: (listener: (payload: WorkbenchOpenBrowserPayload) => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, payload: WorkbenchOpenBrowserPayload) => listener(payload);
+      ipcRenderer.on("workbench:openBrowser", wrapped);
+      return () => ipcRenderer.removeListener("workbench:openBrowser", wrapped);
+    }
+  },
   workspace: {
     getClientConfig: () => ipcRenderer.invoke("workspace:getClientConfig") as Promise<HolabossClientConfigPayload>,
     pickTemplateFolder: () =>
@@ -367,8 +463,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getWorkspaceRoot: (workspaceId: string) => ipcRenderer.invoke("workspace:getWorkspaceRoot", workspaceId) as Promise<string>,
     createWorkspace: (payload: HolabossCreateWorkspacePayload) =>
       ipcRenderer.invoke("workspace:createWorkspace", payload) as Promise<WorkspaceResponsePayload>,
+    listCronjobs: (workspaceId: string, enabledOnly?: boolean) =>
+      ipcRenderer.invoke("workspace:listCronjobs", workspaceId, enabledOnly) as Promise<CronjobListResponsePayload>,
+    createCronjob: (payload: CronjobCreatePayload) =>
+      ipcRenderer.invoke("workspace:createCronjob", payload) as Promise<CronjobRecordPayload>,
+    updateCronjob: (jobId: string, payload: CronjobUpdatePayload) =>
+      ipcRenderer.invoke("workspace:updateCronjob", jobId, payload) as Promise<CronjobRecordPayload>,
+    deleteCronjob: (jobId: string) =>
+      ipcRenderer.invoke("workspace:deleteCronjob", jobId) as Promise<{ success: boolean }>,
     listTaskProposals: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listTaskProposals", workspaceId) as Promise<TaskProposalListResponsePayload>,
+    updateTaskProposalState: (proposalId: string, state: string) =>
+      ipcRenderer.invoke("workspace:updateTaskProposalState", proposalId, state) as Promise<TaskProposalStateUpdatePayload>,
     enqueueRemoteDemoTaskProposal: (payload: DemoTaskProposalRequestPayload) =>
       ipcRenderer.invoke("workspace:enqueueRemoteDemoTaskProposal", payload) as Promise<DemoTaskProposalEnqueueResponsePayload>,
     listRuntimeStates: (workspaceId: string) =>

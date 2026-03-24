@@ -1,39 +1,67 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { PanelRightOpen } from "lucide-react";
+import { LeftNavigationRail, type LeftRailItem } from "@/components/layout/LeftNavigationRail";
+import {
+  OperationsDrawer,
+  type OperationsDrawerTab,
+  type OperationsOutputEntry
+} from "@/components/layout/OperationsDrawer";
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
-import { SplitPaneLayout } from "@/components/layout/SplitPaneLayout";
+import { WorkbenchPanel, type WorkbenchTab } from "@/components/layout/WorkbenchPanel";
+import { AutomationsPane } from "@/components/panes/AutomationsPane";
 import { BrowserPane } from "@/components/panes/BrowserPane";
 import { ChatPane } from "@/components/panes/ChatPane";
 import { FileExplorerPane } from "@/components/panes/FileExplorerPane";
-import { WorkspaceDesktopProvider } from "@/lib/workspaceDesktop";
-import { WorkspaceSelectionProvider } from "@/lib/workspaceSelection";
+import { UpdateReminder } from "@/components/ui/UpdateReminder";
+import { preferredSessionId } from "@/lib/sessionRouting";
+import { useWorkspaceDesktop, WorkspaceDesktopProvider } from "@/lib/workspaceDesktop";
+import { useWorkspaceSelection, WorkspaceSelectionProvider } from "@/lib/workspaceSelection";
 
-const STORAGE_KEY = "holaboss-pane-sizes-v1";
 const THEME_STORAGE_KEY = "holaboss-theme-v1";
-const DEFAULT_SIZES: [number, number, number] = [32, 38, 30];
+const WORKBENCH_TAB_STORAGE_KEY = "holaboss-workbench-tab-v1";
+const OPERATIONS_DRAWER_OPEN_STORAGE_KEY = "holaboss-operations-drawer-open-v1";
+const OPERATIONS_DRAWER_TAB_STORAGE_KEY = "holaboss-operations-drawer-tab-v1";
 const THEMES = ["emerald", "cobalt", "ember", "glacier", "mono", "claude", "slate", "paper", "graphite"] as const;
+
 export type AppTheme = (typeof THEMES)[number];
 
-function loadSizes(): [number, number, number] {
+function loadWorkbenchTab(): WorkbenchTab {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return DEFAULT_SIZES;
+    const raw = localStorage.getItem(WORKBENCH_TAB_STORAGE_KEY);
+    if (raw === "browser" || raw === "files") {
+      return raw;
     }
-
-    const parsed = JSON.parse(raw) as number[];
-    if (parsed.length !== 3) {
-      return DEFAULT_SIZES;
-    }
-
-    const total = parsed.reduce((sum, value) => sum + value, 0);
-    if (total < 99 || total > 101) {
-      return DEFAULT_SIZES;
-    }
-
-    return [parsed[0], parsed[1], parsed[2]];
   } catch {
-    return DEFAULT_SIZES;
+    // ignore
   }
+
+  return "browser";
+}
+
+function loadOperationsDrawerOpen(): boolean {
+  try {
+    const raw = localStorage.getItem(OPERATIONS_DRAWER_OPEN_STORAGE_KEY);
+    if (raw === "0") {
+      return false;
+    }
+  } catch {
+    // ignore
+  }
+
+  return true;
+}
+
+function loadOperationsDrawerTab(): OperationsDrawerTab {
+  try {
+    const raw = localStorage.getItem(OPERATIONS_DRAWER_TAB_STORAGE_KEY);
+    if (raw === "inbox" || raw === "running" || raw === "outputs") {
+      return raw;
+    }
+  } catch {
+    // ignore
+  }
+
+  return "outputs";
 }
 
 function loadTheme(): AppTheme {
@@ -49,11 +77,53 @@ function loadTheme(): AppTheme {
   return "emerald";
 }
 
-export function AppShell() {
-  const [sizes, setSizes] = useState<[number, number, number]>(loadSizes);
+function normalizeErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Request failed.";
+}
+
+function FocusPlaceholder({
+  eyebrow,
+  title,
+  description
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+}) {
+  return (
+    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(87,255,173,0.08),transparent_45%)]" />
+      <div className="relative max-w-[520px] px-8 text-center">
+        <div className="text-[10px] uppercase tracking-[0.18em] text-neon-green/78">{eyebrow}</div>
+        <div className="mt-3 text-[28px] font-semibold tracking-[-0.03em] text-text-main">{title}</div>
+        <div className="mt-3 text-[13px] leading-7 text-text-muted/84">{description}</div>
+      </div>
+    </section>
+  );
+}
+
+function AppShellContent() {
+  const { selectedWorkspaceId } = useWorkspaceSelection();
+  const { runtimeConfig, selectedWorkspace } = useWorkspaceDesktop();
   const [theme, setTheme] = useState<AppTheme>(loadTheme);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatusPayload | null>(null);
-  const userMenuRef = useRef<HTMLDivElement | null>(null);
+  const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatusPayload | null>(null);
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  const [activeWorkbenchTab, setActiveWorkbenchTab] = useState<WorkbenchTab>(loadWorkbenchTab);
+  const [lastManualWorkbenchTab, setLastManualWorkbenchTab] = useState<WorkbenchTab>(loadWorkbenchTab);
+  const [activeLeftRailItem, setActiveLeftRailItem] = useState<LeftRailItem>("agent");
+  const [operationsDrawerOpen, setOperationsDrawerOpen] = useState(loadOperationsDrawerOpen);
+  const [activeOperationsTab, setActiveOperationsTab] = useState<OperationsDrawerTab>(loadOperationsDrawerTab);
+  const [taskProposals, setTaskProposals] = useState<TaskProposalRecordPayload[]>([]);
+  const [isLoadingTaskProposals, setIsLoadingTaskProposals] = useState(false);
+  const [isTriggeringTaskProposal, setIsTriggeringTaskProposal] = useState(false);
+  const [taskProposalStatusMessage, setTaskProposalStatusMessage] = useState("");
+  const [proposalAction, setProposalAction] = useState<{
+    proposalId: string;
+    action: "accept" | "dismiss";
+  } | null>(null);
+  const [outputEntries, setOutputEntries] = useState<OperationsOutputEntry[]>([]);
+  const [selectedOutputId, setSelectedOutputId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!window.electronAPI) {
@@ -70,6 +140,44 @@ export function AppShell() {
     const unsubscribe = window.electronAPI.runtime.onStateChange((status) => {
       if (mounted) {
         setRuntimeStatus(status);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!window.electronAPI) {
+      return;
+    }
+
+    const unsubscribe = window.electronAPI.workbench.onOpenBrowser(() => {
+      setActiveLeftRailItem("agent");
+      setWorkbenchOpen(true);
+      setActiveWorkbenchTab("browser");
+    });
+
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    if (!window.electronAPI) {
+      return;
+    }
+
+    let mounted = true;
+    void window.electronAPI.appUpdate.getStatus().then((status) => {
+      if (mounted) {
+        setAppUpdateStatus(status);
+      }
+    });
+
+    const unsubscribe = window.electronAPI.appUpdate.onStateChange((status) => {
+      if (mounted) {
+        setAppUpdateStatus(status);
       }
     });
 
@@ -104,7 +212,7 @@ export function AppShell() {
       error: "Runtime error"
     };
 
-      return {
+    return {
       label:
         runtimeStatus.status === "running"
           ? "Running"
@@ -116,21 +224,244 @@ export function AppShell() {
                 ? "Missing"
                 : runtimeStatus.status === "disabled"
                   ? "Disabled"
-                : "Stopped",
+                  : "Stopped",
       detail: `${platformInfo} - ${statusLabelByState[runtimeStatus.status]}`
     };
   }, [runtimeStatus]);
-
-  const handleSizesChange = (nextSizes: [number, number, number]) => {
-    setSizes(nextSizes);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextSizes.map((size) => Number(size.toFixed(2)))));
-  };
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem(THEME_STORAGE_KEY, theme);
     void window.electronAPI.ui.setTheme(theme);
   }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem(WORKBENCH_TAB_STORAGE_KEY, lastManualWorkbenchTab);
+  }, [lastManualWorkbenchTab]);
+
+  useEffect(() => {
+    localStorage.setItem(OPERATIONS_DRAWER_OPEN_STORAGE_KEY, operationsDrawerOpen ? "1" : "0");
+  }, [operationsDrawerOpen]);
+
+  useEffect(() => {
+    localStorage.setItem(OPERATIONS_DRAWER_TAB_STORAGE_KEY, activeOperationsTab);
+  }, [activeOperationsTab]);
+
+  const appendOutputEntry = (entry: Omit<OperationsOutputEntry, "id" | "createdAt">) => {
+    const nextEntry: OperationsOutputEntry = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      createdAt: new Date().toISOString(),
+      ...entry
+    };
+    setOutputEntries((previous) => [nextEntry, ...previous].slice(0, 16));
+    setSelectedOutputId(nextEntry.id);
+  };
+
+  async function refreshTaskProposals(options?: { logErrors?: boolean }) {
+    if (!selectedWorkspaceId) {
+      setTaskProposals([]);
+      setTaskProposalStatusMessage("");
+      return;
+    }
+
+    setTaskProposalStatusMessage("");
+    setIsLoadingTaskProposals(true);
+    try {
+      const response = await window.electronAPI.workspace.listTaskProposals(selectedWorkspaceId);
+      setTaskProposals(response.proposals);
+    } catch (error) {
+      const message = normalizeErrorMessage(error);
+      setTaskProposalStatusMessage(message);
+      if (options?.logErrors) {
+        appendOutputEntry({
+          title: "Proposal refresh failed",
+          detail: message,
+          tone: "error"
+        });
+      }
+    } finally {
+      setIsLoadingTaskProposals(false);
+    }
+  }
+
+  async function triggerRemoteTaskProposal() {
+    if (!selectedWorkspaceId) {
+      return;
+    }
+    setIsTriggeringTaskProposal(true);
+    setTaskProposalStatusMessage("");
+    try {
+      const response = await window.electronAPI.workspace.enqueueRemoteDemoTaskProposal({
+        workspace_id: selectedWorkspaceId
+      });
+      const detail = `Remote proactive job queued. Pending cloud jobs: ${response.pending_count}.`;
+      setTaskProposalStatusMessage(detail);
+      appendOutputEntry({
+        title: "Remote task proposal queued",
+        detail,
+        tone: "success"
+      });
+      window.setTimeout(() => {
+        void refreshTaskProposals();
+      }, 1500);
+    } catch (error) {
+      const message = normalizeErrorMessage(error);
+      setTaskProposalStatusMessage(message);
+      appendOutputEntry({
+        title: "Remote task proposal failed",
+        detail: message,
+        tone: "error"
+      });
+    } finally {
+      setIsTriggeringTaskProposal(false);
+    }
+  }
+
+  async function acceptTaskProposal(proposal: TaskProposalRecordPayload) {
+    if (!selectedWorkspaceId || !selectedWorkspace) {
+      return;
+    }
+
+    setProposalAction({ proposalId: proposal.proposal_id, action: "accept" });
+    setTaskProposalStatusMessage("");
+    try {
+      const runtimeStatesResponse = await window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId);
+      const targetSessionId = preferredSessionId(selectedWorkspace, runtimeStatesResponse.items);
+      if (!targetSessionId) {
+        throw new Error("No active session found for this workspace.");
+      }
+
+      await window.electronAPI.workspace.queueSessionInput({
+        text: proposal.task_prompt,
+        workspace_id: selectedWorkspaceId,
+        image_urls: null,
+        session_id: targetSessionId,
+        priority: 0,
+        model: runtimeConfig?.defaultModel ?? null
+      });
+      await window.electronAPI.workspace.updateTaskProposalState(proposal.proposal_id, "accepted");
+
+      const detail = `Queued "${proposal.task_name}" into session ${targetSessionId}.`;
+      setTaskProposalStatusMessage(detail);
+      appendOutputEntry({
+        title: `Accepted: ${proposal.task_name}`,
+        detail,
+        tone: "success"
+      });
+      await refreshTaskProposals();
+    } catch (error) {
+      const message = normalizeErrorMessage(error);
+      setTaskProposalStatusMessage(message);
+      appendOutputEntry({
+        title: `Accept failed: ${proposal.task_name}`,
+        detail: message,
+        tone: "error"
+      });
+    } finally {
+      setProposalAction(null);
+    }
+  }
+
+  async function dismissTaskProposal(proposal: TaskProposalRecordPayload) {
+    setProposalAction({ proposalId: proposal.proposal_id, action: "dismiss" });
+    setTaskProposalStatusMessage("");
+    try {
+      await window.electronAPI.workspace.updateTaskProposalState(proposal.proposal_id, "dismissed");
+      const detail = `Dismissed "${proposal.task_name}" and persisted the update back to the backend.`;
+      setTaskProposalStatusMessage(detail);
+      appendOutputEntry({
+        title: `Dismissed: ${proposal.task_name}`,
+        detail,
+        tone: "info"
+      });
+      await refreshTaskProposals();
+    } catch (error) {
+      const message = normalizeErrorMessage(error);
+      setTaskProposalStatusMessage(message);
+      appendOutputEntry({
+        title: `Dismiss failed: ${proposal.task_name}`,
+        detail: message,
+        tone: "error"
+      });
+    } finally {
+      setProposalAction(null);
+    }
+  }
+
+  useEffect(() => {
+    if (!selectedWorkspaceId) {
+      setTaskProposals([]);
+      setTaskProposalStatusMessage("");
+      return;
+    }
+
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const response = await window.electronAPI.workspace.listTaskProposals(selectedWorkspaceId);
+        if (!cancelled) {
+          setTaskProposals(response.proposals);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setTaskProposalStatusMessage(normalizeErrorMessage(error));
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingTaskProposals(false);
+        }
+      }
+    };
+
+    setIsLoadingTaskProposals(true);
+    void load();
+    const timer = window.setInterval(() => {
+      setIsLoadingTaskProposals(true);
+      void load();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [selectedWorkspaceId]);
+
+  const handleDismissUpdate = () => {
+    void window.electronAPI.appUpdate.dismiss(appUpdateStatus?.releaseTag ?? null);
+  };
+
+  const handleDownloadUpdate = () => {
+    void window.electronAPI.appUpdate.openDownload();
+  };
+
+  const openWorkbench = (tab?: WorkbenchTab) => {
+    const nextTab = tab ?? lastManualWorkbenchTab;
+    setWorkbenchOpen(true);
+    setActiveWorkbenchTab(nextTab);
+    if (tab) {
+      setLastManualWorkbenchTab(tab);
+    }
+  };
+
+  const closeWorkbench = () => {
+    setWorkbenchOpen(false);
+  };
+
+  const handleWorkbenchTabChange = (tab: WorkbenchTab) => {
+    setActiveWorkbenchTab(tab);
+    setLastManualWorkbenchTab(tab);
+  };
+
+  const toggleOperationsDrawer = () => {
+    setOperationsDrawerOpen((open) => !open);
+  };
+
+  const handleLeftRailSelect = (item: LeftRailItem) => {
+    setActiveLeftRailItem(item);
+  };
+
+  const agentMode = activeLeftRailItem === "agent";
 
   return (
     <main className="fixed inset-0 overflow-hidden text-[13px] text-text-main/90">
@@ -139,37 +470,108 @@ export function AppShell() {
       <div className="theme-orb-secondary pointer-events-none absolute -bottom-40 right-12 h-96 w-96 rounded-full blur-3xl" />
 
       <div className="relative z-10 grid h-full w-full grid-rows-[auto_minmax(0,1fr)] gap-2 p-2 sm:gap-3 sm:p-3">
-        <WorkspaceSelectionProvider>
-          <WorkspaceDesktopProvider>
-            <div className="relative flex min-w-0 items-center justify-between gap-2 sm:gap-3">
-              <div ref={userMenuRef} className="relative min-w-0 flex-1">
-                <TopTabsBar
-                  theme={theme}
-                  onThemeChange={setTheme}
-                  onUserMenuToggle={(anchorBounds) => {
-                    void window.electronAPI.auth.togglePopup(anchorBounds);
-                  }}
-                  runtimeIndicator={{
-                    label: runtimeInfo.label,
-                    detail: runtimeInfo.detail,
-                    status: runtimeStatus?.status ?? null
-                  }}
+        {appUpdateStatus?.available ? (
+          <UpdateReminder status={appUpdateStatus} onDismiss={handleDismissUpdate} onDownload={handleDownloadUpdate} />
+        ) : null}
+
+        <div className="relative min-w-0">
+          <TopTabsBar
+            theme={theme}
+            onThemeChange={setTheme}
+            agentMode={agentMode}
+            onOpenBrowserWorkbench={() => openWorkbench("browser")}
+            onOpenFilesWorkbench={() => openWorkbench("files")}
+            onToggleOperationsDrawer={toggleOperationsDrawer}
+            activeWorkbenchTab={activeWorkbenchTab}
+            workbenchOpen={workbenchOpen}
+            operationsDrawerOpen={operationsDrawerOpen}
+            onUserMenuToggle={(anchorBounds) => {
+              void window.electronAPI.auth.togglePopup(anchorBounds);
+            }}
+            runtimeIndicator={{
+              label: runtimeInfo.label,
+              detail: runtimeInfo.detail,
+              status: runtimeStatus?.status ?? null
+            }}
+          />
+        </div>
+
+        <div
+          className={`relative grid min-h-0 gap-3 overflow-hidden ${
+            agentMode && operationsDrawerOpen
+              ? "lg:grid-cols-[220px_minmax(0,1fr)_380px]"
+              : "lg:grid-cols-[220px_minmax(0,1fr)]"
+          }`}
+        >
+          <LeftNavigationRail activeItem={activeLeftRailItem} onSelectItem={handleLeftRailSelect} />
+
+          <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] gap-3 overflow-hidden">
+            <div className="min-h-0 overflow-hidden">
+              {activeLeftRailItem === "agent" ? (
+                <ChatPane />
+              ) : activeLeftRailItem === "automations" ? (
+                <AutomationsPane />
+              ) : (
+                <FocusPlaceholder
+                  eyebrow="Skills"
+                  title="Skills catalog lives here"
+                  description="This screen is reserved for skill discovery, installation, and configuration. The agent drawer stays scoped to Agent mode only."
                 />
-              </div>
+              )}
             </div>
 
-            <div className="relative min-h-0 overflow-hidden">
-              <SplitPaneLayout
-                sizes={sizes}
-                onSizesChange={handleSizesChange}
-                left={<FileExplorerPane />}
-                center={<BrowserPane />}
-                right={<ChatPane />}
+            {agentMode && workbenchOpen ? (
+              <WorkbenchPanel activeTab={activeWorkbenchTab} onTabChange={handleWorkbenchTabChange} onClose={closeWorkbench}>
+                {activeWorkbenchTab === "browser" ? <BrowserPane /> : <FileExplorerPane />}
+              </WorkbenchPanel>
+            ) : null}
+          </div>
+
+          {agentMode && !operationsDrawerOpen ? (
+            <button
+              type="button"
+              onClick={() => setOperationsDrawerOpen(true)}
+              className="absolute right-0 top-1/2 z-20 hidden -translate-y-1/2 items-center gap-2 rounded-l-[18px] border border-panel-border/50 bg-panel-bg/92 px-3 py-3 text-[11px] text-text-muted shadow-card backdrop-blur transition hover:border-neon-green/45 hover:text-neon-green lg:inline-flex"
+            >
+              <PanelRightOpen size={14} />
+              <span>Open panel</span>
+            </button>
+          ) : null}
+
+          {agentMode && operationsDrawerOpen ? (
+            <div className="min-h-0 overflow-hidden">
+              <OperationsDrawer
+                activeTab={activeOperationsTab}
+                onTabChange={setActiveOperationsTab}
+                onClose={() => setOperationsDrawerOpen(false)}
+                proposals={taskProposals}
+                isLoadingProposals={isLoadingTaskProposals}
+                isTriggeringProposal={isTriggeringTaskProposal}
+                proposalStatusMessage={taskProposalStatusMessage}
+                proposalAction={proposalAction}
+                outputs={outputEntries}
+                selectedOutputId={selectedOutputId}
+                onSelectOutput={setSelectedOutputId}
+                onRefreshProposals={() => void refreshTaskProposals({ logErrors: true })}
+                onTriggerProposal={() => void triggerRemoteTaskProposal()}
+                onAcceptProposal={(proposal) => void acceptTaskProposal(proposal)}
+                onDismissProposal={(proposal) => void dismissTaskProposal(proposal)}
+                hasWorkspace={Boolean(selectedWorkspaceId)}
               />
             </div>
-          </WorkspaceDesktopProvider>
-        </WorkspaceSelectionProvider>
+          ) : null}
+        </div>
       </div>
     </main>
+  );
+}
+
+export function AppShell() {
+  return (
+    <WorkspaceSelectionProvider>
+      <WorkspaceDesktopProvider>
+        <AppShellContent />
+      </WorkspaceDesktopProvider>
+    </WorkspaceSelectionProvider>
   );
 }

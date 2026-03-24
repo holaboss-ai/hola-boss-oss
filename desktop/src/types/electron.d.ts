@@ -144,6 +144,25 @@ declare global {
     controlPlaneBaseUrl?: string | null;
   }
 
+  interface AppUpdateStatusPayload {
+    supported: boolean;
+    checking: boolean;
+    available: boolean;
+    currentVersion: string;
+    latestVersion: string | null;
+    releaseTag: string | null;
+    releaseUrl: string | null;
+    downloadUrl: string | null;
+    publishedAt: string | null;
+    dismissedReleaseTag: string | null;
+    lastCheckedAt: string | null;
+    error: string;
+  }
+
+  interface WorkbenchOpenBrowserPayload {
+    url?: string | null;
+  }
+
   interface TemplateAgentInfoPayload {
     role: string;
     description: string;
@@ -209,6 +228,60 @@ declare global {
   interface DemoTaskProposalEnqueueResponsePayload {
     accepted: boolean;
     pending_count: number;
+  }
+
+  interface TaskProposalStateUpdatePayload {
+    proposal: TaskProposalRecordPayload;
+  }
+
+  interface CronjobDeliveryPayload {
+    mode: string;
+    channel: string;
+    to: string | null;
+  }
+
+  interface CronjobRecordPayload {
+    id: string;
+    workspace_id: string;
+    initiated_by: string;
+    name: string;
+    cron: string;
+    description: string;
+    enabled: boolean;
+    delivery: CronjobDeliveryPayload;
+    metadata: Record<string, unknown>;
+    last_run_at: string | null;
+    next_run_at: string | null;
+    run_count: number;
+    last_status: string | null;
+    last_error: string | null;
+    created_at: string;
+    updated_at: string;
+  }
+
+  interface CronjobListResponsePayload {
+    jobs: CronjobRecordPayload[];
+    count: number;
+  }
+
+  interface CronjobCreatePayload {
+    workspace_id: string;
+    initiated_by: string;
+    name?: string;
+    cron: string;
+    description: string;
+    enabled?: boolean;
+    delivery: CronjobDeliveryPayload;
+    metadata?: Record<string, unknown>;
+  }
+
+  interface CronjobUpdatePayload {
+    name?: string;
+    cron?: string;
+    description?: string;
+    enabled?: boolean;
+    delivery?: CronjobDeliveryPayload;
+    metadata?: Record<string, unknown>;
   }
 
   interface SessionRuntimeRecordPayload {
@@ -360,10 +433,21 @@ declare global {
       getConfig: () => Promise<RuntimeConfigPayload>;
       setConfig: (payload: RuntimeConfigUpdatePayload) => Promise<RuntimeConfigPayload>;
       exchangeBinding: (sandboxId: string) => Promise<RuntimeConfigPayload>;
+      onConfigChange: (listener: (config: RuntimeConfigPayload) => void) => () => void;
       onStateChange: (listener: (status: RuntimeStatusPayload) => void) => () => void;
     };
     ui: {
       setTheme: (theme: string) => Promise<void>;
+    };
+    appUpdate: {
+      getStatus: () => Promise<AppUpdateStatusPayload>;
+      checkNow: () => Promise<AppUpdateStatusPayload>;
+      dismiss: (releaseTag?: string | null) => Promise<AppUpdateStatusPayload>;
+      openDownload: () => Promise<void>;
+      onStateChange: (listener: (status: AppUpdateStatusPayload) => void) => () => void;
+    };
+    workbench: {
+      onOpenBrowser: (listener: (payload: WorkbenchOpenBrowserPayload) => void) => () => void;
     };
     workspace: {
       getClientConfig: () => Promise<HolabossClientConfigPayload>;
@@ -371,7 +455,12 @@ declare global {
       listWorkspaces: () => Promise<WorkspaceListResponsePayload>;
       getWorkspaceRoot: (workspaceId: string) => Promise<string>;
       createWorkspace: (payload: HolabossCreateWorkspacePayload) => Promise<WorkspaceResponsePayload>;
+      listCronjobs: (workspaceId: string, enabledOnly?: boolean) => Promise<CronjobListResponsePayload>;
+      createCronjob: (payload: CronjobCreatePayload) => Promise<CronjobRecordPayload>;
+      updateCronjob: (jobId: string, payload: CronjobUpdatePayload) => Promise<CronjobRecordPayload>;
+      deleteCronjob: (jobId: string) => Promise<{ success: boolean }>;
       listTaskProposals: (workspaceId: string) => Promise<TaskProposalListResponsePayload>;
+      updateTaskProposalState: (proposalId: string, state: string) => Promise<TaskProposalStateUpdatePayload>;
       enqueueRemoteDemoTaskProposal: (
         payload: DemoTaskProposalRequestPayload
       ) => Promise<DemoTaskProposalEnqueueResponsePayload>;
