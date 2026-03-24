@@ -27,7 +27,10 @@ import httpx
 import yaml
 from pydantic import BaseModel, Field
 
-from sandbox_agent_runtime.application_lifecycle import ApplicationLifecycleManager
+from sandbox_agent_runtime.application_lifecycle import (
+    _SANDBOX_AGENT_PORT,
+    ApplicationLifecycleManager,
+)
 from sandbox_agent_runtime.product_config import resolve_product_runtime_config
 from sandbox_agent_runtime.runtime_config_adapter import (
     CompiledWorkspaceRuntimePlan,
@@ -1883,8 +1886,12 @@ async def _restart_opencode_sidecar(
         except TimeoutError:
             pass
         else:
-            _clear_opencode_sidecar_state()
-            raise RuntimeError(f"OpenCode sidecar exited during startup with code {sidecar_process.returncode}")
+            # Exit code -15 (SIGTERM) likely means a concurrent restart killed our
+            # freshly spawned process.  Fall through to the readiness check — the
+            # other restart may have already brought up a healthy sidecar.
+            if sidecar_process.returncode != -15:
+                _clear_opencode_sidecar_state()
+                raise RuntimeError(f"OpenCode sidecar exited during startup with code {sidecar_process.returncode}")
 
         await _wait_for_opencode_ready(
             url=readiness_url,
@@ -2167,6 +2174,137 @@ async def _opencode_chat_submit(
         return
 
     await session_resource.chat(**chat_kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Auto-create session artifacts from MCP tool results
+# ---------------------------------------------------------------------------
+
+_ARTIFACT_TOOL_PATTERNS = ("create_post", "create_draft", "publish_post")
+_KNOWN_PLATFORMS = frozenset({"twitter", "linkedin", "reddit"})
+_MODULE_URL_BASE = os.getenv("MODULE_URL_BASE", "http://{platform}.localhost:4000")
+
+# Strong references to fire-and-forget tasks so they aren't garbage-collected.
+_background_tasks: set[asyncio.Task[None]] = set()
+
+
+def _parse_tool_result_as_dict(result: Any) -> dict[str, Any] | None:
+    """Parse a tool result into a dict.  MCP tools return JSON-stringified
+    text, so the result may be a raw string that needs parsing."""
+    if isinstance(result, dict):
+        return result
+    if isinstance(result, str):
+        try:
+            parsed = json.loads(result)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return None
+
+
+def _extract_platform(tool_name: str) -> str:
+    """Derive the platform slug from a tool name.
+
+    Checks known platforms first (exact prefix match), then falls back to the
+    first underscore-delimited segment of the tool name.
+    """
+    for known in _KNOWN_PLATFORMS:
+        if tool_name.startswith(known):
+            return known
+    return tool_name.split("_")[0]
+
+
+def _extract_artifact_fields(
+    payload: dict[str, Any],
+) -> tuple[str, str, str, dict[str, Any]] | None:
+    """Extract (tool_name, platform, resource_id, parsed_result) from a
+    completed tool_call payload, or return ``None`` if the payload doesn't
+    match an artifact-producing tool."""
+    if payload.get("phase") != "completed" or payload.get("error"):
+        return None
+    tool_name = str(payload.get("tool_name", ""))
+    if not any(p in tool_name for p in _ARTIFACT_TOOL_PATTERNS):
+        return None
+    result = _parse_tool_result_as_dict(payload.get("result"))
+    if result is None:
+        return None
+    resource_id = str(result.get("id") or result.get("post_id") or "").strip()
+    if not resource_id:
+        return None
+    platform = _extract_platform(tool_name)
+    return tool_name, platform, resource_id, result
+
+
+def _enrich_tool_payload_with_module_url(
+    payload: dict[str, Any],
+    *,
+    holaboss_user_id: str,
+) -> dict[str, Any]:
+    """Inject ``module_url`` into a completed tool_call payload when the result
+    looks like a post-creation response, so the frontend can render an iframe
+    preview immediately."""
+    fields = _extract_artifact_fields(payload)
+    if fields is None:
+        return payload
+    _tool_name, platform, resource_id, result = fields
+
+    if platform and holaboss_user_id:
+        base = _MODULE_URL_BASE.format(platform=platform)
+        module_url_value = f"{base}/posts/{resource_id}?_uid={holaboss_user_id}"
+        enriched_result = {**result, "module_url": module_url_value}
+        return {**payload, "result": enriched_result}
+    return payload
+
+
+async def _maybe_create_tool_artifact(
+    *,
+    tool_payload: dict[str, Any],
+    session_id: str,
+    workspace_id: str,
+    input_id: str,
+    holaboss_user_id: str,
+) -> None:
+    """Fire-and-forget: create a session artifact + output when a tool call
+    produces a post-like resource.  Errors are logged, never propagated."""
+    try:
+        fields = _extract_artifact_fields(tool_payload)
+        if fields is None:
+            return
+        tool_name, platform, resource_id, result = fields
+
+        content_preview = str(result.get("title") or result.get("content") or "").strip()
+        title = content_preview[:80] if content_preview else f"{platform} post"
+
+        metadata = {
+            "input_id": input_id,
+            "tool_name": tool_name,
+            "module_id": platform,
+            "module_resource_id": resource_id,
+            "status": str(result.get("status", "")),
+        }
+
+        artifact_url = f"http://127.0.0.1:{_SANDBOX_AGENT_PORT}/api/v1/agent-sessions/{session_id}/artifacts"
+        body = {
+            "workspace_id": workspace_id,
+            "artifact_type": "draft",
+            "external_id": resource_id,
+            "platform": platform,
+            "title": title,
+            "metadata": metadata,
+        }
+
+        async with httpx.AsyncClient(trust_env=False) as client:
+            resp = await client.post(artifact_url, json=body, timeout=5)
+            if resp.status_code >= 400:
+                logger.warning(
+                    "Auto artifact creation returned %d for session=%s tool=%s",
+                    resp.status_code,
+                    session_id,
+                    tool_name,
+                )
+    except Exception as exc:
+        logger.debug("Auto artifact creation failed (non-fatal): %s", exc)
 
 
 async def _opencode_get_mcp_status(*, client: Any) -> dict[str, Any]:
@@ -3664,6 +3802,25 @@ async def _execute_request_opencode(request: RunnerRequest) -> int:
                                 instruction=request.instruction,
                             ):
                                 continue
+
+                            # Enrich tool_call payloads with module_url and auto-create artifacts.
+                            if event_type == _EVENT_TOOL_CALL:
+                                payload = _enrich_tool_payload_with_module_url(
+                                    payload,
+                                    holaboss_user_id=_explicit_holaboss_user_id(request.context),
+                                )
+                                if payload.get("phase") == "completed" and not payload.get("error"):
+                                    task = asyncio.create_task(
+                                        _maybe_create_tool_artifact(
+                                            tool_payload=payload,
+                                            session_id=request.session_id,
+                                            workspace_id=request.workspace_id,
+                                            input_id=request.input_id,
+                                            holaboss_user_id=_explicit_holaboss_user_id(request.context),
+                                        )
+                                    )
+                                    _background_tasks.add(task)
+                                    task.add_done_callback(_background_tasks.discard)
 
                             if event_type == _EVENT_OUTPUT_DELTA:
                                 delta = payload.get("delta")
