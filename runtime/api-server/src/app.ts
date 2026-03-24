@@ -42,6 +42,21 @@ import {
   type AppLifecycleExecutorLike,
   PythonAppLifecycleExecutor
 } from "./app-lifecycle-worker.js";
+import {
+  MemoryExecutorError,
+  type MemoryExecutorLike,
+  PythonMemoryExecutor
+} from "./memory-worker.js";
+import {
+  RuntimeConfigExecutorError,
+  type RuntimeConfigExecutorLike,
+  PythonRuntimeConfigExecutor
+} from "./runtime-config-worker.js";
+import {
+  RunnerExecutorError,
+  type RunnerExecutorLike,
+  PythonRunnerExecutor
+} from "./runner-worker.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 50;
 const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
@@ -57,6 +72,9 @@ export interface BuildRuntimeApiServerOptions {
   cronWorker?: CronWorkerLike | null;
   bridgeWorker?: BridgeWorkerLike | null;
   appLifecycleExecutor?: AppLifecycleExecutorLike;
+  memoryExecutor?: MemoryExecutorLike;
+  runtimeConfigExecutor?: RuntimeConfigExecutorLike;
+  runnerExecutor?: RunnerExecutorLike;
 }
 
 type StringMap = Record<string, unknown>;
@@ -751,6 +769,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const app = Fastify({ logger: options.logger ?? false });
   const backgroundTasks = new Set<Promise<void>>();
   const appLifecycleExecutor = options.appLifecycleExecutor ?? new PythonAppLifecycleExecutor();
+  const memoryExecutor = options.memoryExecutor ?? new PythonMemoryExecutor();
+  const runtimeConfigExecutor = options.runtimeConfigExecutor ?? new PythonRuntimeConfigExecutor();
+  const runnerExecutor = options.runnerExecutor ?? new PythonRunnerExecutor();
   const queueWorker =
     options.queueWorker === undefined
       ? tsQueueWorkerEnabled()
@@ -786,6 +807,159 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   });
 
   app.get("/healthz", async () => ({ ok: true }));
+
+  app.get("/api/v1/runtime/config", async (request, reply) => {
+    void request;
+    try {
+      return await runtimeConfigExecutor.getConfig();
+    } catch (error) {
+      if (error instanceof RuntimeConfigExecutorError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "runtime config failed");
+    }
+  });
+
+  app.get("/api/v1/runtime/status", async (request, reply) => {
+    void request;
+    try {
+      return await runtimeConfigExecutor.getStatus();
+    } catch (error) {
+      if (error instanceof RuntimeConfigExecutorError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "runtime status failed");
+    }
+  });
+
+  app.put("/api/v1/runtime/config", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await runtimeConfigExecutor.updateConfig(requiredDict(request.body, "body"));
+    } catch (error) {
+      if (error instanceof RuntimeConfigExecutorError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "runtime config update failed");
+    }
+  });
+
+  app.post("/api/v1/lifecycle/shutdown", async (request, reply) => {
+    void request;
+    try {
+      return await appLifecycleExecutor.shutdownAll();
+    } catch (error) {
+      if (error instanceof AppLifecycleExecutorError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "lifecycle shutdown failed");
+    }
+  });
+
+  app.post("/api/v1/memory/search", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await memoryExecutor.search(requiredDict(request.body, "body"));
+    } catch (error) {
+      if (error instanceof MemoryExecutorError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "memory search failed");
+    }
+  });
+
+  app.post("/api/v1/memory/get", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await memoryExecutor.get(requiredDict(request.body, "body"));
+    } catch (error) {
+      if (error instanceof MemoryExecutorError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "memory get failed");
+    }
+  });
+
+  app.post("/api/v1/memory/upsert", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await memoryExecutor.upsert(requiredDict(request.body, "body"));
+    } catch (error) {
+      if (error instanceof MemoryExecutorError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "memory upsert failed");
+    }
+  });
+
+  app.post("/api/v1/memory/status", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await memoryExecutor.status(requiredDict(request.body, "body"));
+    } catch (error) {
+      if (error instanceof MemoryExecutorError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "memory status failed");
+    }
+  });
+
+  app.post("/api/v1/memory/sync", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await memoryExecutor.sync(requiredDict(request.body, "body"));
+    } catch (error) {
+      if (error instanceof MemoryExecutorError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "memory sync failed");
+    }
+  });
+
+  app.post("/api/v1/agent-runs", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await runnerExecutor.run(requiredDict(request.body, "body"));
+    } catch (error) {
+      if (error instanceof RunnerExecutorError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "agent run failed");
+    }
+  });
+
+  app.post("/api/v1/agent-runs/stream", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      const stream = await runnerExecutor.stream(requiredDict(request.body, "body"));
+      reply.header("Cache-Control", "no-cache");
+      reply.header("Connection", "keep-alive");
+      reply.header("X-Accel-Buffering", "no");
+      reply.type("text/event-stream");
+      return reply.send(stream);
+    } catch (error) {
+      if (error instanceof RunnerExecutorError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "agent run stream failed");
+    }
+  });
 
   function startBackgroundTask(task: Promise<void>): void {
     backgroundTasks.add(task);

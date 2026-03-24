@@ -1,23 +1,24 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
-import shutil
-import subprocess
 from contextlib import suppress
-from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any, Awaitable
+from datetime import datetime
+from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field
-import yaml
 
 from sandbox_agent_runtime.api_models import (
     AgentSessionStateResponse,
+    AppActionResult,
+    AppSetupRequest,
+    AppStartRequest,
+    AppStopRequest,
+    ApplyTemplateRequest,
     ExecSandboxRequest,
+    InstallAppRequest,
+    InstallAppResponse,
     LocalCronjobCreateRequest,
     LocalCronjobListResponse,
     LocalCronjobUpdateRequest,
@@ -41,16 +42,15 @@ from sandbox_agent_runtime.api_models import (
     MemoryUpsertRequest,
     QueueSessionInputRequest,
     QueueSessionInputResponse,
-    RuntimeConfigResponse,
     RuntimeConfigUpdateRequest,
-    RuntimeStatusResponse,
     SessionArtifactListResponse,
     SessionHistoryResponse,
     SessionRuntimeStateListResponse,
     SessionWithArtifactsListResponse,
-    WorkspaceAgentRunResponse,
+    ShutdownResult,
+    UninstallAppRequest,
+    WriteFileRequest,
 )
-from sandbox_agent_runtime.application_lifecycle import ApplicationLifecycleManager
 from sandbox_agent_runtime.control_plane_api import (
     cron_scheduler_state as _cron_scheduler_state_impl,
     local_worker_state as _local_worker_state_impl,
@@ -63,15 +63,7 @@ from sandbox_agent_runtime.control_plane_api import (
     ts_cron_worker_enabled as _ts_cron_worker_enabled_impl,
     ts_queue_worker_enabled as _ts_queue_worker_enabled_impl,
 )
-from sandbox_agent_runtime.local_execution_service import (
-    DEFAULT_AGENT_RUNNER_COMMAND_TEMPLATE as _DEFAULT_AGENT_RUNNER_COMMAND_TEMPLATE,
-)
-from sandbox_agent_runtime.local_execution_service import (
-    process_claimed_input as _process_claimed_input_service,
-)
-from sandbox_agent_runtime.local_execution_service import (
-    selected_harness as _selected_harness_impl,
-)
+from sandbox_agent_runtime.local_execution_service import process_claimed_input as _process_claimed_input_service
 from sandbox_agent_runtime.local_worker import (
     cron_scheduler_loop as _cron_scheduler_loop_impl,
 )
@@ -93,95 +85,20 @@ from sandbox_agent_runtime.worker_service import (
 from sandbox_agent_runtime.worker_service import (
     process_available_inputs_once as _process_available_inputs_once_impl,
 )
-from sandbox_agent_runtime.memory_api import register_memory_routes
-from sandbox_agent_runtime.proactive_bridge import bridge_enabled
-from sandbox_agent_runtime.product_config import (
-    opencode_config_path,
-    runtime_config_status,
-    update_runtime_config,
-    write_opencode_bootstrap_config_if_available,
-)
 from sandbox_agent_runtime.runner import (
-    RunnerOutputEvent,
     RunnerRequest,
-    _ensure_opencode_sidecar_ready,
-    _opencode_base_url,
-    _workspace_mcp_is_ready,
 )
-from sandbox_agent_runtime.runner_api import (
-    run_agent_request as _run_agent_request_impl,
-    stream_agent_run_request as _stream_agent_run_request_impl,
-)
-from sandbox_agent_runtime.runner_backend import (
-    RunnerExecutionResult as _RunnerExecutionResult,
-)
-from sandbox_agent_runtime.runner_backend import (
-    TERMINAL_EVENT_TYPES as _TERMINAL_EVENT_TYPES,
-)
-from sandbox_agent_runtime.runner_backend import (
-    agent_runner_command as _agent_runner_command_impl,
-)
-from sandbox_agent_runtime.runner_backend import (
-    build_run_failed_event as _build_run_failed_event_impl,
-)
-from sandbox_agent_runtime.runner_backend import (
-    execute_runner_request as _execute_runner_request_impl,
-)
-from sandbox_agent_runtime.runner_backend import (
-    normalize_event as _normalize_event_impl,
-)
-from sandbox_agent_runtime.runtime_config.application_loader import _parse_app_runtime_yaml
 from sandbox_agent_runtime.runtime_local_state import (
-    append_output_event,
     claim_inputs,
-    create_cronjob,
-    create_output,
-    create_output_folder,
-    create_session_artifact,
-    create_task_proposal,
-    delete_cronjob,
-    delete_output,
-    delete_output_folder,
     enqueue_input,
     ensure_runtime_state,
-    get_binding,
-    get_cronjob,
-    get_output,
-    get_output_counts,
-    get_output_folder,
-    get_runtime_state,
-    get_task_proposal,
     get_workspace,
-    has_available_inputs_for_session,
     insert_session_message,
-    latest_output_event_id,
     list_cronjobs,
-    list_output_events,
-    list_output_folders,
-    list_outputs,
-    list_runtime_states,
-    list_session_artifacts,
-    list_session_messages,
-    list_sessions_with_artifacts,
-    list_task_proposals,
-    list_unreviewed_task_proposals,
     update_cronjob,
-    update_input,
-    update_output,
-    update_output_folder,
     update_runtime_state,
-    update_task_proposal_state,
 )
-from sandbox_agent_runtime.workspace_scope import WORKSPACE_ROOT, sanitize_app_id, sanitize_workspace_id, workspace_dir_for_id
-from sandbox_agent_runtime.workspace_yaml import (
-    parse_workspace_yaml,
-    read_workspace_yaml,
-    remove_application,
-    write_workspace_yaml,
-)
-from sandbox_agent_runtime.runtime_local_state import (
-    delete_app_build,
-)
+from sandbox_agent_runtime.workspace_scope import WORKSPACE_ROOT
 from sandbox_agent_runtime.ts_api_proxy import TsApiProxySupport
 
 logging.basicConfig(level=os.getenv("SANDBOX_AGENT_LOG_LEVEL", "INFO"))
@@ -227,9 +144,11 @@ async def _proxy_ts_api_json(
 async def _proxy_ts_api_stream(
     path: str,
     *,
+    method: str = "GET",
     params: dict[str, Any] | None = None,
+    json_body: dict[str, Any] | None = None,
 ) -> Response:
-    return await _ts_api_proxy.proxy_ts_api_stream(path, params=params)
+    return await _ts_api_proxy.proxy_ts_api_stream(path, method=method, params=params, json_body=json_body)
 
 
 def _local_worker_state():
@@ -289,52 +208,6 @@ async def shutdown_local_worker() -> None:
     )
 
 
-def _selected_harness() -> str:
-    return _selected_harness_impl()
-
-
-async def _ensure_selected_harness_ready() -> str:
-    harness = _selected_harness()
-    if harness != "opencode":
-        return "not_required"
-    return await _ensure_opencode_sidecar_ready()
-
-
-async def _runtime_status_payload() -> RuntimeStatusResponse:
-    config_status = runtime_config_status()
-    harness = _selected_harness()
-    opencode_config_present = opencode_config_path().exists()
-    harness_ready = False
-    harness_state = "not_required"
-    if harness == "opencode":
-        harness_ready = await _workspace_mcp_is_ready(url=f"{_opencode_base_url()}/mcp")
-        if harness_ready:
-            harness_state = "ready"
-        elif opencode_config_present:
-            harness_state = "configured"
-        elif config_status.get("loaded_from_file"):
-            harness_state = "config_loaded"
-        else:
-            harness_state = "pending_config"
-    browser_available = bool(config_status.get("desktop_browser_enabled")) and bool(
-        str(config_status.get("desktop_browser_url") or "").strip()
-    )
-    browser_state = "available" if browser_available else "unavailable"
-    if bool(config_status.get("desktop_browser_enabled")) and not browser_available:
-        browser_state = "enabled_unconfigured"
-    return RuntimeStatusResponse(
-        harness=harness,
-        config_loaded=bool(config_status.get("loaded_from_file")),
-        config_path=str(config_status.get("config_path") or "") or None,
-        opencode_config_present=opencode_config_present,
-        harness_ready=harness_ready,
-        harness_state=harness_state,
-        browser_available=browser_available,
-        browser_state=browser_state,
-        browser_url=str(config_status.get("desktop_browser_url") or "") or None,
-    )
-
-
 async def _process_claimed_input(record) -> None:
     await _process_claimed_input_service(record)
 
@@ -391,80 +264,34 @@ async def _cron_scheduler_loop() -> None:
     )
 
 
-def _agent_runner_command(payload: RunnerRequest) -> str:
-    return _agent_runner_command_impl(payload, default_command_template=_DEFAULT_AGENT_RUNNER_COMMAND_TEMPLATE)
-
-
-def _build_run_failed_event(
-    *,
-    session_id: str,
-    input_id: str,
-    sequence: int,
-    message: str,
-    error_type: str = "RuntimeError",
-) -> RunnerOutputEvent:
-    return _build_run_failed_event_impl(
-        session_id=session_id,
-        input_id=input_id,
-        sequence=sequence,
-        message=message,
-        error_type=error_type,
-    )
-
-
-def _sse_event(*, event: RunnerOutputEvent) -> bytes:
-    event_name = event.event_type
-    event_id = f"{event.input_id}:{event.sequence}"
-    lines = [f"event: {event_name}", f"id: {event_id}", f"data: {event.model_dump_json()}"]
-    return ("\n".join(lines) + "\n\n").encode("utf-8")
-
-
-def _normalize_event(raw_event: Any) -> RunnerOutputEvent | None:
-    return _normalize_event_impl(raw_event)
-
-
 @app.get("/healthz")
 async def healthz() -> dict[str, bool]:
     return {"ok": True}
 
 
 @app.get("/api/v1/runtime/config")
-async def get_runtime_config() -> RuntimeConfigResponse:
-    try:
-        return RuntimeConfigResponse.model_validate(runtime_config_status())
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+async def get_runtime_config() -> Response:
+    return await _proxy_ts_api_json(
+        "GET",
+        "/api/v1/runtime/config",
+    )
 
 
 @app.get("/api/v1/runtime/status")
-async def get_runtime_status() -> RuntimeStatusResponse:
-    try:
-        return await _runtime_status_payload()
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+async def get_runtime_status() -> Response:
+    return await _proxy_ts_api_json(
+        "GET",
+        "/api/v1/runtime/status",
+    )
 
 
 @app.put("/api/v1/runtime/config")
-async def put_runtime_config(payload: RuntimeConfigUpdateRequest) -> RuntimeConfigResponse:
-    try:
-        update_runtime_config(
-            auth_token=payload.auth_token,
-            user_id=payload.user_id,
-            sandbox_id=payload.sandbox_id,
-            model_proxy_base_url=payload.model_proxy_base_url,
-            default_model_value=payload.default_model,
-            runtime_mode_value=payload.runtime_mode,
-            default_provider_value=payload.default_provider,
-            holaboss_enabled_value=payload.holaboss_enabled,
-            desktop_browser_enabled_value=payload.desktop_browser_enabled,
-            desktop_browser_url_value=payload.desktop_browser_url,
-        )
-        if _selected_harness() == "opencode":
-            write_opencode_bootstrap_config_if_available()
-            await _ensure_selected_harness_ready()
-        return RuntimeConfigResponse.model_validate(runtime_config_status())
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+async def put_runtime_config(payload: RuntimeConfigUpdateRequest) -> Response:
+    return await _proxy_ts_api_json(
+        "PUT",
+        "/api/v1/runtime/config",
+        json_body=payload.model_dump(mode="json"),
+    )
 
 
 @app.post("/api/v1/workspaces")
@@ -896,247 +723,81 @@ async def list_local_session_output_events(
 @app.post("/api/v1/agent-runs")
 async def run_agent(
     payload: RunnerRequest,
-) -> WorkspaceAgentRunResponse:
-    return await _run_agent_request_impl(
-        payload,
-        execute_runner_request=_execute_runner_request,
-        build_run_failed_event=_build_run_failed_event,
+) -> Response:
+    return await _proxy_ts_api_json(
+        "POST",
+        "/api/v1/agent-runs",
+        json_body=payload.model_dump(mode="json"),
     )
 
 
 @app.post("/api/v1/agent-runs/stream")
 async def stream_agent_run(
     payload: RunnerRequest,
-) -> StreamingResponse:
-    return await _stream_agent_run_request_impl(
-        payload,
-        agent_runner_command=_agent_runner_command,
-        normalize_event=_normalize_event,
-        build_run_failed_event=_build_run_failed_event,
-        terminal_event_types=_TERMINAL_EVENT_TYPES,
+) -> Response:
+    return await _proxy_ts_api_stream(
+        "/api/v1/agent-runs/stream",
+        method="POST",
+        json_body=payload.model_dump(mode="json"),
     )
-
-
-class ShutdownResult(BaseModel):
-    stopped: list[str]
-    failed: list[str]
 
 
 @app.post("/api/v1/lifecycle/shutdown")
 async def lifecycle_shutdown() -> ShutdownResult:
-    """Gracefully stop all running applications across all workspaces.
+    return await _proxy_ts_api_json(
+        "POST",
+        "/api/v1/lifecycle/shutdown",
+    )
 
-    Called before sandbox suspend to ensure clean shutdown of docker-compose
-    containers and subprocess apps.
-    """
-    stopped: list[str] = []
-    failed: list[str] = []
 
-    workspace_root = Path(WORKSPACE_ROOT)
-    if not workspace_root.is_dir():
-        return ShutdownResult(stopped=stopped, failed=failed)
+@app.post("/api/v1/memory/search")
+async def memory_search_endpoint(payload: MemorySearchRequest) -> Response:
+    return await _proxy_ts_api_json(
+        "POST",
+        "/api/v1/memory/search",
+        json_body=payload.model_dump(mode="json"),
+    )
 
-    for workspace_dir in workspace_root.iterdir():
-        if not workspace_dir.is_dir():
-            continue
-        workspace_yaml = workspace_dir / "workspace.yaml"
-        if not workspace_yaml.exists():
-            continue
 
-        try:
-            apps = _resolve_apps_from_workspace_yaml(workspace_yaml)
-        except Exception as exc:
-            logger.warning("Failed to parse %s: %s", workspace_yaml, exc)
-            continue
+@app.post("/api/v1/memory/get")
+async def memory_get_endpoint(payload: MemoryGetRequest) -> Response:
+    return await _proxy_ts_api_json(
+        "POST",
+        "/api/v1/memory/get",
+        json_body=payload.model_dump(mode="json"),
+    )
 
-        if not apps:
-            continue
 
-        for app_id, app_dir in apps:
-            compose_file = app_dir / "docker-compose.yml"
-            compose_file_yaml = app_dir / "docker-compose.yaml"
-            if not (compose_file.exists() or compose_file_yaml.exists()):
-                continue
-            try:
-                compose_cmd = await _find_lifecycle_compose_command()
-                if compose_cmd is None:
-                    continue
-                proc = await asyncio.create_subprocess_exec(
-                    *compose_cmd,
-                    "down",
-                    "--remove-orphans",
-                    cwd=str(app_dir),
-                    env={**os.environ},
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                returncode = await proc.wait()
-                if returncode == 0:
-                    stopped.append(app_id)
-                    logger.info("Stopped app '%s' in %s", app_id, workspace_dir.name)
-                else:
-                    failed.append(app_id)
-                    stderr = (await proc.stderr.read()).decode(errors="replace") if proc.stderr else ""
-                    logger.warning("Failed to stop app '%s': %s", app_id, stderr[:300])
-            except Exception as exc:
-                failed.append(app_id)
-                logger.warning("Error stopping app '%s': %s", app_id, exc)
+@app.post("/api/v1/memory/upsert")
+async def memory_upsert_endpoint(payload: MemoryUpsertRequest) -> Response:
+    return await _proxy_ts_api_json(
+        "POST",
+        "/api/v1/memory/upsert",
+        json_body=payload.model_dump(mode="json"),
+    )
 
-    return ShutdownResult(stopped=stopped, failed=failed)
+
+@app.post("/api/v1/memory/status")
+async def memory_status_endpoint(payload: MemoryStatusRequest) -> Response:
+    return await _proxy_ts_api_json(
+        "POST",
+        "/api/v1/memory/status",
+        json_body=payload.model_dump(mode="json"),
+    )
+
+
+@app.post("/api/v1/memory/sync")
+async def memory_sync_endpoint(payload: MemorySyncRequest) -> Response:
+    return await _proxy_ts_api_json(
+        "POST",
+        "/api/v1/memory/sync",
+        json_body=payload.model_dump(mode="json"),
+    )
 
 
 # ---------------------------------------------------------------------------
 # Per-app start / stop endpoints
 # ---------------------------------------------------------------------------
-# These run inside the sandbox container and can execute lifecycle commands
-# that contain shell expansions ($(), ${}, etc.) which are blocked by the
-# sandbox-host exec validation layer.
-
-# Singleton lifecycle managers keyed by workspace_id.
-# Stored on app.state so stop can access processes started by start.
-_lifecycle_managers: dict[str, ApplicationLifecycleManager] = {}
-
-
-class AppStartRequest(BaseModel):
-    workspace_id: str = "workspace-1"
-    env: dict[str, str] = Field(default_factory=dict)
-
-
-class AppStopRequest(BaseModel):
-    workspace_id: str = "workspace-1"
-
-
-class AppActionResult(BaseModel):
-    app_id: str
-    status: str
-    detail: str = ""
-    ports: dict[str, int] = Field(default_factory=dict)
-
-
-def _get_lifecycle_manager(workspace_id: str) -> ApplicationLifecycleManager:
-    """Get or create a lifecycle manager for the given workspace."""
-    if workspace_id not in _lifecycle_managers:
-        workspace_dir = Path(WORKSPACE_ROOT) / workspace_id
-        _lifecycle_managers[workspace_id] = ApplicationLifecycleManager(
-            workspace_dir=workspace_dir,
-        )
-    return _lifecycle_managers[workspace_id]
-
-
-def _resolve_app_from_workspace(workspace_id: str, target_app_id: str) -> tuple[Path, str, str]:
-    """Find an app entry in workspace.yaml and return (workspace_dir, app_id, config_path).
-
-    Raises HTTPException if not found.
-    """
-    try:
-        safe_target_app_id = sanitize_app_id(target_app_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    workspace_dir = Path(WORKSPACE_ROOT) / sanitize_workspace_id(workspace_id)
-    workspace_yaml_path = workspace_dir / "workspace.yaml"
-
-    if not workspace_yaml_path.exists():
-        raise HTTPException(
-            status_code=404,
-            detail=f"workspace.yaml not found for workspace '{workspace_id}'",
-        )
-
-    data = yaml.safe_load(workspace_yaml_path.read_text())
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail="workspace.yaml is not a valid mapping")
-
-    applications = data.get("applications")
-    if not isinstance(applications, list):
-        raise HTTPException(status_code=400, detail="workspace.yaml has no applications list")
-
-    for entry in applications:
-        if not isinstance(entry, dict):
-            continue
-        entry_app_id = str(entry.get("app_id") or "")
-        if entry_app_id == safe_target_app_id:
-            config_path = str(entry.get("config_path") or "")
-            return workspace_dir, entry_app_id, config_path
-
-    raise HTTPException(
-        status_code=404,
-        detail=f"app '{safe_target_app_id}' not found in workspace.yaml",
-    )
-
-
-def _load_resolved_app(workspace_dir: Path, app_id: str, config_path: str):
-    """Read app.runtime.yaml and return a ResolvedApplication."""
-    yaml_path = workspace_dir / config_path
-    if not yaml_path.exists():
-        raise HTTPException(
-            status_code=404,
-            detail=f"app config not found: '{config_path}'",
-        )
-
-    raw_yaml = yaml_path.read_text()
-    return _parse_app_runtime_yaml(
-        raw_yaml=raw_yaml,
-        declared_app_id=app_id,
-        config_path=config_path,
-    )
-
-
-def _app_index_in_workspace(workspace_dir: Path, target_app_id: str) -> int:
-    """Return the 0-based index of an app in workspace.yaml's applications list."""
-    workspace_yaml_path = workspace_dir / "workspace.yaml"
-    if not workspace_yaml_path.exists():
-        return 0
-    data = yaml.safe_load(workspace_yaml_path.read_text())
-    if not isinstance(data, dict):
-        return 0
-    applications = data.get("applications")
-    if not isinstance(applications, list):
-        return 0
-    for index, entry in enumerate(applications):
-        if isinstance(entry, dict) and str(entry.get("app_id") or "") == target_app_id:
-            return index
-    return 0
-
-
-def _ports_for_app_index(index: int) -> tuple[int, int]:
-    """Derive deterministic HTTP and MCP ports from app index."""
-    from sandbox_agent_runtime.application_lifecycle import _APP_HTTP_PORT_BASE, _MCP_PORT_BASE
-
-    return (_APP_HTTP_PORT_BASE + index, _MCP_PORT_BASE + index)
-
-
-def _find_workspace_yaml() -> Path | None:
-    """Find the first workspace.yaml across all workspace directories."""
-    root = Path(WORKSPACE_ROOT)
-    if not root.is_dir():
-        return None
-    for child in root.iterdir():
-        if child.is_dir():
-            candidate = child / "workspace.yaml"
-            if candidate.exists():
-                return candidate
-    return None
-
-
-def _parse_app_ports_from_yaml(workspace_yaml_path: Path) -> dict[str, dict[str, int]]:
-    """Parse workspace.yaml and return deterministic port assignments for listed apps."""
-    data = yaml.safe_load(workspace_yaml_path.read_text())
-    if not isinstance(data, dict):
-        return {}
-    applications = data.get("applications")
-    if not isinstance(applications, list):
-        return {}
-    result: dict[str, dict[str, int]] = {}
-    for index, entry in enumerate(applications):
-        if not isinstance(entry, dict):
-            continue
-        app_id = str(entry.get("app_id") or "")
-        if not app_id:
-            continue
-        http_port, mcp_port = _ports_for_app_index(index)
-        result[app_id] = {"http": http_port, "mcp": mcp_port}
-    return result
-
-
 @app.get("/api/v1/apps/ports")
 async def list_app_ports(workspace_id: str | None = None) -> dict[str, dict[str, int]]:
     return await _proxy_ts_api_json(
@@ -1167,26 +828,6 @@ async def stop_app_endpoint(app_id: str, payload: AppStopRequest) -> AppActionRe
 # ---------------------------------------------------------------------------
 # App install / uninstall / build-status / list / setup endpoints
 # ---------------------------------------------------------------------------
-
-class InstallAppRequest(BaseModel):
-    app_id: str = Field(..., min_length=1)
-    workspace_id: str = Field(..., min_length=1)
-    files: list[dict[str, Any]]  # [{path, content_base64, executable?}]
-
-
-class InstallAppResponse(BaseModel):
-    app_id: str
-    status: str
-    detail: str
-
-
-class UninstallAppRequest(BaseModel):
-    workspace_id: str = Field(..., min_length=1)
-
-
-class AppSetupRequest(BaseModel):
-    workspace_id: str = Field(..., min_length=1)
-
 
 @app.post("/api/v1/apps/install")
 async def install_app(payload: InstallAppRequest) -> InstallAppResponse:
@@ -1232,59 +873,6 @@ async def setup_app_endpoint(app_id: str, payload: AppSetupRequest) -> AppAction
         json_body=payload.model_dump(),
     )
 
-
-def _resolve_apps_from_workspace_yaml(workspace_yaml_path: Path) -> list[tuple[str, Path]]:
-    """Parse workspace.yaml and return (app_id, app_dir) pairs."""
-    workspace_dir = workspace_yaml_path.parent
-    content = read_workspace_yaml(workspace_dir)
-    data = parse_workspace_yaml(content)
-
-    applications = data.get("applications", [])
-    if not isinstance(applications, list):
-        return []
-
-    result: list[tuple[str, Path]] = []
-    for entry in applications:
-        if not isinstance(entry, dict):
-            continue
-        app_id = str(entry.get("app_id") or "")
-        config_path = str(entry.get("config_path") or "")
-        if not app_id:
-            continue
-        # Derive app_dir from config_path (e.g. "apps/myapp/app.runtime.yaml" → "apps/myapp")
-        app_dir = workspace_dir / str(Path(config_path).parent) if config_path else workspace_dir / "apps" / app_id
-        result.append((app_id, app_dir))
-    return result
-
-
-async def _find_lifecycle_compose_command() -> list[str] | None:
-    """Find available docker compose command."""
-    for cmd in (["docker", "compose"], ["docker-compose"]):
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                "version",
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await proc.wait()
-            if proc.returncode == 0:
-                return cmd
-        except FileNotFoundError:
-            continue
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Workspace file & snapshot operations
-# ---------------------------------------------------------------------------
-
-
-class ApplyTemplateRequest(BaseModel):
-    files: list[dict[str, Any]]
-    replace_existing: bool = False
-
-
 @app.post("/api/v1/workspaces/{workspace_id}/apply-template")
 async def apply_template(workspace_id: str, payload: ApplyTemplateRequest) -> dict[str, Any]:
     return await _proxy_ts_api_json(
@@ -1300,12 +888,6 @@ async def read_file_endpoint(workspace_id: str, file_path: str) -> dict[str, Any
         "GET",
         f"/api/v1/workspaces/{workspace_id}/files/{file_path}",
     )
-
-
-class WriteFileRequest(BaseModel):
-    content_base64: str
-    executable: bool = False
-
 
 @app.put("/api/v1/workspaces/{workspace_id}/files/{file_path:path}")
 async def write_file_endpoint(workspace_id: str, file_path: str, payload: WriteFileRequest) -> dict[str, Any]:
@@ -1329,17 +911,3 @@ async def export_workspace(workspace_id: str):
     return await _proxy_ts_api_stream(
         f"/api/v1/workspaces/{workspace_id}/export",
     )
-async def _execute_runner_request(
-    payload: RunnerRequest,
-    *,
-    on_event: Callable[[RunnerOutputEvent], Awaitable[None] | None] | None = None,
-) -> _RunnerExecutionResult:
-    return await _execute_runner_request_impl(
-        payload,
-        on_event=on_event,
-        default_command_template=_DEFAULT_AGENT_RUNNER_COMMAND_TEMPLATE,
-        terminal_event_types=_TERMINAL_EVENT_TYPES,
-    )
-
-
-register_memory_routes(app)

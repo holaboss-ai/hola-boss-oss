@@ -203,7 +203,9 @@ class TsApiProxySupport:
         self,
         path: str,
         *,
+        method: str = "GET",
         params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
     ) -> Response:
         await self.ensure_managed_ts_api_server_ready()
         client = httpx.AsyncClient(
@@ -212,7 +214,12 @@ class TsApiProxySupport:
             follow_redirects=True,
             trust_env=False,
         )
-        stream_context = client.stream("GET", path, params=self.clean_proxy_params(params))
+        stream_context = client.stream(
+            method,
+            path,
+            params=self.clean_proxy_params(params),
+            json=json_body,
+        )
         upstream = await stream_context.__aenter__()
         if upstream.status_code >= 400:
             body = await upstream.aread()

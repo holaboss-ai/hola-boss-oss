@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { afterEach, test } from "node:test";
 import { randomUUID } from "node:crypto";
 
@@ -10,6 +11,9 @@ import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import { buildRuntimeApiServer, type BuildRuntimeApiServerOptions } from "./app.js";
 import type { AppLifecycleExecutorLike } from "./app-lifecycle-worker.js";
+import type { MemoryExecutorLike } from "./memory-worker.js";
+import type { RuntimeConfigExecutorLike } from "./runtime-config-worker.js";
+import type { RunnerExecutorLike } from "./runner-worker.js";
 
 const tempDirs: string[] = [];
 
@@ -46,6 +50,362 @@ test("healthz returns ok", async () => {
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual(response.json(), { ok: true });
+  await app.close();
+  store.close();
+});
+
+test("runtime config routes delegate to the runtime config executor", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const calls: string[] = [];
+  const runtimeConfigExecutor: RuntimeConfigExecutorLike = {
+    async getConfig() {
+      calls.push("get-config");
+      return {
+        config_path: "/tmp/runtime-config.json",
+        loaded_from_file: false,
+        auth_token_present: false,
+        user_id: null,
+        sandbox_id: null,
+        model_proxy_base_url: null,
+        default_model: "openai/gpt-5.1",
+        runtime_mode: "oss",
+        default_provider: null,
+        holaboss_enabled: false,
+        desktop_browser_enabled: false,
+        desktop_browser_url: null
+      };
+    },
+    async getStatus() {
+      calls.push("get-status");
+      return {
+        harness: "opencode",
+        config_loaded: true,
+        config_path: "/tmp/runtime-config.json",
+        opencode_config_present: true,
+        harness_ready: true,
+        harness_state: "ready",
+        browser_available: false,
+        browser_state: "unavailable",
+        browser_url: null
+      };
+    },
+    async updateConfig(payload) {
+      calls.push(`put-config:${JSON.stringify(payload)}`);
+      return {
+        config_path: "/tmp/runtime-config.json",
+        loaded_from_file: true,
+        auth_token_present: true,
+        user_id: "user-1",
+        sandbox_id: "sandbox-1",
+        model_proxy_base_url: "https://runtime.example/api/v1/model-proxy",
+        default_model: "openai/gpt-5.1",
+        runtime_mode: "oss",
+        default_provider: "holaboss_model_proxy",
+        holaboss_enabled: true,
+        desktop_browser_enabled: false,
+        desktop_browser_url: null
+      };
+    }
+  };
+  const app = buildTestRuntimeApiServer({ store, runtimeConfigExecutor });
+
+  const config = await app.inject({
+    method: "GET",
+    url: "/api/v1/runtime/config"
+  });
+  const status = await app.inject({
+    method: "GET",
+    url: "/api/v1/runtime/status"
+  });
+  const updated = await app.inject({
+    method: "PUT",
+    url: "/api/v1/runtime/config",
+    payload: {
+      auth_token: "token-1",
+      user_id: "user-1",
+      sandbox_id: "sandbox-1",
+      model_proxy_base_url: "https://runtime.example/api/v1/model-proxy",
+      default_model: "openai/gpt-5.1"
+    }
+  });
+
+  assert.equal(config.statusCode, 200);
+  assert.equal(status.statusCode, 200);
+  assert.equal(updated.statusCode, 200);
+  assert.deepEqual(calls, [
+    "get-config",
+    "get-status",
+    "put-config:{\"auth_token\":\"token-1\",\"user_id\":\"user-1\",\"sandbox_id\":\"sandbox-1\",\"model_proxy_base_url\":\"https://runtime.example/api/v1/model-proxy\",\"default_model\":\"openai/gpt-5.1\"}"
+  ]);
+
+  await app.close();
+  store.close();
+});
+
+test("runner routes delegate to the runner executor", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const calls: Array<{ operation: string; payload: Record<string, unknown> }> = [];
+  const runnerExecutor: RunnerExecutorLike = {
+    async run(payload) {
+      calls.push({ operation: "run", payload });
+      return {
+        session_id: "session-1",
+        input_id: "input-1",
+        events: [
+          {
+            session_id: "session-1",
+            input_id: "input-1",
+            sequence: 1,
+            event_type: "run_started",
+            payload: { instruction_preview: "hello" }
+          },
+          {
+            session_id: "session-1",
+            input_id: "input-1",
+            sequence: 2,
+            event_type: "run_completed",
+            payload: { status: "success" }
+          }
+        ]
+      };
+    },
+    async stream(payload) {
+      calls.push({ operation: "stream", payload });
+      return Readable.from([
+        "event: run_started\nid: input-1:1\ndata: {\"session_id\":\"session-1\",\"input_id\":\"input-1\",\"sequence\":1,\"event_type\":\"run_started\",\"payload\":{\"instruction_preview\":\"hello\"}}\n\n",
+        "event: run_completed\nid: input-1:2\ndata: {\"session_id\":\"session-1\",\"input_id\":\"input-1\",\"sequence\":2,\"event_type\":\"run_completed\",\"payload\":{\"status\":\"success\"}}\n\n"
+      ]);
+    }
+  };
+  const app = buildTestRuntimeApiServer({ store, runnerExecutor });
+
+  const runResponse = await app.inject({
+    method: "POST",
+    url: "/api/v1/agent-runs",
+    payload: {
+      workspace_id: "workspace-1",
+      session_id: "session-1",
+      input_id: "input-1",
+      instruction: "hello",
+      context: {}
+    }
+  });
+  const streamResponse = await app.inject({
+    method: "POST",
+    url: "/api/v1/agent-runs/stream",
+    payload: {
+      workspace_id: "workspace-1",
+      session_id: "session-1",
+      input_id: "input-1",
+      instruction: "hello",
+      context: {}
+    }
+  });
+
+  assert.equal(runResponse.statusCode, 200);
+  assert.deepEqual(runResponse.json(), {
+    session_id: "session-1",
+    input_id: "input-1",
+    events: [
+      {
+        session_id: "session-1",
+        input_id: "input-1",
+        sequence: 1,
+        event_type: "run_started",
+        payload: { instruction_preview: "hello" }
+      },
+      {
+        session_id: "session-1",
+        input_id: "input-1",
+        sequence: 2,
+        event_type: "run_completed",
+        payload: { status: "success" }
+      }
+    ]
+  });
+  assert.equal(streamResponse.statusCode, 200);
+  assert.match(streamResponse.body, /event: run_started/);
+  assert.match(streamResponse.body, /event: run_completed/);
+  assert.deepEqual(calls, [
+    {
+      operation: "run",
+      payload: {
+        workspace_id: "workspace-1",
+        session_id: "session-1",
+        input_id: "input-1",
+        instruction: "hello",
+        context: {}
+      }
+    },
+    {
+      operation: "stream",
+      payload: {
+        workspace_id: "workspace-1",
+        session_id: "session-1",
+        input_id: "input-1",
+        instruction: "hello",
+        context: {}
+      }
+    }
+  ]);
+
+  await app.close();
+  store.close();
+});
+
+test("memory routes delegate to the memory executor and preserve payloads", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const calls: Array<{ operation: string; payload: Record<string, unknown> }> = [];
+  const memoryExecutor: MemoryExecutorLike = {
+    async search(payload) {
+      calls.push({ operation: "search", payload });
+      return { workspace_id: payload.workspace_id, query: payload.query, hits: [] };
+    },
+    async get(payload) {
+      calls.push({ operation: "get", payload });
+      return { path: payload.path, text: "" };
+    },
+    async upsert(payload) {
+      calls.push({ operation: "upsert", payload });
+      return { path: payload.path, updated: true };
+    },
+    async status(payload) {
+      calls.push({ operation: "status", payload });
+      return { workspace_id: payload.workspace_id, synced: true };
+    },
+    async sync(payload) {
+      calls.push({ operation: "sync", payload });
+      return { workspace_id: payload.workspace_id, queued: true, reason: payload.reason };
+    }
+  };
+  const app = buildTestRuntimeApiServer({ store, memoryExecutor });
+
+  const searched = await app.inject({
+    method: "POST",
+    url: "/api/v1/memory/search",
+    payload: {
+      workspace_id: "workspace-1",
+      query: "durable preferences",
+      max_results: 5,
+      min_score: 0.1
+    }
+  });
+  const fetched = await app.inject({
+    method: "POST",
+    url: "/api/v1/memory/get",
+    payload: {
+      workspace_id: "workspace-1",
+      path: "memory/preferences.md"
+    }
+  });
+  const upserted = await app.inject({
+    method: "POST",
+    url: "/api/v1/memory/upsert",
+    payload: {
+      workspace_id: "workspace-1",
+      path: "memory/preferences.md",
+      content: "coffee",
+      append: false
+    }
+  });
+  const status = await app.inject({
+    method: "POST",
+    url: "/api/v1/memory/status",
+    payload: {
+      workspace_id: "workspace-1"
+    }
+  });
+  const synced = await app.inject({
+    method: "POST",
+    url: "/api/v1/memory/sync",
+    payload: {
+      workspace_id: "workspace-1",
+      reason: "manual",
+      force: true
+    }
+  });
+
+  assert.equal(searched.statusCode, 200);
+  assert.deepEqual(searched.json(), {
+    workspace_id: "workspace-1",
+    query: "durable preferences",
+    hits: []
+  });
+  assert.equal(fetched.statusCode, 200);
+  assert.deepEqual(fetched.json(), {
+    path: "memory/preferences.md",
+    text: ""
+  });
+  assert.equal(upserted.statusCode, 200);
+  assert.deepEqual(upserted.json(), {
+    path: "memory/preferences.md",
+    updated: true
+  });
+  assert.equal(status.statusCode, 200);
+  assert.deepEqual(status.json(), {
+    workspace_id: "workspace-1",
+    synced: true
+  });
+  assert.equal(synced.statusCode, 200);
+  assert.deepEqual(synced.json(), {
+    workspace_id: "workspace-1",
+    queued: true,
+    reason: "manual"
+  });
+  assert.deepEqual(calls, [
+    {
+      operation: "search",
+      payload: {
+        workspace_id: "workspace-1",
+        query: "durable preferences",
+        max_results: 5,
+        min_score: 0.1
+      }
+    },
+    {
+      operation: "get",
+      payload: {
+        workspace_id: "workspace-1",
+        path: "memory/preferences.md"
+      }
+    },
+    {
+      operation: "upsert",
+      payload: {
+        workspace_id: "workspace-1",
+        path: "memory/preferences.md",
+        content: "coffee",
+        append: false
+      }
+    },
+    {
+      operation: "status",
+      payload: {
+        workspace_id: "workspace-1"
+      }
+    },
+    {
+      operation: "sync",
+      payload: {
+        workspace_id: "workspace-1",
+        reason: "manual",
+        force: true
+      }
+    }
+  ]);
+
   await app.close();
   store.close();
 });
@@ -717,6 +1077,9 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
         detail: "app stopped via lifecycle manager",
         ports: {}
       };
+    },
+    async shutdownAll() {
+      throw new Error("not used");
     }
   };
   const app = buildTestRuntimeApiServer({ store, appLifecycleExecutor: executor });
@@ -767,6 +1130,47 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
   assert.equal(store.getAppBuild({ workspaceId: workspace.id, appId: "app-b" }), null);
   const workspaceYaml = fs.readFileSync(path.join(workspaceDir, "workspace.yaml"), "utf8");
   assert.equal(workspaceYaml.includes("app-b"), false);
+
+  await app.close();
+  store.close();
+});
+
+test("lifecycle shutdown route delegates to the lifecycle executor", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const calls: string[] = [];
+  const executor: AppLifecycleExecutorLike = {
+    async startApp() {
+      throw new Error("not used");
+    },
+    async stopApp() {
+      throw new Error("not used");
+    },
+    async shutdownAll() {
+      calls.push("shutdown");
+      return {
+        stopped: ["app-a"],
+        failed: ["app-b"]
+      };
+    }
+  };
+  const app = buildTestRuntimeApiServer({ store, appLifecycleExecutor: executor });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/lifecycle/shutdown"
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), {
+    stopped: ["app-a"],
+    failed: ["app-b"]
+  });
+  assert.deepEqual(calls, ["shutdown"]);
 
   await app.close();
   store.close();

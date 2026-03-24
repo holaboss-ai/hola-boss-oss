@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 
 from fastapi import HTTPException
 
 from sandbox_agent_runtime.api_models import AppActionResult
+from sandbox_agent_runtime.executor_io import print_envelope
 from sandbox_agent_runtime.lifecycle_api import (
     _app_index_in_workspace,
     _get_lifecycle_manager,
@@ -15,20 +15,6 @@ from sandbox_agent_runtime.lifecycle_api import (
     _resolve_app_from_workspace,
 )
 from sandbox_agent_runtime.workspace_scope import sanitize_app_id, sanitize_workspace_id
-
-
-def _print_envelope(*, status_code: int, payload: dict | None = None, detail: str | None = None) -> None:
-    print(
-        json.dumps(
-            {
-                "status_code": status_code,
-                "payload": payload,
-                "detail": detail,
-            },
-            ensure_ascii=True,
-        ),
-        end="",
-    )
 
 
 async def _start_app(*, workspace_id: str, app_id: str) -> AppActionResult:
@@ -96,23 +82,23 @@ async def _run(*, action: str, workspace_id: str, app_id: str) -> int:
         safe_workspace_id = sanitize_workspace_id(workspace_id)
         safe_app_id = sanitize_app_id(app_id)
     except ValueError as exc:
-        _print_envelope(status_code=400, detail=str(exc))
+        print_envelope(status_code=400, detail=str(exc))
         return 0
 
     if action not in {"start", "stop"}:
-        _print_envelope(status_code=400, detail=f"unsupported lifecycle action: {action}")
+        print_envelope(status_code=400, detail=f"unsupported lifecycle action: {action}")
         return 0
 
     try:
         result = await (_start_app(workspace_id=safe_workspace_id, app_id=safe_app_id) if action == "start" else _stop_app(workspace_id=safe_workspace_id, app_id=safe_app_id))
     except HTTPException as exc:
-        _print_envelope(status_code=exc.status_code, detail=str(exc.detail))
+        print_envelope(status_code=exc.status_code, detail=str(exc.detail))
         return 0
     except Exception as exc:
-        _print_envelope(status_code=500, detail=str(exc))
+        print_envelope(status_code=500, detail=str(exc))
         return 0
 
-    _print_envelope(status_code=200, payload=result.model_dump(mode="json"))
+    print_envelope(status_code=200, payload=result.model_dump(mode="json"))
     return 0
 
 

@@ -296,3 +296,33 @@ class AppActionResult(BaseModel):
     status: str
     detail: str = ""
     ports: dict[str, int] = Field(default_factory=dict)
+
+
+class InstallAppRequest(BaseModel):
+    app_id: str = Field(..., min_length=1)
+    workspace_id: str = Field(..., min_length=1)
+    files: list[dict[str, Any]]
+
+
+class InstallAppResponse(BaseModel):
+    app_id: str
+    status: str
+    detail: str
+
+
+class UninstallAppRequest(BaseModel):
+    workspace_id: str = Field(..., min_length=1)
+
+
+class AppSetupRequest(BaseModel):
+    workspace_id: str = Field(..., min_length=1)
+
+
+class ApplyTemplateRequest(BaseModel):
+    files: list[dict[str, Any]]
+    replace_existing: bool = False
+
+
+class WriteFileRequest(BaseModel):
+    content_base64: str
+    executable: bool = False
