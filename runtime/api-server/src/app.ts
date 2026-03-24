@@ -382,6 +382,20 @@ function resolveWorkspaceFilePath(workspaceDir: string, relativePath: string): s
   return fullPath;
 }
 
+function sanitizeAppId(appId: string): string {
+  const value = appId.trim();
+  if (!value) {
+    throw new Error("app_id is required");
+  }
+  if (value.includes("/") || value.includes("\\")) {
+    throw new Error("app_id must not contain path separators");
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) {
+    throw new Error("app_id contains invalid characters");
+  }
+  return value;
+}
+
 function collectWorkspaceSnapshot(workspaceDir: string) {
   const files: Array<Record<string, unknown>> = [];
   const extensionCounts: Record<string, number> = {};
@@ -1071,13 +1085,19 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     return reply.type("application/gzip").send(tar.stdout);
   });
 
-  app.get("/api/v1/apps/:appId/build-status", async (request) => {
+  app.get("/api/v1/apps/:appId/build-status", async (request, reply) => {
     const params = request.params as { appId: string };
     const query = isRecord(request.query) ? request.query : {};
     const workspaceId = requiredString(query.workspace_id, "workspace_id");
+    let appId: string;
+    try {
+      appId = sanitizeAppId(params.appId);
+    } catch (error) {
+      return sendError(reply, 400, error instanceof Error ? error.message : "invalid app_id");
+    }
     const record = store.getAppBuild({
       workspaceId,
-      appId: params.appId
+      appId
     });
     return record ? appBuildPayload(record) : { status: "unknown" };
   });
@@ -1115,7 +1135,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
 
-    const appId = requiredString(request.body.app_id, "app_id");
+    let appId: string;
+    try {
+      appId = sanitizeAppId(requiredString(request.body.app_id, "app_id"));
+    } catch (error) {
+      return sendError(reply, 400, error instanceof Error ? error.message : "invalid app_id");
+    }
     const workspaceId = requiredString(request.body.workspace_id, "workspace_id");
     const workspace = store.getWorkspace(workspaceId);
     if (!workspace) {
@@ -1201,23 +1226,29 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     const params = request.params as { appId: string };
+    let appId: string;
+    try {
+      appId = sanitizeAppId(params.appId);
+    } catch (error) {
+      return sendError(reply, 400, error instanceof Error ? error.message : "invalid app_id");
+    }
     const workspaceId = requiredString(request.body.workspace_id, "workspace_id");
     const workspace = store.getWorkspace(workspaceId);
     if (!workspace) {
       return sendError(reply, 404, "workspace not found");
     }
     const workspaceDir = store.workspaceDir(workspaceId);
-    const appYamlPath = path.join(workspaceDir, "apps", params.appId, "app.runtime.yaml");
+    const appYamlPath = path.join(workspaceDir, "apps", appId, "app.runtime.yaml");
     if (!fs.existsSync(appYamlPath)) {
-      return sendError(reply, 404, `app.runtime.yaml not found for ${params.appId}`);
+      return sendError(reply, 404, `app.runtime.yaml not found for ${appId}`);
     }
 
     let parsed: ParsedInstalledApp;
     try {
       parsed = parseInstalledAppRuntime(
         fs.readFileSync(appYamlPath, "utf8"),
-        params.appId,
-        `apps/${params.appId}/app.runtime.yaml`
+        appId,
+        `apps/${appId}/app.runtime.yaml`
       );
     } catch (error) {
       return sendError(reply, 400, error instanceof Error ? error.message : "invalid app.runtime.yaml");
@@ -1225,7 +1256,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
     if (!parsed.lifecycle.setup) {
       return {
-        app_id: params.appId,
+        app_id: appId,
         status: "no_setup_command",
         detail: "No lifecycle.setup defined",
         ports: {}
@@ -1237,12 +1268,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         store,
         workspaceDir,
         workspaceId,
-        appId: params.appId,
+        appId,
         setupCommand: parsed.lifecycle.setup
       })
     );
     return {
-      app_id: params.appId,
+      app_id: appId,
       status: "setup_started",
       detail: `Running: ${parsed.lifecycle.setup}`,
       ports: {}

@@ -33,6 +33,18 @@ def sanitize_workspace_id(workspace_id: str) -> str:
     return value
 
 
+def sanitize_app_id(app_id: str) -> str:
+    """Validate app_id contains only safe characters (same rules as workspace_id)."""
+    value = app_id.strip()
+    if not value:
+        raise ValueError("app_id is required")
+    if "/" in value or "\\" in value:
+        raise ValueError("app_id must not contain path separators")
+    if not _WORKSPACE_SEGMENT_PATTERN.fullmatch(value):
+        raise ValueError("app_id contains invalid characters")
+    return value
+
+
 def workspace_dir_for_id(workspace_id: str) -> str:
     segment = sanitize_workspace_id(workspace_id)
     return f"{WORKSPACE_ROOT}/{segment}"
@@ -121,6 +133,7 @@ __all__ = [
     "WORKSPACE_ROOT",
     "build_workspace_scoped_command",
     "redact_status_paths",
+    "sanitize_app_id",
     "sanitize_workspace_id",
     "validate_workspace_command",
     "workspace_dir_for_id",

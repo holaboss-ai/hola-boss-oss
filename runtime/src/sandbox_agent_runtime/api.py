@@ -172,8 +172,17 @@ from sandbox_agent_runtime.runtime_local_state import (
     update_runtime_state,
     update_task_proposal_state,
 )
+from sandbox_agent_runtime.workspace_scope import WORKSPACE_ROOT, sanitize_app_id, sanitize_workspace_id, workspace_dir_for_id
+from sandbox_agent_runtime.workspace_yaml import (
+    parse_workspace_yaml,
+    read_workspace_yaml,
+    remove_application,
+    write_workspace_yaml,
+)
+from sandbox_agent_runtime.runtime_local_state import (
+    delete_app_build,
+)
 from sandbox_agent_runtime.ts_api_proxy import TsApiProxySupport
-from sandbox_agent_runtime.workspace_scope import WORKSPACE_ROOT, workspace_dir_for_id
 
 logging.basicConfig(level=os.getenv("SANDBOX_AGENT_LOG_LEVEL", "INFO"))
 logger = logging.getLogger("sandbox_agent_api")
@@ -1019,7 +1028,11 @@ def _resolve_app_from_workspace(workspace_id: str, target_app_id: str) -> tuple[
 
     Raises HTTPException if not found.
     """
-    workspace_dir = Path(WORKSPACE_ROOT) / workspace_id
+    try:
+        safe_target_app_id = sanitize_app_id(target_app_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    workspace_dir = Path(WORKSPACE_ROOT) / sanitize_workspace_id(workspace_id)
     workspace_yaml_path = workspace_dir / "workspace.yaml"
 
     if not workspace_yaml_path.exists():
@@ -1040,13 +1053,13 @@ def _resolve_app_from_workspace(workspace_id: str, target_app_id: str) -> tuple[
         if not isinstance(entry, dict):
             continue
         entry_app_id = str(entry.get("app_id") or "")
-        if entry_app_id == target_app_id:
+        if entry_app_id == safe_target_app_id:
             config_path = str(entry.get("config_path") or "")
             return workspace_dir, entry_app_id, config_path
 
     raise HTTPException(
         status_code=404,
-        detail=f"app '{target_app_id}' not found in workspace.yaml",
+        detail=f"app '{safe_target_app_id}' not found in workspace.yaml",
     )
 
 
@@ -1260,52 +1273,47 @@ async def install_app(payload: InstallAppRequest) -> InstallAppResponse:
 @app.delete("/api/v1/apps/{app_id}")
 async def uninstall_app(app_id: str, payload: UninstallAppRequest) -> AppActionResult:
     """Uninstall an app: stop it, remove files, remove from workspace.yaml, clean up build status."""
-    from sandbox_agent_runtime.runtime_local_state import delete_app_build
-    from sandbox_agent_runtime.workspace_yaml import (
-        read_workspace_yaml,
-        remove_application,
-        write_workspace_yaml,
-    )
-
+    try:
+        safe_app_id = sanitize_app_id(app_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     workspace_dir = workspace_dir_for_id(payload.workspace_id)
 
     # Best-effort stop
     try:
         workspace_dir_path = Path(workspace_dir)
-        workspace_yaml_path = workspace_dir_path / "workspace.yaml"
-        if workspace_yaml_path.exists():
-            data = yaml.safe_load(workspace_yaml_path.read_text())
-            if isinstance(data, dict):
-                applications = data.get("applications", [])
-                if isinstance(applications, list):
-                    for entry in applications:
-                        if isinstance(entry, dict) and entry.get("app_id") == app_id:
-                            config_path = entry.get("config_path", "")
-                            if config_path:
-                                try:
-                                    resolved_app = _load_resolved_app(workspace_dir_path, app_id, config_path)
-                                    manager = _get_lifecycle_manager(payload.workspace_id)
-                                    await manager.stop_all([resolved_app])
-                                    manager._port_allocations.pop(app_id, None)
-                                except Exception:
-                                    logger.debug("Best-effort stop failed for app '%s'", app_id, exc_info=True)
-                            break
+        ws_yaml_content = read_workspace_yaml(workspace_dir)
+        ws_data = parse_workspace_yaml(ws_yaml_content)
+        applications = ws_data.get("applications", [])
+        if isinstance(applications, list):
+            for entry in applications:
+                if isinstance(entry, dict) and entry.get("app_id") == safe_app_id:
+                    config_path = entry.get("config_path", "")
+                    if config_path:
+                        try:
+                            resolved_app = _load_resolved_app(workspace_dir_path, safe_app_id, config_path)
+                            manager = _get_lifecycle_manager(payload.workspace_id)
+                            await manager.stop_all([resolved_app])
+                            manager._port_allocations.pop(safe_app_id, None)
+                        except Exception:
+                            logger.debug("Best-effort stop failed for app '%s'", safe_app_id, exc_info=True)
+                    break
     except Exception:
-        logger.debug("Best-effort stop failed for app '%s'", app_id, exc_info=True)
+        logger.debug("Best-effort stop failed for app '%s'", safe_app_id, exc_info=True)
 
     # Remove files
-    shutil.rmtree(os.path.join(workspace_dir, "apps", app_id), ignore_errors=True)
+    shutil.rmtree(os.path.join(workspace_dir, "apps", safe_app_id), ignore_errors=True)
 
     # Remove from workspace.yaml
     existing_content = read_workspace_yaml(workspace_dir)
-    updated_content = remove_application(existing_content, app_id=app_id)
+    updated_content = remove_application(existing_content, app_id=safe_app_id)
     write_workspace_yaml(workspace_dir, updated_content)
 
     # Clean up build status
-    delete_app_build(workspace_id=payload.workspace_id, app_id=app_id)
+    delete_app_build(workspace_id=payload.workspace_id, app_id=safe_app_id)
 
     return AppActionResult(
-        app_id=app_id,
+        app_id=safe_app_id,
         status="uninstalled",
         detail="App stopped, files removed, workspace.yaml updated",
         ports={},
@@ -1339,19 +1347,16 @@ async def setup_app_endpoint(app_id: str, payload: AppSetupRequest) -> AppAction
     )
 
 
-def _resolve_apps_from_workspace_yaml(workspace_yaml: Path) -> list[tuple[str, Path]]:
+def _resolve_apps_from_workspace_yaml(workspace_yaml_path: Path) -> list[tuple[str, Path]]:
     """Parse workspace.yaml and return (app_id, app_dir) pairs."""
-    import yaml
+    workspace_dir = workspace_yaml_path.parent
+    content = read_workspace_yaml(workspace_dir)
+    data = parse_workspace_yaml(content)
 
-    data = yaml.safe_load(workspace_yaml.read_text())
-    if not isinstance(data, dict):
-        return []
-
-    applications = data.get("applications")
+    applications = data.get("applications", [])
     if not isinstance(applications, list):
         return []
 
-    workspace_dir = workspace_yaml.parent
     result: list[tuple[str, Path]] = []
     for entry in applications:
         if not isinstance(entry, dict):
