@@ -11,7 +11,7 @@ import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import { buildRuntimeApiServer, type BuildRuntimeApiServerOptions } from "./app.js";
 import type { AppLifecycleExecutorLike } from "./app-lifecycle-worker.js";
-import type { MemoryExecutorLike } from "./memory-worker.js";
+import type { MemoryServiceLike } from "./memory.js";
 import type { RuntimeConfigServiceLike } from "./runtime-config.js";
 import type { RunnerExecutorLike } from "./runner-worker.js";
 
@@ -261,14 +261,14 @@ test("runner routes delegate to the runner executor", async () => {
   store.close();
 });
 
-test("memory routes delegate to the memory executor and preserve payloads", async () => {
+test("memory routes delegate to the memory service and preserve payloads", async () => {
   const root = makeTempDir("hb-runtime-api-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
     workspaceRoot: path.join(root, "workspace")
   });
   const calls: Array<{ operation: string; payload: Record<string, unknown> }> = [];
-  const memoryExecutor: MemoryExecutorLike = {
+  const memoryService: MemoryServiceLike = {
     async search(payload) {
       calls.push({ operation: "search", payload });
       return { workspace_id: payload.workspace_id, query: payload.query, hits: [] };
@@ -290,7 +290,7 @@ test("memory routes delegate to the memory executor and preserve payloads", asyn
       return { workspace_id: payload.workspace_id, queued: true, reason: payload.reason };
     }
   };
-  const app = buildTestRuntimeApiServer({ store, memoryExecutor });
+  const app = buildTestRuntimeApiServer({ store, memoryService });
 
   const searched = await app.inject({
     method: "POST",
@@ -1058,7 +1058,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
     "utf8"
   );
 
-  const calls: Array<{ action: string; workspaceId: string; appId: string }> = [];
+  const calls: Array<Record<string, unknown>> = [];
   const executor: AppLifecycleExecutorLike = {
     async startApp(params) {
       calls.push({ action: "start", ...params });
@@ -1122,9 +1122,53 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
     ports: {}
   });
   assert.deepEqual(calls, [
-    { action: "start", workspaceId: "workspace-1", appId: "app-b" },
-    { action: "stop", workspaceId: "workspace-1", appId: "app-b" },
-    { action: "stop", workspaceId: "workspace-1", appId: "app-b" }
+    {
+      action: "start",
+      workspaceId: "workspace-1",
+      appId: "app-b",
+      appDir: path.join(workspaceDir, "apps", "app-b"),
+      httpPort: 18081,
+      mcpPort: 13101,
+      resolvedApp: {
+        appId: "app-b",
+        mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+        healthCheck: { path: "/health", timeoutS: 60, intervalS: 5 },
+        envContract: [],
+        startCommand: "",
+        baseDir: "apps/app-b",
+        lifecycle: { setup: "", start: "", stop: "" }
+      }
+    },
+    {
+      action: "stop",
+      workspaceId: "workspace-1",
+      appId: "app-b",
+      appDir: path.join(workspaceDir, "apps", "app-b"),
+      resolvedApp: {
+        appId: "app-b",
+        mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+        healthCheck: { path: "/health", timeoutS: 60, intervalS: 5 },
+        envContract: [],
+        startCommand: "",
+        baseDir: "apps/app-b",
+        lifecycle: { setup: "", start: "", stop: "" }
+      }
+    },
+    {
+      action: "stop",
+      workspaceId: "workspace-1",
+      appId: "app-b",
+      appDir: path.join(workspaceDir, "apps", "app-b"),
+      resolvedApp: {
+        appId: "app-b",
+        mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+        healthCheck: { path: "/health", timeoutS: 60, intervalS: 5 },
+        envContract: [],
+        startCommand: "",
+        baseDir: "apps/app-b",
+        lifecycle: { setup: "", start: "", stop: "" }
+      }
+    }
   ]);
   assert.equal(fs.existsSync(path.join(workspaceDir, "apps", "app-b")), false);
   assert.equal(store.getAppBuild({ workspaceId: workspace.id, appId: "app-b" }), null);
@@ -1137,12 +1181,33 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
 
 test("lifecycle shutdown route delegates to the lifecycle executor", async () => {
   const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
-    workspaceRoot: path.join(root, "workspace")
+    workspaceRoot
   });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace Apps",
+    harness: "opencode",
+    status: "active"
+  });
+  const workspaceDir = path.join(workspaceRoot, "workspace-1");
+  fs.mkdirSync(path.join(workspaceDir, "apps", "app-a"), { recursive: true });
+  fs.writeFileSync(path.join(workspaceDir, "apps", "app-a", "docker-compose.yml"), "services: {}\n", "utf8");
+  fs.writeFileSync(
+    path.join(workspaceDir, "workspace.yaml"),
+    [
+      "applications:",
+      "  - app_id: app-a",
+      "    config_path: apps/app-a/app.runtime.yaml",
+      "  - app_id: app-b",
+      "    config_path: apps/app-b/app.runtime.yaml"
+    ].join("\n"),
+    "utf8"
+  );
 
-  const calls: string[] = [];
+  const calls: Array<Record<string, unknown>> = [];
   const executor: AppLifecycleExecutorLike = {
     async startApp() {
       throw new Error("not used");
@@ -1150,8 +1215,8 @@ test("lifecycle shutdown route delegates to the lifecycle executor", async () =>
     async stopApp() {
       throw new Error("not used");
     },
-    async shutdownAll() {
-      calls.push("shutdown");
+    async shutdownAll(params = {}) {
+      calls.push({ action: "shutdown", ...params });
       return {
         stopped: ["app-a"],
         failed: ["app-b"]
@@ -1170,7 +1235,12 @@ test("lifecycle shutdown route delegates to the lifecycle executor", async () =>
     stopped: ["app-a"],
     failed: ["app-b"]
   });
-  assert.deepEqual(calls, ["shutdown"]);
+  assert.deepEqual(calls, [
+    {
+      action: "shutdown",
+      targets: [{ appId: "app-a", appDir: path.join(workspaceDir, "apps", "app-a") }]
+    }
+  ]);
 
   await app.close();
   store.close();

@@ -5,7 +5,6 @@ import fs from "node:fs";
 import path from "node:path";
 
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
-import yaml from "js-yaml";
 
 import {
   type AppBuildRecord,
@@ -40,22 +39,33 @@ import {
 import {
   AppLifecycleExecutorError,
   type AppLifecycleExecutorLike,
-  PythonAppLifecycleExecutor
+  RuntimeAppLifecycleExecutor
 } from "./app-lifecycle-worker.js";
 import {
-  MemoryExecutorError,
-  type MemoryExecutorLike,
-  PythonMemoryExecutor
-} from "./memory-worker.js";
+  FilesystemMemoryService,
+  MemoryServiceError,
+  type MemoryServiceLike
+} from "./memory.js";
 import {
   FileRuntimeConfigService,
   RuntimeConfigServiceError,
   type RuntimeConfigServiceLike
 } from "./runtime-config.js";
 import {
+  appendWorkspaceApplication,
+  listWorkspaceComposeShutdownTargets,
+  listWorkspaceApplicationPorts,
+  listWorkspaceApplications,
+  parseInstalledAppRuntime,
+  removeWorkspaceApplication,
+  resolveWorkspaceApp,
+  resolveWorkspaceAppRuntime,
+  type ParsedInstalledApp
+} from "./workspace-apps.js";
+import {
+  NativeRunnerExecutor,
   RunnerExecutorError,
   type RunnerExecutorLike,
-  PythonRunnerExecutor
 } from "./runner-worker.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 50;
@@ -72,7 +82,7 @@ export interface BuildRuntimeApiServerOptions {
   cronWorker?: CronWorkerLike | null;
   bridgeWorker?: BridgeWorkerLike | null;
   appLifecycleExecutor?: AppLifecycleExecutorLike;
-  memoryExecutor?: MemoryExecutorLike;
+  memoryService?: MemoryServiceLike;
   runtimeConfigService?: RuntimeConfigServiceLike;
   runnerExecutor?: RunnerExecutorLike;
 }
@@ -510,16 +520,6 @@ function collectWorkspaceSnapshot(workspaceDir: string) {
   };
 }
 
-type ParsedInstalledApp = {
-  appId: string;
-  configPath: string;
-  lifecycle: {
-    setup: string;
-    start: string;
-    stop: string;
-  };
-};
-
 function appBuildPayload(record: AppBuildRecord): Record<string, unknown> {
   return {
     workspace_id: record.workspaceId,
@@ -531,95 +531,6 @@ function appBuildPayload(record: AppBuildRecord): Record<string, unknown> {
     created_at: record.createdAt,
     updated_at: record.updatedAt
   };
-}
-
-function readWorkspaceYamlDocument(workspaceDir: string): Record<string, unknown> {
-  const workspaceYamlPath = path.join(workspaceDir, "workspace.yaml");
-  if (!fs.existsSync(workspaceYamlPath)) {
-    return {};
-  }
-  const loaded = yaml.load(fs.readFileSync(workspaceYamlPath, "utf8"));
-  return isRecord(loaded) ? loaded : {};
-}
-
-function writeWorkspaceYamlDocument(workspaceDir: string, document: Record<string, unknown>): void {
-  fs.mkdirSync(workspaceDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(workspaceDir, "workspace.yaml"),
-    yaml.dump(document, { sortKeys: false, noRefs: true }),
-    "utf8"
-  );
-}
-
-function updateWorkspaceApplications(
-  workspaceDir: string,
-  updater: (applications: Array<Record<string, unknown>>) => Array<Record<string, unknown>>
-): void {
-  const document = readWorkspaceYamlDocument(workspaceDir);
-  const currentApplications = Array.isArray(document.applications) ? document.applications.filter(isRecord) : [];
-  document.applications = updater([...currentApplications]);
-  writeWorkspaceYamlDocument(workspaceDir, document);
-}
-
-function removeWorkspaceApplication(workspaceDir: string, appId: string): void {
-  updateWorkspaceApplications(workspaceDir, (applications) =>
-    applications.filter((entry) => entry.app_id !== appId)
-  );
-}
-
-function listWorkspaceApplications(workspaceDir: string): Array<Record<string, unknown>> {
-  const document = readWorkspaceYamlDocument(workspaceDir);
-  return Array.isArray(document.applications) ? document.applications.filter(isRecord) : [];
-}
-
-function parseInstalledAppRuntime(rawYaml: string, declaredAppId: string, configPath: string): ParsedInstalledApp {
-  let loaded: unknown;
-  try {
-    loaded = yaml.load(rawYaml);
-  } catch (error) {
-    throw new Error(`invalid YAML: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  if (!isRecord(loaded)) {
-    throw new Error("app.runtime.yaml must be a mapping");
-  }
-  const yamlAppId = String(loaded.app_id ?? "");
-  if (yamlAppId !== declaredAppId) {
-    throw new Error(`app_id in yaml ('${yamlAppId}') does not match declared app_id ('${declaredAppId}')`);
-  }
-  const mcp = isRecord(loaded.mcp) ? loaded.mcp : null;
-  if (mcp?.port === undefined || mcp.port === null || Number.isNaN(Number(mcp.port))) {
-    throw new Error(`mcp.port is required (${configPath})`);
-  }
-  const lifecycle = isRecord(loaded.lifecycle) ? loaded.lifecycle : {};
-  return {
-    appId: declaredAppId,
-    configPath,
-    lifecycle: {
-      setup: typeof lifecycle.setup === "string" ? lifecycle.setup : "",
-      start: typeof lifecycle.start === "string" ? lifecycle.start : "",
-      stop: typeof lifecycle.stop === "string" ? lifecycle.stop : ""
-    }
-  };
-}
-
-function appendWorkspaceApplication(
-  workspaceDir: string,
-  params: { appId: string; configPath: string; lifecycle?: Record<string, string> | null }
-): void {
-  updateWorkspaceApplications(workspaceDir, (applications) => {
-    if (applications.some((entry) => entry.app_id === params.appId)) {
-      return applications;
-    }
-    const nextEntry: Record<string, unknown> = {
-      app_id: params.appId,
-      config_path: params.configPath
-    };
-    if (params.lifecycle && Object.keys(params.lifecycle).length > 0) {
-      nextEntry.lifecycle = params.lifecycle;
-    }
-    applications.push(nextEntry);
-    return applications;
-  });
 }
 
 async function runAppSetup(params: {
@@ -768,10 +679,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
   const app = Fastify({ logger: options.logger ?? false });
   const backgroundTasks = new Set<Promise<void>>();
-  const appLifecycleExecutor = options.appLifecycleExecutor ?? new PythonAppLifecycleExecutor();
-  const memoryExecutor = options.memoryExecutor ?? new PythonMemoryExecutor();
+  const appLifecycleExecutor = options.appLifecycleExecutor ?? new RuntimeAppLifecycleExecutor();
+  const memoryService = options.memoryService ?? new FilesystemMemoryService({ workspaceRoot: store.workspaceRoot });
   const runtimeConfigService = options.runtimeConfigService ?? new FileRuntimeConfigService();
-  const runnerExecutor = options.runnerExecutor ?? new PythonRunnerExecutor();
+  const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
   const queueWorker =
     options.queueWorker === undefined
       ? tsQueueWorkerEnabled()
@@ -787,7 +698,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const bridgeWorker =
     options.bridgeWorker === undefined
       ? tsBridgeWorkerEnabled()
-        ? new RuntimeRemoteBridgeWorker({ logger: app.log })
+        ? new RuntimeRemoteBridgeWorker({ logger: app.log, store, memoryService })
         : null
       : options.bridgeWorker;
 
@@ -849,7 +760,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   app.post("/api/v1/lifecycle/shutdown", async (request, reply) => {
     void request;
     try {
-      return await appLifecycleExecutor.shutdownAll();
+      const targets = store
+        .listWorkspaces()
+        .flatMap((workspace) => listWorkspaceComposeShutdownTargets(store.workspaceDir(workspace.id)));
+      return await appLifecycleExecutor.shutdownAll({ targets });
     } catch (error) {
       if (error instanceof AppLifecycleExecutorError) {
         return sendError(reply, error.statusCode, error.message);
@@ -863,9 +777,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     try {
-      return await memoryExecutor.search(requiredDict(request.body, "body"));
+      return await memoryService.search(requiredDict(request.body, "body"));
     } catch (error) {
-      if (error instanceof MemoryExecutorError) {
+      if (error instanceof MemoryServiceError) {
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "memory search failed");
@@ -877,9 +791,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     try {
-      return await memoryExecutor.get(requiredDict(request.body, "body"));
+      return await memoryService.get(requiredDict(request.body, "body"));
     } catch (error) {
-      if (error instanceof MemoryExecutorError) {
+      if (error instanceof MemoryServiceError) {
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "memory get failed");
@@ -891,9 +805,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     try {
-      return await memoryExecutor.upsert(requiredDict(request.body, "body"));
+      return await memoryService.upsert(requiredDict(request.body, "body"));
     } catch (error) {
-      if (error instanceof MemoryExecutorError) {
+      if (error instanceof MemoryServiceError) {
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "memory upsert failed");
@@ -905,9 +819,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     try {
-      return await memoryExecutor.status(requiredDict(request.body, "body"));
+      return await memoryService.status(requiredDict(request.body, "body"));
     } catch (error) {
-      if (error instanceof MemoryExecutorError) {
+      if (error instanceof MemoryServiceError) {
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "memory status failed");
@@ -919,9 +833,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     try {
-      return await memoryExecutor.sync(requiredDict(request.body, "body"));
+      return await memoryService.sync(requiredDict(request.body, "body"));
     } catch (error) {
-      if (error instanceof MemoryExecutorError) {
+      if (error instanceof MemoryServiceError) {
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "memory sync failed");
@@ -1302,16 +1216,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!workspaceDir || !fs.existsSync(path.join(workspaceDir, "workspace.yaml"))) {
       return {};
     }
-
-    const result: Record<string, { http: number; mcp: number }> = {};
-    for (const [index, entry] of listWorkspaceApplications(workspaceDir).entries()) {
-      const appId = typeof entry.app_id === "string" ? entry.app_id : "";
-      if (!appId) {
-        continue;
-      }
-      result[appId] = portsForAppIndex(index);
-    }
-    return result;
+    return listWorkspaceApplicationPorts(workspaceDir);
   });
 
   app.post("/api/v1/apps/:appId/start", async (request, reply) => {
@@ -1325,10 +1230,30 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     } catch (error) {
       return sendError(reply, 400, error instanceof Error ? error.message : "invalid app_id");
     }
+    const workspaceId = requiredString(request.body.workspace_id, "workspace_id");
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+    const workspaceDir = store.workspaceDir(workspaceId);
+    let resolvedApp;
+    try {
+      resolvedApp = resolveWorkspaceAppRuntime(workspaceDir, appId);
+    } catch (error) {
+      const statusCode =
+        typeof error === "object" && error !== null && "statusCode" in error && typeof (error as { statusCode: unknown }).statusCode === "number"
+          ? (error as { statusCode: number }).statusCode
+          : 400;
+      return sendError(reply, statusCode, error instanceof Error ? error.message : "invalid app metadata");
+    }
     try {
       return await appLifecycleExecutor.startApp({
-        workspaceId: requiredString(request.body.workspace_id, "workspace_id"),
-        appId
+        workspaceId,
+        appId,
+        appDir: resolvedApp.appDir,
+        httpPort: resolvedApp.ports.http,
+        mcpPort: resolvedApp.ports.mcp,
+        resolvedApp: resolvedApp.resolvedApp
       });
     } catch (error) {
       if (error instanceof AppLifecycleExecutorError) {
@@ -1349,10 +1274,28 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     } catch (error) {
       return sendError(reply, 400, error instanceof Error ? error.message : "invalid app_id");
     }
+    const workspaceId = requiredString(request.body.workspace_id, "workspace_id");
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+    const workspaceDir = store.workspaceDir(workspaceId);
+    let resolvedApp;
+    try {
+      resolvedApp = resolveWorkspaceAppRuntime(workspaceDir, appId);
+    } catch (error) {
+      const statusCode =
+        typeof error === "object" && error !== null && "statusCode" in error && typeof (error as { statusCode: unknown }).statusCode === "number"
+          ? (error as { statusCode: number }).statusCode
+          : 400;
+      return sendError(reply, statusCode, error instanceof Error ? error.message : "invalid app metadata");
+    }
     try {
       return await appLifecycleExecutor.stopApp({
-        workspaceId: requiredString(request.body.workspace_id, "workspace_id"),
-        appId
+        workspaceId,
+        appId,
+        appDir: resolvedApp.appDir,
+        resolvedApp: resolvedApp.resolvedApp
       });
     } catch (error) {
       if (error instanceof AppLifecycleExecutorError) {
@@ -1573,14 +1516,20 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!workspace) {
       return sendError(reply, 404, "workspace not found");
     }
+    const workspaceDir = store.workspaceDir(workspaceId);
 
     try {
-      await appLifecycleExecutor.stopApp({ workspaceId, appId });
+      const resolvedApp = resolveWorkspaceAppRuntime(workspaceDir, appId);
+      await appLifecycleExecutor.stopApp({
+        workspaceId,
+        appId,
+        appDir: resolvedApp.appDir,
+        resolvedApp: resolvedApp.resolvedApp
+      });
     } catch {
       app.log.debug({ workspaceId, appId }, "best-effort app stop failed during uninstall");
     }
 
-    const workspaceDir = store.workspaceDir(workspaceId);
     fs.rmSync(path.join(workspaceDir, "apps", appId), { recursive: true, force: true });
     removeWorkspaceApplication(workspaceDir, appId);
     store.deleteAppBuild({ workspaceId, appId });

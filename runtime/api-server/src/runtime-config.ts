@@ -26,7 +26,7 @@ const DEFAULT_OPENCODE_READY_TIMEOUT_S = 30;
 
 type StringMap = Record<string, unknown>;
 
-type ProductRuntimeConfig = {
+export type ProductRuntimeConfig = {
   authToken: string;
   userId: string;
   sandboxId: string;
@@ -304,7 +304,7 @@ function defaultProvider(payload: Record<string, string>): string {
   return payload.default_provider || "";
 }
 
-function resolveProductRuntimeConfig(params?: {
+export function resolveProductRuntimeConfig(params?: {
   requireAuth?: boolean;
   requireUser?: boolean;
   requireBaseUrl?: boolean;

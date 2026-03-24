@@ -54,7 +54,6 @@ from sandbox_agent_runtime.api_models import (
 from sandbox_agent_runtime.control_plane_api import (
     cron_scheduler_state as _cron_scheduler_state_impl,
     local_worker_state as _local_worker_state_impl,
-    python_bridge_worker_enabled as _python_bridge_worker_enabled_impl,
     python_cron_worker_enabled as _python_cron_worker_enabled_impl,
     python_queue_worker_enabled as _python_queue_worker_enabled_impl,
     shutdown_worker_control_plane as _shutdown_worker_control_plane_impl,
@@ -183,10 +182,6 @@ def _python_cron_worker_enabled() -> bool:
 
 def _ts_bridge_worker_enabled() -> bool:
     return _ts_bridge_worker_enabled_impl(ts_api_server_enabled=_ts_api_server_enabled())
-
-
-def _python_bridge_worker_enabled() -> bool:
-    return _python_bridge_worker_enabled_impl(ts_api_server_enabled=_ts_api_server_enabled())
 
 
 @app.on_event("startup")

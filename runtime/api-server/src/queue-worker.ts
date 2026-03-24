@@ -1,7 +1,8 @@
-import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { type RuntimeStateStore, type SessionInputRecord } from "@holaboss/runtime-state-store";
+
+import { processClaimedInput } from "./claimed-input-executor.js";
 
 const TS_QUEUE_WORKER_FLAG_ENV = "HOLABOSS_RUNTIME_USE_TS_QUEUE_WORKER";
 const DEFAULT_CLAIMED_BY = "sandbox-agent-ts-worker";
@@ -26,11 +27,6 @@ export interface RuntimeQueueWorkerOptions {
   pollIntervalMs?: number;
 }
 
-function envFlagEnabled(name: string): boolean {
-  const raw = (process.env[name] ?? "").trim().toLowerCase();
-  return ["1", "true", "yes", "on"].includes(raw);
-}
-
 function envFlagDisabled(name: string): boolean {
   const raw = (process.env[name] ?? "").trim().toLowerCase();
   return ["0", "false", "no", "off"].includes(raw);
@@ -41,48 +37,6 @@ export function tsQueueWorkerEnabled(): boolean {
     return false;
   }
   return true;
-}
-
-function runtimeAppRoot(): string {
-  const configured = (process.env.HOLABOSS_RUNTIME_APP_ROOT ?? "").trim();
-  return configured || process.cwd();
-}
-
-function runtimePythonBin(): string {
-  const configured = (process.env.HOLABOSS_RUNTIME_PYTHON ?? "").trim();
-  return configured || "python";
-}
-
-export async function executeClaimedInputWithPython(record: SessionInputRecord): Promise<void> {
-  const cwd = runtimeAppRoot();
-  const pythonBin = runtimePythonBin();
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(
-      pythonBin,
-      ["-m", "sandbox_agent_runtime.worker_executor", "--input-id", record.inputId],
-      {
-        cwd,
-        env: process.env,
-        stdio: ["ignore", "ignore", "pipe"]
-      }
-    );
-    let stderr = "";
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
-    });
-    child.on("error", (error) => {
-      reject(error);
-    });
-    child.on("close", (code) => {
-      if ((code ?? 0) === 0) {
-        resolve();
-        return;
-      }
-      const suffix = stderr.trim() ? `: ${stderr.trim()}` : "";
-      reject(new Error(`python worker executor exited with code ${code ?? 0}${suffix}`));
-    });
-  });
 }
 
 export class RuntimeQueueWorker implements QueueWorkerLike {
@@ -99,8 +53,15 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
   constructor(options: RuntimeQueueWorkerOptions) {
     this.#store = options.store;
     this.#logger = options.logger;
-    this.#executeClaimedInput = options.executeClaimedInput ?? executeClaimedInputWithPython;
     this.#claimedBy = options.claimedBy ?? DEFAULT_CLAIMED_BY;
+    this.#executeClaimedInput =
+      options.executeClaimedInput ??
+      ((record) =>
+        processClaimedInput({
+          store: this.#store,
+          record,
+          claimedBy: this.#claimedBy
+        }));
     this.#leaseSeconds = options.leaseSeconds ?? DEFAULT_LEASE_SECONDS;
     this.#pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   }

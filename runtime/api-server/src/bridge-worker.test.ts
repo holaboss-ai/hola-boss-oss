@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 
+import { RuntimeStateStore } from "@holaboss/runtime-state-store";
+
+import { FilesystemMemoryService } from "./memory.js";
 import {
   RuntimeRemoteBridgeWorker,
   bridgeEnabled,
   bridgeMaxItems,
   bridgePollIntervalMs,
+  executeBridgeJobNatively,
+  proactiveBridgeBaseUrl,
   proactiveBridgeHeaders,
   tsBridgeWorkerEnabled
 } from "./bridge-worker.js";
@@ -40,17 +48,22 @@ test("bridge helpers read headers and env settings", () => {
   const previousUser = process.env.HOLABOSS_USER_ID;
   const previousPoll = process.env.PROACTIVE_BRIDGE_POLL_INTERVAL_SECONDS;
   const previousMax = process.env.PROACTIVE_BRIDGE_MAX_ITEMS;
+  const previousBridgeBase = process.env.PROACTIVE_BRIDGE_BASE_URL;
+  const previousBackendBase = process.env.HOLABOSS_BACKEND_BASE_URL;
 
   delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
   process.env.HOLABOSS_SANDBOX_AUTH_TOKEN = "token-1";
   process.env.HOLABOSS_USER_ID = "user-1";
   process.env.PROACTIVE_BRIDGE_POLL_INTERVAL_SECONDS = "0.1";
   process.env.PROACTIVE_BRIDGE_MAX_ITEMS = "200";
+  delete process.env.PROACTIVE_BRIDGE_BASE_URL;
+  process.env.HOLABOSS_BACKEND_BASE_URL = "https://backend.example/";
 
   assert.deepEqual(proactiveBridgeHeaders(), {
     "X-API-Key": "token-1",
     "X-Holaboss-User-Id": "user-1"
   });
+  assert.equal(proactiveBridgeBaseUrl(), "https://backend.example:3032");
   assert.equal(bridgePollIntervalMs(), 500);
   assert.equal(bridgeMaxItems(), 100);
 
@@ -78,6 +91,37 @@ test("bridge helpers read headers and env settings", () => {
     delete process.env.PROACTIVE_BRIDGE_MAX_ITEMS;
   } else {
     process.env.PROACTIVE_BRIDGE_MAX_ITEMS = previousMax;
+  }
+  if (previousBridgeBase === undefined) {
+    delete process.env.PROACTIVE_BRIDGE_BASE_URL;
+  } else {
+    process.env.PROACTIVE_BRIDGE_BASE_URL = previousBridgeBase;
+  }
+  if (previousBackendBase === undefined) {
+    delete process.env.HOLABOSS_BACKEND_BASE_URL;
+  } else {
+    process.env.HOLABOSS_BACKEND_BASE_URL = previousBackendBase;
+  }
+});
+
+test("explicit proactive bridge base url overrides backend base url", () => {
+  const previousBridgeBase = process.env.PROACTIVE_BRIDGE_BASE_URL;
+  const previousBackendBase = process.env.HOLABOSS_BACKEND_BASE_URL;
+
+  process.env.PROACTIVE_BRIDGE_BASE_URL = "https://proactive.example/";
+  process.env.HOLABOSS_BACKEND_BASE_URL = "https://backend.example/";
+
+  assert.equal(proactiveBridgeBaseUrl(), "https://proactive.example");
+
+  if (previousBridgeBase === undefined) {
+    delete process.env.PROACTIVE_BRIDGE_BASE_URL;
+  } else {
+    process.env.PROACTIVE_BRIDGE_BASE_URL = previousBridgeBase;
+  }
+  if (previousBackendBase === undefined) {
+    delete process.env.HOLABOSS_BACKEND_BASE_URL;
+  } else {
+    process.env.HOLABOSS_BACKEND_BASE_URL = previousBackendBase;
   }
 });
 
@@ -140,4 +184,110 @@ test("runtime remote bridge worker polls jobs and reports results", async () => 
   } else {
     process.env.HOLABOSS_SANDBOX_AUTH_TOKEN = previousAuth;
   }
+});
+
+test("executeBridgeJobNatively creates task proposals in the TS state store", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hb-bridge-worker-"));
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace One",
+    harness: "opencode",
+    status: "active"
+  });
+  const memoryService = new FilesystemMemoryService({ workspaceRoot });
+
+  const result = await executeBridgeJobNatively({
+    job: {
+      job_id: "job-1",
+      job_type: "task_proposal.create",
+      workspace_id: "workspace-1",
+      payload: {
+        workspace_id: "workspace-1",
+        task_name: "Review workspace",
+        task_prompt: "Review the current workspace.",
+        task_generation_rationale: "Bridge test"
+      }
+    },
+    store,
+    memoryService
+  });
+
+  assert.equal(result.status, "succeeded");
+  assert.deepEqual(result.output, { proposal_id: "job-1" });
+  assert.equal(store.getTaskProposal("job-1")?.taskName, "Review workspace");
+  store.close();
+});
+
+test("executeBridgeJobNatively supports memory operations", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hb-bridge-memory-"));
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace One",
+    harness: "opencode",
+    status: "active"
+  });
+  const memoryService = new FilesystemMemoryService({ workspaceRoot });
+
+  const upsert = await executeBridgeJobNatively({
+    job: {
+      job_id: "job-upsert",
+      job_type: "workspace.memory.upsert",
+      workspace_id: "workspace-1",
+      payload: {
+        workspace_id: "workspace-1",
+        path: "workspace/workspace-1/notes.md",
+        content: "campaign plan",
+        append: false
+      }
+    },
+    store,
+    memoryService
+  });
+  const search = await executeBridgeJobNatively({
+    job: {
+      job_id: "job-search",
+      job_type: "workspace.memory.search",
+      workspace_id: "workspace-1",
+      payload: {
+        workspace_id: "workspace-1",
+        query: "campaign",
+        max_results: 5,
+        min_score: 0
+      }
+    },
+    store,
+    memoryService
+  });
+  const refresh = await executeBridgeJobNatively({
+    job: {
+      job_id: "job-refresh",
+      job_type: "workspace.memory.refresh",
+      workspace_id: "workspace-1",
+      payload: {
+        workspace_id: "workspace-1",
+        reason: "bridge_refresh",
+        force: true
+      }
+    },
+    store,
+    memoryService
+  });
+
+  assert.equal(upsert.status, "succeeded");
+  assert.equal(upsert.output?.path, "workspace/workspace-1/notes.md");
+  assert.equal(search.status, "succeeded");
+  assert.ok(Array.isArray(search.output?.results));
+  assert.equal(refresh.status, "succeeded");
+  assert.equal(refresh.output?.alias, "workspace.memory.sync");
+  store.close();
 });

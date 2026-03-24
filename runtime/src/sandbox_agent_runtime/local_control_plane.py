@@ -19,12 +19,6 @@ class CronSchedulerState:
     task: asyncio.Task[Any] | None = None
 
 
-@dataclass
-class RemoteBridgeState:
-    stop_event: asyncio.Event
-    task: asyncio.Task[Any] | None = None
-
-
 def local_worker_state_for_app(app: Any) -> LocalWorkerState:
     state = getattr(app.state, "local_worker_state", None)
     if state is None:
@@ -41,14 +35,6 @@ def cron_scheduler_state_for_app(app: Any) -> CronSchedulerState:
     return state
 
 
-def remote_bridge_state_for_app(app: Any) -> RemoteBridgeState:
-    state = getattr(app.state, "remote_bridge_state", None)
-    if state is None:
-        state = RemoteBridgeState(stop_event=asyncio.Event())
-        app.state.remote_bridge_state = state
-    return state
-
-
 def wake_local_worker_for_app(app: Any) -> None:
     local_worker_state_for_app(app).wake_event.set()
 
@@ -60,8 +46,6 @@ async def startup_local_control_plane(
     cron_scheduler_loop: Callable[[], Awaitable[None]],
     local_worker_enabled: Callable[[], bool],
     cron_scheduler_enabled: Callable[[], bool],
-    remote_bridge_enabled: Callable[[], bool],
-    create_remote_bridge_runner: Callable[[asyncio.Event], Awaitable[Any]],
     logger: Any,
 ) -> None:
     if local_worker_enabled():
@@ -75,13 +59,7 @@ async def startup_local_control_plane(
         cron_state.stop_event.clear()
         if cron_state.task is None or cron_state.task.done():
             cron_state.task = asyncio.create_task(cron_scheduler_loop())
-
-    bridge_state = remote_bridge_state_for_app(app)
-    bridge_state.stop_event.clear()
-    if remote_bridge_enabled() and (bridge_state.task is None or bridge_state.task.done()):
-        bridge_state.task = asyncio.create_task(create_remote_bridge_runner(bridge_state.stop_event))
-    elif not remote_bridge_enabled():
-        logger.info("Remote proactive bridge disabled in local runtime")
+    logger.info("Python proactive bridge fallback disabled; TS bridge worker owns remote bridge execution")
 
 
 async def shutdown_local_control_plane(
@@ -111,12 +89,3 @@ async def shutdown_local_control_plane(
             cron_task.cancel()
             with suppress(asyncio.CancelledError):
                 await cron_task
-
-    bridge_state = remote_bridge_state_for_app(app)
-    bridge_state.stop_event.set()
-    bridge_task = bridge_state.task
-    bridge_state.task = None
-    if bridge_task is not None:
-        bridge_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await bridge_task
