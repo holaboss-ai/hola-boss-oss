@@ -12,7 +12,7 @@ import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 import { buildRuntimeApiServer, type BuildRuntimeApiServerOptions } from "./app.js";
 import type { AppLifecycleExecutorLike } from "./app-lifecycle-worker.js";
 import type { MemoryExecutorLike } from "./memory-worker.js";
-import type { RuntimeConfigExecutorLike } from "./runtime-config-worker.js";
+import type { RuntimeConfigServiceLike } from "./runtime-config.js";
 import type { RunnerExecutorLike } from "./runner-worker.js";
 
 const tempDirs: string[] = [];
@@ -61,7 +61,7 @@ test("runtime config routes delegate to the runtime config executor", async () =
     workspaceRoot: path.join(root, "workspace")
   });
   const calls: string[] = [];
-  const runtimeConfigExecutor: RuntimeConfigExecutorLike = {
+  const runtimeConfigService: RuntimeConfigServiceLike = {
     async getConfig() {
       calls.push("get-config");
       return {
@@ -111,7 +111,7 @@ test("runtime config routes delegate to the runtime config executor", async () =
       };
     }
   };
-  const app = buildTestRuntimeApiServer({ store, runtimeConfigExecutor });
+  const app = buildTestRuntimeApiServer({ store, runtimeConfigService });
 
   const config = await app.inject({
     method: "GET",

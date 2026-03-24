@@ -1,18 +1,13 @@
 import { spawn } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+
+import { runtimeConfigHeaders } from "./runtime-config.js";
 
 const TS_BRIDGE_WORKER_FLAG_ENV = "HOLABOSS_RUNTIME_USE_TS_BRIDGE_WORKER";
 const PROACTIVE_ENABLE_REMOTE_BRIDGE_ENV = "PROACTIVE_ENABLE_REMOTE_BRIDGE";
 const PROACTIVE_BRIDGE_BASE_URL_ENV = "PROACTIVE_BRIDGE_BASE_URL";
 const PROACTIVE_BRIDGE_POLL_INTERVAL_SECONDS_ENV = "PROACTIVE_BRIDGE_POLL_INTERVAL_SECONDS";
 const PROACTIVE_BRIDGE_MAX_ITEMS_ENV = "PROACTIVE_BRIDGE_MAX_ITEMS";
-const HOLABOSS_RUNTIME_CONFIG_PATH_ENV = "HOLABOSS_RUNTIME_CONFIG_PATH";
-const HB_SANDBOX_ROOT_ENV = "HB_SANDBOX_ROOT";
-const HOLABOSS_SANDBOX_AUTH_TOKEN_ENV = "HOLABOSS_SANDBOX_AUTH_TOKEN";
-const HOLABOSS_USER_ID_ENV = "HOLABOSS_USER_ID";
 
 type LoggerLike = {
   info: (message: string, ...args: unknown[]) => void;
@@ -94,23 +89,6 @@ export function bridgeMaxItems(): number {
   return Math.min(Math.max(parsed, 1), 100);
 }
 
-function runtimeConfigPath(): string {
-  const explicit = (process.env[HOLABOSS_RUNTIME_CONFIG_PATH_ENV] ?? "").trim();
-  if (explicit) {
-    return path.resolve(explicit);
-  }
-  const sandboxRoot = (process.env[HB_SANDBOX_ROOT_ENV] ?? "").trim() || "/holaboss";
-  return path.join(sandboxRoot, "state", "runtime-config.json");
-}
-
-function normalizeString(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function asObject(value: unknown): Record<string, unknown> {
-  return isRecord(value) ? value : {};
-}
-
 function isProactiveBridgeJob(value: unknown): value is ProactiveBridgeJob {
   if (!isRecord(value)) {
     return false;
@@ -135,50 +113,8 @@ function isProactiveBridgeJobResult(value: unknown): value is ProactiveBridgeJob
   );
 }
 
-function loadRuntimeConfigDocument(): Record<string, unknown> {
-  const configPath = runtimeConfigPath();
-  if (!fs.existsSync(configPath)) {
-    return {};
-  }
-  const raw = fs.readFileSync(configPath, "utf8");
-  const parsed = JSON.parse(raw);
-  return isRecord(parsed) ? parsed : {};
-}
-
 export function proactiveBridgeHeaders(): Record<string, string> {
-  const document = loadRuntimeConfigDocument();
-  const runtimePayload = asObject(document.runtime);
-  const providersPayload = asObject(document.providers);
-  const integrationsPayload = asObject(document.integrations);
-  const holabossIntegration = asObject(integrationsPayload.holaboss);
-  const holabossProvider = asObject(providersPayload.holaboss_model_proxy);
-  const legacyPayload = Object.keys(asObject(document.holaboss)).length > 0 ? asObject(document.holaboss) : document;
-
-  const authToken =
-    normalizeString(holabossIntegration.auth_token) ||
-    normalizeString(holabossProvider.api_key) ||
-    normalizeString(legacyPayload.auth_token) ||
-    normalizeString(legacyPayload.model_proxy_api_key) ||
-    normalizeString(process.env[HOLABOSS_SANDBOX_AUTH_TOKEN_ENV]);
-  const userId =
-    normalizeString(holabossIntegration.user_id) ||
-    normalizeString(legacyPayload.user_id) ||
-    normalizeString(process.env[HOLABOSS_USER_ID_ENV]);
-  const sandboxId =
-    normalizeString(runtimePayload.sandbox_id) ||
-    normalizeString(holabossIntegration.sandbox_id) ||
-    normalizeString(legacyPayload.sandbox_id);
-
-  const headers: Record<string, string> = {};
-  if (authToken) {
-    headers["X-API-Key"] = authToken;
-  }
-  if (userId) {
-    headers["X-Holaboss-User-Id"] = userId;
-  }
-  if (sandboxId) {
-    headers["X-Holaboss-Sandbox-Id"] = sandboxId;
-  }
+  const headers = runtimeConfigHeaders({ requireAuth: true, requireUser: false });
   if (!headers["X-API-Key"]) {
     throw new Error("Runtime bridge auth token is not configured");
   }

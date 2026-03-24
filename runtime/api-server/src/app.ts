@@ -48,10 +48,10 @@ import {
   PythonMemoryExecutor
 } from "./memory-worker.js";
 import {
-  RuntimeConfigExecutorError,
-  type RuntimeConfigExecutorLike,
-  PythonRuntimeConfigExecutor
-} from "./runtime-config-worker.js";
+  FileRuntimeConfigService,
+  RuntimeConfigServiceError,
+  type RuntimeConfigServiceLike
+} from "./runtime-config.js";
 import {
   RunnerExecutorError,
   type RunnerExecutorLike,
@@ -73,7 +73,7 @@ export interface BuildRuntimeApiServerOptions {
   bridgeWorker?: BridgeWorkerLike | null;
   appLifecycleExecutor?: AppLifecycleExecutorLike;
   memoryExecutor?: MemoryExecutorLike;
-  runtimeConfigExecutor?: RuntimeConfigExecutorLike;
+  runtimeConfigService?: RuntimeConfigServiceLike;
   runnerExecutor?: RunnerExecutorLike;
 }
 
@@ -770,7 +770,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const backgroundTasks = new Set<Promise<void>>();
   const appLifecycleExecutor = options.appLifecycleExecutor ?? new PythonAppLifecycleExecutor();
   const memoryExecutor = options.memoryExecutor ?? new PythonMemoryExecutor();
-  const runtimeConfigExecutor = options.runtimeConfigExecutor ?? new PythonRuntimeConfigExecutor();
+  const runtimeConfigService = options.runtimeConfigService ?? new FileRuntimeConfigService();
   const runnerExecutor = options.runnerExecutor ?? new PythonRunnerExecutor();
   const queueWorker =
     options.queueWorker === undefined
@@ -811,9 +811,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   app.get("/api/v1/runtime/config", async (request, reply) => {
     void request;
     try {
-      return await runtimeConfigExecutor.getConfig();
+      return await runtimeConfigService.getConfig();
     } catch (error) {
-      if (error instanceof RuntimeConfigExecutorError) {
+      if (error instanceof RuntimeConfigServiceError) {
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "runtime config failed");
@@ -823,9 +823,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   app.get("/api/v1/runtime/status", async (request, reply) => {
     void request;
     try {
-      return await runtimeConfigExecutor.getStatus();
+      return await runtimeConfigService.getStatus();
     } catch (error) {
-      if (error instanceof RuntimeConfigExecutorError) {
+      if (error instanceof RuntimeConfigServiceError) {
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "runtime status failed");
@@ -837,9 +837,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     try {
-      return await runtimeConfigExecutor.updateConfig(requiredDict(request.body, "body"));
+      return await runtimeConfigService.updateConfig(requiredDict(request.body, "body"));
     } catch (error) {
-      if (error instanceof RuntimeConfigExecutorError) {
+      if (error instanceof RuntimeConfigServiceError) {
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "runtime config update failed");
