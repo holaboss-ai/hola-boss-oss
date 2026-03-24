@@ -97,10 +97,35 @@ function payloadForEvent(event: RunnerEvent): Record<string, unknown> {
   return isRecord(event.payload) ? event.payload : {};
 }
 
+function maybePersistHarnessSessionId(params: {
+  store: RuntimeStateStore;
+  workspaceId: string;
+  sessionId: string;
+  harness: string;
+  eventType: string;
+  payload: Record<string, unknown>;
+}): void {
+  if (!["run_completed", "run_failed"].includes(params.eventType)) {
+    return;
+  }
+  const harnessSessionId = params.payload.harness_session_id;
+  if (typeof harnessSessionId !== "string" || !harnessSessionId.trim()) {
+    return;
+  }
+  params.store.upsertBinding({
+    workspaceId: params.workspaceId,
+    sessionId: params.sessionId,
+    harness: params.harness,
+    harnessSessionId: harnessSessionId.trim()
+  });
+}
+
 export async function processClaimedInput(params: {
   store: RuntimeStateStore;
   record: SessionInputRecord;
   claimedBy?: string;
+  executeRunnerRequestFn?: typeof executeRunnerRequest;
+  resolveProductRuntimeConfigFn?: typeof resolveProductRuntimeConfig;
 }): Promise<void> {
   const { store, record } = params;
   const workspace = store.getWorkspace(record.workspaceId);
@@ -150,7 +175,8 @@ export async function processClaimedInput(params: {
   const priorExecContext = isRecord(runtimeContext[RUNTIME_EXEC_CONTEXT_KEY])
     ? { ...runtimeContext[RUNTIME_EXEC_CONTEXT_KEY] }
     : {};
-  const runtimeBinding = resolveProductRuntimeConfig({
+  const resolveRuntimeConfig = params.resolveProductRuntimeConfigFn ?? resolveProductRuntimeConfig;
+  const runtimeBinding = resolveRuntimeConfig({
     requireAuth: false,
     requireUser: false,
     requireBaseUrl: false
@@ -184,7 +210,8 @@ export async function processClaimedInput(params: {
   let lastSequence = 0;
 
   try {
-    const execution = await executeRunnerRequest(payload, {
+    const executeRunner = params.executeRunnerRequestFn ?? executeRunnerRequest;
+    const execution = await executeRunner(payload, {
       onEvent: async (event) => {
         const sequence = typeof event.sequence === "number" ? event.sequence : 0;
         lastSequence = Math.max(lastSequence, sequence);
@@ -197,6 +224,14 @@ export async function processClaimedInput(params: {
           eventType: typeof event.event_type === "string" ? event.event_type : "unknown",
           payload: eventPayload,
           createdAt: createdAtForEvent(event)
+        });
+        maybePersistHarnessSessionId({
+          store,
+          workspaceId: record.workspaceId,
+          sessionId: record.sessionId,
+          harness,
+          eventType: typeof event.event_type === "string" ? event.event_type : "unknown",
+          payload: eventPayload
         });
         if (event.event_type === "output_delta" && typeof eventPayload.delta === "string") {
           assistantParts.push(eventPayload.delta);

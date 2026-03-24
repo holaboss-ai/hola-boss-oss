@@ -6,7 +6,6 @@ import asyncio
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -15,9 +14,7 @@ from fastapi.responses import Response, StreamingResponse
 from sandbox_agent_runtime import api as api_module
 from sandbox_agent_runtime.api import app
 from sandbox_agent_runtime.runtime_local_state import (
-    claim_inputs,
     create_workspace,
-    enqueue_input,
     get_input,
     list_runtime_states,
 )
@@ -41,9 +38,6 @@ mcp:
 @pytest.mark.asyncio
 async def test_runner_routes_proxy_to_ts_api_when_enabled(monkeypatch: pytest.MonkeyPatch, runtime_db_env: Path) -> None:
     del runtime_db_env
-
-    async def _fake_worker_loop() -> None:
-        await asyncio.sleep(0)
 
     captured_json: list[dict[str, object]] = []
     captured_stream: list[dict[str, object]] = []
@@ -82,7 +76,6 @@ async def test_runner_routes_proxy_to_ts_api_when_enabled(monkeypatch: pytest.Mo
             media_type="text/event-stream",
         )
 
-    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
     monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy_json)
     monkeypatch.setattr(api_module, "_proxy_ts_api_stream", _fake_proxy_stream)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
@@ -150,14 +143,84 @@ async def test_runner_routes_proxy_to_ts_api_when_enabled(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
-async def test_memory_routes_proxy_to_ts_api_when_enabled(
+async def test_opencode_app_bootstrap_route_proxies_to_ts_api_when_enabled(
     monkeypatch: pytest.MonkeyPatch,
     runtime_db_env: Path,
 ) -> None:
     del runtime_db_env
 
-    async def _fake_worker_loop() -> None:
-        await asyncio.sleep(0)
+    captured: list[dict[str, object]] = []
+
+    async def _fake_proxy(method: str, path: str, *, params=None, json_body=None):
+        captured.append({
+            "method": method,
+            "path": path,
+            "params": params,
+            "json_body": json_body,
+        })
+        return Response(
+            content=json.dumps({
+                "applications": [
+                    {"app_id": "app-a", "mcp_url": "http://localhost:13100/mcp", "timeout_ms": 60000}
+                ]
+            }).encode("utf-8"),
+            media_type="application/json",
+        )
+
+    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/internal/workspaces/workspace-1/opencode-apps/start",
+            json={
+                "workspace_dir": "/tmp/workspace-1",
+                "holaboss_user_id": "user-1",
+                "resolved_applications": [
+                    {
+                        "app_id": "app-a",
+                        "mcp": {"transport": "http-sse", "port": 3099, "path": "/mcp"},
+                        "health_check": {"path": "/health", "timeout_s": 60, "interval_s": 5},
+                        "env_contract": ["HOLABOSS_USER_ID"],
+                        "start_command": "",
+                        "base_dir": "apps/app-a",
+                        "lifecycle": {"setup": "", "start": "npm run start", "stop": "npm run stop"},
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["applications"][0]["app_id"] == "app-a"
+    assert captured == [{
+        "method": "POST",
+        "path": "/api/v1/internal/workspaces/workspace-1/opencode-apps/start",
+        "params": None,
+        "json_body": {
+            "workspace_dir": "/tmp/workspace-1",
+            "holaboss_user_id": "user-1",
+            "resolved_applications": [
+                {
+                    "app_id": "app-a",
+                    "mcp": {"transport": "http-sse", "port": 3099, "path": "/mcp"},
+                    "health_check": {"path": "/health", "timeout_s": 60, "interval_s": 5},
+                    "env_contract": ["HOLABOSS_USER_ID"],
+                    "start_command": "",
+                    "base_dir": "apps/app-a",
+                    "lifecycle": {"setup": "", "start": "npm run start", "stop": "npm run stop"},
+                }
+            ],
+        },
+    }]
+
+
+@pytest.mark.asyncio
+async def test_memory_routes_proxy_to_ts_api_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    runtime_db_env: Path,
+) -> None:
+    del runtime_db_env
 
     captured: list[dict[str, object]] = []
 
@@ -180,7 +243,6 @@ async def test_memory_routes_proxy_to_ts_api_when_enabled(
             payload = {"workspace_id": "workspace-1", "queued": True}
         return Response(content=json.dumps(payload).encode("utf-8"), media_type="application/json")
 
-    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
     monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
@@ -275,9 +337,6 @@ async def test_runtime_config_and_status_routes_proxy_to_ts_api_when_enabled(
 ) -> None:
     del runtime_db_env
 
-    async def _fake_worker_loop() -> None:
-        await asyncio.sleep(0)
-
     captured: list[dict[str, object]] = []
 
     async def _fake_proxy(method: str, path: str, *, params=None, json_body=None):
@@ -316,7 +375,6 @@ async def test_runtime_config_and_status_routes_proxy_to_ts_api_when_enabled(
             }
         return Response(content=json.dumps(payload).encode("utf-8"), media_type="application/json")
 
-    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
     monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
@@ -403,9 +461,6 @@ async def test_app_ports_endpoint_proxies_to_ts_api_when_enabled(
 ) -> None:
     del runtime_db_env
 
-    async def _fake_worker_loop() -> None:
-        await asyncio.sleep(0)
-
     captured: list[dict[str, object]] = []
 
     async def _fake_proxy(method: str, path: str, *, params=None, json_body=None):
@@ -423,7 +478,6 @@ async def test_app_ports_endpoint_proxies_to_ts_api_when_enabled(
             media_type="application/json",
         )
 
-    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
     monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
@@ -450,9 +504,6 @@ async def test_app_lifecycle_routes_proxy_to_ts_api_when_enabled(
     runtime_db_env: Path,
 ) -> None:
     del runtime_db_env
-
-    async def _fake_worker_loop() -> None:
-        await asyncio.sleep(0)
 
     captured: list[dict[str, object]] = []
 
@@ -486,7 +537,6 @@ async def test_app_lifecycle_routes_proxy_to_ts_api_when_enabled(
             }
         return Response(content=json.dumps(payload).encode("utf-8"), media_type="application/json")
 
-    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
     monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
@@ -528,9 +578,6 @@ async def test_lifecycle_shutdown_route_proxies_to_ts_api_when_enabled(
 ) -> None:
     del runtime_db_env
 
-    async def _fake_worker_loop() -> None:
-        await asyncio.sleep(0)
-
     captured: list[dict[str, object]] = []
 
     async def _fake_proxy(method: str, path: str, *, params=None, json_body=None):
@@ -545,7 +592,6 @@ async def test_lifecycle_shutdown_route_proxies_to_ts_api_when_enabled(
             media_type="application/json",
         )
 
-    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
     monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
@@ -564,16 +610,60 @@ async def test_lifecycle_shutdown_route_proxies_to_ts_api_when_enabled(
 
 
 @pytest.mark.asyncio
+async def test_internal_opencode_app_start_route_proxies_to_ts_api_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    runtime_db_env: Path,
+) -> None:
+    del runtime_db_env
+
+    captured: list[dict[str, object]] = []
+
+    async def _fake_proxy(method: str, path: str, *, params=None, json_body=None):
+        captured.append({
+            "method": method,
+            "path": path,
+            "params": params,
+            "json_body": json_body,
+        })
+        return Response(
+            content=json.dumps({"items": []}).encode("utf-8"),
+            media_type="application/json",
+        )
+
+    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/internal/workspaces/workspace-1/opencode-apps/start",
+            json={
+                "workspace_dir": "/tmp/workspace-1",
+                "holaboss_user_id": "user-1",
+                "resolved_applications": [{"app_id": "app-a"}],
+            },
+        )
+
+    assert response.status_code == 200
+    assert captured == [{
+        "method": "POST",
+        "path": "/api/v1/internal/workspaces/workspace-1/opencode-apps/start",
+        "params": None,
+        "json_body": {
+            "workspace_dir": "/tmp/workspace-1",
+            "holaboss_user_id": "user-1",
+            "resolved_applications": [{"app_id": "app-a"}],
+        },
+    }]
+
+
+@pytest.mark.asyncio
 async def test_queue_endpoint_persists_local_input_and_runtime_state(
     monkeypatch: pytest.MonkeyPatch,
     runtime_db_env: Path,
 ) -> None:
     del runtime_db_env
 
-    async def _fake_worker_loop() -> None:
-        await asyncio.sleep(0)
-
-    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
     workspace = create_workspace(
         name="Workspace 1",
         harness="opencode",
@@ -606,68 +696,11 @@ async def test_queue_endpoint_persists_local_input_and_runtime_state(
 
 
 @pytest.mark.asyncio
-async def test_process_claimed_input_hydrates_runtime_exec_context_from_runtime_config(
-    monkeypatch: pytest.MonkeyPatch,
-    runtime_db_env: Path,
-) -> None:
-    del runtime_db_env
-    workspace = create_workspace(
-        name="Workspace hydrate context",
-        harness="opencode",
-        status="active",
-        main_session_id="session-main",
-    )
-    queued = enqueue_input(
-        workspace_id=workspace.id,
-        session_id="session-main",
-        payload={"text": "hello", "context": {}},
-    )
-    claimed = claim_inputs(limit=1, claimed_by="test-worker", lease_seconds=60)
-    assert claimed
-    record = claimed[0]
-    assert record.input_id == queued.input_id
-
-    captured_context: dict[str, object] = {}
-
-    async def _fake_execute_runner_request(request, on_event=None):
-        del on_event
-        captured_context.update(request.context)
-        return api_module._RunnerExecutionResult(
-            events=[],
-            skipped_lines=[],
-            stderr="",
-            return_code=0,
-            saw_terminal=True,
-        )
-
-    monkeypatch.setattr(
-        "sandbox_agent_runtime.local_execution_service.execute_local_runner_request",
-        _fake_execute_runner_request,
-    )
-    monkeypatch.setattr(
-        "sandbox_agent_runtime.local_execution_service.resolve_product_runtime_config",
-        lambda **kwargs: SimpleNamespace(auth_token="token-1", sandbox_id="sandbox-1"),  # noqa: S106
-    )
-
-    await api_module._process_claimed_input(record)
-
-    runtime_context = captured_context["_sandbox_runtime_exec_v1"]
-    assert isinstance(runtime_context, dict)
-    assert runtime_context["model_proxy_api_key"] == "token-1"
-    assert runtime_context["sandbox_id"] == "sandbox-1"
-    assert runtime_context["harness"] == "opencode"
-    assert runtime_context["harness_session_id"] == "session-main"
-
-
-@pytest.mark.asyncio
 async def test_workspace_create_endpoint_proxies_to_ts_api_when_enabled(
     monkeypatch: pytest.MonkeyPatch,
     runtime_db_env: Path,
 ) -> None:
     del runtime_db_env
-
-    async def _fake_worker_loop() -> None:
-        await asyncio.sleep(0)
 
     captured: list[dict[str, object]] = []
 
@@ -683,7 +716,6 @@ async def test_workspace_create_endpoint_proxies_to_ts_api_when_enabled(
             media_type="application/json",
         )
 
-    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
     monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
@@ -729,9 +761,6 @@ async def test_history_and_output_events_endpoints_proxy_to_ts_api_when_enabled(
 ) -> None:
     del runtime_db_env
 
-    async def _fake_worker_loop() -> None:
-        await asyncio.sleep(0)
-
     captured: list[dict[str, object]] = []
 
     async def _fake_proxy(method: str, path: str, *, params=None, json_body=None):
@@ -748,7 +777,6 @@ async def test_history_and_output_events_endpoints_proxy_to_ts_api_when_enabled(
             payload = {"items": [], "count": 0, "last_event_id": 12}
         return Response(content=json.dumps(payload).encode("utf-8"), media_type="application/json")
 
-    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
     monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
@@ -799,9 +827,6 @@ async def test_output_stream_endpoint_proxies_to_ts_api_when_enabled(
 ) -> None:
     del runtime_db_env
 
-    async def _fake_worker_loop() -> None:
-        await asyncio.sleep(0)
-
     captured: list[dict[str, object]] = []
 
     async def _fake_stream(path: str, *, params=None):
@@ -813,7 +838,6 @@ async def test_output_stream_endpoint_proxies_to_ts_api_when_enabled(
 
         return StreamingResponse(_iter(), media_type="text/event-stream")
 
-    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
     monkeypatch.setattr(api_module, "_proxy_ts_api_stream", _fake_stream)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
@@ -847,9 +871,6 @@ async def test_workspace_export_endpoint_proxies_to_ts_api_when_enabled(
 ) -> None:
     del runtime_db_env
 
-    async def _fake_worker_loop() -> None:
-        await asyncio.sleep(0)
-
     captured: list[dict[str, object]] = []
 
     async def _fake_stream(path: str, *, params=None):
@@ -864,7 +885,6 @@ async def test_workspace_export_endpoint_proxies_to_ts_api_when_enabled(
             headers={"Content-Disposition": "attachment; filename=workspace-1.tar.gz"},
         )
 
-    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
     monkeypatch.setattr(api_module, "_proxy_ts_api_stream", _fake_stream)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
@@ -891,9 +911,6 @@ async def test_state_and_artifact_endpoints_proxy_to_ts_api_when_enabled(
 ) -> None:
     del runtime_db_env
 
-    async def _fake_worker_loop() -> None:
-        await asyncio.sleep(0)
-
     captured: list[dict[str, object]] = []
 
     async def _fake_proxy(method: str, path: str, *, params=None, json_body=None):
@@ -912,7 +929,6 @@ async def test_state_and_artifact_endpoints_proxy_to_ts_api_when_enabled(
             payload = {"items": [], "count": 0}
         return Response(content=json.dumps(payload).encode("utf-8"), media_type="application/json")
 
-    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
     monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
@@ -977,9 +993,6 @@ async def test_outputs_cronjobs_and_task_proposals_proxy_to_ts_api_when_enabled(
 ) -> None:
     del runtime_db_env
 
-    async def _fake_worker_loop() -> None:
-        await asyncio.sleep(0)
-
     captured: list[dict[str, object]] = []
 
     async def _fake_proxy(method: str, path: str, *, params=None, json_body=None):
@@ -1000,7 +1013,6 @@ async def test_outputs_cronjobs_and_task_proposals_proxy_to_ts_api_when_enabled(
             payload = {"proposals": [], "count": 0} if method == "GET" else {"proposal": {"proposal_id": "proposal-1"}}
         return Response(content=json.dumps(payload).encode("utf-8"), media_type="application/json")
 
-    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
     monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
@@ -1043,9 +1055,6 @@ async def test_workspace_exec_endpoint_proxies_to_ts_api_when_enabled(
 ) -> None:
     del runtime_db_env
 
-    async def _fake_worker_loop() -> None:
-        await asyncio.sleep(0)
-
     captured: list[dict[str, object]] = []
 
     async def _fake_proxy(method: str, path: str, *, params=None, json_body=None):
@@ -1060,7 +1069,6 @@ async def test_workspace_exec_endpoint_proxies_to_ts_api_when_enabled(
             media_type="application/json",
         )
 
-    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
     monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
@@ -1088,9 +1096,6 @@ async def test_workspace_file_routes_proxy_to_ts_api_when_enabled(
 ) -> None:
     del runtime_db_env
 
-    async def _fake_worker_loop() -> None:
-        await asyncio.sleep(0)
-
     captured: list[dict[str, object]] = []
 
     async def _fake_proxy(method: str, path: str, *, params=None, json_body=None):
@@ -1108,7 +1113,6 @@ async def test_workspace_file_routes_proxy_to_ts_api_when_enabled(
             payload = {"status": "applied", "files_written": 1}
         return Response(content=json.dumps(payload).encode("utf-8"), media_type="application/json")
 
-    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
     monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
@@ -1167,9 +1171,6 @@ async def test_app_install_and_status_routes_proxy_to_ts_api_when_enabled(
 ) -> None:
     del runtime_db_env
 
-    async def _fake_worker_loop() -> None:
-        await asyncio.sleep(0)
-
     captured: list[dict[str, object]] = []
 
     async def _fake_proxy(method: str, path: str, *, params=None, json_body=None):
@@ -1190,7 +1191,6 @@ async def test_app_install_and_status_routes_proxy_to_ts_api_when_enabled(
             payload = {"app_id": "demo-app", "status": "installed", "detail": "Files written, no setup command defined"}
         return Response(content=json.dumps(payload).encode("utf-8"), media_type="application/json")
 
-    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
     monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
@@ -1254,18 +1254,7 @@ async def test_queue_endpoint_proxies_to_ts_api_when_enabled_and_does_not_wake_p
 ) -> None:
     del runtime_db_env
 
-    class _WakeEvent:
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def set(self) -> None:
-            self.calls += 1
-
-    async def _fake_worker_loop() -> None:
-        await asyncio.sleep(0)
-
     captured: list[dict[str, object]] = []
-    wake_event = _WakeEvent()
 
     async def _fake_proxy(method: str, path: str, *, params=None, json_body=None):
         captured.append({
@@ -1279,9 +1268,7 @@ async def test_queue_endpoint_proxies_to_ts_api_when_enabled_and_does_not_wake_p
             media_type="application/json",
         )
 
-    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
     monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
-    monkeypatch.setattr(api_module, "_local_worker_state", lambda: SimpleNamespace(wake_event=wake_event))
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
@@ -1293,7 +1280,6 @@ async def test_queue_endpoint_proxies_to_ts_api_when_enabled_and_does_not_wake_p
 
     assert response.status_code == 200
     assert response.json()["input_id"] == "input-1"
-    assert wake_event.calls == 0
     assert captured == [{
         "method": "POST",
         "path": "/api/v1/agent-sessions/queue",
@@ -1312,57 +1298,11 @@ async def test_queue_endpoint_proxies_to_ts_api_when_enabled_and_does_not_wake_p
 
 
 @pytest.mark.asyncio
-async def test_queue_endpoint_proxies_to_ts_api_and_wakes_python_worker_when_ts_queue_worker_opted_out(
-    monkeypatch: pytest.MonkeyPatch,
-    runtime_db_env: Path,
-) -> None:
-    del runtime_db_env
-
-    class _WakeEvent:
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def set(self) -> None:
-            self.calls += 1
-
-    async def _fake_worker_loop() -> None:
-        await asyncio.sleep(0)
-
-    wake_event = _WakeEvent()
-
-    async def _fake_proxy(method: str, path: str, *, params=None, json_body=None):
-        del method, path, params, json_body
-        return Response(
-            content=json.dumps({"input_id": "input-1", "session_id": "session-main", "status": "QUEUED"}).encode("utf-8"),
-            media_type="application/json",
-        )
-
-    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
-    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
-    monkeypatch.setattr(api_module, "_local_worker_state", lambda: SimpleNamespace(wake_event=wake_event))
-    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
-    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_QUEUE_WORKER", "0")
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post(
-            "/api/v1/agent-sessions/queue",
-            json={"workspace_id": "workspace-1", "text": "hello world"},
-        )
-
-    assert response.status_code == 200
-    assert wake_event.calls == 1
-
-
-@pytest.mark.asyncio
 async def test_unreviewed_task_proposal_stream_proxies_to_ts_api_when_enabled(
     monkeypatch: pytest.MonkeyPatch,
     runtime_db_env: Path,
 ) -> None:
     del runtime_db_env
-
-    async def _fake_worker_loop() -> None:
-        await asyncio.sleep(0)
 
     captured: list[dict[str, object]] = []
 
@@ -1375,7 +1315,6 @@ async def test_unreviewed_task_proposal_stream_proxies_to_ts_api_when_enabled(
 
         return StreamingResponse(_iter(), media_type="text/event-stream")
 
-    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
     monkeypatch.setattr(api_module, "_proxy_ts_api_stream", _fake_stream)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
@@ -1438,61 +1377,17 @@ async def test_managed_ts_api_server_starts_on_demand(
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create_subprocess_exec)
     monkeypatch.setattr(api_module.app.state, "ts_api_server_state", None, raising=False)
 
-    await api_module._ensure_managed_ts_api_server_ready()
+    await api_module._ts_api_proxy.ensure_managed_ts_api_server_ready()
 
     assert len(spawned) == 1
     assert spawned[0]["args"][:2] == ("node", str(entry_path))
     assert spawned[0]["kwargs"]["env"]["SANDBOX_RUNTIME_API_PORT"] == "3061"
     assert api_module.app.state.ts_api_server_state.process is fake_process
 
-    await api_module._shutdown_managed_ts_api_server()
+    await api_module._ts_api_proxy.shutdown_managed_ts_api_server()
 
 
 def test_ts_api_server_enabled_defaults_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", raising=False)
 
-    assert api_module._ts_api_server_enabled() is True
-
-
-def test_ts_queue_worker_enabled_defaults_with_ts_api_server(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
-    monkeypatch.delenv("HOLABOSS_RUNTIME_USE_TS_QUEUE_WORKER", raising=False)
-
-    assert api_module._ts_queue_worker_enabled() is True
-
-
-def test_ts_queue_worker_enabled_respects_explicit_opt_out(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
-    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_QUEUE_WORKER", "off")
-
-    assert api_module._ts_queue_worker_enabled() is False
-
-
-def test_ts_cron_worker_enabled_defaults_with_ts_api_server(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
-    monkeypatch.delenv("HOLABOSS_RUNTIME_USE_TS_CRON_WORKER", raising=False)
-
-    assert api_module._ts_cron_worker_enabled() is True
-
-
-def test_ts_cron_worker_enabled_respects_explicit_opt_out(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
-    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_CRON_WORKER", "off")
-
-    assert api_module._ts_cron_worker_enabled() is False
-
-
-def test_ts_bridge_worker_enabled_defaults_with_ts_api_server(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
-    monkeypatch.setenv("PROACTIVE_ENABLE_REMOTE_BRIDGE", "1")
-    monkeypatch.delenv("HOLABOSS_RUNTIME_USE_TS_BRIDGE_WORKER", raising=False)
-
-    assert api_module._ts_bridge_worker_enabled() is True
-
-
-def test_ts_bridge_worker_enabled_respects_explicit_opt_out(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
-    monkeypatch.setenv("PROACTIVE_ENABLE_REMOTE_BRIDGE", "1")
-    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_BRIDGE_WORKER", "off")
-
-    assert api_module._ts_bridge_worker_enabled() is False
+    assert api_module._ts_api_proxy.ts_api_server_enabled() is True

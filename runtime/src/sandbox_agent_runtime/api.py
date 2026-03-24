@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from contextlib import suppress
-from datetime import datetime
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, Query, Request
@@ -51,83 +50,26 @@ from sandbox_agent_runtime.api_models import (
     UninstallAppRequest,
     WriteFileRequest,
 )
-from sandbox_agent_runtime.control_plane_api import (
-    cron_scheduler_state as _cron_scheduler_state_impl,
-    local_worker_state as _local_worker_state_impl,
-    python_cron_worker_enabled as _python_cron_worker_enabled_impl,
-    python_queue_worker_enabled as _python_queue_worker_enabled_impl,
-    shutdown_worker_control_plane as _shutdown_worker_control_plane_impl,
-    startup_worker_control_plane as _startup_worker_control_plane_impl,
-    ts_bridge_worker_enabled as _ts_bridge_worker_enabled_impl,
-    ts_cron_worker_enabled as _ts_cron_worker_enabled_impl,
-    ts_queue_worker_enabled as _ts_queue_worker_enabled_impl,
-)
-from sandbox_agent_runtime.local_execution_service import process_claimed_input as _process_claimed_input_service
-from sandbox_agent_runtime.local_worker import (
-    cron_scheduler_loop as _cron_scheduler_loop_impl,
-)
-from sandbox_agent_runtime.local_worker import (
-    cronjob_check_interval_seconds as _cronjob_check_interval_seconds_impl,
-)
-from sandbox_agent_runtime.local_worker import (
-    cronjob_is_due as _cronjob_is_due_impl,
-)
-from sandbox_agent_runtime.local_worker import (
-    cronjob_next_run_at as _cronjob_next_run_at_impl,
-)
-from sandbox_agent_runtime.local_worker import (
-    queue_local_cronjob_run as _queue_local_cronjob_run_impl,
-)
-from sandbox_agent_runtime.worker_service import (
-    local_worker_loop as _local_worker_loop_impl,
-)
-from sandbox_agent_runtime.worker_service import (
-    process_available_inputs_once as _process_available_inputs_once_impl,
-)
 from sandbox_agent_runtime.runner import (
     RunnerRequest,
-)
-from sandbox_agent_runtime.runtime_local_state import (
-    claim_inputs,
-    enqueue_input,
-    ensure_runtime_state,
-    get_workspace,
-    insert_session_message,
-    list_cronjobs,
-    update_cronjob,
-    update_runtime_state,
 )
 from sandbox_agent_runtime.workspace_scope import WORKSPACE_ROOT
 from sandbox_agent_runtime.ts_api_proxy import TsApiProxySupport
 
 logging.basicConfig(level=os.getenv("SANDBOX_AGENT_LOG_LEVEL", "INFO"))
-logger = logging.getLogger("sandbox_agent_api")
 
-app = FastAPI(title="holaboss-sandbox-agent", version="0.1.0")
+@asynccontextmanager
+async def _app_lifespan(_: FastAPI):
+    try:
+        yield
+    finally:
+        await _ts_api_proxy.shutdown_managed_ts_api_server()
 
-_DEFAULT_OUTPUT_STREAM_POLL_INTERVAL_S = 0.05
-def _output_stream_poll_interval_seconds() -> float:
-    raw = (os.getenv("SANDBOX_OUTPUT_STREAM_POLL_INTERVAL_S") or "").strip()
-    if not raw:
-        return _DEFAULT_OUTPUT_STREAM_POLL_INTERVAL_S
-    with suppress(ValueError):
-        return min(max(float(raw), 0.01), 1.0)
-    return _DEFAULT_OUTPUT_STREAM_POLL_INTERVAL_S
+
+app = FastAPI(title="holaboss-sandbox-agent", version="0.1.0", lifespan=_app_lifespan)
 
 
 _ts_api_proxy = TsApiProxySupport(app=app, current_file=__file__)
-
-
-def _ts_api_server_enabled() -> bool:
-    return _ts_api_proxy.ts_api_server_enabled()
-
-
-async def _ensure_managed_ts_api_server_ready() -> None:
-    await _ts_api_proxy.ensure_managed_ts_api_server_ready()
-
-
-async def _shutdown_managed_ts_api_server() -> None:
-    await _ts_api_proxy.shutdown_managed_ts_api_server()
 
 
 async def _proxy_ts_api_json(
@@ -148,115 +90,6 @@ async def _proxy_ts_api_stream(
     json_body: dict[str, Any] | None = None,
 ) -> Response:
     return await _ts_api_proxy.proxy_ts_api_stream(path, method=method, params=params, json_body=json_body)
-
-
-def _local_worker_state():
-    return _local_worker_state_impl(app)
-
-
-def _cron_scheduler_state():
-    return _cron_scheduler_state_impl(app)
-
-
-def _wake_local_worker() -> None:
-    if _ts_queue_worker_enabled():
-        return
-    _local_worker_state().wake_event.set()
-
-
-def _ts_queue_worker_enabled() -> bool:
-    return _ts_queue_worker_enabled_impl(ts_api_server_enabled=_ts_api_server_enabled())
-
-
-def _python_queue_worker_enabled() -> bool:
-    return _python_queue_worker_enabled_impl(ts_api_server_enabled=_ts_api_server_enabled())
-
-
-def _ts_cron_worker_enabled() -> bool:
-    return _ts_cron_worker_enabled_impl(ts_api_server_enabled=_ts_api_server_enabled())
-
-
-def _python_cron_worker_enabled() -> bool:
-    return _python_cron_worker_enabled_impl(ts_api_server_enabled=_ts_api_server_enabled())
-
-
-def _ts_bridge_worker_enabled() -> bool:
-    return _ts_bridge_worker_enabled_impl(ts_api_server_enabled=_ts_api_server_enabled())
-
-
-@app.on_event("startup")
-async def startup_local_worker() -> None:
-    await _startup_worker_control_plane_impl(
-        app=app,
-        local_worker_loop=_local_worker_loop,
-        cron_scheduler_loop=_cron_scheduler_loop,
-        ts_api_server_enabled=_ts_api_server_enabled(),
-        logger=logger,
-    )
-
-
-@app.on_event("shutdown")
-async def shutdown_local_worker() -> None:
-    await _shutdown_worker_control_plane_impl(
-        app=app,
-        shutdown_managed_ts_api_server=_shutdown_managed_ts_api_server,
-    )
-
-
-async def _process_claimed_input(record) -> None:
-    await _process_claimed_input_service(record)
-
-
-async def _process_available_inputs_once() -> int:
-    return await _process_available_inputs_once_impl(
-        claim_inputs=claim_inputs,
-        process_claimed_input=_process_claimed_input,
-    )
-
-
-async def _local_worker_loop() -> None:
-    await _local_worker_loop_impl(
-        state=_local_worker_state(),
-        process_available_inputs_once=_process_available_inputs_once,
-    )
-
-
-def _cronjob_check_interval_seconds() -> int:
-    return _cronjob_check_interval_seconds_impl()
-
-
-def _cronjob_next_run_at(*, cron_expression: str, now: datetime) -> str | None:
-    return _cronjob_next_run_at_impl(cron_expression=cron_expression, now=now)
-
-
-def _cronjob_is_due(job: dict[str, Any], *, now: datetime) -> bool:
-    return _cronjob_is_due_impl(job, now=now)
-
-
-def _queue_local_cronjob_run(job: dict[str, Any], *, now: datetime) -> None:
-    _queue_local_cronjob_run_impl(
-        job,
-        now=now,
-        get_workspace=get_workspace,
-        ensure_runtime_state=ensure_runtime_state,
-        enqueue_input=enqueue_input,
-        insert_session_message=insert_session_message,
-        update_runtime_state=update_runtime_state,
-        wake_worker=_wake_local_worker,
-    )
-
-
-async def _cron_scheduler_loop() -> None:
-    await _cron_scheduler_loop_impl(
-        state=_cron_scheduler_state(),
-        logger=logger,
-        list_cronjobs=list_cronjobs,
-        cronjob_is_due=_cronjob_is_due,
-        queue_local_cronjob_run=_queue_local_cronjob_run,
-        update_cronjob=update_cronjob,
-        cronjob_next_run_at=_cronjob_next_run_at,
-        interval=_cronjob_check_interval_seconds(),
-    )
 
 
 @app.get("/healthz")
@@ -364,14 +197,21 @@ async def exec_local_workspace(
 
 @app.post("/api/v1/agent-sessions/queue")
 async def queue_session_input(payload: QueueSessionInputRequest) -> QueueSessionInputResponse:
-    response = await _proxy_ts_api_json(
+    return await _proxy_ts_api_json(
         "POST",
         "/api/v1/agent-sessions/queue",
         json_body=payload.model_dump(mode="json"),
     )
-    if response.status_code < 400:
-        _wake_local_worker()
-    return response
+
+
+@app.post("/api/v1/internal/workspaces/{workspace_id}/opencode-apps/start")
+async def start_opencode_workspace_apps_internal(workspace_id: str, request: Request) -> Response:
+    payload = await request.json()
+    return await _proxy_ts_api_json(
+        "POST",
+        f"/api/v1/internal/workspaces/{workspace_id}/opencode-apps/start",
+        json_body=payload,
+    )
 
 
 @app.get("/api/v1/agent-sessions/{session_id}/state")

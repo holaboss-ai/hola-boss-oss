@@ -10,7 +10,8 @@ import { processClaimedInput } from "./claimed-input-executor.js";
 
 const tempDirs: string[] = [];
 const ORIGINAL_ENV = {
-  SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE: process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE
+  SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE: process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE,
+  HB_SANDBOX_ROOT: process.env.HB_SANDBOX_ROOT
 };
 
 afterEach(() => {
@@ -21,6 +22,11 @@ afterEach(() => {
     delete process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE;
   } else {
     process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE = ORIGINAL_ENV.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE;
+  }
+  if (ORIGINAL_ENV.HB_SANDBOX_ROOT === undefined) {
+    delete process.env.HB_SANDBOX_ROOT;
+  } else {
+    process.env.HB_SANDBOX_ROOT = ORIGINAL_ENV.HB_SANDBOX_ROOT;
   }
 });
 
@@ -201,6 +207,106 @@ PY`;
   assert.equal(events[0].eventType, "run_started");
   assert.equal(events[1].eventType, "run_failed");
   assert.match(String(events[1].payload.message), /runner ended before terminal event/);
+
+  store.close();
+});
+
+test("claimed input hydrates runtime exec context from runtime config", async () => {
+  const store = makeStore("hb-claimed-input-runtime-context-");
+  const sandboxRoot = makeTempDir("hb-runtime-config-root-");
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  fs.mkdirSync(path.join(sandboxRoot, "state"), { recursive: true });
+  fs.writeFileSync(
+    path.join(sandboxRoot, "state", "runtime-config.json"),
+    `${JSON.stringify({ auth_token: "token-1", sandbox_id: "sandbox-1" }, null, 2)}\n`,
+    "utf8"
+  );
+
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello", context: {} }
+  });
+  process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE = `python -c "import base64, json, sys; payload=json.loads(base64.b64decode(sys.argv[1])); ctx=payload['context']['_sandbox_runtime_exec_v1']; print(json.dumps(dict(session_id=payload['session_id'], input_id=payload['input_id'], sequence=1, event_type='run_started', payload=dict(runtime_exec_context=ctx)))); print(json.dumps(dict(session_id=payload['session_id'], input_id=payload['input_id'], sequence=2, event_type='run_completed', payload=dict(status='ok'))))" {request_base64}`;
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker"
+  });
+
+  const events = store.listOutputEvents({
+    sessionId: "session-main",
+    inputId: queued.inputId
+  });
+  assert.equal(events.length, 2);
+  const runtimeExecContext = events[0].payload.runtime_exec_context as Record<string, unknown>;
+  assert.equal(runtimeExecContext.model_proxy_api_key, "token-1");
+  assert.equal(runtimeExecContext.sandbox_id, "sandbox-1");
+  assert.equal(runtimeExecContext.harness, "opencode");
+  assert.equal(runtimeExecContext.harness_session_id, "session-main");
+
+  store.close();
+});
+
+test("claimed input persists replacement harness session id from terminal runner event", async () => {
+  const store = makeStore("hb-claimed-input-harness-session-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    harness: "opencode",
+    harnessSessionId: "existing-session"
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" }
+  });
+  process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE = `python - <<'PY'
+import json
+print(json.dumps(dict(session_id="session-main", input_id="${queued.inputId}", sequence=1, event_type="run_started", payload=dict(status="started"))))
+print(json.dumps(dict(session_id="session-main", input_id="${queued.inputId}", sequence=2, event_type="run_completed", payload=dict(status="ok", harness_session_id="replacement-session"))))
+PY`;
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker"
+  });
+
+  const binding = store.getBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-main"
+  });
+
+  assert.ok(binding);
+  assert.equal(binding.harnessSessionId, "replacement-session");
 
   store.close();
 });

@@ -12,8 +12,7 @@ import {
   cronjobCheckIntervalMs,
   cronjobInstruction,
   cronjobIsDue,
-  cronjobNextRunAt,
-  tsCronWorkerEnabled
+  cronjobNextRunAt
 } from "./cron-worker.js";
 
 const tempDirs: string[] = [];
@@ -29,27 +28,6 @@ function makeTempDir(prefix: string): string {
   tempDirs.push(dir);
   return dir;
 }
-
-test("ts cron worker is enabled by default and only disables on explicit opt-out", () => {
-  const previous = process.env.HOLABOSS_RUNTIME_USE_TS_CRON_WORKER;
-  delete process.env.HOLABOSS_RUNTIME_USE_TS_CRON_WORKER;
-  assert.equal(tsCronWorkerEnabled(), true);
-
-  process.env.HOLABOSS_RUNTIME_USE_TS_CRON_WORKER = "0";
-  assert.equal(tsCronWorkerEnabled(), false);
-
-  process.env.HOLABOSS_RUNTIME_USE_TS_CRON_WORKER = "false";
-  assert.equal(tsCronWorkerEnabled(), false);
-
-  process.env.HOLABOSS_RUNTIME_USE_TS_CRON_WORKER = "1";
-  assert.equal(tsCronWorkerEnabled(), true);
-
-  if (previous === undefined) {
-    delete process.env.HOLABOSS_RUNTIME_USE_TS_CRON_WORKER;
-  } else {
-    process.env.HOLABOSS_RUNTIME_USE_TS_CRON_WORKER = previous;
-  }
-});
 
 test("cronjob helpers preserve Python scheduling behavior", () => {
   const dueJob = {

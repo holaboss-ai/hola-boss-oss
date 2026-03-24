@@ -7,7 +7,7 @@ import { afterEach, test } from "node:test";
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import { buildRuntimeApiServer } from "./app.js";
-import { RuntimeQueueWorker, tsQueueWorkerEnabled } from "./queue-worker.js";
+import { RuntimeQueueWorker } from "./queue-worker.js";
 
 const tempDirs: string[] = [];
 
@@ -67,27 +67,6 @@ test("runtime queue worker claims queued inputs and executes them in claim order
   assert.deepEqual(seen, [high.inputId, low.inputId]);
 
   store.close();
-});
-
-test("ts queue worker is enabled by default and only disables on explicit opt-out", () => {
-  const previous = process.env.HOLABOSS_RUNTIME_USE_TS_QUEUE_WORKER;
-  delete process.env.HOLABOSS_RUNTIME_USE_TS_QUEUE_WORKER;
-  assert.equal(tsQueueWorkerEnabled(), true);
-
-  process.env.HOLABOSS_RUNTIME_USE_TS_QUEUE_WORKER = "0";
-  assert.equal(tsQueueWorkerEnabled(), false);
-
-  process.env.HOLABOSS_RUNTIME_USE_TS_QUEUE_WORKER = "false";
-  assert.equal(tsQueueWorkerEnabled(), false);
-
-  process.env.HOLABOSS_RUNTIME_USE_TS_QUEUE_WORKER = "1";
-  assert.equal(tsQueueWorkerEnabled(), true);
-
-  if (previous === undefined) {
-    delete process.env.HOLABOSS_RUNTIME_USE_TS_QUEUE_WORKER;
-  } else {
-    process.env.HOLABOSS_RUNTIME_USE_TS_QUEUE_WORKER = previous;
-  }
 });
 
 test("runtime queue worker marks claimed input failed when delegated execution raises", async () => {

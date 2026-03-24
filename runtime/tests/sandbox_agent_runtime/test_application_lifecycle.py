@@ -1,6 +1,7 @@
 # ruff: noqa: S101
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -47,6 +48,48 @@ def test_build_app_env_only_injects_holaboss_user_id_when_contracted() -> None:
 
 
 @pytest.mark.asyncio
+async def test_compose_images_exist_injects_holaboss_user_id_and_allocated_ports() -> None:
+    manager = ApplicationLifecycleManager(workspace_dir="/workspace/test-ws", holaboss_user_id="user-1")
+    app = _make_app("compose-app")
+    manager._port_allocations = {"compose-app": (18081, 13101)}
+    seen_envs: list[dict[str, str]] = []
+
+    def _proc(stdout: bytes):
+        proc = AsyncMock()
+        proc.communicate = AsyncMock(return_value=(stdout, b""))
+        return proc
+
+    with patch("asyncio.create_subprocess_exec", new=AsyncMock(side_effect=[_proc(b"image-1\n"), _proc(b"app\n")])) as mock_exec:
+        exists = await manager._compose_images_exist(["docker", "compose"], app, Path("/workspace/test-ws/apps/compose-app"))
+
+    assert exists is True
+    assert mock_exec.await_count == 2
+    for call in mock_exec.await_args_list:
+        seen_envs.append(call.kwargs["env"])
+    for env in seen_envs:
+        assert env["HOLABOSS_USER_ID"] == "user-1"
+        assert env["PORT"] == "18081"
+        assert env["MCP_PORT"] == "13101"
+
+
+@pytest.mark.asyncio
+async def test_start_subprocess_app_injects_holaboss_user_id_and_allocated_ports() -> None:
+    manager = ApplicationLifecycleManager(workspace_dir="/workspace/test-ws", holaboss_user_id="user-1")
+    app = _make_app("subprocess-app")
+    manager._port_allocations = {"subprocess-app": (18082, 13102)}
+
+    proc = AsyncMock()
+    proc.pid = 1234
+
+    with patch("asyncio.create_subprocess_shell", new=AsyncMock(return_value=proc)) as mock_shell:
+        await manager._start_subprocess_app(app, Path("/workspace/test-ws/apps/subprocess-app"))
+
+    assert mock_shell.await_args.kwargs["env"]["HOLABOSS_USER_ID"] == "user-1"
+    assert mock_shell.await_args.kwargs["env"]["PORT"] == "18082"
+    assert mock_shell.await_args.kwargs["env"]["MCP_PORT"] == "13102"
+
+
+@pytest.mark.asyncio
 async def test_start_all_calls_start_then_health() -> None:
     manager = ApplicationLifecycleManager(workspace_dir="/workspace/test-ws")
     app = _make_app()
@@ -86,29 +129,6 @@ async def test_get_mcp_url_falls_back_to_declared_port_without_allocation() -> N
     app = _make_app()
     url = manager.get_mcp_url(app)
     assert url == "http://localhost:3099/mcp"
-
-
-@pytest.mark.asyncio
-async def test_stop_all_terminates_running_proc() -> None:
-    manager = ApplicationLifecycleManager(workspace_dir="/workspace/test-ws")
-    app = _make_app()
-    mock_proc = AsyncMock()
-    mock_proc.wait = AsyncMock()
-    manager._procs["test-mcp"] = mock_proc
-
-    await manager.stop_all([app])
-
-    mock_proc.terminate.assert_called_once()
-    assert "test-mcp" not in manager._procs
-
-
-@pytest.mark.asyncio
-async def test_stop_all_skips_apps_without_proc() -> None:
-    manager = ApplicationLifecycleManager(workspace_dir="/workspace/test-ws")
-    app = _make_app()
-
-    # No proc registered — stop_all should not raise
-    await manager.stop_all([app])
 
 
 @pytest.mark.asyncio

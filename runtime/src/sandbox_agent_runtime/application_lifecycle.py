@@ -76,11 +76,6 @@ async def _find_compose_command() -> list[str] | None:
     return None
 
 
-def _has_lifecycle_start(app: ResolvedApplication) -> bool:
-    """Return True if the app declares a lifecycle.start command."""
-    return bool(app.lifecycle.start)
-
-
 class ApplicationLifecycleManager:
     def __init__(self, *, workspace_dir: str | Path, holaboss_user_id: str = "") -> None:
         self._workspace_dir = Path(workspace_dir)
@@ -108,7 +103,7 @@ class ApplicationLifecycleManager:
 
         for app in apps:
             mcp_host_port = self._get_mcp_host_port(app)
-            if await self._is_app_healthy(app, mcp_host_port=mcp_host_port):
+            if await self._is_app_healthy(app):
                 logger.info("App '%s' already healthy on port %d, skipping start", app.app_id, mcp_host_port)
                 self._compose_apps.add(app.app_id)
                 continue
@@ -142,9 +137,8 @@ class ApplicationLifecycleManager:
             ("mcp", f"http://localhost:{mcp_port}{app.health_check.path}"),
         ]
 
-    async def _is_app_healthy(self, app: ResolvedApplication, *, mcp_host_port: int | None = None) -> bool:
+    async def _is_app_healthy(self, app: ResolvedApplication) -> bool:
         """Return True if the app's health endpoint is already responding successfully."""
-        del mcp_host_port  # kept for compatibility with existing callers/tests
         async with httpx.AsyncClient() as client:
             for probe_kind, probe_url in self._health_probe_urls(app):
                 try:
@@ -157,10 +151,6 @@ class ApplicationLifecycleManager:
                 if probe_kind == "mcp" and resp.status_code == 200:
                     return True
         return False
-
-    async def stop_all(self, apps: list[ResolvedApplication]) -> None:
-        for app in apps:
-            await self._stop_app(app)
 
     async def _stop_app(self, app: ResolvedApplication) -> None:
         """Stop an app using its lifecycle.stop command, falling back to SIGTERM or docker compose."""
@@ -228,7 +218,7 @@ class ApplicationLifecycleManager:
         app_dir = self._resolve_app_dir(app)
 
         # Priority 1: lifecycle.start command declared by the module
-        if _has_lifecycle_start(app):
+        if app.lifecycle.start:
             await self._start_lifecycle_app(app, app_dir)
             return
 
@@ -272,9 +262,9 @@ class ApplicationLifecycleManager:
         self._procs[app.app_id] = proc
         logger.info("Started app '%s' via lifecycle (pid=%s)", app.app_id, proc.pid)
 
-    async def _compose_images_exist(self, compose_cmd: list[str], app_dir: Path) -> bool:
+    async def _compose_images_exist(self, compose_cmd: list[str], app: ResolvedApplication, app_dir: Path) -> bool:
         """Check whether all compose services already have local images."""
-        compose_env = self._build_app_env()
+        compose_env = self._build_app_env(app)
 
         images_proc = await asyncio.create_subprocess_exec(
             *compose_cmd,
@@ -326,7 +316,7 @@ class ApplicationLifecycleManager:
                 )
                 break
 
-        has_images = await self._compose_images_exist(compose_cmd, app_dir)
+        has_images = await self._compose_images_exist(compose_cmd, app, app_dir)
         if has_images:
             cmd = [*compose_cmd, "up", "-d"]
             logger.info("Starting app '%s' via docker compose (images cached) in %s", app.app_id, app_dir)
@@ -334,7 +324,7 @@ class ApplicationLifecycleManager:
             cmd = [*compose_cmd, "up", "--build", "-d"]
             logger.info("Starting app '%s' via docker compose (building) in %s", app.app_id, app_dir)
 
-        compose_env = self._build_app_env()
+        compose_env = self._build_app_env(app)
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=str(app_dir),
@@ -353,7 +343,7 @@ class ApplicationLifecycleManager:
         proc = await asyncio.create_subprocess_shell(
             app.start_command,
             cwd=str(app_dir),
-            env=self._build_app_env(),
+            env=self._build_app_env(app),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -371,7 +361,7 @@ class ApplicationLifecycleManager:
             "down",
             "--remove-orphans",
             cwd=str(app_dir),
-            env=self._build_app_env(),
+            env=self._build_app_env(app),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -401,7 +391,7 @@ class ApplicationLifecycleManager:
     async def _retry_start_app(self, app: ResolvedApplication) -> None:
         """Restart an app as a retry fallback after health check failure."""
         # For lifecycle and subprocess apps, stop then start again
-        if _has_lifecycle_start(app) or app.start_command:
+        if app.lifecycle.start or app.start_command:
             await self._stop_app(app)
             await self._start_app(app)
             return
@@ -417,7 +407,7 @@ class ApplicationLifecycleManager:
         if compose_cmd is None:
             return
         cmd = [*compose_cmd, "up", "--build", "-d"]
-        compose_env = self._build_app_env()
+        compose_env = self._build_app_env(app)
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=str(app_dir),
@@ -470,40 +460,3 @@ class ApplicationLifecycleManager:
         )
         with contextlib.suppress(Exception):
             await asyncio.wait_for(proc.wait(), timeout=10)
-
-
-# ---------------------------------------------------------------------------
-# Per-workspace singleton factory
-# ---------------------------------------------------------------------------
-
-_lifecycle_managers: dict[str, ApplicationLifecycleManager] = {}
-
-
-def get_lifecycle_manager(
-    workspace_dir: str | Path,
-    *,
-    holaboss_user_id: str = "",
-) -> ApplicationLifecycleManager:
-    """Return a per-workspace singleton ``ApplicationLifecycleManager``.
-
-    The singleton is keyed by the resolved workspace directory path so that
-    every caller (runner, API endpoints) shares the same manager instance and
-    therefore the same port allocations and process tracking.
-    """
-    key = str(Path(workspace_dir))
-    if key not in _lifecycle_managers:
-        _lifecycle_managers[key] = ApplicationLifecycleManager(
-            workspace_dir=workspace_dir,
-            holaboss_user_id=holaboss_user_id,
-        )
-    manager = _lifecycle_managers[key]
-    if holaboss_user_id and manager._holaboss_user_id and manager._holaboss_user_id != holaboss_user_id:
-        logger.warning(
-            "Overwriting holaboss_user_id for workspace %s: %s → %s",
-            key,
-            manager._holaboss_user_id,
-            holaboss_user_id,
-        )
-    if holaboss_user_id:
-        manager._holaboss_user_id = holaboss_user_id
-    return manager

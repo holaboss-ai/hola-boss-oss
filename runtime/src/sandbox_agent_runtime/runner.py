@@ -27,10 +27,6 @@ import httpx
 import yaml
 from pydantic import BaseModel, Field
 
-from sandbox_agent_runtime.application_lifecycle import (
-    _SANDBOX_AGENT_PORT,
-    ApplicationLifecycleManager,
-)
 from sandbox_agent_runtime.product_config import resolve_product_runtime_config
 from sandbox_agent_runtime.runtime_config_adapter import (
     CompiledWorkspaceRuntimePlan,
@@ -77,6 +73,7 @@ _DEFAULT_OPENCODE_STRUCTURED_RETRY_COUNT = 2
 _SUPPORTED_HARNESSES = {"opencode"}
 _SANDBOX_RUNTIME_API_URL_ENV = "SANDBOX_RUNTIME_API_URL"
 _DEFAULT_SANDBOX_RUNTIME_API_URL = "http://sandbox-runtime:3060"
+_PYTHON_OPENCODE_APP_LIFECYCLE_FALLBACK_ENV = "SANDBOX_AGENT_ENABLE_PYTHON_APP_LIFECYCLE_FALLBACK"
 _OPENCODE_DEFAULT_TOOLS = ("read", "edit", "bash", "grep", "glob", "list", "question", "todowrite", "todoread", "skill")
 _WORKSPACE_MCP_SERVER_ID = "workspace"
 _WORKSPACE_MCP_READY_TIMEOUT_S = 10.0
@@ -97,6 +94,24 @@ _OPENCODE_STATE_VERSION = 1
 _OPENCODE_SKILL_MANIFEST_FILE_NAME = ".skill-manifest.json"
 _TS_HARNESS_HOST_NODE_BIN_ENV = "HOLABOSS_RUNTIME_NODE_BIN"
 _TS_HARNESS_HOST_NOT_IMPLEMENTED_EXIT_CODE = 86
+
+
+def _sandbox_runtime_api_url() -> str:
+    raw = (os.getenv(_SANDBOX_RUNTIME_API_URL_ENV) or "").strip()
+    return raw.rstrip("/") or _DEFAULT_SANDBOX_RUNTIME_API_URL
+
+
+def _should_fallback_opencode_app_bootstrap(exc: Exception) -> bool:
+    if isinstance(exc, httpx.RequestError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500
+    return False
+
+
+def _python_opencode_app_lifecycle_fallback_enabled() -> bool:
+    raw = (os.getenv(_PYTHON_OPENCODE_APP_LIFECYCLE_FALLBACK_ENV) or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 class RunnerRequest(BaseModel):
@@ -2014,6 +2029,125 @@ def _extract_error_payload(chunk: Any) -> dict[str, Any] | None:
     return payload
 
 
+def _resolved_application_runtime_payload(app: Any) -> dict[str, Any]:
+    return {
+        "app_id": str(app.app_id),
+        "mcp": {
+            "transport": str(app.mcp.transport),
+            "port": int(app.mcp.port),
+            "path": str(app.mcp.path),
+        },
+        "health_check": {
+            "path": str(app.health_check.path),
+            "timeout_s": int(app.health_check.timeout_s),
+            "interval_s": int(app.health_check.interval_s),
+        },
+        "env_contract": [str(value) for value in getattr(app, "env_contract", ())],
+        "start_command": str(getattr(app, "start_command", "") or ""),
+        "base_dir": str(getattr(app, "base_dir", "") or ""),
+        "lifecycle": {
+            "setup": str(getattr(app.lifecycle, "setup", "") or ""),
+            "start": str(getattr(app.lifecycle, "start", "") or ""),
+            "stop": str(getattr(app.lifecycle, "stop", "") or ""),
+        },
+    }
+
+
+async def _start_opencode_apps_via_runtime_api(
+    *,
+    request: RunnerRequest,
+    workspace_dir: Path,
+    resolved_applications: tuple[Any, ...],
+) -> tuple[dict[str, Any], ...]:
+    payload = {
+        "workspace_dir": str(workspace_dir),
+        "holaboss_user_id": _explicit_holaboss_user_id(request.context),
+        "resolved_applications": [
+            _resolved_application_runtime_payload(app)
+            for app in resolved_applications
+        ],
+    }
+    url = f"{_sandbox_runtime_api_url()}/api/v1/internal/workspaces/{request.workspace_id}/opencode-apps/start"
+    async with httpx.AsyncClient(timeout=60.0, trust_env=False) as client:
+        response = await client.post(url, json=payload)
+    response.raise_for_status()
+    response_payload = response.json()
+    applications = response_payload.get("applications") if isinstance(response_payload, dict) else None
+    if not isinstance(applications, list):
+        raise RuntimeError("invalid opencode app bootstrap response")
+    entries: list[dict[str, Any]] = []
+    for application in applications:
+        if not isinstance(application, dict):
+            raise RuntimeError("invalid opencode app bootstrap item")
+        app_id = application.get("app_id")
+        mcp_url = application.get("mcp_url")
+        timeout_ms = application.get("timeout_ms")
+        if (
+            not isinstance(app_id, str)
+            or not isinstance(mcp_url, str)
+            or not isinstance(timeout_ms, int)
+        ):
+            raise RuntimeError("invalid opencode app bootstrap item")
+        entries.append(
+            {
+                "name": app_id,
+                "config": {
+                    "type": "remote",
+                    "url": mcp_url,
+                    "enabled": True,
+                    "headers": {"X-Workspace-Id": request.workspace_id},
+                    "timeout": timeout_ms,
+                },
+            }
+        )
+    return tuple(entries)
+
+
+async def _start_opencode_apps_via_python_lifecycle(
+    *,
+    request: RunnerRequest,
+    workspace_dir: Path,
+    resolved_applications: tuple[Any, ...],
+) -> tuple[dict[str, Any], ...]:
+    from sandbox_agent_runtime.legacy_opencode_app_lifecycle import (
+        start_resolved_applications_via_python_lifecycle,
+    )
+
+    return await start_resolved_applications_via_python_lifecycle(
+        workspace_id=request.workspace_id,
+        workspace_dir=workspace_dir,
+        holaboss_user_id=_explicit_holaboss_user_id(request.context),
+        resolved_applications=resolved_applications,
+    )
+
+
+async def _start_opencode_resolved_applications(
+    *,
+    request: RunnerRequest,
+    workspace_dir: Path,
+    resolved_applications: tuple[Any, ...],
+) -> tuple[dict[str, Any], ...]:
+    try:
+        return await _start_opencode_apps_via_runtime_api(
+            request=request,
+            workspace_dir=workspace_dir,
+            resolved_applications=resolved_applications,
+        )
+    except Exception as exc:
+        if not _should_fallback_opencode_app_bootstrap(exc):
+            raise
+        if not _python_opencode_app_lifecycle_fallback_enabled():
+            raise RuntimeError(
+                "OpenCode app bootstrap via TS runtime API failed and Python lifecycle fallback is disabled"
+            ) from exc
+        logger.warning("Falling back to Python app lifecycle manager for OpenCode app startup: %s", exc)
+    return await _start_opencode_apps_via_python_lifecycle(
+        request=request,
+        workspace_dir=workspace_dir,
+        resolved_applications=resolved_applications,
+    )
+
+
 def _selected_harness(*, request: RunnerRequest) -> str:
     harness = (
         _runtime_exec_context_str(request=request, key=_RUNTIME_EXEC_HARNESS_KEY)
@@ -3396,9 +3530,6 @@ async def _execute_request_opencode(request: RunnerRequest) -> int:
     sequence = 0
     sidecar: _RunningWorkspaceMcpSidecar | None = None
     execution_started_at = time.perf_counter()
-    opencode_lifecycle_manager: ApplicationLifecycleManager | None = None
-    opencode_resolved_applications: tuple[Any, ...] = ()
-
     def _next_sequence() -> int:
         nonlocal sequence
         sequence += 1
@@ -3481,23 +3612,10 @@ async def _execute_request_opencode(request: RunnerRequest) -> int:
             # Start app containers and append their MCP servers
             opencode_resolved_applications = getattr(compiled_plan, "resolved_applications", ())
             if opencode_resolved_applications:
-                opencode_lifecycle_manager = ApplicationLifecycleManager(
+                app_mcp_entries = await _start_opencode_resolved_applications(
+                    request=request,
                     workspace_dir=workspace_dir,
-                    holaboss_user_id=_explicit_holaboss_user_id(request.context),
-                )
-                await opencode_lifecycle_manager.start_all(list(opencode_resolved_applications))
-                app_mcp_entries = tuple(
-                    {
-                        "name": app.app_id,
-                        "config": {
-                            "type": "remote",
-                            "url": opencode_lifecycle_manager.get_mcp_url(app),
-                            "enabled": True,
-                            "headers": {"X-Workspace-Id": request.workspace_id},
-                            "timeout": app.health_check.timeout_s * 1000,
-                        },
-                    }
-                    for app in opencode_resolved_applications
+                    resolved_applications=tuple(opencode_resolved_applications),
                 )
                 effective_mcp_servers = effective_mcp_servers + app_mcp_entries
 

@@ -7,7 +7,6 @@ import { type CronjobRecord, type RuntimeStateStore } from "@holaboss/runtime-st
 
 import type { QueueWorkerLike } from "./queue-worker.js";
 
-const TS_CRON_WORKER_FLAG_ENV = "HOLABOSS_RUNTIME_USE_TS_CRON_WORKER";
 const DEFAULT_POLL_INTERVAL_MS = 60_000;
 
 type LoggerLike = {
@@ -17,18 +16,6 @@ type LoggerLike = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function envFlagDisabled(name: string): boolean {
-  const raw = (process.env[name] ?? "").trim().toLowerCase();
-  return ["0", "false", "no", "off"].includes(raw);
-}
-
-export function tsCronWorkerEnabled(): boolean {
-  if (envFlagDisabled(TS_CRON_WORKER_FLAG_ENV)) {
-    return false;
-  }
-  return true;
 }
 
 export function cronjobCheckIntervalMs(): number {

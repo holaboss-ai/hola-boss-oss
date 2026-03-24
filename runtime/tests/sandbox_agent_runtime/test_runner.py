@@ -188,6 +188,239 @@ def test_selected_harness_defaults_to_opencode_without_explicit_override(monkeyp
     assert _selected_harness(request=request) == "opencode"
 
 
+@pytest.mark.asyncio
+async def test_start_opencode_apps_via_runtime_api_posts_bootstrap_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    request = RunnerRequest(
+        holaboss_user_id="user-1",
+        workspace_id="workspace-1",
+        session_id="session-1",
+        input_id="input-1",
+        instruction="hello",
+        context={},
+    )
+    workspace_dir = Path("/tmp/workspace-1")
+    app = SimpleNamespace(
+        app_id="app-a",
+        mcp=SimpleNamespace(transport="http-sse", port=3099, path="/mcp"),
+        health_check=SimpleNamespace(path="/health", timeout_s=60, interval_s=5),
+        env_contract=("HOLABOSS_USER_ID",),
+        start_command="npm run start",
+        base_dir="apps/app-a",
+        lifecycle=SimpleNamespace(setup="", start="", stop=""),
+    )
+    captured: dict[str, object] = {}
+
+    class _FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "applications": [
+                    {
+                        "app_id": "app-a",
+                        "mcp_url": "http://localhost:13100/mcp",
+                        "timeout_ms": 60000,
+                    }
+                ]
+            }
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            del exc_type, exc, tb
+            return False
+
+        async def post(self, url: str, *, json: dict[str, object]):
+            captured["url"] = url
+            captured["json"] = json
+            return _FakeResponse()
+
+    monkeypatch.setenv("SANDBOX_RUNTIME_API_URL", "http://runtime.example")
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: _FakeClient())
+
+    entries = await runner_module._start_opencode_apps_via_runtime_api(
+        request=request,
+        workspace_dir=workspace_dir,
+        resolved_applications=(app,),
+    )
+
+    assert entries == (
+        {
+            "name": "app-a",
+            "config": {
+                "type": "remote",
+                "url": "http://localhost:13100/mcp",
+                "enabled": True,
+                "headers": {"X-Workspace-Id": "workspace-1"},
+                "timeout": 60000,
+            },
+        },
+    )
+    assert captured == {
+        "url": "http://runtime.example/api/v1/internal/workspaces/workspace-1/opencode-apps/start",
+        "json": {
+            "workspace_dir": "/tmp/workspace-1",
+            "holaboss_user_id": "",
+            "resolved_applications": [
+                {
+                    "app_id": "app-a",
+                    "mcp": {"transport": "http-sse", "port": 3099, "path": "/mcp"},
+                    "health_check": {"path": "/health", "timeout_s": 60, "interval_s": 5},
+                    "env_contract": ["HOLABOSS_USER_ID"],
+                    "start_command": "npm run start",
+                    "base_dir": "apps/app-a",
+                    "lifecycle": {"setup": "", "start": "", "stop": ""},
+                }
+            ],
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_start_opencode_resolved_applications_falls_back_on_runtime_api_transport_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = RunnerRequest(
+        holaboss_user_id="user-1",
+        workspace_id="workspace-1",
+        session_id="session-1",
+        input_id="input-1",
+        instruction="hello",
+        context={},
+    )
+    workspace_dir = Path("/tmp/workspace-1")
+    app = SimpleNamespace(
+        app_id="app-a",
+        health_check=SimpleNamespace(timeout_s=60),
+    )
+    started: dict[str, object] = {}
+
+    async def _fail_runtime_api(**kwargs):
+        del kwargs
+        raise httpx.ConnectError("ts bootstrap unavailable")
+
+    async def _python_fallback(**kwargs):
+        started.update(kwargs)
+        return (
+            {
+                "name": "app-a",
+                "config": {
+                    "type": "remote",
+                    "url": "http://localhost:13100/mcp",
+                    "enabled": True,
+                    "headers": {"X-Workspace-Id": "workspace-1"},
+                    "timeout": 60000,
+                },
+            },
+        )
+
+    monkeypatch.setenv("SANDBOX_AGENT_ENABLE_PYTHON_APP_LIFECYCLE_FALLBACK", "1")
+    monkeypatch.setattr(runner_module, "_start_opencode_apps_via_runtime_api", _fail_runtime_api)
+    monkeypatch.setattr(runner_module, "_start_opencode_apps_via_python_lifecycle", _python_fallback)
+
+    entries = await runner_module._start_opencode_resolved_applications(
+        request=request,
+        workspace_dir=workspace_dir,
+        resolved_applications=(app,),
+    )
+
+    assert started == {
+        "request": request,
+        "workspace_dir": workspace_dir,
+        "resolved_applications": (app,),
+    }
+    assert entries == (
+        {
+            "name": "app-a",
+            "config": {
+                "type": "remote",
+                "url": "http://localhost:13100/mcp",
+                "enabled": True,
+                "headers": {"X-Workspace-Id": "workspace-1"},
+                "timeout": 60000,
+            },
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_start_opencode_resolved_applications_raises_when_transport_fallback_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = RunnerRequest(
+        holaboss_user_id="user-1",
+        workspace_id="workspace-1",
+        session_id="session-1",
+        input_id="input-1",
+        instruction="hello",
+        context={},
+    )
+    workspace_dir = Path("/tmp/workspace-1")
+    app = SimpleNamespace(
+        app_id="app-a",
+        health_check=SimpleNamespace(timeout_s=60),
+    )
+
+    async def _fail_runtime_api(**kwargs):
+        del kwargs
+        raise httpx.ConnectError("ts bootstrap unavailable")
+
+    async def _unexpected_python_fallback(**kwargs):
+        del kwargs
+        raise AssertionError("python lifecycle fallback should stay disabled by default")
+
+    monkeypatch.delenv("SANDBOX_AGENT_ENABLE_PYTHON_APP_LIFECYCLE_FALLBACK", raising=False)
+    monkeypatch.setattr(runner_module, "_start_opencode_apps_via_runtime_api", _fail_runtime_api)
+    monkeypatch.setattr(runner_module, "_start_opencode_apps_via_python_lifecycle", _unexpected_python_fallback)
+
+    with pytest.raises(RuntimeError, match="Python lifecycle fallback is disabled"):
+        await runner_module._start_opencode_resolved_applications(
+            request=request,
+            workspace_dir=workspace_dir,
+            resolved_applications=(app,),
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_opencode_resolved_applications_raises_on_invalid_ts_bootstrap_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = RunnerRequest(
+        holaboss_user_id="user-1",
+        workspace_id="workspace-1",
+        session_id="session-1",
+        input_id="input-1",
+        instruction="hello",
+        context={},
+    )
+    workspace_dir = Path("/tmp/workspace-1")
+    app = SimpleNamespace(
+        app_id="app-a",
+        health_check=SimpleNamespace(timeout_s=60),
+    )
+
+    async def _invalid_runtime_api(**kwargs):
+        del kwargs
+        raise RuntimeError("invalid opencode app bootstrap response")
+
+    async def _unexpected_python_fallback(**kwargs):
+        del kwargs
+        raise AssertionError("python lifecycle fallback should not run for invalid TS bootstrap responses")
+
+    monkeypatch.setattr(runner_module, "_start_opencode_apps_via_runtime_api", _invalid_runtime_api)
+    monkeypatch.setattr(runner_module, "_start_opencode_apps_via_python_lifecycle", _unexpected_python_fallback)
+
+    with pytest.raises(RuntimeError, match="invalid opencode app bootstrap response"):
+        await runner_module._start_opencode_resolved_applications(
+            request=request,
+            workspace_dir=workspace_dir,
+            resolved_applications=(app,),
+        )
+
+
 def test_model_proxy_base_root_url_accepts_product_base_url_alias(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("HOLABOSS_MODEL_PROXY_BASE_URL", raising=False)
     monkeypatch.setenv("HOLABOSS_MODEL_PROXY_BASE_URL", "https://runtime.example/api/v1/model-proxy")
@@ -772,6 +1005,8 @@ def test_resolve_model_client_config_prefers_runtime_context(monkeypatch: pytest
         "X-Holaboss-Workspace-Id": "workspace-1",
         "X-Holaboss-Input-Id": "input-1",
     }
+
+
 
 
 def test_resolve_model_client_config_uses_direct_openai_fallback_when_enabled(

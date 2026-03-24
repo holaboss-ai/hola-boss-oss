@@ -163,6 +163,75 @@ test("startComposeAppTarget patches ports, runs compose up, and waits healthy", 
   assert.match(patched, /13101:4100/);
 });
 
+test("startComposeAppTarget passes HOLABOSS_USER_ID to docker compose when requested", async () => {
+  const appDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-compose-app-env-"));
+  fs.writeFileSync(
+    path.join(appDir, "docker-compose.yml"),
+    ['services:', '  app:', '    ports:', '      - "9999:8080"', '      - "9998:4100"'].join("\n"),
+    "utf8"
+  );
+
+  let started = false;
+  const seenEnvs: NodeJS.ProcessEnv[] = [];
+  const spawnStub = ((command: string, args?: readonly string[], options?: { cwd?: string; env?: NodeJS.ProcessEnv }) => {
+    const key = `${command} ${(args ?? []).join(" ")}`.trim();
+    if (key !== "docker compose version" && options?.env) {
+      seenEnvs.push(options.env);
+    }
+    const child = new EventEmitter() as EventEmitter & {
+      stderr: EventEmitter & { setEncoding: (encoding: string) => void };
+      stdout: EventEmitter & { setEncoding: (encoding: string) => void };
+    };
+    child.stderr = Object.assign(new EventEmitter(), { setEncoding: (_encoding: string) => {} });
+    child.stdout = Object.assign(new EventEmitter(), { setEncoding: (_encoding: string) => {} });
+    queueMicrotask(() => {
+      if (key === "docker compose images -q") {
+        child.stdout.emit("data", "image-1\n");
+      }
+      if (key === "docker compose config --services") {
+        child.stdout.emit("data", "app\n");
+      }
+      if (key === "docker compose up -d") {
+        started = true;
+      }
+      child.emit("close", 0);
+    });
+    return child;
+  }) as typeof import("node:child_process").spawn;
+  const fetchStub = (async (input: string | URL | RequestInfo) => {
+    if (!started) {
+      throw new Error("not healthy yet");
+    }
+    return new Response("", { status: String(input).includes("/health") ? 200 : 503 });
+  }) as typeof fetch;
+
+  await startComposeAppTarget({
+    appId: "app-a",
+    appDir,
+    resolvedApp: {
+      appId: "app-a",
+      mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+      healthCheck: { path: "/health", timeoutS: 1, intervalS: 0.01 },
+      envContract: ["HOLABOSS_USER_ID"],
+      startCommand: "",
+      baseDir: "apps/app-a",
+      lifecycle: { setup: "", start: "", stop: "" }
+    },
+    httpPort: 18081,
+    mcpPort: 13101,
+    holabossUserId: "user-1",
+    spawnImpl: spawnStub,
+    fetchImpl: fetchStub
+  });
+
+  assert.ok(seenEnvs.length >= 1);
+  for (const env of seenEnvs) {
+    assert.equal(env.HOLABOSS_USER_ID, "user-1");
+    assert.equal(env.PORT, "18081");
+    assert.equal(env.MCP_PORT, "13101");
+  }
+});
+
 test("stopComposeAppTarget runs compose down", async () => {
   const calls: Array<{ key: string; cwd?: string }> = [];
   const spawnStub = ((command: string, args?: readonly string[], options?: { cwd?: string }) => {
@@ -202,9 +271,11 @@ test("startShellLifecycleAppTarget runs lifecycle.start and waits healthy", asyn
   const appDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-shell-app-"));
   const calls: Array<{ key: string; cwd?: string }> = [];
   let started = false;
-  const spawnStub = ((command: string, args?: readonly string[], options?: { cwd?: string; shell?: boolean }) => {
+  let seenEnv: NodeJS.ProcessEnv | undefined;
+  const spawnStub = ((command: string, args?: readonly string[], options?: { cwd?: string; shell?: boolean; env?: NodeJS.ProcessEnv }) => {
     const key = `${command} ${(args ?? []).join(" ")}`.trim();
     calls.push({ key, cwd: options?.cwd });
+    seenEnv = options?.env;
     const child = new EventEmitter() as EventEmitter & {
       stderr: EventEmitter & { setEncoding: (encoding: string) => void };
       stdout: EventEmitter & { setEncoding: (encoding: string) => void };
@@ -242,6 +313,7 @@ test("startShellLifecycleAppTarget runs lifecycle.start and waits healthy", asyn
     },
     httpPort: 18081,
     mcpPort: 13101,
+    holabossUserId: "user-1",
     spawnImpl: spawnStub,
     fetchImpl: fetchStub
   });
@@ -253,6 +325,7 @@ test("startShellLifecycleAppTarget runs lifecycle.start and waits healthy", asyn
     ports: { http: 18081, mcp: 13101 }
   });
   assert.deepEqual(calls, [{ key: "npm run start", cwd: appDir }]);
+  assert.equal(seenEnv?.HOLABOSS_USER_ID, "user-1");
 });
 
 test("stopShellLifecycleAppTarget runs lifecycle.stop and clears tracked shell state", async () => {
@@ -428,7 +501,6 @@ test("lifecycle executor raises for unsupported startup configs", async () => {
   await assert.rejects(
     () =>
       executor.startApp({
-        workspaceId: "workspace-1",
         appId: "app-legacy",
         appDir: "/tmp/app-legacy",
         resolvedApp: {

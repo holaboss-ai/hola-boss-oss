@@ -4,7 +4,6 @@ import { type RuntimeStateStore, type SessionInputRecord } from "@holaboss/runti
 
 import { processClaimedInput } from "./claimed-input-executor.js";
 
-const TS_QUEUE_WORKER_FLAG_ENV = "HOLABOSS_RUNTIME_USE_TS_QUEUE_WORKER";
 const DEFAULT_CLAIMED_BY = "sandbox-agent-ts-worker";
 const DEFAULT_LEASE_SECONDS = 300;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
@@ -25,18 +24,6 @@ export interface RuntimeQueueWorkerOptions {
   claimedBy?: string;
   leaseSeconds?: number;
   pollIntervalMs?: number;
-}
-
-function envFlagDisabled(name: string): boolean {
-  const raw = (process.env[name] ?? "").trim().toLowerCase();
-  return ["0", "false", "no", "off"].includes(raw);
-}
-
-export function tsQueueWorkerEnabled(): boolean {
-  if (envFlagDisabled(TS_QUEUE_WORKER_FLAG_ENV)) {
-    return false;
-  }
-  return true;
 }
 
 export class RuntimeQueueWorker implements QueueWorkerLike {

@@ -21,15 +21,14 @@ export interface LifecycleShutdownParams {
 
 export interface AppLifecycleExecutorLike {
   startApp(params: {
-    workspaceId: string;
     appId: string;
     appDir?: string;
     httpPort?: number;
     mcpPort?: number;
+    holabossUserId?: string;
     resolvedApp?: ResolvedApplicationRuntime;
   }): Promise<AppLifecycleActionResult>;
   stopApp(params: {
-    workspaceId: string;
     appId: string;
     appDir?: string;
     resolvedApp?: ResolvedApplicationRuntime;
@@ -180,9 +179,10 @@ async function runSpawn(
 
 function buildShellLifecycleEnv(
   params: {
-    resolvedApp: ResolvedApplicationRuntime;
     httpPort?: number;
     mcpPort?: number;
+    holabossUserId?: string;
+    resolvedApp?: ResolvedApplicationRuntime;
   }
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
@@ -191,6 +191,13 @@ function buildShellLifecycleEnv(
   }
   if (params.mcpPort !== undefined) {
     env.MCP_PORT = String(params.mcpPort);
+  }
+  if (
+    params.holabossUserId &&
+    params.resolvedApp &&
+    params.resolvedApp.envContract.includes("HOLABOSS_USER_ID")
+  ) {
+    env.HOLABOSS_USER_ID = params.holabossUserId;
   }
   return env;
 }
@@ -273,15 +280,20 @@ export async function shutdownComposeTargets(
   return { stopped, failed };
 }
 
-async function composeImagesExist(composeCmd: string[], appDir: string, spawnImpl: SpawnLike): Promise<boolean> {
+async function composeImagesExist(
+  composeCmd: string[],
+  appDir: string,
+  spawnImpl: SpawnLike,
+  env: NodeJS.ProcessEnv
+): Promise<boolean> {
   const images = await runSpawn(spawnImpl, composeCmd[0]!, [...composeCmd.slice(1), "images", "-q"], {
     cwd: appDir,
-    env: process.env,
+    env,
     captureStdout: true
   });
   const services = await runSpawn(spawnImpl, composeCmd[0]!, [...composeCmd.slice(1), "config", "--services"], {
     cwd: appDir,
-    env: process.env,
+    env,
     captureStdout: true
   });
   const imageCount = images.stdout ? images.stdout.split("\n").filter(Boolean).length : 0;
@@ -357,6 +369,7 @@ export async function startComposeAppTarget(params: {
   resolvedApp: ResolvedApplicationRuntime;
   httpPort: number;
   mcpPort: number;
+  holabossUserId?: string;
   spawnImpl?: SpawnLike;
   fetchImpl?: typeof fetch;
 }): Promise<AppLifecycleActionResult> {
@@ -386,12 +399,13 @@ export async function startComposeAppTarget(params: {
     containerMcpPort: params.resolvedApp.mcp.port,
     hostMcpPort: params.mcpPort
   });
+  const composeEnv = buildShellLifecycleEnv(params);
 
-  const hasImages = await composeImagesExist(composeCmd, params.appDir, spawnImpl);
+  const hasImages = await composeImagesExist(composeCmd, params.appDir, spawnImpl, composeEnv);
   const upArgs = hasImages ? [...composeCmd.slice(1), "up", "-d"] : [...composeCmd.slice(1), "up", "--build", "-d"];
   let upResult = await runSpawn(spawnImpl, composeCmd[0]!, upArgs, {
     cwd: params.appDir,
-    env: process.env,
+    env: composeEnv,
     captureStderr: true
   });
   if (upResult.code !== 0) {
@@ -403,7 +417,7 @@ export async function startComposeAppTarget(params: {
   } catch (error) {
     upResult = await runSpawn(spawnImpl, composeCmd[0]!, [...composeCmd.slice(1), "up", "--build", "-d"], {
       cwd: params.appDir,
-      env: process.env,
+      env: composeEnv,
       captureStderr: true
     });
     if (upResult.code !== 0) {
@@ -426,6 +440,7 @@ export async function startShellLifecycleAppTarget(params: {
   resolvedApp: ResolvedApplicationRuntime;
   httpPort: number;
   mcpPort: number;
+  holabossUserId?: string;
   spawnImpl?: SpawnLike;
   fetchImpl?: typeof fetch;
 }): Promise<AppLifecycleActionResult> {
@@ -468,6 +483,7 @@ export async function startSubprocessAppTarget(params: {
   resolvedApp: ResolvedApplicationRuntime;
   httpPort: number;
   mcpPort: number;
+  holabossUserId?: string;
   spawnImpl?: SpawnLike;
   fetchImpl?: typeof fetch;
 }): Promise<AppLifecycleActionResult> {
@@ -519,7 +535,7 @@ export async function stopShellLifecycleAppTarget(params: {
     try {
       const child = spawnImpl(lifecycleStop, [], {
         cwd: params.appDir,
-        env: buildShellLifecycleEnv({ resolvedApp: params.resolvedApp }),
+        env: buildShellLifecycleEnv({}),
         shell: true,
         stdio: ["ignore", "pipe", "pipe"]
       });
@@ -640,11 +656,11 @@ function unsupportedStartError(params: {
 
 export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
   async startApp(params: {
-    workspaceId: string;
     appId: string;
     appDir?: string;
     httpPort?: number;
     mcpPort?: number;
+    holabossUserId?: string;
     resolvedApp?: ResolvedApplicationRuntime;
   }): Promise<AppLifecycleActionResult> {
     if (
@@ -657,7 +673,8 @@ export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
         appDir: params.appDir,
         resolvedApp: params.resolvedApp,
         httpPort: params.httpPort,
-        mcpPort: params.mcpPort
+        mcpPort: params.mcpPort,
+        holabossUserId: params.holabossUserId
       });
     }
     if (hasNativeShellLifecycle(params) && params.resolvedApp.lifecycle.start) {
@@ -669,7 +686,8 @@ export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
         appDir: params.appDir,
         resolvedApp: params.resolvedApp,
         httpPort: params.httpPort,
-        mcpPort: params.mcpPort
+        mcpPort: params.mcpPort,
+        holabossUserId: params.holabossUserId
       });
     }
     if (hasNativeStartCommandLifecycle(params)) {
@@ -681,14 +699,14 @@ export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
         appDir: params.appDir,
         resolvedApp: params.resolvedApp,
         httpPort: params.httpPort,
-        mcpPort: params.mcpPort
+        mcpPort: params.mcpPort,
+        holabossUserId: params.holabossUserId
       });
     }
     throw unsupportedStartError(params);
   }
 
   async stopApp(params: {
-    workspaceId: string;
     appId: string;
     appDir?: string;
     resolvedApp?: ResolvedApplicationRuntime;
