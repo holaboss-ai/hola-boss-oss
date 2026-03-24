@@ -1,11 +1,14 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { Readable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
+import path from "node:path";
 
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
+import yaml from "js-yaml";
 
 import {
+  type AppBuildRecord,
   type CronjobRecord,
   type OutputFolderRecord,
   type OutputRecord,
@@ -367,6 +370,295 @@ function sendError(reply: FastifyReply, statusCode: number, detail: string) {
   return reply.code(statusCode).send({ detail });
 }
 
+function resolveWorkspaceFilePath(workspaceDir: string, relativePath: string): string {
+  if (!relativePath || relativePath.split("/").includes("..")) {
+    throw new Error("path traversal not allowed");
+  }
+  const resolvedWorkspaceDir = path.resolve(workspaceDir);
+  const fullPath = path.resolve(resolvedWorkspaceDir, relativePath);
+  if (fullPath !== resolvedWorkspaceDir && !fullPath.startsWith(`${resolvedWorkspaceDir}${path.sep}`)) {
+    throw new Error("path traversal not allowed");
+  }
+  return fullPath;
+}
+
+function collectWorkspaceSnapshot(workspaceDir: string) {
+  const files: Array<Record<string, unknown>> = [];
+  const extensionCounts: Record<string, number> = {};
+  let totalSize = 0;
+  const maxFiles = 5000;
+  const skipDirectories = new Set([".git", "node_modules", "__pycache__", ".venv", "dist", "build"]);
+  const stack: string[] = [workspaceDir];
+
+  while (stack.length > 0 && files.length < maxFiles) {
+    const currentDir = stack.pop() as string;
+    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+      const fullPath = path.join(currentDir, entry.name);
+      const relativePath = path.relative(workspaceDir, fullPath);
+      if (!relativePath) {
+        continue;
+      }
+      if (entry.isDirectory()) {
+        if (!skipDirectories.has(entry.name)) {
+          stack.push(fullPath);
+        }
+        continue;
+      }
+      if (!entry.isFile()) {
+        continue;
+      }
+      const stat = fs.statSync(fullPath);
+      totalSize += stat.size;
+      const extension = path.extname(entry.name).toLowerCase() || "(none)";
+      extensionCounts[extension] = (extensionCounts[extension] ?? 0) + 1;
+      files.push({
+        path: relativePath.split(path.sep).join("/"),
+        size: stat.size,
+        modified: new Date(stat.mtimeMs).toISOString()
+      });
+      if (files.length >= maxFiles) {
+        break;
+      }
+    }
+  }
+
+  const previews: Record<string, string> = {};
+  for (const keyFile of ["workspace.yaml", "README.md", "AGENTS.md", "package.json"]) {
+    const fullPath = path.join(workspaceDir, keyFile);
+    if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
+      continue;
+    }
+    previews[keyFile] = fs.readFileSync(fullPath).subarray(0, 1000).toString("utf8");
+  }
+
+  const git: Record<string, unknown> = {};
+  if (fs.existsSync(path.join(workspaceDir, ".git"))) {
+    try {
+      const branchResult = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+        cwd: workspaceDir,
+        encoding: "utf8",
+        timeout: 5000
+      });
+      if (branchResult.status === 0) {
+        git.branch = branchResult.stdout.trim();
+      }
+      const statusResult = spawnSync("git", ["status", "--porcelain"], {
+        cwd: workspaceDir,
+        encoding: "utf8",
+        timeout: 5000
+      });
+      git.dirty = Boolean(statusResult.stdout.trim());
+    } catch {
+      // Ignore git inspection failures.
+    }
+  }
+
+  return {
+    file_count: files.length,
+    total_size: totalSize,
+    files,
+    extension_counts: extensionCounts,
+    previews,
+    git
+  };
+}
+
+type ParsedInstalledApp = {
+  appId: string;
+  configPath: string;
+  lifecycle: {
+    setup: string;
+    start: string;
+    stop: string;
+  };
+};
+
+function appBuildPayload(record: AppBuildRecord): Record<string, unknown> {
+  return {
+    workspace_id: record.workspaceId,
+    app_id: record.appId,
+    status: record.status,
+    started_at: record.startedAt,
+    completed_at: record.completedAt,
+    error: record.error,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt
+  };
+}
+
+function readWorkspaceYamlDocument(workspaceDir: string): Record<string, unknown> {
+  const workspaceYamlPath = path.join(workspaceDir, "workspace.yaml");
+  if (!fs.existsSync(workspaceYamlPath)) {
+    return {};
+  }
+  const loaded = yaml.load(fs.readFileSync(workspaceYamlPath, "utf8"));
+  return isRecord(loaded) ? loaded : {};
+}
+
+function writeWorkspaceYamlDocument(workspaceDir: string, document: Record<string, unknown>): void {
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(workspaceDir, "workspace.yaml"),
+    yaml.dump(document, { sortKeys: false, noRefs: true }),
+    "utf8"
+  );
+}
+
+function updateWorkspaceApplications(
+  workspaceDir: string,
+  updater: (applications: Array<Record<string, unknown>>) => Array<Record<string, unknown>>
+): void {
+  const document = readWorkspaceYamlDocument(workspaceDir);
+  const currentApplications = Array.isArray(document.applications) ? document.applications.filter(isRecord) : [];
+  document.applications = updater([...currentApplications]);
+  writeWorkspaceYamlDocument(workspaceDir, document);
+}
+
+function listWorkspaceApplications(workspaceDir: string): Array<Record<string, unknown>> {
+  const document = readWorkspaceYamlDocument(workspaceDir);
+  return Array.isArray(document.applications) ? document.applications.filter(isRecord) : [];
+}
+
+function parseInstalledAppRuntime(rawYaml: string, declaredAppId: string, configPath: string): ParsedInstalledApp {
+  let loaded: unknown;
+  try {
+    loaded = yaml.load(rawYaml);
+  } catch (error) {
+    throw new Error(`invalid YAML: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!isRecord(loaded)) {
+    throw new Error("app.runtime.yaml must be a mapping");
+  }
+  const yamlAppId = String(loaded.app_id ?? "");
+  if (yamlAppId !== declaredAppId) {
+    throw new Error(`app_id in yaml ('${yamlAppId}') does not match declared app_id ('${declaredAppId}')`);
+  }
+  const mcp = isRecord(loaded.mcp) ? loaded.mcp : null;
+  if (mcp?.port === undefined || mcp.port === null || Number.isNaN(Number(mcp.port))) {
+    throw new Error(`mcp.port is required (${configPath})`);
+  }
+  const lifecycle = isRecord(loaded.lifecycle) ? loaded.lifecycle : {};
+  return {
+    appId: declaredAppId,
+    configPath,
+    lifecycle: {
+      setup: typeof lifecycle.setup === "string" ? lifecycle.setup : "",
+      start: typeof lifecycle.start === "string" ? lifecycle.start : "",
+      stop: typeof lifecycle.stop === "string" ? lifecycle.stop : ""
+    }
+  };
+}
+
+function appendWorkspaceApplication(
+  workspaceDir: string,
+  params: { appId: string; configPath: string; lifecycle?: Record<string, string> | null }
+): void {
+  updateWorkspaceApplications(workspaceDir, (applications) => {
+    if (applications.some((entry) => entry.app_id === params.appId)) {
+      return applications;
+    }
+    const nextEntry: Record<string, unknown> = {
+      app_id: params.appId,
+      config_path: params.configPath
+    };
+    if (params.lifecycle && Object.keys(params.lifecycle).length > 0) {
+      nextEntry.lifecycle = params.lifecycle;
+    }
+    applications.push(nextEntry);
+    return applications;
+  });
+}
+
+async function runAppSetup(params: {
+  store: RuntimeStateStore;
+  workspaceDir: string;
+  workspaceId: string;
+  appId: string;
+  setupCommand: string;
+}): Promise<void> {
+  params.store.upsertAppBuild({
+    workspaceId: params.workspaceId,
+    appId: params.appId,
+    status: "building"
+  });
+
+  try {
+    const result = await new Promise<{ code: number | null; timedOut: boolean; stderr: string }>((resolve, reject) => {
+      let stderr = "";
+      let settled = false;
+      const child = spawn(params.setupCommand, {
+        cwd: path.join(params.workspaceDir, "apps", params.appId),
+        env: process.env,
+        shell: true,
+        stdio: ["ignore", "ignore", "pipe"]
+      });
+      const timeoutHandle = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        child.kill("SIGKILL");
+        resolve({ code: null, timedOut: true, stderr });
+      }, 300_000);
+
+      child.stderr?.on("data", (chunk: Buffer | string) => {
+        if (stderr.length >= 2000) {
+          return;
+        }
+        const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+        stderr = `${stderr}${text}`.slice(0, 2000);
+      });
+      child.on("error", (error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeoutHandle);
+        reject(error);
+      });
+      child.on("close", (code) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeoutHandle);
+        resolve({ code, timedOut: false, stderr });
+      });
+    });
+
+    if (result.timedOut) {
+      params.store.upsertAppBuild({
+        workspaceId: params.workspaceId,
+        appId: params.appId,
+        status: "failed",
+        error: "setup timed out after 300s"
+      });
+      return;
+    }
+    if ((result.code ?? 0) !== 0) {
+      params.store.upsertAppBuild({
+        workspaceId: params.workspaceId,
+        appId: params.appId,
+        status: "failed",
+        error: result.stderr
+      });
+      return;
+    }
+    params.store.upsertAppBuild({
+      workspaceId: params.workspaceId,
+      appId: params.appId,
+      status: "completed"
+    });
+  } catch (error) {
+    params.store.upsertAppBuild({
+      workspaceId: params.workspaceId,
+      appId: params.appId,
+      status: "failed",
+      error: (error instanceof Error ? error.message : String(error)).slice(0, 2000)
+    });
+  }
+}
+
 async function executeWorkspaceCommand(command: string, cwd: string, timeoutSeconds: number): Promise<{
   stdout: string;
   stderr: string;
@@ -422,6 +714,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     });
 
   const app = Fastify({ logger: options.logger ?? false });
+  const backgroundTasks = new Set<Promise<void>>();
   const queueWorker =
     options.queueWorker === undefined
       ? tsQueueWorkerEnabled()
@@ -457,6 +750,13 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   });
 
   app.get("/healthz", async () => ({ ok: true }));
+
+  function startBackgroundTask(task: Promise<void>): void {
+    backgroundTasks.add(task);
+    void task.finally(() => {
+      backgroundTasks.delete(task);
+    });
+  }
 
   app.post("/api/v1/workspaces", async (request, reply) => {
     if (!isRecord(request.body)) {
@@ -620,6 +920,333 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "workspace exec failed");
     }
+  });
+
+  app.post("/api/v1/workspaces/:workspaceId/apply-template", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { workspaceId: string };
+    const files = Array.isArray(request.body.files) ? request.body.files : [];
+    const replaceExisting = optionalBoolean(request.body.replace_existing, false);
+    const workspaceDir = store.workspaceDir(params.workspaceId);
+
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    if (replaceExisting) {
+      for (const entry of fs.readdirSync(workspaceDir, { withFileTypes: true })) {
+        if (entry.name === ".holaboss" || entry.name === "workspace.json") {
+          continue;
+        }
+        fs.rmSync(path.join(workspaceDir, entry.name), { recursive: true, force: true });
+      }
+    }
+
+    let filesWritten = 0;
+    for (const item of files) {
+      if (!isRecord(item)) {
+        continue;
+      }
+      const relativePath = optionalString(item.path) ?? "";
+      const contentBase64 = optionalString(item.content_base64) ?? "";
+      if (!relativePath || !contentBase64) {
+        continue;
+      }
+      let fullPath: string;
+      try {
+        fullPath = resolveWorkspaceFilePath(workspaceDir, relativePath);
+      } catch (error) {
+        return sendError(reply, 400, error instanceof Error ? error.message : "path traversal not allowed");
+      }
+      fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+      fs.writeFileSync(fullPath, Buffer.from(contentBase64, "base64"));
+      if (optionalBoolean(item.executable, false)) {
+        fs.chmodSync(fullPath, fs.statSync(fullPath).mode | 0o111);
+      }
+      filesWritten += 1;
+    }
+
+    return reply.send({ status: "applied", files_written: filesWritten });
+  });
+
+  app.get("/api/v1/workspaces/:workspaceId/files/*", async (request, reply) => {
+    const params = request.params as { workspaceId: string; "*": string };
+    const workspaceDir = store.workspaceDir(params.workspaceId);
+    let fullPath: string;
+    try {
+      fullPath = resolveWorkspaceFilePath(workspaceDir, params["*"] ?? "");
+    } catch (error) {
+      return sendError(reply, 400, error instanceof Error ? error.message : "path traversal not allowed");
+    }
+    if (!fs.existsSync(fullPath)) {
+      return sendError(reply, 404, `file not found: ${params["*"]}`);
+    }
+    if (!fs.statSync(fullPath).isFile()) {
+      return sendError(reply, 400, `not a file: ${params["*"]}`);
+    }
+    const raw = fs.readFileSync(fullPath);
+    try {
+      const content = new TextDecoder("utf-8", { fatal: true }).decode(raw);
+      return reply.send({
+        path: params["*"],
+        content,
+        encoding: "utf-8"
+      });
+    } catch {
+      return reply.send({
+        path: params["*"],
+        content: raw.toString("base64"),
+        encoding: "base64"
+      });
+    }
+  });
+
+  app.put("/api/v1/workspaces/:workspaceId/files/*", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { workspaceId: string; "*": string };
+    const workspaceDir = store.workspaceDir(params.workspaceId);
+    let fullPath: string;
+    try {
+      fullPath = resolveWorkspaceFilePath(workspaceDir, params["*"] ?? "");
+    } catch (error) {
+      return sendError(reply, 400, error instanceof Error ? error.message : "path traversal not allowed");
+    }
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    fs.writeFileSync(fullPath, Buffer.from(requiredString(request.body.content_base64, "content_base64"), "base64"));
+    if (optionalBoolean(request.body.executable, false)) {
+      fs.chmodSync(fullPath, fs.statSync(fullPath).mode | 0o111);
+    }
+    return reply.send({ path: params["*"], status: "written" });
+  });
+
+  app.get("/api/v1/workspaces/:workspaceId/snapshot", async (request, reply) => {
+    const params = request.params as { workspaceId: string };
+    const workspaceDir = store.workspaceDir(params.workspaceId);
+    if (!fs.existsSync(workspaceDir)) {
+      return sendError(reply, 404, "workspace not found");
+    }
+    return reply.send({
+      workspace_id: params.workspaceId,
+      ...collectWorkspaceSnapshot(workspaceDir)
+    });
+  });
+
+  app.get("/api/v1/workspaces/:workspaceId/export", async (request, reply) => {
+    const params = request.params as { workspaceId: string };
+    const workspaceDir = store.workspaceDir(params.workspaceId);
+    if (!fs.existsSync(workspaceDir)) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    const tar = spawnSync(
+      "tar",
+      [
+        "-czf",
+        "-",
+        "--exclude=node_modules",
+        "--exclude=.git",
+        "--exclude=dist",
+        "--exclude=build",
+        "--exclude=__pycache__",
+        "--exclude=.venv",
+        "--exclude=.hb_template_bootstrap_tmp",
+        "--exclude=.hb_app_template_tmp",
+        "."
+      ],
+      {
+        cwd: workspaceDir,
+        encoding: null,
+        maxBuffer: 128 * 1024 * 1024
+      }
+    );
+    if (tar.status !== 0) {
+      return sendError(
+        reply,
+        500,
+        tar.stderr instanceof Buffer ? tar.stderr.toString("utf8", 0, 2000) : "workspace export failed"
+      );
+    }
+    reply.header("Content-Disposition", `attachment; filename=${params.workspaceId}.tar.gz`);
+    return reply.type("application/gzip").send(tar.stdout);
+  });
+
+  app.get("/api/v1/apps/:appId/build-status", async (request) => {
+    const params = request.params as { appId: string };
+    const query = isRecord(request.query) ? request.query : {};
+    const workspaceId = requiredString(query.workspace_id, "workspace_id");
+    const record = store.getAppBuild({
+      workspaceId,
+      appId: params.appId
+    });
+    return record ? appBuildPayload(record) : { status: "unknown" };
+  });
+
+  app.get("/api/v1/apps", async (request, reply) => {
+    const query = isRecord(request.query) ? request.query : {};
+    const workspaceId = requiredString(query.workspace_id, "workspace_id");
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+    const apps = listWorkspaceApplications(store.workspaceDir(workspaceId)).map((entry) => {
+      const appId = typeof entry.app_id === "string" ? entry.app_id : "";
+      const build = appId
+        ? store.getAppBuild({
+            workspaceId,
+            appId
+          })
+        : null;
+      return {
+        app_id: appId,
+        config_path: typeof entry.config_path === "string" ? entry.config_path : "",
+        lifecycle: isRecord(entry.lifecycle) ? entry.lifecycle : null,
+        build_status: build?.status ?? "unknown"
+      };
+    });
+    return {
+      apps: apps.filter((entry) => entry.app_id.length > 0),
+      count: apps.filter((entry) => entry.app_id.length > 0).length
+    };
+  });
+
+  app.post("/api/v1/apps/install", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+
+    const appId = requiredString(request.body.app_id, "app_id");
+    const workspaceId = requiredString(request.body.workspace_id, "workspace_id");
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    const workspaceDir = store.workspaceDir(workspaceId);
+    const appDir = path.join(workspaceDir, "apps", appId);
+    fs.mkdirSync(appDir, { recursive: true });
+
+    const files = Array.isArray(request.body.files) ? request.body.files : [];
+    for (const item of files) {
+      if (!isRecord(item)) {
+        continue;
+      }
+      const relativePath = requiredString(item.path, "path");
+      const fullPath = resolveWorkspaceFilePath(appDir, relativePath);
+      fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+      fs.writeFileSync(fullPath, Buffer.from(requiredString(item.content_base64, "content_base64"), "base64"));
+      if (optionalBoolean(item.executable, false)) {
+        fs.chmodSync(fullPath, 0o755);
+      }
+    }
+
+    const appYamlPath = path.join(appDir, "app.runtime.yaml");
+    if (!fs.existsSync(appYamlPath)) {
+      return sendError(reply, 400, "app.runtime.yaml not found in uploaded files");
+    }
+
+    let parsed: ParsedInstalledApp;
+    try {
+      parsed = parseInstalledAppRuntime(
+        fs.readFileSync(appYamlPath, "utf8"),
+        appId,
+        `apps/${appId}/app.runtime.yaml`
+      );
+    } catch (error) {
+      return sendError(reply, 400, error instanceof Error ? error.message : "invalid app.runtime.yaml");
+    }
+
+    const lifecycle: Record<string, string> = {};
+    if (parsed.lifecycle.setup) {
+      lifecycle.setup = parsed.lifecycle.setup;
+    }
+    if (parsed.lifecycle.start) {
+      lifecycle.start = parsed.lifecycle.start;
+    }
+    if (parsed.lifecycle.stop) {
+      lifecycle.stop = parsed.lifecycle.stop;
+    }
+    appendWorkspaceApplication(workspaceDir, {
+      appId,
+      configPath: parsed.configPath,
+      lifecycle: Object.keys(lifecycle).length > 0 ? lifecycle : null
+    });
+
+    if (parsed.lifecycle.setup) {
+      startBackgroundTask(
+        runAppSetup({
+          store,
+          workspaceDir,
+          workspaceId,
+          appId,
+          setupCommand: parsed.lifecycle.setup
+        })
+      );
+      return {
+        app_id: appId,
+        status: "setup_started",
+        detail: `Files written, running setup: ${parsed.lifecycle.setup}`
+      };
+    }
+
+    return {
+      app_id: appId,
+      status: "installed",
+      detail: "Files written, no setup command defined"
+    };
+  });
+
+  app.post("/api/v1/apps/:appId/setup", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { appId: string };
+    const workspaceId = requiredString(request.body.workspace_id, "workspace_id");
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+    const workspaceDir = store.workspaceDir(workspaceId);
+    const appYamlPath = path.join(workspaceDir, "apps", params.appId, "app.runtime.yaml");
+    if (!fs.existsSync(appYamlPath)) {
+      return sendError(reply, 404, `app.runtime.yaml not found for ${params.appId}`);
+    }
+
+    let parsed: ParsedInstalledApp;
+    try {
+      parsed = parseInstalledAppRuntime(
+        fs.readFileSync(appYamlPath, "utf8"),
+        params.appId,
+        `apps/${params.appId}/app.runtime.yaml`
+      );
+    } catch (error) {
+      return sendError(reply, 400, error instanceof Error ? error.message : "invalid app.runtime.yaml");
+    }
+
+    if (!parsed.lifecycle.setup) {
+      return {
+        app_id: params.appId,
+        status: "no_setup_command",
+        detail: "No lifecycle.setup defined",
+        ports: {}
+      };
+    }
+
+    startBackgroundTask(
+      runAppSetup({
+        store,
+        workspaceDir,
+        workspaceId,
+        appId: params.appId,
+        setupCommand: parsed.lifecycle.setup
+      })
+    );
+    return {
+      app_id: params.appId,
+      status: "setup_started",
+      detail: `Running: ${parsed.lifecycle.setup}`,
+      ports: {}
+    };
   });
 
   app.post("/api/v1/agent-sessions/queue", async (request, reply) => {

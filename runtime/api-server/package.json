@@ -14,8 +14,10 @@
   },
   "dependencies": {
     "@holaboss/runtime-state-store": "file:../state-store",
+    "@types/js-yaml": "^4.0.9",
     "cron-parser": "^5.5.0",
-    "fastify": "^5.6.1"
+    "fastify": "^5.6.1",
+    "js-yaml": "^4.1.1"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",

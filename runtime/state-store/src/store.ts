@@ -124,6 +124,17 @@ export interface OutputRecord {
   updatedAt: string | null;
 }
 
+export interface AppBuildRecord {
+  workspaceId: string;
+  appId: string;
+  status: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CronjobRecord {
   id: string;
   workspaceId: string;
@@ -1180,6 +1191,83 @@ export class RuntimeStateStore {
     };
   }
 
+  upsertAppBuild(params: {
+    workspaceId: string;
+    appId: string;
+    status: string;
+    error?: string | null;
+  }): AppBuildRecord {
+    const now = utcNowIso();
+    const existing = this.getAppBuild({
+      workspaceId: params.workspaceId,
+      appId: params.appId
+    });
+    if (existing) {
+      const fields: Record<string, string | null> = {
+        status: params.status,
+        updated_at: now
+      };
+      if (params.status === "building") {
+        fields.started_at = now;
+        fields.error = null;
+      } else if (params.status === "completed") {
+        fields.completed_at = now;
+        fields.error = null;
+      } else if (params.status === "failed") {
+        fields.completed_at = now;
+        fields.error = params.error ?? null;
+      }
+      const setClause = Object.keys(fields)
+        .map((column) => `${column} = ?`)
+        .join(", ");
+      this.db()
+        .prepare(`UPDATE app_builds SET ${setClause} WHERE workspace_id = ? AND app_id = ?`)
+        .run(...Object.values(fields), params.workspaceId, params.appId);
+    } else {
+      this.db()
+        .prepare(`
+          INSERT INTO app_builds (
+              workspace_id, app_id, status, started_at, completed_at, error, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          params.workspaceId,
+          params.appId,
+          params.status,
+          params.status === "building" ? now : null,
+          null,
+          params.error ?? null,
+          now,
+          now
+        );
+    }
+    const row = this.db()
+      .prepare<[string, string], Record<string, unknown>>(
+        "SELECT * FROM app_builds WHERE workspace_id = ? AND app_id = ? LIMIT 1"
+      )
+      .get(params.workspaceId, params.appId);
+    if (!row) {
+      throw new Error("app build row not found after upsert");
+    }
+    return this.rowToAppBuild(row);
+  }
+
+  getAppBuild(params: { workspaceId: string; appId: string }): AppBuildRecord | null {
+    const row = this.db()
+      .prepare<[string, string], Record<string, unknown>>(
+        "SELECT * FROM app_builds WHERE workspace_id = ? AND app_id = ? LIMIT 1"
+      )
+      .get(params.workspaceId, params.appId);
+    return row ? this.rowToAppBuild(row) : null;
+  }
+
+  deleteAppBuild(params: { workspaceId: string; appId: string }): boolean {
+    const result = this.db()
+      .prepare("DELETE FROM app_builds WHERE workspace_id = ? AND app_id = ?")
+      .run(params.workspaceId, params.appId);
+    return result.changes > 0;
+  }
+
   createCronjob(params: {
     workspaceId: string;
     initiatedBy: string;
@@ -1593,6 +1681,21 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_outputs_workspace_folder_created
           ON outputs (workspace_id, folder_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS app_builds (
+          workspace_id TEXT NOT NULL,
+          app_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          started_at TEXT,
+          completed_at TEXT,
+          error TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, app_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_app_builds_workspace
+          ON app_builds (workspace_id);
 
       CREATE TABLE IF NOT EXISTS cronjobs (
           id TEXT PRIMARY KEY,
@@ -2123,6 +2226,19 @@ export class RuntimeStateStore {
       metadata: this.parseJsonDict(row.metadata),
       createdAt: row.created_at == null ? null : String(row.created_at),
       updatedAt: row.updated_at == null ? null : String(row.updated_at)
+    };
+  }
+
+  private rowToAppBuild(row: Record<string, unknown>): AppBuildRecord {
+    return {
+      workspaceId: String(row.workspace_id),
+      appId: String(row.app_id),
+      status: String(row.status),
+      startedAt: row.started_at == null ? null : String(row.started_at),
+      completedAt: row.completed_at == null ? null : String(row.completed_at),
+      error: row.error == null ? null : String(row.error),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at)
     };
   }
 

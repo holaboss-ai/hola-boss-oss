@@ -402,6 +402,61 @@ test("output events support latest id, incremental listing, and tail mode", () =
   store.close();
 });
 
+test("app build status round trip supports upsert, lookup, and delete", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const building = store.upsertAppBuild({
+    workspaceId: "workspace-1",
+    appId: "app-a",
+    status: "building"
+  });
+  const failed = store.upsertAppBuild({
+    workspaceId: "workspace-1",
+    appId: "app-a",
+    status: "failed",
+    error: "boom"
+  });
+  const completed = store.upsertAppBuild({
+    workspaceId: "workspace-1",
+    appId: "app-a",
+    status: "completed"
+  });
+  const fetched = store.getAppBuild({
+    workspaceId: "workspace-1",
+    appId: "app-a"
+  });
+  const deleted = store.deleteAppBuild({
+    workspaceId: "workspace-1",
+    appId: "app-a"
+  });
+
+  assert.equal(building.status, "building");
+  assert.ok(building.startedAt);
+  assert.equal(building.completedAt, null);
+  assert.equal(building.error, null);
+  assert.equal(failed.status, "failed");
+  assert.ok(failed.completedAt);
+  assert.equal(failed.error, "boom");
+  assert.equal(completed.status, "completed");
+  assert.ok(completed.completedAt);
+  assert.equal(completed.error, null);
+  assert.ok(fetched);
+  assert.equal(fetched.status, "completed");
+  assert.equal(deleted, true);
+  assert.equal(
+    store.getAppBuild({
+      workspaceId: "workspace-1",
+      appId: "app-a"
+    }),
+    null
+  );
+  store.close();
+});
+
 test("cronjobs round trip supports create, list, update, get, and delete", () => {
   const root = makeTempDir("hb-state-store-");
   const store = new RuntimeStateStore({

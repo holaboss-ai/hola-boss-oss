@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -485,6 +486,230 @@ test("workspace exec route runs inside the workspace directory", async () => {
     fs.realpathSync(response.json().stdout.trim()),
     fs.realpathSync(path.join(workspaceRoot, workspace.id))
   );
+
+  await app.close();
+  store.close();
+});
+
+test("workspace template, file, and snapshot routes preserve local payload shape", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: {
+      name: "Workspace Files",
+      harness: "opencode",
+      status: "active"
+    }
+  });
+  const workspace = created.json().workspace as { id: string };
+
+  const applied = await app.inject({
+    method: "POST",
+    url: `/api/v1/workspaces/${workspace.id}/apply-template`,
+    payload: {
+      replace_existing: true,
+      files: [
+        {
+          path: "README.md",
+          content_base64: Buffer.from("# Hello\n", "utf8").toString("base64")
+        },
+        {
+          path: "scripts/run.sh",
+          content_base64: Buffer.from("echo hi\n", "utf8").toString("base64"),
+          executable: true
+        }
+      ]
+    }
+  });
+  assert.equal(applied.statusCode, 200);
+  assert.equal(applied.json().files_written, 2);
+
+  const written = await app.inject({
+    method: "PUT",
+    url: `/api/v1/workspaces/${workspace.id}/files/docs/note.txt`,
+    payload: {
+      content_base64: Buffer.from("note body", "utf8").toString("base64"),
+      executable: false
+    }
+  });
+  assert.equal(written.statusCode, 200);
+  assert.equal(written.json().path, "docs/note.txt");
+
+  const readText = await app.inject({
+    method: "GET",
+    url: `/api/v1/workspaces/${workspace.id}/files/README.md`
+  });
+  assert.equal(readText.statusCode, 200);
+  assert.equal(readText.json().encoding, "utf-8");
+  assert.equal(readText.json().content, "# Hello\n");
+
+  const binaryPath = path.join(workspaceRoot, workspace.id, "bin", "payload.bin");
+  fs.mkdirSync(path.dirname(binaryPath), { recursive: true });
+  fs.writeFileSync(binaryPath, Buffer.from([0xff, 0x00, 0xfe]));
+  const readBinary = await app.inject({
+    method: "GET",
+    url: `/api/v1/workspaces/${workspace.id}/files/bin/payload.bin`
+  });
+  assert.equal(readBinary.statusCode, 200);
+  assert.equal(readBinary.json().encoding, "base64");
+  assert.equal(readBinary.json().content, Buffer.from([0xff, 0x00, 0xfe]).toString("base64"));
+
+  fs.writeFileSync(path.join(workspaceRoot, workspace.id, "workspace.yaml"), "name: demo\n", "utf8");
+  const snapshot = await app.inject({
+    method: "GET",
+    url: `/api/v1/workspaces/${workspace.id}/snapshot`
+  });
+  assert.equal(snapshot.statusCode, 200);
+  assert.equal(snapshot.json().workspace_id, workspace.id);
+  assert.ok(snapshot.json().file_count >= 4);
+  assert.equal(snapshot.json().previews["workspace.yaml"], "name: demo\n");
+  assert.equal(snapshot.json().git.dirty, undefined);
+
+  await app.close();
+  store.close();
+});
+
+test("workspace export route streams a tar.gz with the workspace files", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: {
+      name: "Workspace Export",
+      harness: "opencode",
+      status: "active"
+    }
+  });
+  const workspace = created.json().workspace as { id: string };
+  const workspaceDir = path.join(workspaceRoot, workspace.id);
+  fs.writeFileSync(path.join(workspaceDir, "README.md"), "# Export\n", "utf8");
+  fs.mkdirSync(path.join(workspaceDir, "node_modules"), { recursive: true });
+  fs.writeFileSync(path.join(workspaceDir, "node_modules", "ignored.txt"), "skip", "utf8");
+
+  const exported = await app.inject({
+    method: "GET",
+    url: `/api/v1/workspaces/${workspace.id}/export`
+  });
+
+  assert.equal(exported.statusCode, 200);
+  assert.equal(exported.headers["content-type"], "application/gzip");
+  assert.equal(
+    exported.headers["content-disposition"],
+    `attachment; filename=${workspace.id}.tar.gz`
+  );
+  const listed = spawnSync("tar", ["-tzf", "-"], {
+    input: exported.rawPayload
+  });
+  assert.equal(listed.status, 0);
+  const entries = listed.stdout.toString("utf8").trim().split("\n");
+  assert.equal(entries.includes("./README.md"), true);
+  assert.equal(entries.some((entry: string) => entry.includes("node_modules")), false);
+
+  await app.close();
+  store.close();
+});
+
+test("app install, list, build-status, and setup routes preserve local payload shape", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: {
+      name: "Workspace Apps",
+      harness: "opencode",
+      status: "active"
+    }
+  });
+  const workspace = created.json().workspace as { id: string };
+
+  const install = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/install",
+    payload: {
+      app_id: "demo-app",
+      workspace_id: workspace.id,
+      files: [
+        {
+          path: "app.runtime.yaml",
+          content_base64: Buffer.from(
+            [
+              "app_id: demo-app",
+              "mcp:",
+              "  port: 4100",
+              "lifecycle:",
+              "  start: npm run dev"
+            ].join("\n"),
+            "utf8"
+          ).toString("base64")
+        }
+      ]
+    }
+  });
+  assert.equal(install.statusCode, 200);
+  assert.deepEqual(install.json(), {
+    app_id: "demo-app",
+    status: "installed",
+    detail: "Files written, no setup command defined"
+  });
+
+  const listed = await app.inject({
+    method: "GET",
+    url: `/api/v1/apps?workspace_id=${workspace.id}`
+  });
+  assert.equal(listed.statusCode, 200);
+  assert.deepEqual(listed.json(), {
+    apps: [
+      {
+        app_id: "demo-app",
+        config_path: "apps/demo-app/app.runtime.yaml",
+        lifecycle: { start: "npm run dev" },
+        build_status: "unknown"
+      }
+    ],
+    count: 1
+  });
+
+  const buildStatus = await app.inject({
+    method: "GET",
+    url: `/api/v1/apps/demo-app/build-status?workspace_id=${workspace.id}`
+  });
+  assert.equal(buildStatus.statusCode, 200);
+  assert.deepEqual(buildStatus.json(), { status: "unknown" });
+
+  const setup = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/demo-app/setup",
+    payload: { workspace_id: workspace.id }
+  });
+  assert.equal(setup.statusCode, 200);
+  assert.deepEqual(setup.json(), {
+    app_id: "demo-app",
+    status: "no_setup_command",
+    detail: "No lifecycle.setup defined",
+    ports: {}
+  });
 
   await app.close();
   store.close();

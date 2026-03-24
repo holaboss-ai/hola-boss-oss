@@ -766,6 +766,50 @@ async def test_output_stream_endpoint_proxies_to_ts_api_when_enabled(
 
 
 @pytest.mark.asyncio
+async def test_workspace_export_endpoint_proxies_to_ts_api_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    runtime_db_env: Path,
+) -> None:
+    del runtime_db_env
+
+    async def _fake_worker_loop() -> None:
+        await asyncio.sleep(0)
+
+    captured: list[dict[str, object]] = []
+
+    async def _fake_stream(path: str, *, params=None):
+        captured.append({"path": path, "params": params})
+
+        async def _iter():
+            yield b"fake tarball"
+
+        return StreamingResponse(
+            _iter(),
+            media_type="application/gzip",
+            headers={"Content-Disposition": "attachment; filename=workspace-1.tar.gz"},
+        )
+
+    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
+    monkeypatch.setattr(api_module, "_proxy_ts_api_stream", _fake_stream)
+    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
+
+    transport = ASGITransport(app=app)
+    async with (
+        AsyncClient(transport=transport, base_url="http://test") as client,
+        client.stream("GET", "/api/v1/workspaces/workspace-1/export") as response,
+    ):
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/gzip")
+        body = await response.aread()
+
+    assert body == b"fake tarball"
+    assert captured == [{
+        "path": "/api/v1/workspaces/workspace-1/export",
+        "params": None,
+    }]
+
+
+@pytest.mark.asyncio
 async def test_state_and_artifact_endpoints_proxy_to_ts_api_when_enabled(
     monkeypatch: pytest.MonkeyPatch,
     runtime_db_env: Path,
@@ -960,6 +1004,172 @@ async def test_workspace_exec_endpoint_proxies_to_ts_api_when_enabled(
         "params": None,
         "json_body": {"command": "pwd", "timeout_s": 30},
     }]
+
+
+@pytest.mark.asyncio
+async def test_workspace_file_routes_proxy_to_ts_api_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    runtime_db_env: Path,
+) -> None:
+    del runtime_db_env
+
+    async def _fake_worker_loop() -> None:
+        await asyncio.sleep(0)
+
+    captured: list[dict[str, object]] = []
+
+    async def _fake_proxy(method: str, path: str, *, params=None, json_body=None):
+        captured.append({
+            "method": method,
+            "path": path,
+            "params": params,
+            "json_body": json_body,
+        })
+        if method == "GET":
+            payload = {"path": "docs/readme.md", "content": "hello", "encoding": "utf-8"}
+        elif method == "PUT":
+            payload = {"path": "docs/readme.md", "status": "written"}
+        else:
+            payload = {"status": "applied", "files_written": 1}
+        return Response(content=json.dumps(payload).encode("utf-8"), media_type="application/json")
+
+    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
+    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        applied = await client.post(
+            "/api/v1/workspaces/workspace-1/apply-template",
+            json={"files": [{"path": "docs/readme.md", "content_base64": "aGVsbG8="}], "replace_existing": False},
+        )
+        read = await client.get("/api/v1/workspaces/workspace-1/files/docs/readme.md")
+        written = await client.put(
+            "/api/v1/workspaces/workspace-1/files/docs/readme.md",
+            json={"content_base64": "aGVsbG8=", "executable": False},
+        )
+        snapshot = await client.get("/api/v1/workspaces/workspace-1/snapshot")
+
+    assert applied.status_code == 200
+    assert read.status_code == 200
+    assert written.status_code == 200
+    assert snapshot.status_code == 200
+    assert captured == [
+        {
+            "method": "POST",
+            "path": "/api/v1/workspaces/workspace-1/apply-template",
+            "params": None,
+            "json_body": {
+                "files": [{"path": "docs/readme.md", "content_base64": "aGVsbG8="}],
+                "replace_existing": False,
+            },
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/workspaces/workspace-1/files/docs/readme.md",
+            "params": None,
+            "json_body": None,
+        },
+        {
+            "method": "PUT",
+            "path": "/api/v1/workspaces/workspace-1/files/docs/readme.md",
+            "params": None,
+            "json_body": {"content_base64": "aGVsbG8=", "executable": False},
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/workspaces/workspace-1/snapshot",
+            "params": None,
+            "json_body": None,
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_app_install_and_status_routes_proxy_to_ts_api_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    runtime_db_env: Path,
+) -> None:
+    del runtime_db_env
+
+    async def _fake_worker_loop() -> None:
+        await asyncio.sleep(0)
+
+    captured: list[dict[str, object]] = []
+
+    async def _fake_proxy(method: str, path: str, *, params=None, json_body=None):
+        captured.append({
+            "method": method,
+            "path": path,
+            "params": params,
+            "json_body": json_body,
+        })
+        payload = {"ok": True}
+        if path == "/api/v1/apps":
+            payload = {"apps": [], "count": 0}
+        elif path.endswith("/build-status"):
+            payload = {"status": "unknown"}
+        elif path.endswith("/setup"):
+            payload = {"app_id": "demo-app", "status": "setup_started", "detail": "Running: npm install", "ports": {}}
+        elif path == "/api/v1/apps/install":
+            payload = {"app_id": "demo-app", "status": "installed", "detail": "Files written, no setup command defined"}
+        return Response(content=json.dumps(payload).encode("utf-8"), media_type="application/json")
+
+    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
+    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        installed = await client.post(
+            "/api/v1/apps/install",
+            json={
+                "app_id": "demo-app",
+                "workspace_id": "workspace-1",
+                "files": [{"path": "app.runtime.yaml", "content_base64": "ZGVtbw=="}],
+            },
+        )
+        listed = await client.get("/api/v1/apps", params={"workspace_id": "workspace-1"})
+        build_status = await client.get("/api/v1/apps/demo-app/build-status", params={"workspace_id": "workspace-1"})
+        setup = await client.post(
+            "/api/v1/apps/demo-app/setup",
+            json={"workspace_id": "workspace-1"},
+        )
+
+    assert installed.status_code == 200
+    assert listed.status_code == 200
+    assert build_status.status_code == 200
+    assert setup.status_code == 200
+    assert captured == [
+        {
+            "method": "POST",
+            "path": "/api/v1/apps/install",
+            "params": None,
+            "json_body": {
+                "app_id": "demo-app",
+                "workspace_id": "workspace-1",
+                "files": [{"path": "app.runtime.yaml", "content_base64": "ZGVtbw=="}],
+            },
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/apps",
+            "params": {"workspace_id": "workspace-1"},
+            "json_body": None,
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/apps/demo-app/build-status",
+            "params": {"workspace_id": "workspace-1"},
+            "json_body": None,
+        },
+        {
+            "method": "POST",
+            "path": "/api/v1/apps/demo-app/setup",
+            "params": None,
+            "json_body": {"workspace_id": "workspace-1"},
+        },
+    ]
 
 
 @pytest.mark.asyncio
