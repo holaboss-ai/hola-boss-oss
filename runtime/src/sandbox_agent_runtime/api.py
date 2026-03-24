@@ -110,7 +110,19 @@ from sandbox_agent_runtime.runtime_local_state import (
 from sandbox_agent_runtime.runtime_local_state import (
     update_workspace as update_local_workspace,
 )
-from sandbox_agent_runtime.workspace_scope import WORKSPACE_ROOT, workspace_dir_for_id
+from sandbox_agent_runtime.workspace_scope import WORKSPACE_ROOT, sanitize_app_id, workspace_dir_for_id
+from sandbox_agent_runtime.workspace_yaml import (
+    append_application,
+    parse_workspace_yaml,
+    read_workspace_yaml,
+    remove_application,
+    write_workspace_yaml,
+)
+from sandbox_agent_runtime.runtime_local_state import (
+    delete_app_build,
+    get_app_build,
+    upsert_app_build,
+)
 
 logging.basicConfig(level=os.getenv("SANDBOX_AGENT_LOG_LEVEL", "INFO"))
 logger = logging.getLogger("sandbox_agent_api")
@@ -2292,6 +2304,16 @@ async def stop_app_endpoint(app_id: str, payload: AppStopRequest) -> AppActionRe
 _background_tasks: set[asyncio.Task[Any]] = set()
 
 
+def _validate_relative_path(base_dir: Path, relative_path: str) -> Path:
+    """Validate that relative_path resolves under base_dir. Raises HTTPException on traversal."""
+    if ".." in relative_path.split("/"):
+        raise HTTPException(status_code=400, detail=f"path traversal not allowed: {relative_path}")
+    full = (base_dir / relative_path).resolve()
+    if not str(full).startswith(str(base_dir.resolve())):
+        raise HTTPException(status_code=400, detail=f"path traversal not allowed: {relative_path}")
+    return full
+
+
 class InstallAppRequest(BaseModel):
     app_id: str = Field(..., min_length=1)
     workspace_id: str = Field(..., min_length=1)
@@ -2319,14 +2341,22 @@ async def _run_app_setup(
     app_id: str,
     setup_command: str,
 ) -> None:
-    """Execute lifecycle.setup in background, track status in SQLite."""
-    from sandbox_agent_runtime.runtime_local_state import upsert_app_build
+    """Execute lifecycle.setup in background, track status in SQLite.
+
+    Trust boundary: setup_command comes from app.runtime.yaml which is written
+    from the install payload. The runtime trusts app packages it is asked to
+    install — the backend is responsible for validating package provenance.
+    """
+    cwd = os.path.join(workspace_dir, "apps", app_id)
+    if not os.path.isdir(cwd):
+        upsert_app_build(workspace_id=workspace_id, app_id=app_id, status="failed", error=f"app directory does not exist: {cwd}")
+        return
 
     upsert_app_build(workspace_id=workspace_id, app_id=app_id, status="building")
     try:
         proc = await asyncio.create_subprocess_shell(
             setup_command,
-            cwd=os.path.join(workspace_dir, "apps", app_id),
+            cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -2345,24 +2375,20 @@ async def _run_app_setup(
 @app.post("/api/v1/apps/install")
 async def install_app(payload: InstallAppRequest) -> InstallAppResponse:
     """Install an app by writing files, registering in workspace.yaml, and optionally running setup."""
-    from sandbox_agent_runtime.workspace_yaml import (
-        append_application,
-        read_workspace_yaml,
-        write_workspace_yaml,
-    )
-
+    safe_app_id = sanitize_app_id(payload.app_id)
     workspace_dir = workspace_dir_for_id(payload.workspace_id)
-    app_dir = os.path.join(workspace_dir, "apps", payload.app_id)
+    app_dir = Path(workspace_dir) / "apps" / safe_app_id
 
-    # Write files
+    # Write files — validate each path stays under app_dir
     for file_entry in payload.files:
-        file_path = os.path.join(app_dir, file_entry["path"])
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        content = base64.b64decode(file_entry["content_base64"])
-        with open(file_path, "wb") as f:
-            f.write(content)
+        rel_path = file_entry.get("path", "")
+        if not rel_path:
+            continue
+        full_path = _validate_relative_path(app_dir, rel_path)
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_bytes(base64.b64decode(file_entry["content_base64"]))
         if file_entry.get("executable"):
-            os.chmod(file_path, 0o755)
+            full_path.chmod(full_path.stat().st_mode | 0o111)
 
     # Parse app.runtime.yaml
     app_yaml_path = os.path.join(app_dir, "app.runtime.yaml")
@@ -2418,52 +2444,44 @@ async def install_app(payload: InstallAppRequest) -> InstallAppResponse:
 @app.delete("/api/v1/apps/{app_id}")
 async def uninstall_app(app_id: str, payload: UninstallAppRequest) -> AppActionResult:
     """Uninstall an app: stop it, remove files, remove from workspace.yaml, clean up build status."""
-    from sandbox_agent_runtime.runtime_local_state import delete_app_build
-    from sandbox_agent_runtime.workspace_yaml import (
-        read_workspace_yaml,
-        remove_application,
-        write_workspace_yaml,
-    )
-
+    safe_app_id = sanitize_app_id(app_id)
     workspace_dir = workspace_dir_for_id(payload.workspace_id)
 
     # Best-effort stop
     try:
         workspace_dir_path = Path(workspace_dir)
-        workspace_yaml_path = workspace_dir_path / "workspace.yaml"
-        if workspace_yaml_path.exists():
-            data = yaml.safe_load(workspace_yaml_path.read_text())
-            if isinstance(data, dict):
-                applications = data.get("applications", [])
-                if isinstance(applications, list):
-                    for entry in applications:
-                        if isinstance(entry, dict) and entry.get("app_id") == app_id:
-                            config_path = entry.get("config_path", "")
-                            if config_path:
-                                try:
-                                    resolved_app = _load_resolved_app(workspace_dir_path, app_id, config_path)
-                                    manager = _get_lifecycle_manager(payload.workspace_id)
-                                    await manager.stop_all([resolved_app])
-                                    manager._port_allocations.pop(app_id, None)
-                                except Exception:
-                                    logger.debug("Best-effort stop failed for app '%s'", app_id, exc_info=True)
-                            break
+        ws_yaml_content = read_workspace_yaml(workspace_dir)
+        ws_data = parse_workspace_yaml(ws_yaml_content)
+        applications = ws_data.get("applications", [])
+        if isinstance(applications, list):
+            for entry in applications:
+                if isinstance(entry, dict) and entry.get("app_id") == safe_app_id:
+                    config_path = entry.get("config_path", "")
+                    if config_path:
+                        try:
+                            resolved_app = _load_resolved_app(workspace_dir_path, safe_app_id, config_path)
+                            manager = _get_lifecycle_manager(payload.workspace_id)
+                            await manager.stop_all([resolved_app])
+                            manager._port_allocations.pop(safe_app_id, None)
+                        except Exception:
+                            logger.debug("Best-effort stop failed for app '%s'", safe_app_id, exc_info=True)
+                    break
     except Exception:
-        logger.debug("Best-effort stop failed for app '%s'", app_id, exc_info=True)
+        logger.debug("Best-effort stop failed for app '%s'", safe_app_id, exc_info=True)
 
     # Remove files
-    shutil.rmtree(os.path.join(workspace_dir, "apps", app_id), ignore_errors=True)
+    shutil.rmtree(os.path.join(workspace_dir, "apps", safe_app_id), ignore_errors=True)
 
     # Remove from workspace.yaml
     existing_content = read_workspace_yaml(workspace_dir)
-    updated_content = remove_application(existing_content, app_id=app_id)
+    updated_content = remove_application(existing_content, app_id=safe_app_id)
     write_workspace_yaml(workspace_dir, updated_content)
 
     # Clean up build status
-    delete_app_build(workspace_id=payload.workspace_id, app_id=app_id)
+    delete_app_build(workspace_id=payload.workspace_id, app_id=safe_app_id)
 
     return AppActionResult(
-        app_id=app_id,
+        app_id=safe_app_id,
         status="uninstalled",
         detail="App stopped, files removed, workspace.yaml updated",
         ports={},
@@ -2473,9 +2491,8 @@ async def uninstall_app(app_id: str, payload: UninstallAppRequest) -> AppActionR
 @app.get("/api/v1/apps/{app_id}/build-status")
 async def app_build_status(app_id: str, workspace_id: str = Query(...)) -> dict[str, Any]:
     """Get the build/setup status for a given app."""
-    from sandbox_agent_runtime.runtime_local_state import get_app_build
-
-    record = get_app_build(workspace_id=workspace_id, app_id=app_id)
+    safe_app_id = sanitize_app_id(app_id)
+    record = get_app_build(workspace_id=workspace_id, app_id=safe_app_id)
     if record is None:
         return {"status": "unknown"}
     return dict(record)
@@ -2484,9 +2501,6 @@ async def app_build_status(app_id: str, workspace_id: str = Query(...)) -> dict[
 @app.get("/api/v1/apps")
 async def list_installed_apps(workspace_id: str = Query(...)) -> dict[str, Any]:
     """List all installed apps for a workspace, including build status."""
-    from sandbox_agent_runtime.runtime_local_state import get_app_build
-    from sandbox_agent_runtime.workspace_yaml import parse_workspace_yaml, read_workspace_yaml
-
     workspace_dir = workspace_dir_for_id(workspace_id)
     content = read_workspace_yaml(workspace_dir)
     data = parse_workspace_yaml(content)
@@ -2512,45 +2526,43 @@ async def list_installed_apps(workspace_id: str = Query(...)) -> dict[str, Any]:
 @app.post("/api/v1/apps/{app_id}/setup")
 async def setup_app_endpoint(app_id: str, payload: AppSetupRequest) -> AppActionResult:
     """Re-run the lifecycle.setup command for an already-installed app."""
+    safe_app_id = sanitize_app_id(app_id)
     workspace_dir = workspace_dir_for_id(payload.workspace_id)
-    app_yaml_path = os.path.join(workspace_dir, "apps", app_id, "app.runtime.yaml")
+    app_yaml_path = os.path.join(workspace_dir, "apps", safe_app_id, "app.runtime.yaml")
     if not os.path.exists(app_yaml_path):
-        raise HTTPException(status_code=404, detail=f"app.runtime.yaml not found for {app_id}")
+        raise HTTPException(status_code=404, detail=f"app.runtime.yaml not found for {safe_app_id}")
     raw_yaml = Path(app_yaml_path).read_text(encoding="utf-8")
     resolved = _parse_app_runtime_yaml(
         raw_yaml=raw_yaml,
-        declared_app_id=app_id,
-        config_path=f"apps/{app_id}/app.runtime.yaml",
+        declared_app_id=safe_app_id,
+        config_path=f"apps/{safe_app_id}/app.runtime.yaml",
     )
     setup_cmd = resolved.lifecycle.setup
     if not setup_cmd:
-        return AppActionResult(app_id=app_id, status="no_setup_command", detail="No lifecycle.setup defined", ports={})
+        return AppActionResult(app_id=safe_app_id, status="no_setup_command", detail="No lifecycle.setup defined", ports={})
     task = asyncio.create_task(
         _run_app_setup(
             workspace_dir=workspace_dir,
             workspace_id=payload.workspace_id,
-            app_id=app_id,
+            app_id=safe_app_id,
             setup_command=setup_cmd,
         )
     )
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
-    return AppActionResult(app_id=app_id, status="setup_started", detail=f"Running: {setup_cmd}", ports={})
+    return AppActionResult(app_id=safe_app_id, status="setup_started", detail=f"Running: {setup_cmd}", ports={})
 
 
-def _resolve_apps_from_workspace_yaml(workspace_yaml: Path) -> list[tuple[str, Path]]:
+def _resolve_apps_from_workspace_yaml(workspace_yaml_path: Path) -> list[tuple[str, Path]]:
     """Parse workspace.yaml and return (app_id, app_dir) pairs."""
-    import yaml
+    workspace_dir = workspace_yaml_path.parent
+    content = read_workspace_yaml(workspace_dir)
+    data = parse_workspace_yaml(content)
 
-    data = yaml.safe_load(workspace_yaml.read_text())
-    if not isinstance(data, dict):
-        return []
-
-    applications = data.get("applications")
+    applications = data.get("applications", [])
     if not isinstance(applications, list):
         return []
 
-    workspace_dir = workspace_yaml.parent
     result: list[tuple[str, Path]] = []
     for entry in applications:
         if not isinstance(entry, dict):
@@ -2621,11 +2633,7 @@ async def apply_template(workspace_id: str, payload: ApplyTemplateRequest) -> di
         if not rel_path or not content_b64:
             continue
 
-        # Validate no traversal
-        if ".." in rel_path.split("/"):
-            raise HTTPException(status_code=400, detail=f"path traversal not allowed: {rel_path}")
-
-        full_path = ws_path / rel_path
+        full_path = _validate_relative_path(ws_path, rel_path)
         full_path.parent.mkdir(parents=True, exist_ok=True)
         full_path.write_bytes(base64.b64decode(content_b64))
         if executable:
@@ -2638,13 +2646,9 @@ async def apply_template(workspace_id: str, payload: ApplyTemplateRequest) -> di
 @app.get("/api/v1/workspaces/{workspace_id}/files/{file_path:path}")
 async def read_file_endpoint(workspace_id: str, file_path: str) -> dict[str, Any]:
     """Read a file from the workspace."""
-    workspace_dir = workspace_dir_for_id(workspace_id)
+    ws_path = Path(workspace_dir_for_id(workspace_id))
+    full_path = _validate_relative_path(ws_path, file_path)
 
-    # Validate path
-    if ".." in file_path.split("/"):
-        raise HTTPException(status_code=400, detail="path traversal not allowed")
-
-    full_path = Path(workspace_dir) / file_path
     if not full_path.exists():
         raise HTTPException(status_code=404, detail=f"file not found: {file_path}")
     if not full_path.is_file():
@@ -2666,12 +2670,8 @@ class WriteFileRequest(BaseModel):
 @app.put("/api/v1/workspaces/{workspace_id}/files/{file_path:path}")
 async def write_file_endpoint(workspace_id: str, file_path: str, payload: WriteFileRequest) -> dict[str, Any]:
     """Write a file to the workspace."""
-    workspace_dir = workspace_dir_for_id(workspace_id)
-
-    if ".." in file_path.split("/"):
-        raise HTTPException(status_code=400, detail="path traversal not allowed")
-
-    full_path = Path(workspace_dir) / file_path
+    ws_path = Path(workspace_dir_for_id(workspace_id))
+    full_path = _validate_relative_path(ws_path, file_path)
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_bytes(base64.b64decode(payload.content_base64))
     if payload.executable:
