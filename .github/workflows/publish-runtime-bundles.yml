@@ -82,9 +82,9 @@ jobs:
             generate_notes_args+=(-f "previous_tag_name=${previous_tag}")
           fi
 
-          gh api "${generate_notes_args[@]}" --jq '.body' > "${notes_path}"
-
           if ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh api "${generate_notes_args[@]}" --jq '.body' > "${notes_path}"
+
             prerelease_flag=()
             if [ "${GITHUB_REF_NAME}" != "main" ]; then
               prerelease_flag+=(--prerelease)
@@ -95,6 +95,21 @@ jobs:
               --target "${GITHUB_SHA}" \
               "${prerelease_flag[@]}"
           else
+            tag_ref="repos/${GITHUB_REPOSITORY}/git/refs/tags/${RELEASE_TAG}"
+            if gh api "${tag_ref}" >/dev/null 2>&1; then
+              gh api "${tag_ref}" \
+                --method PATCH \
+                -f "sha=${GITHUB_SHA}" \
+                -F force=true >/dev/null
+            else
+              gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+                --method POST \
+                -f "ref=refs/tags/${RELEASE_TAG}" \
+                -f "sha=${GITHUB_SHA}" >/dev/null
+            fi
+
+            gh api "${generate_notes_args[@]}" --jq '.body' > "${notes_path}"
+
             gh release edit "${RELEASE_TAG}" \
               --title "${RELEASE_TITLE}" \
               --notes-file "${notes_path}" \
