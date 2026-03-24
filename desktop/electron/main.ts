@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import { createServer, request as httpRequest, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
+import { request as httpsRequest } from "node:https";
 import path from "node:path";
 import { URL } from "node:url";
 
@@ -27,6 +28,11 @@ const OVERFLOW_POPUP_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MIN_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MAX_HEIGHT = 320;
 const APP_THEMES = new Set(["emerald", "cobalt", "ember", "glacier", "mono", "claude", "slate", "paper", "graphite"]);
+const GITHUB_RELEASES_OWNER = "holaboss-ai";
+const GITHUB_RELEASES_REPO = "hola-boss-oss";
+const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
+const APP_UPDATE_REQUEST_TIMEOUT_MS = 15000;
+const APP_UPDATE_MACOS_ASSET_NAME = "Holaboss-macos-arm64.dmg";
 
 interface DirectoryEntryPayload {
   name: string;
@@ -197,6 +203,43 @@ interface AuthErrorPayload {
   path: string;
 }
 
+interface AppUpdatePreferencesPayload {
+  dismissedReleaseTag?: string | null;
+}
+
+interface AppUpdateStatusPayload {
+  supported: boolean;
+  checking: boolean;
+  available: boolean;
+  currentVersion: string;
+  latestVersion: string | null;
+  releaseTag: string | null;
+  releaseUrl: string | null;
+  downloadUrl: string | null;
+  publishedAt: string | null;
+  dismissedReleaseTag: string | null;
+  lastCheckedAt: string | null;
+  error: string;
+}
+
+interface GithubReleaseAssetPayload {
+  name?: string;
+  browser_download_url?: string;
+}
+
+interface GithubReleasePayload {
+  tag_name?: string;
+  html_url?: string;
+  published_at?: string;
+  draft?: boolean;
+  prerelease?: boolean;
+  assets?: GithubReleaseAssetPayload[];
+}
+
+interface WorkbenchOpenBrowserPayload {
+  url?: string | null;
+}
+
 let mainWindow: BrowserWindow | null = null;
 let authPopupWindow: BrowserWindow | null = null;
 let downloadsPopupWindow: BrowserWindow | null = null;
@@ -234,6 +277,23 @@ let runtimeStatus: RuntimeStatusPayload = {
 let desktopBrowserServiceServer: HttpServer | null = null;
 let desktopBrowserServiceUrl = "";
 let desktopBrowserServiceAuthToken = "";
+let appUpdateCheckTimer: NodeJS.Timeout | null = null;
+let appUpdateCheckPromise: Promise<AppUpdateStatusPayload> | null = null;
+let appUpdatePreferences: AppUpdatePreferencesPayload = {};
+let appUpdateStatus: AppUpdateStatusPayload = {
+  supported: false,
+  checking: false,
+  available: false,
+  currentVersion: app.getVersion(),
+  latestVersion: null,
+  releaseTag: null,
+  releaseUrl: null,
+  downloadUrl: null,
+  publishedAt: null,
+  dismissedReleaseTag: null,
+  lastCheckedAt: null,
+  error: ""
+};
 
 const RUNTIME_API_PORT = 5060;
 const RUNTIME_OPENCODE_PORT = 5096;
@@ -322,6 +382,28 @@ function configureStableUserDataPath() {
   }
 }
 
+function appUpdatePreferencesPath() {
+  return path.join(app.getPath("userData"), "app-update-preferences.json");
+}
+
+function loadAppUpdatePreferences(): AppUpdatePreferencesPayload {
+  const preferencesPath = appUpdatePreferencesPath();
+  try {
+    if (!existsSync(preferencesPath)) {
+      return {};
+    }
+    const parsed = JSON.parse(readFileSync(preferencesPath, "utf8")) as AppUpdatePreferencesPayload;
+    return typeof parsed === "object" && parsed ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function persistAppUpdatePreferences() {
+  await fs.mkdir(path.dirname(appUpdatePreferencesPath()), { recursive: true });
+  await fs.writeFile(appUpdatePreferencesPath(), `${JSON.stringify(appUpdatePreferences, null, 2)}\n`, "utf8");
+}
+
 function serviceBaseUrlFromControlPlane(
   controlPlaneBaseUrl: string,
   port: number
@@ -339,7 +421,245 @@ function serviceBaseUrlFromControlPlane(
   }
 }
 
+function emitAppUpdateState() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  mainWindow.webContents.send("appUpdate:state", appUpdateStatus);
+}
+
+function emitWorkbenchOpenBrowser(payload?: WorkbenchOpenBrowserPayload) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  mainWindow.webContents.send("workbench:openBrowser", payload ?? {});
+}
+
+function normalizeReleaseVersion(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const match = trimmed.match(/(\d+\.\d+\.\d+)$/);
+  return match ? match[1] : trimmed;
+}
+
+function versionParts(value: string): number[] {
+  return normalizeReleaseVersion(value)
+    .split(".")
+    .map((part) => Number.parseInt(part, 10))
+    .filter((part) => Number.isFinite(part));
+}
+
+function compareReleaseVersions(left: string, right: string): number {
+  const leftParts = versionParts(left);
+  const rightParts = versionParts(right);
+  const length = Math.max(leftParts.length, rightParts.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const leftValue = leftParts[index] ?? 0;
+    const rightValue = rightParts[index] ?? 0;
+    if (leftValue < rightValue) {
+      return -1;
+    }
+    if (leftValue > rightValue) {
+      return 1;
+    }
+  }
+
+  return 0;
+}
+
+function releaseDownloadUrl(release: GithubReleasePayload): string {
+  const assets = Array.isArray(release.assets) ? release.assets : [];
+  if (process.platform === "darwin") {
+    const dmgAsset = assets.find((asset) => asset.name === APP_UPDATE_MACOS_ASSET_NAME);
+    if (typeof dmgAsset?.browser_download_url === "string" && dmgAsset.browser_download_url.trim()) {
+      return dmgAsset.browser_download_url.trim();
+    }
+  }
+
+  return typeof release.html_url === "string" ? release.html_url.trim() : "";
+}
+
+async function requestJsonFromUrl<T>(targetUrl: URL): Promise<T> {
+  const requestImpl = targetUrl.protocol === "https:" ? httpsRequest : httpRequest;
+
+  return new Promise<T>((resolve, reject) => {
+    const request = requestImpl(
+      {
+        protocol: targetUrl.protocol,
+        hostname: targetUrl.hostname,
+        port: targetUrl.port || (targetUrl.protocol === "https:" ? "443" : "80"),
+        path: `${targetUrl.pathname}${targetUrl.search}`,
+        method: "GET",
+        headers: {
+          Accept: "application/vnd.github+json",
+          "User-Agent": "Holaboss-Desktop-Updater"
+        },
+        timeout: APP_UPDATE_REQUEST_TIMEOUT_MS
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        response.on("end", () => {
+          const statusCode = response.statusCode ?? 0;
+          const body = Buffer.concat(chunks).toString("utf8");
+          if (statusCode < 200 || statusCode >= 300) {
+            reject(new Error(`GitHub release check failed (${statusCode} ${response.statusMessage ?? "error"}).`));
+            return;
+          }
+
+          try {
+            resolve(JSON.parse(body) as T);
+          } catch {
+            reject(new Error("GitHub returned invalid JSON."));
+          }
+        });
+      }
+    );
+
+    request.on("timeout", () => {
+      request.destroy(new Error("GitHub release check timed out."));
+    });
+    request.on("error", (error) => {
+      reject(error);
+    });
+    request.end();
+  });
+}
+
+async function checkForAppUpdates(): Promise<AppUpdateStatusPayload> {
+  if (!app.isPackaged) {
+    appUpdateStatus = {
+      ...appUpdateStatus,
+      supported: false,
+      checking: false,
+      available: false,
+      currentVersion: app.getVersion(),
+      error: "",
+      lastCheckedAt: new Date().toISOString()
+    };
+    emitAppUpdateState();
+    return appUpdateStatus;
+  }
+
+  if (appUpdateCheckPromise) {
+    return appUpdateCheckPromise;
+  }
+
+  appUpdateStatus = {
+    ...appUpdateStatus,
+    supported: true,
+    checking: true,
+    currentVersion: normalizeReleaseVersion(app.getVersion()),
+    dismissedReleaseTag: appUpdatePreferences.dismissedReleaseTag ?? null,
+    error: ""
+  };
+  emitAppUpdateState();
+
+  appUpdateCheckPromise = (async () => {
+    try {
+      const release = await requestJsonFromUrl<GithubReleasePayload>(
+        new URL(`https://api.github.com/repos/${GITHUB_RELEASES_OWNER}/${GITHUB_RELEASES_REPO}/releases/latest`)
+      );
+
+      const releaseTag = typeof release.tag_name === "string" ? release.tag_name.trim() : "";
+      const latestVersion = normalizeReleaseVersion(releaseTag);
+      const currentVersion = normalizeReleaseVersion(app.getVersion());
+      const dismissedReleaseTag = appUpdatePreferences.dismissedReleaseTag ?? null;
+      const newerReleaseAvailable =
+        Boolean(releaseTag) &&
+        Boolean(latestVersion) &&
+        compareReleaseVersions(currentVersion, latestVersion) < 0;
+
+      appUpdateStatus = {
+        supported: true,
+        checking: false,
+        available: newerReleaseAvailable && dismissedReleaseTag !== releaseTag,
+        currentVersion,
+        latestVersion: latestVersion || null,
+        releaseTag: releaseTag || null,
+        releaseUrl: typeof release.html_url === "string" ? release.html_url.trim() || null : null,
+        downloadUrl: releaseDownloadUrl(release) || null,
+        publishedAt: typeof release.published_at === "string" ? release.published_at : null,
+        dismissedReleaseTag,
+        lastCheckedAt: new Date().toISOString(),
+        error: ""
+      };
+    } catch (error) {
+      appUpdateStatus = {
+        ...appUpdateStatus,
+        supported: true,
+        checking: false,
+        currentVersion: normalizeReleaseVersion(app.getVersion()),
+        lastCheckedAt: new Date().toISOString(),
+        error: error instanceof Error ? error.message : "Failed to check for updates."
+      };
+    } finally {
+      emitAppUpdateState();
+      appUpdateCheckPromise = null;
+    }
+
+    return appUpdateStatus;
+  })();
+
+  return appUpdateCheckPromise;
+}
+
+function scheduleAppUpdateChecks() {
+  if (!app.isPackaged || appUpdateCheckTimer) {
+    return;
+  }
+
+  appUpdateCheckTimer = setInterval(() => {
+    void checkForAppUpdates();
+  }, APP_UPDATE_CHECK_INTERVAL_MS);
+  appUpdateCheckTimer.unref();
+}
+
+async function dismissAppUpdate(releaseTag?: string | null): Promise<AppUpdateStatusPayload> {
+  const nextDismissedReleaseTag = releaseTag?.trim() || appUpdateStatus.releaseTag || null;
+  if (!nextDismissedReleaseTag) {
+    return appUpdateStatus;
+  }
+
+  appUpdatePreferences = {
+    ...appUpdatePreferences,
+    dismissedReleaseTag: nextDismissedReleaseTag
+  };
+  await persistAppUpdatePreferences();
+
+  appUpdateStatus = {
+    ...appUpdateStatus,
+    available: appUpdateStatus.releaseTag !== nextDismissedReleaseTag ? appUpdateStatus.available : false,
+    dismissedReleaseTag: nextDismissedReleaseTag
+  };
+  emitAppUpdateState();
+  return appUpdateStatus;
+}
+
+async function openAppUpdateDownload(): Promise<void> {
+  const targetUrl = appUpdateStatus.downloadUrl || appUpdateStatus.releaseUrl;
+  if (!targetUrl) {
+    throw new Error("No release download link is available.");
+  }
+
+  await shell.openExternal(targetUrl);
+}
+
 configureStableUserDataPath();
+appUpdatePreferences = loadAppUpdatePreferences();
+appUpdateStatus = {
+  ...appUpdateStatus,
+  supported: app.isPackaged,
+  dismissedReleaseTag: appUpdatePreferences.dismissedReleaseTag ?? null
+};
 
 const desktopAuthClient =
   AUTH_BASE_URL && AUTH_SIGN_IN_URL
@@ -720,6 +1040,60 @@ interface DemoTaskProposalEnqueueResponsePayload {
   pending_count: number;
 }
 
+interface TaskProposalStateUpdatePayload {
+  proposal: TaskProposalRecordPayload;
+}
+
+interface CronjobDeliveryPayload {
+  mode: string;
+  channel: string;
+  to: string | null;
+}
+
+interface CronjobRecordPayload {
+  id: string;
+  workspace_id: string;
+  initiated_by: string;
+  name: string;
+  cron: string;
+  description: string;
+  enabled: boolean;
+  delivery: CronjobDeliveryPayload;
+  metadata: Record<string, unknown>;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  run_count: number;
+  last_status: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface CronjobListResponsePayload {
+  jobs: CronjobRecordPayload[];
+  count: number;
+}
+
+interface CronjobCreatePayload {
+  workspace_id: string;
+  initiated_by: string;
+  name?: string;
+  cron: string;
+  description: string;
+  enabled?: boolean;
+  delivery: CronjobDeliveryPayload;
+  metadata?: Record<string, unknown>;
+}
+
+interface CronjobUpdatePayload {
+  name?: string;
+  cron?: string;
+  description?: string;
+  enabled?: boolean;
+  delivery?: CronjobDeliveryPayload;
+  metadata?: Record<string, unknown>;
+}
+
 interface SessionRuntimeRecordPayload {
   workspace_id: string;
   session_id: string;
@@ -846,6 +1220,7 @@ const DEFAULT_PROACTIVE_URL =
 const sessionOutputStreams = new Map<string, AbortController>();
 const sessionStreamDebugLog: HolabossSessionStreamDebugEntry[] = [];
 let lastRuntimeStateSignature = "";
+let lastRuntimeConfigSignature = "";
 let lastRuntimeBindingRefreshAtMs = 0;
 let lastRuntimeBindingRefreshUserId = "";
 let runtimeBindingRefreshPromise: Promise<void> | null = null;
@@ -1604,6 +1979,7 @@ async function handleDesktopBrowserServiceRequest(
         writeBrowserServiceJson(response, 400, { error: "Field 'url' is required." });
         return;
       }
+      emitWorkbenchOpenBrowser({ url: targetUrl });
       const snapshot = await navigateActiveBrowserTab(targetUrl);
       writeBrowserServiceJson(response, 200, snapshot);
       return;
@@ -1920,6 +2296,10 @@ function emitPendingAuthState() {
     }
     pendingAuthError = null;
   }
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("appUpdate:state", appUpdateStatus);
+  }
 }
 
 function clearPersistedAuthCookie() {
@@ -2117,6 +2497,7 @@ async function clearRuntimeBindingSecrets(reason: string): Promise<void> {
   lastRuntimeBindingRefreshAtMs = 0;
   lastRuntimeBindingRefreshUserId = "";
   await restartEmbeddedRuntimeIfNeeded(currentConfig, nextConfig);
+  await emitRuntimeConfig();
   appendRuntimeEventLog({
     category: "auth",
     event: "runtime_binding.invalidate",
@@ -2170,6 +2551,7 @@ async function provisionRuntimeBindingForAuthenticatedUser(
         controlPlaneBaseUrl: DESKTOP_CONTROL_PLANE_BASE_URL
       });
       await restartEmbeddedRuntimeIfNeeded(currentConfig, nextConfig);
+      await emitRuntimeConfig();
 
       appendRuntimeEventLog({
         category: "auth",
@@ -2372,6 +2754,36 @@ async function handleAuthCallbackUrl(targetUrl: string) {
   }
 }
 
+async function syncPersistedAuthSessionOnStartup(): Promise<void> {
+  try {
+    const user = await getAuthenticatedUser();
+    emitAuthUserUpdated(user);
+    if (!user) {
+      const currentConfig = await readRuntimeConfigFile();
+      if (runtimeModelProxyApiKeyFromConfig(currentConfig)) {
+        await clearRuntimeBindingSecrets("startup_missing_auth_session");
+      }
+      return;
+    }
+
+    await provisionRuntimeBindingForAuthenticatedUser(user, {
+      forceNewSandbox: false,
+      forceRefresh: false,
+      reason: "startup_session_restore"
+    });
+  } catch (error) {
+    emitAuthError({
+      message:
+        error instanceof Error
+          ? `Signed in, but runtime binding provisioning failed: ${error.message}`
+          : "Signed in, but runtime binding provisioning failed.",
+      status: 502,
+      statusText: "Bad Gateway",
+      path: DESKTOP_RUNTIME_BINDING_EXCHANGE_PATH
+    });
+  }
+}
+
 function projectsBaseUrl() {
   return DEFAULT_PROJECTS_URL.replace(/\/+$/, "");
 }
@@ -2566,6 +2978,37 @@ async function listTaskProposals(workspaceId: string): Promise<TaskProposalListR
   });
 }
 
+async function listCronjobs(workspaceId: string, enabledOnly = false): Promise<CronjobListResponsePayload> {
+  return requestRuntimeJson<CronjobListResponsePayload>({
+    method: "GET",
+    path: "/api/v1/cronjobs",
+    params: { workspace_id: workspaceId, enabled_only: enabledOnly }
+  });
+}
+
+async function createCronjob(payload: CronjobCreatePayload): Promise<CronjobRecordPayload> {
+  return requestRuntimeJson<CronjobRecordPayload>({
+    method: "POST",
+    path: "/api/v1/cronjobs",
+    payload
+  });
+}
+
+async function updateCronjob(jobId: string, payload: CronjobUpdatePayload): Promise<CronjobRecordPayload> {
+  return requestRuntimeJson<CronjobRecordPayload>({
+    method: "PATCH",
+    path: `/api/v1/cronjobs/${encodeURIComponent(jobId)}`,
+    payload
+  });
+}
+
+async function deleteCronjob(jobId: string): Promise<{ success: boolean }> {
+  return requestRuntimeJson<{ success: boolean }>({
+    method: "DELETE",
+    path: `/api/v1/cronjobs/${encodeURIComponent(jobId)}`
+  });
+}
+
 async function enqueueRemoteDemoTaskProposal(
   payload: DemoTaskProposalRequestPayload
 ): Promise<DemoTaskProposalEnqueueResponsePayload> {
@@ -2577,6 +3020,17 @@ async function enqueueRemoteDemoTaskProposal(
     method: "POST",
     path: "/api/v1/proactive/bridge/demo/task-proposal",
     payload
+  });
+}
+
+async function updateTaskProposalState(
+  proposalId: string,
+  state: string
+): Promise<TaskProposalStateUpdatePayload> {
+  return requestRuntimeJson<TaskProposalStateUpdatePayload>({
+    method: "PATCH",
+    path: `/api/v1/task-proposals/${encodeURIComponent(proposalId)}`,
+    payload: { state }
   });
 }
 
@@ -3541,6 +3995,22 @@ function emitRuntimeState() {
   }
   lastRuntimeStateSignature = nextSignature;
   mainWindow.webContents.send("runtime:state", runtimeStatus);
+}
+
+async function emitRuntimeConfig(config?: RuntimeConfigPayload) {
+  const payload = config ?? (await getRuntimeConfig());
+  const nextSignature = JSON.stringify(payload);
+  if (nextSignature === lastRuntimeConfigSignature) {
+    return;
+  }
+  lastRuntimeConfigSignature = nextSignature;
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("runtime:config", payload);
+  }
+  if (authPopupWindow && !authPopupWindow.isDestroyed()) {
+    authPopupWindow.webContents.send("runtime:config", payload);
+  }
 }
 
 async function fileExists(targetPath: string) {
@@ -6224,6 +6694,7 @@ function createMainWindow() {
     win.webContents.setZoomLevel(0);
     emitBrowserState();
     emitPendingAuthState();
+    emitAppUpdateState();
   });
 
   win.webContents.on("before-input-event", (event, input) => {
@@ -6381,7 +6852,9 @@ app.whenReady().then(async () => {
     const currentConfig = await readRuntimeConfigFile();
     const nextConfig = await writeRuntimeConfigFile(payload);
     await restartEmbeddedRuntimeIfNeeded(currentConfig, nextConfig);
-    return getRuntimeConfig();
+    const config = await getRuntimeConfig();
+    await emitRuntimeConfig(config);
+    return config;
   });
   ipcMain.handle("ui:setTheme", async (_event, theme: string) => {
     currentTheme = APP_THEMES.has(theme) ? theme : "emerald";
@@ -6395,6 +6868,12 @@ app.whenReady().then(async () => {
     overflowPopupWindow = null;
     addressSuggestionsPopupWindow?.close();
     addressSuggestionsPopupWindow = null;
+  });
+  ipcMain.handle("appUpdate:getStatus", async () => appUpdateStatus);
+  ipcMain.handle("appUpdate:checkNow", async () => checkForAppUpdates());
+  ipcMain.handle("appUpdate:dismiss", async (_event, releaseTag?: string | null) => dismissAppUpdate(releaseTag));
+  ipcMain.handle("appUpdate:openDownload", async () => {
+    await openAppUpdateDownload();
   });
   ipcMain.handle("runtime:exchangeBinding", async (_event, sandboxId: string) => {
     const binding = await exchangeDesktopRuntimeBinding(sandboxId);
@@ -6413,14 +6892,27 @@ app.whenReady().then(async () => {
       controlPlaneBaseUrl: DESKTOP_CONTROL_PLANE_BASE_URL
     });
     await restartEmbeddedRuntimeIfNeeded(currentConfig, nextConfig);
-    return getRuntimeConfig();
+    const config = await getRuntimeConfig();
+    await emitRuntimeConfig(config);
+    return config;
   });
   ipcMain.handle("workspace:getClientConfig", () => getHolabossClientConfig());
   ipcMain.handle("workspace:pickTemplateFolder", async () => pickTemplateFolder());
   ipcMain.handle("workspace:listWorkspaces", async () => listWorkspaces());
   ipcMain.handle("workspace:getWorkspaceRoot", async (_event, workspaceId: string) => workspaceDirectoryPath(workspaceId));
   ipcMain.handle("workspace:createWorkspace", async (_event, payload: HolabossCreateWorkspacePayload) => createWorkspace(payload));
+  ipcMain.handle("workspace:listCronjobs", async (_event, workspaceId: string, enabledOnly?: boolean) =>
+    listCronjobs(workspaceId, enabledOnly)
+  );
+  ipcMain.handle("workspace:createCronjob", async (_event, payload: CronjobCreatePayload) => createCronjob(payload));
+  ipcMain.handle("workspace:updateCronjob", async (_event, jobId: string, payload: CronjobUpdatePayload) =>
+    updateCronjob(jobId, payload)
+  );
+  ipcMain.handle("workspace:deleteCronjob", async (_event, jobId: string) => deleteCronjob(jobId));
   ipcMain.handle("workspace:listTaskProposals", async (_event, workspaceId: string) => listTaskProposals(workspaceId));
+  ipcMain.handle("workspace:updateTaskProposalState", async (_event, proposalId: string, state: string) =>
+    updateTaskProposalState(proposalId, state)
+  );
   ipcMain.handle("workspace:enqueueRemoteDemoTaskProposal", async (_event, payload: DemoTaskProposalRequestPayload) =>
     enqueueRemoteDemoTaskProposal(payload)
   );
@@ -6639,6 +7131,8 @@ app.whenReady().then(async () => {
   });
 
   createMainWindow();
+  scheduleAppUpdateChecks();
+  void checkForAppUpdates();
   try {
     await startDesktopBrowserService();
   } catch (error) {
@@ -6656,6 +7150,7 @@ app.whenReady().then(async () => {
   };
   emitRuntimeState();
   void startEmbeddedRuntime();
+  void syncPersistedAuthSessionOnStartup();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

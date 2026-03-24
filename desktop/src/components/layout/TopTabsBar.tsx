@@ -1,5 +1,5 @@
 import { FormEvent, useMemo, useRef, useState } from "react";
-import { Search, Bell, User2, Palette, Loader2, Plus, RefreshCcw, ChevronDown, FolderKanban } from "lucide-react";
+import { Search, User2, Palette, Loader2, Plus, RefreshCcw, ChevronDown, FolderKanban, FolderOpen, Globe, PanelRightClose, PanelRightOpen } from "lucide-react";
 import type { AppTheme } from "@/components/layout/AppShell";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
@@ -7,7 +7,14 @@ import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 interface TopTabsBarProps {
   theme: AppTheme;
   onThemeChange: (theme: AppTheme) => void;
+  agentMode?: boolean;
   onUserMenuToggle?: (anchorBounds: BrowserAnchorBoundsPayload) => void;
+  onOpenBrowserWorkbench?: () => void;
+  onOpenFilesWorkbench?: () => void;
+  onToggleOperationsDrawer?: () => void;
+  activeWorkbenchTab?: "browser" | "files" | null;
+  workbenchOpen?: boolean;
+  operationsDrawerOpen?: boolean;
   runtimeIndicator?: {
     label: string;
     detail: string;
@@ -27,7 +34,19 @@ const THEME_OPTIONS: Array<{ value: AppTheme; label: string }> = [
   { value: "graphite", label: "Graphite" }
 ];
 
-export function TopTabsBar({ theme, onThemeChange, onUserMenuToggle, runtimeIndicator }: TopTabsBarProps) {
+export function TopTabsBar({
+  theme,
+  onThemeChange,
+  agentMode = true,
+  onUserMenuToggle,
+  onOpenBrowserWorkbench,
+  onOpenFilesWorkbench,
+  onToggleOperationsDrawer,
+  activeWorkbenchTab,
+  workbenchOpen,
+  operationsDrawerOpen,
+  runtimeIndicator
+}: TopTabsBarProps) {
   const userButtonRef = useRef<HTMLButtonElement | null>(null);
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = useState(false);
   const [createPanelOpen, setCreatePanelOpen] = useState(false);
@@ -46,7 +65,6 @@ export function TopTabsBar({ theme, onThemeChange, onUserMenuToggle, runtimeIndi
     setupStatus,
     onboardingModeActive,
     sessionModeLabel,
-    sessionTargetId,
     refreshWorkspaceData,
     chooseTemplateFolder,
     createWorkspace
@@ -192,6 +210,36 @@ export function TopTabsBar({ theme, onThemeChange, onUserMenuToggle, runtimeIndi
                 {isRefreshing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCcw size={14} />}
                 <span>Refresh</span>
               </button>
+
+              {agentMode ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={onOpenBrowserWorkbench}
+                    className={`inline-flex h-[42px] items-center justify-center gap-2 rounded-[16px] border px-3 text-[12px] transition ${
+                      workbenchOpen && activeWorkbenchTab === "browser"
+                        ? "border-neon-green/45 bg-neon-green/10 text-neon-green"
+                        : "border-panel-border/45 text-text-muted hover:border-neon-green/35 hover:text-text-main"
+                    }`}
+                  >
+                    <Globe size={14} />
+                    <span>Browser</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={onOpenFilesWorkbench}
+                    className={`inline-flex h-[42px] items-center justify-center gap-2 rounded-[16px] border px-3 text-[12px] transition ${
+                      workbenchOpen && activeWorkbenchTab === "files"
+                        ? "border-neon-green/45 bg-neon-green/10 text-neon-green"
+                        : "border-panel-border/45 text-text-muted hover:border-neon-green/35 hover:text-text-main"
+                    }`}
+                  >
+                    <FolderOpen size={14} />
+                    <span>Files</span>
+                  </button>
+                </>
+              ) : null}
             </div>
 
             {createPanelOpen ? (
@@ -311,9 +359,20 @@ export function TopTabsBar({ theme, onThemeChange, onUserMenuToggle, runtimeIndi
               ))}
             </select>
           </label>
-          <button className="theme-control-surface hidden h-8 w-8 place-items-center rounded-[var(--theme-radius-control)] border border-panel-border text-text-muted/85 transition hover:border-neon-green/50 hover:text-neon-green sm:grid">
-            <Bell size={14} />
-          </button>
+          {agentMode ? (
+            <button
+              type="button"
+              onClick={onToggleOperationsDrawer}
+              className={`inline-flex h-8 items-center gap-2 rounded-[var(--theme-radius-pill)] border px-3 text-[11px] transition ${
+                operationsDrawerOpen
+                  ? "border-neon-green/45 bg-neon-green/10 text-neon-green"
+                  : "border-panel-border text-text-muted/85 hover:border-neon-green/50 hover:text-neon-green"
+              }`}
+            >
+              {operationsDrawerOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
+              <span className="hidden sm:inline">{operationsDrawerOpen ? "Hide panel" : "Show panel"}</span>
+            </button>
+          ) : null}
         </div>
       </div>
     </header>

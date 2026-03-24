@@ -7,8 +7,6 @@ import httpx
 import pytest
 from sandbox_agent_runtime.application_lifecycle import (
     ApplicationLifecycleManager,
-    _allocate_ports,
-    _is_port_available,
     _patch_compose_ports,
 )
 from sandbox_agent_runtime.runtime_config.models import (
@@ -228,38 +226,21 @@ async def test_start_app_raises_when_no_start_command() -> None:
         await manager._start_app(app)
 
 
-# --- Port allocation tests ---
+# --- Deterministic port allocation tests ---
 
 
-def test_is_port_available_returns_true_for_unused_port() -> None:
-    # Port 19999 is very unlikely to be in use
-    assert _is_port_available(19999) is True
-
-
-def test_is_port_available_returns_false_for_used_port() -> None:
-    import socket
-
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    sock.listen(1)
-    try:
-        assert _is_port_available(port) is False
-    finally:
-        sock.close()
-
-
-def test_allocate_ports_assigns_unique_ports_per_app() -> None:
+def test_assign_deterministic_ports_assigns_unique_ports_per_app() -> None:
+    manager = ApplicationLifecycleManager(workspace_dir="/workspace/test-ws")
     apps = [
         _make_app("twitter-module"),
         _make_app("linkedin-module"),
         _make_app("reddit-module"),
     ]
-    allocations = _allocate_ports(apps)
+    manager.assign_deterministic_ports(apps)
 
-    assert len(allocations) == 3
-    http_ports = [v[0] for v in allocations.values()]
-    mcp_ports = [v[1] for v in allocations.values()]
+    assert len(manager._port_allocations) == 3
+    http_ports = [v[0] for v in manager._port_allocations.values()]
+    mcp_ports = [v[1] for v in manager._port_allocations.values()]
 
     # All ports must be unique
     assert len(set(http_ports)) == 3
@@ -269,34 +250,28 @@ def test_allocate_ports_assigns_unique_ports_per_app() -> None:
     assert not set(http_ports) & set(mcp_ports)
 
 
-def test_allocate_ports_all_same_declared_port_still_unique() -> None:
-    """Even when all apps declare the same MCP port, allocated host ports are unique."""
+def test_assign_deterministic_ports_stable_across_calls() -> None:
+    """Same app list order always produces the same port assignments."""
+    manager = ApplicationLifecycleManager(workspace_dir="/workspace/test-ws")
     apps = [_make_app(f"app-{i}") for i in range(5)]
-    # All apps declare mcp.port=3099
-    allocations = _allocate_ports(apps)
 
-    mcp_ports = [v[1] for v in allocations.values()]
-    assert len(set(mcp_ports)) == 5
+    manager.assign_deterministic_ports(apps)
+    first = dict(manager._port_allocations)
+
+    manager.assign_deterministic_ports(apps)
+    second = dict(manager._port_allocations)
+
+    assert first == second
 
 
-def test_allocate_ports_skips_occupied_ports() -> None:
-    """If a port in the range is occupied, allocation skips it."""
-    import socket
+def test_assign_deterministic_ports_index_based() -> None:
+    """Ports are derived from list index: HTTP=18080+i, MCP=13100+i."""
+    manager = ApplicationLifecycleManager(workspace_dir="/workspace/test-ws")
+    apps = [_make_app("app-a"), _make_app("app-b")]
+    manager.assign_deterministic_ports(apps)
 
-    # Occupy the first MCP port in the range
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(("127.0.0.1", 13100))
-    sock.listen(1)
-    try:
-        apps = [_make_app("my-app")]
-        allocations = _allocate_ports(apps)
-        allocated_mcp = allocations["my-app"][1]
-        # Should have skipped 13100 and allocated 13101+
-        assert allocated_mcp != 13100
-        assert allocated_mcp >= 13101
-    finally:
-        sock.close()
+    assert manager._port_allocations["app-a"] == (18080, 13100)
+    assert manager._port_allocations["app-b"] == (18081, 13101)
 
 
 def test_patch_compose_ports_rewrites_both_ports(tmp_path: object) -> None:

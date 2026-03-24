@@ -1,7 +1,8 @@
 import { FormEvent, KeyboardEvent, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { ArrowUp, ChevronDown, ListTodo, Loader2, Mic, Plus, RefreshCcw, Sparkles } from "lucide-react";
+import { ArrowUp, ChevronDown, Loader2, Mic, Plus } from "lucide-react";
 import { PaneCard } from "@/components/ui/PaneCard";
+import { preferredSessionId } from "@/lib/sessionRouting";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
@@ -27,43 +28,9 @@ interface StreamTelemetryEntry {
 
 const STREAM_ATTACH_PENDING = "__stream_attach_pending__";
 const STREAM_TELEMETRY_LIMIT = 240;
-const ONBOARDING_ACTIVE_STATUSES = new Set(["pending", "awaiting_confirmation", "in_progress"]);
 
 function normalizeErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed.";
-}
-
-function sessionSelectionUsesOnboarding(workspace: WorkspaceRecordPayload | null): boolean {
-  if (!workspace) {
-    return false;
-  }
-  const onboardingSessionId = (workspace.onboarding_session_id || "").trim();
-  if (!onboardingSessionId) {
-    return false;
-  }
-  const onboardingStatus = (workspace.onboarding_status || "").trim().toLowerCase();
-  return ONBOARDING_ACTIVE_STATUSES.has(onboardingStatus);
-}
-
-function preferredSessionId(
-  workspace: WorkspaceRecordPayload | null,
-  runtimeStates: SessionRuntimeRecordPayload[]
-): string | null {
-  if (!workspace) {
-    return runtimeStates[0]?.session_id ?? null;
-  }
-  if (sessionSelectionUsesOnboarding(workspace)) {
-    const onboardingSessionId = (workspace.onboarding_session_id || "").trim();
-    if (onboardingSessionId) {
-      return onboardingSessionId;
-    }
-  }
-
-  const mainSessionId = (workspace.main_session_id || "").trim();
-  if (mainSessionId) {
-    return mainSessionId;
-  }
-  return runtimeStates[0]?.session_id ?? null;
 }
 
 function runtimeStateStatus(value: string | null | undefined): string {
@@ -106,14 +73,6 @@ function toolActivityLabel(eventType: string, payload: Record<string, unknown>):
   return null;
 }
 
-function formatProposalTimestamp(value: string): string {
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
-    return value;
-  }
-  return new Date(timestamp).toLocaleString();
-}
-
 export function ChatPane() {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const {
@@ -136,10 +95,6 @@ export function ChatPane() {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
   const [chatErrorMessage, setChatErrorMessage] = useState("");
-  const [taskProposals, setTaskProposals] = useState<TaskProposalRecordPayload[]>([]);
-  const [isLoadingTaskProposals, setIsLoadingTaskProposals] = useState(false);
-  const [isTriggeringTaskProposal, setIsTriggeringTaskProposal] = useState(false);
-  const [taskProposalStatusMessage, setTaskProposalStatusMessage] = useState("");
   const [verboseTelemetryEnabled, setVerboseTelemetryEnabled] = useState(false);
   const [streamTelemetry, setStreamTelemetry] = useState<StreamTelemetryEntry[]>([]);
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -302,8 +257,6 @@ export function ChatPane() {
       setCollapsedThinkingByMessageId({});
       setActiveSession(null);
       pendingInputIdRef.current = null;
-      setTaskProposals([]);
-      setTaskProposalStatusMessage("");
       return;
     }
 
@@ -369,42 +322,6 @@ export function ChatPane() {
     selectedWorkspace?.onboarding_session_id,
     selectedWorkspace?.onboarding_status
   ]);
-
-  useEffect(() => {
-    if (!selectedWorkspaceId) {
-      return;
-    }
-
-    let cancelled = false;
-
-    async function loadTaskProposals() {
-      setIsLoadingTaskProposals(true);
-      try {
-        const response = await window.electronAPI.workspace.listTaskProposals(selectedWorkspaceId);
-        if (!cancelled) {
-          setTaskProposals(response.proposals);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setTaskProposalStatusMessage(normalizeErrorMessage(error));
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoadingTaskProposals(false);
-        }
-      }
-    }
-
-    void loadTaskProposals();
-    const timer = window.setInterval(() => {
-      void loadTaskProposals();
-    }, 5000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [selectedWorkspaceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1053,43 +970,6 @@ export function ChatPane() {
     }
   };
 
-  async function refreshTaskProposals() {
-    if (!selectedWorkspaceId) {
-      return;
-    }
-    setTaskProposalStatusMessage("");
-    setIsLoadingTaskProposals(true);
-    try {
-      const response = await window.electronAPI.workspace.listTaskProposals(selectedWorkspaceId);
-      setTaskProposals(response.proposals);
-    } catch (error) {
-      setTaskProposalStatusMessage(normalizeErrorMessage(error));
-    } finally {
-      setIsLoadingTaskProposals(false);
-    }
-  }
-
-  async function triggerRemoteTaskProposal() {
-    if (!selectedWorkspaceId) {
-      return;
-    }
-    setIsTriggeringTaskProposal(true);
-    setTaskProposalStatusMessage("");
-    try {
-      const response = await window.electronAPI.workspace.enqueueRemoteDemoTaskProposal({
-        workspace_id: selectedWorkspaceId,
-      });
-      setTaskProposalStatusMessage(`Remote proactive job queued. Pending cloud jobs: ${response.pending_count}.`);
-      window.setTimeout(() => {
-        void refreshTaskProposals();
-      }, 1500);
-    } catch (error) {
-      setTaskProposalStatusMessage(normalizeErrorMessage(error));
-    } finally {
-      setIsTriggeringTaskProposal(false);
-    }
-  }
-
   const hasMessages = messages.length > 0 || Boolean(liveAssistantText) || Boolean(liveThinkingText);
   const showWorkingIndicator = isResponding && !liveAssistantText && !liveThinkingText;
   const sessionTargetId = onboardingModeActive
@@ -1123,71 +1003,6 @@ export function ChatPane() {
           {chatErrorMessage ? (
             <div className="theme-chat-system-bubble mt-3 rounded-[14px] border px-3 py-2 text-[11px]">
               {chatErrorMessage}
-            </div>
-          ) : null}
-
-          {selectedWorkspace ? (
-            <div className="theme-subtle-surface mt-3 rounded-[16px] border border-panel-border/45 px-3 py-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 text-[10px] tracking-[0.14em] text-neon-green/78">
-                    <ListTodo size={12} />
-                    <span>REMOTE PROPOSALS</span>
-                  </div>
-                  <div className="mt-1 text-[12px] text-text-main/88">
-                    Trigger a cloud proactive demo job and watch the resulting proposal land in this local workspace.
-                  </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void refreshTaskProposals()}
-                    disabled={isLoadingTaskProposals}
-                    className="inline-flex h-8 items-center justify-center gap-2 rounded-[14px] border border-panel-border/45 px-3 text-[11px] text-text-muted transition hover:border-neon-green/35 hover:text-text-main disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {isLoadingTaskProposals ? <Loader2 size={12} className="animate-spin" /> : <RefreshCcw size={12} />}
-                    <span>Refresh</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void triggerRemoteTaskProposal()}
-                    disabled={isTriggeringTaskProposal}
-                    className="inline-flex h-8 items-center justify-center gap-2 rounded-[14px] border border-neon-green/40 bg-neon-green/10 px-3 text-[11px] text-neon-green transition hover:bg-neon-green/14 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {isTriggeringTaskProposal ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                    <span>Trigger</span>
-                  </button>
-                </div>
-              </div>
-
-              {taskProposalStatusMessage ? (
-                <div className="mt-2 rounded-[12px] border border-panel-border/35 px-3 py-2 text-[11px] text-text-muted">
-                  {taskProposalStatusMessage}
-                </div>
-              ) : null}
-
-              <div className="mt-3 grid gap-2">
-                {taskProposals.length === 0 ? (
-                  <div className="rounded-[14px] border border-panel-border/35 px-3 py-3 text-[12px] text-text-dim/78">
-                    {isLoadingTaskProposals ? "Loading task proposals..." : "No local task proposals for this workspace yet."}
-                  </div>
-                ) : (
-                  taskProposals.slice(0, 4).map((proposal) => (
-                    <div key={proposal.proposal_id} className="rounded-[14px] border border-panel-border/35 px-3 py-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-[12px] font-medium text-text-main">{proposal.task_name}</div>
-                          <div className="mt-1 line-clamp-3 text-[11px] text-text-muted">{proposal.task_prompt}</div>
-                        </div>
-                        <div className="shrink-0 rounded-full border border-panel-border/45 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-text-dim">
-                          {proposal.state}
-                        </div>
-                      </div>
-                      <div className="mt-2 text-[10px] text-text-dim/78">{formatProposalTimestamp(proposal.created_at)}</div>
-                    </div>
-                  ))
-                )}
-              </div>
             </div>
           ) : null}
 

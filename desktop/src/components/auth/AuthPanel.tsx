@@ -116,6 +116,23 @@ export function AuthPanel() {
     if (!window.electronAPI) {
       return;
     }
+
+    const unsubscribe = window.electronAPI.runtime.onConfigChange((config) => {
+      setRuntimeConfig(config);
+      setModelProxyBaseUrl(config.modelProxyBaseUrl ?? DEFAULT_MODEL_PROXY_BASE_URL);
+      setDefaultModel(config.defaultModel ?? DEFAULT_RUNTIME_MODEL);
+      setRuntimeUserId(config.userId ?? "");
+      setSandboxId(config.sandboxId ?? `desktop:${crypto.randomUUID()}`);
+      setAuthError("");
+    });
+
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    if (!window.electronAPI) {
+      return;
+    }
     void refreshRuntimeConfig();
   }, [session]);
 

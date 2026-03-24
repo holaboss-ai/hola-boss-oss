@@ -447,6 +447,21 @@ def ensure_runtime_db_schema(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_cronjobs_enabled_next_run
             ON cronjobs (enabled, next_run_at);
+
+        CREATE TABLE IF NOT EXISTS app_builds (
+            workspace_id TEXT NOT NULL,
+            app_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            started_at TEXT,
+            completed_at TEXT,
+            error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (workspace_id, app_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_app_builds_workspace
+            ON app_builds (workspace_id);
         """
     )
 
@@ -2907,3 +2922,74 @@ def _row_to_output(row: sqlite3.Row) -> dict[str, Any]:
         "created_at": str(data["created_at"]) if data.get("created_at") is not None else None,
         "updated_at": str(data["updated_at"]) if data.get("updated_at") is not None else None,
     }
+
+
+# ---------------------------------------------------------------------------
+# App build status
+# ---------------------------------------------------------------------------
+
+
+def upsert_app_build(
+    *,
+    workspace_id: str,
+    app_id: str,
+    status: str,
+    error: str | None = None,
+) -> dict[str, Any]:
+    """Insert or update app build status."""
+    now = utc_now_iso()
+    with runtime_db_connection() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM app_builds WHERE workspace_id = ? AND app_id = ?",
+            (workspace_id, app_id),
+        ).fetchone()
+        if row:
+            fields: dict[str, Any] = {"status": status, "updated_at": now}
+            if status == "building":
+                fields["started_at"] = now
+                fields["error"] = None
+            elif status == "completed":
+                fields["completed_at"] = now
+                fields["error"] = None
+            elif status == "failed":
+                fields["completed_at"] = now
+                fields["error"] = error
+            set_clause = ", ".join(f"{k} = ?" for k in fields)
+            conn.execute(
+                f"UPDATE app_builds SET {set_clause} WHERE workspace_id = ? AND app_id = ?",
+                (*fields.values(), workspace_id, app_id),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO app_builds (workspace_id, app_id, status, started_at, completed_at, error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (workspace_id, app_id, status, now if status == "building" else None, None, error, now, now),
+            )
+        result_row = conn.execute(
+            "SELECT workspace_id, app_id, status, started_at, completed_at, error, created_at, updated_at FROM app_builds WHERE workspace_id = ? AND app_id = ?",
+            (workspace_id, app_id),
+        ).fetchone()
+    if result_row is None:
+        return {}
+    return dict(result_row)
+
+
+def get_app_build(*, workspace_id: str, app_id: str) -> dict[str, Any] | None:
+    """Get build status for an app."""
+    with runtime_db_connection() as conn:
+        row = conn.execute(
+            "SELECT workspace_id, app_id, status, started_at, completed_at, error, created_at, updated_at FROM app_builds WHERE workspace_id = ? AND app_id = ?",
+            (workspace_id, app_id),
+        ).fetchone()
+    if row is None:
+        return None
+    return dict(row)
+
+
+def delete_app_build(*, workspace_id: str, app_id: str) -> bool:
+    """Remove build status entry."""
+    with runtime_db_connection() as conn:
+        cursor = conn.execute(
+            "DELETE FROM app_builds WHERE workspace_id = ? AND app_id = ?",
+            (workspace_id, app_id),
+        )
+    return cursor.rowcount > 0

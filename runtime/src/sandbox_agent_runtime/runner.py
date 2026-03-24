@@ -27,7 +27,10 @@ import httpx
 import yaml
 from pydantic import BaseModel, Field
 
-from sandbox_agent_runtime.application_lifecycle import ApplicationLifecycleManager
+from sandbox_agent_runtime.application_lifecycle import (
+    _SANDBOX_AGENT_PORT,
+    ApplicationLifecycleManager,
+)
 from sandbox_agent_runtime.product_config import resolve_product_runtime_config
 from sandbox_agent_runtime.runtime_config_adapter import (
     CompiledWorkspaceRuntimePlan,
@@ -2169,8 +2172,12 @@ async def _restart_opencode_sidecar(
         except TimeoutError:
             pass
         else:
-            _clear_opencode_sidecar_state()
-            raise RuntimeError(f"OpenCode sidecar exited during startup with code {sidecar_process.returncode}")
+            # Exit code -15 (SIGTERM) likely means a concurrent restart killed our
+            # freshly spawned process.  Fall through to the readiness check — the
+            # other restart may have already brought up a healthy sidecar.
+            if sidecar_process.returncode != -15:
+                _clear_opencode_sidecar_state()
+                raise RuntimeError(f"OpenCode sidecar exited during startup with code {sidecar_process.returncode}")
 
         await _wait_for_opencode_ready(
             url=readiness_url,

@@ -156,6 +156,26 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     };
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+    void window.electronAPI.runtime.getConfig().then((config) => {
+      if (mounted) {
+        setRuntimeConfig(config);
+      }
+    });
+
+    const unsubscribe = window.electronAPI.runtime.onConfigChange((config) => {
+      if (mounted) {
+        setRuntimeConfig(config);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+
   async function loadWorkspaceData(preserveSelection = true) {
     const workspaceResponse = await window.electronAPI.workspace.listWorkspaces();
     const nextWorkspaces = workspaceResponse.items;

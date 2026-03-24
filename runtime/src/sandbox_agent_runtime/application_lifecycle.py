@@ -5,7 +5,6 @@ import contextlib
 import logging
 import os
 import re
-import socket
 from pathlib import Path
 
 import httpx
@@ -19,64 +18,11 @@ _COMPOSE_COMMANDS = (["docker", "compose"], ["docker-compose"])
 # Port 8080 is reserved for the sandbox agent runtime uvicorn.
 _SANDBOX_AGENT_PORT = 8080
 
-# Port ranges for dynamic allocation.
+# Port ranges for deterministic allocation.
 # App HTTP ports: 18080, 18081, 18082, ...
 _APP_HTTP_PORT_BASE = 18080
 # MCP ports: 13100, 13101, 13102, ...
 _MCP_PORT_BASE = 13100
-
-
-def _is_port_available(port: int) -> bool:
-    """Check if a TCP port is available on localhost."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(0.5)
-        return sock.connect_ex(("127.0.0.1", port)) != 0
-
-
-def _allocate_ports(
-    apps: list[ResolvedApplication],
-) -> dict[str, tuple[int, int]]:
-    """Pre-allocate unique host ports for each app.
-
-    Returns a mapping of app_id → (http_host_port, mcp_host_port).
-    Checks that each allocated port is actually available before assigning it.
-    Raises RuntimeError if a required port cannot be allocated.
-    """
-    allocations: dict[str, tuple[int, int]] = {}
-    http_port = _APP_HTTP_PORT_BASE
-    mcp_port = _MCP_PORT_BASE
-
-    for app in apps:
-        # Find next available HTTP host port
-        while not _is_port_available(http_port):
-            logger.debug("Port %d in use, skipping", http_port)
-            http_port += 1
-            if http_port > _APP_HTTP_PORT_BASE + 100:
-                raise RuntimeError(
-                    f"Cannot allocate HTTP port for app '{app.app_id}': "
-                    f"ports {_APP_HTTP_PORT_BASE}-{http_port} exhausted"
-                )
-
-        # Find next available MCP host port
-        while not _is_port_available(mcp_port):
-            logger.debug("Port %d in use, skipping", mcp_port)
-            mcp_port += 1
-            if mcp_port > _MCP_PORT_BASE + 100:
-                raise RuntimeError(
-                    f"Cannot allocate MCP port for app '{app.app_id}': ports {_MCP_PORT_BASE}-{mcp_port} exhausted"
-                )
-
-        allocations[app.app_id] = (http_port, mcp_port)
-        logger.info(
-            "Allocated ports for '%s': HTTP=%d, MCP=%d",
-            app.app_id,
-            http_port,
-            mcp_port,
-        )
-        http_port += 1
-        mcp_port += 1
-
-    return allocations
 
 
 def _patch_compose_ports(
@@ -144,9 +90,21 @@ class ApplicationLifecycleManager:
         # Maps app_id → allocated (http_host_port, mcp_host_port)
         self._port_allocations: dict[str, tuple[int, int]] = {}
 
+    def assign_deterministic_ports(self, apps: list[ResolvedApplication]) -> None:
+        """Set port allocations deterministically based on app list order.
+
+        Uses the index of each app in the list (which matches workspace.yaml order)
+        to compute stable ports: HTTP = 18080 + index, MCP = 13100 + index.
+        This ensures the same app always gets the same port across runs.
+        """
+        self._port_allocations = {
+            app.app_id: (_APP_HTTP_PORT_BASE + index, _MCP_PORT_BASE + index)
+            for index, app in enumerate(apps)
+        }
+
     async def start_all(self, apps: list[ResolvedApplication], *, max_retries: int = 2) -> None:
-        # Pre-allocate ports for all apps before starting any of them.
-        self._port_allocations = _allocate_ports(apps)
+        # Assign deterministic ports so the same app always gets the same port.
+        self.assign_deterministic_ports(apps)
 
         for app in apps:
             mcp_host_port = self._get_mcp_host_port(app)
@@ -154,6 +112,9 @@ class ApplicationLifecycleManager:
                 logger.info("App '%s' already healthy on port %d, skipping start", app.app_id, mcp_host_port)
                 self._compose_apps.add(app.app_id)
                 continue
+            # Kill any stale process on this port from a previous sandbox lifecycle.
+            with contextlib.suppress(Exception):
+                await self._kill_allocated_port_listeners(app)
             await self._start_app(app)
             await self._wait_healthy_with_retry(app, max_retries=max_retries)
 
@@ -509,3 +470,40 @@ class ApplicationLifecycleManager:
         )
         with contextlib.suppress(Exception):
             await asyncio.wait_for(proc.wait(), timeout=10)
+
+
+# ---------------------------------------------------------------------------
+# Per-workspace singleton factory
+# ---------------------------------------------------------------------------
+
+_lifecycle_managers: dict[str, ApplicationLifecycleManager] = {}
+
+
+def get_lifecycle_manager(
+    workspace_dir: str | Path,
+    *,
+    holaboss_user_id: str = "",
+) -> ApplicationLifecycleManager:
+    """Return a per-workspace singleton ``ApplicationLifecycleManager``.
+
+    The singleton is keyed by the resolved workspace directory path so that
+    every caller (runner, API endpoints) shares the same manager instance and
+    therefore the same port allocations and process tracking.
+    """
+    key = str(Path(workspace_dir))
+    if key not in _lifecycle_managers:
+        _lifecycle_managers[key] = ApplicationLifecycleManager(
+            workspace_dir=workspace_dir,
+            holaboss_user_id=holaboss_user_id,
+        )
+    manager = _lifecycle_managers[key]
+    if holaboss_user_id and manager._holaboss_user_id and manager._holaboss_user_id != holaboss_user_id:
+        logger.warning(
+            "Overwriting holaboss_user_id for workspace %s: %s → %s",
+            key,
+            manager._holaboss_user_id,
+            holaboss_user_id,
+        )
+    if holaboss_user_id:
+        manager._holaboss_user_id = holaboss_user_id
+    return manager

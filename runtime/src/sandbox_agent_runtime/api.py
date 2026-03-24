@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import logging
 import os
+import shutil
+import subprocess
+import tarfile
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,6 +15,8 @@ from typing import Any, Awaitable
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel, Field
+import yaml
 
 from sandbox_agent_runtime.api_models import (
     AgentSessionStateResponse,
@@ -46,6 +53,7 @@ from sandbox_agent_runtime.api_models import (
     SessionWithArtifactsListResponse,
     WorkspaceAgentRunResponse,
 )
+from sandbox_agent_runtime.application_lifecycle import ApplicationLifecycleManager
 from sandbox_agent_runtime.control_plane_api import (
     cron_scheduler_state as _cron_scheduler_state_impl,
     local_worker_state as _local_worker_state_impl,
@@ -58,7 +66,6 @@ from sandbox_agent_runtime.control_plane_api import (
     ts_cron_worker_enabled as _ts_cron_worker_enabled_impl,
     ts_queue_worker_enabled as _ts_queue_worker_enabled_impl,
 )
-from sandbox_agent_runtime.lifecycle_api import register_lifecycle_routes
 from sandbox_agent_runtime.local_execution_service import (
     DEFAULT_AGENT_RUNNER_COMMAND_TEMPLATE as _DEFAULT_AGENT_RUNNER_COMMAND_TEMPLATE,
 )
@@ -126,6 +133,7 @@ from sandbox_agent_runtime.runner_backend import (
 from sandbox_agent_runtime.runner_backend import (
     normalize_event as _normalize_event_impl,
 )
+from sandbox_agent_runtime.runtime_config.application_loader import _parse_app_runtime_yaml
 from sandbox_agent_runtime.runtime_local_state import (
     append_output_event,
     claim_inputs,
@@ -168,7 +176,7 @@ from sandbox_agent_runtime.runtime_local_state import (
     update_task_proposal_state,
 )
 from sandbox_agent_runtime.ts_api_proxy import TsApiProxySupport
-from sandbox_agent_runtime.workspace_scope import WORKSPACE_ROOT
+from sandbox_agent_runtime.workspace_scope import WORKSPACE_ROOT, workspace_dir_for_id
 
 logging.basicConfig(level=os.getenv("SANDBOX_AGENT_LOG_LEVEL", "INFO"))
 logger = logging.getLogger("sandbox_agent_api")
@@ -903,6 +911,829 @@ async def stream_agent_run(
     )
 
 
+class ShutdownResult(BaseModel):
+    stopped: list[str]
+    failed: list[str]
+
+
+@app.post("/api/v1/lifecycle/shutdown")
+async def lifecycle_shutdown() -> ShutdownResult:
+    """Gracefully stop all running applications across all workspaces.
+
+    Called before sandbox suspend to ensure clean shutdown of docker-compose
+    containers and subprocess apps.
+    """
+    stopped: list[str] = []
+    failed: list[str] = []
+
+    workspace_root = Path(WORKSPACE_ROOT)
+    if not workspace_root.is_dir():
+        return ShutdownResult(stopped=stopped, failed=failed)
+
+    for workspace_dir in workspace_root.iterdir():
+        if not workspace_dir.is_dir():
+            continue
+        workspace_yaml = workspace_dir / "workspace.yaml"
+        if not workspace_yaml.exists():
+            continue
+
+        try:
+            apps = _resolve_apps_from_workspace_yaml(workspace_yaml)
+        except Exception as exc:
+            logger.warning("Failed to parse %s: %s", workspace_yaml, exc)
+            continue
+
+        if not apps:
+            continue
+
+        for app_id, app_dir in apps:
+            compose_file = app_dir / "docker-compose.yml"
+            compose_file_yaml = app_dir / "docker-compose.yaml"
+            if not (compose_file.exists() or compose_file_yaml.exists()):
+                continue
+            try:
+                compose_cmd = await _find_lifecycle_compose_command()
+                if compose_cmd is None:
+                    continue
+                proc = await asyncio.create_subprocess_exec(
+                    *compose_cmd,
+                    "down",
+                    "--remove-orphans",
+                    cwd=str(app_dir),
+                    env={**os.environ},
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                returncode = await proc.wait()
+                if returncode == 0:
+                    stopped.append(app_id)
+                    logger.info("Stopped app '%s' in %s", app_id, workspace_dir.name)
+                else:
+                    failed.append(app_id)
+                    stderr = (await proc.stderr.read()).decode(errors="replace") if proc.stderr else ""
+                    logger.warning("Failed to stop app '%s': %s", app_id, stderr[:300])
+            except Exception as exc:
+                failed.append(app_id)
+                logger.warning("Error stopping app '%s': %s", app_id, exc)
+
+    return ShutdownResult(stopped=stopped, failed=failed)
+
+
+# ---------------------------------------------------------------------------
+# Per-app start / stop endpoints
+# ---------------------------------------------------------------------------
+# These run inside the sandbox container and can execute lifecycle commands
+# that contain shell expansions ($(), ${}, etc.) which are blocked by the
+# sandbox-host exec validation layer.
+
+# Singleton lifecycle managers keyed by workspace_id.
+# Stored on app.state so stop can access processes started by start.
+_lifecycle_managers: dict[str, ApplicationLifecycleManager] = {}
+
+
+class AppStartRequest(BaseModel):
+    workspace_id: str = "workspace-1"
+    env: dict[str, str] = Field(default_factory=dict)
+
+
+class AppStopRequest(BaseModel):
+    workspace_id: str = "workspace-1"
+
+
+class AppActionResult(BaseModel):
+    app_id: str
+    status: str
+    detail: str = ""
+    ports: dict[str, int] = Field(default_factory=dict)
+
+
+def _get_lifecycle_manager(workspace_id: str) -> ApplicationLifecycleManager:
+    """Get or create a lifecycle manager for the given workspace."""
+    if workspace_id not in _lifecycle_managers:
+        workspace_dir = Path(WORKSPACE_ROOT) / workspace_id
+        _lifecycle_managers[workspace_id] = ApplicationLifecycleManager(
+            workspace_dir=workspace_dir,
+        )
+    return _lifecycle_managers[workspace_id]
+
+
+def _resolve_app_from_workspace(workspace_id: str, target_app_id: str) -> tuple[Path, str, str]:
+    """Find an app entry in workspace.yaml and return (workspace_dir, app_id, config_path).
+
+    Raises HTTPException if not found.
+    """
+    workspace_dir = Path(WORKSPACE_ROOT) / workspace_id
+    workspace_yaml_path = workspace_dir / "workspace.yaml"
+
+    if not workspace_yaml_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"workspace.yaml not found for workspace '{workspace_id}'",
+        )
+
+    data = yaml.safe_load(workspace_yaml_path.read_text())
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="workspace.yaml is not a valid mapping")
+
+    applications = data.get("applications")
+    if not isinstance(applications, list):
+        raise HTTPException(status_code=400, detail="workspace.yaml has no applications list")
+
+    for entry in applications:
+        if not isinstance(entry, dict):
+            continue
+        entry_app_id = str(entry.get("app_id") or "")
+        if entry_app_id == target_app_id:
+            config_path = str(entry.get("config_path") or "")
+            return workspace_dir, entry_app_id, config_path
+
+    raise HTTPException(
+        status_code=404,
+        detail=f"app '{target_app_id}' not found in workspace.yaml",
+    )
+
+
+def _load_resolved_app(workspace_dir: Path, app_id: str, config_path: str):
+    """Read app.runtime.yaml and return a ResolvedApplication."""
+    yaml_path = workspace_dir / config_path
+    if not yaml_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"app config not found: '{config_path}'",
+        )
+
+    raw_yaml = yaml_path.read_text()
+    return _parse_app_runtime_yaml(
+        raw_yaml=raw_yaml,
+        declared_app_id=app_id,
+        config_path=config_path,
+    )
+
+
+def _app_index_in_workspace(workspace_dir: Path, target_app_id: str) -> int:
+    """Return the 0-based index of an app in workspace.yaml's applications list."""
+    workspace_yaml_path = workspace_dir / "workspace.yaml"
+    if not workspace_yaml_path.exists():
+        return 0
+    data = yaml.safe_load(workspace_yaml_path.read_text())
+    if not isinstance(data, dict):
+        return 0
+    applications = data.get("applications")
+    if not isinstance(applications, list):
+        return 0
+    for index, entry in enumerate(applications):
+        if isinstance(entry, dict) and str(entry.get("app_id") or "") == target_app_id:
+            return index
+    return 0
+
+
+def _ports_for_app_index(index: int) -> tuple[int, int]:
+    """Derive deterministic HTTP and MCP ports from app index."""
+    from sandbox_agent_runtime.application_lifecycle import _APP_HTTP_PORT_BASE, _MCP_PORT_BASE
+
+    return (_APP_HTTP_PORT_BASE + index, _MCP_PORT_BASE + index)
+
+
+def _find_workspace_yaml() -> Path | None:
+    """Find the first workspace.yaml across all workspace directories."""
+    root = Path(WORKSPACE_ROOT)
+    if not root.is_dir():
+        return None
+    for child in root.iterdir():
+        if child.is_dir():
+            candidate = child / "workspace.yaml"
+            if candidate.exists():
+                return candidate
+    return None
+
+
+def _parse_app_ports_from_yaml(workspace_yaml_path: Path) -> dict[str, dict[str, int]]:
+    """Parse workspace.yaml and return deterministic port assignments for listed apps."""
+    data = yaml.safe_load(workspace_yaml_path.read_text())
+    if not isinstance(data, dict):
+        return {}
+    applications = data.get("applications")
+    if not isinstance(applications, list):
+        return {}
+    result: dict[str, dict[str, int]] = {}
+    for index, entry in enumerate(applications):
+        if not isinstance(entry, dict):
+            continue
+        app_id = str(entry.get("app_id") or "")
+        if not app_id:
+            continue
+        http_port, mcp_port = _ports_for_app_index(index)
+        result[app_id] = {"http": http_port, "mcp": mcp_port}
+    return result
+
+
+@app.get("/api/v1/apps/ports")
+async def list_app_ports(workspace_id: str | None = None) -> dict[str, dict[str, int]]:
+    """Return deterministic app ports based on application order in workspace.yaml."""
+    if workspace_id:
+        workspace_yaml_path = Path(WORKSPACE_ROOT) / workspace_id / "workspace.yaml"
+    else:
+        workspace_yaml_path = _find_workspace_yaml()
+
+    if not workspace_yaml_path or not workspace_yaml_path.exists():
+        return {}
+    return _parse_app_ports_from_yaml(workspace_yaml_path)
+
+
+@app.post("/api/v1/apps/{app_id}/start")
+async def start_app_endpoint(app_id: str, payload: AppStartRequest) -> AppActionResult:
+    """Start an application using its lifecycle commands.
+
+    Runs inside the sandbox container so shell expansions ($(), ${}) work.
+    Port assignment is deterministic from app order in workspace.yaml.
+    """
+    workspace_dir, resolved_app_id, config_path = _resolve_app_from_workspace(payload.workspace_id, app_id)
+
+    try:
+        resolved_app = _load_resolved_app(workspace_dir, resolved_app_id, config_path)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"failed to parse app config: {exc}") from exc
+
+    manager = _get_lifecycle_manager(payload.workspace_id)
+
+    try:
+        index = _app_index_in_workspace(workspace_dir, resolved_app_id)
+        http_port, mcp_port = _ports_for_app_index(index)
+        manager._port_allocations[resolved_app_id] = (http_port, mcp_port)
+        logger.info(
+            "Assigned deterministic ports for app '%s': HTTP=%d, MCP=%d",
+            resolved_app_id,
+            http_port,
+            mcp_port,
+        )
+
+        # Check if already healthy before starting
+        mcp_host_port = manager._get_mcp_host_port(resolved_app)
+        if not await manager._is_app_healthy(resolved_app, mcp_host_port=mcp_host_port):
+            await manager._start_app(resolved_app)
+            await manager._wait_healthy_with_retry(resolved_app)
+        else:
+            logger.info("App '%s' already healthy on port %d, skipping start", app_id, mcp_host_port)
+    except Exception as exc:
+        logger.exception("Failed to start app '%s'", app_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    # Return allocated ports so the caller knows where to reach the app
+    ports: dict[str, int] = {}
+    if resolved_app_id in manager._port_allocations:
+        http_port, mcp_port = manager._port_allocations[resolved_app_id]
+        ports = {"http": http_port, "mcp": mcp_port}
+
+    return AppActionResult(
+        app_id=resolved_app_id,
+        status="started",
+        detail="app started with lifecycle manager",
+        ports=ports,
+    )
+
+
+@app.post("/api/v1/apps/{app_id}/stop")
+async def stop_app_endpoint(app_id: str, payload: AppStopRequest) -> AppActionResult:
+    """Stop an application using its lifecycle commands.
+
+    Runs inside the sandbox container so shell expansions ($(), ${}) work.
+    """
+    workspace_dir, resolved_app_id, config_path = _resolve_app_from_workspace(payload.workspace_id, app_id)
+
+    try:
+        resolved_app = _load_resolved_app(workspace_dir, resolved_app_id, config_path)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"failed to parse app config: {exc}") from exc
+
+    manager = _get_lifecycle_manager(payload.workspace_id)
+
+    try:
+        await manager.stop_all([resolved_app])
+    except Exception as exc:
+        logger.exception("Failed to stop app '%s'", app_id)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    # Clean up port allocations
+    manager._port_allocations.pop(resolved_app_id, None)
+
+    return AppActionResult(
+        app_id=resolved_app_id,
+        status="stopped",
+        detail="app stopped via lifecycle manager",
+    )
+
+
+# ---------------------------------------------------------------------------
+# App install / uninstall / build-status / list / setup endpoints
+# ---------------------------------------------------------------------------
+
+_background_tasks: set[asyncio.Task[Any]] = set()
+
+
+class InstallAppRequest(BaseModel):
+    app_id: str = Field(..., min_length=1)
+    workspace_id: str = Field(..., min_length=1)
+    files: list[dict[str, Any]]  # [{path, content_base64, executable?}]
+
+
+class InstallAppResponse(BaseModel):
+    app_id: str
+    status: str
+    detail: str
+
+
+class UninstallAppRequest(BaseModel):
+    workspace_id: str = Field(..., min_length=1)
+
+
+class AppSetupRequest(BaseModel):
+    workspace_id: str = Field(..., min_length=1)
+
+
+async def _run_app_setup(
+    *,
+    workspace_dir: str,
+    workspace_id: str,
+    app_id: str,
+    setup_command: str,
+) -> None:
+    """Execute lifecycle.setup in background, track status in SQLite."""
+    from sandbox_agent_runtime.runtime_local_state import upsert_app_build
+
+    upsert_app_build(workspace_id=workspace_id, app_id=app_id, status="building")
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            setup_command,
+            cwd=os.path.join(workspace_dir, "apps", app_id),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+        if proc.returncode != 0:
+            error_detail = stderr.decode("utf-8", errors="replace")[:2000]
+            upsert_app_build(workspace_id=workspace_id, app_id=app_id, status="failed", error=error_detail)
+            return
+        upsert_app_build(workspace_id=workspace_id, app_id=app_id, status="completed")
+    except asyncio.TimeoutError:
+        upsert_app_build(workspace_id=workspace_id, app_id=app_id, status="failed", error="setup timed out after 300s")
+    except Exception as exc:
+        upsert_app_build(workspace_id=workspace_id, app_id=app_id, status="failed", error=str(exc)[:2000])
+
+
+@app.post("/api/v1/apps/install")
+async def install_app(payload: InstallAppRequest) -> InstallAppResponse:
+    """Install an app by writing files, registering in workspace.yaml, and optionally running setup."""
+    from sandbox_agent_runtime.workspace_yaml import (
+        append_application,
+        read_workspace_yaml,
+        write_workspace_yaml,
+    )
+
+    workspace_dir = workspace_dir_for_id(payload.workspace_id)
+    app_dir = os.path.join(workspace_dir, "apps", payload.app_id)
+
+    # Write files
+    for file_entry in payload.files:
+        file_path = os.path.join(app_dir, file_entry["path"])
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        content = base64.b64decode(file_entry["content_base64"])
+        with open(file_path, "wb") as f:
+            f.write(content)
+        if file_entry.get("executable"):
+            os.chmod(file_path, 0o755)
+
+    # Parse app.runtime.yaml
+    app_yaml_path = os.path.join(app_dir, "app.runtime.yaml")
+    if not os.path.exists(app_yaml_path):
+        raise HTTPException(status_code=400, detail="app.runtime.yaml not found in uploaded files")
+    raw_yaml = Path(app_yaml_path).read_text(encoding="utf-8")
+    config_path = f"apps/{payload.app_id}/app.runtime.yaml"
+    resolved = _parse_app_runtime_yaml(raw_yaml=raw_yaml, declared_app_id=payload.app_id, config_path=config_path)
+
+    # Register in workspace.yaml
+    existing_content = read_workspace_yaml(workspace_dir)
+    lifecycle_dict: dict[str, str] = {}
+    if resolved.lifecycle.setup:
+        lifecycle_dict["setup"] = resolved.lifecycle.setup
+    if resolved.lifecycle.start:
+        lifecycle_dict["start"] = resolved.lifecycle.start
+    if resolved.lifecycle.stop:
+        lifecycle_dict["stop"] = resolved.lifecycle.stop
+    updated_content = append_application(
+        existing_content,
+        app_id=payload.app_id,
+        config_path=config_path,
+        lifecycle=lifecycle_dict or None,
+    )
+    write_workspace_yaml(workspace_dir, updated_content)
+
+    # Run setup if defined
+    setup_cmd = resolved.lifecycle.setup
+    if setup_cmd:
+        task = asyncio.create_task(
+            _run_app_setup(
+                workspace_dir=workspace_dir,
+                workspace_id=payload.workspace_id,
+                app_id=payload.app_id,
+                setup_command=setup_cmd,
+            )
+        )
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+        return InstallAppResponse(
+            app_id=payload.app_id,
+            status="setup_started",
+            detail=f"Files written, running setup: {setup_cmd}",
+        )
+
+    return InstallAppResponse(
+        app_id=payload.app_id,
+        status="installed",
+        detail="Files written, no setup command defined",
+    )
+
+
+@app.delete("/api/v1/apps/{app_id}")
+async def uninstall_app(app_id: str, payload: UninstallAppRequest) -> AppActionResult:
+    """Uninstall an app: stop it, remove files, remove from workspace.yaml, clean up build status."""
+    from sandbox_agent_runtime.runtime_local_state import delete_app_build
+    from sandbox_agent_runtime.workspace_yaml import (
+        read_workspace_yaml,
+        remove_application,
+        write_workspace_yaml,
+    )
+
+    workspace_dir = workspace_dir_for_id(payload.workspace_id)
+
+    # Best-effort stop
+    try:
+        workspace_dir_path = Path(workspace_dir)
+        workspace_yaml_path = workspace_dir_path / "workspace.yaml"
+        if workspace_yaml_path.exists():
+            data = yaml.safe_load(workspace_yaml_path.read_text())
+            if isinstance(data, dict):
+                applications = data.get("applications", [])
+                if isinstance(applications, list):
+                    for entry in applications:
+                        if isinstance(entry, dict) and entry.get("app_id") == app_id:
+                            config_path = entry.get("config_path", "")
+                            if config_path:
+                                try:
+                                    resolved_app = _load_resolved_app(workspace_dir_path, app_id, config_path)
+                                    manager = _get_lifecycle_manager(payload.workspace_id)
+                                    await manager.stop_all([resolved_app])
+                                    manager._port_allocations.pop(app_id, None)
+                                except Exception:
+                                    logger.debug("Best-effort stop failed for app '%s'", app_id, exc_info=True)
+                            break
+    except Exception:
+        logger.debug("Best-effort stop failed for app '%s'", app_id, exc_info=True)
+
+    # Remove files
+    shutil.rmtree(os.path.join(workspace_dir, "apps", app_id), ignore_errors=True)
+
+    # Remove from workspace.yaml
+    existing_content = read_workspace_yaml(workspace_dir)
+    updated_content = remove_application(existing_content, app_id=app_id)
+    write_workspace_yaml(workspace_dir, updated_content)
+
+    # Clean up build status
+    delete_app_build(workspace_id=payload.workspace_id, app_id=app_id)
+
+    return AppActionResult(
+        app_id=app_id,
+        status="uninstalled",
+        detail="App stopped, files removed, workspace.yaml updated",
+        ports={},
+    )
+
+
+@app.get("/api/v1/apps/{app_id}/build-status")
+async def app_build_status(app_id: str, workspace_id: str = Query(...)) -> dict[str, Any]:
+    """Get the build/setup status for a given app."""
+    from sandbox_agent_runtime.runtime_local_state import get_app_build
+
+    record = get_app_build(workspace_id=workspace_id, app_id=app_id)
+    if record is None:
+        return {"status": "unknown"}
+    return dict(record)
+
+
+@app.get("/api/v1/apps")
+async def list_installed_apps(workspace_id: str = Query(...)) -> dict[str, Any]:
+    """List all installed apps for a workspace, including build status."""
+    from sandbox_agent_runtime.runtime_local_state import get_app_build
+    from sandbox_agent_runtime.workspace_yaml import parse_workspace_yaml, read_workspace_yaml
+
+    workspace_dir = workspace_dir_for_id(workspace_id)
+    content = read_workspace_yaml(workspace_dir)
+    data = parse_workspace_yaml(content)
+    apps_list = data.get("applications", [])
+    if not isinstance(apps_list, list):
+        apps_list = []
+
+    result = []
+    for entry in apps_list:
+        if not isinstance(entry, dict) or "app_id" not in entry:
+            continue
+        aid = entry["app_id"]
+        build = get_app_build(workspace_id=workspace_id, app_id=aid)
+        result.append({
+            "app_id": aid,
+            "config_path": entry.get("config_path", ""),
+            "lifecycle": entry.get("lifecycle"),
+            "build_status": build["status"] if build else "unknown",
+        })
+    return {"apps": result, "count": len(result)}
+
+
+@app.post("/api/v1/apps/{app_id}/setup")
+async def setup_app_endpoint(app_id: str, payload: AppSetupRequest) -> AppActionResult:
+    """Re-run the lifecycle.setup command for an already-installed app."""
+    workspace_dir = workspace_dir_for_id(payload.workspace_id)
+    app_yaml_path = os.path.join(workspace_dir, "apps", app_id, "app.runtime.yaml")
+    if not os.path.exists(app_yaml_path):
+        raise HTTPException(status_code=404, detail=f"app.runtime.yaml not found for {app_id}")
+    raw_yaml = Path(app_yaml_path).read_text(encoding="utf-8")
+    resolved = _parse_app_runtime_yaml(
+        raw_yaml=raw_yaml,
+        declared_app_id=app_id,
+        config_path=f"apps/{app_id}/app.runtime.yaml",
+    )
+    setup_cmd = resolved.lifecycle.setup
+    if not setup_cmd:
+        return AppActionResult(app_id=app_id, status="no_setup_command", detail="No lifecycle.setup defined", ports={})
+    task = asyncio.create_task(
+        _run_app_setup(
+            workspace_dir=workspace_dir,
+            workspace_id=payload.workspace_id,
+            app_id=app_id,
+            setup_command=setup_cmd,
+        )
+    )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return AppActionResult(app_id=app_id, status="setup_started", detail=f"Running: {setup_cmd}", ports={})
+
+
+def _resolve_apps_from_workspace_yaml(workspace_yaml: Path) -> list[tuple[str, Path]]:
+    """Parse workspace.yaml and return (app_id, app_dir) pairs."""
+    import yaml
+
+    data = yaml.safe_load(workspace_yaml.read_text())
+    if not isinstance(data, dict):
+        return []
+
+    applications = data.get("applications")
+    if not isinstance(applications, list):
+        return []
+
+    workspace_dir = workspace_yaml.parent
+    result: list[tuple[str, Path]] = []
+    for entry in applications:
+        if not isinstance(entry, dict):
+            continue
+        app_id = str(entry.get("app_id") or "")
+        config_path = str(entry.get("config_path") or "")
+        if not app_id:
+            continue
+        # Derive app_dir from config_path (e.g. "apps/myapp/app.runtime.yaml" → "apps/myapp")
+        app_dir = workspace_dir / str(Path(config_path).parent) if config_path else workspace_dir / "apps" / app_id
+        result.append((app_id, app_dir))
+    return result
+
+
+async def _find_lifecycle_compose_command() -> list[str] | None:
+    """Find available docker compose command."""
+    for cmd in (["docker", "compose"], ["docker-compose"]):
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                "version",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
+            if proc.returncode == 0:
+                return cmd
+        except FileNotFoundError:
+            continue
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Workspace file & snapshot operations
+# ---------------------------------------------------------------------------
+
+
+class ApplyTemplateRequest(BaseModel):
+    files: list[dict[str, Any]]
+    replace_existing: bool = False
+
+
+@app.post("/api/v1/workspaces/{workspace_id}/apply-template")
+async def apply_template(workspace_id: str, payload: ApplyTemplateRequest) -> dict[str, Any]:
+    """Atomically apply a materialized template to a workspace."""
+    workspace_dir = workspace_dir_for_id(workspace_id)
+    ws_path = Path(workspace_dir)
+
+    if not ws_path.exists():
+        ws_path.mkdir(parents=True, exist_ok=True)
+
+    if payload.replace_existing:
+        # Remove everything except .holaboss and workspace.json
+        for child in ws_path.iterdir():
+            if child.name in (".holaboss", "workspace.json"):
+                continue
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+
+    files_written = 0
+    for entry in payload.files:
+        rel_path = entry.get("path", "")
+        content_b64 = entry.get("content_base64", "")
+        executable = bool(entry.get("executable", False))
+
+        if not rel_path or not content_b64:
+            continue
+
+        # Validate no traversal
+        if ".." in rel_path.split("/"):
+            raise HTTPException(status_code=400, detail=f"path traversal not allowed: {rel_path}")
+
+        full_path = ws_path / rel_path
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_bytes(base64.b64decode(content_b64))
+        if executable:
+            full_path.chmod(full_path.stat().st_mode | 0o111)
+        files_written += 1
+
+    return {"status": "applied", "files_written": files_written}
+
+
+@app.get("/api/v1/workspaces/{workspace_id}/files/{file_path:path}")
+async def read_file_endpoint(workspace_id: str, file_path: str) -> dict[str, Any]:
+    """Read a file from the workspace."""
+    workspace_dir = workspace_dir_for_id(workspace_id)
+
+    # Validate path
+    if ".." in file_path.split("/"):
+        raise HTTPException(status_code=400, detail="path traversal not allowed")
+
+    full_path = Path(workspace_dir) / file_path
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail=f"file not found: {file_path}")
+    if not full_path.is_file():
+        raise HTTPException(status_code=400, detail=f"not a file: {file_path}")
+
+    raw = full_path.read_bytes()
+    try:
+        content = raw.decode("utf-8")
+        return {"path": file_path, "content": content, "encoding": "utf-8"}
+    except UnicodeDecodeError:
+        return {"path": file_path, "content": base64.b64encode(raw).decode("ascii"), "encoding": "base64"}
+
+
+class WriteFileRequest(BaseModel):
+    content_base64: str
+    executable: bool = False
+
+
+@app.put("/api/v1/workspaces/{workspace_id}/files/{file_path:path}")
+async def write_file_endpoint(workspace_id: str, file_path: str, payload: WriteFileRequest) -> dict[str, Any]:
+    """Write a file to the workspace."""
+    workspace_dir = workspace_dir_for_id(workspace_id)
+
+    if ".." in file_path.split("/"):
+        raise HTTPException(status_code=400, detail="path traversal not allowed")
+
+    full_path = Path(workspace_dir) / file_path
+    full_path.parent.mkdir(parents=True, exist_ok=True)
+    full_path.write_bytes(base64.b64decode(payload.content_base64))
+    if payload.executable:
+        full_path.chmod(full_path.stat().st_mode | 0o111)
+
+    return {"path": file_path, "status": "written"}
+
+
+@app.get("/api/v1/workspaces/{workspace_id}/snapshot")
+async def workspace_snapshot(workspace_id: str) -> dict[str, Any]:
+    """Return workspace filesystem metadata and git state."""
+    workspace_dir = workspace_dir_for_id(workspace_id)
+    ws_path = Path(workspace_dir)
+
+    if not ws_path.exists():
+        raise HTTPException(status_code=404, detail="workspace not found")
+
+    # Collect filesystem tree
+    files: list[dict[str, Any]] = []
+    extension_counts: dict[str, int] = {}
+    total_size = 0
+    max_files = 5000
+
+    for item in sorted(ws_path.rglob("*")):
+        if len(files) >= max_files:
+            break
+        if not item.is_file():
+            continue
+
+        rel = item.relative_to(ws_path).as_posix()
+
+        # Skip noisy dirs
+        skip_prefixes = (".git/", "node_modules/", "__pycache__/", ".venv/", "dist/", "build/")
+        if any(rel.startswith(p) for p in skip_prefixes):
+            continue
+
+        try:
+            st = item.stat()
+        except OSError:
+            continue
+
+        size = st.st_size
+        total_size += size
+        ext = item.suffix.lower() if item.suffix else "(none)"
+        extension_counts[ext] = extension_counts.get(ext, 0) + 1
+
+        files.append({
+            "path": rel,
+            "size": size,
+            "modified": datetime.fromtimestamp(st.st_mtime, tz=UTC).isoformat(),
+        })
+
+    # Key file previews
+    previews: dict[str, str] = {}
+    for key_file in ("workspace.yaml", "README.md", "AGENTS.md", "package.json"):
+        kf_path = ws_path / key_file
+        if kf_path.exists() and kf_path.is_file():
+            try:
+                raw = kf_path.read_bytes()[:1000]
+                previews[key_file] = raw.decode("utf-8", errors="replace")
+            except OSError:
+                pass
+
+    # Git state
+    git_state: dict[str, Any] = {}
+    if (ws_path / ".git").exists():
+        try:
+            branch_result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=str(ws_path), capture_output=True, text=True, timeout=5,
+            )
+            if branch_result.returncode == 0:
+                git_state["branch"] = branch_result.stdout.strip()
+
+            status_result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=str(ws_path), capture_output=True, text=True, timeout=5,
+            )
+            git_state["dirty"] = bool(status_result.stdout.strip())
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+    return {
+        "workspace_id": workspace_id,
+        "file_count": len(files),
+        "total_size": total_size,
+        "files": files,
+        "extension_counts": extension_counts,
+        "previews": previews,
+        "git": git_state,
+    }
+
+
+@app.get("/api/v1/workspaces/{workspace_id}/export")
+async def export_workspace(workspace_id: str):
+    """Export workspace as streaming tar.gz."""
+    workspace_dir = workspace_dir_for_id(workspace_id)
+    ws_path = Path(workspace_dir)
+
+    if not ws_path.exists():
+        raise HTTPException(status_code=404, detail="workspace not found")
+
+    exclude_dirs = {"node_modules", ".git", "dist", "build", "__pycache__", ".venv", ".hb_template_bootstrap_tmp", ".hb_app_template_tmp"}
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for item in sorted(ws_path.rglob("*")):
+            rel = item.relative_to(ws_path)
+            # Skip excluded directories
+            if any(part in exclude_dirs for part in rel.parts):
+                continue
+            if item.is_file():
+                tar.add(str(item), arcname=rel.as_posix())
+
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/gzip",
+        headers={"Content-Disposition": f"attachment; filename={workspace_id}.tar.gz"},
+    )
 async def _execute_runner_request(
     payload: RunnerRequest,
     *,
@@ -916,5 +1747,4 @@ async def _execute_runner_request(
     )
 
 
-register_lifecycle_routes(app)
 register_memory_routes(app)

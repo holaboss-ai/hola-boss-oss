@@ -15,7 +15,6 @@ from fastapi.responses import Response, StreamingResponse
 from sandbox_agent_runtime import api as api_module
 from sandbox_agent_runtime.api import app
 from sandbox_agent_runtime import runner_api as runner_api_module
-from sandbox_agent_runtime import lifecycle_api as lifecycle_api_module
 from sandbox_agent_runtime import memory_api as memory_api_module
 from sandbox_agent_runtime.runtime_local_state import (
     claim_inputs,
@@ -446,7 +445,7 @@ async def test_list_app_ports_returns_deterministic_workspace_ports(
 ) -> None:
     workspace_root = tmp_path / "workspace-root"
     _write_workspace_apps(workspace_root, "workspace-1", ["app-a", "app-b"])
-    monkeypatch.setattr(lifecycle_api_module, "WORKSPACE_ROOT", str(workspace_root))
+    monkeypatch.setattr(api_module, "WORKSPACE_ROOT", str(workspace_root))
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -466,8 +465,8 @@ async def test_start_app_endpoint_assigns_deterministic_ports_from_workspace_ord
 ) -> None:
     workspace_root = tmp_path / "workspace-root"
     _write_workspace_apps(workspace_root, "workspace-1", ["app-a", "app-b"])
-    monkeypatch.setattr(lifecycle_api_module, "WORKSPACE_ROOT", str(workspace_root))
-    lifecycle_api_module._lifecycle_managers.clear()
+    monkeypatch.setattr(api_module, "WORKSPACE_ROOT", str(workspace_root))
+    api_module._lifecycle_managers.clear()
 
     async def _healthy(*args, **kwargs) -> bool:
         del args, kwargs
@@ -486,7 +485,7 @@ async def test_start_app_endpoint_assigns_deterministic_ports_from_workspace_ord
     payload = response.json()
     assert payload["app_id"] == "app-b"
     assert payload["ports"] == {"http": 18081, "mcp": 13101}
-    assert lifecycle_api_module._lifecycle_managers["workspace-1"]._port_allocations["app-b"] == (18081, 13101)
+    assert api_module._lifecycle_managers["workspace-1"]._port_allocations["app-b"] == (18081, 13101)
 
 
 @pytest.mark.asyncio

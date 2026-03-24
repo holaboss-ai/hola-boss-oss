@@ -57,6 +57,9 @@ jobs:
           RELEASE_TAG: ${{ steps.release_meta.outputs.release_tag }}
           RELEASE_TITLE: ${{ steps.release_meta.outputs.release_title }}
         run: |
+          notes_path="$(mktemp)"
+          trap 'rm -f "${notes_path}"' EXIT
+
           if [ "${GITHUB_REF_NAME}" = "main" ]; then
             release_pattern='holaboss-[0-9]*'
           else
@@ -69,21 +72,48 @@ jobs:
               | head -n1 || true
           )"
 
+          generate_notes_args=(
+            "repos/${GITHUB_REPOSITORY}/releases/generate-notes"
+            --method POST
+            -f "tag_name=${RELEASE_TAG}"
+            -f "target_commitish=${GITHUB_SHA}"
+          )
+          if [ -n "${previous_tag}" ]; then
+            generate_notes_args+=(-f "previous_tag_name=${previous_tag}")
+          fi
+
           if ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh api "${generate_notes_args[@]}" --jq '.body' > "${notes_path}"
+
             prerelease_flag=()
-            notes_start_tag_flag=()
             if [ "${GITHUB_REF_NAME}" != "main" ]; then
               prerelease_flag+=(--prerelease)
             fi
-            if [ -n "${previous_tag}" ]; then
-              notes_start_tag_flag+=(--notes-start-tag "${previous_tag}")
-            fi
             gh release create "${RELEASE_TAG}" \
               --title "${RELEASE_TITLE}" \
-              --generate-notes \
-              "${notes_start_tag_flag[@]}" \
+              --notes-file "${notes_path}" \
               --target "${GITHUB_SHA}" \
               "${prerelease_flag[@]}"
+          else
+            tag_ref="repos/${GITHUB_REPOSITORY}/git/refs/tags/${RELEASE_TAG}"
+            if gh api "${tag_ref}" >/dev/null 2>&1; then
+              gh api "${tag_ref}" \
+                --method PATCH \
+                -f "sha=${GITHUB_SHA}" \
+                -F force=true >/dev/null
+            else
+              gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+                --method POST \
+                -f "ref=refs/tags/${RELEASE_TAG}" \
+                -f "sha=${GITHUB_SHA}" >/dev/null
+            fi
+
+            gh api "${generate_notes_args[@]}" --jq '.body' > "${notes_path}"
+
+            gh release edit "${RELEASE_TAG}" \
+              --title "${RELEASE_TITLE}" \
+              --notes-file "${notes_path}" \
+              --target "${GITHUB_SHA}"
           fi
 
   publish-macos-runtime:
