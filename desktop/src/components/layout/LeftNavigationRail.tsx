@@ -1,10 +1,13 @@
 import { BriefcaseBusiness, MessageSquareText, Sparkles, Workflow } from "lucide-react";
+import { WORKSPACE_APPS } from "@/lib/workspaceApps";
 
 export type LeftRailItem = "agent" | "automations" | "skills";
 
 interface LeftNavigationRailProps {
   activeItem: LeftRailItem;
   onSelectItem: (item: LeftRailItem) => void;
+  activeAppId: string | null;
+  onSelectApp: (appId: string) => void;
 }
 
 const PRIMARY_ITEMS: Array<{ id: LeftRailItem; label: string; icon: React.ReactNode }> = [
@@ -13,13 +16,7 @@ const PRIMARY_ITEMS: Array<{ id: LeftRailItem; label: string; icon: React.ReactN
   { id: "skills", label: "Skills", icon: <Sparkles size={14} /> }
 ];
 
-const APP_ITEMS = [
-  { id: "twitter", label: "Twitter" },
-  { id: "linkedin", label: "LinkedIn" },
-  { id: "reddit", label: "Reddit" }
-];
-
-export function LeftNavigationRail({ activeItem, onSelectItem }: LeftNavigationRailProps) {
+export function LeftNavigationRail({ activeItem, onSelectItem, activeAppId, onSelectApp }: LeftNavigationRailProps) {
   return (
     <aside className="theme-shell soft-vignette neon-border relative hidden min-h-0 min-w-[210px] max-w-[230px] flex-col overflow-hidden rounded-[var(--theme-radius-card)] p-3 shadow-card lg:flex">
       <nav className="grid gap-1 px-1 pt-1">
@@ -55,13 +52,18 @@ export function LeftNavigationRail({ activeItem, onSelectItem }: LeftNavigationR
         </div>
 
         <div className="mt-3 grid gap-2">
-          {APP_ITEMS.map((item) => (
+          {WORKSPACE_APPS.map((item) => (
             <button
               key={item.id}
               type="button"
-              className="flex items-center gap-3 rounded-[14px] px-2 py-2 text-left text-[12px] text-text-muted transition hover:bg-[var(--theme-hover-bg)] hover:text-text-main"
+              onClick={() => onSelectApp(item.id)}
+              className={`flex items-center gap-3 rounded-[14px] border px-2 py-2 text-left text-[12px] transition ${
+                activeItem === "agent" && activeAppId === item.id
+                  ? "border-neon-green/35 bg-neon-green/10 text-text-main"
+                  : "border-transparent text-text-muted hover:bg-[var(--theme-hover-bg)] hover:text-text-main"
+              }`}
             >
-              <span className="h-2 w-2 rounded-full bg-neon-green/80" />
+              <span className={`h-2 w-2 rounded-full ${item.accentClassName}`} />
               <span>{item.label}</span>
             </button>
           ))}

@@ -11,6 +11,7 @@ import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 const ONBOARDING_ACTIVE_STATUSES = new Set(["pending", "awaiting_confirmation", "in_progress"]);
 const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
+type TemplateSourceMode = "local" | "marketplace";
 
 interface WorkspaceDesktopContextValue {
   runtimeConfig: RuntimeConfigPayload | null;
@@ -18,13 +19,21 @@ interface WorkspaceDesktopContextValue {
   clientConfig: HolabossClientConfigPayload | null;
   workspaces: WorkspaceRecordPayload[];
   selectedWorkspace: WorkspaceRecordPayload | null;
+  templateSourceMode: TemplateSourceMode;
+  setTemplateSourceMode: (value: TemplateSourceMode) => void;
   selectedTemplateFolder: TemplateFolderSelectionPayload | null;
+  marketplaceTemplates: TemplateMetadataPayload[];
+  selectedMarketplaceTemplate: TemplateMetadataPayload | null;
+  selectMarketplaceTemplate: (templateName: string) => void;
   newWorkspaceName: string;
   setNewWorkspaceName: (value: string) => void;
   resolvedUserId: string;
   isLoadingBootstrap: boolean;
   isRefreshing: boolean;
   isCreatingWorkspace: boolean;
+  isLoadingMarketplaceTemplates: boolean;
+  canUseMarketplaceTemplates: boolean;
+  marketplaceTemplatesError: string;
   workspaceErrorMessage: string;
   statusSummary: string;
   setupStatus: {
@@ -81,24 +90,45 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatusPayload | null>(null);
   const [clientConfig, setClientConfig] = useState<HolabossClientConfigPayload | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceRecordPayload[]>([]);
+  const [templateSourceMode, setTemplateSourceModeState] = useState<TemplateSourceMode>("local");
   const [selectedTemplateFolder, setSelectedTemplateFolder] = useState<TemplateFolderSelectionPayload | null>(null);
+  const [marketplaceTemplates, setMarketplaceTemplates] = useState<TemplateMetadataPayload[]>([]);
+  const [selectedMarketplaceTemplateName, setSelectedMarketplaceTemplateName] = useState("");
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const [isLoadingBootstrap, setIsLoadingBootstrap] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
+  const [isLoadingMarketplaceTemplates, setIsLoadingMarketplaceTemplates] = useState(false);
+  const [marketplaceTemplatesError, setMarketplaceTemplatesError] = useState("");
   const [workspaceErrorMessage, setWorkspaceErrorMessage] = useState("");
   const [recentAuthCompletedAt, setRecentAuthCompletedAt] = useState<number | null>(null);
 
+  const isSignedIn = Boolean(sessionUserId(session));
   const resolvedUserId = runtimeConfig?.userId?.trim() || sessionUserId(session);
+  const canUseMarketplaceTemplates = isSignedIn && Boolean(runtimeConfig?.authTokenPresent);
   const selectedWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
     [selectedWorkspaceId, workspaces]
+  );
+  const selectedMarketplaceTemplate = useMemo(
+    () => marketplaceTemplates.find((template) => template.name === selectedMarketplaceTemplateName) ?? null,
+    [marketplaceTemplates, selectedMarketplaceTemplateName]
   );
   const onboardingModeActive = useMemo(() => isOnboardingMode(selectedWorkspace), [selectedWorkspace]);
   const sessionModeLabel = onboardingModeActive ? "onboarding" : "main";
   const sessionTargetId = onboardingModeActive
     ? (selectedWorkspace?.onboarding_session_id || "").trim()
     : (selectedWorkspace?.main_session_id || "").trim();
+
+  function setTemplateSourceMode(value: TemplateSourceMode) {
+    setWorkspaceErrorMessage("");
+    setTemplateSourceModeState(value);
+  }
+
+  function selectMarketplaceTemplate(templateName: string) {
+    setWorkspaceErrorMessage("");
+    setSelectedMarketplaceTemplateName(templateName);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -209,19 +239,36 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   }
 
   async function createWorkspace() {
-    if (!selectedTemplateFolder?.rootPath) {
-      setWorkspaceErrorMessage("Choose a template folder first.");
-      return;
-    }
-
     setIsCreatingWorkspace(true);
     setWorkspaceErrorMessage("");
     try {
-      const response = await window.electronAPI.workspace.createWorkspace({
-        holaboss_user_id: resolvedUserId || LOCAL_OSS_TEMPLATE_USER_ID,
-        name: newWorkspaceName.trim() || "Desktop Workspace",
-        template_root_path: selectedTemplateFolder.rootPath
-      });
+      const trimmedWorkspaceName = newWorkspaceName.trim() || "Desktop Workspace";
+      let response: WorkspaceResponsePayload;
+      if (templateSourceMode === "marketplace") {
+        if (!canUseMarketplaceTemplates) {
+          throw new Error("Sign in and finish runtime setup to use marketplace templates.");
+        }
+        if (!resolvedUserId) {
+          throw new Error("Signed-in user id is required for marketplace templates.");
+        }
+        if (!selectedMarketplaceTemplate) {
+          throw new Error("Choose a marketplace template first.");
+        }
+        response = await window.electronAPI.workspace.createWorkspace({
+          holaboss_user_id: resolvedUserId,
+          name: trimmedWorkspaceName,
+          template_name: selectedMarketplaceTemplate.name
+        });
+      } else {
+        if (!selectedTemplateFolder?.rootPath) {
+          throw new Error("Choose a template folder first.");
+        }
+        response = await window.electronAPI.workspace.createWorkspace({
+          holaboss_user_id: resolvedUserId || LOCAL_OSS_TEMPLATE_USER_ID,
+          name: trimmedWorkspaceName,
+          template_root_path: selectedTemplateFolder.rootPath
+        });
+      }
       setNewWorkspaceName("");
       await loadWorkspaceData(false);
       setSelectedWorkspaceId(response.workspace.id);
@@ -238,11 +285,60 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       const selection = await window.electronAPI.workspace.pickTemplateFolder();
       if (!selection.canceled && selection.rootPath) {
         setSelectedTemplateFolder(selection);
+        setTemplateSourceModeState("local");
       }
     } catch (error) {
       setWorkspaceErrorMessage(normalizeErrorMessage(error));
     }
   }
+
+  useEffect(() => {
+    if (!canUseMarketplaceTemplates) {
+      setMarketplaceTemplates([]);
+      setSelectedMarketplaceTemplateName("");
+      setMarketplaceTemplatesError("");
+      setIsLoadingMarketplaceTemplates(false);
+      if (templateSourceMode === "marketplace") {
+        setTemplateSourceModeState("local");
+      }
+      return;
+    }
+
+    let cancelled = false;
+    async function loadMarketplaceTemplates() {
+      setIsLoadingMarketplaceTemplates(true);
+      setMarketplaceTemplatesError("");
+      try {
+        const response = await window.electronAPI.workspace.listMarketplaceTemplates();
+        if (cancelled) {
+          return;
+        }
+        const visibleTemplates = response.templates.filter((template) => !template.is_hidden);
+        setMarketplaceTemplates(visibleTemplates);
+        setSelectedMarketplaceTemplateName((current) => {
+          if (current && visibleTemplates.some((template) => template.name === current)) {
+            return current;
+          }
+          return visibleTemplates.find((template) => !template.is_coming_soon)?.name || visibleTemplates[0]?.name || "";
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setMarketplaceTemplates([]);
+          setSelectedMarketplaceTemplateName("");
+          setMarketplaceTemplatesError(normalizeErrorMessage(error));
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingMarketplaceTemplates(false);
+        }
+      }
+    }
+
+    void loadMarketplaceTemplates();
+    return () => {
+      cancelled = true;
+    };
+  }, [canUseMarketplaceTemplates, resolvedUserId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -337,7 +433,6 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   }, [clientConfig, resolvedUserId, runtimeConfig]);
 
   const setupStatus = useMemo(() => {
-    const isSignedIn = Boolean(sessionUserId(session));
     if (!clientConfig && !runtimeConfig && !runtimeStatus) {
       return null;
     }
@@ -393,13 +488,21 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       clientConfig,
       workspaces,
       selectedWorkspace,
+      templateSourceMode,
+      setTemplateSourceMode,
       selectedTemplateFolder,
+      marketplaceTemplates,
+      selectedMarketplaceTemplate,
+      selectMarketplaceTemplate,
       newWorkspaceName,
       setNewWorkspaceName,
       resolvedUserId,
       isLoadingBootstrap,
       isRefreshing,
       isCreatingWorkspace,
+      isLoadingMarketplaceTemplates,
+      canUseMarketplaceTemplates,
+      marketplaceTemplatesError,
       workspaceErrorMessage,
       statusSummary,
       setupStatus,
@@ -416,12 +519,18 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       clientConfig,
       workspaces,
       selectedWorkspace,
+      templateSourceMode,
       selectedTemplateFolder,
+      marketplaceTemplates,
+      selectedMarketplaceTemplate,
       newWorkspaceName,
       resolvedUserId,
       isLoadingBootstrap,
       isRefreshing,
       isCreatingWorkspace,
+      isLoadingMarketplaceTemplates,
+      canUseMarketplaceTemplates,
+      marketplaceTemplatesError,
       workspaceErrorMessage,
       statusSummary,
       setupStatus,

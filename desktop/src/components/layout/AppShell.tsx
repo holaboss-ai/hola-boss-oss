@@ -9,11 +9,13 @@ import {
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
 import { WorkbenchPanel, type WorkbenchTab } from "@/components/layout/WorkbenchPanel";
 import { AutomationsPane } from "@/components/panes/AutomationsPane";
+import { AppSurfacePane } from "@/components/panes/AppSurfacePane";
 import { BrowserPane } from "@/components/panes/BrowserPane";
 import { ChatPane } from "@/components/panes/ChatPane";
 import { FileExplorerPane } from "@/components/panes/FileExplorerPane";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
 import { preferredSessionId } from "@/lib/sessionRouting";
+import { inferWorkspaceAppIdFromText } from "@/lib/workspaceApps";
 import { useWorkspaceDesktop, WorkspaceDesktopProvider } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection, WorkspaceSelectionProvider } from "@/lib/workspaceSelection";
 
@@ -24,6 +26,11 @@ const OPERATIONS_DRAWER_TAB_STORAGE_KEY = "holaboss-operations-drawer-tab-v1";
 const THEMES = ["emerald", "cobalt", "ember", "glacier", "mono", "claude", "slate", "paper", "graphite"] as const;
 
 export type AppTheme = (typeof THEMES)[number];
+
+type AgentView =
+  | { type: "chat" }
+  | { type: "app"; appId: string; resourceId?: string | null; view?: string | null }
+  | { type: "internal"; surface: "document" | "preview" | "file" | "event"; resourceId?: string | null };
 
 function loadWorkbenchTab(): WorkbenchTab {
   try {
@@ -112,6 +119,7 @@ function AppShellContent() {
   const [activeWorkbenchTab, setActiveWorkbenchTab] = useState<WorkbenchTab>(loadWorkbenchTab);
   const [lastManualWorkbenchTab, setLastManualWorkbenchTab] = useState<WorkbenchTab>(loadWorkbenchTab);
   const [activeLeftRailItem, setActiveLeftRailItem] = useState<LeftRailItem>("agent");
+  const [agentView, setAgentView] = useState<AgentView>({ type: "chat" });
   const [operationsDrawerOpen, setOperationsDrawerOpen] = useState(loadOperationsDrawerOpen);
   const [activeOperationsTab, setActiveOperationsTab] = useState<OperationsDrawerTab>(loadOperationsDrawerTab);
   const [taskProposals, setTaskProposals] = useState<TaskProposalRecordPayload[]>([]);
@@ -156,6 +164,7 @@ function AppShellContent() {
 
     const unsubscribe = window.electronAPI.workbench.onOpenBrowser(() => {
       setActiveLeftRailItem("agent");
+      setAgentView({ type: "chat" });
       setWorkbenchOpen(true);
       setActiveWorkbenchTab("browser");
     });
@@ -276,7 +285,11 @@ function AppShellContent() {
         appendOutputEntry({
           title: "Proposal refresh failed",
           detail: message,
-          tone: "error"
+          tone: "error",
+          renderer: {
+            type: "internal",
+            surface: "event"
+          }
         });
       }
     } finally {
@@ -299,7 +312,11 @@ function AppShellContent() {
       appendOutputEntry({
         title: "Remote task proposal queued",
         detail,
-        tone: "success"
+        tone: "success",
+        renderer: {
+          type: "internal",
+          surface: "event"
+        }
       });
       window.setTimeout(() => {
         void refreshTaskProposals();
@@ -310,7 +327,11 @@ function AppShellContent() {
       appendOutputEntry({
         title: "Remote task proposal failed",
         detail: message,
-        tone: "error"
+        tone: "error",
+        renderer: {
+          type: "internal",
+          surface: "event"
+        }
       });
     } finally {
       setIsTriggeringTaskProposal(false);
@@ -342,11 +363,24 @@ function AppShellContent() {
       await window.electronAPI.workspace.updateTaskProposalState(proposal.proposal_id, "accepted");
 
       const detail = `Queued "${proposal.task_name}" into session ${targetSessionId}.`;
+      const inferredAppId = inferWorkspaceAppIdFromText(`${proposal.task_name}\n${proposal.task_prompt}`);
       setTaskProposalStatusMessage(detail);
       appendOutputEntry({
         title: `Accepted: ${proposal.task_name}`,
         detail,
-        tone: "success"
+        tone: "success",
+        sessionId: targetSessionId,
+        renderer: inferredAppId
+          ? {
+              type: "app",
+              appId: inferredAppId,
+              resourceId: proposal.proposal_id,
+              view: "editor"
+            }
+          : {
+              type: "internal",
+              surface: "event"
+            }
       });
       await refreshTaskProposals();
     } catch (error) {
@@ -355,7 +389,11 @@ function AppShellContent() {
       appendOutputEntry({
         title: `Accept failed: ${proposal.task_name}`,
         detail: message,
-        tone: "error"
+        tone: "error",
+        renderer: {
+          type: "internal",
+          surface: "event"
+        }
       });
     } finally {
       setProposalAction(null);
@@ -372,7 +410,11 @@ function AppShellContent() {
       appendOutputEntry({
         title: `Dismissed: ${proposal.task_name}`,
         detail,
-        tone: "info"
+        tone: "info",
+        renderer: {
+          type: "internal",
+          surface: "event"
+        }
       });
       await refreshTaskProposals();
     } catch (error) {
@@ -381,7 +423,11 @@ function AppShellContent() {
       appendOutputEntry({
         title: `Dismiss failed: ${proposal.task_name}`,
         detail: message,
-        tone: "error"
+        tone: "error",
+        renderer: {
+          type: "internal",
+          surface: "event"
+        }
       });
     } finally {
       setProposalAction(null);
@@ -459,9 +505,84 @@ function AppShellContent() {
 
   const handleLeftRailSelect = (item: LeftRailItem) => {
     setActiveLeftRailItem(item);
+    if (item === "agent") {
+      setAgentView({ type: "chat" });
+    }
+  };
+
+  const handleSelectWorkspaceApp = (appId: string) => {
+    setActiveLeftRailItem("agent");
+    setAgentView({
+      type: "app",
+      appId,
+      view: "home"
+    });
+  };
+
+  const handleOpenOutput = (entry: OperationsOutputEntry) => {
+    setActiveLeftRailItem("agent");
+    if (entry.renderer.type === "app") {
+      setAgentView({
+        type: "app",
+        appId: entry.renderer.appId,
+        resourceId: entry.renderer.resourceId,
+        view: entry.renderer.view
+      });
+      return;
+    }
+
+    setAgentView({
+      type: "internal",
+      surface: entry.renderer.surface,
+      resourceId: entry.renderer.resourceId ?? entry.id
+    });
+  };
+
+  const openAgentChat = () => {
+    setActiveLeftRailItem("agent");
+    setAgentView({ type: "chat" });
   };
 
   const agentMode = activeLeftRailItem === "agent";
+  const activeAppId = activeLeftRailItem === "agent" && agentView.type === "app" ? agentView.appId : null;
+
+  const agentContent = useMemo(() => {
+    if (agentView.type === "chat") {
+      return <ChatPane />;
+    }
+
+    if (agentView.type === "app") {
+      return (
+        <AppSurfacePane
+          appId={agentView.appId}
+          resourceId={agentView.resourceId}
+          view={agentView.view}
+          onReturnToChat={openAgentChat}
+        />
+      );
+    }
+
+    const title =
+      agentView.surface === "document"
+        ? "Internal document renderer"
+        : agentView.surface === "preview"
+          ? "Internal preview renderer"
+          : agentView.surface === "file"
+            ? "Internal file renderer"
+            : "Internal event detail";
+    const description =
+      agentView.surface === "event"
+        ? "This output stays within Holaboss itself instead of opening a workspace app. The routing contract is in place; a future pass can replace this placeholder with a dedicated internal viewer."
+        : "This output is intended to stay inside the desktop shell rather than jumping into an installed app surface.";
+
+    return (
+      <FocusPlaceholder
+        eyebrow="Internal Surface"
+        title={title}
+        description={`${description} Target id: ${agentView.resourceId ?? "n/a"}.`}
+      />
+    );
+  }, [agentView]);
 
   return (
     <main className="fixed inset-0 overflow-hidden text-[13px] text-text-main/90">
@@ -503,12 +624,17 @@ function AppShellContent() {
               : "lg:grid-cols-[220px_minmax(0,1fr)]"
           }`}
         >
-          <LeftNavigationRail activeItem={activeLeftRailItem} onSelectItem={handleLeftRailSelect} />
+          <LeftNavigationRail
+            activeItem={activeLeftRailItem}
+            onSelectItem={handleLeftRailSelect}
+            activeAppId={activeAppId}
+            onSelectApp={handleSelectWorkspaceApp}
+          />
 
           <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] gap-3 overflow-hidden">
             <div className="min-h-0 overflow-hidden">
               {activeLeftRailItem === "agent" ? (
-                <ChatPane />
+                agentContent
               ) : activeLeftRailItem === "automations" ? (
                 <AutomationsPane />
               ) : (
@@ -552,6 +678,7 @@ function AppShellContent() {
                 outputs={outputEntries}
                 selectedOutputId={selectedOutputId}
                 onSelectOutput={setSelectedOutputId}
+                onOpenOutput={handleOpenOutput}
                 onRefreshProposals={() => void refreshTaskProposals({ logErrors: true })}
                 onTriggerProposal={() => void triggerRemoteTaskProposal()}
                 onAcceptProposal={(proposal) => void acceptTaskProposal(proposal)}
