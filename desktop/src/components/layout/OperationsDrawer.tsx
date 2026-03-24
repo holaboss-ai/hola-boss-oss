@@ -1,7 +1,21 @@
 import { useMemo, type ReactNode } from "react";
 import { Bell, Check, ChevronRight, Clock3, Loader2, RefreshCcw, Sparkles, X } from "lucide-react";
+import { getWorkspaceAppDefinition } from "@/lib/workspaceApps";
 
 export type OperationsDrawerTab = "inbox" | "running" | "outputs";
+
+export type OperationsOutputRenderer =
+  | {
+      type: "app";
+      appId: string;
+      resourceId?: string | null;
+      view?: string | null;
+    }
+  | {
+      type: "internal";
+      surface: "document" | "preview" | "file" | "event";
+      resourceId?: string | null;
+    };
 
 export interface OperationsOutputEntry {
   id: string;
@@ -9,6 +23,8 @@ export interface OperationsOutputEntry {
   detail: string;
   createdAt: string;
   tone: "info" | "success" | "error";
+  sessionId?: string | null;
+  renderer: OperationsOutputRenderer;
 }
 
 interface OperationsDrawerProps {
@@ -26,6 +42,7 @@ interface OperationsDrawerProps {
   outputs: OperationsOutputEntry[];
   selectedOutputId: string | null;
   onSelectOutput: (outputId: string) => void;
+  onOpenOutput: (entry: OperationsOutputEntry) => void;
   onRefreshProposals: () => void;
   onTriggerProposal: () => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
@@ -45,6 +62,7 @@ export function OperationsDrawer({
   outputs,
   selectedOutputId,
   onSelectOutput,
+  onOpenOutput,
   onRefreshProposals,
   onTriggerProposal,
   onAcceptProposal,
@@ -106,7 +124,12 @@ export function OperationsDrawer({
         {activeTab === "running" ? <RunningPanel /> : null}
 
         {activeTab === "outputs" ? (
-          <OutputsPanel outputs={outputs} selectedOutput={selectedOutput} onSelectOutput={onSelectOutput} />
+          <OutputsPanel
+            outputs={outputs}
+            selectedOutput={selectedOutput}
+            onSelectOutput={onSelectOutput}
+            onOpenOutput={onOpenOutput}
+          />
         ) : null}
       </div>
     </aside>
@@ -275,11 +298,13 @@ function RunningPanel() {
 function OutputsPanel({
   outputs,
   selectedOutput,
-  onSelectOutput
+  onSelectOutput,
+  onOpenOutput
 }: {
   outputs: OperationsOutputEntry[];
   selectedOutput: OperationsOutputEntry | null;
   onSelectOutput: (outputId: string) => void;
+  onOpenOutput: (entry: OperationsOutputEntry) => void;
 }) {
   return (
     <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]">
@@ -319,9 +344,21 @@ function OutputsPanel({
           <div className="min-h-0 overflow-y-auto p-4">
             {selectedOutput ? (
               <article className={`rounded-[20px] border px-4 py-4 ${outputToneClasses(selectedOutput.tone, false)}`}>
-                <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/75">Latest event</div>
+                <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/75">
+                  {selectedOutput.renderer.type === "app" ? "Workspace app output" : "Internal output"}
+                </div>
                 <div className="mt-2 text-[16px] font-medium text-text-main">{selectedOutput.title}</div>
                 <div className="mt-2 whitespace-pre-wrap text-[12px] leading-6 text-text-main/86">{selectedOutput.detail}</div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onOpenOutput(selectedOutput)}
+                    className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-neon-green/40 bg-neon-green/10 px-3 text-[11px] text-neon-green transition hover:bg-neon-green/14"
+                  >
+                    <ChevronRight size={12} />
+                    <span>{openOutputLabel(selectedOutput)}</span>
+                  </button>
+                </div>
                 <div className="mt-4 text-[10px] text-text-dim/78">{formatTimestamp(selectedOutput.createdAt)}</div>
               </article>
             ) : null}
@@ -330,6 +367,24 @@ function OutputsPanel({
       )}
     </div>
   );
+}
+
+function openOutputLabel(entry: OperationsOutputEntry): string {
+  if (entry.renderer.type === "app") {
+    const app = getWorkspaceAppDefinition(entry.renderer.appId);
+    return `Open in ${app?.label ?? entry.renderer.appId}`;
+  }
+
+  if (entry.renderer.surface === "document") {
+    return "Open document";
+  }
+  if (entry.renderer.surface === "preview") {
+    return "Open preview";
+  }
+  if (entry.renderer.surface === "file") {
+    return "Open file view";
+  }
+  return "Open detail";
 }
 
 function EmptyNotice({ message }: { message: string }) {
