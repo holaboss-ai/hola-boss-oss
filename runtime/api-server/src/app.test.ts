@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import { buildRuntimeApiServer, type BuildRuntimeApiServerOptions } from "./app.js";
+import type { AppLifecycleExecutorLike } from "./app-lifecycle-worker.js";
 
 const tempDirs: string[] = [];
 
@@ -619,6 +620,153 @@ test("workspace export route streams a tar.gz with the workspace files", async (
   const entries = listed.stdout.toString("utf8").trim().split("\n");
   assert.equal(entries.includes("./README.md"), true);
   assert.equal(entries.some((entry: string) => entry.includes("node_modules")), false);
+
+  await app.close();
+  store.close();
+});
+
+test("app ports route preserves deterministic workspace port assignments", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  fs.mkdirSync(path.join(workspaceRoot, "workspace-1", "apps", "app-a"), { recursive: true });
+  fs.mkdirSync(path.join(workspaceRoot, "workspace-1", "apps", "app-b"), { recursive: true });
+  fs.writeFileSync(
+    path.join(workspaceRoot, "workspace-1", "workspace.yaml"),
+    [
+      "applications:",
+      "  - app_id: app-a",
+      "    config_path: apps/app-a/app.runtime.yaml",
+      "  - app_id: app-b",
+      "    config_path: apps/app-b/app.runtime.yaml"
+    ].join("\n"),
+    "utf8"
+  );
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/api/v1/apps/ports?workspace_id=workspace-1"
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), {
+    "app-a": { http: 18080, mcp: 13100 },
+    "app-b": { http: 18081, mcp: 13101 }
+  });
+
+  await app.close();
+  store.close();
+});
+
+test("app lifecycle routes delegate to the lifecycle executor and uninstall updates workspace state", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace Apps",
+    harness: "opencode",
+    status: "active"
+  });
+  store.upsertAppBuild({
+    workspaceId: workspace.id,
+    appId: "app-b",
+    status: "building"
+  });
+
+  const workspaceDir = path.join(workspaceRoot, workspace.id);
+  fs.mkdirSync(path.join(workspaceDir, "apps", "app-a"), { recursive: true });
+  fs.mkdirSync(path.join(workspaceDir, "apps", "app-b"), { recursive: true });
+  fs.writeFileSync(path.join(workspaceDir, "apps", "app-b", "app.runtime.yaml"), "app_id: app-b\nmcp:\n  port: 4100\n", "utf8");
+  fs.writeFileSync(
+    path.join(workspaceDir, "workspace.yaml"),
+    [
+      "applications:",
+      "  - app_id: app-a",
+      "    config_path: apps/app-a/app.runtime.yaml",
+      "  - app_id: app-b",
+      "    config_path: apps/app-b/app.runtime.yaml"
+    ].join("\n"),
+    "utf8"
+  );
+
+  const calls: Array<{ action: string; workspaceId: string; appId: string }> = [];
+  const executor: AppLifecycleExecutorLike = {
+    async startApp(params) {
+      calls.push({ action: "start", ...params });
+      return {
+        app_id: params.appId,
+        status: "started",
+        detail: "app started with lifecycle manager",
+        ports: { http: 18081, mcp: 13101 }
+      };
+    },
+    async stopApp(params) {
+      calls.push({ action: "stop", ...params });
+      return {
+        app_id: params.appId,
+        status: "stopped",
+        detail: "app stopped via lifecycle manager",
+        ports: {}
+      };
+    }
+  };
+  const app = buildTestRuntimeApiServer({ store, appLifecycleExecutor: executor });
+
+  const started = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/app-b/start",
+    payload: { workspace_id: workspace.id }
+  });
+  const stopped = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/app-b/stop",
+    payload: { workspace_id: workspace.id }
+  });
+  const uninstalled = await app.inject({
+    method: "DELETE",
+    url: "/api/v1/apps/app-b",
+    payload: { workspace_id: workspace.id }
+  });
+
+  assert.equal(started.statusCode, 200);
+  assert.deepEqual(started.json(), {
+    app_id: "app-b",
+    status: "started",
+    detail: "app started with lifecycle manager",
+    ports: { http: 18081, mcp: 13101 }
+  });
+  assert.equal(stopped.statusCode, 200);
+  assert.deepEqual(stopped.json(), {
+    app_id: "app-b",
+    status: "stopped",
+    detail: "app stopped via lifecycle manager",
+    ports: {}
+  });
+  assert.equal(uninstalled.statusCode, 200);
+  assert.deepEqual(uninstalled.json(), {
+    app_id: "app-b",
+    status: "uninstalled",
+    detail: "App stopped, files removed, workspace.yaml updated",
+    ports: {}
+  });
+  assert.deepEqual(calls, [
+    { action: "start", workspaceId: "workspace-1", appId: "app-b" },
+    { action: "stop", workspaceId: "workspace-1", appId: "app-b" },
+    { action: "stop", workspaceId: "workspace-1", appId: "app-b" }
+  ]);
+  assert.equal(fs.existsSync(path.join(workspaceDir, "apps", "app-b")), false);
+  assert.equal(store.getAppBuild({ workspaceId: workspace.id, appId: "app-b" }), null);
+  const workspaceYaml = fs.readFileSync(path.join(workspaceDir, "workspace.yaml"), "utf8");
+  assert.equal(workspaceYaml.includes("app-b"), false);
 
   await app.close();
   store.close();

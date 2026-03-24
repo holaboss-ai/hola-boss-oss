@@ -1139,101 +1139,28 @@ def _parse_app_ports_from_yaml(workspace_yaml_path: Path) -> dict[str, dict[str,
 
 @app.get("/api/v1/apps/ports")
 async def list_app_ports(workspace_id: str | None = None) -> dict[str, dict[str, int]]:
-    """Return deterministic app ports based on application order in workspace.yaml."""
-    if workspace_id:
-        workspace_yaml_path = Path(WORKSPACE_ROOT) / workspace_id / "workspace.yaml"
-    else:
-        workspace_yaml_path = _find_workspace_yaml()
-
-    if not workspace_yaml_path or not workspace_yaml_path.exists():
-        return {}
-    return _parse_app_ports_from_yaml(workspace_yaml_path)
+    return await _proxy_ts_api_json(
+        "GET",
+        "/api/v1/apps/ports",
+        params={"workspace_id": workspace_id},
+    )
 
 
 @app.post("/api/v1/apps/{app_id}/start")
 async def start_app_endpoint(app_id: str, payload: AppStartRequest) -> AppActionResult:
-    """Start an application using its lifecycle commands.
-
-    Runs inside the sandbox container so shell expansions ($(), ${}) work.
-    Port assignment is deterministic from app order in workspace.yaml.
-    """
-    workspace_dir, resolved_app_id, config_path = _resolve_app_from_workspace(payload.workspace_id, app_id)
-
-    try:
-        resolved_app = _load_resolved_app(workspace_dir, resolved_app_id, config_path)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"failed to parse app config: {exc}") from exc
-
-    manager = _get_lifecycle_manager(payload.workspace_id)
-
-    try:
-        index = _app_index_in_workspace(workspace_dir, resolved_app_id)
-        http_port, mcp_port = _ports_for_app_index(index)
-        manager._port_allocations[resolved_app_id] = (http_port, mcp_port)
-        logger.info(
-            "Assigned deterministic ports for app '%s': HTTP=%d, MCP=%d",
-            resolved_app_id,
-            http_port,
-            mcp_port,
-        )
-
-        # Check if already healthy before starting
-        mcp_host_port = manager._get_mcp_host_port(resolved_app)
-        if not await manager._is_app_healthy(resolved_app, mcp_host_port=mcp_host_port):
-            await manager._start_app(resolved_app)
-            await manager._wait_healthy_with_retry(resolved_app)
-        else:
-            logger.info("App '%s' already healthy on port %d, skipping start", app_id, mcp_host_port)
-    except Exception as exc:
-        logger.exception("Failed to start app '%s'", app_id)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    # Return allocated ports so the caller knows where to reach the app
-    ports: dict[str, int] = {}
-    if resolved_app_id in manager._port_allocations:
-        http_port, mcp_port = manager._port_allocations[resolved_app_id]
-        ports = {"http": http_port, "mcp": mcp_port}
-
-    return AppActionResult(
-        app_id=resolved_app_id,
-        status="started",
-        detail="app started with lifecycle manager",
-        ports=ports,
+    return await _proxy_ts_api_json(
+        "POST",
+        f"/api/v1/apps/{app_id}/start",
+        json_body=payload.model_dump(),
     )
 
 
 @app.post("/api/v1/apps/{app_id}/stop")
 async def stop_app_endpoint(app_id: str, payload: AppStopRequest) -> AppActionResult:
-    """Stop an application using its lifecycle commands.
-
-    Runs inside the sandbox container so shell expansions ($(), ${}) work.
-    """
-    workspace_dir, resolved_app_id, config_path = _resolve_app_from_workspace(payload.workspace_id, app_id)
-
-    try:
-        resolved_app = _load_resolved_app(workspace_dir, resolved_app_id, config_path)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"failed to parse app config: {exc}") from exc
-
-    manager = _get_lifecycle_manager(payload.workspace_id)
-
-    try:
-        await manager.stop_all([resolved_app])
-    except Exception as exc:
-        logger.exception("Failed to stop app '%s'", app_id)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    # Clean up port allocations
-    manager._port_allocations.pop(resolved_app_id, None)
-
-    return AppActionResult(
-        app_id=resolved_app_id,
-        status="stopped",
-        detail="app stopped via lifecycle manager",
+    return await _proxy_ts_api_json(
+        "POST",
+        f"/api/v1/apps/{app_id}/stop",
+        json_body=payload.model_dump(),
     )
 
 
@@ -1272,51 +1199,10 @@ async def install_app(payload: InstallAppRequest) -> InstallAppResponse:
 
 @app.delete("/api/v1/apps/{app_id}")
 async def uninstall_app(app_id: str, payload: UninstallAppRequest) -> AppActionResult:
-    """Uninstall an app: stop it, remove files, remove from workspace.yaml, clean up build status."""
-    try:
-        safe_app_id = sanitize_app_id(app_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    workspace_dir = workspace_dir_for_id(payload.workspace_id)
-
-    # Best-effort stop
-    try:
-        workspace_dir_path = Path(workspace_dir)
-        ws_yaml_content = read_workspace_yaml(workspace_dir)
-        ws_data = parse_workspace_yaml(ws_yaml_content)
-        applications = ws_data.get("applications", [])
-        if isinstance(applications, list):
-            for entry in applications:
-                if isinstance(entry, dict) and entry.get("app_id") == safe_app_id:
-                    config_path = entry.get("config_path", "")
-                    if config_path:
-                        try:
-                            resolved_app = _load_resolved_app(workspace_dir_path, safe_app_id, config_path)
-                            manager = _get_lifecycle_manager(payload.workspace_id)
-                            await manager.stop_all([resolved_app])
-                            manager._port_allocations.pop(safe_app_id, None)
-                        except Exception:
-                            logger.debug("Best-effort stop failed for app '%s'", safe_app_id, exc_info=True)
-                    break
-    except Exception:
-        logger.debug("Best-effort stop failed for app '%s'", safe_app_id, exc_info=True)
-
-    # Remove files
-    shutil.rmtree(os.path.join(workspace_dir, "apps", safe_app_id), ignore_errors=True)
-
-    # Remove from workspace.yaml
-    existing_content = read_workspace_yaml(workspace_dir)
-    updated_content = remove_application(existing_content, app_id=safe_app_id)
-    write_workspace_yaml(workspace_dir, updated_content)
-
-    # Clean up build status
-    delete_app_build(workspace_id=payload.workspace_id, app_id=safe_app_id)
-
-    return AppActionResult(
-        app_id=safe_app_id,
-        status="uninstalled",
-        detail="App stopped, files removed, workspace.yaml updated",
-        ports={},
+    return await _proxy_ts_api_json(
+        "DELETE",
+        f"/api/v1/apps/{app_id}",
+        json_body=payload.model_dump(),
     )
 
 

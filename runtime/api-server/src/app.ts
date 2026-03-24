@@ -37,9 +37,16 @@ import {
   RuntimeRemoteBridgeWorker,
   tsBridgeWorkerEnabled
 } from "./bridge-worker.js";
+import {
+  AppLifecycleExecutorError,
+  type AppLifecycleExecutorLike,
+  PythonAppLifecycleExecutor
+} from "./app-lifecycle-worker.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 50;
 const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
+const APP_HTTP_PORT_BASE = 18080;
+const APP_MCP_PORT_BASE = 13100;
 
 export interface BuildRuntimeApiServerOptions {
   logger?: boolean;
@@ -49,6 +56,7 @@ export interface BuildRuntimeApiServerOptions {
   queueWorker?: QueueWorkerLike | null;
   cronWorker?: CronWorkerLike | null;
   bridgeWorker?: BridgeWorkerLike | null;
+  appLifecycleExecutor?: AppLifecycleExecutorLike;
 }
 
 type StringMap = Record<string, unknown>;
@@ -396,6 +404,13 @@ function sanitizeAppId(appId: string): string {
   return value;
 }
 
+function portsForAppIndex(index: number): { http: number; mcp: number } {
+  return {
+    http: APP_HTTP_PORT_BASE + index,
+    mcp: APP_MCP_PORT_BASE + index
+  };
+}
+
 function collectWorkspaceSnapshot(workspaceDir: string) {
   const files: Array<Record<string, unknown>> = [];
   const extensionCounts: Record<string, number> = {};
@@ -526,6 +541,12 @@ function updateWorkspaceApplications(
   const currentApplications = Array.isArray(document.applications) ? document.applications.filter(isRecord) : [];
   document.applications = updater([...currentApplications]);
   writeWorkspaceYamlDocument(workspaceDir, document);
+}
+
+function removeWorkspaceApplication(workspaceDir: string, appId: string): void {
+  updateWorkspaceApplications(workspaceDir, (applications) =>
+    applications.filter((entry) => entry.app_id !== appId)
+  );
 }
 
 function listWorkspaceApplications(workspaceDir: string): Array<Record<string, unknown>> {
@@ -729,6 +750,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
   const app = Fastify({ logger: options.logger ?? false });
   const backgroundTasks = new Set<Promise<void>>();
+  const appLifecycleExecutor = options.appLifecycleExecutor ?? new PythonAppLifecycleExecutor();
   const queueWorker =
     options.queueWorker === undefined
       ? tsQueueWorkerEnabled()
@@ -1085,6 +1107,87 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     return reply.type("application/gzip").send(tar.stdout);
   });
 
+  app.get("/api/v1/apps/ports", async (request) => {
+    const query = isRecord(request.query) ? request.query : {};
+    const workspaceId = optionalString(query.workspace_id);
+    let workspaceDir: string | null = null;
+    if (workspaceId) {
+      workspaceDir = path.join(store.workspaceRoot, workspaceId);
+    } else if (fs.existsSync(store.workspaceRoot)) {
+      for (const entry of fs.readdirSync(store.workspaceRoot, { withFileTypes: true })) {
+        if (!entry.isDirectory()) {
+          continue;
+        }
+        const candidate = path.join(store.workspaceRoot, entry.name, "workspace.yaml");
+        if (fs.existsSync(candidate)) {
+          workspaceDir = path.dirname(candidate);
+          break;
+        }
+      }
+    }
+    if (!workspaceDir || !fs.existsSync(path.join(workspaceDir, "workspace.yaml"))) {
+      return {};
+    }
+
+    const result: Record<string, { http: number; mcp: number }> = {};
+    for (const [index, entry] of listWorkspaceApplications(workspaceDir).entries()) {
+      const appId = typeof entry.app_id === "string" ? entry.app_id : "";
+      if (!appId) {
+        continue;
+      }
+      result[appId] = portsForAppIndex(index);
+    }
+    return result;
+  });
+
+  app.post("/api/v1/apps/:appId/start", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { appId: string };
+    let appId: string;
+    try {
+      appId = sanitizeAppId(params.appId);
+    } catch (error) {
+      return sendError(reply, 400, error instanceof Error ? error.message : "invalid app_id");
+    }
+    try {
+      return await appLifecycleExecutor.startApp({
+        workspaceId: requiredString(request.body.workspace_id, "workspace_id"),
+        appId
+      });
+    } catch (error) {
+      if (error instanceof AppLifecycleExecutorError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "app lifecycle start failed");
+    }
+  });
+
+  app.post("/api/v1/apps/:appId/stop", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { appId: string };
+    let appId: string;
+    try {
+      appId = sanitizeAppId(params.appId);
+    } catch (error) {
+      return sendError(reply, 400, error instanceof Error ? error.message : "invalid app_id");
+    }
+    try {
+      return await appLifecycleExecutor.stopApp({
+        workspaceId: requiredString(request.body.workspace_id, "workspace_id"),
+        appId
+      });
+    } catch (error) {
+      if (error instanceof AppLifecycleExecutorError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "app lifecycle stop failed");
+    }
+  });
+
   app.get("/api/v1/apps/:appId/build-status", async (request, reply) => {
     const params = request.params as { appId: string };
     const query = isRecord(request.query) ? request.query : {};
@@ -1276,6 +1379,41 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       app_id: appId,
       status: "setup_started",
       detail: `Running: ${parsed.lifecycle.setup}`,
+      ports: {}
+    };
+  });
+
+  app.delete("/api/v1/apps/:appId", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { appId: string };
+    let appId: string;
+    try {
+      appId = sanitizeAppId(params.appId);
+    } catch (error) {
+      return sendError(reply, 400, error instanceof Error ? error.message : "invalid app_id");
+    }
+    const workspaceId = requiredString(request.body.workspace_id, "workspace_id");
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    try {
+      await appLifecycleExecutor.stopApp({ workspaceId, appId });
+    } catch {
+      app.log.debug({ workspaceId, appId }, "best-effort app stop failed during uninstall");
+    }
+
+    const workspaceDir = store.workspaceDir(workspaceId);
+    fs.rmSync(path.join(workspaceDir, "apps", appId), { recursive: true, force: true });
+    removeWorkspaceApplication(workspaceDir, appId);
+    store.deleteAppBuild({ workspaceId, appId });
+    return {
+      app_id: appId,
+      status: "uninstalled",
+      detail: "App stopped, files removed, workspace.yaml updated",
       ports: {}
     };
   });

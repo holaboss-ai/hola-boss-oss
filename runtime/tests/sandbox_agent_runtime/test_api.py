@@ -439,13 +439,35 @@ def _write_workspace_apps(workspace_root: Path, workspace_id: str, app_ids: list
 
 
 @pytest.mark.asyncio
-async def test_list_app_ports_returns_deterministic_workspace_ports(
+async def test_app_ports_endpoint_proxies_to_ts_api_when_enabled(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    runtime_db_env: Path,
 ) -> None:
-    workspace_root = tmp_path / "workspace-root"
-    _write_workspace_apps(workspace_root, "workspace-1", ["app-a", "app-b"])
-    monkeypatch.setattr(api_module, "WORKSPACE_ROOT", str(workspace_root))
+    del runtime_db_env
+
+    async def _fake_worker_loop() -> None:
+        await asyncio.sleep(0)
+
+    captured: list[dict[str, object]] = []
+
+    async def _fake_proxy(method: str, path: str, *, params=None, json_body=None):
+        captured.append({
+            "method": method,
+            "path": path,
+            "params": params,
+            "json_body": json_body,
+        })
+        return Response(
+            content=json.dumps({
+                "app-a": {"http": 18080, "mcp": 13100},
+                "app-b": {"http": 18081, "mcp": 13101},
+            }).encode("utf-8"),
+            media_type="application/json",
+        )
+
+    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
+    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -456,36 +478,89 @@ async def test_list_app_ports_returns_deterministic_workspace_ports(
         "app-a": {"http": 18080, "mcp": 13100},
         "app-b": {"http": 18081, "mcp": 13101},
     }
+    assert captured == [{
+        "method": "GET",
+        "path": "/api/v1/apps/ports",
+        "params": {"workspace_id": "workspace-1"},
+        "json_body": None,
+    }]
 
 
 @pytest.mark.asyncio
-async def test_start_app_endpoint_assigns_deterministic_ports_from_workspace_order(
+async def test_app_lifecycle_routes_proxy_to_ts_api_when_enabled(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    runtime_db_env: Path,
 ) -> None:
-    workspace_root = tmp_path / "workspace-root"
-    _write_workspace_apps(workspace_root, "workspace-1", ["app-a", "app-b"])
-    monkeypatch.setattr(api_module, "WORKSPACE_ROOT", str(workspace_root))
-    api_module._lifecycle_managers.clear()
+    del runtime_db_env
 
-    async def _healthy(*args, **kwargs) -> bool:
-        del args, kwargs
-        return True
+    async def _fake_worker_loop() -> None:
+        await asyncio.sleep(0)
 
-    monkeypatch.setattr(
-        "sandbox_agent_runtime.application_lifecycle.ApplicationLifecycleManager._is_app_healthy",
-        _healthy,
-    )
+    captured: list[dict[str, object]] = []
+
+    async def _fake_proxy(method: str, path: str, *, params=None, json_body=None):
+        captured.append({
+            "method": method,
+            "path": path,
+            "params": params,
+            "json_body": json_body,
+        })
+        if path.endswith("/start"):
+            payload = {
+                "app_id": "app-b",
+                "status": "started",
+                "detail": "app started with lifecycle manager",
+                "ports": {"http": 18081, "mcp": 13101},
+            }
+        elif path.endswith("/stop"):
+            payload = {
+                "app_id": "app-b",
+                "status": "stopped",
+                "detail": "app stopped via lifecycle manager",
+                "ports": {},
+            }
+        else:
+            payload = {
+                "app_id": "app-b",
+                "status": "uninstalled",
+                "detail": "App stopped, files removed, workspace.yaml updated",
+                "ports": {},
+            }
+        return Response(content=json.dumps(payload).encode("utf-8"), media_type="application/json")
+
+    monkeypatch.setattr("sandbox_agent_runtime.api._local_worker_loop", _fake_worker_loop)
+    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/api/v1/apps/app-b/start", json={"workspace_id": "workspace-1"})
+        started = await client.post("/api/v1/apps/app-b/start", json={"workspace_id": "workspace-1"})
+        stopped = await client.post("/api/v1/apps/app-b/stop", json={"workspace_id": "workspace-1"})
+        uninstalled = await client.request("DELETE", "/api/v1/apps/app-b", json={"workspace_id": "workspace-1"})
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["app_id"] == "app-b"
-    assert payload["ports"] == {"http": 18081, "mcp": 13101}
-    assert api_module._lifecycle_managers["workspace-1"]._port_allocations["app-b"] == (18081, 13101)
+    assert started.status_code == 200
+    assert stopped.status_code == 200
+    assert uninstalled.status_code == 200
+    assert captured == [
+        {
+            "method": "POST",
+            "path": "/api/v1/apps/app-b/start",
+            "params": None,
+            "json_body": {"workspace_id": "workspace-1", "env": {}},
+        },
+        {
+            "method": "POST",
+            "path": "/api/v1/apps/app-b/stop",
+            "params": None,
+            "json_body": {"workspace_id": "workspace-1"},
+        },
+        {
+            "method": "DELETE",
+            "path": "/api/v1/apps/app-b",
+            "params": None,
+            "json_body": {"workspace_id": "workspace-1"},
+        },
+    ]
 
 
 @pytest.mark.asyncio
