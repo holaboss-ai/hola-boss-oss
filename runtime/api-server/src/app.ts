@@ -68,6 +68,7 @@ import {
   type RunnerExecutorLike,
 } from "./runner-worker.js";
 import { startOpencodeApplications } from "./opencode-bootstrap-shared.js";
+import { buildAppSetupEnv } from "./app-setup-env.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 50;
 const DEFAULT_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
@@ -657,6 +658,7 @@ async function runAppSetup(params: {
   appId: string;
   setupCommand: string;
 }): Promise<void> {
+  const appDir = path.join(params.workspaceDir, "apps", params.appId);
   params.store.upsertAppBuild({
     workspaceId: params.workspaceId,
     appId: params.appId,
@@ -668,8 +670,8 @@ async function runAppSetup(params: {
       let stderr = "";
       let settled = false;
       const child = spawn(params.setupCommand, {
-        cwd: path.join(params.workspaceDir, "apps", params.appId),
-        env: process.env,
+        cwd: appDir,
+        env: buildAppSetupEnv(appDir),
         shell: true,
         stdio: ["ignore", "ignore", "pipe"]
       });
@@ -799,6 +801,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     bodyLimit: DEFAULT_BODY_LIMIT_BYTES,
   });
   const backgroundTasks = new Set<Promise<void>>();
+  const appSetupTasks = new Map<string, Promise<void>>();
   const appLifecycleExecutor = options.appLifecycleExecutor ?? new RuntimeAppLifecycleExecutor();
   const memoryService = options.memoryService ?? new FilesystemMemoryService({ workspaceRoot: store.workspaceRoot });
   const runtimeConfigService = options.runtimeConfigService ?? new FileRuntimeConfigService();
@@ -1014,6 +1017,49 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     void task.finally(() => {
       backgroundTasks.delete(task);
     });
+  }
+
+  function queueAppSetup(params: {
+    workspaceDir: string;
+    workspaceId: string;
+    appId: string;
+    setupCommand: string;
+  }): { status: "setup_started"; detail: string } {
+    const taskKey = `${params.workspaceId}:${params.appId}`;
+    const existingTask = appSetupTasks.get(taskKey);
+    if (existingTask) {
+      return {
+        status: "setup_started",
+        detail: "Setup already in progress"
+      };
+    }
+
+    const build = store.getAppBuild({
+      workspaceId: params.workspaceId,
+      appId: params.appId
+    });
+    if (build?.status === "completed") {
+      return {
+        status: "setup_started",
+        detail: "Setup already completed"
+      };
+    }
+
+    const task = runAppSetup({
+      store,
+      workspaceDir: params.workspaceDir,
+      workspaceId: params.workspaceId,
+      appId: params.appId,
+      setupCommand: params.setupCommand
+    }).finally(() => {
+      appSetupTasks.delete(taskKey);
+    });
+    appSetupTasks.set(taskKey, task);
+    startBackgroundTask(task);
+    return {
+      status: "setup_started",
+      detail: `Running: ${params.setupCommand}`
+    };
   }
 
   app.post("/api/v1/workspaces", async (request, reply) => {
@@ -1630,19 +1676,16 @@ print(files_written)
     });
 
     if (parsed.lifecycle.setup) {
-      startBackgroundTask(
-        runAppSetup({
-          store,
-          workspaceDir,
-          workspaceId,
-          appId,
-          setupCommand: parsed.lifecycle.setup
-        })
-      );
+      const queued = queueAppSetup({
+        workspaceDir,
+        workspaceId,
+        appId,
+        setupCommand: parsed.lifecycle.setup
+      });
       return {
         app_id: appId,
-        status: "setup_started",
-        detail: `Files written, running setup: ${parsed.lifecycle.setup}`
+        status: queued.status,
+        detail: `Files written, ${queued.detail.toLowerCase()}`
       };
     }
 
@@ -1695,19 +1738,16 @@ print(files_written)
       };
     }
 
-    startBackgroundTask(
-      runAppSetup({
-        store,
-        workspaceDir,
-        workspaceId,
-        appId,
-        setupCommand: parsed.lifecycle.setup
-      })
-    );
+    const queued = queueAppSetup({
+      workspaceDir,
+      workspaceId,
+      appId,
+      setupCommand: parsed.lifecycle.setup
+    });
     return {
       app_id: appId,
-      status: "setup_started",
-      detail: `Running: ${parsed.lifecycle.setup}`,
+      status: queued.status,
+      detail: queued.detail,
       ports: {}
     };
   });

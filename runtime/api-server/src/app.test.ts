@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import { buildRuntimeApiServer, type BuildRuntimeApiServerOptions } from "./app.js";
+import { appLocalNpmCacheDir, buildAppSetupEnv } from "./app-setup-env.js";
 import type { AppLifecycleExecutorLike } from "./app-lifecycle-worker.js";
 import type { MemoryServiceLike } from "./memory.js";
 import type { RuntimeConfigServiceLike } from "./runtime-config.js";
@@ -52,6 +53,16 @@ test("healthz returns ok", async () => {
   assert.deepEqual(response.json(), { ok: true });
   await app.close();
   store.close();
+});
+
+test("buildAppSetupEnv uses an app-local npm cache", () => {
+  const appDir = makeTempDir("hb-app-env-");
+  const env = buildAppSetupEnv(appDir, { PATH: process.env.PATH });
+
+  const expectedCacheDir = appLocalNpmCacheDir(appDir);
+  assert.equal(env.npm_config_cache, expectedCacheDir);
+  assert.equal(env.NPM_CONFIG_CACHE, expectedCacheDir);
+  assert.ok(fs.existsSync(expectedCacheDir));
 });
 
 test("runtime config routes delegate to the runtime config executor", async () => {
@@ -1171,6 +1182,69 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
   assert.equal(store.getAppBuild({ workspaceId: workspace.id, appId: "app-b" }), null);
   const workspaceYaml = fs.readFileSync(path.join(workspaceDir, "workspace.yaml"), "utf8");
   assert.equal(workspaceYaml.includes("app-b"), false);
+
+  await app.close();
+  store.close();
+});
+
+test("app setup route does not start duplicate setup for an app already building", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace Apps",
+    harness: "opencode",
+    status: "active"
+  });
+  const workspaceDir = path.join(workspaceRoot, workspace.id);
+  const appDir = path.join(workspaceDir, "apps", "app-a");
+  fs.mkdirSync(appDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(appDir, "app.runtime.yaml"),
+    [
+      "app_id: app-a",
+      "mcp:",
+      "  port: 4100",
+      "lifecycle:",
+      "  setup: 'sleep 1'"
+    ].join("\n"),
+    "utf8"
+  );
+  const app = buildTestRuntimeApiServer({ store });
+
+  const first = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/app-a/setup",
+    payload: { workspace_id: workspace.id }
+  });
+  const second = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/app-a/setup",
+    payload: { workspace_id: workspace.id }
+  });
+
+  assert.equal(first.statusCode, 200);
+  assert.deepEqual(first.json(), {
+    app_id: "app-a",
+    status: "setup_started",
+    detail: "Running: sleep 1",
+    ports: {}
+  });
+  assert.equal(second.statusCode, 200);
+  assert.deepEqual(second.json(), {
+    app_id: "app-a",
+    status: "setup_started",
+    detail: "Setup already in progress",
+    ports: {}
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  const build = store.getAppBuild({ workspaceId: workspace.id, appId: "app-a" });
+  assert.equal(build?.status, "completed");
 
   await app.close();
   store.close();

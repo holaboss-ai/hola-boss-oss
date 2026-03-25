@@ -229,6 +229,8 @@ test("startComposeAppTarget passes HOLABOSS_USER_ID to docker compose when reque
     assert.equal(env.HOLABOSS_USER_ID, "user-1");
     assert.equal(env.PORT, "18081");
     assert.equal(env.MCP_PORT, "13101");
+    assert.equal(env.NPM_CONFIG_CACHE, path.join(appDir, ".npm-cache"));
+    assert.equal(env.npm_config_cache, path.join(appDir, ".npm-cache"));
   }
 });
 
@@ -330,11 +332,15 @@ test("startShellLifecycleAppTarget runs lifecycle.start and waits healthy", asyn
 
 test("startShellLifecycleAppTarget runs lifecycle.setup before lifecycle.start", async () => {
   const appDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-shell-app-setup-"));
-  const calls: Array<{ key: string; cwd?: string }> = [];
+  const calls: Array<{ key: string; cwd?: string; shell?: boolean; cacheDir?: string }> = [];
   let started = false;
-  const spawnStub = ((command: string, args?: readonly string[], options?: { cwd?: string; shell?: boolean }) => {
+  const spawnStub = ((
+    command: string,
+    args?: readonly string[],
+    options?: { cwd?: string; shell?: boolean; env?: NodeJS.ProcessEnv }
+  ) => {
     const key = `${command} ${(args ?? []).join(" ")}`.trim();
-    calls.push({ key, cwd: options?.cwd });
+    calls.push({ key, cwd: options?.cwd, shell: options?.shell, cacheDir: options?.env?.NPM_CONFIG_CACHE });
     if (key === "npm run start") {
       started = true;
     }
@@ -378,8 +384,8 @@ test("startShellLifecycleAppTarget runs lifecycle.setup before lifecycle.start",
   });
 
   assert.deepEqual(calls, [
-    { key: "npm run build", cwd: appDir },
-    { key: "npm run start", cwd: appDir }
+    { key: "npm run build", cwd: appDir, shell: true, cacheDir: path.join(appDir, ".npm-cache") },
+    { key: "npm run start", cwd: appDir, shell: true, cacheDir: path.join(appDir, ".npm-cache") }
   ]);
 });
 
@@ -501,11 +507,15 @@ test("startSubprocessAppTarget runs startCommand and waits healthy", async () =>
 
 test("startSubprocessAppTarget runs lifecycle.setup before startCommand", async () => {
   const appDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-subprocess-setup-"));
-  const calls: Array<{ key: string; cwd?: string }> = [];
+  const calls: Array<{ key: string; cwd?: string; shell?: boolean; cacheDir?: string }> = [];
   let started = false;
-  const spawnStub = ((command: string, args?: readonly string[], options?: { cwd?: string; shell?: boolean }) => {
+  const spawnStub = ((
+    command: string,
+    args?: readonly string[],
+    options?: { cwd?: string; shell?: boolean; env?: NodeJS.ProcessEnv }
+  ) => {
     const key = `${command} ${(args ?? []).join(" ")}`.trim();
-    calls.push({ key, cwd: options?.cwd });
+    calls.push({ key, cwd: options?.cwd, shell: options?.shell, cacheDir: options?.env?.NPM_CONFIG_CACHE });
     if (key === "npm run legacy-start") {
       started = true;
     }
@@ -549,8 +559,8 @@ test("startSubprocessAppTarget runs lifecycle.setup before startCommand", async 
   });
 
   assert.deepEqual(calls, [
-    { key: "npm run build", cwd: appDir },
-    { key: "npm run legacy-start", cwd: appDir }
+    { key: "npm run build", cwd: appDir, shell: true, cacheDir: path.join(appDir, ".npm-cache") },
+    { key: "npm run legacy-start", cwd: appDir, shell: true, cacheDir: path.join(appDir, ".npm-cache") }
   ]);
 });
 
