@@ -164,6 +164,8 @@ interface RuntimeStatusPayload {
   url: string | null;
   pid: number | null;
   harness: string | null;
+  desktopBrowserReady: boolean;
+  desktopBrowserUrl: string | null;
   lastError: string;
 }
 
@@ -272,6 +274,8 @@ let runtimeStatus: RuntimeStatusPayload = {
   url: null,
   pid: null,
   harness: null,
+  desktopBrowserReady: false,
+  desktopBrowserUrl: null,
   lastError: ""
 };
 let desktopBrowserServiceServer: HttpServer | null = null;
@@ -1163,6 +1167,50 @@ interface HolabossClientConfigPayload {
   projectsUrl: string;
   marketplaceUrl: string;
   hasApiKey: boolean;
+}
+
+type WorkspaceAppBuildStatus =
+  | "unknown"
+  | "pending"
+  | "building"
+  | "completed"
+  | "failed"
+  | "running"
+  | "stopped";
+
+interface InstalledWorkspaceAppPayload {
+  app_id: string;
+  config_path: string;
+  lifecycle: Record<string, string> | null;
+  build_status: WorkspaceAppBuildStatus;
+}
+
+interface InstalledWorkspaceAppListResponsePayload {
+  apps: InstalledWorkspaceAppPayload[];
+  count: number;
+}
+
+interface WorkspaceOutputRecordPayload {
+  id: string;
+  workspace_id: string;
+  output_type: string;
+  title: string;
+  status: string;
+  module_id: string | null;
+  module_resource_id: string | null;
+  file_path: string | null;
+  html_content: string | null;
+  session_id: string | null;
+  artifact_id: string | null;
+  folder_id: string | null;
+  platform: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+interface WorkspaceOutputListResponsePayload {
+  items: WorkspaceOutputRecordPayload[];
 }
 
 interface HolabossCreateWorkspacePayload {
@@ -2086,6 +2134,10 @@ async function startDesktopBrowserService(): Promise<void> {
   desktopBrowserServiceServer = server;
   desktopBrowserServiceAuthToken = authToken;
   desktopBrowserServiceUrl = `http://127.0.0.1:${address.port}/api/v1/browser`;
+  runtimeStatus = withDesktopBrowserStatus({
+    ...runtimeStatus
+  });
+  emitRuntimeState();
   await updateDesktopBrowserCapabilityConfig({
     enabled: true,
     url: desktopBrowserServiceUrl,
@@ -2105,7 +2157,27 @@ async function stopDesktopBrowserService(): Promise<void> {
     });
   }
 
+  runtimeStatus = withDesktopBrowserStatus({
+    ...runtimeStatus
+  });
+  emitRuntimeState();
   await updateDesktopBrowserCapabilityConfig({ enabled: false });
+}
+
+function desktopBrowserStatusFields() {
+  return {
+    desktopBrowserReady: Boolean(desktopBrowserServiceUrl),
+    desktopBrowserUrl: desktopBrowserServiceUrl || null
+  };
+}
+
+function withDesktopBrowserStatus(
+  payload: Omit<RuntimeStatusPayload, "desktopBrowserReady" | "desktopBrowserUrl">
+): RuntimeStatusPayload {
+  return {
+    ...payload,
+    ...desktopBrowserStatusFields()
+  };
 }
 
 function runtimeModelProxyApiKeyFromConfig(config: Record<string, string>): string {
@@ -3556,6 +3628,27 @@ async function listWorkspaces(): Promise<WorkspaceListResponsePayload> {
   });
 }
 
+async function listInstalledApps(workspaceId: string): Promise<InstalledWorkspaceAppListResponsePayload> {
+  return requestRuntimeJson<InstalledWorkspaceAppListResponsePayload>({
+    method: "GET",
+    path: "/api/v1/apps",
+    params: {
+      workspace_id: workspaceId
+    }
+  });
+}
+
+async function listOutputs(workspaceId: string): Promise<WorkspaceOutputListResponsePayload> {
+  return requestRuntimeJson<WorkspaceOutputListResponsePayload>({
+    method: "GET",
+    path: "/api/v1/outputs",
+    params: {
+      workspace_id: workspaceId,
+      limit: 50
+    }
+  });
+}
+
 function renderMinimalWorkspaceYaml(workspace: WorkspaceRecordPayload, template: ResolvedTemplatePayload) {
   const createdAt = workspace.created_at ?? utcNowIso();
   const templateCommit = template.effective_commit ? `  commit: ${JSON.stringify(template.effective_commit)}\n` : "";
@@ -4080,6 +4173,8 @@ function emitRuntimeState() {
     url: runtimeStatus.url,
     pid: runtimeStatus.pid,
     harness: runtimeStatus.harness,
+    desktopBrowserReady: runtimeStatus.desktopBrowserReady,
+    desktopBrowserUrl: runtimeStatus.desktopBrowserUrl,
     lastError: runtimeStatus.lastError
   });
   if (nextSignature === lastRuntimeStateSignature) {
@@ -4186,7 +4281,7 @@ async function refreshRuntimeStatus() {
       lastHealthyAt: utcNowIso(),
       lastError: ""
     });
-    runtimeStatus = {
+    runtimeStatus = withDesktopBrowserStatus({
       status: "running",
       available: Boolean(runtimeRoot && executablePath),
       runtimeRoot,
@@ -4196,12 +4291,12 @@ async function refreshRuntimeStatus() {
       pid: runtimeProcess?.pid ?? null,
       harness,
       lastError: ""
-    };
+    });
     emitRuntimeState();
     return runtimeStatus;
   }
 
-  runtimeStatus = {
+  runtimeStatus = withDesktopBrowserStatus({
     ...runtimeStatus,
     available: Boolean(runtimeRoot && executablePath),
     runtimeRoot,
@@ -4211,7 +4306,7 @@ async function refreshRuntimeStatus() {
     harness,
     status: runtimeProcess ? runtimeStatus.status : runtimeRoot && executablePath ? "stopped" : "missing",
     lastError: runtimeRoot && executablePath ? runtimeStatus.lastError : "Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package runtime-macos into app resources."
-  };
+  });
   emitRuntimeState();
   return runtimeStatus;
 }
@@ -4221,11 +4316,11 @@ async function stopEmbeddedRuntime() {
   runtimeProcess = null;
   if (!running) {
     if (runtimeStatus.status === "running" || runtimeStatus.status === "starting") {
-      runtimeStatus = {
+      runtimeStatus = withDesktopBrowserStatus({
         ...runtimeStatus,
         status: "stopped",
         pid: null
-      };
+      });
       persistRuntimeProcessState({
         pid: null,
         status: "stopped",
@@ -4261,7 +4356,7 @@ async function startEmbeddedRuntime() {
   const workflowBackend = process.env.HOLABOSS_RUNTIME_WORKFLOW_BACKEND || "remote_api";
   const url = `http://127.0.0.1:${RUNTIME_API_PORT}`;
 
-  runtimeStatus = {
+  runtimeStatus = withDesktopBrowserStatus({
     ...runtimeStatus,
     status: runtimeRoot && executablePath ? "starting" : "missing",
     available: Boolean(runtimeRoot && executablePath),
@@ -4272,7 +4367,7 @@ async function startEmbeddedRuntime() {
     pid: null,
     harness,
     lastError: runtimeRoot && executablePath ? "" : "Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package runtime-macos into app resources."
-  };
+  });
   emitRuntimeState();
 
   if (!runtimeRoot || !executablePath) {
@@ -4323,11 +4418,11 @@ async function startEmbeddedRuntime() {
     outcome: "start",
     detail: `pid=${child.pid ?? "null"}`
   });
-  runtimeStatus = {
+  runtimeStatus = withDesktopBrowserStatus({
     ...runtimeStatus,
     status: "starting",
     pid: child.pid ?? null
-  };
+  });
   emitRuntimeState();
 
   child.stdout.on("data", (chunk) => {
@@ -4348,12 +4443,12 @@ async function startEmbeddedRuntime() {
         return;
       }
 
-      runtimeStatus = {
+      runtimeStatus = withDesktopBrowserStatus({
         ...runtimeStatus,
         status: code === 0 ? "stopped" : "error",
         pid: null,
         lastError: code === 0 ? "" : `Runtime exited unexpectedly (code=${code ?? "null"}, signal=${signal ?? "null"}).`
-      };
+      });
       persistRuntimeProcessState({
         pid: null,
         status: code === 0 ? "stopped" : "error",
@@ -4374,12 +4469,12 @@ async function startEmbeddedRuntime() {
   if (healthy) {
     runtimeStatus = await refreshRuntimeStatus();
   } else {
-    runtimeStatus = {
+    runtimeStatus = withDesktopBrowserStatus({
       ...runtimeStatus,
       status: "error",
       pid: child.pid ?? null,
       lastError: "Runtime process started but did not pass health checks. Check runtime.log in the Electron userData directory."
-    };
+    });
     persistRuntimeProcessState({
       pid: child.pid ?? null,
       status: "error",
@@ -6992,6 +7087,8 @@ app.whenReady().then(async () => {
   ipcMain.handle("workspace:listMarketplaceTemplates", async () => listMarketplaceTemplates());
   ipcMain.handle("workspace:pickTemplateFolder", async () => pickTemplateFolder());
   ipcMain.handle("workspace:listWorkspaces", async () => listWorkspaces());
+  ipcMain.handle("workspace:listInstalledApps", async (_event, workspaceId: string) => listInstalledApps(workspaceId));
+  ipcMain.handle("workspace:listOutputs", async (_event, workspaceId: string) => listOutputs(workspaceId));
   ipcMain.handle("workspace:getWorkspaceRoot", async (_event, workspaceId: string) => workspaceDirectoryPath(workspaceId));
   ipcMain.handle("workspace:createWorkspace", async (_event, payload: HolabossCreateWorkspacePayload) => createWorkspace(payload));
   ipcMain.handle("workspace:listCronjobs", async (_event, workspaceId: string, enabledOnly?: boolean) =>
@@ -7233,14 +7330,14 @@ app.whenReady().then(async () => {
       `[desktop-browser-service] failed to start: ${error instanceof Error ? error.message : String(error)}\n`
     );
   }
-  runtimeStatus = {
+  runtimeStatus = withDesktopBrowserStatus({
     ...runtimeStatus,
     status: "starting",
     url: `http://127.0.0.1:${RUNTIME_API_PORT}`,
     sandboxRoot: runtimeSandboxRoot(),
     harness: process.env.HOLABOSS_RUNTIME_HARNESS || "opencode",
     lastError: ""
-  };
+  });
   emitRuntimeState();
   void startEmbeddedRuntime();
   void syncPersistedAuthSessionOnStartup();

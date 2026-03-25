@@ -70,6 +70,7 @@ export function TopTabsBar({
     canUseMarketplaceTemplates,
     marketplaceTemplatesError,
     workspaceErrorMessage,
+    lifecycleSteps,
     setupStatus,
     onboardingModeActive,
     sessionModeLabel,
@@ -386,6 +387,41 @@ export function TopTabsBar({
                 }`}
               >
                 {setupStatus.message}
+              </div>
+            ) : null}
+
+            {lifecycleSteps.length ? (
+              <div className="mt-2 grid gap-2 xl:grid-cols-5">
+                {lifecycleSteps.map((step) => (
+                  <div
+                    key={step.id}
+                    className={`rounded-[14px] border px-3 py-2 ${
+                      step.state === "done"
+                        ? "border-neon-green/30 bg-neon-green/10"
+                        : step.state === "current"
+                          ? "border-sky-400/30 bg-sky-400/10"
+                          : step.state === "error"
+                            ? "border-[rgba(255,153,102,0.24)] bg-[rgba(255,153,102,0.08)]"
+                            : "border-panel-border/45 bg-[var(--theme-subtle-bg)]"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`h-2 w-2 rounded-full ${
+                          step.state === "done"
+                            ? "bg-neon-green"
+                            : step.state === "current"
+                              ? "bg-sky-300"
+                              : step.state === "error"
+                                ? "bg-[rgba(255,186,145,0.95)]"
+                                : "bg-text-dim/50"
+                        }`}
+                      />
+                      <span className="text-[10px] uppercase tracking-[0.14em] text-text-dim/72">{step.label}</span>
+                    </div>
+                    <div className="mt-2 text-[10px] leading-5 text-text-main/82">{step.detail}</div>
+                  </div>
+                ))}
               </div>
             ) : null}
 

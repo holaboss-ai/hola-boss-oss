@@ -7,11 +7,20 @@ import {
   type ReactNode,
 } from "react";
 import { type AuthSession, useDesktopAuthSession } from "@/lib/auth/authClient";
+import { hydrateInstalledWorkspaceApps, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 const ONBOARDING_ACTIVE_STATUSES = new Set(["pending", "awaiting_confirmation", "in_progress"]);
 const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
 type TemplateSourceMode = "local" | "marketplace";
+type LifecycleStepState = "pending" | "current" | "done" | "error";
+
+export interface DesktopLifecycleStep {
+  id: "signed_in" | "runtime_provisioned" | "sandbox_assigned" | "desktop_browser_ready" | "workspace_ready";
+  label: string;
+  state: LifecycleStepState;
+  detail: string;
+}
 
 interface WorkspaceDesktopContextValue {
   runtimeConfig: RuntimeConfigPayload | null;
@@ -19,6 +28,8 @@ interface WorkspaceDesktopContextValue {
   clientConfig: HolabossClientConfigPayload | null;
   workspaces: WorkspaceRecordPayload[];
   selectedWorkspace: WorkspaceRecordPayload | null;
+  installedApps: WorkspaceInstalledAppDefinition[];
+  isLoadingInstalledApps: boolean;
   templateSourceMode: TemplateSourceMode;
   setTemplateSourceMode: (value: TemplateSourceMode) => void;
   selectedTemplateFolder: TemplateFolderSelectionPayload | null;
@@ -36,6 +47,7 @@ interface WorkspaceDesktopContextValue {
   marketplaceTemplatesError: string;
   workspaceErrorMessage: string;
   statusSummary: string;
+  lifecycleSteps: DesktopLifecycleStep[];
   setupStatus: {
     tone: "info" | "success" | "warning";
     message: string;
@@ -90,6 +102,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatusPayload | null>(null);
   const [clientConfig, setClientConfig] = useState<HolabossClientConfigPayload | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceRecordPayload[]>([]);
+  const [installedApps, setInstalledApps] = useState<WorkspaceInstalledAppDefinition[]>([]);
   const [templateSourceMode, setTemplateSourceModeState] = useState<TemplateSourceMode>("local");
   const [selectedTemplateFolder, setSelectedTemplateFolder] = useState<TemplateFolderSelectionPayload | null>(null);
   const [marketplaceTemplates, setMarketplaceTemplates] = useState<TemplateMetadataPayload[]>([]);
@@ -101,6 +114,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [isLoadingMarketplaceTemplates, setIsLoadingMarketplaceTemplates] = useState(false);
   const [marketplaceTemplatesError, setMarketplaceTemplatesError] = useState("");
   const [workspaceErrorMessage, setWorkspaceErrorMessage] = useState("");
+  const [isLoadingInstalledApps, setIsLoadingInstalledApps] = useState(false);
   const [recentAuthCompletedAt, setRecentAuthCompletedAt] = useState<number | null>(null);
 
   const isSignedIn = Boolean(sessionUserId(session));
@@ -396,6 +410,40 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   }, [session]);
 
   useEffect(() => {
+    if (!selectedWorkspaceId) {
+      setInstalledApps([]);
+      setIsLoadingInstalledApps(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadInstalledApps() {
+      setIsLoadingInstalledApps(true);
+      try {
+        const response = await window.electronAPI.workspace.listInstalledApps(selectedWorkspaceId);
+        if (!cancelled) {
+          setInstalledApps(hydrateInstalledWorkspaceApps(response.apps));
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setInstalledApps([]);
+          setWorkspaceErrorMessage((current) => current || normalizeErrorMessage(error));
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingInstalledApps(false);
+        }
+      }
+    }
+
+    void loadInstalledApps();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedWorkspace?.status, selectedWorkspace?.updated_at, selectedWorkspaceId]);
+
+  useEffect(() => {
     if (!selectedWorkspaceId || !onboardingModeActive) {
       return;
     }
@@ -431,6 +479,63 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     }
     return parts.join(" - ");
   }, [clientConfig, resolvedUserId, runtimeConfig]);
+
+  const lifecycleSteps = useMemo<DesktopLifecycleStep[]>(() => {
+    const signedIn = isSignedIn;
+    const runtimeProvisioned = Boolean(runtimeConfig?.authTokenPresent);
+    const sandboxAssigned = Boolean(runtimeConfig?.sandboxId?.trim());
+    const desktopBrowserReady = Boolean(runtimeStatus?.desktopBrowserReady);
+    const workspaceReady = Boolean(selectedWorkspace && selectedWorkspace.status.trim().toLowerCase() === "active");
+    const runtimeFailed = runtimeStatus?.status === "error";
+    const workspaceFailed = Boolean(selectedWorkspace && selectedWorkspace.status.trim().toLowerCase() === "error");
+
+    return [
+      {
+        id: "signed_in",
+        label: "Signed in",
+        state: signedIn ? "done" : "current",
+        detail: signedIn ? "Desktop auth session is available." : "Sign in to sync product-backed desktop state."
+      },
+      {
+        id: "runtime_provisioned",
+        label: "Runtime provisioned",
+        state: runtimeFailed ? "error" : runtimeProvisioned ? "done" : signedIn ? "current" : "pending",
+        detail: runtimeFailed
+          ? runtimeStatus?.lastError || "Embedded runtime failed to start."
+          : runtimeProvisioned
+            ? "Runtime token and binding are loaded."
+            : "Waiting for runtime token provisioning."
+      },
+      {
+        id: "sandbox_assigned",
+        label: "Sandbox assigned",
+        state: sandboxAssigned ? "done" : runtimeProvisioned ? "current" : "pending",
+        detail: sandboxAssigned
+          ? `Sandbox ${runtimeConfig?.sandboxId}`
+          : "Waiting for a sandbox assignment in runtime config."
+      },
+      {
+        id: "desktop_browser_ready",
+        label: "Desktop browser ready",
+        state: desktopBrowserReady ? "done" : runtimeStatus?.status === "starting" ? "current" : "pending",
+        detail: desktopBrowserReady
+          ? "Desktop browser service is registered for agent-triggered browsing."
+          : "Desktop browser service has not finished registering yet."
+      },
+      {
+        id: "workspace_ready",
+        label: "Workspace ready",
+        state: workspaceFailed ? "error" : workspaceReady ? "done" : selectedWorkspace ? "current" : "pending",
+        detail: workspaceFailed
+          ? selectedWorkspace?.error_message || "Workspace provisioning failed."
+          : workspaceReady
+            ? `${selectedWorkspace?.name || "Workspace"} is active.`
+            : selectedWorkspace
+              ? `Current workspace status: ${selectedWorkspace.status}.`
+              : "Create or select a workspace to finish desktop routing."
+      }
+    ];
+  }, [isSignedIn, runtimeConfig, runtimeStatus, selectedWorkspace]);
 
   const setupStatus = useMemo(() => {
     if (!clientConfig && !runtimeConfig && !runtimeStatus) {
@@ -488,6 +593,8 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       clientConfig,
       workspaces,
       selectedWorkspace,
+      installedApps,
+      isLoadingInstalledApps,
       templateSourceMode,
       setTemplateSourceMode,
       selectedTemplateFolder,
@@ -505,6 +612,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       marketplaceTemplatesError,
       workspaceErrorMessage,
       statusSummary,
+      lifecycleSteps,
       setupStatus,
       onboardingModeActive,
       sessionModeLabel,
@@ -519,6 +627,8 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       clientConfig,
       workspaces,
       selectedWorkspace,
+      installedApps,
+      isLoadingInstalledApps,
       templateSourceMode,
       selectedTemplateFolder,
       marketplaceTemplates,
@@ -533,6 +643,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       marketplaceTemplatesError,
       workspaceErrorMessage,
       statusSummary,
+      lifecycleSteps,
       setupStatus,
       onboardingModeActive,
       sessionModeLabel,

@@ -73,7 +73,7 @@ function toolActivityLabel(eventType: string, payload: Record<string, unknown>):
   return null;
 }
 
-export function ChatPane() {
+export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const {
     runtimeConfig,
@@ -720,13 +720,14 @@ export function ChatPane() {
           detail: "run completed"
         });
         void refreshWorkspaceData().catch(() => undefined);
+        onOutputsChanged?.();
       }
     });
 
     return () => {
       unsubscribe();
     };
-  }, []);
+  }, [onOutputsChanged, refreshWorkspaceData]);
 
   useEffect(() => {
     if (!isResponding || !selectedWorkspaceId || !activeSessionId) {

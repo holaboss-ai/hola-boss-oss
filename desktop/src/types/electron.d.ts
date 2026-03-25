@@ -120,6 +120,8 @@ declare global {
     url: string | null;
     pid: number | null;
     harness: string | null;
+    desktopBrowserReady: boolean;
+    desktopBrowserUrl: string | null;
     lastError: string;
   }
 
@@ -374,6 +376,50 @@ declare global {
     hasApiKey: boolean;
   }
 
+  type WorkspaceAppBuildStatus =
+    | "unknown"
+    | "pending"
+    | "building"
+    | "completed"
+    | "failed"
+    | "running"
+    | "stopped";
+
+  interface InstalledWorkspaceAppPayload {
+    app_id: string;
+    config_path: string;
+    lifecycle: Record<string, string> | null;
+    build_status: WorkspaceAppBuildStatus;
+  }
+
+  interface InstalledWorkspaceAppListResponsePayload {
+    apps: InstalledWorkspaceAppPayload[];
+    count: number;
+  }
+
+  interface WorkspaceOutputRecordPayload {
+    id: string;
+    workspace_id: string;
+    output_type: string;
+    title: string;
+    status: string;
+    module_id: string | null;
+    module_resource_id: string | null;
+    file_path: string | null;
+    html_content: string | null;
+    session_id: string | null;
+    artifact_id: string | null;
+    folder_id: string | null;
+    platform: string | null;
+    metadata: Record<string, unknown>;
+    created_at: string;
+    updated_at: string;
+  }
+
+  interface WorkspaceOutputListResponsePayload {
+    items: WorkspaceOutputRecordPayload[];
+  }
+
   interface AuthUserPayload {
     id: string;
     email?: string | null;
@@ -493,6 +539,8 @@ declare global {
       listMarketplaceTemplates: () => Promise<TemplateListResponsePayload>;
       pickTemplateFolder: () => Promise<TemplateFolderSelectionPayload>;
       listWorkspaces: () => Promise<WorkspaceListResponsePayload>;
+      listInstalledApps: (workspaceId: string) => Promise<InstalledWorkspaceAppListResponsePayload>;
+      listOutputs: (workspaceId: string) => Promise<WorkspaceOutputListResponsePayload>;
       getWorkspaceRoot: (workspaceId: string) => Promise<string>;
       createWorkspace: (payload: HolabossCreateWorkspacePayload) => Promise<WorkspaceResponsePayload>;
       listCronjobs: (workspaceId: string, enabledOnly?: boolean) => Promise<CronjobListResponsePayload>;

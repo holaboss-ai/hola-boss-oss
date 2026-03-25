@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PanelRightOpen } from "lucide-react";
 import { LeftNavigationRail, type LeftRailItem } from "@/components/layout/LeftNavigationRail";
 import {
@@ -13,9 +13,10 @@ import { AppSurfacePane } from "@/components/panes/AppSurfacePane";
 import { BrowserPane } from "@/components/panes/BrowserPane";
 import { ChatPane } from "@/components/panes/ChatPane";
 import { FileExplorerPane } from "@/components/panes/FileExplorerPane";
+import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
 import { preferredSessionId } from "@/lib/sessionRouting";
-import { inferWorkspaceAppIdFromText } from "@/lib/workspaceApps";
+import { getWorkspaceAppDefinition, inferInstalledWorkspaceAppIdFromText } from "@/lib/workspaceApps";
 import { useWorkspaceDesktop, WorkspaceDesktopProvider } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection, WorkspaceSelectionProvider } from "@/lib/workspaceSelection";
 
@@ -30,7 +31,12 @@ export type AppTheme = (typeof THEMES)[number];
 type AgentView =
   | { type: "chat" }
   | { type: "app"; appId: string; resourceId?: string | null; view?: string | null }
-  | { type: "internal"; surface: "document" | "preview" | "file" | "event"; resourceId?: string | null };
+  | {
+      type: "internal";
+      surface: "document" | "preview" | "file" | "event";
+      resourceId?: string | null;
+      htmlContent?: string | null;
+    };
 
 function loadWorkbenchTab(): WorkbenchTab {
   try {
@@ -88,6 +94,97 @@ function normalizeErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed.";
 }
 
+function inferInternalSurfaceFromOutputType(outputType: string): "document" | "preview" | "file" | "event" {
+  const normalized = outputType.trim().toLowerCase();
+  if (normalized === "document") {
+    return "document";
+  }
+  if (normalized === "preview") {
+    return "preview";
+  }
+  if (normalized === "file") {
+    return "file";
+  }
+  return "event";
+}
+
+function runtimeOutputTone(status: string): OperationsOutputEntry["tone"] {
+  const normalized = status.trim().toLowerCase();
+  if (normalized === "failed" || normalized === "error") {
+    return "error";
+  }
+  if (normalized === "completed" || normalized === "ready" || normalized === "active") {
+    return "success";
+  }
+  return "info";
+}
+
+function runtimeOutputToEntry(
+  output: WorkspaceOutputRecordPayload,
+  installedAppIds: Set<string>
+): OperationsOutputEntry {
+  const moduleId = (output.module_id || "").trim().toLowerCase();
+  const title = output.title.trim() || output.output_type.trim() || "Workspace output";
+  const detailParts = [
+    output.status ? `Status: ${output.status}` : "",
+    output.file_path ? `File: ${output.file_path}` : "",
+    output.platform ? `Platform: ${output.platform}` : ""
+  ].filter(Boolean);
+
+  return {
+    id: `runtime-output:${output.id}`,
+    title,
+    detail: detailParts.join(" | ") || "Runtime output generated for this workspace.",
+    createdAt: output.created_at,
+    tone: runtimeOutputTone(output.status),
+    sessionId: output.session_id,
+    renderer:
+      moduleId && installedAppIds.has(moduleId)
+        ? {
+            type: "app",
+            appId: moduleId,
+            resourceId: output.module_resource_id || output.artifact_id || output.id,
+            view: output.output_type || "home"
+          }
+        : {
+            type: "internal",
+            surface: inferInternalSurfaceFromOutputType(output.output_type),
+            resourceId: output.file_path || output.artifact_id || output.id,
+            htmlContent: output.html_content
+          }
+  };
+}
+
+function EmptyWorkspacePane() {
+  return (
+    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(87,255,173,0.08),transparent_45%)]" />
+      <div className="relative max-w-[640px] px-8 text-center">
+        <div className="text-[10px] uppercase tracking-[0.18em] text-neon-green/78">Workspace setup</div>
+        <div className="mt-3 text-[28px] font-semibold tracking-[-0.03em] text-text-main">Create your first workspace</div>
+        <div className="mt-4 text-[13px] leading-7 text-text-muted/84">
+          You are signed in, but there is no workspace available yet. Start by creating one from a local template folder or a marketplace
+          template using the <span className="text-text-main">New workspace</span> control in the top bar.
+        </div>
+        <div className="mt-6 grid gap-3 text-left sm:grid-cols-3">
+          <SetupCard title="1. Open create flow" detail="Use the New workspace button in the top bar." />
+          <SetupCard title="2. Choose template" detail="Pick a local template folder or a marketplace template." />
+          <SetupCard title="3. Launch workspace" detail="Once active, chat, apps, and outputs will route here automatically." />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SetupCard({ title, detail }: { title: string; detail: string }) {
+  return (
+    <div className="rounded-[18px] border border-panel-border/35 bg-black/10 px-4 py-4">
+      <div className="text-[12px] font-medium text-text-main">{title}</div>
+      <div className="mt-2 text-[11px] leading-6 text-text-muted/82">{detail}</div>
+    </div>
+  );
+}
+
 function FocusPlaceholder({
   eyebrow,
   title,
@@ -111,7 +208,7 @@ function FocusPlaceholder({
 
 function AppShellContent() {
   const { selectedWorkspaceId } = useWorkspaceSelection();
-  const { runtimeConfig, selectedWorkspace } = useWorkspaceDesktop();
+  const { runtimeConfig, selectedWorkspace, installedApps, isLoadingInstalledApps } = useWorkspaceDesktop();
   const [theme, setTheme] = useState<AppTheme>(loadTheme);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatusPayload | null>(null);
   const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatusPayload | null>(null);
@@ -131,7 +228,66 @@ function AppShellContent() {
     action: "accept" | "dismiss";
   } | null>(null);
   const [outputEntries, setOutputEntries] = useState<OperationsOutputEntry[]>([]);
+  const [runtimeOutputEntries, setRuntimeOutputEntries] = useState<OperationsOutputEntry[]>([]);
   const [selectedOutputId, setSelectedOutputId] = useState<string | null>(null);
+  const outputRefreshTimerRef = useRef<number | null>(null);
+
+  const refreshRuntimeOutputs = useCallback(async () => {
+    if (!selectedWorkspaceId) {
+      setRuntimeOutputEntries([]);
+      return;
+    }
+    try {
+      const response = await window.electronAPI.workspace.listOutputs(selectedWorkspaceId);
+      const installedAppIds = new Set(installedApps.map((app) => app.id));
+      setRuntimeOutputEntries(response.items.map((item) => runtimeOutputToEntry(item, installedAppIds)));
+    } catch {
+      setRuntimeOutputEntries([]);
+    }
+  }, [installedApps, selectedWorkspaceId]);
+
+  useEffect(() => {
+    if (!selectedWorkspaceId) {
+      setRuntimeOutputEntries([]);
+      return;
+    }
+
+    void refreshRuntimeOutputs();
+  }, [refreshRuntimeOutputs, selectedWorkspaceId]);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.workspace.onSessionStreamEvent((payload) => {
+      if (payload.type !== "event") {
+        return;
+      }
+      const data =
+        payload.event?.data && typeof payload.event.data === "object" && !Array.isArray(payload.event.data)
+          ? (payload.event.data as {
+              event_type?: string;
+              session_id?: string;
+            })
+          : null;
+      const eventType = typeof data?.event_type === "string" ? data.event_type : payload.event?.event || "";
+      if (eventType === "output_delta" || eventType === "thinking_delta") {
+        return;
+      }
+      if (outputRefreshTimerRef.current !== null) {
+        window.clearTimeout(outputRefreshTimerRef.current);
+      }
+      outputRefreshTimerRef.current = window.setTimeout(() => {
+        outputRefreshTimerRef.current = null;
+        void refreshRuntimeOutputs();
+      }, 250);
+    });
+
+    return () => {
+      if (outputRefreshTimerRef.current !== null) {
+        window.clearTimeout(outputRefreshTimerRef.current);
+        outputRefreshTimerRef.current = null;
+      }
+      unsubscribe();
+    };
+  }, [refreshRuntimeOutputs]);
 
   useEffect(() => {
     if (!window.electronAPI) {
@@ -318,6 +474,7 @@ function AppShellContent() {
           surface: "event"
         }
       });
+      void refreshRuntimeOutputs();
       window.setTimeout(() => {
         void refreshTaskProposals();
       }, 1500);
@@ -333,6 +490,7 @@ function AppShellContent() {
           surface: "event"
         }
       });
+      void refreshRuntimeOutputs();
     } finally {
       setIsTriggeringTaskProposal(false);
     }
@@ -363,7 +521,10 @@ function AppShellContent() {
       await window.electronAPI.workspace.updateTaskProposalState(proposal.proposal_id, "accepted");
 
       const detail = `Queued "${proposal.task_name}" into session ${targetSessionId}.`;
-      const inferredAppId = inferWorkspaceAppIdFromText(`${proposal.task_name}\n${proposal.task_prompt}`);
+      const inferredAppId = inferInstalledWorkspaceAppIdFromText(
+        `${proposal.task_name}\n${proposal.task_prompt}`,
+        installedApps
+      );
       setTaskProposalStatusMessage(detail);
       appendOutputEntry({
         title: `Accepted: ${proposal.task_name}`,
@@ -382,6 +543,7 @@ function AppShellContent() {
               surface: "event"
             }
       });
+      void refreshRuntimeOutputs();
       await refreshTaskProposals();
     } catch (error) {
       const message = normalizeErrorMessage(error);
@@ -395,6 +557,7 @@ function AppShellContent() {
           surface: "event"
         }
       });
+      void refreshRuntimeOutputs();
     } finally {
       setProposalAction(null);
     }
@@ -416,6 +579,7 @@ function AppShellContent() {
           surface: "event"
         }
       });
+      void refreshRuntimeOutputs();
       await refreshTaskProposals();
     } catch (error) {
       const message = normalizeErrorMessage(error);
@@ -429,6 +593,7 @@ function AppShellContent() {
           surface: "event"
         }
       });
+      void refreshRuntimeOutputs();
     } finally {
       setProposalAction(null);
     }
@@ -534,7 +699,8 @@ function AppShellContent() {
     setAgentView({
       type: "internal",
       surface: entry.renderer.surface,
-      resourceId: entry.renderer.resourceId ?? entry.id
+      resourceId: entry.renderer.resourceId ?? entry.id,
+      htmlContent: entry.renderer.htmlContent
     });
   };
 
@@ -545,16 +711,34 @@ function AppShellContent() {
 
   const agentMode = activeLeftRailItem === "agent";
   const activeAppId = activeLeftRailItem === "agent" && agentView.type === "app" ? agentView.appId : null;
+  const activeApp = getWorkspaceAppDefinition(activeAppId, installedApps);
+  const hasSelectedWorkspace = Boolean(selectedWorkspace);
+  const combinedOutputEntries = useMemo(() => {
+    const merged = [...runtimeOutputEntries, ...outputEntries];
+    const seen = new Set<string>();
+    return merged.filter((entry) => {
+      if (seen.has(entry.id)) {
+        return false;
+      }
+      seen.add(entry.id);
+      return true;
+    });
+  }, [outputEntries, runtimeOutputEntries]);
 
   const agentContent = useMemo(() => {
+    if (!hasSelectedWorkspace) {
+      return <EmptyWorkspacePane />;
+    }
+
     if (agentView.type === "chat") {
-      return <ChatPane />;
+      return <ChatPane onOutputsChanged={() => void refreshRuntimeOutputs()} />;
     }
 
     if (agentView.type === "app") {
       return (
         <AppSurfacePane
           appId={agentView.appId}
+          app={activeAppId === agentView.appId ? activeApp : getWorkspaceAppDefinition(agentView.appId, installedApps)}
           resourceId={agentView.resourceId}
           view={agentView.view}
           onReturnToChat={openAgentChat}
@@ -562,27 +746,15 @@ function AppShellContent() {
       );
     }
 
-    const title =
-      agentView.surface === "document"
-        ? "Internal document renderer"
-        : agentView.surface === "preview"
-          ? "Internal preview renderer"
-          : agentView.surface === "file"
-            ? "Internal file renderer"
-            : "Internal event detail";
-    const description =
-      agentView.surface === "event"
-        ? "This output stays within Holaboss itself instead of opening a workspace app. The routing contract is in place; a future pass can replace this placeholder with a dedicated internal viewer."
-        : "This output is intended to stay inside the desktop shell rather than jumping into an installed app surface.";
-
     return (
-      <FocusPlaceholder
-        eyebrow="Internal Surface"
-        title={title}
-        description={`${description} Target id: ${agentView.resourceId ?? "n/a"}.`}
+      <InternalSurfacePane
+        surface={agentView.surface}
+        resourceId={agentView.resourceId}
+        htmlContent={agentView.htmlContent}
+        onReturnToChat={openAgentChat}
       />
     );
-  }, [agentView]);
+  }, [activeApp, activeAppId, agentView, hasSelectedWorkspace, installedApps, refreshRuntimeOutputs]);
 
   return (
     <main className="fixed inset-0 overflow-hidden text-[13px] text-text-main/90">
@@ -628,6 +800,8 @@ function AppShellContent() {
             activeItem={activeLeftRailItem}
             onSelectItem={handleLeftRailSelect}
             activeAppId={activeAppId}
+            installedApps={installedApps}
+            isLoadingApps={isLoadingInstalledApps}
             onSelectApp={handleSelectWorkspaceApp}
           />
 
@@ -675,7 +849,8 @@ function AppShellContent() {
                 isTriggeringProposal={isTriggeringTaskProposal}
                 proposalStatusMessage={taskProposalStatusMessage}
                 proposalAction={proposalAction}
-                outputs={outputEntries}
+                outputs={combinedOutputEntries}
+                installedApps={installedApps}
                 selectedOutputId={selectedOutputId}
                 onSelectOutput={setSelectedOutputId}
                 onOpenOutput={handleOpenOutput}
@@ -683,7 +858,7 @@ function AppShellContent() {
                 onTriggerProposal={() => void triggerRemoteTaskProposal()}
                 onAcceptProposal={(proposal) => void acceptTaskProposal(proposal)}
                 onDismissProposal={(proposal) => void dismissTaskProposal(proposal)}
-                hasWorkspace={Boolean(selectedWorkspaceId)}
+                hasWorkspace={hasSelectedWorkspace}
               />
             </div>
           ) : null}

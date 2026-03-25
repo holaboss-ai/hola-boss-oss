@@ -1,5 +1,5 @@
 import { BriefcaseBusiness, MessageSquareText, Sparkles, Workflow } from "lucide-react";
-import { WORKSPACE_APPS } from "@/lib/workspaceApps";
+import { type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 
 export type LeftRailItem = "agent" | "automations" | "skills";
 
@@ -7,6 +7,8 @@ interface LeftNavigationRailProps {
   activeItem: LeftRailItem;
   onSelectItem: (item: LeftRailItem) => void;
   activeAppId: string | null;
+  installedApps: WorkspaceInstalledAppDefinition[];
+  isLoadingApps: boolean;
   onSelectApp: (appId: string) => void;
 }
 
@@ -16,7 +18,14 @@ const PRIMARY_ITEMS: Array<{ id: LeftRailItem; label: string; icon: React.ReactN
   { id: "skills", label: "Skills", icon: <Sparkles size={14} /> }
 ];
 
-export function LeftNavigationRail({ activeItem, onSelectItem, activeAppId, onSelectApp }: LeftNavigationRailProps) {
+export function LeftNavigationRail({
+  activeItem,
+  onSelectItem,
+  activeAppId,
+  installedApps,
+  isLoadingApps,
+  onSelectApp
+}: LeftNavigationRailProps) {
   return (
     <aside className="theme-shell soft-vignette neon-border relative hidden min-h-0 min-w-[210px] max-w-[230px] flex-col overflow-hidden rounded-[var(--theme-radius-card)] p-3 shadow-card lg:flex">
       <nav className="grid gap-1 px-1 pt-1">
@@ -52,21 +61,32 @@ export function LeftNavigationRail({ activeItem, onSelectItem, activeAppId, onSe
         </div>
 
         <div className="mt-3 grid gap-2">
-          {WORKSPACE_APPS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onSelectApp(item.id)}
-              className={`flex items-center gap-3 rounded-[14px] border px-2 py-2 text-left text-[12px] transition ${
-                activeItem === "agent" && activeAppId === item.id
-                  ? "border-neon-green/35 bg-neon-green/10 text-text-main"
-                  : "border-transparent text-text-muted hover:bg-[var(--theme-hover-bg)] hover:text-text-main"
-              }`}
-            >
-              <span className={`h-2 w-2 rounded-full ${item.accentClassName}`} />
-              <span>{item.label}</span>
-            </button>
-          ))}
+          {isLoadingApps ? (
+            <div className="rounded-[14px] border border-panel-border/35 px-2 py-2 text-[11px] text-text-dim/78">
+              Loading workspace apps...
+            </div>
+          ) : installedApps.length ? (
+            installedApps.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onSelectApp(item.id)}
+                className={`flex items-center gap-3 rounded-[14px] border px-2 py-2 text-left text-[12px] transition ${
+                  activeItem === "agent" && activeAppId === item.id
+                    ? "border-neon-green/35 bg-neon-green/10 text-text-main"
+                    : "border-transparent text-text-muted hover:bg-[var(--theme-hover-bg)] hover:text-text-main"
+                }`}
+              >
+                <span className={`h-2 w-2 rounded-full ${item.accentClassName}`} />
+                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                <span className="text-[9px] uppercase tracking-[0.12em] text-text-dim/72">{item.buildStatus}</span>
+              </button>
+            ))
+          ) : (
+            <div className="rounded-[14px] border border-panel-border/35 px-2 py-2 text-[11px] text-text-dim/78">
+              No installed apps in this workspace yet.
+            </div>
+          )}
         </div>
       </div>
     </aside>

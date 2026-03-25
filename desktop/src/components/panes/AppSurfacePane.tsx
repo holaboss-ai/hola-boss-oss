@@ -1,18 +1,21 @@
 import { ArrowLeft, PencilLine } from "lucide-react";
-import { getWorkspaceAppDefinition } from "@/lib/workspaceApps";
+import { getWorkspaceAppDefinition, type WorkspaceAppDefinition, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 
 interface AppSurfacePaneProps {
   appId: string;
+  app?: WorkspaceInstalledAppDefinition | WorkspaceAppDefinition | null;
   resourceId?: string | null;
   view?: string | null;
   onReturnToChat: () => void;
 }
 
-export function AppSurfacePane({ appId, resourceId, view, onReturnToChat }: AppSurfacePaneProps) {
-  const app = getWorkspaceAppDefinition(appId);
+export function AppSurfacePane({ appId, app: providedApp, resourceId, view, onReturnToChat }: AppSurfacePaneProps) {
+  const app = providedApp || getWorkspaceAppDefinition(appId);
   const label = app?.label ?? appId;
   const descriptor = resourceId ? `Resource ${resourceId}` : "Workspace app home";
   const modeLabel = view || (resourceId ? "editor" : "home");
+  const buildStatus =
+    app && "buildStatus" in app && typeof app.buildStatus === "string" ? app.buildStatus : "unknown";
 
   return (
     <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
@@ -49,6 +52,7 @@ export function AppSurfacePane({ appId, resourceId, view, onReturnToChat }: AppS
             <MetadataCard label="Surface mode" value={modeLabel} />
             <MetadataCard label="Target" value={descriptor} />
             <MetadataCard label="App id" value={appId} />
+            <MetadataCard label="Build status" value={buildStatus} />
             <MetadataCard label="Workspace scope" value="Active workspace" />
           </div>
         </div>

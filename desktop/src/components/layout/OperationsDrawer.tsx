@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { Bell, Check, ChevronRight, Clock3, Loader2, RefreshCcw, Sparkles, X } from "lucide-react";
-import { getWorkspaceAppDefinition } from "@/lib/workspaceApps";
+import { getWorkspaceAppDefinition, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 
 export type OperationsDrawerTab = "inbox" | "running" | "outputs";
 
@@ -15,6 +15,7 @@ export type OperationsOutputRenderer =
       type: "internal";
       surface: "document" | "preview" | "file" | "event";
       resourceId?: string | null;
+      htmlContent?: string | null;
     };
 
 export interface OperationsOutputEntry {
@@ -40,6 +41,7 @@ interface OperationsDrawerProps {
     action: "accept" | "dismiss";
   } | null;
   outputs: OperationsOutputEntry[];
+  installedApps: WorkspaceInstalledAppDefinition[];
   selectedOutputId: string | null;
   onSelectOutput: (outputId: string) => void;
   onOpenOutput: (entry: OperationsOutputEntry) => void;
@@ -60,6 +62,7 @@ export function OperationsDrawer({
   proposalStatusMessage,
   proposalAction,
   outputs,
+  installedApps,
   selectedOutputId,
   onSelectOutput,
   onOpenOutput,
@@ -126,6 +129,7 @@ export function OperationsDrawer({
         {activeTab === "outputs" ? (
           <OutputsPanel
             outputs={outputs}
+            installedApps={installedApps}
             selectedOutput={selectedOutput}
             onSelectOutput={onSelectOutput}
             onOpenOutput={onOpenOutput}
@@ -297,11 +301,13 @@ function RunningPanel() {
 
 function OutputsPanel({
   outputs,
+  installedApps,
   selectedOutput,
   onSelectOutput,
   onOpenOutput
 }: {
   outputs: OperationsOutputEntry[];
+  installedApps: WorkspaceInstalledAppDefinition[];
   selectedOutput: OperationsOutputEntry | null;
   onSelectOutput: (outputId: string) => void;
   onOpenOutput: (entry: OperationsOutputEntry) => void;
@@ -356,7 +362,7 @@ function OutputsPanel({
                     className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-neon-green/40 bg-neon-green/10 px-3 text-[11px] text-neon-green transition hover:bg-neon-green/14"
                   >
                     <ChevronRight size={12} />
-                    <span>{openOutputLabel(selectedOutput)}</span>
+                    <span>{openOutputLabel(selectedOutput, installedApps)}</span>
                   </button>
                 </div>
                 <div className="mt-4 text-[10px] text-text-dim/78">{formatTimestamp(selectedOutput.createdAt)}</div>
@@ -369,9 +375,9 @@ function OutputsPanel({
   );
 }
 
-function openOutputLabel(entry: OperationsOutputEntry): string {
+function openOutputLabel(entry: OperationsOutputEntry, installedApps: WorkspaceInstalledAppDefinition[]): string {
   if (entry.renderer.type === "app") {
-    const app = getWorkspaceAppDefinition(entry.renderer.appId);
+    const app = getWorkspaceAppDefinition(entry.renderer.appId, installedApps);
     return `Open in ${app?.label ?? entry.renderer.appId}`;
   }
 

@@ -501,6 +501,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     pickTemplateFolder: () =>
       ipcRenderer.invoke("workspace:pickTemplateFolder") as Promise<TemplateFolderSelectionPayload>,
     listWorkspaces: () => ipcRenderer.invoke("workspace:listWorkspaces") as Promise<WorkspaceListResponsePayload>,
+    listInstalledApps: (workspaceId: string) =>
+      ipcRenderer.invoke("workspace:listInstalledApps", workspaceId) as Promise<InstalledWorkspaceAppListResponsePayload>,
+    listOutputs: (workspaceId: string) =>
+      ipcRenderer.invoke("workspace:listOutputs", workspaceId) as Promise<WorkspaceOutputListResponsePayload>,
     getWorkspaceRoot: (workspaceId: string) => ipcRenderer.invoke("workspace:getWorkspaceRoot", workspaceId) as Promise<string>,
     createWorkspace: (payload: HolabossCreateWorkspacePayload) =>
       ipcRenderer.invoke("workspace:createWorkspace", payload) as Promise<WorkspaceResponsePayload>,
