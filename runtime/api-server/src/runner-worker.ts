@@ -56,6 +56,44 @@ function runnerTimeoutSeconds(): number {
   return Math.max(1, Math.min(parsed, 7200));
 }
 
+function normalizeRuntimeApiHost(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "0.0.0.0" || trimmed === "::") {
+    return "127.0.0.1";
+  }
+  return trimmed;
+}
+
+export function currentRuntimeApiUrl(): string | undefined {
+  const configured = (process.env.SANDBOX_RUNTIME_API_URL ?? "").trim();
+  if (configured) {
+    return configured;
+  }
+
+  const portValue = (process.env.SANDBOX_RUNTIME_API_PORT ?? process.env.SANDBOX_AGENT_BIND_PORT ?? "").trim();
+  if (!portValue) {
+    return undefined;
+  }
+  const port = Number.parseInt(portValue, 10);
+  if (!Number.isFinite(port) || port <= 0) {
+    return undefined;
+  }
+
+  const host = normalizeRuntimeApiHost(
+    process.env.SANDBOX_RUNTIME_API_HOST ?? process.env.SANDBOX_AGENT_BIND_HOST ?? "127.0.0.1"
+  );
+  return `http://${host}:${port}`;
+}
+
+export function buildRunnerEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  const currentApiUrl = currentRuntimeApiUrl();
+  if (currentApiUrl && !(env.SANDBOX_RUNTIME_API_URL ?? "").trim()) {
+    env.SANDBOX_RUNTIME_API_URL = currentApiUrl;
+  }
+  return env;
+}
+
 function runnerCommand(payload: Record<string, unknown>): string {
   const template = process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE ?? DEFAULT_AGENT_RUNNER_COMMAND_TEMPLATE;
   const replacements: Record<string, string> = {
@@ -189,7 +227,8 @@ export async function executeRunnerRequest(
   validateRunnerPayload(payload);
   const command = runnerCommand(payload);
   const child = spawn("/bin/bash", ["-lc", command], {
-    stdio: ["ignore", "pipe", "pipe"]
+    stdio: ["ignore", "pipe", "pipe"],
+    env: buildRunnerEnv()
   });
   const closePromise = new Promise<number>((resolve, reject) => {
     child.once("error", reject);
@@ -299,7 +338,8 @@ export class NativeRunnerExecutor implements RunnerExecutorLike {
     validateRunnerPayload(payload);
     const command = runnerCommand(payload);
     const child = spawn("/bin/bash", ["-lc", command], {
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      env: buildRunnerEnv()
     });
     const stdout = child.stdout;
     const stderr = child.stderr;

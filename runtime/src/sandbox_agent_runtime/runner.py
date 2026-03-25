@@ -10,7 +10,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import signal
 import socket
 import sys
@@ -19,15 +18,33 @@ import types
 from collections.abc import Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import httpx
-import yaml
 from pydantic import BaseModel, Field
 
 from sandbox_agent_runtime.product_config import resolve_product_runtime_config
+from sandbox_agent_runtime.runner_models import (
+    HarnessHostModelClientPayload as _HarnessHostModelClientPayload,
+    HarnessHostOpencodeRequest as _HarnessHostOpencodeRequest,
+    OpencodeCommandsCliRequest as _OpencodeCommandsCliRequest,
+    OpencodeCommandsCliResponse as _OpencodeCommandsCliResponse,
+    OpencodeConfigCliRequest as _OpencodeConfigCliRequest,
+    OpencodeConfigCliResponse as _OpencodeConfigCliResponse,
+    OpencodeRuntimeConfigCliRequest as _OpencodeRuntimeConfigCliRequest,
+    OpencodeRuntimeConfigCliResponse as _OpencodeRuntimeConfigCliResponse,
+    OpencodeRuntimeConfigGeneralMemberPayload as _OpencodeRuntimeConfigGeneralMemberPayload,
+    OpencodeSidecarCliRequest as _OpencodeSidecarCliRequest,
+    OpencodeSidecarCliResponse as _OpencodeSidecarCliResponse,
+    OpencodeSkillsCliRequest as _OpencodeSkillsCliRequest,
+    OpencodeSkillsCliResponse as _OpencodeSkillsCliResponse,
+    RunnerOutputEvent,
+    RunnerRequest,
+    WorkspaceMcpSidecarCliRequest as _WorkspaceMcpSidecarCliRequest,
+    WorkspaceMcpSidecarCliResponse as _WorkspaceMcpSidecarCliResponse,
+)
 from sandbox_agent_runtime.runtime_config_adapter import (
     CompiledWorkspaceRuntimePlan,
     WorkspaceGeneralSingleConfig,
@@ -59,11 +76,6 @@ _MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE = "openai_compatible"
 _MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE = "anthropic_native"
 _DEFAULT_MODEL_PROXY_PROVIDER = _MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE
 _DIRECT_OPENAI_FALLBACK_FLAG = "SANDBOX_MODEL_PROXY_ENABLE_DIRECT_OPENAI_FALLBACK"
-_OPENCODE_PERSISTED_PROXY_HEADER_ALLOWLIST = {
-    "x-api-key",
-    "x-holaboss-user-id",
-    "x-holaboss-sandbox-id",
-}
 _DEFAULT_OPENCODE_HOST = "127.0.0.1"
 _DEFAULT_OPENCODE_PORT = 4096
 _DEFAULT_OPENCODE_BASE_URL = f"http://{_DEFAULT_OPENCODE_HOST}:{_DEFAULT_OPENCODE_PORT}"
@@ -84,14 +96,9 @@ _SESSION_STATE_DIR_NAME = ".holaboss"
 _SESSION_STATE_FILE_NAME = "harness-session-state.json"
 _SESSION_STATE_VERSION = 1
 _SESSION_STATE_MAIN_SESSION_KEY = "main_session_id"
-_WORKSPACE_MCP_STATE_FILE_NAME = "workspace-mcp-sidecar-state.json"
-_WORKSPACE_MCP_STATE_VERSION = 1
 _WORKSPACE_MCP_STDOUT_LOG_BASENAME = "workspace-mcp-sidecar.stdout.log"
 _WORKSPACE_MCP_STDERR_LOG_BASENAME = "workspace-mcp-sidecar.stderr.log"
 _WORKSPACE_MCP_LOG_TAIL_BYTES = 4096
-_OPENCODE_STATE_FILE_NAME = "opencode-sidecar-state.json"
-_OPENCODE_STATE_VERSION = 1
-_OPENCODE_SKILL_MANIFEST_FILE_NAME = ".skill-manifest.json"
 _TS_HARNESS_HOST_NODE_BIN_ENV = "HOLABOSS_RUNTIME_NODE_BIN"
 _TS_HARNESS_HOST_NOT_IMPLEMENTED_EXIT_CODE = 86
 
@@ -122,58 +129,6 @@ def _legacy_local_opencode_app_bootstrap_fallback_error(exc: Exception) -> Runti
     )
 
 
-class RunnerRequest(BaseModel):
-    holaboss_user_id: str | None = Field(default=None, min_length=1)
-    workspace_id: str = Field(..., min_length=1)
-    session_id: str = Field(..., min_length=1)
-    input_id: str = Field(..., min_length=1)
-    instruction: str = Field(..., min_length=1)
-    context: dict[str, Any] = Field(default_factory=dict)
-    model: str | None = None
-    debug: bool = False
-
-
-class RunnerOutputEvent(BaseModel):
-    session_id: str
-    input_id: str
-    sequence: int
-    event_type: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    payload: dict[str, Any] = Field(default_factory=dict)
-
-
-class _HarnessHostModelClientPayload(BaseModel):
-    model_proxy_provider: str
-    api_key: str
-    base_url: str | None = None
-    default_headers: dict[str, str] | None = None
-
-
-class _HarnessHostOpencodeRequest(BaseModel):
-    workspace_id: str
-    workspace_dir: str
-    session_id: str
-    input_id: str
-    instruction: str
-    debug: bool = False
-    harness_session_id: str | None = None
-    persisted_harness_session_id: str | None = None
-    provider_id: str
-    model_id: str
-    mode: str
-    opencode_base_url: str
-    timeout_seconds: int
-    system_prompt: str
-    tools: dict[str, bool]
-    workspace_tool_ids: list[str]
-    workspace_skill_ids: list[str]
-    mcp_servers: list[dict[str, Any]]
-    output_format: dict[str, Any] | None = None
-    workspace_config_checksum: str
-    run_started_payload: dict[str, Any]
-    model_client: _HarnessHostModelClientPayload
-
-
 @dataclass(frozen=True)
 class _ModelClientConfig:
     model_proxy_provider: str
@@ -188,6 +143,7 @@ class _OpencodeRuntimeConfig:
     model_id: str
     mode: str
     system_prompt: str
+    model_client_config: _ModelClientConfig
     tools: dict[str, bool]
     workspace_tool_ids: tuple[str, ...]
     mcp_servers: tuple[dict[str, Any], ...]
@@ -199,25 +155,13 @@ class _OpencodeRuntimeConfig:
 
 
 @dataclass(frozen=True)
-class _WorkspaceSkillSpec:
-    skill_id: str
-    skill_md_path: Path
-
-
-@dataclass(frozen=True)
-class _WorkspaceSkillsConfig:
-    skills_path: Path
-    skills: tuple[_WorkspaceSkillSpec, ...]
-
-
-@dataclass(frozen=True)
 class _RunningWorkspaceMcpSidecar:
     logical_server_id: str
     physical_server_id: str
     sandbox_id: str
     url: str
     timeout_ms: int
-    process: asyncio.subprocess.Process | None
+    pid: int | None
     reused: bool
 
 
@@ -369,6 +313,30 @@ def _ts_opencode_app_bootstrap_entry_path() -> Path:
     return _runtime_root_dir() / "api-server" / "dist" / "opencode-app-bootstrap.mjs"
 
 
+def _ts_opencode_commands_entry_path() -> Path:
+    return _runtime_root_dir() / "api-server" / "dist" / "opencode-commands.mjs"
+
+
+def _ts_opencode_config_entry_path() -> Path:
+    return _runtime_root_dir() / "api-server" / "dist" / "opencode-config.mjs"
+
+
+def _ts_opencode_runtime_config_entry_path() -> Path:
+    return _runtime_root_dir() / "api-server" / "dist" / "opencode-runtime-config.mjs"
+
+
+def _ts_opencode_skills_entry_path() -> Path:
+    return _runtime_root_dir() / "api-server" / "dist" / "opencode-skills.mjs"
+
+
+def _ts_opencode_sidecar_entry_path() -> Path:
+    return _runtime_root_dir() / "api-server" / "dist" / "opencode-sidecar.mjs"
+
+
+def _ts_workspace_mcp_sidecar_entry_path() -> Path:
+    return _runtime_root_dir() / "api-server" / "dist" / "workspace-mcp-sidecar.mjs"
+
+
 def _ts_harness_host_node_bin() -> str:
     configured = (os.getenv(_TS_HARNESS_HOST_NODE_BIN_ENV) or "").strip()
     return configured or "node"
@@ -445,6 +413,66 @@ def _harness_host_run_command(*, command: str, payload: BaseModel) -> tuple[str,
         _ts_harness_host_node_bin(),
         str(_ts_harness_host_entry_path()),
         command,
+        "--request-base64",
+        encoded,
+    )
+
+
+def _ts_workspace_mcp_sidecar_command(*, payload: _WorkspaceMcpSidecarCliRequest) -> tuple[str, ...]:
+    encoded = base64.b64encode(payload.model_dump_json().encode("utf-8")).decode("utf-8")
+    return (
+        _ts_harness_host_node_bin(),
+        str(_ts_workspace_mcp_sidecar_entry_path()),
+        "--request-base64",
+        encoded,
+    )
+
+
+def _ts_opencode_sidecar_command(*, payload: _OpencodeSidecarCliRequest) -> tuple[str, ...]:
+    encoded = base64.b64encode(payload.model_dump_json().encode("utf-8")).decode("utf-8")
+    return (
+        _ts_harness_host_node_bin(),
+        str(_ts_opencode_sidecar_entry_path()),
+        "--request-base64",
+        encoded,
+    )
+
+
+def _ts_opencode_config_command(*, payload: _OpencodeConfigCliRequest) -> tuple[str, ...]:
+    encoded = base64.b64encode(payload.model_dump_json().encode("utf-8")).decode("utf-8")
+    return (
+        _ts_harness_host_node_bin(),
+        str(_ts_opencode_config_entry_path()),
+        "--request-base64",
+        encoded,
+    )
+
+
+def _ts_opencode_runtime_config_command(*, payload: _OpencodeRuntimeConfigCliRequest) -> tuple[str, ...]:
+    encoded = base64.b64encode(payload.model_dump_json().encode("utf-8")).decode("utf-8")
+    return (
+        _ts_harness_host_node_bin(),
+        str(_ts_opencode_runtime_config_entry_path()),
+        "--request-base64",
+        encoded,
+    )
+
+
+def _ts_opencode_skills_command(*, payload: _OpencodeSkillsCliRequest) -> tuple[str, ...]:
+    encoded = base64.b64encode(payload.model_dump_json().encode("utf-8")).decode("utf-8")
+    return (
+        _ts_harness_host_node_bin(),
+        str(_ts_opencode_skills_entry_path()),
+        "--request-base64",
+        encoded,
+    )
+
+
+def _ts_opencode_commands_command(*, payload: _OpencodeCommandsCliRequest) -> tuple[str, ...]:
+    encoded = base64.b64encode(payload.model_dump_json().encode("utf-8")).decode("utf-8")
+    return (
+        _ts_harness_host_node_bin(),
+        str(_ts_opencode_commands_entry_path()),
         "--request-base64",
         encoded,
     )
@@ -736,268 +764,67 @@ def _workspace_import_scope(*, workspace_dir: str | None, template_id: str | Non
                 sys.path.remove(workspace_dir)
 
 
-def _read_workspace_yaml_mapping(*, workspace_dir: Path) -> Mapping[str, Any] | None:
-    workspace_yaml_path = workspace_dir / "workspace.yaml"
-    if not workspace_yaml_path.is_file():
-        return None
+async def _stage_workspace_skills_for_opencode_via_local_ts(
+    *, workspace_dir: Path
+) -> tuple[bool, tuple[str, ...]]:
+    entry_path = _ts_opencode_skills_entry_path()
+    if not entry_path.is_file():
+        raise RuntimeError(f"ts opencode skills entrypoint not found: {entry_path}")
+
+    payload = _OpencodeSkillsCliRequest(
+        workspace_dir=str(workspace_dir),
+        runtime_root=str(Path(WORKSPACE_ROOT)),
+    )
+    process = await asyncio.create_subprocess_exec(
+        *_ts_opencode_skills_command(payload=payload),
+        cwd=str(workspace_dir),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    stderr_text = stderr.decode("utf-8", errors="replace").strip()
+    stdout_text = stdout.decode("utf-8", errors="replace").strip()
+    if process.returncode != 0:
+        detail = stderr_text or stdout_text or f"local ts opencode skills exited with code {process.returncode}"
+        raise RuntimeError(detail)
     try:
-        loaded = yaml.safe_load(workspace_yaml_path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    if not isinstance(loaded, Mapping):
-        return None
-    return loaded
+        response = _OpencodeSkillsCliResponse.model_validate_json(stdout_text)
+    except Exception as exc:
+        raise RuntimeError(f"invalid local ts opencode skills response: {exc}") from exc
+    return response.changed, tuple(response.skill_ids)
 
 
-def _normalize_skill_id(value: Any) -> str | None:
-    if not isinstance(value, str):
-        return None
-    skill_id = value.strip()
-    if not skill_id or skill_id in {".", ".."}:
-        return None
-    if "/" in skill_id or "\\" in skill_id or "\x00" in skill_id:
-        return None
-    return skill_id
+async def _stage_workspace_skills_for_opencode(*, workspace_dir: Path) -> tuple[bool, tuple[str, ...]]:
+    return await _stage_workspace_skills_for_opencode_via_local_ts(workspace_dir=workspace_dir)
 
 
-def _workspace_skills_path_token(*, payload: Mapping[str, Any]) -> str | None:
-    skills = payload.get("skills")
-    if isinstance(skills, Mapping):
-        raw = skills.get("path")
-        if isinstance(raw, str) and raw.strip():
-            return raw.strip()
+async def _stage_workspace_commands_for_opencode_via_local_ts(*, workspace_dir: Path) -> bool:
+    entry_path = _ts_opencode_commands_entry_path()
+    if not entry_path.is_file():
+        raise RuntimeError(f"ts opencode commands entrypoint not found: {entry_path}")
 
-    # Legacy fallback.
-    agents = payload.get("agents")
-    if not isinstance(agents, Mapping):
-        return None
-    proactive = agents.get("proactive")
-    if not isinstance(proactive, Mapping):
-        return None
-    raw = proactive.get("skills_path")
-    if not isinstance(raw, str) or not raw.strip():
-        return None
-    return raw.strip()
-
-
-def _workspace_enabled_skill_ids(*, payload: Mapping[str, Any]) -> tuple[str, ...]:
-    skills = payload.get("skills")
-    if not isinstance(skills, Mapping):
-        return ()
-    enabled = skills.get("enabled")
-    if not isinstance(enabled, list):
-        return ()
-
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for item in enabled:
-        skill_id = _normalize_skill_id(item)
-        if skill_id is None or skill_id in seen:
-            continue
-        seen.add(skill_id)
-        ordered.append(skill_id)
-    return tuple(ordered)
-
-
-def _resolve_workspace_skills(*, workspace_dir: Path) -> _WorkspaceSkillsConfig | None:
-    payload = _read_workspace_yaml_mapping(workspace_dir=workspace_dir)
-    if payload is None:
-        return None
-
-    skills_path_token = _workspace_skills_path_token(payload=payload)
-    if skills_path_token is None:
-        return None
-
-    relative = Path(skills_path_token)
-    if relative.is_absolute() or ".." in relative.parts:
-        return None
-    skills_path = (workspace_dir / relative).resolve()
-    workspace_root = workspace_dir.resolve()
-    if workspace_root not in skills_path.parents and skills_path != workspace_root:
-        return None
-    if not skills_path.is_dir():
-        return None
-
-    selected_skill_ids = _workspace_enabled_skill_ids(payload=payload)
-    if not selected_skill_ids:
-        selected_skill_ids = tuple(
-            child.name
-            for child in sorted(skills_path.iterdir(), key=lambda path: path.name)
-            if child.is_dir() and (child / "SKILL.md").is_file()
-        )
-
-    loaded_specs: list[_WorkspaceSkillSpec] = []
-    for skill_id in selected_skill_ids:
-        skill_md_path = (skills_path / skill_id / "SKILL.md").resolve()
-        if workspace_root not in skill_md_path.parents and skill_md_path != workspace_root:
-            continue
-        if not skill_md_path.is_file():
-            continue
-        loaded_specs.append(_WorkspaceSkillSpec(skill_id=skill_id, skill_md_path=skill_md_path))
-
-    if not loaded_specs:
-        return None
-    return _WorkspaceSkillsConfig(skills_path=skills_path, skills=tuple(loaded_specs))
-
-
-def _remove_path(path: Path) -> None:
-    if path.is_symlink() or path.is_file():
-        path.unlink(missing_ok=True)
-        return
-    if path.is_dir():
-        shutil.rmtree(path)
-
-
-def _opencode_skill_manifest_payload(*, workspace_skills: _WorkspaceSkillsConfig) -> dict[str, Any]:
-    return {
-        "skills": [
-            {
-                "skill_id": skill.skill_id,
-                "source_dir": str(skill.skill_md_path.parent.resolve()),
-            }
-            for skill in workspace_skills.skills
-        ]
-    }
-
-
-def _read_opencode_skill_manifest(*, staged_root: Path) -> dict[str, Any] | None:
-    manifest_path = staged_root / _OPENCODE_SKILL_MANIFEST_FILE_NAME
-    if not manifest_path.is_file():
-        return None
+    payload = _OpencodeCommandsCliRequest(workspace_dir=str(workspace_dir))
+    process = await asyncio.create_subprocess_exec(
+        *_ts_opencode_commands_command(payload=payload),
+        cwd=str(workspace_dir),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    stderr_text = stderr.decode("utf-8", errors="replace").strip()
+    stdout_text = stdout.decode("utf-8", errors="replace").strip()
+    if process.returncode != 0:
+        detail = stderr_text or stdout_text or f"local ts opencode commands exited with code {process.returncode}"
+        raise RuntimeError(detail)
     try:
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    return payload
+        response = _OpencodeCommandsCliResponse.model_validate_json(stdout_text)
+    except Exception as exc:
+        raise RuntimeError(f"invalid local ts opencode commands response: {exc}") from exc
+    return response.changed
 
 
-def _write_opencode_skill_manifest(*, staged_root: Path, payload: dict[str, Any]) -> None:
-    manifest_path = staged_root / _OPENCODE_SKILL_MANIFEST_FILE_NAME
-    manifest_path.write_text(json.dumps(payload, ensure_ascii=True, sort_keys=True, indent=2), encoding="utf-8")
-
-
-def _staged_skill_root_matches_manifest(*, staged_root: Path, manifest_payload: dict[str, Any]) -> bool:
-    existing_manifest = _read_opencode_skill_manifest(staged_root=staged_root)
-    if existing_manifest != manifest_payload:
-        return False
-
-    expected_names = {
-        str(item.get("skill_id", "")).strip()
-        for item in manifest_payload.get("skills", [])
-        if isinstance(item, dict)
-    }
-    if not expected_names:
-        return False
-
-    actual_names = {
-        child.name
-        for child in staged_root.iterdir()
-        if child.name != _OPENCODE_SKILL_MANIFEST_FILE_NAME
-    }
-    if actual_names != expected_names:
-        return False
-
-    for item in manifest_payload["skills"]:
-        if not isinstance(item, dict):
-            return False
-        skill_id = str(item.get("skill_id", "")).strip()
-        source_dir = Path(str(item.get("source_dir", "")).strip())
-        target_dir = staged_root / skill_id
-        if not target_dir.exists():
-            return False
-        if target_dir.is_symlink():
-            try:
-                if target_dir.resolve() != source_dir:
-                    return False
-            except OSError:
-                return False
-            continue
-        if not (target_dir / "SKILL.md").is_file():
-            return False
-    return True
-
-
-def _stage_workspace_skills_for_opencode(
-    *, workspace_dir: Path, workspace_skills: _WorkspaceSkillsConfig | None
-) -> bool:
-    if workspace_skills is None:
-        return False
-
-    workspace_staged_root = (workspace_dir / ".opencode" / "skills").resolve()
-    # OpenCode skill discovery starts from the sidecar process working directory.
-    # Runtime-staged skills are shared under WORKSPACE_ROOT/.opencode, not per-workspace directories.
-    # Mirror enabled workspace skills at both locations so built-in `skill` discovery works.
-    runtime_staged_root = (Path(WORKSPACE_ROOT) / ".opencode" / "skills").resolve()
-    manifest_payload = _opencode_skill_manifest_payload(workspace_skills=workspace_skills)
-
-    staged_roots: list[Path] = [workspace_staged_root]
-    if runtime_staged_root != workspace_staged_root:
-        staged_roots.append(runtime_staged_root)
-
-    changed = False
-    for staged_root in staged_roots:
-        if staged_root.is_dir() and _staged_skill_root_matches_manifest(
-            staged_root=staged_root,
-            manifest_payload=manifest_payload,
-        ):
-            continue
-
-        if staged_root.exists() or staged_root.is_symlink():
-            _remove_path(staged_root)
-        staged_root.mkdir(parents=True, exist_ok=True)
-
-        for skill in workspace_skills.skills:
-            source_dir = skill.skill_md_path.parent.resolve()
-            target_dir = staged_root / skill.skill_id
-            try:
-                target_dir.symlink_to(source_dir, target_is_directory=True)
-            except OSError:
-                shutil.copytree(source_dir, target_dir, dirs_exist_ok=False)
-        _write_opencode_skill_manifest(staged_root=staged_root, payload=manifest_payload)
-        changed = True
-
-    return changed
-
-
-def _stage_workspace_commands_for_opencode(*, workspace_dir: Path) -> None:
-    workspace_root = workspace_dir.resolve()
-    commands_source = workspace_dir / "commands"
-    staged_target = workspace_dir / ".opencode" / "commands"
-
-    # Heal prior bad state where commands became a self-referential symlink.
-    if commands_source.is_symlink():
-        try:
-            commands_source.resolve(strict=True)
-        except RuntimeError:
-            logger.warning("Removing invalid workspace commands symlink loop at %s", commands_source)
-            commands_source.unlink(missing_ok=True)
-        except OSError:
-            commands_source.unlink(missing_ok=True)
-
-    try:
-        commands_source_resolved = commands_source.resolve(strict=True)
-    except FileNotFoundError:
-        commands_source_resolved = commands_source
-    except RuntimeError:
-        commands_source_resolved = commands_source
-
-    if workspace_root not in commands_source_resolved.parents and commands_source_resolved != workspace_root:
-        return
-
-    if not commands_source.is_dir():
-        if staged_target.exists() or staged_target.is_symlink():
-            _remove_path(staged_target)
-        return
-
-    if staged_target.exists() or staged_target.is_symlink():
-        _remove_path(staged_target)
-    staged_target.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        staged_target.symlink_to(commands_source, target_is_directory=True)
-    except OSError:
-        shutil.copytree(commands_source, staged_target, dirs_exist_ok=False)
+async def _stage_workspace_commands_for_opencode(*, workspace_dir: Path) -> bool:
+    return await _stage_workspace_commands_for_opencode_via_local_ts(workspace_dir=workspace_dir)
 
 
 async def _compile_workspace_runtime_plan(*, workspace_dir: Path, workspace_id: str) -> CompiledWorkspaceRuntimePlan:
@@ -1100,12 +927,6 @@ def _mcp_server_id_map(
     return mapping
 
 
-def _workspace_mcp_state_path() -> Path:
-    state_dir = Path(WORKSPACE_ROOT) / _SESSION_STATE_DIR_NAME
-    state_dir.mkdir(parents=True, exist_ok=True)
-    return state_dir / _WORKSPACE_MCP_STATE_FILE_NAME
-
-
 def _workspace_mcp_log_dir() -> Path:
     state_dir = Path(WORKSPACE_ROOT) / _SESSION_STATE_DIR_NAME
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -1205,74 +1026,6 @@ def _release_opencode_lock(*, lock_file: Any) -> None:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
     with suppress(Exception):
         lock_file.close()
-
-
-def _opencode_state_path() -> Path:
-    state_dir = Path(WORKSPACE_ROOT) / _SESSION_STATE_DIR_NAME
-    state_dir.mkdir(parents=True, exist_ok=True)
-    return state_dir / _OPENCODE_STATE_FILE_NAME
-
-
-def _read_opencode_sidecar_state() -> dict[str, Any]:
-    state_path = _opencode_state_path()
-    if not state_path.is_file():
-        return {}
-    try:
-        payload = json.loads(state_path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    if int(payload.get("version") or 0) != _OPENCODE_STATE_VERSION:
-        return {}
-    sidecar = payload.get("sidecar")
-    if not isinstance(sidecar, dict):
-        return {}
-    return sidecar
-
-
-def _write_opencode_sidecar_state(entry: dict[str, Any]) -> None:
-    state_path = _opencode_state_path()
-    payload = {
-        "version": _OPENCODE_STATE_VERSION,
-        "sidecar": entry,
-    }
-    state_path.write_text(json.dumps(payload, ensure_ascii=True, sort_keys=True, indent=2), encoding="utf-8")
-
-
-def _clear_opencode_sidecar_state() -> None:
-    _opencode_state_path().unlink(missing_ok=True)
-
-
-def _read_workspace_mcp_sidecar_state() -> dict[str, dict[str, Any]]:
-    state_path = _workspace_mcp_state_path()
-    if not state_path.is_file():
-        return {}
-    try:
-        payload = json.loads(state_path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    if int(payload.get("version") or 0) != _WORKSPACE_MCP_STATE_VERSION:
-        return {}
-    raw_entries = payload.get("sidecars")
-    if not isinstance(raw_entries, dict):
-        return {}
-    entries: dict[str, dict[str, Any]] = {}
-    for key, value in raw_entries.items():
-        if isinstance(key, str) and isinstance(value, dict):
-            entries[key] = value
-    return entries
-
-
-def _write_workspace_mcp_sidecar_state(entries: dict[str, dict[str, Any]]) -> None:
-    state_path = _workspace_mcp_state_path()
-    payload = {
-        "version": _WORKSPACE_MCP_STATE_VERSION,
-        "sidecars": entries,
-    }
-    state_path.write_text(json.dumps(payload, ensure_ascii=True, sort_keys=True, indent=2), encoding="utf-8")
 
 
 def _workspace_mcp_catalog_fingerprint(compiled_plan: CompiledWorkspaceRuntimePlan) -> str:
@@ -1391,13 +1144,6 @@ def _sidecar_enabled_tool_ids_payload(compiled_plan: CompiledWorkspaceRuntimePla
     return base64.b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
 
 
-def _next_local_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        return int(sock.getsockname()[1])
-
-
 async def _wait_for_http_ready(*, url: str, timeout_seconds: float, target_name: str) -> None:
     deadline = asyncio.get_running_loop().time() + timeout_seconds
     async with httpx.AsyncClient(timeout=2.0, trust_env=False) as client:
@@ -1410,14 +1156,6 @@ async def _wait_for_http_ready(*, url: str, timeout_seconds: float, target_name:
                 if response.status_code < 500:
                     return
             await asyncio.sleep(_WORKSPACE_MCP_READY_POLL_S)
-
-
-async def _wait_for_workspace_mcp_ready(*, url: str, timeout_seconds: float) -> None:
-    await _wait_for_http_ready(
-        url=url,
-        timeout_seconds=timeout_seconds,
-        target_name="workspace MCP sidecar",
-    )
 
 
 async def _wait_for_opencode_ready(*, url: str, timeout_seconds: float) -> None:
@@ -1439,6 +1177,12 @@ async def _start_workspace_mcp_sidecar(
     enabled_workspace_tool_ids = _workspace_sidecar_enabled_tool_ids(compiled_plan=compiled_plan)
     if not enabled_workspace_tool_ids:
         return None
+    entry_path = _ts_workspace_mcp_sidecar_entry_path()
+    if not entry_path.is_file():
+        raise WorkspaceRuntimeConfigError(
+            code="workspace_mcp_sidecar_start_failed",
+            message=f"ts workspace MCP sidecar entrypoint not found: {entry_path}",
+        )
 
     timeout_ms = 10_000
     for server in compiled_plan.resolved_mcp_servers:
@@ -1448,136 +1192,66 @@ async def _start_workspace_mcp_sidecar(
 
     lock_file = await _acquire_workspace_mcp_lock(physical_server_id=physical_server_id)
     try:
-        state_entries = _read_workspace_mcp_sidecar_state()
-        state_entry = state_entries.get(physical_server_id)
         expected_fingerprint = _workspace_mcp_catalog_fingerprint(compiled_plan)
-
-        if isinstance(state_entry, dict):
-            persisted_url = str(state_entry.get("url") or "").strip()
-            persisted_pid = int(state_entry.get("pid") or 0)
-            persisted_workspace_id = str(state_entry.get("workspace_id") or "").strip()
-            persisted_sandbox_id = str(state_entry.get("sandbox_id") or "").strip()
-            persisted_fingerprint = str(state_entry.get("config_fingerprint") or "").strip()
-            if (
-                persisted_url
-                and persisted_workspace_id == workspace_id
-                and persisted_sandbox_id == sandbox_id
-                and persisted_fingerprint == expected_fingerprint
-                and _workspace_mcp_pid_alive(persisted_pid)
-                and await _workspace_mcp_is_ready(url=persisted_url)
-            ):
-                logger.info(
-                    "Reusing workspace MCP sidecar for physical_id=%s url=%s",
-                    physical_server_id,
-                    persisted_url,
-                    extra={
-                        "event": "workspace_mcp.sidecar",
-                        "outcome": "reuse",
-                        "logical_server_id": _WORKSPACE_MCP_SERVER_ID,
-                        "physical_server_id": physical_server_id,
-                        "sandbox_id": sandbox_id,
-                    },
-                )
-                return _RunningWorkspaceMcpSidecar(
-                    logical_server_id=_WORKSPACE_MCP_SERVER_ID,
-                    physical_server_id=physical_server_id,
-                    sandbox_id=sandbox_id,
-                    url=persisted_url,
-                    timeout_ms=timeout_ms,
-                    process=None,
-                    reused=True,
-                )
-
-            if persisted_pid > 0 and _workspace_mcp_pid_alive(persisted_pid):
-                _terminate_workspace_mcp_pid(persisted_pid)
-            state_entries.pop(physical_server_id, None)
-            _write_workspace_mcp_sidecar_state(state_entries)
-
-        port = _next_local_port()
-        url = f"http://127.0.0.1:{port}/mcp"
-        command = [
-            sys.executable,
-            "-m",
-            "sandbox_agent_runtime.workspace_mcp_sidecar",
-            "--workspace-dir",
-            str(workspace_dir),
-            "--workspace-id",
-            workspace_id,
-            "--catalog-json-base64",
-            _sidecar_catalog_payload(compiled_plan),
-            "--enabled-tool-ids-json-base64",
-            _sidecar_enabled_tool_ids_payload(compiled_plan),
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-            "--server-name",
-            physical_server_id,
-        ]
-        env = os.environ.copy()
-        pythonpath = (env.get("PYTHONPATH") or "").strip()
-        if not pythonpath:
-            env["PYTHONPATH"] = "/app"
-        elif "/app" not in pythonpath.split(":"):
-            env["PYTHONPATH"] = f"/app:{pythonpath}"
-        stdout_log_path = _workspace_mcp_log_path(physical_server_id=physical_server_id, stream="stdout")
-        stderr_log_path = _workspace_mcp_log_path(physical_server_id=physical_server_id, stream="stderr")
-        stdout_log_path.parent.mkdir(parents=True, exist_ok=True)
-        stdout_log_path.write_text("", encoding="utf-8")
-        stderr_log_path.write_text("", encoding="utf-8")
-        with stdout_log_path.open("ab") as stdout_handle, stderr_log_path.open("ab") as stderr_handle:
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                cwd=str(workspace_dir),
-                env=env,
-                stdout=stdout_handle,
-                stderr=stderr_handle,
-            )
-        try:
-            await _wait_for_workspace_mcp_ready(url=url, timeout_seconds=_WORKSPACE_MCP_READY_TIMEOUT_S)
-        except Exception as exc:
-            if process.returncode is None:
-                process.terminate()
-                with suppress(Exception):
-                    await asyncio.wait_for(process.wait(), timeout=1.0)
-            detail = _workspace_mcp_failure_detail(physical_server_id=physical_server_id)
+        request_payload = _WorkspaceMcpSidecarCliRequest(
+            workspace_id=workspace_id,
+            workspace_dir=str(workspace_dir),
+            sandbox_id=sandbox_id,
+            physical_server_id=physical_server_id,
+            expected_fingerprint=expected_fingerprint,
+            timeout_ms=timeout_ms,
+            readiness_timeout_s=_WORKSPACE_MCP_READY_TIMEOUT_S,
+            catalog_json_base64=_sidecar_catalog_payload(compiled_plan),
+            enabled_tool_ids_json_base64=_sidecar_enabled_tool_ids_payload(compiled_plan),
+            python_executable=sys.executable,
+        )
+        process = await asyncio.create_subprocess_exec(
+            *_ts_workspace_mcp_sidecar_command(payload=request_payload),
+            cwd=str(workspace_dir),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        stderr_text = stderr.decode("utf-8", errors="replace").strip()
+        stdout_text = stdout.decode("utf-8", errors="replace").strip()
+        if process.returncode != 0:
+            detail = stderr_text or stdout_text or _workspace_mcp_failure_detail(physical_server_id=physical_server_id)
+            suffix = f": {detail}" if detail else ""
             raise WorkspaceRuntimeConfigError(
                 code="workspace_mcp_sidecar_start_failed",
-                message=f"failed to start workspace MCP sidecar{detail}",
+                message=f"failed to start workspace MCP sidecar{suffix}",
+            )
+        try:
+            response = _WorkspaceMcpSidecarCliResponse.model_validate_json(stdout_text)
+        except Exception as exc:
+            detail = stderr_text or stdout_text or _workspace_mcp_failure_detail(physical_server_id=physical_server_id)
+            suffix = f": {detail}" if detail else ""
+            raise WorkspaceRuntimeConfigError(
+                code="workspace_mcp_sidecar_start_failed",
+                message=f"invalid workspace MCP sidecar response{suffix}",
             ) from exc
 
-        state_entries[physical_server_id] = {
-            "workspace_id": workspace_id,
-            "sandbox_id": sandbox_id,
-            "logical_server_id": _WORKSPACE_MCP_SERVER_ID,
-            "physical_server_id": physical_server_id,
-            "url": url,
-            "pid": int(process.pid or 0),
-            "config_fingerprint": expected_fingerprint,
-            "updated_at": datetime.now(UTC).isoformat(),
-        }
-        _write_workspace_mcp_sidecar_state(state_entries)
-
         logger.info(
-            "Started workspace MCP sidecar for physical_id=%s url=%s",
-            physical_server_id,
-            url,
+            "%s workspace MCP sidecar for physical_id=%s url=%s",
+            "Reused" if response.reused else "Started",
+            response.physical_server_id,
+            response.url,
             extra={
                 "event": "workspace_mcp.sidecar",
-                "outcome": "start",
-                "logical_server_id": _WORKSPACE_MCP_SERVER_ID,
-                "physical_server_id": physical_server_id,
-                "sandbox_id": sandbox_id,
+                "outcome": "reuse" if response.reused else "start",
+                "logical_server_id": response.logical_server_id,
+                "physical_server_id": response.physical_server_id,
+                "sandbox_id": response.sandbox_id,
             },
         )
         return _RunningWorkspaceMcpSidecar(
-            logical_server_id=_WORKSPACE_MCP_SERVER_ID,
-            physical_server_id=physical_server_id,
-            sandbox_id=sandbox_id,
-            url=url,
-            timeout_ms=timeout_ms,
-            process=process,
-            reused=False,
+            logical_server_id=response.logical_server_id,
+            physical_server_id=response.physical_server_id,
+            sandbox_id=response.sandbox_id,
+            url=response.url,
+            timeout_ms=response.timeout_ms,
+            pid=response.pid,
+            reused=response.reused,
         )
     finally:
         _release_workspace_mcp_lock(lock_file=lock_file)
@@ -1589,19 +1263,12 @@ async def _stop_workspace_mcp_sidecar(sidecar: _RunningWorkspaceMcpSidecar | Non
     keep_warm = (os.getenv("SANDBOX_WORKSPACE_MCP_KEEP_WARM", "true") or "").strip().lower()
     if keep_warm in {"1", "true", "yes", "on"}:
         return
-
-    process = sidecar.process
-    if process is None:
+    if sidecar.reused:
         return
-    if process.returncode is not None:
+    pid = int(sidecar.pid or 0)
+    if pid <= 0 or not _workspace_mcp_pid_alive(pid):
         return
-    process.terminate()
-    with suppress(asyncio.TimeoutError):
-        await asyncio.wait_for(process.wait(), timeout=2.0)
-    if process.returncode is None:
-        process.kill()
-        with suppress(Exception):
-            await process.wait()
+    _terminate_workspace_mcp_pid(pid)
 
 
 def _effective_mcp_server_payloads(
@@ -2234,12 +1901,6 @@ def _opencode_server_port() -> int:
     return max(1, min(value, 65535))
 
 
-def _opencode_server_log_path() -> Path:
-    path = Path(WORKSPACE_ROOT) / _SESSION_STATE_DIR_NAME / "opencode-server.log"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path
-
-
 def _opencode_ready_timeout_seconds() -> float:
     raw = (os.getenv("OPENCODE_READY_TIMEOUT_S") or "30").strip()
     with suppress(ValueError):
@@ -2262,114 +1923,43 @@ def _opencode_sidecar_fingerprint(*, runtime_config: _OpencodeRuntimeConfig, wor
 async def _restart_opencode_sidecar(
     *, allow_reuse_existing: bool = False, config_fingerprint: str = "", workspace_id: str = ""
 ) -> None:
+    entry_path = _ts_opencode_sidecar_entry_path()
+    if not entry_path.is_file():
+        raise RuntimeError(f"ts opencode sidecar entrypoint not found: {entry_path}")
+
     host = _opencode_server_host()
     port = _opencode_server_port()
-    process_marker = f"opencode serve --hostname {host} --port {port}"
     workspace_root = str(Path(WORKSPACE_ROOT))
     readiness_url = f"{_opencode_base_url()}/mcp"
-
-    async def _opencode_sidecar_pids() -> list[int]:
-        try:
-            ps_process = await asyncio.create_subprocess_exec(
-                "ps",
-                "-eo",
-                "pid=,args=",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await ps_process.communicate()
-        except Exception as exc:
-            raise RuntimeError(f"failed to inspect running OpenCode sidecar processes: {exc}") from exc
-
-        pids: list[int] = []
-        for line in stdout.decode("utf-8", errors="replace").splitlines():
-            row = line.strip()
-            if not row:
-                continue
-            parts = row.split(maxsplit=1)
-            if len(parts) != 2:
-                continue
-            pid_token, args = parts
-            if process_marker not in args:
-                continue
-            with suppress(ValueError):
-                pids.append(int(pid_token))
-        return pids
+    request_payload = _OpencodeSidecarCliRequest(
+        workspace_root=workspace_root,
+        workspace_id=workspace_id,
+        config_fingerprint=config_fingerprint,
+        allow_reuse_existing=allow_reuse_existing,
+        host=host,
+        port=port,
+        readiness_url=readiness_url,
+        ready_timeout_s=_opencode_ready_timeout_seconds(),
+    )
 
     lock_file = await _acquire_opencode_lock()
     try:
-        persisted_state = _read_opencode_sidecar_state()
-        persisted_fingerprint = str(persisted_state.get("config_fingerprint") or "").strip()
-        persisted_pid = int(persisted_state.get("pid") or 0)
-        fingerprint_matches = bool(config_fingerprint) and persisted_fingerprint == config_fingerprint
-
-        if await _workspace_mcp_is_ready(url=readiness_url):
-            if allow_reuse_existing or fingerprint_matches:
-                return
-
-        if persisted_pid and not _workspace_mcp_pid_alive(persisted_pid):
-            _clear_opencode_sidecar_state()
-            persisted_state = {}
-
-        running_pids = await _opencode_sidecar_pids()
-        for pid in sorted(set(running_pids)):
-            _terminate_workspace_mcp_pid(pid)
-
-        if running_pids:
-            deadline = asyncio.get_running_loop().time() + 3.0
-            while asyncio.get_running_loop().time() < deadline:
-                if not await _opencode_sidecar_pids():
-                    break
-                await asyncio.sleep(0.1)
-            remaining = await _opencode_sidecar_pids()
-            for pid in sorted(set(remaining)):
-                with suppress(OSError):
-                    os.kill(pid, signal.SIGKILL)
-            if remaining:
-                await asyncio.sleep(0.1)
-                if await _opencode_sidecar_pids():
-                    raise RuntimeError("failed to stop existing OpenCode sidecar before restart")
-
-        with _opencode_server_log_path().open("ab") as log_file:
-            try:
-                sidecar_process = await asyncio.create_subprocess_exec(
-                    "opencode",
-                    "serve",
-                    "--hostname",
-                    host,
-                    "--port",
-                    str(port),
-                    cwd=workspace_root,
-                    stdout=log_file,
-                    stderr=asyncio.subprocess.STDOUT,
-                    start_new_session=True,
-                )
-            except Exception as exc:
-                raise RuntimeError(f"failed to restart OpenCode sidecar: {exc}") from exc
+        process = await asyncio.create_subprocess_exec(
+            *_ts_opencode_sidecar_command(payload=request_payload),
+            cwd=workspace_root,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        stderr_text = stderr.decode("utf-8", errors="replace").strip()
+        stdout_text = stdout.decode("utf-8", errors="replace").strip()
+        if process.returncode != 0:
+            detail = stderr_text or stdout_text or f"local ts opencode sidecar exited with code {process.returncode}"
+            raise RuntimeError(detail)
         try:
-            await asyncio.wait_for(sidecar_process.wait(), timeout=0.2)
-        except TimeoutError:
-            pass
-        else:
-            # Exit code -15 (SIGTERM) likely means a concurrent restart killed our
-            # freshly spawned process.  Fall through to the readiness check — the
-            # other restart may have already brought up a healthy sidecar.
-            if sidecar_process.returncode != -15:
-                _clear_opencode_sidecar_state()
-                raise RuntimeError(f"OpenCode sidecar exited during startup with code {sidecar_process.returncode}")
-
-        await _wait_for_opencode_ready(
-            url=readiness_url,
-            timeout_seconds=_opencode_ready_timeout_seconds(),
-        )
-        _write_opencode_sidecar_state(
-            {
-                "pid": sidecar_process.pid,
-                "url": readiness_url,
-                "workspace_id": workspace_id,
-                "config_fingerprint": config_fingerprint,
-            }
-        )
+            _OpencodeSidecarCliResponse.model_validate_json(stdout_text)
+        except Exception as exc:
+            raise RuntimeError(f"invalid local ts opencode sidecar response: {exc}") from exc
     finally:
         _release_opencode_lock(lock_file=lock_file)
 
@@ -2397,120 +1987,44 @@ def _opencode_default_provider_id() -> str:
     return provider or _DEFAULT_OPENCODE_PROVIDER_ID
 
 
-def _opencode_proxy_config_path() -> Path:
-    return Path(WORKSPACE_ROOT) / "opencode.json"
-
-
-def _opencode_provider_config_payload(
+async def _write_opencode_config_via_local_ts(
     *,
     provider_id: str,
     model_id: str,
     model_client_config: _ModelClientConfig,
-) -> dict[str, Any]:
-    base_url = (model_client_config.base_url or "").strip().rstrip("/")
-    if not base_url:
-        raise RuntimeError("OpenCode model proxy base URL is not configured")
+) -> tuple[Path, bool, bool]:
+    entry_path = _ts_opencode_config_entry_path()
+    if not entry_path.is_file():
+        raise RuntimeError(f"ts opencode config entrypoint not found: {entry_path}")
 
-    headers: dict[str, str] = {}
-    if model_client_config.default_headers:
-        for key, value in model_client_config.default_headers.items():
-            normalized_key = str(key).strip()
-            normalized_value = str(value).strip()
-            if not normalized_key or not normalized_value:
-                continue
-            # Persist only stable auth/routing headers in opencode.json.
-            # Per-run metadata headers (session/input/run IDs) would mutate the
-            # file every turn and invalidate harness sessions on each request.
-            if normalized_key.lower() not in _OPENCODE_PERSISTED_PROXY_HEADER_ALLOWLIST:
-                continue
-            if normalized_key and normalized_value:
-                headers[normalized_key] = normalized_value
-    if "X-API-Key" not in headers:
-        headers["X-API-Key"] = model_client_config.api_key
-
-    provider_npm_package = "@ai-sdk/openai-compatible"
-    if model_client_config.model_proxy_provider == _MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE:
-        provider_npm_package = "@ai-sdk/anthropic"
-
-    return {
-        "$schema": "https://opencode.ai/config.json",
-        "provider": {
-            provider_id: {
-                "npm": provider_npm_package,
-                "name": "Holaboss Model Proxy",
-                "options": {
-                    "apiKey": model_client_config.api_key,
-                    "baseURL": base_url,
-                    "headers": headers,
-                },
-                "models": {
-                    model_id: {
-                        "name": model_id,
-                    },
-                },
-            },
-        },
-        "model": f"{provider_id}/{model_id}",
-    }
-
-
-def _write_opencode_provider_config(
-    *,
-    provider_id: str,
-    model_id: str,
-    model_client_config: _ModelClientConfig,
-) -> tuple[Path, bool]:
-    """Write opencode provider config. Returns (path, changed) where changed=True if the file was updated."""
-    path = _opencode_proxy_config_path()
-    payload = _opencode_provider_config_payload(
+    payload = _OpencodeConfigCliRequest(
+        workspace_root=str(Path(WORKSPACE_ROOT)),
         provider_id=provider_id,
         model_id=model_id,
-        model_client_config=model_client_config,
+        model_client=_HarnessHostModelClientPayload(
+            model_proxy_provider=model_client_config.model_proxy_provider,
+            api_key=model_client_config.api_key,
+            base_url=model_client_config.base_url,
+            default_headers=model_client_config.default_headers,
+        ),
     )
-    new_text = json.dumps(payload, ensure_ascii=True, indent=2)
+    process = await asyncio.create_subprocess_exec(
+        *_ts_opencode_config_command(payload=payload),
+        cwd=str(Path(WORKSPACE_ROOT)),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    stderr_text = stderr.decode("utf-8", errors="replace").strip()
+    stdout_text = stdout.decode("utf-8", errors="replace").strip()
+    if process.returncode != 0:
+        detail = stderr_text or stdout_text or f"local ts opencode config exited with code {process.returncode}"
+        raise RuntimeError(detail)
     try:
-        existing_text = path.read_text(encoding="utf-8")
-    except OSError:
-        existing_text = ""
-    if existing_text == new_text:
-        return path, False
-    path.write_text(new_text, encoding="utf-8")
-    return path, True
-
-
-def _write_opencode_model_selection(
-    *,
-    provider_id: str,
-    model_id: str,
-) -> tuple[Path, bool]:
-    """Update only top-level model selection in opencode.json.
-
-    Provider definitions are bootstrapped by entrypoint.sh and should remain
-    stable across runs to avoid unnecessary session invalidation.
-    """
-
-    path = _opencode_proxy_config_path()
-    desired_model = f"{provider_id}/{model_id}"
-
-    try:
-        existing_text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise RuntimeError(f"OpenCode config file is missing at {path}") from exc
-
-    try:
-        payload = json.loads(existing_text)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"OpenCode config at {path} is invalid JSON") from exc
-    if not isinstance(payload, dict):
-        raise TypeError(f"OpenCode config at {path} must be a JSON object")
-
-    existing_model = str(payload.get("model") or "").strip()
-    if existing_model == desired_model:
-        return path, False
-
-    payload["model"] = desired_model
-    path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
-    return path, True
+        response = _OpencodeConfigCliResponse.model_validate_json(stdout_text)
+    except Exception as exc:
+        raise RuntimeError(f"invalid local ts opencode config response: {exc}") from exc
+    return Path(response.path), response.provider_config_changed, response.model_selection_changed
 
 
 def _opencode_structured_retry_count() -> int:
@@ -2526,154 +2040,161 @@ def _opencode_tool_name_from_mcp_server_and_tool(*, server_id: str, tool_name: s
     return f"{server_id}_{tool_name}"
 
 
-def _opencode_tools_from_workspace(
+def _project_opencode_runtime_config_request(
     *,
+    request: RunnerRequest,
     compiled_plan: CompiledWorkspaceRuntimePlan,
+    workspace_skill_ids: tuple[str, ...] = (),
     tool_server_id_map: Mapping[str, str] | None = None,
-) -> tuple[dict[str, bool], tuple[str, ...]]:
-    workspace_tool_ids = tuple(tool_ref.tool_id for tool_ref in compiled_plan.resolved_mcp_tool_refs)
-    tools: dict[str, bool] = dict.fromkeys(_OPENCODE_DEFAULT_TOOLS, True)
-    for tool_ref in compiled_plan.resolved_mcp_tool_refs:
-        server_id = (
-            tool_server_id_map.get(tool_ref.server_id, tool_ref.server_id) if tool_server_id_map else tool_ref.server_id
-        )
-        tools[_opencode_tool_name_from_mcp_server_and_tool(server_id=server_id, tool_name=tool_ref.tool_name)] = True
-    return tools, workspace_tool_ids
-
-
-def _opencode_chat_tools_from_workspace(
-    *,
-    compiled_plan: CompiledWorkspaceRuntimePlan,
-    tool_server_id_map: Mapping[str, str] | None = None,
-) -> tuple[dict[str, bool], tuple[str, ...]]:
-    tools, workspace_tool_ids = _opencode_tools_from_workspace(
-        compiled_plan=compiled_plan,
-        tool_server_id_map=tool_server_id_map,
-    )
-    extra_tools = (os.getenv("OPENCODE_EXTRA_TOOLS") or "").strip()
-    for token in extra_tools.split(","):
-        tool_name = token.strip()
-        if tool_name:
-            tools[tool_name] = True
-    return tools, workspace_tool_ids
-
-
-def _selected_opencode_schema(
-    *,
-    general_config: WorkspaceGeneralSingleConfig | WorkspaceGeneralTeamConfig,
-    resolved_output_schemas: dict[str, type[BaseModel]],
-) -> tuple[str | None, type[BaseModel] | None]:
+) -> _OpencodeRuntimeConfigCliRequest:
+    general_config = compiled_plan.general_config
+    resolved_output_schemas = {
+        member_id: schema_model.model_json_schema()
+        for member_id, schema_model in compiled_plan.resolved_output_schemas.items()
+    }
     if isinstance(general_config, WorkspaceGeneralSingleConfig):
-        member_id = general_config.agent.id
-        return member_id, resolved_output_schemas.get(member_id)
-
-    coordinator_id = general_config.coordinator.id
-    unsupported_member_ids = sorted(member_id for member_id in resolved_output_schemas if member_id != coordinator_id)
-    if unsupported_member_ids:
-        raise WorkspaceRuntimeConfigError(
-            code="workspace_schema_member_unsupported",
-            path="agents",
-            message=(
-                "OpenCode harness currently validates a single schema for the selected runtime member only; "
-                + f"unsupported schema members: {', '.join(unsupported_member_ids)}"
+        return _OpencodeRuntimeConfigCliRequest(
+            session_id=request.session_id,
+            workspace_id=request.workspace_id,
+            input_id=request.input_id,
+            runtime_exec_model_proxy_api_key=_runtime_exec_context_str(
+                request=request, key=_RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY
+            ) or None,
+            runtime_exec_sandbox_id=_runtime_exec_context_str(request=request, key=_RUNTIME_EXEC_SANDBOX_ID_KEY) or None,
+            runtime_exec_run_id=_runtime_exec_context_str(request=request, key=_RUNTIME_EXEC_RUN_ID_KEY) or None,
+            selected_model=request.model,
+            default_provider_id=_opencode_default_provider_id(),
+            session_mode=_opencode_session_mode(),
+            workspace_config_checksum=compiled_plan.config_checksum,
+            workspace_skill_ids=list(workspace_skill_ids),
+            default_tools=list(_OPENCODE_DEFAULT_TOOLS),
+            extra_tools=[token.strip() for token in (os.getenv("OPENCODE_EXTRA_TOOLS") or "").split(",") if token.strip()],
+            tool_server_id_map=dict(tool_server_id_map) if tool_server_id_map else None,
+            resolved_mcp_tool_refs=[
+                {
+                    "tool_id": tool_ref.tool_id,
+                    "server_id": tool_ref.server_id,
+                    "tool_name": tool_ref.tool_name,
+                }
+                for tool_ref in compiled_plan.resolved_mcp_tool_refs
+            ],
+            resolved_output_schemas=resolved_output_schemas,
+            general_type="single",
+            single_agent=_OpencodeRuntimeConfigGeneralMemberPayload(
+                id=general_config.agent.id,
+                model=general_config.agent.model,
+                prompt=general_config.agent.prompt,
+                role=general_config.agent.role,
             ),
         )
-    return coordinator_id, resolved_output_schemas.get(coordinator_id)
-
-
-def _opencode_output_format(*, schema_model: type[BaseModel] | None) -> dict[str, Any] | None:
-    if schema_model is None:
-        return None
-    return {
-        "type": "json_schema",
-        "schema": schema_model.model_json_schema(),
-        "retryCount": _opencode_structured_retry_count(),
-    }
-
-
-def _resolve_opencode_provider_and_model(*, model: str, default_provider_id: str) -> tuple[str, str]:
-    provider, model_id = _resolve_model_proxy_provider_and_model_id(
-        model_token=model,
-        default_provider=default_provider_id,
+    if isinstance(general_config, WorkspaceGeneralTeamConfig):
+        return _OpencodeRuntimeConfigCliRequest(
+            session_id=request.session_id,
+            workspace_id=request.workspace_id,
+            input_id=request.input_id,
+            runtime_exec_model_proxy_api_key=_runtime_exec_context_str(
+                request=request, key=_RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY
+            ) or None,
+            runtime_exec_sandbox_id=_runtime_exec_context_str(request=request, key=_RUNTIME_EXEC_SANDBOX_ID_KEY) or None,
+            runtime_exec_run_id=_runtime_exec_context_str(request=request, key=_RUNTIME_EXEC_RUN_ID_KEY) or None,
+            selected_model=request.model,
+            default_provider_id=_opencode_default_provider_id(),
+            session_mode=_opencode_session_mode(),
+            workspace_config_checksum=compiled_plan.config_checksum,
+            workspace_skill_ids=list(workspace_skill_ids),
+            default_tools=list(_OPENCODE_DEFAULT_TOOLS),
+            extra_tools=[token.strip() for token in (os.getenv("OPENCODE_EXTRA_TOOLS") or "").split(",") if token.strip()],
+            tool_server_id_map=dict(tool_server_id_map) if tool_server_id_map else None,
+            resolved_mcp_tool_refs=[
+                {
+                    "tool_id": tool_ref.tool_id,
+                    "server_id": tool_ref.server_id,
+                    "tool_name": tool_ref.tool_name,
+                }
+                for tool_ref in compiled_plan.resolved_mcp_tool_refs
+            ],
+            resolved_output_schemas=resolved_output_schemas,
+            general_type="team",
+            coordinator=_OpencodeRuntimeConfigGeneralMemberPayload(
+                id=general_config.coordinator.id,
+                model=general_config.coordinator.model,
+                prompt=general_config.coordinator.prompt,
+                role=general_config.coordinator.role,
+            ),
+            members=[
+                _OpencodeRuntimeConfigGeneralMemberPayload(
+                    id=member.id,
+                    model=member.model,
+                    prompt=member.prompt,
+                    role=member.role,
+                )
+                for member in general_config.members
+            ],
+        )
+    raise WorkspaceRuntimeConfigError(
+        code="workspace_general_type_invalid",
+        path="agents",
+        message=f"unsupported general runtime mode: {type(general_config).__name__}",
     )
-    if provider == _MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE:
-        return "anthropic", model_id
-    return "openai", model_id
 
 
-def _compose_opencode_team_system_prompt(*, general_config: WorkspaceGeneralTeamConfig) -> str:
-    lines = [
-        "You are the workspace coordinator agent.",
-        "Follow coordinator guidance and apply member guidance when useful.",
-        "",
-        "Coordinator instructions:",
-        general_config.coordinator.prompt.strip(),
-        "",
-        "Member guidance:",
-    ]
-    for member in general_config.members:
-        role_label = member.role or "member"
-        lines.extend([
-            f"- {member.id} ({role_label}):",
-            member.prompt.strip(),
-            "",
-        ])
-    return "\n".join(lines).strip()
-
-
-def _build_opencode_runtime_config(
+async def _build_opencode_runtime_config(
     *,
     request: RunnerRequest,
     compiled_plan: CompiledWorkspaceRuntimePlan,
     mcp_servers: tuple[dict[str, Any], ...],
+    workspace_skill_ids: tuple[str, ...] = (),
     tool_server_id_map: Mapping[str, str] | None = None,
 ) -> _OpencodeRuntimeConfig:
-    workspace_dir = Path(WORKSPACE_ROOT) / sanitize_workspace_id(request.workspace_id)
-    workspace_skills = _resolve_workspace_skills(workspace_dir=workspace_dir)
+    entry_path = _ts_opencode_runtime_config_entry_path()
+    if not entry_path.is_file():
+        raise RuntimeError(f"ts opencode runtime config entrypoint not found: {entry_path}")
 
-    general_config = compiled_plan.general_config
-    if isinstance(general_config, WorkspaceGeneralSingleConfig):
-        selected_model = request.model or general_config.agent.model
-        system_prompt = general_config.agent.prompt.strip()
-    elif isinstance(general_config, WorkspaceGeneralTeamConfig):
-        selected_model = request.model or general_config.coordinator.model
-        system_prompt = _compose_opencode_team_system_prompt(general_config=general_config)
-    else:
-        raise WorkspaceRuntimeConfigError(
-            code="workspace_general_type_invalid",
-            path="agents",
-            message=f"unsupported general runtime mode: {type(general_config).__name__}",
-        )
-
-    provider_id, model_id = _resolve_opencode_provider_and_model(
-        model=selected_model,
-        default_provider_id=_opencode_default_provider_id(),
-    )
-    tools, workspace_tool_ids = _opencode_chat_tools_from_workspace(
+    payload = _project_opencode_runtime_config_request(
+        request=request,
         compiled_plan=compiled_plan,
+        workspace_skill_ids=workspace_skill_ids,
         tool_server_id_map=tool_server_id_map,
     )
-    if workspace_skills is not None:
-        tools.setdefault("read", True)
-    output_schema_member_id, output_schema_model = _selected_opencode_schema(
-        general_config=general_config,
-        resolved_output_schemas=compiled_plan.resolved_output_schemas,
+    process = await asyncio.create_subprocess_exec(
+        *_ts_opencode_runtime_config_command(payload=payload),
+        cwd=str(Path(WORKSPACE_ROOT)),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
-    output_format = _opencode_output_format(schema_model=output_schema_model)
+    stdout, stderr = await process.communicate()
+    stderr_text = stderr.decode("utf-8", errors="replace").strip()
+    stdout_text = stdout.decode("utf-8", errors="replace").strip()
+    if process.returncode != 0:
+        detail = stderr_text or stdout_text or f"local ts opencode runtime config exited with code {process.returncode}"
+        raise RuntimeError(detail)
+    try:
+        response = _OpencodeRuntimeConfigCliResponse.model_validate_json(stdout_text)
+    except Exception as exc:
+        raise RuntimeError(f"invalid local ts opencode runtime config response: {exc}") from exc
 
+    output_schema_model = (
+        compiled_plan.resolved_output_schemas.get(response.output_schema_member_id) if response.output_schema_member_id else None
+    )
     return _OpencodeRuntimeConfig(
-        provider_id=provider_id,
-        model_id=model_id,
-        mode=_opencode_session_mode(),
-        system_prompt=system_prompt,
-        tools=tools,
-        workspace_tool_ids=workspace_tool_ids,
+        provider_id=response.provider_id,
+        model_id=response.model_id,
+        mode=response.mode,
+        system_prompt=response.system_prompt,
+        model_client_config=_ModelClientConfig(
+            model_proxy_provider=response.model_client.model_proxy_provider,
+            api_key=response.model_client.api_key,
+            base_url=response.model_client.base_url,
+            default_headers=response.model_client.default_headers,
+        ),
+        tools=dict(response.tools),
+        workspace_tool_ids=tuple(response.workspace_tool_ids),
         mcp_servers=mcp_servers,
-        output_schema_member_id=output_schema_member_id,
+        output_schema_member_id=response.output_schema_member_id,
         output_schema_model=output_schema_model,
-        output_format=output_format,
-        workspace_config_checksum=compiled_plan.config_checksum,
-        workspace_skill_ids=tuple(skill.skill_id for skill in workspace_skills.skills) if workspace_skills else (),
+        output_format=response.output_format,
+        workspace_config_checksum=response.workspace_config_checksum,
+        workspace_skill_ids=tuple(response.workspace_skill_ids),
     )
 
 
@@ -3611,12 +3132,10 @@ async def _execute_request_opencode(request: RunnerRequest) -> int:
             )
 
             phase_started_at = time.perf_counter()
-            workspace_skills = _resolve_workspace_skills(workspace_dir=workspace_dir)
-            workspace_skills_changed = _stage_workspace_skills_for_opencode(
-                workspace_dir=workspace_dir,
-                workspace_skills=workspace_skills,
+            workspace_skills_changed, workspace_skill_ids = await _stage_workspace_skills_for_opencode(
+                workspace_dir=workspace_dir
             )
-            _stage_workspace_commands_for_opencode(workspace_dir=workspace_dir)
+            await _stage_workspace_commands_for_opencode(workspace_dir=workspace_dir)
             _log_phase("stage_workspace_assets", phase_started_at)
 
             phase_started_at = time.perf_counter()
@@ -3664,18 +3183,16 @@ async def _execute_request_opencode(request: RunnerRequest) -> int:
                 )
                 effective_mcp_servers = effective_mcp_servers + app_mcp_entries
 
-            runtime_config = _build_opencode_runtime_config(
+            runtime_config = await _build_opencode_runtime_config(
                 request=request,
                 compiled_plan=compiled_plan,
                 mcp_servers=effective_mcp_servers,
+                workspace_skill_ids=workspace_skill_ids,
                 tool_server_id_map=mcp_server_id_map,
             )
 
-            model_client_config = _resolve_model_client_config(
-                request=request,
-                model_proxy_provider=runtime_config.provider_id,
-            )
-            _, opencode_provider_config_changed = _write_opencode_provider_config(
+            model_client_config = runtime_config.model_client_config
+            _, opencode_provider_config_changed, opencode_model_selection_changed = await _write_opencode_config_via_local_ts(
                 provider_id=runtime_config.provider_id,
                 model_id=runtime_config.model_id,
                 model_client_config=model_client_config,
@@ -3687,10 +3204,6 @@ async def _execute_request_opencode(request: RunnerRequest) -> int:
                     runtime_config.model_id,
                 )
 
-            _, opencode_model_selection_changed = _write_opencode_model_selection(
-                provider_id=runtime_config.provider_id,
-                model_id=runtime_config.model_id,
-            )
             if opencode_model_selection_changed:
                 logger.info(
                     "opencode.json model selection updated provider_id=%s model_id=%s",

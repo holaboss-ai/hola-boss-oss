@@ -69,6 +69,7 @@ import {
 import { startOpencodeApplications } from "./opencode-bootstrap-shared.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 50;
+const DEFAULT_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
 const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
 export interface BuildRuntimeApiServerOptions {
   logger?: boolean;
@@ -690,7 +691,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       workspaceRoot: options.workspaceRoot ?? defaultWorkspaceRoot()
     });
 
-  const app = Fastify({ logger: options.logger ?? false });
+  const app = Fastify({
+    logger: options.logger ?? false,
+    bodyLimit: DEFAULT_BODY_LIMIT_BYTES,
+  });
   const backgroundTasks = new Set<Promise<void>>();
   const appLifecycleExecutor = options.appLifecycleExecutor ?? new RuntimeAppLifecycleExecutor();
   const memoryService = options.memoryService ?? new FilesystemMemoryService({ workspaceRoot: store.workspaceRoot });

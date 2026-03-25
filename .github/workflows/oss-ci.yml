@@ -44,3 +44,30 @@ jobs:
 
       - name: Runtime tests
         run: npm run runtime:test
+
+  runtime-api-server:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            runtime/api-server/package-lock.json
+            runtime/state-store/package-lock.json
+
+      - name: Install runtime API server dependencies
+        run: npm --prefix runtime/api-server ci
+
+      - name: Runtime API server typecheck
+        run: npm --prefix runtime/api-server run typecheck
+
+      - name: Runtime API server tests
+        run: npm --prefix runtime/api-server run test
+
+      - name: Runtime API server build
+        run: npm --prefix runtime/api-server run build

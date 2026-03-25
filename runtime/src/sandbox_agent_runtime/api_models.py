@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from sandbox_agent_runtime.runner import RunnerOutputEvent
+from sandbox_agent_runtime.runner_models import RunnerOutputEvent
 
 
 class WorkspaceAgentRunResponse(BaseModel):

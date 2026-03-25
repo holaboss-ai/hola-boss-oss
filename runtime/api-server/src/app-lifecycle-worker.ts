@@ -128,7 +128,7 @@ function hasNativeShellLifecycle(params: {
   if (!params.resolvedApp.lifecycle.start && !params.resolvedApp.lifecycle.stop) {
     return false;
   }
-  return composeFilePath(params.appDir) === null;
+  return true;
 }
 
 function hasNativeStartCommandLifecycle(params: {

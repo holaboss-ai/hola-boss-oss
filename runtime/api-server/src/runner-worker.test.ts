@@ -1,11 +1,21 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
-import { NativeRunnerExecutor, RunnerExecutorError } from "./runner-worker.js";
+import {
+  buildRunnerEnv,
+  currentRuntimeApiUrl,
+  NativeRunnerExecutor,
+  RunnerExecutorError
+} from "./runner-worker.js";
 
 const ORIGINAL_ENV = {
   SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE: process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE,
-  SANDBOX_AGENT_RUN_TIMEOUT_S: process.env.SANDBOX_AGENT_RUN_TIMEOUT_S
+  SANDBOX_AGENT_RUN_TIMEOUT_S: process.env.SANDBOX_AGENT_RUN_TIMEOUT_S,
+  SANDBOX_RUNTIME_API_URL: process.env.SANDBOX_RUNTIME_API_URL,
+  SANDBOX_RUNTIME_API_HOST: process.env.SANDBOX_RUNTIME_API_HOST,
+  SANDBOX_RUNTIME_API_PORT: process.env.SANDBOX_RUNTIME_API_PORT,
+  SANDBOX_AGENT_BIND_HOST: process.env.SANDBOX_AGENT_BIND_HOST,
+  SANDBOX_AGENT_BIND_PORT: process.env.SANDBOX_AGENT_BIND_PORT
 };
 
 afterEach(() => {
@@ -18,6 +28,31 @@ afterEach(() => {
     delete process.env.SANDBOX_AGENT_RUN_TIMEOUT_S;
   } else {
     process.env.SANDBOX_AGENT_RUN_TIMEOUT_S = ORIGINAL_ENV.SANDBOX_AGENT_RUN_TIMEOUT_S;
+  }
+  if (ORIGINAL_ENV.SANDBOX_RUNTIME_API_URL === undefined) {
+    delete process.env.SANDBOX_RUNTIME_API_URL;
+  } else {
+    process.env.SANDBOX_RUNTIME_API_URL = ORIGINAL_ENV.SANDBOX_RUNTIME_API_URL;
+  }
+  if (ORIGINAL_ENV.SANDBOX_RUNTIME_API_HOST === undefined) {
+    delete process.env.SANDBOX_RUNTIME_API_HOST;
+  } else {
+    process.env.SANDBOX_RUNTIME_API_HOST = ORIGINAL_ENV.SANDBOX_RUNTIME_API_HOST;
+  }
+  if (ORIGINAL_ENV.SANDBOX_RUNTIME_API_PORT === undefined) {
+    delete process.env.SANDBOX_RUNTIME_API_PORT;
+  } else {
+    process.env.SANDBOX_RUNTIME_API_PORT = ORIGINAL_ENV.SANDBOX_RUNTIME_API_PORT;
+  }
+  if (ORIGINAL_ENV.SANDBOX_AGENT_BIND_HOST === undefined) {
+    delete process.env.SANDBOX_AGENT_BIND_HOST;
+  } else {
+    process.env.SANDBOX_AGENT_BIND_HOST = ORIGINAL_ENV.SANDBOX_AGENT_BIND_HOST;
+  }
+  if (ORIGINAL_ENV.SANDBOX_AGENT_BIND_PORT === undefined) {
+    delete process.env.SANDBOX_AGENT_BIND_PORT;
+  } else {
+    process.env.SANDBOX_AGENT_BIND_PORT = ORIGINAL_ENV.SANDBOX_AGENT_BIND_PORT;
   }
 });
 
@@ -91,4 +126,30 @@ test("native runner executor reports invalid command templates", async () => {
     assert.match(error.message, /invalid SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE/);
     return true;
   });
+});
+
+test("current runtime api url prefers explicit value", () => {
+  process.env.SANDBOX_RUNTIME_API_URL = "http://127.0.0.1:5060";
+  process.env.SANDBOX_RUNTIME_API_PORT = "9999";
+
+  assert.equal(currentRuntimeApiUrl(), "http://127.0.0.1:5060");
+});
+
+test("current runtime api url derives from runtime host and port", () => {
+  delete process.env.SANDBOX_RUNTIME_API_URL;
+  process.env.SANDBOX_RUNTIME_API_HOST = "0.0.0.0";
+  process.env.SANDBOX_RUNTIME_API_PORT = "53668";
+
+  assert.equal(currentRuntimeApiUrl(), "http://127.0.0.1:53668");
+});
+
+test("build runner env injects runtime api url when missing", () => {
+  delete process.env.SANDBOX_RUNTIME_API_URL;
+  delete process.env.SANDBOX_RUNTIME_API_HOST;
+  process.env.SANDBOX_AGENT_BIND_HOST = "127.0.0.1";
+  process.env.SANDBOX_AGENT_BIND_PORT = "5060";
+
+  const env = buildRunnerEnv();
+
+  assert.equal(env.SANDBOX_RUNTIME_API_URL, "http://127.0.0.1:5060");
 });

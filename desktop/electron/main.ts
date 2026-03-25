@@ -3697,16 +3697,45 @@ async function listRuntimeStates(workspaceId: string): Promise<SessionRuntimeSta
   });
 }
 
+function isMissingSessionBindingError(error: unknown): boolean {
+  return error instanceof Error && error.message.trim().toLowerCase() === "session binding not found";
+}
+
+function emptySessionHistoryPayload(sessionId: string, workspaceId: string): SessionHistoryResponsePayload {
+  return {
+    workspace_id: workspaceId,
+    session_id: sessionId,
+    harness: "",
+    harness_session_id: "",
+    source: "sandbox_local_storage",
+    main_session_id: sessionId,
+    is_main_session: true,
+    messages: [],
+    count: 0,
+    total: 0,
+    limit: 200,
+    offset: 0,
+    raw: null
+  };
+}
+
 async function getSessionHistory(sessionId: string, workspaceId: string): Promise<SessionHistoryResponsePayload> {
-  return requestRuntimeJson<SessionHistoryResponsePayload>({
-    method: "GET",
-    path: `/api/v1/agent-sessions/${sessionId}/history`,
-    params: {
-      workspace_id: workspaceId,
-      limit: 200,
-      offset: 0
+  try {
+    return await requestRuntimeJson<SessionHistoryResponsePayload>({
+      method: "GET",
+      path: `/api/v1/agent-sessions/${sessionId}/history`,
+      params: {
+        workspace_id: workspaceId,
+        limit: 200,
+        offset: 0
+      }
+    });
+  } catch (error) {
+    if (isMissingSessionBindingError(error)) {
+      return emptySessionHistoryPayload(sessionId, workspaceId);
     }
-  });
+    throw error;
+  }
 }
 
 function normalizeErrorMessage(error: unknown) {

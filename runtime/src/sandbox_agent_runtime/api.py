@@ -50,9 +50,7 @@ from sandbox_agent_runtime.api_models import (
     UninstallAppRequest,
     WriteFileRequest,
 )
-from sandbox_agent_runtime.runner import (
-    RunnerRequest,
-)
+from sandbox_agent_runtime.runner_models import RunnerRequest
 from sandbox_agent_runtime.workspace_scope import WORKSPACE_ROOT
 from sandbox_agent_runtime.ts_api_proxy import TsApiProxySupport
 
