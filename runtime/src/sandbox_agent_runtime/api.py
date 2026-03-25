@@ -92,6 +92,14 @@ async def get_runtime_status() -> Response:
     )
 
 
+@app.get("/api/v1/runtime/system-status")
+async def get_runtime_system_status() -> Response:
+    return await _ts_api_proxy.proxy_ts_api_json(
+        "GET",
+        "/api/v1/runtime/system-status",
+    )
+
+
 @app.put("/api/v1/runtime/config")
 async def put_runtime_config(payload: RuntimeConfigUpdateRequest) -> Response:
     return await _ts_api_proxy.proxy_ts_api_json(

@@ -454,6 +454,108 @@ function sanitizeAppId(appId: string): string {
   return value;
 }
 
+function collectSystemStatus(workspaceRoot: string, store: RuntimeStateStore): Record<string, unknown> {
+  return {
+    cpu: getCpuInfo(),
+    memory: getMemoryInfo(),
+    disk: getDiskInfo(),
+    workspaces: getWorkspaceDiskInfo(workspaceRoot, store),
+    uptime_seconds: os.uptime(),
+  };
+}
+
+function getCpuInfo(): Record<string, unknown> {
+  const numCores = os.cpus().length || 1;
+  const loadAvg = os.loadavg()[0] ?? 0;
+  const usagePercent = Math.round(Math.min((loadAvg / numCores) * 100, 100) * 10) / 10;
+  return { usage_percent: usagePercent, num_cores: numCores };
+}
+
+function getMemoryInfo(): Record<string, unknown> {
+  const totalBytes = os.totalmem();
+  const freeBytes = os.freemem();
+  const usedBytes = totalBytes - freeBytes;
+  const percent = totalBytes > 0 ? Math.round((usedBytes / totalBytes) * 1000) / 10 : 0;
+
+  // Try cgroup v2 for container-aware limits
+  try {
+    const cgroupCurrent = "/sys/fs/cgroup/memory.current";
+    const cgroupMax = "/sys/fs/cgroup/memory.max";
+    if (fs.existsSync(cgroupCurrent) && fs.existsSync(cgroupMax)) {
+      const used = Number.parseInt(fs.readFileSync(cgroupCurrent, "utf8").trim(), 10);
+      const maxRaw = fs.readFileSync(cgroupMax, "utf8").trim();
+      const total = maxRaw === "max" ? totalBytes : Number.parseInt(maxRaw, 10);
+      const pct = total > 0 ? Math.round((used / total) * 1000) / 10 : 0;
+      return { used_bytes: used, total_bytes: total, percent: pct };
+    }
+  } catch {
+    // fall through to os-level stats
+  }
+
+  return { used_bytes: usedBytes, total_bytes: totalBytes, percent };
+}
+
+function getDiskInfo(): Record<string, unknown> {
+  try {
+    const result = spawnSync("df", ["-B1", "--output=size,used,avail", "/"], { timeout: 5000 });
+    if (result.status === 0) {
+      const lines = result.stdout.toString().trim().split("\n");
+      if (lines.length >= 2) {
+        const parts = (lines[1] ?? "").trim().split(/\s+/);
+        const total = Number.parseInt(parts[0] ?? "0", 10);
+        const used = Number.parseInt(parts[1] ?? "0", 10);
+        const percent = total > 0 ? Math.round((used / total) * 1000) / 10 : 0;
+        return { used_bytes: used, total_bytes: total, percent };
+      }
+    }
+  } catch {
+    // fall through
+  }
+  return { used_bytes: 0, total_bytes: 0, percent: 0 };
+}
+
+function getWorkspaceDiskInfo(workspaceRoot: string, store: RuntimeStateStore): Record<string, unknown> {
+  const byWorkspace: Record<string, number> = {};
+  try {
+    const workspaces = store.listWorkspaces({ includeDeleted: false });
+    for (const ws of workspaces) {
+      const wsDir = store.workspaceDir(ws.id);
+      if (fs.existsSync(wsDir)) {
+        byWorkspace[ws.id] = dirSize(wsDir);
+      }
+    }
+  } catch {
+    // best-effort
+  }
+  const totalBytes = Object.values(byWorkspace).reduce((sum, size) => sum + size, 0);
+  return { count: Object.keys(byWorkspace).length, total_bytes: totalBytes, by_workspace: byWorkspace };
+}
+
+function dirSize(dirPath: string): number {
+  let total = 0;
+  try {
+    const stack = [dirPath];
+    while (stack.length > 0) {
+      const current = stack.pop() as string;
+      for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+        const fullPath = path.join(current, entry.name);
+        if (entry.isDirectory()) {
+          stack.push(fullPath);
+        } else if (entry.isFile() && !entry.isSymbolicLink()) {
+          try {
+            total += fs.statSync(fullPath).size;
+          } catch {
+            // skip inaccessible files
+          }
+        }
+      }
+    }
+  } catch {
+    // skip inaccessible dirs
+  }
+  return total;
+}
+
 function collectWorkspaceSnapshot(workspaceDir: string) {
   const files: Array<Record<string, unknown>> = [];
   const extensionCounts: Record<string, number> = {};
@@ -749,6 +851,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "runtime status failed");
     }
+  });
+
+  app.get("/api/v1/runtime/system-status", async () => {
+    return collectSystemStatus(store.workspaceRoot, store);
   });
 
   app.put("/api/v1/runtime/config", async (request, reply) => {
