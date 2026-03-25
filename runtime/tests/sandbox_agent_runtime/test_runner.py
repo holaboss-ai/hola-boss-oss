@@ -840,6 +840,20 @@ async def test_execute_request_emits_run_failed_without_model_proxy_config(
         "sandbox_agent_runtime.runner._stage_workspace_skills_for_opencode",
         lambda *, workspace_dir: asyncio.sleep(0, result=(False, ())),
     )
+    monkeypatch.setattr(
+        "sandbox_agent_runtime.runner._stage_workspace_commands_for_opencode",
+        lambda *, workspace_dir: asyncio.sleep(0),
+    )
+    monkeypatch.setattr(
+        "sandbox_agent_runtime.runner._write_opencode_config_via_local_ts",
+        lambda **kwargs: (_ for _ in ()).throw(
+            RuntimeError(
+                "missing required runtime exec context values: "
+                "_sandbox_runtime_exec_v1.model_proxy_api_key, "
+                "_sandbox_runtime_exec_v1.sandbox_id"
+            )
+        ),
+    )
 
     request = RunnerRequest(
         holaboss_user_id="user-1",

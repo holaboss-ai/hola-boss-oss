@@ -658,41 +658,55 @@ async def test_internal_opencode_app_start_route_proxies_to_ts_api_when_enabled(
 
 
 @pytest.mark.asyncio
-async def test_queue_endpoint_persists_local_input_and_runtime_state(
+async def test_queue_endpoint_proxies_to_ts_api_by_default(
     monkeypatch: pytest.MonkeyPatch,
     runtime_db_env: Path,
 ) -> None:
     del runtime_db_env
 
-    workspace = create_workspace(
-        name="Workspace 1",
-        harness="opencode",
-        status="active",
-        main_session_id="session-main",
-    )
+    captured: list[dict[str, object]] = []
+
+    async def _fake_proxy(method: str, path: str, *, params=None, json_body=None):
+        captured.append({
+            "method": method,
+            "path": path,
+            "params": params,
+            "json_body": json_body,
+        })
+        return Response(
+            content=json.dumps({"input_id": "input-1", "session_id": "session-main", "status": "QUEUED"}).encode("utf-8"),
+            media_type="application/json",
+        )
+
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_json", _fake_proxy)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post(
             "/api/v1/agent-sessions/queue",
             json={
-                "workspace_id": workspace.id,
+                "workspace_id": "workspace-1",
                 "text": "hello world",
             },
         )
 
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["session_id"] == "session-main"
-    assert payload["status"] == "QUEUED"
-
-    queued = get_input(payload["input_id"])
-    assert queued is not None
-    assert queued.payload["text"] == "hello world"
-    assert "holaboss_user_id" not in queued.payload
-    runtime_states = list_runtime_states(workspace.id)
-    assert runtime_states[0]["status"] in {"QUEUED", "BUSY"}
-    assert runtime_states[0]["current_input_id"] == payload["input_id"]
+    assert response.json()["input_id"] == "input-1"
+    assert captured == [{
+        "method": "POST",
+        "path": "/api/v1/agent-sessions/queue",
+        "params": None,
+        "json_body": {
+            "workspace_id": "workspace-1",
+            "text": "hello world",
+            "holaboss_user_id": None,
+            "image_urls": None,
+            "session_id": None,
+            "idempotency_key": None,
+            "priority": 0,
+            "model": None,
+        },
+    }]
 
 
 @pytest.mark.asyncio

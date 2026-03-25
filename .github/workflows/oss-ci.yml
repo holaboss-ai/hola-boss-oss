@@ -34,6 +34,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            runtime/api-server/package-lock.json
+            runtime/state-store/package-lock.json
+
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
@@ -41,6 +50,18 @@ jobs:
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v7
+
+      - name: Install runtime state store dependencies
+        run: npm --prefix runtime/state-store ci
+
+      - name: Build runtime state store
+        run: npm --prefix runtime/state-store run build
+
+      - name: Install runtime API server dependencies
+        run: npm --prefix runtime/api-server ci
+
+      - name: Build runtime API server
+        run: npm --prefix runtime/api-server run build
 
       - name: Runtime tests
         run: npm run runtime:test
@@ -62,6 +83,12 @@ jobs:
 
       - name: Install runtime API server dependencies
         run: npm --prefix runtime/api-server ci
+
+      - name: Install runtime state store dependencies
+        run: npm --prefix runtime/state-store ci
+
+      - name: Build runtime state store
+        run: npm --prefix runtime/state-store run build
 
       - name: Runtime API server typecheck
         run: npm --prefix runtime/api-server run typecheck
