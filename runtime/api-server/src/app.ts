@@ -36,7 +36,6 @@ import {
 } from "./bridge-worker.js";
 import {
   AppLifecycleExecutorError,
-  type AppLifecycleActionResult,
   type AppLifecycleExecutorLike,
   RuntimeAppLifecycleExecutor
 } from "./app-lifecycle-worker.js";
@@ -51,12 +50,12 @@ import {
   type RuntimeConfigServiceLike
 } from "./runtime-config.js";
 import {
-  type ResolvedApplicationRuntime,
   appendWorkspaceApplication,
   listWorkspaceComposeShutdownTargets,
   listWorkspaceApplicationPorts,
   listWorkspaceApplications,
   parseInstalledAppRuntime,
+  portsForAppIndex,
   removeWorkspaceApplication,
   resolveWorkspaceApp,
   resolveWorkspaceAppRuntime,
@@ -67,12 +66,10 @@ import {
   RunnerExecutorError,
   type RunnerExecutorLike,
 } from "./runner-worker.js";
+import { startOpencodeApplications } from "./opencode-bootstrap-shared.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 50;
 const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
-const APP_HTTP_PORT_BASE = 18080;
-const APP_MCP_PORT_BASE = 13100;
-
 export interface BuildRuntimeApiServerOptions {
   logger?: boolean;
   store?: RuntimeStateStore;
@@ -219,95 +216,6 @@ function workspaceRecordPayload(workspace: WorkspaceRecord): Record<string, unkn
     created_at: workspace.createdAt,
     updated_at: workspace.updatedAt,
     deleted_at_utc: workspace.deletedAtUtc
-  };
-}
-
-function parseResolvedApplicationRuntimePayload(value: unknown): ResolvedApplicationRuntime {
-  const payload = requiredDict(value, "resolved_application");
-  const appId = requiredString(payload.app_id, "resolved_application.app_id");
-  const mcp = requiredDict(payload.mcp, "resolved_application.mcp");
-  const healthCheck = requiredDict(payload.health_check, "resolved_application.health_check");
-  const lifecycle = isRecord(payload.lifecycle) ? payload.lifecycle : {};
-  const mcpPort = optionalInteger(mcp.port, Number.NaN);
-  const timeoutS = optionalInteger(healthCheck.timeout_s, Number.NaN);
-  const intervalS = optionalInteger(healthCheck.interval_s, Number.NaN);
-  if (!Number.isFinite(mcpPort)) {
-    throw new Error("resolved_application.mcp.port is required");
-  }
-  if (!Number.isFinite(timeoutS)) {
-    throw new Error("resolved_application.health_check.timeout_s is required");
-  }
-  if (!Number.isFinite(intervalS)) {
-    throw new Error("resolved_application.health_check.interval_s is required");
-  }
-  return {
-    appId,
-    mcp: {
-      transport: requiredString(mcp.transport, "resolved_application.mcp.transport"),
-      port: mcpPort,
-      path: requiredString(mcp.path, "resolved_application.mcp.path")
-    },
-    healthCheck: {
-      path: requiredString(healthCheck.path, "resolved_application.health_check.path"),
-      timeoutS,
-      intervalS
-    },
-    envContract: optionalStringList(payload.env_contract),
-    startCommand: optionalString(payload.start_command) ?? "",
-    baseDir: optionalString(payload.base_dir) ?? "",
-    lifecycle: {
-      setup: optionalString(lifecycle.setup) ?? "",
-      start: optionalString(lifecycle.start) ?? "",
-      stop: optionalString(lifecycle.stop) ?? ""
-    }
-  };
-}
-
-function appDirForResolvedApplication(workspaceDir: string, resolvedApp: ResolvedApplicationRuntime): string {
-  const workspaceRoot = path.resolve(workspaceDir);
-  const appDir = path.resolve(
-    workspaceRoot,
-    resolvedApp.baseDir && resolvedApp.baseDir.trim() ? resolvedApp.baseDir : path.join("apps", resolvedApp.appId)
-  );
-  const relativeAppDir = path.relative(workspaceRoot, appDir);
-  if (relativeAppDir.startsWith("..") || path.isAbsolute(relativeAppDir)) {
-    throw new AppLifecycleExecutorError(
-      400,
-      `resolved_application.base_dir escapes workspace: '${resolvedApp.baseDir}'`
-    );
-  }
-  return appDir;
-}
-
-function normalizeOpencodeBootstrapApplication(params: {
-  requestedAppId: string;
-  started: AppLifecycleActionResult;
-  mcpPath: string;
-  timeoutMs: number;
-}): {
-  app_id: string;
-  mcp_url: string;
-  timeout_ms: number;
-  ports: { http: number; mcp: number };
-} {
-  if (params.started.app_id !== params.requestedAppId) {
-    throw new AppLifecycleExecutorError(
-      500,
-      `opencode bootstrap returned mismatched app id '${params.started.app_id}' for '${params.requestedAppId}'`
-    );
-  }
-  const { http, mcp } = params.started.ports;
-  if (!Number.isInteger(http) || http <= 0 || !Number.isInteger(mcp) || mcp <= 0) {
-    throw new AppLifecycleExecutorError(
-      500,
-      `opencode bootstrap returned invalid ports for '${params.requestedAppId}'`
-    );
-  }
-  return {
-    app_id: params.requestedAppId,
-    mcp_url: `http://localhost:${mcp}${params.mcpPath}`,
-    timeout_ms: params.timeoutMs,
-    ports: { http, mcp }
   };
 }
 
@@ -542,13 +450,6 @@ function sanitizeAppId(appId: string): string {
     throw new Error("app_id contains invalid characters");
   }
   return value;
-}
-
-function portsForAppIndex(index: number): { http: number; mcp: number } {
-  return {
-    http: APP_HTTP_PORT_BASE + index,
-    mcp: APP_MCP_PORT_BASE + index
-  };
 }
 
 function collectWorkspaceSnapshot(workspaceDir: string) {
@@ -879,48 +780,13 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     const params = request.params as { workspaceId: string };
-    const workspaceId = requiredString(params.workspaceId, "workspaceId");
-    const workspaceDir = optionalString(request.body.workspace_dir) ?? store.workspaceDir(workspaceId);
-    const holabossUserId = optionalString(request.body.holaboss_user_id);
-    const rawResolvedApps = Array.isArray(request.body.resolved_applications) ? request.body.resolved_applications : null;
-    if (!rawResolvedApps) {
-      return sendError(reply, 400, "resolved_applications must be an array");
-    }
     try {
-      const parsedResolvedApps = rawResolvedApps.map((rawResolvedApp) =>
-        parseResolvedApplicationRuntimePayload(rawResolvedApp)
-      );
-      const seenAppIds = new Set<string>();
-      for (const resolvedApp of parsedResolvedApps) {
-        if (seenAppIds.has(resolvedApp.appId)) {
-          return sendError(reply, 400, `resolved_applications contains duplicate app_id '${resolvedApp.appId}'`);
-        }
-        seenAppIds.add(resolvedApp.appId);
-      }
-      const applications = [];
-      for (const [index, resolvedApp] of parsedResolvedApps.entries()) {
-        const ports = {
-          http: 18080 + index,
-          mcp: 13100 + index
-        };
-        const started = await appLifecycleExecutor.startApp({
-          appId: resolvedApp.appId,
-          appDir: appDirForResolvedApplication(workspaceDir, resolvedApp),
-          httpPort: ports.http,
-          mcpPort: ports.mcp,
-          holabossUserId,
-          resolvedApp
-        });
-        applications.push(
-          normalizeOpencodeBootstrapApplication({
-            requestedAppId: resolvedApp.appId,
-            started,
-            mcpPath: resolvedApp.mcp.path,
-            timeoutMs: resolvedApp.healthCheck.timeoutS * 1000
-          })
-        );
-      }
-      return { applications };
+      return await startOpencodeApplications({
+        store,
+        appLifecycleExecutor,
+        workspaceId: requiredString(params.workspaceId, "workspaceId"),
+        body: request.body
+      });
     } catch (error) {
       if (error instanceof AppLifecycleExecutorError) {
         return sendError(reply, error.statusCode, error.message);

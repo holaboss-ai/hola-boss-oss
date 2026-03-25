@@ -1189,6 +1189,8 @@ test("internal opencode app bootstrap route starts resolved apps and returns MCP
     harness: "opencode",
     status: "active"
   });
+  fs.mkdirSync(path.join(workspaceRoot, "workspace-1", "apps", "app-a"), { recursive: true });
+  fs.mkdirSync(path.join(workspaceRoot, "workspace-1", "apps", "app-b"), { recursive: true });
 
   const calls: Array<Record<string, unknown>> = [];
   const executor: AppLifecycleExecutorLike = {
@@ -1311,8 +1313,10 @@ test("internal opencode app bootstrap route rejects base_dir that escapes the wo
     status: "active"
   });
 
+  const calls: Array<Record<string, unknown>> = [];
   const executor: AppLifecycleExecutorLike = {
-    async startApp() {
+    async startApp(params) {
+      calls.push({ action: "start", ...params });
       throw new Error("not used");
     },
     async stopApp() {
@@ -1347,6 +1351,243 @@ test("internal opencode app bootstrap route rejects base_dir that escapes the wo
   assert.deepEqual(response.json(), {
     detail: "resolved_application.base_dir escapes workspace: '../escape'"
   });
+  assert.deepEqual(calls, []);
+
+  await app.close();
+  store.close();
+});
+
+test("internal opencode app bootstrap route prevalidates all app dirs before starting any apps", async () => {
+  const root = makeTempDir("hb-runtime-api-prevalidate-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace Apps",
+    harness: "opencode",
+    status: "active"
+  });
+  fs.mkdirSync(path.join(workspaceRoot, "workspace-1", "apps", "app-a"), { recursive: true });
+
+  let startCalls = 0;
+  const executor: AppLifecycleExecutorLike = {
+    async startApp() {
+      startCalls += 1;
+      throw new Error("not reached");
+    },
+    async stopApp() {
+      throw new Error("not used");
+    },
+    async shutdownAll() {
+      throw new Error("not used");
+    }
+  };
+  const app = buildTestRuntimeApiServer({ store, appLifecycleExecutor: executor });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/internal/workspaces/workspace-1/opencode-apps/start",
+    payload: {
+      workspace_dir: path.join(workspaceRoot, "workspace-1"),
+      resolved_applications: [
+        {
+          app_id: "app-a",
+          mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+          health_check: { path: "/health", timeout_s: 60, interval_s: 5 },
+          env_contract: [],
+          start_command: "",
+          base_dir: "apps/app-a",
+          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
+        },
+        {
+          app_id: "app-b",
+          mcp: { transport: "http-sse", port: 4200, path: "/mcp" },
+          health_check: { path: "/ready", timeout_s: 30, interval_s: 2 },
+          env_contract: [],
+          start_command: "",
+          base_dir: "../escape",
+          lifecycle: { setup: "", start: "npm run other-start", stop: "npm run other-stop" }
+        }
+      ]
+    }
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(response.json(), {
+    detail: "resolved_application.base_dir escapes workspace: '../escape'"
+  });
+  assert.equal(startCalls, 0);
+
+  await app.close();
+  store.close();
+});
+
+test("internal opencode app bootstrap route rejects missing expected workspace dir", async () => {
+  const root = makeTempDir("hb-runtime-api-missing-workspace-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace Apps",
+    harness: "opencode",
+    status: "active"
+  });
+  fs.rmSync(path.join(workspaceRoot, "workspace-1"), { recursive: true, force: true });
+
+  const calls: Array<Record<string, unknown>> = [];
+  const executor: AppLifecycleExecutorLike = {
+    async startApp(params) {
+      calls.push({ action: "start", ...params });
+      throw new Error("not used");
+    },
+    async stopApp() {
+      throw new Error("not used");
+    },
+    async shutdownAll() {
+      throw new Error("not used");
+    }
+  };
+  const app = buildTestRuntimeApiServer({ store, appLifecycleExecutor: executor });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/internal/workspaces/workspace-1/opencode-apps/start",
+    payload: {
+      resolved_applications: [
+        {
+          app_id: "app-a",
+          mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+          health_check: { path: "/health", timeout_s: 60, interval_s: 5 },
+          env_contract: [],
+          start_command: "",
+          base_dir: "apps/app-a",
+          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
+        }
+      ]
+    }
+  });
+
+  assert.equal(response.statusCode, 404);
+  assert.deepEqual(response.json(), {
+    detail: `workspace_dir not found: '${path.join(workspaceRoot, "workspace-1")}'`
+  });
+  assert.deepEqual(calls, []);
+
+  await app.close();
+  store.close();
+});
+
+test("internal opencode app bootstrap route rejects unknown workspace ids before startup", async () => {
+  const root = makeTempDir("hb-runtime-api-unknown-workspace-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+
+  const calls: Array<Record<string, unknown>> = [];
+  const executor: AppLifecycleExecutorLike = {
+    async startApp(params) {
+      calls.push({ action: "start", ...params });
+      throw new Error("not used");
+    },
+    async stopApp() {
+      throw new Error("not used");
+    },
+    async shutdownAll() {
+      throw new Error("not used");
+    }
+  };
+  const app = buildTestRuntimeApiServer({ store, appLifecycleExecutor: executor });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/internal/workspaces/workspace-unknown/opencode-apps/start",
+    payload: {
+      workspace_dir: path.join(workspaceRoot, "workspace-unknown"),
+      resolved_applications: [
+        {
+          app_id: "app-a",
+          mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+          health_check: { path: "/health", timeout_s: 60, interval_s: 5 },
+          env_contract: [],
+          start_command: "",
+          base_dir: "apps/app-a",
+          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
+        }
+      ]
+    }
+  });
+
+  assert.equal(response.statusCode, 404);
+  assert.deepEqual(response.json(), {
+    detail: "workspace not found"
+  });
+  assert.deepEqual(calls, []);
+
+  await app.close();
+  store.close();
+});
+
+test("internal opencode app bootstrap route rejects workspace_dir mismatches before startup", async () => {
+  const root = makeTempDir("hb-runtime-api-workspace-mismatch-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace Apps",
+    harness: "opencode",
+    status: "active"
+  });
+
+  const calls: Array<Record<string, unknown>> = [];
+  const executor: AppLifecycleExecutorLike = {
+    async startApp(params) {
+      calls.push({ action: "start", ...params });
+      throw new Error("not used");
+    },
+    async stopApp() {
+      throw new Error("not used");
+    },
+    async shutdownAll() {
+      throw new Error("not used");
+    }
+  };
+  const app = buildTestRuntimeApiServer({ store, appLifecycleExecutor: executor });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/internal/workspaces/workspace-1/opencode-apps/start",
+    payload: {
+      workspace_dir: path.join(workspaceRoot, "workspace-other"),
+      resolved_applications: [
+        {
+          app_id: "app-a",
+          mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+          health_check: { path: "/health", timeout_s: 60, interval_s: 5 },
+          env_contract: [],
+          start_command: "",
+          base_dir: "apps/app-a",
+          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
+        }
+      ]
+    }
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(response.json(), {
+    detail: "workspace_dir does not match workspace 'workspace-1'"
+  });
+  assert.deepEqual(calls, []);
 
   await app.close();
   store.close();
@@ -1365,8 +1606,10 @@ test("internal opencode app bootstrap route rejects duplicate app ids", async ()
     harness: "opencode",
     status: "active"
   });
+  const calls: Array<Record<string, unknown>> = [];
   const executor: AppLifecycleExecutorLike = {
-    async startApp() {
+    async startApp(params) {
+      calls.push({ action: "start", ...params });
       throw new Error("not reached");
     },
     async stopApp() {
@@ -1410,6 +1653,54 @@ test("internal opencode app bootstrap route rejects duplicate app ids", async ()
   assert.deepEqual(response.json(), {
     detail: "resolved_applications contains duplicate app_id 'app-a'"
   });
+  assert.deepEqual(calls, []);
+
+  await app.close();
+  store.close();
+});
+
+test("internal opencode app bootstrap route rejects empty resolved applications", async () => {
+  const root = makeTempDir("hb-runtime-api-empty-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace Apps",
+    harness: "opencode",
+    status: "active"
+  });
+  const calls: Array<Record<string, unknown>> = [];
+  const executor: AppLifecycleExecutorLike = {
+    async startApp(params) {
+      calls.push({ action: "start", ...params });
+      throw new Error("not reached");
+    },
+    async stopApp() {
+      throw new Error("not used");
+    },
+    async shutdownAll() {
+      throw new Error("not used");
+    }
+  };
+  const app = buildTestRuntimeApiServer({ store, appLifecycleExecutor: executor });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/internal/workspaces/workspace-1/opencode-apps/start",
+    payload: {
+      workspace_dir: path.join(workspaceRoot, "workspace-1"),
+      resolved_applications: []
+    }
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(response.json(), {
+    detail: "resolved_applications must not be empty"
+  });
+  assert.deepEqual(calls, []);
 
   await app.close();
   store.close();

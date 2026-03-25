@@ -1,7 +1,7 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/app.ts"],
+  entry: ["src/index.ts", "src/app.ts", "src/opencode-app-bootstrap.ts"],
   format: ["esm"],
   outDir: "dist",
   clean: true,

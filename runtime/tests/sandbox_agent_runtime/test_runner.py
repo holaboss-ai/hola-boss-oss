@@ -294,7 +294,9 @@ async def test_start_opencode_resolved_applications_falls_back_on_runtime_api_tr
     workspace_dir = Path("/tmp/workspace-1")
     app = SimpleNamespace(
         app_id="app-a",
-        health_check=SimpleNamespace(timeout_s=60),
+        mcp=SimpleNamespace(transport="http-sse", port=3099, path="/mcp"),
+        health_check=SimpleNamespace(path="/health", timeout_s=60, interval_s=5),
+        lifecycle=SimpleNamespace(setup="", start="", stop=""),
     )
     started: dict[str, object] = {}
 
@@ -302,7 +304,7 @@ async def test_start_opencode_resolved_applications_falls_back_on_runtime_api_tr
         del kwargs
         raise httpx.ConnectError("ts bootstrap unavailable")
 
-    async def _python_fallback(**kwargs):
+    async def _local_ts_fallback(**kwargs):
         started.update(kwargs)
         return (
             {
@@ -319,7 +321,7 @@ async def test_start_opencode_resolved_applications_falls_back_on_runtime_api_tr
 
     monkeypatch.setenv("SANDBOX_AGENT_ENABLE_PYTHON_APP_LIFECYCLE_FALLBACK", "1")
     monkeypatch.setattr(runner_module, "_start_opencode_apps_via_runtime_api", _fail_runtime_api)
-    monkeypatch.setattr(runner_module, "_start_opencode_apps_via_python_lifecycle", _python_fallback)
+    monkeypatch.setattr(runner_module, "_start_opencode_apps_via_local_ts_lifecycle", _local_ts_fallback)
 
     entries = await runner_module._start_opencode_resolved_applications(
         request=request,
@@ -368,15 +370,15 @@ async def test_start_opencode_resolved_applications_raises_when_transport_fallba
         del kwargs
         raise httpx.ConnectError("ts bootstrap unavailable")
 
-    async def _unexpected_python_fallback(**kwargs):
+    async def _unexpected_local_ts_fallback(**kwargs):
         del kwargs
-        raise AssertionError("python lifecycle fallback should stay disabled by default")
+        raise AssertionError("local ts lifecycle fallback should stay disabled by default")
 
     monkeypatch.delenv("SANDBOX_AGENT_ENABLE_PYTHON_APP_LIFECYCLE_FALLBACK", raising=False)
     monkeypatch.setattr(runner_module, "_start_opencode_apps_via_runtime_api", _fail_runtime_api)
-    monkeypatch.setattr(runner_module, "_start_opencode_apps_via_python_lifecycle", _unexpected_python_fallback)
+    monkeypatch.setattr(runner_module, "_start_opencode_apps_via_local_ts_lifecycle", _unexpected_local_ts_fallback)
 
-    with pytest.raises(RuntimeError, match="Python lifecycle fallback is disabled"):
+    with pytest.raises(RuntimeError, match="SANDBOX_AGENT_ENABLE_PYTHON_APP_LIFECYCLE_FALLBACK=1"):
         await runner_module._start_opencode_resolved_applications(
             request=request,
             workspace_dir=workspace_dir,
@@ -406,12 +408,12 @@ async def test_start_opencode_resolved_applications_raises_on_invalid_ts_bootstr
         del kwargs
         raise RuntimeError("invalid opencode app bootstrap response")
 
-    async def _unexpected_python_fallback(**kwargs):
+    async def _unexpected_local_ts_fallback(**kwargs):
         del kwargs
-        raise AssertionError("python lifecycle fallback should not run for invalid TS bootstrap responses")
+        raise AssertionError("local ts lifecycle fallback should not run for invalid TS bootstrap responses")
 
     monkeypatch.setattr(runner_module, "_start_opencode_apps_via_runtime_api", _invalid_runtime_api)
-    monkeypatch.setattr(runner_module, "_start_opencode_apps_via_python_lifecycle", _unexpected_python_fallback)
+    monkeypatch.setattr(runner_module, "_start_opencode_apps_via_local_ts_lifecycle", _unexpected_local_ts_fallback)
 
     with pytest.raises(RuntimeError, match="invalid opencode app bootstrap response"):
         await runner_module._start_opencode_resolved_applications(
@@ -421,6 +423,152 @@ async def test_start_opencode_resolved_applications_raises_on_invalid_ts_bootstr
         )
 
 
+@pytest.mark.asyncio
+async def test_start_opencode_apps_via_local_ts_lifecycle_invokes_cli_and_parses_response(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    request = RunnerRequest(
+        holaboss_user_id="user-1",
+        workspace_id="workspace-1",
+        session_id="session-1",
+        input_id="input-1",
+        instruction="hello",
+        context={},
+    )
+    workspace_dir = tmp_path / "workspace-1"
+    workspace_dir.mkdir()
+    entry_path = tmp_path / "opencode-app-bootstrap.mjs"
+    entry_path.write_text("// test entry\n", encoding="utf-8")
+    app = SimpleNamespace(
+        app_id="app-a",
+        mcp=SimpleNamespace(transport="http-sse", port=3099, path="/mcp"),
+        health_check=SimpleNamespace(path="/health", timeout_s=60, interval_s=5),
+        env_contract=("HOLABOSS_USER_ID",),
+        start_command="npm run start",
+        base_dir="apps/app-a",
+        lifecycle=SimpleNamespace(setup="", start="", stop=""),
+    )
+    captured: dict[str, object] = {}
+
+    class _FakeProcess:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return (
+                json.dumps(
+                    {
+                        "applications": [
+                            {
+                                "app_id": "app-a",
+                                "mcp_url": "http://localhost:13100/mcp",
+                                "timeout_ms": 60000,
+                            }
+                        ]
+                    }
+                ).encode("utf-8"),
+                b"",
+            )
+
+    async def _fake_create_subprocess_exec(*command: object, **kwargs: object) -> _FakeProcess:
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return _FakeProcess()
+
+    monkeypatch.setattr(runner_module, "_ts_opencode_app_bootstrap_entry_path", lambda: entry_path)
+    monkeypatch.setattr(runner_module, "_ts_harness_host_node_bin", lambda: "node")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create_subprocess_exec)
+
+    entries = await runner_module._start_opencode_apps_via_local_ts_lifecycle(
+        request=request,
+        workspace_dir=workspace_dir,
+        resolved_applications=(app,),
+    )
+
+    assert entries == (
+        {
+            "name": "app-a",
+            "config": {
+                "type": "remote",
+                "url": "http://localhost:13100/mcp",
+                "enabled": True,
+                "headers": {"X-Workspace-Id": "workspace-1"},
+                "timeout": 60000,
+            },
+        },
+    )
+    assert captured["command"]
+    command = captured["command"]
+    assert isinstance(command, tuple)
+    assert command[0] == "node"
+    assert command[1] == str(entry_path)
+    assert command[2] == "--request-base64"
+    decoded_request = json.loads(base64.b64decode(str(command[3])).decode("utf-8"))
+    assert decoded_request == {
+        "workspace_id": "workspace-1",
+        "workspace_dir": str(workspace_dir),
+        "holaboss_user_id": "",
+        "resolved_applications": [
+            {
+                "app_id": "app-a",
+                "mcp": {"transport": "http-sse", "port": 3099, "path": "/mcp"},
+                "health_check": {"path": "/health", "timeout_s": 60, "interval_s": 5},
+                "env_contract": ["HOLABOSS_USER_ID"],
+                "start_command": "npm run start",
+                "base_dir": "apps/app-a",
+                "lifecycle": {"setup": "", "start": "", "stop": ""},
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_start_opencode_apps_via_local_ts_lifecycle_raises_on_nonzero_exit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    request = RunnerRequest(
+        holaboss_user_id="user-1",
+        workspace_id="workspace-1",
+        session_id="session-1",
+        input_id="input-1",
+        instruction="hello",
+        context={},
+    )
+    workspace_dir = tmp_path / "workspace-1"
+    workspace_dir.mkdir()
+    entry_path = tmp_path / "opencode-app-bootstrap.mjs"
+    entry_path.write_text("// test entry\n", encoding="utf-8")
+    app = SimpleNamespace(
+        app_id="app-a",
+        mcp=SimpleNamespace(transport="http-sse", port=3099, path="/mcp"),
+        health_check=SimpleNamespace(path="/health", timeout_s=60, interval_s=5),
+        lifecycle=SimpleNamespace(setup="", start="", stop=""),
+    )
+
+    class _FakeProcess:
+        returncode = 1
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return (b"", b"bootstrap failed")
+
+    async def _fake_create_subprocess_exec(*command: object, **kwargs: object) -> _FakeProcess:
+        del command, kwargs
+        return _FakeProcess()
+
+    monkeypatch.setattr(runner_module, "_ts_opencode_app_bootstrap_entry_path", lambda: entry_path)
+    monkeypatch.setattr(runner_module, "_ts_harness_host_node_bin", lambda: "node")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create_subprocess_exec)
+
+    with pytest.raises(RuntimeError, match="bootstrap failed"):
+        await runner_module._start_opencode_apps_via_local_ts_lifecycle(
+            request=request,
+            workspace_dir=workspace_dir,
+            resolved_applications=(app,),
+        )
+
+
+@pytest.mark.asyncio
 def test_model_proxy_base_root_url_accepts_product_base_url_alias(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("HOLABOSS_MODEL_PROXY_BASE_URL", raising=False)
     monkeypatch.setenv("HOLABOSS_MODEL_PROXY_BASE_URL", "https://runtime.example/api/v1/model-proxy")

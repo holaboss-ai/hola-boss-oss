@@ -109,9 +109,17 @@ def _should_fallback_opencode_app_bootstrap(exc: Exception) -> bool:
     return False
 
 
-def _python_opencode_app_lifecycle_fallback_enabled() -> bool:
+def _legacy_local_opencode_app_bootstrap_fallback_enabled() -> bool:
     raw = (os.getenv(_PYTHON_OPENCODE_APP_LIFECYCLE_FALLBACK_ENV) or "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
+
+
+def _legacy_local_opencode_app_bootstrap_fallback_error(exc: Exception) -> RuntimeError:
+    return RuntimeError(
+        "OpenCode app bootstrap via TS runtime API failed and local TS lifecycle fallback is disabled. "
+        f"Set {_PYTHON_OPENCODE_APP_LIFECYCLE_FALLBACK_ENV}=1 to opt into the legacy local fallback. "
+        f"Underlying error: {exc}"
+    )
 
 
 class RunnerRequest(BaseModel):
@@ -355,6 +363,10 @@ def _runtime_root_dir() -> Path:
 
 def _ts_harness_host_entry_path() -> Path:
     return _runtime_root_dir() / "harness-host" / "dist" / "index.mjs"
+
+
+def _ts_opencode_app_bootstrap_entry_path() -> Path:
+    return _runtime_root_dir() / "api-server" / "dist" / "opencode-app-bootstrap.mjs"
 
 
 def _ts_harness_host_node_bin() -> str:
@@ -2072,6 +2084,17 @@ async def _start_opencode_apps_via_runtime_api(
         response = await client.post(url, json=payload)
     response.raise_for_status()
     response_payload = response.json()
+    return _parse_opencode_bootstrap_entries(
+        response_payload=response_payload,
+        workspace_id=request.workspace_id,
+    )
+
+
+def _parse_opencode_bootstrap_entries(
+    *,
+    response_payload: Any,
+    workspace_id: str,
+) -> tuple[dict[str, Any], ...]:
     applications = response_payload.get("applications") if isinstance(response_payload, dict) else None
     if not isinstance(applications, list):
         raise RuntimeError("invalid opencode app bootstrap response")
@@ -2095,7 +2118,7 @@ async def _start_opencode_apps_via_runtime_api(
                     "type": "remote",
                     "url": mcp_url,
                     "enabled": True,
-                    "headers": {"X-Workspace-Id": request.workspace_id},
+                    "headers": {"X-Workspace-Id": workspace_id},
                     "timeout": timeout_ms,
                 },
             }
@@ -2103,21 +2126,45 @@ async def _start_opencode_apps_via_runtime_api(
     return tuple(entries)
 
 
-async def _start_opencode_apps_via_python_lifecycle(
+async def _start_opencode_apps_via_local_ts_lifecycle(
     *,
     request: RunnerRequest,
     workspace_dir: Path,
     resolved_applications: tuple[Any, ...],
 ) -> tuple[dict[str, Any], ...]:
-    from sandbox_agent_runtime.legacy_opencode_app_lifecycle import (
-        start_resolved_applications_via_python_lifecycle,
-    )
+    entry_path = _ts_opencode_app_bootstrap_entry_path()
+    if not entry_path.is_file():
+        raise RuntimeError(f"ts opencode app bootstrap entrypoint not found: {entry_path}")
 
-    return await start_resolved_applications_via_python_lifecycle(
+    payload = {
+        "workspace_id": request.workspace_id,
+        "workspace_dir": str(workspace_dir),
+        "holaboss_user_id": _explicit_holaboss_user_id(request.context),
+        "resolved_applications": [
+            _resolved_application_runtime_payload(app)
+            for app in resolved_applications
+        ],
+    }
+    request_base64 = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+    process = await asyncio.create_subprocess_exec(
+        _ts_harness_host_node_bin(),
+        str(entry_path),
+        "--request-base64",
+        request_base64,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    if process.returncode != 0:
+        detail = (stderr.decode("utf-8", errors="replace").strip() or stdout.decode("utf-8", errors="replace").strip())
+        raise RuntimeError(detail or f"local ts opencode app bootstrap exited with code {process.returncode}")
+    try:
+        response_payload = json.loads(stdout.decode("utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"invalid local ts opencode app bootstrap response: {exc}") from exc
+    return _parse_opencode_bootstrap_entries(
+        response_payload=response_payload,
         workspace_id=request.workspace_id,
-        workspace_dir=workspace_dir,
-        holaboss_user_id=_explicit_holaboss_user_id(request.context),
-        resolved_applications=resolved_applications,
     )
 
 
@@ -2136,12 +2183,10 @@ async def _start_opencode_resolved_applications(
     except Exception as exc:
         if not _should_fallback_opencode_app_bootstrap(exc):
             raise
-        if not _python_opencode_app_lifecycle_fallback_enabled():
-            raise RuntimeError(
-                "OpenCode app bootstrap via TS runtime API failed and Python lifecycle fallback is disabled"
-            ) from exc
-        logger.warning("Falling back to Python app lifecycle manager for OpenCode app startup: %s", exc)
-    return await _start_opencode_apps_via_python_lifecycle(
+        if not _legacy_local_opencode_app_bootstrap_fallback_enabled():
+            raise _legacy_local_opencode_app_bootstrap_fallback_error(exc) from exc
+        logger.warning("Falling back to local TS OpenCode app bootstrap for OpenCode app startup: %s", exc)
+    return await _start_opencode_apps_via_local_ts_lifecycle(
         request=request,
         workspace_dir=workspace_dir,
         resolved_applications=resolved_applications,

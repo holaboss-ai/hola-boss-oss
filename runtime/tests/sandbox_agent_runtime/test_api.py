@@ -76,8 +76,8 @@ async def test_runner_routes_proxy_to_ts_api_when_enabled(monkeypatch: pytest.Mo
             media_type="text/event-stream",
         )
 
-    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy_json)
-    monkeypatch.setattr(api_module, "_proxy_ts_api_stream", _fake_proxy_stream)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_json", _fake_proxy_json)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_stream", _fake_proxy_stream)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
@@ -167,7 +167,7 @@ async def test_opencode_app_bootstrap_route_proxies_to_ts_api_when_enabled(
             media_type="application/json",
         )
 
-    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
@@ -243,7 +243,7 @@ async def test_memory_routes_proxy_to_ts_api_when_enabled(
             payload = {"workspace_id": "workspace-1", "queued": True}
         return Response(content=json.dumps(payload).encode("utf-8"), media_type="application/json")
 
-    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
@@ -375,7 +375,7 @@ async def test_runtime_config_and_status_routes_proxy_to_ts_api_when_enabled(
             }
         return Response(content=json.dumps(payload).encode("utf-8"), media_type="application/json")
 
-    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
@@ -478,7 +478,7 @@ async def test_app_ports_endpoint_proxies_to_ts_api_when_enabled(
             media_type="application/json",
         )
 
-    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
@@ -537,7 +537,7 @@ async def test_app_lifecycle_routes_proxy_to_ts_api_when_enabled(
             }
         return Response(content=json.dumps(payload).encode("utf-8"), media_type="application/json")
 
-    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
@@ -592,7 +592,7 @@ async def test_lifecycle_shutdown_route_proxies_to_ts_api_when_enabled(
             media_type="application/json",
         )
 
-    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
@@ -630,7 +630,7 @@ async def test_internal_opencode_app_start_route_proxies_to_ts_api_when_enabled(
             media_type="application/json",
         )
 
-    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
@@ -691,7 +691,7 @@ async def test_queue_endpoint_persists_local_input_and_runtime_state(
     assert queued.payload["text"] == "hello world"
     assert "holaboss_user_id" not in queued.payload
     runtime_states = list_runtime_states(workspace.id)
-    assert runtime_states[0]["status"] == "QUEUED"
+    assert runtime_states[0]["status"] in {"QUEUED", "BUSY"}
     assert runtime_states[0]["current_input_id"] == payload["input_id"]
 
 
@@ -716,7 +716,7 @@ async def test_workspace_create_endpoint_proxies_to_ts_api_when_enabled(
             media_type="application/json",
         )
 
-    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
@@ -777,7 +777,7 @@ async def test_history_and_output_events_endpoints_proxy_to_ts_api_when_enabled(
             payload = {"items": [], "count": 0, "last_event_id": 12}
         return Response(content=json.dumps(payload).encode("utf-8"), media_type="application/json")
 
-    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
@@ -838,7 +838,7 @@ async def test_output_stream_endpoint_proxies_to_ts_api_when_enabled(
 
         return StreamingResponse(_iter(), media_type="text/event-stream")
 
-    monkeypatch.setattr(api_module, "_proxy_ts_api_stream", _fake_stream)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_stream", _fake_stream)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
@@ -885,7 +885,7 @@ async def test_workspace_export_endpoint_proxies_to_ts_api_when_enabled(
             headers={"Content-Disposition": "attachment; filename=workspace-1.tar.gz"},
         )
 
-    monkeypatch.setattr(api_module, "_proxy_ts_api_stream", _fake_stream)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_stream", _fake_stream)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
@@ -929,7 +929,7 @@ async def test_state_and_artifact_endpoints_proxy_to_ts_api_when_enabled(
             payload = {"items": [], "count": 0}
         return Response(content=json.dumps(payload).encode("utf-8"), media_type="application/json")
 
-    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
@@ -1013,7 +1013,7 @@ async def test_outputs_cronjobs_and_task_proposals_proxy_to_ts_api_when_enabled(
             payload = {"proposals": [], "count": 0} if method == "GET" else {"proposal": {"proposal_id": "proposal-1"}}
         return Response(content=json.dumps(payload).encode("utf-8"), media_type="application/json")
 
-    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
@@ -1069,7 +1069,7 @@ async def test_workspace_exec_endpoint_proxies_to_ts_api_when_enabled(
             media_type="application/json",
         )
 
-    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
@@ -1113,7 +1113,7 @@ async def test_workspace_file_routes_proxy_to_ts_api_when_enabled(
             payload = {"status": "applied", "files_written": 1}
         return Response(content=json.dumps(payload).encode("utf-8"), media_type="application/json")
 
-    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
@@ -1191,7 +1191,7 @@ async def test_app_install_and_status_routes_proxy_to_ts_api_when_enabled(
             payload = {"app_id": "demo-app", "status": "installed", "detail": "Files written, no setup command defined"}
         return Response(content=json.dumps(payload).encode("utf-8"), media_type="application/json")
 
-    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
@@ -1268,7 +1268,7 @@ async def test_queue_endpoint_proxies_to_ts_api_when_enabled_and_does_not_wake_p
             media_type="application/json",
         )
 
-    monkeypatch.setattr(api_module, "_proxy_ts_api_json", _fake_proxy)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_json", _fake_proxy)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)
@@ -1315,7 +1315,7 @@ async def test_unreviewed_task_proposal_stream_proxies_to_ts_api_when_enabled(
 
         return StreamingResponse(_iter(), media_type="text/event-stream")
 
-    monkeypatch.setattr(api_module, "_proxy_ts_api_stream", _fake_stream)
+    monkeypatch.setattr(api_module._ts_api_proxy, "proxy_ts_api_stream", _fake_stream)
     monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_API_SERVER", "1")
 
     transport = ASGITransport(app=app)

@@ -72,26 +72,6 @@ app = FastAPI(title="holaboss-sandbox-agent", version="0.1.0", lifespan=_app_lif
 _ts_api_proxy = TsApiProxySupport(app=app, current_file=__file__)
 
 
-async def _proxy_ts_api_json(
-    method: str,
-    path: str,
-    *,
-    params: dict[str, Any] | None = None,
-    json_body: dict[str, Any] | None = None,
-) -> Response:
-    return await _ts_api_proxy.proxy_ts_api_json(method, path, params=params, json_body=json_body)
-
-
-async def _proxy_ts_api_stream(
-    path: str,
-    *,
-    method: str = "GET",
-    params: dict[str, Any] | None = None,
-    json_body: dict[str, Any] | None = None,
-) -> Response:
-    return await _ts_api_proxy.proxy_ts_api_stream(path, method=method, params=params, json_body=json_body)
-
-
 @app.get("/healthz")
 async def healthz() -> dict[str, bool]:
     return {"ok": True}
@@ -99,7 +79,7 @@ async def healthz() -> dict[str, bool]:
 
 @app.get("/api/v1/runtime/config")
 async def get_runtime_config() -> Response:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         "/api/v1/runtime/config",
     )
@@ -107,7 +87,7 @@ async def get_runtime_config() -> Response:
 
 @app.get("/api/v1/runtime/status")
 async def get_runtime_status() -> Response:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         "/api/v1/runtime/status",
     )
@@ -115,7 +95,7 @@ async def get_runtime_status() -> Response:
 
 @app.put("/api/v1/runtime/config")
 async def put_runtime_config(payload: RuntimeConfigUpdateRequest) -> Response:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "PUT",
         "/api/v1/runtime/config",
         json_body=payload.model_dump(mode="json"),
@@ -124,7 +104,7 @@ async def put_runtime_config(payload: RuntimeConfigUpdateRequest) -> Response:
 
 @app.post("/api/v1/workspaces")
 async def create_local_workspace_endpoint(payload: LocalWorkspaceCreateRequest) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         "/api/v1/workspaces",
         json_body=payload.model_dump(mode="json"),
@@ -138,7 +118,7 @@ async def list_local_workspaces_endpoint(
     limit: int = Query(50, ge=1),
     offset: int = Query(0, ge=0),
 ) -> LocalWorkspaceListResponse:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         "/api/v1/workspaces",
         params={
@@ -155,7 +135,7 @@ async def get_local_workspace_endpoint(
     workspace_id: str,
     include_deleted: bool = Query(False),
 ) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         f"/api/v1/workspaces/{workspace_id}",
         params={"include_deleted": include_deleted},
@@ -167,7 +147,7 @@ async def update_local_workspace_endpoint(
     workspace_id: str,
     payload: LocalWorkspaceUpdateRequest,
 ) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "PATCH",
         f"/api/v1/workspaces/{workspace_id}",
         json_body=payload.model_dump(mode="json", exclude_unset=True),
@@ -176,7 +156,7 @@ async def update_local_workspace_endpoint(
 
 @app.delete("/api/v1/workspaces/{workspace_id}")
 async def delete_local_workspace_endpoint(workspace_id: str) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "DELETE",
         f"/api/v1/workspaces/{workspace_id}",
     )
@@ -188,7 +168,7 @@ async def exec_local_workspace(
     workspace_id: str,
     payload: ExecSandboxRequest,
 ) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         f"/api/v1/sandbox/users/{holaboss_user_id}/workspaces/{workspace_id}/exec",
         json_body=payload.model_dump(mode="json"),
@@ -197,7 +177,7 @@ async def exec_local_workspace(
 
 @app.post("/api/v1/agent-sessions/queue")
 async def queue_session_input(payload: QueueSessionInputRequest) -> QueueSessionInputResponse:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         "/api/v1/agent-sessions/queue",
         json_body=payload.model_dump(mode="json"),
@@ -207,7 +187,7 @@ async def queue_session_input(payload: QueueSessionInputRequest) -> QueueSession
 @app.post("/api/v1/internal/workspaces/{workspace_id}/opencode-apps/start")
 async def start_opencode_workspace_apps_internal(workspace_id: str, request: Request) -> Response:
     payload = await request.json()
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         f"/api/v1/internal/workspaces/{workspace_id}/opencode-apps/start",
         json_body=payload,
@@ -220,7 +200,7 @@ async def get_local_session_state(
     workspace_id: str | None = Query(None),
     profile_id: str | None = Query(None),
 ) -> AgentSessionStateResponse:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         f"/api/v1/agent-sessions/{session_id}/state",
         params={
@@ -236,7 +216,7 @@ async def list_workspace_runtime_states(
     limit: int = Query(100, ge=1),
     offset: int = Query(0, ge=0),
 ) -> SessionRuntimeStateListResponse:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         f"/api/v1/agent-sessions/by-workspace/{workspace_id}/runtime-states",
         params={"limit": limit, "offset": offset},
@@ -248,7 +228,7 @@ async def create_local_session_artifact(
     session_id: str,
     payload: LocalSessionArtifactCreateRequest,
 ) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         f"/api/v1/agent-sessions/{session_id}/artifacts",
         json_body=payload.model_dump(mode="json"),
@@ -261,7 +241,7 @@ async def list_local_session_artifacts(
     workspace_id: str | None = Query(None),
     profile_id: str | None = Query(None),
 ) -> SessionArtifactListResponse:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         f"/api/v1/agent-sessions/{session_id}/artifacts",
         params={
@@ -277,7 +257,7 @@ async def list_local_sessions_with_artifacts(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ) -> SessionWithArtifactsListResponse:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         f"/api/v1/agent-sessions/by-workspace/{workspace_id}/with-artifacts",
         params={"limit": limit, "offset": offset},
@@ -286,7 +266,7 @@ async def list_local_sessions_with_artifacts(
 
 @app.get("/api/v1/output-folders")
 async def list_local_output_folders(workspace_id: str = Query(...)) -> LocalOutputFolderListResponse:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         "/api/v1/output-folders",
         params={"workspace_id": workspace_id},
@@ -295,7 +275,7 @@ async def list_local_output_folders(workspace_id: str = Query(...)) -> LocalOutp
 
 @app.post("/api/v1/output-folders")
 async def create_local_output_folder(payload: LocalOutputFolderCreateRequest) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         "/api/v1/output-folders",
         json_body=payload.model_dump(mode="json"),
@@ -304,7 +284,7 @@ async def create_local_output_folder(payload: LocalOutputFolderCreateRequest) ->
 
 @app.get("/api/v1/output-folders/{folder_id}")
 async def get_local_output_folder_endpoint(folder_id: str) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         f"/api/v1/output-folders/{folder_id}",
     )
@@ -315,7 +295,7 @@ async def update_local_output_folder_endpoint(
     folder_id: str,
     payload: LocalOutputFolderUpdateRequest,
 ) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "PATCH",
         f"/api/v1/output-folders/{folder_id}",
         json_body=payload.model_dump(mode="json", exclude_unset=True),
@@ -324,7 +304,7 @@ async def update_local_output_folder_endpoint(
 
 @app.delete("/api/v1/output-folders/{folder_id}")
 async def delete_local_output_folder_endpoint(folder_id: str) -> dict[str, bool]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "DELETE",
         f"/api/v1/output-folders/{folder_id}",
     )
@@ -340,7 +320,7 @@ async def list_local_outputs(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> LocalOutputListResponse:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         "/api/v1/outputs",
         params={
@@ -357,7 +337,7 @@ async def list_local_outputs(
 
 @app.get("/api/v1/outputs/counts")
 async def get_local_output_counts(workspace_id: str = Query(...)) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         "/api/v1/outputs/counts",
         params={"workspace_id": workspace_id},
@@ -366,7 +346,7 @@ async def get_local_output_counts(workspace_id: str = Query(...)) -> dict[str, A
 
 @app.get("/api/v1/outputs/{output_id}")
 async def get_local_output(output_id: str) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         f"/api/v1/outputs/{output_id}",
     )
@@ -374,7 +354,7 @@ async def get_local_output(output_id: str) -> dict[str, Any]:
 
 @app.post("/api/v1/outputs")
 async def create_local_output_endpoint(payload: LocalOutputCreateRequest) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         "/api/v1/outputs",
         json_body=payload.model_dump(mode="json"),
@@ -383,7 +363,7 @@ async def create_local_output_endpoint(payload: LocalOutputCreateRequest) -> dic
 
 @app.patch("/api/v1/outputs/{output_id}")
 async def update_local_output_endpoint(output_id: str, payload: LocalOutputUpdateRequest) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "PATCH",
         f"/api/v1/outputs/{output_id}",
         json_body=payload.model_dump(mode="json", exclude_unset=True),
@@ -392,7 +372,7 @@ async def update_local_output_endpoint(output_id: str, payload: LocalOutputUpdat
 
 @app.delete("/api/v1/outputs/{output_id}")
 async def delete_local_output_endpoint(output_id: str) -> dict[str, bool]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "DELETE",
         f"/api/v1/outputs/{output_id}",
     )
@@ -403,7 +383,7 @@ async def list_local_cronjobs(
     workspace_id: str = Query(...),
     enabled_only: bool = Query(False),
 ) -> LocalCronjobListResponse:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         "/api/v1/cronjobs",
         params={"workspace_id": workspace_id, "enabled_only": enabled_only},
@@ -412,7 +392,7 @@ async def list_local_cronjobs(
 
 @app.post("/api/v1/cronjobs")
 async def create_local_cronjob_endpoint(payload: LocalCronjobCreateRequest) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         "/api/v1/cronjobs",
         json_body=payload.model_dump(mode="json"),
@@ -421,7 +401,7 @@ async def create_local_cronjob_endpoint(payload: LocalCronjobCreateRequest) -> d
 
 @app.get("/api/v1/cronjobs/{job_id}")
 async def get_local_cronjob_endpoint(job_id: str) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         f"/api/v1/cronjobs/{job_id}",
     )
@@ -429,7 +409,7 @@ async def get_local_cronjob_endpoint(job_id: str) -> dict[str, Any]:
 
 @app.patch("/api/v1/cronjobs/{job_id}")
 async def update_local_cronjob_endpoint(job_id: str, payload: LocalCronjobUpdateRequest) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "PATCH",
         f"/api/v1/cronjobs/{job_id}",
         json_body=payload.model_dump(mode="json", exclude_unset=True),
@@ -438,7 +418,7 @@ async def update_local_cronjob_endpoint(job_id: str, payload: LocalCronjobUpdate
 
 @app.delete("/api/v1/cronjobs/{job_id}")
 async def delete_local_cronjob_endpoint(job_id: str) -> dict[str, bool]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "DELETE",
         f"/api/v1/cronjobs/{job_id}",
     )
@@ -446,7 +426,7 @@ async def delete_local_cronjob_endpoint(job_id: str) -> dict[str, bool]:
 
 @app.get("/api/v1/task-proposals")
 async def list_local_task_proposals(workspace_id: str = Query(...)) -> LocalTaskProposalListResponse:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         "/api/v1/task-proposals",
         params={"workspace_id": workspace_id},
@@ -455,7 +435,7 @@ async def list_local_task_proposals(workspace_id: str = Query(...)) -> LocalTask
 
 @app.get("/api/v1/task-proposals/unreviewed")
 async def list_local_unreviewed_task_proposals(workspace_id: str = Query(...)) -> LocalTaskProposalListResponse:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         "/api/v1/task-proposals/unreviewed",
         params={"workspace_id": workspace_id},
@@ -464,7 +444,7 @@ async def list_local_unreviewed_task_proposals(workspace_id: str = Query(...)) -
 
 @app.get("/api/v1/task-proposals/unreviewed/stream")
 async def stream_local_unreviewed_task_proposals(workspace_id: str = Query(...)) -> StreamingResponse:
-    return await _proxy_ts_api_stream(
+    return await _ts_api_proxy.proxy_ts_api_stream(
         "/api/v1/task-proposals/unreviewed/stream",
         params={"workspace_id": workspace_id},
     )
@@ -472,7 +452,7 @@ async def stream_local_unreviewed_task_proposals(workspace_id: str = Query(...))
 
 @app.post("/api/v1/task-proposals")
 async def create_local_task_proposal_endpoint(payload: LocalTaskProposalCreateRequest) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         "/api/v1/task-proposals",
         json_body=payload.model_dump(mode="json"),
@@ -481,7 +461,7 @@ async def create_local_task_proposal_endpoint(payload: LocalTaskProposalCreateRe
 
 @app.get("/api/v1/task-proposals/{proposal_id}")
 async def get_local_task_proposal_endpoint(proposal_id: str) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         f"/api/v1/task-proposals/{proposal_id}",
     )
@@ -491,7 +471,7 @@ async def get_local_task_proposal_endpoint(proposal_id: str) -> dict[str, Any]:
 async def update_local_task_proposal_state_endpoint(
     proposal_id: str, payload: LocalTaskProposalStateUpdateRequest
 ) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "PATCH",
         f"/api/v1/task-proposals/{proposal_id}",
         json_body=payload.model_dump(mode="json"),
@@ -506,7 +486,7 @@ async def get_local_session_history(
     offset: int = Query(0, ge=0),
     include_raw: bool = Query(False),
 ) -> SessionHistoryResponse:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         f"/api/v1/agent-sessions/{session_id}/history",
         params={
@@ -527,7 +507,7 @@ async def stream_local_session_outputs(
     stop_on_terminal: bool = Query(True),
 ) -> StreamingResponse:
     del request
-    return await _proxy_ts_api_stream(
+    return await _ts_api_proxy.proxy_ts_api_stream(
         f"/api/v1/agent-sessions/{session_id}/outputs/stream",
         params={
             "input_id": input_id,
@@ -544,7 +524,7 @@ async def list_local_session_output_events(
     include_history: bool = Query(True),
     after_event_id: int = Query(0, ge=0),
 ) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         f"/api/v1/agent-sessions/{session_id}/outputs/events",
         params={
@@ -559,7 +539,7 @@ async def list_local_session_output_events(
 async def run_agent(
     payload: RunnerRequest,
 ) -> Response:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         "/api/v1/agent-runs",
         json_body=payload.model_dump(mode="json"),
@@ -570,7 +550,7 @@ async def run_agent(
 async def stream_agent_run(
     payload: RunnerRequest,
 ) -> Response:
-    return await _proxy_ts_api_stream(
+    return await _ts_api_proxy.proxy_ts_api_stream(
         "/api/v1/agent-runs/stream",
         method="POST",
         json_body=payload.model_dump(mode="json"),
@@ -579,7 +559,7 @@ async def stream_agent_run(
 
 @app.post("/api/v1/lifecycle/shutdown")
 async def lifecycle_shutdown() -> ShutdownResult:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         "/api/v1/lifecycle/shutdown",
     )
@@ -587,7 +567,7 @@ async def lifecycle_shutdown() -> ShutdownResult:
 
 @app.post("/api/v1/memory/search")
 async def memory_search_endpoint(payload: MemorySearchRequest) -> Response:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         "/api/v1/memory/search",
         json_body=payload.model_dump(mode="json"),
@@ -596,7 +576,7 @@ async def memory_search_endpoint(payload: MemorySearchRequest) -> Response:
 
 @app.post("/api/v1/memory/get")
 async def memory_get_endpoint(payload: MemoryGetRequest) -> Response:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         "/api/v1/memory/get",
         json_body=payload.model_dump(mode="json"),
@@ -605,7 +585,7 @@ async def memory_get_endpoint(payload: MemoryGetRequest) -> Response:
 
 @app.post("/api/v1/memory/upsert")
 async def memory_upsert_endpoint(payload: MemoryUpsertRequest) -> Response:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         "/api/v1/memory/upsert",
         json_body=payload.model_dump(mode="json"),
@@ -614,7 +594,7 @@ async def memory_upsert_endpoint(payload: MemoryUpsertRequest) -> Response:
 
 @app.post("/api/v1/memory/status")
 async def memory_status_endpoint(payload: MemoryStatusRequest) -> Response:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         "/api/v1/memory/status",
         json_body=payload.model_dump(mode="json"),
@@ -623,7 +603,7 @@ async def memory_status_endpoint(payload: MemoryStatusRequest) -> Response:
 
 @app.post("/api/v1/memory/sync")
 async def memory_sync_endpoint(payload: MemorySyncRequest) -> Response:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         "/api/v1/memory/sync",
         json_body=payload.model_dump(mode="json"),
@@ -635,7 +615,7 @@ async def memory_sync_endpoint(payload: MemorySyncRequest) -> Response:
 # ---------------------------------------------------------------------------
 @app.get("/api/v1/apps/ports")
 async def list_app_ports(workspace_id: str | None = None) -> dict[str, dict[str, int]]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         "/api/v1/apps/ports",
         params={"workspace_id": workspace_id},
@@ -644,7 +624,7 @@ async def list_app_ports(workspace_id: str | None = None) -> dict[str, dict[str,
 
 @app.post("/api/v1/apps/{app_id}/start")
 async def start_app_endpoint(app_id: str, payload: AppStartRequest) -> AppActionResult:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         f"/api/v1/apps/{app_id}/start",
         json_body=payload.model_dump(),
@@ -653,7 +633,7 @@ async def start_app_endpoint(app_id: str, payload: AppStartRequest) -> AppAction
 
 @app.post("/api/v1/apps/{app_id}/stop")
 async def stop_app_endpoint(app_id: str, payload: AppStopRequest) -> AppActionResult:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         f"/api/v1/apps/{app_id}/stop",
         json_body=payload.model_dump(),
@@ -666,7 +646,7 @@ async def stop_app_endpoint(app_id: str, payload: AppStopRequest) -> AppActionRe
 
 @app.post("/api/v1/apps/install")
 async def install_app(payload: InstallAppRequest) -> InstallAppResponse:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         "/api/v1/apps/install",
         json_body=payload.model_dump(),
@@ -675,7 +655,7 @@ async def install_app(payload: InstallAppRequest) -> InstallAppResponse:
 
 @app.delete("/api/v1/apps/{app_id}")
 async def uninstall_app(app_id: str, payload: UninstallAppRequest) -> AppActionResult:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "DELETE",
         f"/api/v1/apps/{app_id}",
         json_body=payload.model_dump(),
@@ -684,7 +664,7 @@ async def uninstall_app(app_id: str, payload: UninstallAppRequest) -> AppActionR
 
 @app.get("/api/v1/apps/{app_id}/build-status")
 async def app_build_status(app_id: str, workspace_id: str = Query(...)) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         f"/api/v1/apps/{app_id}/build-status",
         params={"workspace_id": workspace_id},
@@ -693,7 +673,7 @@ async def app_build_status(app_id: str, workspace_id: str = Query(...)) -> dict[
 
 @app.get("/api/v1/apps")
 async def list_installed_apps(workspace_id: str = Query(...)) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         "/api/v1/apps",
         params={"workspace_id": workspace_id},
@@ -702,7 +682,7 @@ async def list_installed_apps(workspace_id: str = Query(...)) -> dict[str, Any]:
 
 @app.post("/api/v1/apps/{app_id}/setup")
 async def setup_app_endpoint(app_id: str, payload: AppSetupRequest) -> AppActionResult:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         f"/api/v1/apps/{app_id}/setup",
         json_body=payload.model_dump(),
@@ -710,7 +690,7 @@ async def setup_app_endpoint(app_id: str, payload: AppSetupRequest) -> AppAction
 
 @app.post("/api/v1/workspaces/{workspace_id}/apply-template")
 async def apply_template(workspace_id: str, payload: ApplyTemplateRequest) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "POST",
         f"/api/v1/workspaces/{workspace_id}/apply-template",
         json_body=payload.model_dump(mode="json"),
@@ -719,14 +699,14 @@ async def apply_template(workspace_id: str, payload: ApplyTemplateRequest) -> di
 
 @app.get("/api/v1/workspaces/{workspace_id}/files/{file_path:path}")
 async def read_file_endpoint(workspace_id: str, file_path: str) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         f"/api/v1/workspaces/{workspace_id}/files/{file_path}",
     )
 
 @app.put("/api/v1/workspaces/{workspace_id}/files/{file_path:path}")
 async def write_file_endpoint(workspace_id: str, file_path: str, payload: WriteFileRequest) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "PUT",
         f"/api/v1/workspaces/{workspace_id}/files/{file_path}",
         json_body=payload.model_dump(mode="json"),
@@ -735,7 +715,7 @@ async def write_file_endpoint(workspace_id: str, file_path: str, payload: WriteF
 
 @app.get("/api/v1/workspaces/{workspace_id}/snapshot")
 async def workspace_snapshot(workspace_id: str) -> dict[str, Any]:
-    return await _proxy_ts_api_json(
+    return await _ts_api_proxy.proxy_ts_api_json(
         "GET",
         f"/api/v1/workspaces/{workspace_id}/snapshot",
     )
@@ -743,6 +723,6 @@ async def workspace_snapshot(workspace_id: str) -> dict[str, Any]:
 
 @app.get("/api/v1/workspaces/{workspace_id}/export")
 async def export_workspace(workspace_id: str):
-    return await _proxy_ts_api_stream(
+    return await _ts_api_proxy.proxy_ts_api_stream(
         f"/api/v1/workspaces/{workspace_id}/export",
     )

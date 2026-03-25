@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "holaboss-runtime-api": "dist/index.mjs"
+    "holaboss-runtime-api": "dist/index.mjs",
+    "holaboss-runtime-opencode-app-bootstrap": "dist/opencode-app-bootstrap.mjs"
   },
   "scripts": {
     "build": "tsup --config tsup.config.ts",
