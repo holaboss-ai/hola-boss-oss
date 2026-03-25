@@ -267,63 +267,6 @@ def test_runtime_config_file_overrides_legacy_env(monkeypatch: pytest.MonkeyPatc
     assert config.default_model == "openai/gpt-4.1"
 
 
-def test_write_opencode_bootstrap_config_if_available_returns_none_without_runtime_config(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setenv("HOLABOSS_RUNTIME_CONFIG_PATH", str(tmp_path / "runtime-config.json"))
-    monkeypatch.delenv("HOLABOSS_SANDBOX_AUTH_TOKEN", raising=False)
-    monkeypatch.delenv("HOLABOSS_USER_ID", raising=False)
-    monkeypatch.delenv("HOLABOSS_MODEL_PROXY_BASE_URL", raising=False)
-
-    assert product_config.write_opencode_bootstrap_config_if_available() is None
-
-
-def test_write_opencode_bootstrap_config_if_available_does_not_require_user_id(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    sandbox_root = tmp_path / "sandbox-root"
-    monkeypatch.setenv("HB_SANDBOX_ROOT", str(sandbox_root))
-    monkeypatch.setenv("HOLABOSS_RUNTIME_CONFIG_PATH", str(sandbox_root / "state" / "runtime-config.json"))
-    product_config.update_runtime_config(
-        auth_token="token-1",
-        user_id="",
-        sandbox_id="sandbox-1",
-        model_proxy_base_url="https://runtime.example/api/v1/model-proxy",
-        default_model_value="openai/gpt-5.1",
-    )
-
-    config_path = product_config.write_opencode_bootstrap_config_if_available()
-
-    assert config_path == sandbox_root / "workspace" / "opencode.json"
-    payload = json.loads(config_path.read_text(encoding="utf-8"))
-    assert payload["provider"]["openai"]["options"]["headers"]["X-Holaboss-Sandbox-Id"] == "sandbox-1"
-    assert "X-Holaboss-User-Id" not in payload["provider"]["openai"]["options"]["headers"]
-
-
-def test_write_opencode_bootstrap_config_persists_provider_config(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    sandbox_root = tmp_path / "sandbox-root"
-    monkeypatch.setenv("HB_SANDBOX_ROOT", str(sandbox_root))
-    monkeypatch.setenv("HOLABOSS_RUNTIME_CONFIG_PATH", str(sandbox_root / "state" / "runtime-config.json"))
-    product_config.update_runtime_config(
-        auth_token="token-1",
-        user_id="user-1",
-        sandbox_id="sandbox-1",
-        model_proxy_base_url="https://runtime.example/api/v1/model-proxy",
-        default_model_value="openai/gpt-5.1",
-    )
-
-    config_path = product_config.write_opencode_bootstrap_config()
-    payload = json.loads(config_path.read_text(encoding="utf-8"))
-
-    assert config_path == sandbox_root / "workspace" / "opencode.json"
-    assert payload["model"] == "openai/gpt-5.1"
-    assert payload["provider"]["openai"]["options"]["apiKey"] == "token-1"
-    assert payload["provider"]["openai"]["options"]["headers"]["X-Holaboss-Sandbox-Id"] == "sandbox-1"
-    assert "X-Holaboss-User-Id" not in payload["provider"]["openai"]["options"]["headers"]
-
-
 def test_update_runtime_config_writes_split_and_legacy_compat_fields(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

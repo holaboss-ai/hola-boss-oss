@@ -3,11 +3,17 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 const desktopRoot = process.cwd();
-const runtimeExecutable = path.join(desktopRoot, "out", "runtime-macos", "bin", "sandbox-runtime");
+const runtimeRoot = path.join(desktopRoot, "out", "runtime-macos");
+const requiredRuntimePaths = [
+  path.join(runtimeRoot, "bin", "sandbox-runtime"),
+  path.join(runtimeRoot, "package-metadata.json"),
+  path.join(runtimeRoot, "runtime", "metadata.json"),
+  path.join(runtimeRoot, "runtime", "api-server", "dist", "index.mjs")
+];
 
 async function runtimeBundleExists() {
   try {
-    await access(runtimeExecutable);
+    await Promise.all(requiredRuntimePaths.map((targetPath) => access(targetPath)));
     return true;
   } catch {
     return false;

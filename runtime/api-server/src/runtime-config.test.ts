@@ -63,7 +63,8 @@ test("file runtime config service updates runtime config and writes opencode boo
     model_proxy_base_url: "https://runtime.example/api/v1/model-proxy",
     default_model: "openai/gpt-5.1",
     desktop_browser_enabled: true,
-    desktop_browser_url: "http://127.0.0.1:8787/api/v1/browser"
+    desktop_browser_url: "http://127.0.0.1:8787/api/v1/browser",
+    desktop_browser_auth_token: "browser-token"
   });
 
   assert.deepEqual(updated, {
@@ -87,6 +88,7 @@ test("file runtime config service updates runtime config and writes opencode boo
   assert.equal(configDocument.providers.holaboss_model_proxy.base_url, "https://runtime.example/api/v1/model-proxy");
   assert.equal(configDocument.integrations.holaboss.user_id, "user-1");
   assert.equal(configDocument.capabilities.desktop_browser.url, "http://127.0.0.1:8787/api/v1/browser");
+  assert.equal(configDocument.capabilities.desktop_browser.auth_token, "browser-token");
 
   const opencodeDocument = JSON.parse(fs.readFileSync(path.join(root, "workspace", "opencode.json"), "utf8"));
   assert.equal(opencodeDocument.model, "openai/gpt-5.1");

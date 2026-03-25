@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 from typing import Literal
-
-from pydantic import BaseModel
 
 
 @dataclass(slots=True, frozen=True)
@@ -54,7 +53,6 @@ class ResolvedMcpToolRef:
 @dataclass(slots=True, frozen=True)
 class WorkspaceMcpCatalogEntry:
     tool_id: str
-    server_id: str
     tool_name: str
     module_path: str
     symbol_name: str
@@ -101,7 +99,7 @@ class CompiledWorkspaceRuntimePlan:
     resolved_mcp_servers: tuple[ResolvedMcpServerConfig, ...]
     resolved_mcp_tool_refs: tuple[ResolvedMcpToolRef, ...]
     workspace_mcp_catalog: tuple[WorkspaceMcpCatalogEntry, ...]
-    resolved_output_schemas: dict[str, type[BaseModel]]
+    resolved_output_schemas: dict[str, dict[str, Any]]
     config_checksum: str
     resolved_applications: tuple[ResolvedApplication, ...] = ()
     mcp_tool_allowlist: frozenset[str] = field(default_factory=frozenset)

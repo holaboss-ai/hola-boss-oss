@@ -45,12 +45,20 @@ from sandbox_agent_runtime.runner_models import (
     WorkspaceMcpSidecarCliRequest as _WorkspaceMcpSidecarCliRequest,
     WorkspaceMcpSidecarCliResponse as _WorkspaceMcpSidecarCliResponse,
 )
-from sandbox_agent_runtime.runtime_config_adapter import (
+from sandbox_agent_runtime.runtime_config import (
     CompiledWorkspaceRuntimePlan,
     WorkspaceGeneralSingleConfig,
     WorkspaceGeneralTeamConfig,
     WorkspaceRuntimeConfigError,
     WorkspaceRuntimePlanBuilder,
+)
+from sandbox_agent_runtime.ts_bridge import (
+    command_error_detail,
+    encode_json_base64,
+    run_async_command_capture,
+    runtime_root_dir,
+    ts_exec_command_from_json,
+    validate_json_output,
 )
 from sandbox_agent_runtime.workspace_scope import WORKSPACE_ROOT, sanitize_workspace_id
 
@@ -148,7 +156,7 @@ class _OpencodeRuntimeConfig:
     workspace_tool_ids: tuple[str, ...]
     mcp_servers: tuple[dict[str, Any], ...]
     output_schema_member_id: str | None
-    output_schema_model: type[BaseModel] | None
+    output_schema_model: dict[str, Any] | None
     output_format: dict[str, Any] | None
     workspace_config_checksum: str
     workspace_skill_ids: tuple[str, ...]
@@ -156,9 +164,7 @@ class _OpencodeRuntimeConfig:
 
 @dataclass(frozen=True)
 class _RunningWorkspaceMcpSidecar:
-    logical_server_id: str
     physical_server_id: str
-    sandbox_id: str
     url: str
     timeout_ms: int
     pid: int | None
@@ -302,7 +308,7 @@ async def _emit_event_with_push(*, event: RunnerOutputEvent, push_client: _PushE
 
 
 def _runtime_root_dir() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return runtime_root_dir(__file__)
 
 
 def _ts_harness_host_entry_path() -> Path:
@@ -408,73 +414,59 @@ def _opencode_harness_host_request_payload(
 
 
 def _harness_host_run_command(*, command: str, payload: BaseModel) -> tuple[str, ...]:
-    encoded = base64.b64encode(payload.model_dump_json().encode("utf-8")).decode("utf-8")
-    return (
-        _ts_harness_host_node_bin(),
-        str(_ts_harness_host_entry_path()),
-        command,
-        "--request-base64",
-        encoded,
+    return ts_exec_command_from_json(
+        node_bin=_ts_harness_host_node_bin(),
+        entry_path=_ts_harness_host_entry_path(),
+        operation=command,
+        payload_json=payload.model_dump_json(),
     )
 
 
 def _ts_workspace_mcp_sidecar_command(*, payload: _WorkspaceMcpSidecarCliRequest) -> tuple[str, ...]:
-    encoded = base64.b64encode(payload.model_dump_json().encode("utf-8")).decode("utf-8")
-    return (
-        _ts_harness_host_node_bin(),
-        str(_ts_workspace_mcp_sidecar_entry_path()),
-        "--request-base64",
-        encoded,
+    return ts_exec_command_from_json(
+        node_bin=_ts_harness_host_node_bin(),
+        entry_path=_ts_workspace_mcp_sidecar_entry_path(),
+        payload_json=payload.model_dump_json(),
     )
 
 
 def _ts_opencode_sidecar_command(*, payload: _OpencodeSidecarCliRequest) -> tuple[str, ...]:
-    encoded = base64.b64encode(payload.model_dump_json().encode("utf-8")).decode("utf-8")
-    return (
-        _ts_harness_host_node_bin(),
-        str(_ts_opencode_sidecar_entry_path()),
-        "--request-base64",
-        encoded,
+    return ts_exec_command_from_json(
+        node_bin=_ts_harness_host_node_bin(),
+        entry_path=_ts_opencode_sidecar_entry_path(),
+        payload_json=payload.model_dump_json(),
     )
 
 
 def _ts_opencode_config_command(*, payload: _OpencodeConfigCliRequest) -> tuple[str, ...]:
-    encoded = base64.b64encode(payload.model_dump_json().encode("utf-8")).decode("utf-8")
-    return (
-        _ts_harness_host_node_bin(),
-        str(_ts_opencode_config_entry_path()),
-        "--request-base64",
-        encoded,
+    return ts_exec_command_from_json(
+        node_bin=_ts_harness_host_node_bin(),
+        entry_path=_ts_opencode_config_entry_path(),
+        payload_json=payload.model_dump_json(),
     )
 
 
 def _ts_opencode_runtime_config_command(*, payload: _OpencodeRuntimeConfigCliRequest) -> tuple[str, ...]:
-    encoded = base64.b64encode(payload.model_dump_json().encode("utf-8")).decode("utf-8")
-    return (
-        _ts_harness_host_node_bin(),
-        str(_ts_opencode_runtime_config_entry_path()),
-        "--request-base64",
-        encoded,
+    return ts_exec_command_from_json(
+        node_bin=_ts_harness_host_node_bin(),
+        entry_path=_ts_opencode_runtime_config_entry_path(),
+        payload_json=payload.model_dump_json(),
     )
 
 
 def _ts_opencode_skills_command(*, payload: _OpencodeSkillsCliRequest) -> tuple[str, ...]:
-    encoded = base64.b64encode(payload.model_dump_json().encode("utf-8")).decode("utf-8")
-    return (
-        _ts_harness_host_node_bin(),
-        str(_ts_opencode_skills_entry_path()),
-        "--request-base64",
-        encoded,
+    return ts_exec_command_from_json(
+        node_bin=_ts_harness_host_node_bin(),
+        entry_path=_ts_opencode_skills_entry_path(),
+        payload_json=payload.model_dump_json(),
     )
 
 
 def _ts_opencode_commands_command(*, payload: _OpencodeCommandsCliRequest) -> tuple[str, ...]:
-    encoded = base64.b64encode(payload.model_dump_json().encode("utf-8")).decode("utf-8")
-    return (
-        _ts_harness_host_node_bin(),
-        str(_ts_opencode_commands_entry_path()),
-        "--request-base64",
-        encoded,
+    return ts_exec_command_from_json(
+        node_bin=_ts_harness_host_node_bin(),
+        entry_path=_ts_opencode_commands_entry_path(),
+        payload_json=payload.model_dump_json(),
     )
 
 
@@ -775,22 +767,24 @@ async def _stage_workspace_skills_for_opencode_via_local_ts(
         workspace_dir=str(workspace_dir),
         runtime_root=str(Path(WORKSPACE_ROOT)),
     )
-    process = await asyncio.create_subprocess_exec(
-        *_ts_opencode_skills_command(payload=payload),
+    returncode, stdout_text, stderr_text = await run_async_command_capture(
+        _ts_opencode_skills_command(payload=payload),
         cwd=str(workspace_dir),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        create_process=asyncio.create_subprocess_exec,
     )
-    stdout, stderr = await process.communicate()
-    stderr_text = stderr.decode("utf-8", errors="replace").strip()
-    stdout_text = stdout.decode("utf-8", errors="replace").strip()
-    if process.returncode != 0:
-        detail = stderr_text or stdout_text or f"local ts opencode skills exited with code {process.returncode}"
+    if returncode != 0:
+        detail = command_error_detail(
+            returncode=returncode,
+            stdout_text=stdout_text,
+            stderr_text=stderr_text,
+            fallback="local ts opencode skills exited with code {returncode}",
+        )
         raise RuntimeError(detail)
-    try:
-        response = _OpencodeSkillsCliResponse.model_validate_json(stdout_text)
-    except Exception as exc:
-        raise RuntimeError(f"invalid local ts opencode skills response: {exc}") from exc
+    response = validate_json_output(
+        stdout_text,
+        parser=_OpencodeSkillsCliResponse.model_validate_json,
+        invalid_message="invalid local ts opencode skills response",
+    )
     return response.changed, tuple(response.skill_ids)
 
 
@@ -804,22 +798,24 @@ async def _stage_workspace_commands_for_opencode_via_local_ts(*, workspace_dir: 
         raise RuntimeError(f"ts opencode commands entrypoint not found: {entry_path}")
 
     payload = _OpencodeCommandsCliRequest(workspace_dir=str(workspace_dir))
-    process = await asyncio.create_subprocess_exec(
-        *_ts_opencode_commands_command(payload=payload),
+    returncode, stdout_text, stderr_text = await run_async_command_capture(
+        _ts_opencode_commands_command(payload=payload),
         cwd=str(workspace_dir),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        create_process=asyncio.create_subprocess_exec,
     )
-    stdout, stderr = await process.communicate()
-    stderr_text = stderr.decode("utf-8", errors="replace").strip()
-    stdout_text = stdout.decode("utf-8", errors="replace").strip()
-    if process.returncode != 0:
-        detail = stderr_text or stdout_text or f"local ts opencode commands exited with code {process.returncode}"
+    if returncode != 0:
+        detail = command_error_detail(
+            returncode=returncode,
+            stdout_text=stdout_text,
+            stderr_text=stderr_text,
+            fallback="local ts opencode commands exited with code {returncode}",
+        )
         raise RuntimeError(detail)
-    try:
-        response = _OpencodeCommandsCliResponse.model_validate_json(stdout_text)
-    except Exception as exc:
-        raise RuntimeError(f"invalid local ts opencode commands response: {exc}") from exc
+    response = validate_json_output(
+        stdout_text,
+        parser=_OpencodeCommandsCliResponse.model_validate_json,
+        invalid_message="invalid local ts opencode commands response",
+    )
     return response.changed
 
 
@@ -1030,7 +1026,6 @@ def _release_opencode_lock(*, lock_file: Any) -> None:
 
 def _workspace_mcp_catalog_fingerprint(compiled_plan: CompiledWorkspaceRuntimePlan) -> str:
     payload = {
-        "enabled_tool_ids": list(_workspace_sidecar_enabled_tool_ids(compiled_plan=compiled_plan)),
         "catalog": [
             {
                 "tool_id": entry.tool_id,
@@ -1047,15 +1042,6 @@ def _workspace_mcp_catalog_fingerprint(compiled_plan: CompiledWorkspaceRuntimePl
     }
     serialized = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
-
-
-def _workspace_sidecar_enabled_tool_ids(*, compiled_plan: CompiledWorkspaceRuntimePlan) -> tuple[str, ...]:
-    tool_ids = [
-        tool_ref.tool_id
-        for tool_ref in compiled_plan.resolved_mcp_tool_refs
-        if tool_ref.server_id == _WORKSPACE_MCP_SERVER_ID
-    ]
-    return tuple(dict.fromkeys(tool_ids))
 
 
 def _workspace_mcp_pid_alive(pid: int) -> bool:
@@ -1128,20 +1114,13 @@ def _sidecar_catalog_payload(compiled_plan: CompiledWorkspaceRuntimePlan) -> str
     payload = [
         {
             "tool_id": entry.tool_id,
-            "server_id": entry.server_id,
             "tool_name": entry.tool_name,
             "module_path": entry.module_path,
             "symbol_name": entry.symbol_name,
         }
         for entry in compiled_plan.workspace_mcp_catalog
     ]
-    encoded = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
-    return encoded
-
-
-def _sidecar_enabled_tool_ids_payload(compiled_plan: CompiledWorkspaceRuntimePlan) -> str:
-    payload = list(_workspace_sidecar_enabled_tool_ids(compiled_plan=compiled_plan))
-    return base64.b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
+    return encode_json_base64(payload)
 
 
 async def _wait_for_http_ready(*, url: str, timeout_seconds: float, target_name: str) -> None:
@@ -1170,12 +1149,10 @@ async def _start_workspace_mcp_sidecar(
     *,
     workspace_dir: Path,
     compiled_plan: CompiledWorkspaceRuntimePlan,
-    workspace_id: str,
     sandbox_id: str,
     physical_server_id: str,
 ) -> _RunningWorkspaceMcpSidecar | None:
-    enabled_workspace_tool_ids = _workspace_sidecar_enabled_tool_ids(compiled_plan=compiled_plan)
-    if not enabled_workspace_tool_ids:
+    if not compiled_plan.workspace_mcp_catalog:
         return None
     entry_path = _ts_workspace_mcp_sidecar_entry_path()
     if not entry_path.is_file():
@@ -1194,36 +1171,38 @@ async def _start_workspace_mcp_sidecar(
     try:
         expected_fingerprint = _workspace_mcp_catalog_fingerprint(compiled_plan)
         request_payload = _WorkspaceMcpSidecarCliRequest(
-            workspace_id=workspace_id,
             workspace_dir=str(workspace_dir),
-            sandbox_id=sandbox_id,
             physical_server_id=physical_server_id,
             expected_fingerprint=expected_fingerprint,
             timeout_ms=timeout_ms,
             readiness_timeout_s=_WORKSPACE_MCP_READY_TIMEOUT_S,
             catalog_json_base64=_sidecar_catalog_payload(compiled_plan),
-            enabled_tool_ids_json_base64=_sidecar_enabled_tool_ids_payload(compiled_plan),
             python_executable=sys.executable,
         )
-        process = await asyncio.create_subprocess_exec(
-            *_ts_workspace_mcp_sidecar_command(payload=request_payload),
+        returncode, stdout_text, stderr_text = await run_async_command_capture(
+            _ts_workspace_mcp_sidecar_command(payload=request_payload),
             cwd=str(workspace_dir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            create_process=asyncio.create_subprocess_exec,
         )
-        stdout, stderr = await process.communicate()
-        stderr_text = stderr.decode("utf-8", errors="replace").strip()
-        stdout_text = stdout.decode("utf-8", errors="replace").strip()
-        if process.returncode != 0:
-            detail = stderr_text or stdout_text or _workspace_mcp_failure_detail(physical_server_id=physical_server_id)
+        if returncode != 0:
+            detail = command_error_detail(
+                returncode=returncode,
+                stdout_text=stdout_text,
+                stderr_text=stderr_text,
+                fallback=_workspace_mcp_failure_detail(physical_server_id=physical_server_id),
+            )
             suffix = f": {detail}" if detail else ""
             raise WorkspaceRuntimeConfigError(
                 code="workspace_mcp_sidecar_start_failed",
                 message=f"failed to start workspace MCP sidecar{suffix}",
             )
         try:
-            response = _WorkspaceMcpSidecarCliResponse.model_validate_json(stdout_text)
-        except Exception as exc:
+            response = validate_json_output(
+                stdout_text,
+                parser=_WorkspaceMcpSidecarCliResponse.model_validate_json,
+                invalid_message="invalid workspace MCP sidecar response",
+            )
+        except RuntimeError as exc:
             detail = stderr_text or stdout_text or _workspace_mcp_failure_detail(physical_server_id=physical_server_id)
             suffix = f": {detail}" if detail else ""
             raise WorkspaceRuntimeConfigError(
@@ -1234,22 +1213,20 @@ async def _start_workspace_mcp_sidecar(
         logger.info(
             "%s workspace MCP sidecar for physical_id=%s url=%s",
             "Reused" if response.reused else "Started",
-            response.physical_server_id,
+            physical_server_id,
             response.url,
             extra={
                 "event": "workspace_mcp.sidecar",
                 "outcome": "reuse" if response.reused else "start",
-                "logical_server_id": response.logical_server_id,
-                "physical_server_id": response.physical_server_id,
-                "sandbox_id": response.sandbox_id,
+                "logical_server_id": _WORKSPACE_MCP_SERVER_ID,
+                "physical_server_id": physical_server_id,
+                "sandbox_id": sandbox_id,
             },
         )
         return _RunningWorkspaceMcpSidecar(
-            logical_server_id=response.logical_server_id,
-            physical_server_id=response.physical_server_id,
-            sandbox_id=response.sandbox_id,
+            physical_server_id=physical_server_id,
             url=response.url,
-            timeout_ms=response.timeout_ms,
+            timeout_ms=timeout_ms,
             pid=response.pid,
             reused=response.reused,
         )
@@ -1812,23 +1789,30 @@ async def _start_opencode_apps_via_local_ts_lifecycle(
             for app in resolved_applications
         ],
     }
-    request_base64 = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
-    process = await asyncio.create_subprocess_exec(
-        _ts_harness_host_node_bin(),
-        str(entry_path),
-        "--request-base64",
-        request_base64,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+    request_base64 = encode_json_base64(payload)
+    returncode, stdout_text, stderr_text = await run_async_command_capture(
+        (
+            _ts_harness_host_node_bin(),
+            str(entry_path),
+            "--request-base64",
+            request_base64,
+        ),
+        cwd=str(Path(WORKSPACE_ROOT)),
+        create_process=asyncio.create_subprocess_exec,
     )
-    stdout, stderr = await process.communicate()
-    if process.returncode != 0:
-        detail = (stderr.decode("utf-8", errors="replace").strip() or stdout.decode("utf-8", errors="replace").strip())
-        raise RuntimeError(detail or f"local ts opencode app bootstrap exited with code {process.returncode}")
-    try:
-        response_payload = json.loads(stdout.decode("utf-8"))
-    except Exception as exc:
-        raise RuntimeError(f"invalid local ts opencode app bootstrap response: {exc}") from exc
+    if returncode != 0:
+        detail = command_error_detail(
+            returncode=returncode,
+            stdout_text=stdout_text,
+            stderr_text=stderr_text,
+            fallback="local ts opencode app bootstrap exited with code {returncode}",
+        )
+        raise RuntimeError(detail)
+    response_payload = validate_json_output(
+        stdout_text,
+        parser=json.loads,
+        invalid_message="invalid local ts opencode app bootstrap response",
+    )
     return _parse_opencode_bootstrap_entries(
         response_payload=response_payload,
         workspace_id=request.workspace_id,
@@ -1944,22 +1928,24 @@ async def _restart_opencode_sidecar(
 
     lock_file = await _acquire_opencode_lock()
     try:
-        process = await asyncio.create_subprocess_exec(
-            *_ts_opencode_sidecar_command(payload=request_payload),
+        returncode, stdout_text, stderr_text = await run_async_command_capture(
+            _ts_opencode_sidecar_command(payload=request_payload),
             cwd=workspace_root,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            create_process=asyncio.create_subprocess_exec,
         )
-        stdout, stderr = await process.communicate()
-        stderr_text = stderr.decode("utf-8", errors="replace").strip()
-        stdout_text = stdout.decode("utf-8", errors="replace").strip()
-        if process.returncode != 0:
-            detail = stderr_text or stdout_text or f"local ts opencode sidecar exited with code {process.returncode}"
+        if returncode != 0:
+            detail = command_error_detail(
+                returncode=returncode,
+                stdout_text=stdout_text,
+                stderr_text=stderr_text,
+                fallback="local ts opencode sidecar exited with code {returncode}",
+            )
             raise RuntimeError(detail)
-        try:
-            _OpencodeSidecarCliResponse.model_validate_json(stdout_text)
-        except Exception as exc:
-            raise RuntimeError(f"invalid local ts opencode sidecar response: {exc}") from exc
+        validate_json_output(
+            stdout_text,
+            parser=_OpencodeSidecarCliResponse.model_validate_json,
+            invalid_message="invalid local ts opencode sidecar response",
+        )
     finally:
         _release_opencode_lock(lock_file=lock_file)
 
@@ -2008,22 +1994,24 @@ async def _write_opencode_config_via_local_ts(
             default_headers=model_client_config.default_headers,
         ),
     )
-    process = await asyncio.create_subprocess_exec(
-        *_ts_opencode_config_command(payload=payload),
+    returncode, stdout_text, stderr_text = await run_async_command_capture(
+        _ts_opencode_config_command(payload=payload),
         cwd=str(Path(WORKSPACE_ROOT)),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        create_process=asyncio.create_subprocess_exec,
     )
-    stdout, stderr = await process.communicate()
-    stderr_text = stderr.decode("utf-8", errors="replace").strip()
-    stdout_text = stdout.decode("utf-8", errors="replace").strip()
-    if process.returncode != 0:
-        detail = stderr_text or stdout_text or f"local ts opencode config exited with code {process.returncode}"
+    if returncode != 0:
+        detail = command_error_detail(
+            returncode=returncode,
+            stdout_text=stdout_text,
+            stderr_text=stderr_text,
+            fallback="local ts opencode config exited with code {returncode}",
+        )
         raise RuntimeError(detail)
-    try:
-        response = _OpencodeConfigCliResponse.model_validate_json(stdout_text)
-    except Exception as exc:
-        raise RuntimeError(f"invalid local ts opencode config response: {exc}") from exc
+    response = validate_json_output(
+        stdout_text,
+        parser=_OpencodeConfigCliResponse.model_validate_json,
+        invalid_message="invalid local ts opencode config response",
+    )
     return Path(response.path), response.provider_config_changed, response.model_selection_changed
 
 
@@ -2049,8 +2037,8 @@ def _project_opencode_runtime_config_request(
 ) -> _OpencodeRuntimeConfigCliRequest:
     general_config = compiled_plan.general_config
     resolved_output_schemas = {
-        member_id: schema_model.model_json_schema()
-        for member_id, schema_model in compiled_plan.resolved_output_schemas.items()
+        member_id: dict(schema)
+        for member_id, schema in compiled_plan.resolved_output_schemas.items()
     }
     if isinstance(general_config, WorkspaceGeneralSingleConfig):
         return _OpencodeRuntimeConfigCliRequest(
@@ -2156,22 +2144,24 @@ async def _build_opencode_runtime_config(
         workspace_skill_ids=workspace_skill_ids,
         tool_server_id_map=tool_server_id_map,
     )
-    process = await asyncio.create_subprocess_exec(
-        *_ts_opencode_runtime_config_command(payload=payload),
+    returncode, stdout_text, stderr_text = await run_async_command_capture(
+        _ts_opencode_runtime_config_command(payload=payload),
         cwd=str(Path(WORKSPACE_ROOT)),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        create_process=asyncio.create_subprocess_exec,
     )
-    stdout, stderr = await process.communicate()
-    stderr_text = stderr.decode("utf-8", errors="replace").strip()
-    stdout_text = stdout.decode("utf-8", errors="replace").strip()
-    if process.returncode != 0:
-        detail = stderr_text or stdout_text or f"local ts opencode runtime config exited with code {process.returncode}"
+    if returncode != 0:
+        detail = command_error_detail(
+            returncode=returncode,
+            stdout_text=stdout_text,
+            stderr_text=stderr_text,
+            fallback="local ts opencode runtime config exited with code {returncode}",
+        )
         raise RuntimeError(detail)
-    try:
-        response = _OpencodeRuntimeConfigCliResponse.model_validate_json(stdout_text)
-    except Exception as exc:
-        raise RuntimeError(f"invalid local ts opencode runtime config response: {exc}") from exc
+    response = validate_json_output(
+        stdout_text,
+        parser=_OpencodeRuntimeConfigCliResponse.model_validate_json,
+        invalid_message="invalid local ts opencode runtime config response",
+    )
 
     output_schema_model = (
         compiled_plan.resolved_output_schemas.get(response.output_schema_member_id) if response.output_schema_member_id else None
@@ -3156,7 +3146,6 @@ async def _execute_request_opencode(request: RunnerRequest) -> int:
             sidecar = await _start_workspace_mcp_sidecar(
                 workspace_dir=workspace_dir,
                 compiled_plan=compiled_plan,
-                workspace_id=request.workspace_id,
                 sandbox_id=sandbox_id,
                 physical_server_id=workspace_physical_server_id,
             )

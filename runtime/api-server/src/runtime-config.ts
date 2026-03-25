@@ -348,7 +348,7 @@ export function resolveProductRuntimeConfig(params?: {
   };
 }
 
-function runtimeConfigResponse(config: ProductRuntimeConfig): Record<string, unknown> {
+export function runtimeConfigResponse(config: ProductRuntimeConfig): Record<string, unknown> {
   return {
     config_path: config.configPath || null,
     loaded_from_file: config.loadedFromFile,
@@ -547,7 +547,7 @@ function assignOrRemove(target: StringMap, key: string, value: unknown): void {
   }
 }
 
-function updateRuntimeConfigDocument(payload: Record<string, unknown>): ProductRuntimeConfig {
+export function updateRuntimeConfigDocument(payload: Record<string, unknown>): ProductRuntimeConfig {
   const { document, configPath } = loadRuntimeConfigDocument();
   const runtimePayload = asObject(document.runtime);
   const providersPayload = asObject(document.providers);
@@ -574,6 +574,7 @@ function updateRuntimeConfigDocument(payload: Record<string, unknown>): ProductR
   assignOrRemove(legacyPayload, "model_proxy_base_url", payload.model_proxy_base_url);
   assignOrRemove(legacyPayload, "default_model", payload.default_model);
   assignOrRemove(desktopBrowserCapability, "url", payload.desktop_browser_url);
+  assignOrRemove(desktopBrowserCapability, "auth_token", payload.desktop_browser_auth_token);
   if (payload.desktop_browser_url !== undefined && payload.desktop_browser_url !== null) {
     delete desktopBrowserCapability.mcp_url;
   }

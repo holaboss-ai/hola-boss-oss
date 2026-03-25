@@ -15,11 +15,10 @@ class WorkspaceOutputSchemaResolver:
     def resolve(
         self,
         *,
-        config: Mapping[str, Any],
+        schema_aliases: Mapping[str, str],
         general_config: WorkspaceGeneralConfig,
         module_prefixes: tuple[str, ...],
     ) -> dict[str, type[BaseModel]]:
-        schema_aliases = _load_schema_aliases(config)
         resolved: dict[str, type[BaseModel]] = {}
 
         members = _ordered_members(general_config)
@@ -55,26 +54,6 @@ class WorkspaceOutputSchemaResolver:
             resolved[member.id] = schema_model
 
         return resolved
-
-
-def _load_schema_aliases(config: Mapping[str, Any]) -> dict[str, str]:
-    registry = config.get("schema_registry")
-    if not isinstance(registry, Mapping):
-        return {}
-    aliases = registry.get("aliases")
-    if not isinstance(aliases, Mapping):
-        return {}
-
-    parsed: dict[str, str] = {}
-    for key, value in aliases.items():
-        if not isinstance(key, str) or not key.strip():
-            continue
-        if not isinstance(value, str) or not value.strip():
-            continue
-        parsed[key.strip()] = value.strip()
-    return parsed
-
-
 def _load_schema_model(
     *,
     module_path: str,

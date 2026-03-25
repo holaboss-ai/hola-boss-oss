@@ -193,17 +193,22 @@ holaboss_runtime_ensure_opencode_ready() {
 }
 
 holaboss_runtime_start_api() {
-  SANDBOX_AGENT_LOG_LEVEL_RAW="${SANDBOX_AGENT_LOG_LEVEL:-info}"
-  SANDBOX_AGENT_UVICORN_LOG_LEVEL="$(printf '%s' "${SANDBOX_AGENT_LOG_LEVEL_RAW}" | tr '[:upper:]' '[:lower:]')"
-  SANDBOX_AGENT_PY_LOG_LEVEL="$(printf '%s' "${SANDBOX_AGENT_LOG_LEVEL_RAW}" | tr '[:lower:]' '[:upper:]')"
-  export SANDBOX_AGENT_LOG_LEVEL="${SANDBOX_AGENT_PY_LOG_LEVEL}"
-  holaboss_runtime_log "resolved log levels python=${SANDBOX_AGENT_LOG_LEVEL} uvicorn=${SANDBOX_AGENT_UVICORN_LOG_LEVEL}"
+  export HOLABOSS_RUNTIME_NODE_BIN="${HOLABOSS_RUNTIME_NODE_BIN:-node}"
+  export SANDBOX_RUNTIME_API_HOST="${SANDBOX_RUNTIME_API_HOST:-${SANDBOX_AGENT_BIND_HOST:-0.0.0.0}}"
+  export SANDBOX_RUNTIME_API_PORT="${SANDBOX_RUNTIME_API_PORT:-${SANDBOX_AGENT_BIND_PORT:-8080}}"
 
-  holaboss_runtime_log "starting sandbox agent API on ${SANDBOX_AGENT_BIND_HOST:-0.0.0.0}:${SANDBOX_AGENT_BIND_PORT:-8080}"
-  exec "${HOLABOSS_RUNTIME_PYTHON}" -m uvicorn sandbox_agent_runtime.api:app \
-    --host "${SANDBOX_AGENT_BIND_HOST:-0.0.0.0}" \
-    --port "${SANDBOX_AGENT_BIND_PORT:-8080}" \
-    --log-level "${SANDBOX_AGENT_UVICORN_LOG_LEVEL}"
+  local runtime_api_entry="${HOLABOSS_RUNTIME_APP_ROOT%/}/../api-server/dist/index.mjs"
+  if [ ! -f "${runtime_api_entry}" ]; then
+    holaboss_runtime_log "runtime api entrypoint not found: ${runtime_api_entry}"
+    exit 1
+  fi
+  if ! command -v "${HOLABOSS_RUNTIME_NODE_BIN}" >/dev/null 2>&1; then
+    holaboss_runtime_log "runtime node binary not found: ${HOLABOSS_RUNTIME_NODE_BIN}"
+    exit 1
+  fi
+
+  holaboss_runtime_log "starting sandbox runtime TS API on ${SANDBOX_RUNTIME_API_HOST}:${SANDBOX_RUNTIME_API_PORT}"
+  exec "${HOLABOSS_RUNTIME_NODE_BIN}" "${runtime_api_entry}"
 }
 
 holaboss_runtime_shared_main() {

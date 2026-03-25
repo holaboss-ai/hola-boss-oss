@@ -66,11 +66,19 @@ cat > "${OUTPUT_ROOT}/bin/hb" <<'EOF'
 set -euo pipefail
 
 RUNTIME_APP_ROOT="${HOLABOSS_RUNTIME_APP_ROOT:-/app}"
-RUNTIME_PYTHON="${HOLABOSS_RUNTIME_PYTHON:-/opt/venv/bin/python}"
-RUNTIME_SITE_PACKAGES="${HOLABOSS_RUNTIME_SITE_PACKAGES:-}"
+RUNTIME_NODE_BIN="${HOLABOSS_RUNTIME_NODE_BIN:-node}"
+RUNTIME_TS_HB="${RUNTIME_APP_ROOT%/}/api-server/dist/hb.mjs"
 
-export PYTHONPATH="${RUNTIME_APP_ROOT}${RUNTIME_SITE_PACKAGES:+:${RUNTIME_SITE_PACKAGES}}${PYTHONPATH:+:${PYTHONPATH}}"
-exec "${RUNTIME_PYTHON}" -m sandbox_agent_runtime.hb_cli "$@"
+if [ ! -f "${RUNTIME_TS_HB}" ]; then
+  echo "runtime hb entrypoint not found: ${RUNTIME_TS_HB}" >&2
+  exit 1
+fi
+if ! command -v "${RUNTIME_NODE_BIN}" >/dev/null 2>&1; then
+  echo "runtime node binary not found: ${RUNTIME_NODE_BIN}" >&2
+  exit 1
+fi
+
+exec "${RUNTIME_NODE_BIN}" "${RUNTIME_TS_HB}" "$@"
 EOF
 chmod +x "${OUTPUT_ROOT}/bin/hb"
 chmod +x "${OUTPUT_ROOT}/bootstrap/"*.sh

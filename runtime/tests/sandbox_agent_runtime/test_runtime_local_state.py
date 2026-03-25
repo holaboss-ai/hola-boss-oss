@@ -8,11 +8,41 @@ from pathlib import Path
 from sandbox_agent_runtime import runtime_local_state as state_module
 
 
+def _runtime_db_row(db_path: Path, query: str, params: tuple[object, ...] = ()) -> sqlite3.Row | None:
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        return conn.execute(query, params).fetchone()
+    finally:
+        conn.close()
+
+
+def _runtime_db_tables(db_path: Path) -> set[str]:
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+    finally:
+        conn.close()
+    return {str(row["name"]) for row in rows}
+
+
 def test_runtime_root_dir_resolves_app_parent(monkeypatch) -> None:
-    fake_file = "/app/sandbox_agent_runtime/runtime_local_state.py"
+    fake_file = "/runtime-root/app/sandbox_agent_runtime/runtime_local_state.py"
     monkeypatch.setattr(state_module, "__file__", fake_file)
 
-    assert state_module._runtime_root_dir() == Path("/app")
+    assert state_module._runtime_root_dir() == Path("/runtime-root")
+
+
+def test_ts_state_store_is_enabled_by_default_and_can_be_disabled(monkeypatch) -> None:
+    monkeypatch.delenv("HOLABOSS_RUNTIME_USE_TS_STATE_STORE", raising=False)
+    monkeypatch.delenv("HOLABOSS_RUNTIME_DISABLE_TS_STATE_STORE", raising=False)
+
+    assert state_module._ts_state_store_enabled() is True
+
+    monkeypatch.setenv("HOLABOSS_RUNTIME_DISABLE_TS_STATE_STORE", "1")
+
+    assert state_module._ts_state_store_enabled() is False
 
 
 def test_workspace_registry_round_trip_uses_hidden_identity_file(monkeypatch, tmp_path: Path) -> None:
@@ -35,11 +65,8 @@ def test_workspace_registry_round_trip_uses_hidden_identity_file(monkeypatch, tm
     assert state_module.get_workspace("workspace-1") == created
     assert [record.id for record in state_module.list_workspaces()] == ["workspace-1"]
 
-    with state_module.runtime_db_connection() as conn:
-        tables = {
-            str(row["name"]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
-        }
-        row = conn.execute("SELECT workspace_path FROM workspaces WHERE id = ?", ("workspace-1",)).fetchone()
+    tables = _runtime_db_tables(db_path)
+    row = _runtime_db_row(db_path, "SELECT workspace_path FROM workspaces WHERE id = ?", ("workspace-1",))
     assert "workspaces" in tables
     assert row is not None
     assert Path(str(row["workspace_path"])) == workspace_root / "workspace-1"
@@ -110,12 +137,8 @@ def test_runtime_schema_migrates_workspace_rows_to_registry_and_identity_file(mo
     assert identity_path.is_file()
     assert identity_path.read_text(encoding="utf-8").strip() == "workspace-legacy"
 
-    with state_module.runtime_db_connection() as conn_after:
-        tables = {
-            str(row["name"])
-            for row in conn_after.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
-        }
-        row = conn_after.execute("SELECT workspace_path FROM workspaces WHERE id = ?", ("workspace-legacy",)).fetchone()
+    tables = _runtime_db_tables(db_path)
+    row = _runtime_db_row(db_path, "SELECT workspace_path FROM workspaces WHERE id = ?", ("workspace-legacy",))
     assert "workspaces" in tables
     assert row is not None
     assert Path(str(row["workspace_path"])) == workspace_root / "workspace-legacy"
@@ -135,8 +158,7 @@ def test_workspace_dir_recovers_when_folder_is_renamed(monkeypatch, tmp_path: Pa
     resolved = state_module.workspace_dir("workspace-1")
 
     assert resolved == renamed_path
-    with state_module.runtime_db_connection() as conn:
-        row = conn.execute("SELECT workspace_path FROM workspaces WHERE id = ?", ("workspace-1",)).fetchone()
+    row = _runtime_db_row(db_path, "SELECT workspace_path FROM workspaces WHERE id = ?", ("workspace-1",))
     assert row is not None
     assert Path(str(row["workspace_path"])) == renamed_path
 
@@ -149,8 +171,12 @@ def test_get_workspace_recovers_missing_row_from_identity_file(monkeypatch, tmp_
     monkeypatch.setattr(state_module, "WORKSPACE_ROOT", str(workspace_root))
 
     state_module.create_workspace(workspace_id="workspace-1", name="Acme", harness="opencode", status="active")
-    with state_module.runtime_db_connection() as conn:
+    conn = sqlite3.connect(str(db_path))
+    try:
         conn.execute("DELETE FROM workspaces WHERE id = ?", ("workspace-1",))
+        conn.commit()
+    finally:
+        conn.close()
 
     recovered = state_module.get_workspace("workspace-1")
 
@@ -159,11 +185,11 @@ def test_get_workspace_recovers_missing_row_from_identity_file(monkeypatch, tmp_
     assert recovered.name == "workspace-1"
     assert recovered.harness == "opencode"
     assert recovered.status == "active"
-    with state_module.runtime_db_connection() as conn:
-        row = conn.execute(
-            "SELECT id, workspace_path, harness, status FROM workspaces WHERE id = ?",
-            ("workspace-1",),
-        ).fetchone()
+    row = _runtime_db_row(
+        db_path,
+        "SELECT id, workspace_path, harness, status FROM workspaces WHERE id = ?",
+        ("workspace-1",),
+    )
     assert row is not None
     assert str(row["id"]) == "workspace-1"
     assert Path(str(row["workspace_path"])) == workspace_root / "workspace-1"
@@ -172,8 +198,6 @@ def test_get_workspace_recovers_missing_row_from_identity_file(monkeypatch, tmp_
 
 
 def test_upsert_binding_delegates_to_ts_state_store_when_enabled(monkeypatch) -> None:
-    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_STATE_STORE", "1")
-
     def _fake_call(*, operation, payload):
         assert operation == "upsert-binding"
         assert payload == {
@@ -206,8 +230,6 @@ def test_upsert_binding_delegates_to_ts_state_store_when_enabled(monkeypatch) ->
 
 
 def test_list_session_messages_delegates_to_ts_state_store_when_enabled(monkeypatch) -> None:
-    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_STATE_STORE", "1")
-
     def _fake_call(*, operation, payload):
         assert operation == "list-session-messages"
         assert payload == {
@@ -240,7 +262,6 @@ def test_list_session_messages_delegates_to_ts_state_store_when_enabled(monkeypa
 
 
 def test_output_event_functions_delegate_to_ts_state_store_when_enabled(monkeypatch) -> None:
-    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_STATE_STORE", "1")
     captured: list[tuple[str, dict[str, object]]] = []
 
     def _fake_call(*, operation, payload):
@@ -294,7 +315,6 @@ def test_output_event_functions_delegate_to_ts_state_store_when_enabled(monkeypa
 
 
 def test_workspace_crud_delegates_to_ts_state_store_when_enabled(monkeypatch) -> None:
-    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_STATE_STORE", "1")
     captured: list[tuple[str, dict[str, object]]] = []
 
     def _fake_call(*, operation, payload):
@@ -422,9 +442,18 @@ def test_workspace_crud_delegates_to_ts_state_store_when_enabled(monkeypatch) ->
     ]
 
 
-def test_outputs_and_artifacts_delegate_to_ts_state_store_when_enabled(monkeypatch) -> None:
-    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_STATE_STORE", "1")
+def test_workspace_dir_delegates_to_ts_state_store_when_enabled(monkeypatch) -> None:
+    def _fake_call(*, operation, payload):
+        assert operation == "workspace-dir"
+        assert payload == {"workspace_id": "workspace-1"}
+        return "/tmp/workspace-1"
 
+    monkeypatch.setattr(state_module, "_ts_state_store_call", _fake_call)
+
+    assert state_module.workspace_dir("workspace-1") == Path("/tmp/workspace-1")
+
+
+def test_outputs_and_artifacts_delegate_to_ts_state_store_when_enabled(monkeypatch) -> None:
     def _fake_call(*, operation, payload):
         if operation == "create-output-folder":
             return {
@@ -553,8 +582,6 @@ def test_outputs_and_artifacts_delegate_to_ts_state_store_when_enabled(monkeypat
 
 
 def test_cronjobs_and_task_proposals_delegate_to_ts_state_store_when_enabled(monkeypatch) -> None:
-    monkeypatch.setenv("HOLABOSS_RUNTIME_USE_TS_STATE_STORE", "1")
-
     def _fake_call(*, operation, payload):
         if operation == "create-cronjob":
             return {

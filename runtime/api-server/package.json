@@ -4,12 +4,16 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
+    "holaboss-runtime-hb": "dist/hb.mjs",
     "holaboss-runtime-api": "dist/index.mjs",
     "holaboss-runtime-opencode-app-bootstrap": "dist/opencode-app-bootstrap.mjs",
     "holaboss-runtime-opencode-commands": "dist/opencode-commands.mjs",
     "holaboss-runtime-opencode-config": "dist/opencode-config.mjs",
+    "holaboss-runtime-runtime-config": "dist/runtime-config-cli.mjs",
+    "holaboss-runtime-workspace-runtime-plan": "dist/workspace-runtime-plan.mjs",
     "holaboss-runtime-opencode-runtime-config": "dist/opencode-runtime-config.mjs",
     "holaboss-runtime-opencode-skills": "dist/opencode-skills.mjs",
+    "holaboss-runtime-workspace-mcp-host": "dist/workspace-mcp-host.mjs",
     "holaboss-runtime-workspace-mcp-sidecar": "dist/workspace-mcp-sidecar.mjs",
     "holaboss-runtime-opencode-sidecar": "dist/opencode-sidecar.mjs"
   },
@@ -21,10 +25,12 @@
   },
   "dependencies": {
     "@holaboss/runtime-state-store": "file:../state-store",
+    "@modelcontextprotocol/sdk": "^1.28.0",
     "@types/js-yaml": "^4.0.9",
     "cron-parser": "^5.5.0",
     "fastify": "^5.6.1",
-    "js-yaml": "^4.1.1"
+    "js-yaml": "^4.1.1",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",

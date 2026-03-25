@@ -5,7 +5,6 @@ description = "Holaboss runtime package and dependency manifest."
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "croniter",
-    "fastapi[standard]>=0.115.12",
     "httpx[socks]>=0.28.1",
     "mcp>=1.6.0",
     "openai==2.11.0",
@@ -14,9 +13,6 @@ dependencies = [
     "PyYAML>=6.0",
     "sqlalchemy>=2.0,<3",
 ]
-
-[project.scripts]
-hb = "sandbox_agent_runtime.hb_cli:main"
 
 [dependency-groups]
 dev = [

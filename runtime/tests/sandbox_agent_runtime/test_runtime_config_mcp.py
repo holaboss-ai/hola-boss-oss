@@ -30,7 +30,6 @@ mcp_registry:
   servers:
     workspace:
       type: local
-      command: ["python", "-m", "sandbox_agent_runtime.workspace_mcp_sidecar"]
       enabled: true
       timeout_ms: 10000
   catalog:
@@ -85,7 +84,6 @@ mcp_registry:
   servers:
     workspace:
       type: local
-      command: ["python", "-m", "sandbox_agent_runtime.workspace_mcp_sidecar"]
   catalog: {}
 """
     with pytest.raises(WorkspaceRuntimeConfigError) as exc:
@@ -135,7 +133,6 @@ mcp_registry:
   servers:
     workspace:
       type: local
-      command: ["python", "-m", "sandbox_agent_runtime.workspace_mcp_sidecar"]
   catalog: {}
 """
     with pytest.raises(WorkspaceRuntimeConfigError) as exc:

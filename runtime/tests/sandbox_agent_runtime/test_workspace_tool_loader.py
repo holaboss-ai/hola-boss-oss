@@ -26,7 +26,6 @@ def echo_tool(text: str) -> str:
     catalog = (
         WorkspaceMcpCatalogEntry(
             tool_id="workspace.echo",
-            server_id="workspace",
             tool_name="echo",
             module_path="tools.echo",
             symbol_name="echo_tool",
@@ -42,7 +41,6 @@ def test_load_workspace_tools_rejects_non_tools_module_prefix(tmp_path: Path) ->
     catalog = (
         WorkspaceMcpCatalogEntry(
             tool_id="workspace.echo",
-            server_id="workspace",
             tool_name="echo",
             module_path="bad_prefix.echo",
             symbol_name="echo_tool",

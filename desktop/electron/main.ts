@@ -1653,7 +1653,7 @@ async function bootstrapRuntimeDatabase() {
     `);
 
     const now = utcNowIso();
-    const runtimeRoot = await resolveRuntimeRoot();
+    const { runtimeRoot } = await resolveRuntimeRoot();
     database
       .prepare(`
         INSERT INTO runtime_installation_state (
@@ -3077,6 +3077,9 @@ async function listMarketplaceTemplates(): Promise<TemplateListResponsePayload> 
 }
 
 async function listTaskProposals(workspaceId: string): Promise<TaskProposalListResponsePayload> {
+  if (!workspaceId.trim()) {
+    return { proposals: [], count: 0 };
+  }
   return requestRuntimeJson<TaskProposalListResponsePayload>({
     method: "GET",
     path: "/api/v1/task-proposals/unreviewed",
@@ -3664,7 +3667,6 @@ function renderMinimalWorkspaceYaml(workspace: WorkspaceRecordPayload, template:
     "  servers:",
     "    workspace:",
     '      type: "local"',
-    '      command: ["python", "-m", "sandbox_agent_runtime.workspace_mcp_sidecar"]',
     "      enabled: true",
     "      timeout_ms: 10000",
     "  catalog: {}",
@@ -3680,36 +3682,50 @@ function renderMinimalWorkspaceYaml(workspace: WorkspaceRecordPayload, template:
 
 async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise<WorkspaceResponsePayload> {
   await ensureRuntimeBindingReadyForWorkspaceFlow("workspace_create");
-  const runtime = await ensureRuntimeReady();
   const mainSessionId = crypto.randomUUID();
   const harness = workspaceHarness();
   const templateRootPath = payload.template_root_path?.trim() || "";
   const templateName = payload.template_name?.trim() || "";
   let materializedTemplate: MaterializeTemplateResponsePayload;
   if (templateRootPath) {
-    materializedTemplate = await materializeLocalTemplate({ template_root_path: templateRootPath });
+    try {
+      materializedTemplate = await materializeLocalTemplate({ template_root_path: templateRootPath });
+    } catch (error) {
+      throw new Error(contextualWorkspaceCreateError("Couldn't materialize the local template", error));
+    }
   } else if (templateName) {
-    materializedTemplate = await materializeMarketplaceTemplate({
-      holaboss_user_id: payload.holaboss_user_id,
-      template_name: templateName,
-      template_ref: payload.template_ref,
-      template_commit: payload.template_commit
-    });
+    try {
+      materializedTemplate = await materializeMarketplaceTemplate({
+        holaboss_user_id: payload.holaboss_user_id,
+        template_name: templateName,
+        template_ref: payload.template_ref,
+        template_commit: payload.template_commit
+      });
+    } catch (error) {
+      throw new Error(
+        contextualWorkspaceCreateError(`Couldn't materialize the marketplace template '${templateName}'`, error)
+      );
+    }
   } else {
     throw new Error("Choose a local folder or a marketplace template first.");
   }
   const resolvedTemplate = materializedTemplate.template;
-  const created = await requestRuntimeJson<WorkspaceResponsePayload>({
-    method: "POST",
-    path: "/api/v1/workspaces",
-    payload: {
-      name: payload.name,
-      harness,
-      status: "provisioning",
-      main_session_id: mainSessionId,
-      onboarding_status: "not_required"
-    }
-  });
+  let created: WorkspaceResponsePayload;
+  try {
+    created = await requestRuntimeJson<WorkspaceResponsePayload>({
+      method: "POST",
+      path: "/api/v1/workspaces",
+      payload: {
+        name: payload.name,
+        harness,
+        status: "provisioning",
+        main_session_id: mainSessionId,
+        onboarding_status: "not_required"
+      }
+    });
+  } catch (error) {
+    throw new Error(contextualWorkspaceCreateError("Couldn't create the workspace record", error));
+  }
   const workspaceId = created.workspace.id;
 
   try {
@@ -3743,7 +3759,7 @@ async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise
       onboardingSessionId = null;
     }
 
-    const updated = await requestRuntimeJson<WorkspaceResponsePayload>({
+    let updated = await requestRuntimeJson<WorkspaceResponsePayload>({
       method: "PATCH",
       path: `/api/v1/workspaces/${workspaceId}`,
       payload: {
@@ -3754,16 +3770,29 @@ async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise
       }
     });
     if (onboardingSessionId) {
-      await requestRuntimeJson<EnqueueSessionInputResponsePayload>({
-        method: "POST",
-        path: "/api/v1/agent-sessions/queue",
-        payload: {
-          workspace_id: workspaceId,
-          session_id: onboardingSessionId,
-          text: "Start workspace onboarding now. Use ONBOARD.md as the guide and ask the first onboarding question only.",
-          priority: 0
-        }
-      });
+      try {
+        await requestRuntimeJson<EnqueueSessionInputResponsePayload>({
+          method: "POST",
+          path: "/api/v1/agent-sessions/queue",
+          payload: {
+            workspace_id: workspaceId,
+            session_id: onboardingSessionId,
+            text: "Start workspace onboarding now. Use ONBOARD.md as the guide and ask the first onboarding question only.",
+            priority: 0
+          }
+        });
+      } catch (error) {
+        updated = await requestRuntimeJson<WorkspaceResponsePayload>({
+          method: "PATCH",
+          path: `/api/v1/workspaces/${workspaceId}`,
+          payload: {
+            error_message: contextualWorkspaceCreateError(
+              "Workspace created, but automatic onboarding could not start",
+              error
+            )
+          }
+        }).catch(() => updated);
+      }
     }
     return updated;
   } catch (error) {
@@ -3833,6 +3862,10 @@ async function getSessionHistory(sessionId: string, workspaceId: string): Promis
 
 function normalizeErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Operation failed.";
+}
+
+function contextualWorkspaceCreateError(stage: string, error: unknown) {
+  return `${stage}: ${normalizeErrorMessage(error)}`;
 }
 
 async function queueSessionInput(
@@ -4214,6 +4247,24 @@ async function fileExists(targetPath: string) {
   }
 }
 
+const REQUIRED_RUNTIME_BUNDLE_PATHS = [
+  path.join("bin", "sandbox-runtime"),
+  "package-metadata.json",
+  path.join("runtime", "metadata.json"),
+  path.join("runtime", "api-server", "dist", "index.mjs")
+] as const;
+
+async function validateRuntimeRoot(runtimeRoot: string) {
+  for (const relativePath of REQUIRED_RUNTIME_BUNDLE_PATHS) {
+    const absolutePath = path.join(runtimeRoot, relativePath);
+    if (!(await fileExists(absolutePath))) {
+      return `Runtime bundle is incomplete. Missing ${relativePath} under ${runtimeRoot}. Rebuild or restage runtime-macos.`;
+    }
+  }
+
+  return null;
+}
+
 async function resolveRuntimeRoot() {
   const candidates = [
     process.env.HOLABOSS_RUNTIME_ROOT,
@@ -4221,15 +4272,25 @@ async function resolveRuntimeRoot() {
     isDev ? DEV_RUNTIME_ROOT : path.join(process.resourcesPath, "runtime-macos")
   ].filter((value): value is string => Boolean(value && value.trim().length > 0));
 
+  let firstInvalidError: string | null = null;
   for (const candidate of candidates) {
     const resolved = path.resolve(candidate);
-    const executablePath = path.join(resolved, "bin", "sandbox-runtime");
-    if (await fileExists(executablePath)) {
-      return resolved;
+    const validationError = await validateRuntimeRoot(resolved);
+    if (!validationError) {
+      return {
+        runtimeRoot: resolved,
+        validationError: null
+      };
+    }
+    if (!firstInvalidError) {
+      firstInvalidError = validationError;
     }
   }
 
-  return null;
+  return {
+    runtimeRoot: null,
+    validationError: firstInvalidError
+  };
 }
 
 async function waitForRuntimeHealth(url: string, attempts = 30, delayMs = 1000) {
@@ -4271,7 +4332,7 @@ async function isRuntimeHealthy(url: string) {
 }
 
 async function refreshRuntimeStatus() {
-  const runtimeRoot = await resolveRuntimeRoot();
+  const { runtimeRoot, validationError } = await resolveRuntimeRoot();
   const executablePath = runtimeRoot ? path.join(runtimeRoot, "bin", "sandbox-runtime") : null;
   const sandboxRoot = runtimeSandboxRoot();
   const harness = process.env.HOLABOSS_RUNTIME_HARNESS || "opencode";
@@ -4310,7 +4371,11 @@ async function refreshRuntimeStatus() {
     url,
     harness,
     status: runtimeProcess ? runtimeStatus.status : runtimeRoot && executablePath ? "stopped" : "missing",
-    lastError: runtimeRoot && executablePath ? runtimeStatus.lastError : "Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package runtime-macos into app resources."
+    lastError:
+      runtimeRoot && executablePath
+        ? runtimeStatus.lastError
+        : validationError ||
+          "Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package runtime-macos into app resources."
   });
   emitRuntimeState();
   return runtimeStatus;
@@ -4354,7 +4419,7 @@ async function startEmbeddedRuntime() {
     return refreshRuntimeStatus();
   }
 
-  const runtimeRoot = await resolveRuntimeRoot();
+  const { runtimeRoot, validationError } = await resolveRuntimeRoot();
   const executablePath = runtimeRoot ? path.join(runtimeRoot, "bin", "sandbox-runtime") : null;
   const sandboxRoot = runtimeSandboxRoot();
   const harness = process.env.HOLABOSS_RUNTIME_HARNESS || "opencode";
@@ -4371,7 +4436,11 @@ async function startEmbeddedRuntime() {
     url,
     pid: null,
     harness,
-    lastError: runtimeRoot && executablePath ? "" : "Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package runtime-macos into app resources."
+    lastError:
+      runtimeRoot && executablePath
+        ? ""
+        : validationError ||
+          "Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package runtime-macos into app resources."
   });
   emitRuntimeState();
 

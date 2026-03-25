@@ -15,10 +15,7 @@ from sandbox_agent_runtime.runtime_config.models import WorkspaceMcpCatalogEntry
 
 @dataclass(slots=True, frozen=True)
 class LoadedWorkspaceTool:
-    tool_id: str
     tool_name: str
-    module_path: str
-    symbol_name: str
     callable_obj: Callable[..., Any]
 
 
@@ -39,10 +36,7 @@ def load_workspace_tools(
             symbol = _resolve_symbol(module=module, symbol_name=entry.symbol_name, tool_id=entry.tool_id)
             loaded.append(
                 LoadedWorkspaceTool(
-                    tool_id=entry.tool_id,
                     tool_name=entry.tool_name,
-                    module_path=entry.module_path,
-                    symbol_name=entry.symbol_name,
                     callable_obj=symbol,
                 )
             )
@@ -66,6 +60,8 @@ def _validate_module_path(module_path: str, *, tool_id: str) -> None:
 
 
 def _import_workspace_module(*, workspace_dir: Path, module_path: str, tool_id: str) -> ModuleType:
+    _evict_cached_workspace_modules(module_path)
+    importlib.invalidate_caches()
     try:
         module = importlib.import_module(module_path)
     except Exception as exc:
@@ -84,6 +80,16 @@ def _import_workspace_module(*, workspace_dir: Path, module_path: str, tool_id: 
             message=f"module '{module_path}' resolves outside workspace root",
         )
     return module
+
+
+def _evict_cached_workspace_modules(module_path: str) -> None:
+    prefixes = {
+        module_path,
+        *( ".".join(module_path.split(".")[:index]) for index in range(1, len(module_path.split("."))) )
+    }
+    for name in list(sys.modules.keys()):
+        if name in prefixes or any(name.startswith(f"{prefix}.") for prefix in prefixes):
+            sys.modules.pop(name, None)
 
 
 def _module_origin(module: ModuleType) -> Path | None:

@@ -1,4 +1,3 @@
-from .application_loader import WorkspaceApplicationLoader
 from .errors import WorkspaceRuntimeConfigError
 from .models import (
     CompiledWorkspaceRuntimePlan,
@@ -22,7 +21,6 @@ __all__ = [
     "ResolvedApplicationMcp",
     "ResolvedMcpServerConfig",
     "ResolvedMcpToolRef",
-    "WorkspaceApplicationLoader",
     "WorkspaceGeneralConfig",
     "WorkspaceGeneralMemberConfig",
     "WorkspaceGeneralSingleConfig",

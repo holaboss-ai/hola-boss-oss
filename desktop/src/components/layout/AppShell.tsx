@@ -729,7 +729,7 @@ function AppShellContent() {
   };
 
   async function refreshTaskProposals(options?: { logErrors?: boolean }) {
-    if (!selectedWorkspaceId) {
+    if (!selectedWorkspaceId || !selectedWorkspace) {
       setTaskProposals([]);
       setTaskProposalStatusMessage("");
       return;
@@ -738,7 +738,7 @@ function AppShellContent() {
     setTaskProposalStatusMessage("");
     setIsLoadingTaskProposals(true);
     try {
-      const response = await window.electronAPI.workspace.listTaskProposals(selectedWorkspaceId);
+      const response = await window.electronAPI.workspace.listTaskProposals(selectedWorkspace.id);
       setTaskProposals(response.proposals);
     } catch (error) {
       const message = normalizeErrorMessage(error);
@@ -906,9 +906,10 @@ function AppShellContent() {
   }
 
   useEffect(() => {
-    if (!selectedWorkspaceId) {
+    if (!selectedWorkspaceId || !selectedWorkspace) {
       setTaskProposals([]);
       setTaskProposalStatusMessage("");
+      setIsLoadingTaskProposals(false);
       return;
     }
 
@@ -916,7 +917,7 @@ function AppShellContent() {
 
     const load = async () => {
       try {
-        const response = await window.electronAPI.workspace.listTaskProposals(selectedWorkspaceId);
+        const response = await window.electronAPI.workspace.listTaskProposals(selectedWorkspace.id);
         if (!cancelled) {
           setTaskProposals(response.proposals);
         }
@@ -942,7 +943,7 @@ function AppShellContent() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [selectedWorkspaceId]);
+  }, [selectedWorkspace, selectedWorkspaceId]);
 
   const handleDismissUpdate = () => {
     void window.electronAPI.appUpdate.dismiss(appUpdateStatus?.releaseTag ?? null);

@@ -106,6 +106,19 @@ function toCronjobRecord(record: ReturnType<RuntimeStateStore["listCronjobs"]>[n
   };
 }
 
+function toAppBuildRecord(record: ReturnType<RuntimeStateStore["getAppBuild"]> extends infer T ? Exclude<T, null> : never) {
+  return {
+    workspace_id: record.workspaceId,
+    app_id: record.appId,
+    status: record.status,
+    started_at: record.startedAt,
+    completed_at: record.completedAt,
+    error: record.error,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt
+  };
+}
+
 function toTaskProposalRecord(record: ReturnType<RuntimeStateStore["listTaskProposals"]>[number]) {
   return {
     proposal_id: record.proposalId,
@@ -179,6 +192,8 @@ export function handleRequest(operation: string, envelope: RequestEnvelope): Jso
   const store = new RuntimeStateStore(envelope.options ?? {});
   try {
     switch (operation) {
+      case "workspace-dir":
+        return store.workspaceDir(String(envelope.workspace_id));
       case "create-workspace":
         return toWorkspaceRecord(
           store.createWorkspace({
@@ -558,6 +573,27 @@ export function handleRequest(operation: string, envelope: RequestEnvelope): Jso
       }
       case "delete-cronjob":
         return store.deleteCronjob(String(envelope.job_id));
+      case "upsert-app-build":
+        return toAppBuildRecord(
+          store.upsertAppBuild({
+            workspaceId: String(envelope.workspace_id),
+            appId: String(envelope.app_id),
+            status: String(envelope.status),
+            error: typeof envelope.error === "string" ? envelope.error : null
+          })
+        );
+      case "get-app-build": {
+        const record = store.getAppBuild({
+          workspaceId: String(envelope.workspace_id),
+          appId: String(envelope.app_id)
+        });
+        return record ? toAppBuildRecord(record) : null;
+      }
+      case "delete-app-build":
+        return store.deleteAppBuild({
+          workspaceId: String(envelope.workspace_id),
+          appId: String(envelope.app_id)
+        });
       case "create-task-proposal":
         return toTaskProposalRecord(
           store.createTaskProposal({
