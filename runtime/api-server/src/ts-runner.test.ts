@@ -70,6 +70,7 @@ function testDeps(params: {
 } = {}): Partial<TsRunnerExecutionDeps> {
   const harnessEvents = params.harnessEvents ?? [];
   return {
+    stageBrowserTools: () => ({ changed: false, toolIds: [] }),
     stageSkills: () => ({ changed: false, skillIds: [] }),
     stageCommands: () => ({ changed: false }),
     compilePlan: () => baseCompiledPlan() as never,

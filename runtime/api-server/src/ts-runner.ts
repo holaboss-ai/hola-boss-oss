@@ -32,6 +32,7 @@ import {
 } from "./agent-runtime-config.js";
 import { restartOpencodeSidecar, type OpencodeSidecarCliRequest } from "./opencode-sidecar.js";
 import { stageOpencodeSkills } from "./opencode-skills.js";
+import { stageOpencodeDesktopBrowserPlugin } from "./opencode-browser-tools.js";
 import {
   decodeTsRunnerRequestPayload,
   fallbackEventIdentity,
@@ -125,6 +126,7 @@ export interface TsRunnerExecutionDeps {
     emitEvent: (event: TsRunnerEvent) => Promise<void>;
     logger?: LoggerLike;
   }) => Promise<TsRunnerHarnessRelayResult>;
+  stageBrowserTools: (params: { workspaceDir: string }) => { changed: boolean; toolIds: string[] };
   stageCommands: (params: { workspaceDir: string }) => { changed: boolean };
   stageSkills: (params: { workspaceDir: string; runtimeRoot: string }) => { changed: boolean; skillIds: string[] };
   startWorkspaceMcpSidecar: (request: WorkspaceMcpSidecarCliRequest) => Promise<RunningWorkspaceMcpSidecar | null>;
@@ -319,10 +321,12 @@ function bootstrapStartedPayload(params: {
 function buildAgentRuntimeConfigRequest(params: {
   request: TsRunnerRequest;
   compiledPlan: CompiledWorkspaceRuntimePlan;
+  browserToolIds: string[];
   workspaceSkillIds: string[];
   toolServerIdMap: Readonly<Record<string, string>>;
   resolvedMcpToolRefs: CompiledWorkspaceRuntimePlan["resolved_mcp_tool_refs"];
 }): AgentRuntimeConfigCliRequest {
+  const extraTools = Array.from(new Set([...opencodeExtraTools(), ...params.browserToolIds]));
   const common = {
     session_id: params.request.session_id,
     workspace_id: params.request.workspace_id,
@@ -336,7 +340,7 @@ function buildAgentRuntimeConfigRequest(params: {
     workspace_config_checksum: params.compiledPlan.config_checksum,
     workspace_skill_ids: [...params.workspaceSkillIds],
     default_tools: [...OPENCODE_DEFAULT_TOOLS],
-    extra_tools: opencodeExtraTools(),
+    extra_tools: extraTools,
     tool_server_id_map: { ...params.toolServerIdMap },
     resolved_mcp_tool_refs: params.resolvedMcpToolRefs.map((toolRef) => ({
       tool_id: toolRef.tool_id,
@@ -589,6 +593,15 @@ function defaultExecutionDeps(): TsRunnerExecutionDeps {
       await restartOpencodeSidecar(opencodeRequest);
     },
     runHarnessHost: defaultRunHarnessHost,
+    stageBrowserTools: ({ workspaceDir }) => {
+      const result = stageOpencodeDesktopBrowserPlugin({
+        workspace_dir: workspaceDir
+      });
+      return {
+        changed: result.changed,
+        toolIds: result.tool_ids
+      };
+    },
     stageCommands: ({ workspaceDir }) =>
       stageWorkspaceCommands({
         workspace_dir: workspaceDir
@@ -740,6 +753,12 @@ export async function executeTsRunnerRequest(
       request,
       bootstrap
     });
+    const stagedBrowserTools =
+      bootstrap.harness === "opencode"
+        ? deps.stageBrowserTools({
+            workspaceDir: bootstrap.workspaceDir
+          })
+        : { changed: false, toolIds: [] };
     const workspaceSkills = resolveWorkspaceSkills(bootstrap.workspaceDir);
     const stagedSkills = runnerPrepPlan.stageWorkspaceSkills
       ? deps.stageSkills({
@@ -808,6 +827,7 @@ export async function executeTsRunnerRequest(
       buildAgentRuntimeConfigRequest({
         request,
         compiledPlan,
+        browserToolIds: stagedBrowserTools.toolIds,
         workspaceSkillIds: workspaceSkills.map((skill) => skill.skill_id),
         toolServerIdMap: serverIdMap,
         resolvedMcpToolRefs
@@ -819,7 +839,7 @@ export async function executeTsRunnerRequest(
         request,
         bootstrap,
         runtimeConfig,
-        stagedSkillsChanged: stagedSkills.changed,
+        stagedSkillsChanged: stagedSkills.changed || stagedBrowserTools.changed,
         syncModelConfig: deps.syncHarnessModelConfig,
         restartBackend: deps.restartHarnessBackend,
         backendBaseUrl: opencodeBaseUrl(),
