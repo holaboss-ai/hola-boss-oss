@@ -1234,7 +1234,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
   store.upsertAppBuild({
     workspaceId: workspace.id,
     appId: "app-b",
-    status: "building"
+    status: "completed"
   });
 
   const workspaceDir = path.join(workspaceRoot, workspace.id);
@@ -1282,7 +1282,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
   const started = await app.inject({
     method: "POST",
     url: "/api/v1/apps/app-b/start",
-    payload: { workspace_id: workspace.id }
+    payload: { workspace_id: workspace.id, holaboss_user_id: "user-1" }
   });
 
   assert.equal(started.statusCode, 200);
@@ -1327,6 +1327,8 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
       appDir: path.join(workspaceDir, "apps", "app-b"),
       httpPort: 18081,
       mcpPort: 13101,
+      holabossUserId: "user-1",
+      skipSetup: true,
       resolvedApp: {
         appId: "app-b",
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
@@ -1451,6 +1453,11 @@ test("internal opencode app bootstrap route starts resolved apps and returns MCP
     harness: "opencode",
     status: "active"
   });
+  store.upsertAppBuild({
+    workspaceId: "workspace-1",
+    appId: "app-a",
+    status: "completed"
+  });
   fs.mkdirSync(path.join(workspaceRoot, "workspace-1", "apps", "app-a"), { recursive: true });
   fs.mkdirSync(path.join(workspaceRoot, "workspace-1", "apps", "app-b"), { recursive: true });
 
@@ -1528,6 +1535,7 @@ test("internal opencode app bootstrap route starts resolved apps and returns MCP
       httpPort: 18080,
       mcpPort: 13100,
       holabossUserId: "user-1",
+      skipSetup: true,
       resolvedApp: {
         appId: "app-a",
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
@@ -1545,6 +1553,7 @@ test("internal opencode app bootstrap route starts resolved apps and returns MCP
       httpPort: 18081,
       mcpPort: 13101,
       holabossUserId: "user-1",
+      skipSetup: false,
       resolvedApp: {
         appId: "app-b",
         mcp: { transport: "http-sse", port: 4200, path: "/mcp" },

@@ -20,15 +20,18 @@ export interface LifecycleShutdownParams {
   targets?: WorkspaceComposeShutdownTarget[];
 }
 
+export interface AppLifecycleStartParams {
+  appId: string;
+  appDir?: string;
+  httpPort?: number;
+  mcpPort?: number;
+  holabossUserId?: string;
+  resolvedApp?: ResolvedApplicationRuntime;
+  skipSetup?: boolean;
+}
+
 export interface AppLifecycleExecutorLike {
-  startApp(params: {
-    appId: string;
-    appDir?: string;
-    httpPort?: number;
-    mcpPort?: number;
-    holabossUserId?: string;
-    resolvedApp?: ResolvedApplicationRuntime;
-  }): Promise<AppLifecycleActionResult>;
+  startApp(params: AppLifecycleStartParams): Promise<AppLifecycleActionResult>;
   stopApp(params: {
     appId: string;
     appDir?: string;
@@ -53,6 +56,11 @@ type ShellLifecyclePorts = { http: number; mcp: number };
 
 const shellLifecycleProcesses = new Map<string, ChildLike>();
 const shellLifecyclePorts = new Map<string, ShellLifecyclePorts>();
+
+export function appBuildHasCompletedSetup(status: string | null | undefined): boolean {
+  const normalized = (status ?? "").trim().toLowerCase();
+  return normalized === "completed" || normalized === "running" || normalized === "stopped";
+}
 
 async function waitForExit(child: ChildLike, options: { captureStderr?: boolean } = {}): Promise<{ code: number; stderr: string }> {
   return await new Promise((resolve, reject) => {
@@ -477,6 +485,7 @@ export async function startShellLifecycleAppTarget(params: {
   httpPort: number;
   mcpPort: number;
   holabossUserId?: string;
+  skipSetup?: boolean;
   spawnImpl?: SpawnLike;
   fetchImpl?: typeof fetch;
 }): Promise<AppLifecycleActionResult> {
@@ -495,7 +504,9 @@ export async function startShellLifecycleAppTarget(params: {
     };
   }
 
-  await runLifecycleSetup(params);
+  if (!params.skipSetup) {
+    await runLifecycleSetup(params);
+  }
 
   const child = spawnImpl(lifecycleStart, [], {
     cwd: params.appDir,
@@ -522,6 +533,7 @@ export async function startSubprocessAppTarget(params: {
   httpPort: number;
   mcpPort: number;
   holabossUserId?: string;
+  skipSetup?: boolean;
   spawnImpl?: SpawnLike;
   fetchImpl?: typeof fetch;
 }): Promise<AppLifecycleActionResult> {
@@ -540,7 +552,9 @@ export async function startSubprocessAppTarget(params: {
     };
   }
 
-  await runLifecycleSetup(params);
+  if (!params.skipSetup) {
+    await runLifecycleSetup(params);
+  }
 
   const child = spawnImpl(startCommand, [], {
     cwd: params.appDir,
@@ -695,14 +709,7 @@ function unsupportedStartError(params: {
 }
 
 export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
-  async startApp(params: {
-    appId: string;
-    appDir?: string;
-    httpPort?: number;
-    mcpPort?: number;
-    holabossUserId?: string;
-    resolvedApp?: ResolvedApplicationRuntime;
-  }): Promise<AppLifecycleActionResult> {
+  async startApp(params: AppLifecycleStartParams): Promise<AppLifecycleActionResult> {
     if (
       hasNativeComposeLifecycle(params) &&
       params.httpPort !== undefined &&
@@ -727,7 +734,8 @@ export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
         resolvedApp: params.resolvedApp,
         httpPort: params.httpPort,
         mcpPort: params.mcpPort,
-        holabossUserId: params.holabossUserId
+        holabossUserId: params.holabossUserId,
+        skipSetup: params.skipSetup
       });
     }
     if (hasNativeStartCommandLifecycle(params)) {
@@ -740,7 +748,8 @@ export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
         resolvedApp: params.resolvedApp,
         httpPort: params.httpPort,
         mcpPort: params.mcpPort,
-        holabossUserId: params.holabossUserId
+        holabossUserId: params.holabossUserId,
+        skipSetup: params.skipSetup
       });
     }
     throw unsupportedStartError(params);

@@ -6,6 +6,7 @@ import type { RuntimeStateStore } from "@holaboss/runtime-state-store";
 import {
   AppLifecycleExecutorError,
   type AppLifecycleActionResult,
+  appBuildHasCompletedSetup,
   type AppLifecycleExecutorLike
 } from "./app-lifecycle-worker.js";
 import type { ResolvedApplicationRuntime } from "./workspace-apps.js";
@@ -165,6 +166,8 @@ export async function bootstrapResolvedApplications(params: {
   workspaceDir: string;
   holabossUserId?: string;
   resolvedApplications?: unknown;
+  store?: RuntimeStateStore;
+  workspaceId?: string;
   appLifecycleExecutor: AppLifecycleExecutorLike;
 }): Promise<OpencodeBootstrapResponse> {
   const resolvedWorkspaceDir = path.resolve(params.workspaceDir);
@@ -202,13 +205,21 @@ export async function bootstrapResolvedApplications(params: {
   }));
   const applications: OpencodeBootstrapApplication[] = [];
   for (const preparedStart of preparedStarts) {
+    const build =
+      params.store && params.workspaceId
+        ? params.store.getAppBuild({
+          workspaceId: params.workspaceId,
+          appId: preparedStart.resolvedApp.appId
+        })
+        : null;
     const started = await params.appLifecycleExecutor.startApp({
       appId: preparedStart.resolvedApp.appId,
       appDir: preparedStart.appDir,
       httpPort: preparedStart.ports.http,
       mcpPort: preparedStart.ports.mcp,
       holabossUserId,
-      resolvedApp: preparedStart.resolvedApp
+      resolvedApp: preparedStart.resolvedApp,
+      skipSetup: appBuildHasCompletedSetup(build?.status)
     });
     applications.push(
       normalizeOpencodeBootstrapApplication({
@@ -242,6 +253,8 @@ export async function startOpencodeApplications(params: {
     workspaceDir: resolvedWorkspaceDir,
     holabossUserId: params.body.holaboss_user_id,
     resolvedApplications: params.body.resolved_applications,
+    store: params.store,
+    workspaceId: params.workspaceId,
     appLifecycleExecutor: params.appLifecycleExecutor
   });
 }

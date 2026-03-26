@@ -39,10 +39,15 @@ test("startOpencodeApplications validates the workspace and starts resolved apps
     name: "Workspace 1",
     harness: "opencode"
   });
+  store.upsertAppBuild({
+    workspaceId: workspace.id,
+    appId: "app-a",
+    status: "completed"
+  });
   const calls: Array<Record<string, unknown>> = [];
   const appLifecycleExecutor: AppLifecycleExecutorLike = {
     async startApp(params) {
-      calls.push(params as Record<string, unknown>);
+      calls.push(params as unknown as Record<string, unknown>);
       return {
         app_id: params.appId,
         status: "running",
@@ -92,17 +97,29 @@ test("startOpencodeApplications validates the workspace and starts resolved apps
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.appId, "app-a");
   assert.equal(calls[0]?.appDir, path.join(store.workspaceDir(workspace.id), "apps", "app-a"));
+  assert.equal(calls[0]?.skipSetup, true);
   store.close();
 });
 
 test("bootstrapResolvedApplications starts resolved apps without a runtime API hop", async () => {
   const root = makeTempDir("hb-opencode-bootstrap-direct-");
+  const store = createStore(root);
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode"
+  });
+  store.upsertAppBuild({
+    workspaceId: "workspace-1",
+    appId: "app-a",
+    status: "completed"
+  });
   const workspaceDir = path.join(root, "workspace", "workspace-1");
   fs.mkdirSync(path.join(workspaceDir, "apps", "app-a"), { recursive: true });
   const calls: Array<Record<string, unknown>> = [];
   const appLifecycleExecutor: AppLifecycleExecutorLike = {
     async startApp(params) {
-      calls.push(params as Record<string, unknown>);
+      calls.push(params as unknown as Record<string, unknown>);
       return {
         app_id: params.appId,
         status: "running",
@@ -121,6 +138,8 @@ test("bootstrapResolvedApplications starts resolved apps without a runtime API h
   const result = await bootstrapResolvedApplications({
     workspaceDir,
     holabossUserId: "user-1",
+    store,
+    workspaceId: "workspace-1",
     resolvedApplications: [
       {
         app_id: "app-a",
@@ -148,6 +167,8 @@ test("bootstrapResolvedApplications starts resolved apps without a runtime API h
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.appId, "app-a");
   assert.equal(calls[0]?.appDir, path.join(workspaceDir, "apps", "app-a"));
+  assert.equal(calls[0]?.skipSetup, true);
+  store.close();
 });
 
 test("runOpencodeAppBootstrapCli writes JSON response for a valid request", async () => {

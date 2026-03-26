@@ -6,6 +6,8 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { RuntimeStateStore } from "@holaboss/runtime-state-store";
+
 import {
   RuntimeAppLifecycleExecutor,
   type AppLifecycleExecutorLike
@@ -479,23 +481,32 @@ async function defaultBootstrapApplications(params: {
     return [];
   }
   const appLifecycleExecutor: AppLifecycleExecutorLike = new RuntimeAppLifecycleExecutor();
-  const result = await bootstrapResolvedApplications({
-    workspaceDir: params.workspaceDir,
-    holabossUserId: explicitHolabossUserId(params.request),
-    resolvedApplications: params.resolvedApplications,
-    appLifecycleExecutor
+  const store = new RuntimeStateStore({
+    workspaceRoot: path.dirname(path.resolve(params.workspaceDir))
   });
+  try {
+    const result = await bootstrapResolvedApplications({
+      workspaceDir: params.workspaceDir,
+      holabossUserId: explicitHolabossUserId(params.request),
+      resolvedApplications: params.resolvedApplications,
+      store,
+      workspaceId: params.request.workspace_id,
+      appLifecycleExecutor
+    });
 
-  return result.applications.map((application: { app_id: string; mcp_url: string; timeout_ms: number }) => ({
-    name: application.app_id,
-    config: {
-      type: "remote" as const,
-      enabled: true,
-      url: application.mcp_url,
-      headers: { "X-Workspace-Id": params.request.workspace_id },
-      timeout: application.timeout_ms
-    }
-  }));
+    return result.applications.map((application: { app_id: string; mcp_url: string; timeout_ms: number }) => ({
+      name: application.app_id,
+      config: {
+        type: "remote" as const,
+        enabled: true,
+        url: application.mcp_url,
+        headers: { "X-Workspace-Id": params.request.workspace_id },
+        timeout: application.timeout_ms
+      }
+    }));
+  } finally {
+    store.close();
+  }
 }
 
 async function defaultRunHarnessHost(params: {

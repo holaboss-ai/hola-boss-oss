@@ -39,6 +39,7 @@ import {
 } from "./bridge-worker.js";
 import {
   AppLifecycleExecutorError,
+  appBuildHasCompletedSetup,
   type AppLifecycleExecutorLike,
   RuntimeAppLifecycleExecutor
 } from "./app-lifecycle-worker.js";
@@ -1618,12 +1619,16 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, statusCode, error instanceof Error ? error.message : "invalid app metadata");
     }
     try {
+      const holabossUserId = optionalString(request.body.holaboss_user_id);
+      const build = store.getAppBuild({ workspaceId, appId });
       const result = await appLifecycleExecutor.startApp({
         appId,
         appDir: resolvedApp.appDir,
         httpPort: resolvedApp.ports.http,
         mcpPort: resolvedApp.ports.mcp,
-        resolvedApp: resolvedApp.resolvedApp
+        holabossUserId,
+        resolvedApp: resolvedApp.resolvedApp,
+        skipSetup: appBuildHasCompletedSetup(build?.status)
       });
       store.upsertAppBuild({
         workspaceId,
