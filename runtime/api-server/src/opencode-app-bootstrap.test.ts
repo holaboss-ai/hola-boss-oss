@@ -178,11 +178,11 @@ test("bootstrapResolvedApplications starts multiple apps in parallel", async () 
   fs.mkdirSync(path.join(workspaceDir, "apps", "app-b"), { recursive: true });
 
   const startedAppIds: string[] = [];
-  let resolveBothStarted: (() => void) | null = null;
+  let resolveBothStarted: (() => void) | undefined;
   const bothStarted = new Promise<void>((resolve) => {
     resolveBothStarted = resolve;
   });
-  let releaseStarts: (() => void) | null = null;
+  let releaseStarts: (() => void) | undefined;
   const releaseGate = new Promise<void>((resolve) => {
     releaseStarts = resolve;
   });
@@ -237,7 +237,8 @@ test("bootstrapResolvedApplications starts multiple apps in parallel", async () 
 
   await bothStarted;
   assert.deepEqual(new Set(startedAppIds), new Set(["app-a", "app-b"]));
-  releaseStarts?.();
+  assert.ok(releaseStarts);
+  releaseStarts();
 
   const result = await resultPromise;
   assert.deepEqual(
