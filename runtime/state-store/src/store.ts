@@ -1279,26 +1279,23 @@ export class RuntimeStateStore {
   // --- App Ports ---
 
   allocateAppPort(params: { workspaceId: string; appId: string }): AppPortRecord {
-    const now = utcNowIso();
+    const allocate = this.db().transaction(() => {
+      const existing = this.getAppPort({ workspaceId: params.workspaceId, appId: params.appId });
+      if (existing) {
+        return existing;
+      }
 
-    // Check if this app already has a port assigned
-    const existing = this.getAppPort({ workspaceId: params.workspaceId, appId: params.appId });
-    if (existing) {
-      return existing;
-    }
+      const port = this.findAvailablePort();
+      const now = utcNowIso();
 
-    // Find next available port
-    const port = this.findAvailablePort();
+      this.db().prepare(`
+        INSERT OR IGNORE INTO app_ports (workspace_id, app_id, port, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(params.workspaceId, params.appId, port, now, now);
 
-    // Upsert
-    this.db().prepare(`
-      INSERT INTO app_ports (workspace_id, app_id, port, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT (workspace_id, app_id)
-      DO UPDATE SET port = ?, updated_at = ?
-    `).run(params.workspaceId, params.appId, port, now, now, port, now);
-
-    return { workspaceId: params.workspaceId, appId: params.appId, port, createdAt: now, updatedAt: now };
+      return this.getAppPort({ workspaceId: params.workspaceId, appId: params.appId })!;
+    });
+    return allocate();
   }
 
   getAppPort(params: { workspaceId: string; appId: string }): AppPortRecord | null {
@@ -1796,7 +1793,7 @@ export class RuntimeStateStore {
       CREATE TABLE IF NOT EXISTS app_ports (
           workspace_id TEXT NOT NULL,
           app_id TEXT NOT NULL,
-          port INTEGER NOT NULL,
+          port INTEGER NOT NULL UNIQUE,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           PRIMARY KEY (workspace_id, app_id)
