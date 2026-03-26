@@ -24,7 +24,7 @@ test("mapOpencodeEvent flushes buffered deltas once part type is known", () => {
   );
 
   assert.deepEqual(firstEvents, []);
-  assert.deepEqual(state.pendingPartDeltas.get("text-part-1"), [["message.part.delta", "Hello"]]);
+  assert.deepEqual(state.pendingPartDeltas.get("text-part-1"), [["message.part.delta", "Hello "]]);
 
   state.partTypeSnapshots.set("text-part-1", "text");
   const secondEvents = mapOpencodeEvent(
@@ -44,7 +44,7 @@ test("mapOpencodeEvent flushes buffered deltas once part type is known", () => {
     {
       event_type: "output_delta",
       payload: {
-        delta: "Hello",
+        delta: "Hello ",
         event: "message.part.delta",
         source: "opencode",
         part_id: "text-part-1",
@@ -56,6 +56,41 @@ test("mapOpencodeEvent flushes buffered deltas once part type is known", () => {
       event_type: "output_delta",
       payload: {
         delta: "world",
+        event: "message.part.delta",
+        source: "opencode",
+        part_id: "text-part-1",
+        part_type: "text",
+        delta_kind: "output",
+      },
+    },
+  ]);
+});
+
+test("mapOpencodeEvent prefers part text snapshots over packed raw text deltas", () => {
+  const state = createOpencodeEventMapperState();
+
+  const events = mapOpencodeEvent(
+    {
+      type: "message.part.delta",
+      properties: {
+        sessionID: "opencode-session-1",
+        delta: "Imheretowrite",
+        part: {
+          id: "text-part-1",
+          type: "text",
+          text: "I'm here to write",
+        },
+      },
+    },
+    "opencode-session-1",
+    state
+  );
+
+  assert.deepEqual(events, [
+    {
+      event_type: "output_delta",
+      payload: {
+        delta: "I'm here to write",
         event: "message.part.delta",
         source: "opencode",
         part_id: "text-part-1",

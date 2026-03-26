@@ -100,6 +100,7 @@ _WORKSPACE_MCP_READY_TIMEOUT_S = 10.0
 _WORKSPACE_MCP_READY_POLL_S = 0.2
 _WORKSPACE_MCP_LOCK_TIMEOUT_S = 15.0
 _OPENCODE_LOCK_TIMEOUT_S = 15.0
+_OPENCODE_APP_BOOTSTRAP_TIMEOUT_S = 600.0
 _SESSION_STATE_DIR_NAME = ".holaboss"
 _SESSION_STATE_FILE_NAME = "harness-session-state.json"
 _SESSION_STATE_VERSION = 1
@@ -1724,7 +1725,7 @@ async def _start_opencode_apps_via_runtime_api(
         ],
     }
     url = f"{_sandbox_runtime_api_url()}/api/v1/internal/workspaces/{request.workspace_id}/opencode-apps/start"
-    async with httpx.AsyncClient(timeout=60.0, trust_env=False) as client:
+    async with httpx.AsyncClient(timeout=_OPENCODE_APP_BOOTSTRAP_TIMEOUT_S, trust_env=False) as client:
         response = await client.post(url, json=payload)
     response.raise_for_status()
     response_payload = response.json()
@@ -2900,21 +2901,22 @@ def _map_opencode_event(
     resolved_part_type = part_type_snapshots.get(part_id, part_type) if part_id else part_type
 
     if event_name == "message.part.delta":
-        delta = _event_delta(raw_event)
-        if not delta:
+        raw_delta = _event_delta(raw_event)
+        if not raw_delta:
             return []
         if resolved_part_type and resolved_part_type not in {"text", "reasoning", "snapshot"}:
             return []
         if part_id and not resolved_part_type:
-            pending_part_deltas.setdefault(part_id, []).append((event_name, delta))
+            pending_part_deltas.setdefault(part_id, []).append((event_name, raw_delta))
             return []
+        delta = raw_delta
         if part_id:
             raw_text = _part_value(part, "text", "snapshot")
             text = str(raw_text) if raw_text is not None else ""
             if text:
-                text_snapshots[part_id] = text
+                delta = _text_delta_from_values(part_id=part_id, text=text, snapshots=text_snapshots)
             else:
-                text_snapshots[part_id] = f"{text_snapshots.get(part_id, '')}{delta}"
+                text_snapshots[part_id] = f"{text_snapshots.get(part_id, '')}{raw_delta}"
         stream_event_type, delta_kind = _part_stream_event_type(resolved_part_type)
         queued_events = (
             _queued_part_delta_events(
@@ -2926,6 +2928,8 @@ def _map_opencode_event(
             if part_id and resolved_part_type
             else []
         )
+        if not delta:
+            return queued_events
         return [
             *queued_events,
             (
@@ -2942,19 +2946,20 @@ def _map_opencode_event(
         ]
 
     if resolved_part_type == "text":
-        delta = _event_delta(raw_event)
-        if delta:
-            if part_id:
-                raw_text = _part_value(part, "text", "snapshot")
-                text = str(raw_text) if raw_text is not None else ""
-                if text:
-                    text_snapshots[part_id] = text
-                else:
-                    text_snapshots[part_id] = f"{text_snapshots.get(part_id, '')}{delta}"
+        raw_delta = _event_delta(raw_event)
+        delta = ""
+        if part_id:
+            raw_text = _part_value(part, "text", "snapshot")
+            text = str(raw_text) if raw_text is not None else ""
+            if text:
+                delta = _text_delta_from_values(part_id=part_id, text=text, snapshots=text_snapshots)
+            elif raw_delta:
+                delta = raw_delta
+                text_snapshots[part_id] = f"{text_snapshots.get(part_id, '')}{raw_delta}"
+        elif raw_delta:
+            delta = raw_delta
         else:
             delta = _text_delta(part=part, snapshots=text_snapshots)
-        if not delta:
-            return []
         queued_events = (
             _queued_part_delta_events(
                 part_id=part_id,
@@ -2965,6 +2970,8 @@ def _map_opencode_event(
             if part_id
             else []
         )
+        if not delta:
+            return queued_events
         return [
             *queued_events,
             (

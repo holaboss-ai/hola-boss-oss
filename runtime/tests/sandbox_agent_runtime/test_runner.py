@@ -247,6 +247,9 @@ async def test_start_opencode_apps_via_runtime_api_posts_bootstrap_payload(monke
             }
 
     class _FakeClient:
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+
         async def __aenter__(self):
             return self
 
@@ -260,7 +263,7 @@ async def test_start_opencode_apps_via_runtime_api_posts_bootstrap_payload(monke
             return _FakeResponse()
 
     monkeypatch.setenv("SANDBOX_RUNTIME_API_URL", "http://runtime.example")
-    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: _FakeClient())
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
 
     entries = await runner_module._start_opencode_apps_via_runtime_api(
         request=request,
@@ -281,6 +284,7 @@ async def test_start_opencode_apps_via_runtime_api_posts_bootstrap_payload(monke
         },
     )
     assert captured == {
+        "client_kwargs": {"timeout": runner_module._OPENCODE_APP_BOOTSTRAP_TIMEOUT_S, "trust_env": False},
         "url": "http://runtime.example/api/v1/internal/workspaces/workspace-1/opencode-apps/start",
         "json": {
             "workspace_dir": "/tmp/workspace-1",
@@ -2405,6 +2409,42 @@ def test_map_opencode_event_supports_message_part_delta_dict_properties_aliases(
             "output_delta",
             {
                 "delta": "world",
+                "event": "message.part.delta",
+                "source": "opencode",
+                "part_id": "text-part-1",
+                "part_type": "text",
+                "delta_kind": "output",
+            },
+        )
+    ]
+
+
+def test_map_opencode_event_prefers_part_text_snapshot_over_packed_raw_delta() -> None:
+    raw_event = SimpleNamespace(
+        type="message.part.delta",
+        properties=SimpleNamespace(
+            session_id="opencode-session-1",
+            delta="Imheretowrite",
+            part=SimpleNamespace(
+                type="text",
+                id="text-part-1",
+                text="I'm here to write",
+            ),
+        ),
+    )
+
+    events = _map_opencode_event(
+        raw_event=raw_event,
+        target_session_id="opencode-session-1",
+        text_snapshots={},
+        tool_snapshots={},
+    )
+
+    assert events == [
+        (
+            "output_delta",
+            {
+                "delta": "I'm here to write",
                 "event": "message.part.delta",
                 "source": "opencode",
                 "part_id": "text-part-1",

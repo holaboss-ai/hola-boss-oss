@@ -35,7 +35,7 @@ function removePath(target: string): void {
   fs.rmSync(target, { recursive: true, force: true });
 }
 
-function stageWorkspaceCommands(request: OpencodeCommandsCliRequest): OpencodeCommandsCliResponse {
+export function stageWorkspaceCommands(request: OpencodeCommandsCliRequest): OpencodeCommandsCliResponse {
   const workspaceRoot = path.resolve(request.workspace_dir);
   const workspaceRealRoot = fs.realpathSync(workspaceRoot);
   const commandsSource = path.join(workspaceRoot, "commands");

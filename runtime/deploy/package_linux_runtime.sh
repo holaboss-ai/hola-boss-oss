@@ -113,6 +113,7 @@ if [ -z "${RUNTIME_PYTHON}" ]; then
 fi
 
 export HOLABOSS_RUNTIME_APP_ROOT="${BUNDLE_ROOT}/runtime/app"
+export HOLABOSS_RUNTIME_ROOT="${BUNDLE_ROOT}/runtime"
 export HOLABOSS_RUNTIME_PYTHON="${RUNTIME_PYTHON}"
 export HOLABOSS_RUNTIME_SITE_PACKAGES="${BUNDLE_ROOT}/python-packages"
 export PATH="${BUNDLE_ROOT}/node-runtime/bin:${PATH}"
@@ -134,6 +135,7 @@ if [ -z "${RUNTIME_PYTHON}" ]; then
 fi
 
 export HOLABOSS_RUNTIME_APP_ROOT="${BUNDLE_ROOT}/runtime/app"
+export HOLABOSS_RUNTIME_ROOT="${BUNDLE_ROOT}/runtime"
 export HOLABOSS_RUNTIME_PYTHON="${RUNTIME_PYTHON}"
 export HOLABOSS_RUNTIME_SITE_PACKAGES="${BUNDLE_ROOT}/python-packages"
 export PATH="${BUNDLE_ROOT}/node-runtime/bin:${PATH}"

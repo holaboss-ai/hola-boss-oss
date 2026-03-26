@@ -9,10 +9,18 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Mapping, Sequence, TypeVar
 
 _RUNTIME_NODE_BIN_ENV = "HOLABOSS_RUNTIME_NODE_BIN"
+_RUNTIME_ROOT_ENV = "HOLABOSS_RUNTIME_ROOT"
 
 
 def runtime_root_dir(module_file: str) -> Path:
-    return Path(module_file).resolve().parents[2]
+    configured_root = (os.getenv(_RUNTIME_ROOT_ENV) or "").strip()
+    if configured_root:
+        return Path(configured_root).resolve()
+    module_path = Path(module_file).resolve()
+    packaged_root = module_path.parents[1]
+    if any((packaged_root / package_name).is_dir() for package_name in ("api-server", "harness-host", "state-store")):
+        return packaged_root
+    return module_path.parents[2]
 
 
 def package_root_dir(*, module_file: str, package_name: str) -> Path:

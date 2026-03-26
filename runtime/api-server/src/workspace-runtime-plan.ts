@@ -5,13 +5,13 @@ import yaml from "js-yaml";
 
 type JsonRecord = Record<string, unknown>;
 
-type WorkspaceRuntimePlanCompileRequest = {
+export type WorkspaceRuntimePlanCompileRequest = {
   workspace_id: string;
   workspace_yaml: string;
   references?: Record<string, string> | null;
 };
 
-type WorkspaceRuntimePlanReferenceRequest = {
+export type WorkspaceRuntimePlanReferenceRequest = {
   workspace_yaml: string;
 };
 
@@ -32,7 +32,7 @@ type WorkspaceRuntimePlanErrorPayload = {
   hint?: string | null;
 };
 
-type WorkspaceGeneralMemberConfig = {
+export type WorkspaceGeneralMemberConfig = {
   id: string;
   model: string;
   prompt: string;
@@ -42,20 +42,20 @@ type WorkspaceGeneralMemberConfig = {
   schema_module_path?: string | null;
 };
 
-type WorkspaceGeneralSingleConfig = {
+export type WorkspaceGeneralSingleConfig = {
   type: "single";
   agent: WorkspaceGeneralMemberConfig;
 };
 
-type WorkspaceGeneralTeamConfig = {
+export type WorkspaceGeneralTeamConfig = {
   type: "team";
   coordinator: WorkspaceGeneralMemberConfig;
   members: WorkspaceGeneralMemberConfig[];
 };
 
-type WorkspaceGeneralConfig = WorkspaceGeneralSingleConfig | WorkspaceGeneralTeamConfig;
+export type WorkspaceGeneralConfig = WorkspaceGeneralSingleConfig | WorkspaceGeneralTeamConfig;
 
-type ResolvedMcpServerConfig = {
+export type ResolvedMcpServerConfig = {
   server_id: string;
   type: "local" | "remote";
   command: string[];
@@ -65,20 +65,20 @@ type ResolvedMcpServerConfig = {
   timeout_ms: number;
 };
 
-type ResolvedMcpToolRef = {
+export type ResolvedMcpToolRef = {
   tool_id: string;
   server_id: string;
   tool_name: string;
 };
 
-type WorkspaceMcpCatalogEntry = {
+export type WorkspaceMcpCatalogEntry = {
   tool_id: string;
   tool_name: string;
   module_path: string;
   symbol_name: string;
 };
 
-type ResolvedApplication = {
+export type ResolvedApplication = {
   app_id: string;
   mcp: {
     transport: string;
@@ -100,7 +100,7 @@ type ResolvedApplication = {
   };
 };
 
-type CompiledWorkspaceRuntimePlan = {
+export type CompiledWorkspaceRuntimePlan = {
   workspace_id: string;
   mode: "single" | "team";
   general_config: WorkspaceGeneralConfig;

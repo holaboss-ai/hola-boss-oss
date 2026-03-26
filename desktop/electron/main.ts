@@ -33,6 +33,7 @@ const GITHUB_RELEASES_REPO = "hola-boss-oss";
 const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const APP_UPDATE_REQUEST_TIMEOUT_MS = 15000;
 const APP_UPDATE_MACOS_ASSET_NAME = "Holaboss-macos-arm64.dmg";
+const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
 
 interface DirectoryEntryPayload {
   name: string;
@@ -1002,6 +1003,12 @@ interface SpotlightItemPayload {
 interface TemplateListResponsePayload {
   templates: TemplateMetadataPayload[];
   spotlight: SpotlightItemPayload[];
+}
+
+interface ProactiveIngestItemResultPayload {
+  status?: string;
+  event_id?: string;
+  detail?: string | null;
 }
 
 interface WorkspaceRecordPayload {
@@ -2997,6 +3004,66 @@ async function requestControlPlaneJson<T>({
   return response.json() as Promise<T>;
 }
 
+async function emitWorkspaceReadyHeartbeat(params: {
+  workspaceId: string;
+  holabossUserId: string;
+}): Promise<void> {
+  const workspaceId = params.workspaceId.trim();
+  const holabossUserId = params.holabossUserId.trim();
+  if (!workspaceId || !holabossUserId || holabossUserId === LOCAL_OSS_TEMPLATE_USER_ID) {
+    return;
+  }
+
+  const correlationId = `workspace-ready-${workspaceId}`;
+  appendRuntimeEventLog({
+    category: "workspace",
+    event: "workspace.heartbeat.emit",
+    outcome: "start",
+    detail: correlationId
+  });
+
+  try {
+    const results = await requestControlPlaneJson<ProactiveIngestItemResultPayload[]>({
+      service: "proactive",
+      method: "POST",
+      path: "/api/v1/proactive/ingest",
+      payload: {
+        events: [
+          {
+            event_id: `evt-heartbeat-${crypto.randomUUID().replace(/-/g, "")}`,
+            event_type: "heartbeat",
+            workspace_id: workspaceId,
+            actor: {
+              type: "system",
+              id: "desktop_workspace_create"
+            },
+            correlation_id: correlationId,
+            origin: "system",
+            timestamp: utcNowIso(),
+            source_refs: ["workspace-created:ready"],
+            window: "24h",
+            proposal_scope: "window"
+          }
+        ]
+      }
+    });
+    const acceptedCount = results.filter((item) => (item?.status || "").trim().toLowerCase() === "accepted").length;
+    appendRuntimeEventLog({
+      category: "workspace",
+      event: "workspace.heartbeat.emit",
+      outcome: "success",
+      detail: `workspace_id=${workspaceId} accepted=${acceptedCount}/${results.length}`
+    });
+  } catch (error) {
+    appendRuntimeEventLog({
+      category: "workspace",
+      event: "workspace.heartbeat.emit",
+      outcome: "error",
+      detail: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
 function getHolabossClientConfig(): HolabossClientConfigPayload {
   return {
     projectsUrl: projectsBaseUrl(),
@@ -3794,6 +3861,10 @@ async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise
         }).catch(() => updated);
       }
     }
+    await emitWorkspaceReadyHeartbeat({
+      workspaceId,
+      holabossUserId: payload.holaboss_user_id
+    });
     return updated;
   } catch (error) {
     await requestRuntimeJson<WorkspaceResponsePayload>({

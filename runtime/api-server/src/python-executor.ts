@@ -8,6 +8,10 @@ export type ExecutorEnvelope<TPayload> = {
 };
 
 function runtimeAppRoot(): string {
+  const runtimeRoot = (process.env.HOLABOSS_RUNTIME_ROOT ?? "").trim();
+  if (runtimeRoot) {
+    return runtimeRoot;
+  }
   const configured = (process.env.HOLABOSS_RUNTIME_APP_ROOT ?? "").trim();
   return configured || process.cwd();
 }

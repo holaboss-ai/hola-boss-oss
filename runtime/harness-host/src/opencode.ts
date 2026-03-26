@@ -211,7 +211,7 @@ function eventSessionId(rawEvent: unknown): string {
 function eventDelta(rawEvent: unknown): string {
   const payload = asRecord(rawEvent);
   const properties = asRecord(payload?.properties);
-  return firstNonEmptyString(properties?.delta) ?? "";
+  return typeof properties?.delta === "string" ? properties.delta : "";
 }
 
 function eventPart(rawEvent: unknown): Record<string, unknown> | null {
@@ -573,8 +573,8 @@ export function mapOpencodeEvent(
   const resolvedPartType = partID ? partTypeSnapshots.get(partID) ?? partType : partType;
 
   if (eventName === "message.part.delta") {
-    const delta = eventDelta(rawEvent);
-    if (!delta) {
+    const rawDelta = eventDelta(rawEvent);
+    if (!rawDelta) {
       return [];
     }
     if (resolvedPartType && !["text", "reasoning", "snapshot"].includes(resolvedPartType)) {
@@ -582,19 +582,27 @@ export function mapOpencodeEvent(
     }
     if (partID && !resolvedPartType) {
       const queued = pendingPartDeltas.get(partID) ?? [];
-      queued.push([eventName, delta]);
+      queued.push([eventName, rawDelta]);
       pendingPartDeltas.set(partID, queued);
       return [];
     }
+    let delta = rawDelta;
     if (partID) {
       const rawText = partValue(part, "text", "snapshot");
       const text = rawText !== undefined ? String(rawText) : "";
-      textSnapshots.set(partID, text || `${textSnapshots.get(partID) ?? ""}${delta}`);
+      if (text) {
+        delta = textDeltaFromValues(partID, text, textSnapshots);
+      } else {
+        textSnapshots.set(partID, `${textSnapshots.get(partID) ?? ""}${rawDelta}`);
+      }
     }
     const [eventType, deltaKind] = partStreamEventType(resolvedPartType);
     const queuedEvents = partID && resolvedPartType
       ? queuedPartDeltaEvents(partID, resolvedPartType, eventName, pendingPartDeltas)
       : [];
+    if (!delta) {
+      return queuedEvents;
+    }
     return [
       ...queuedEvents,
       {
@@ -612,20 +620,26 @@ export function mapOpencodeEvent(
   }
 
   if (resolvedPartType === "text") {
-    let delta = eventDelta(rawEvent);
-    if (delta) {
-      if (partID) {
-        const rawText = partValue(part, "text", "snapshot");
-        const text = rawText !== undefined ? String(rawText) : "";
-        textSnapshots.set(partID, text || `${textSnapshots.get(partID) ?? ""}${delta}`);
+    const rawDelta = eventDelta(rawEvent);
+    let delta = "";
+    if (partID) {
+      const rawText = partValue(part, "text", "snapshot");
+      const text = rawText !== undefined ? String(rawText) : "";
+      if (text) {
+        delta = textDeltaFromValues(partID, text, textSnapshots);
+      } else if (rawDelta) {
+        delta = rawDelta;
+        textSnapshots.set(partID, `${textSnapshots.get(partID) ?? ""}${rawDelta}`);
       }
+    } else if (rawDelta) {
+      delta = rawDelta;
     } else {
       delta = textDelta(part, textSnapshots);
     }
-    if (!delta) {
-      return [];
-    }
     const queuedEvents = partID ? queuedPartDeltaEvents(partID, resolvedPartType, eventName, pendingPartDeltas) : [];
+    if (!delta) {
+      return queuedEvents;
+    }
     return [
       ...queuedEvents,
       {
