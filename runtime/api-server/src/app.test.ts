@@ -2359,3 +2359,94 @@ test("queue route persists input, user message, and runtime state", async () => 
   await app.close();
   store.close();
 });
+
+test("queue route accepts staged attachments and history hydrates attachment metadata", async () => {
+  const root = makeTempDir("hb-runtime-api-queue-attachments-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    harness: "opencode",
+    harnessSessionId: "session-main"
+  });
+
+  const workspaceDir = store.workspaceDir(workspace.id);
+  const attachmentPath = path.join(workspaceDir, ".holaboss", "input-attachments", "batch-1", "diagram.png");
+  fs.mkdirSync(path.dirname(attachmentPath), { recursive: true });
+  fs.writeFileSync(attachmentPath, "png-bytes", "utf8");
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/agent-sessions/queue",
+    payload: {
+      workspace_id: workspace.id,
+      text: "",
+      attachments: [
+        {
+          id: "attachment-1",
+          kind: "image",
+          name: "diagram.png",
+          mime_type: "image/png",
+          size_bytes: 9,
+          workspace_path: ".holaboss/input-attachments/batch-1/diagram.png"
+        }
+      ]
+    }
+  });
+
+  assert.equal(response.statusCode, 200);
+  const queued = store.getInput(response.json().input_id);
+  assert.ok(queued);
+  assert.deepEqual(queued.payload.attachments, [
+    {
+      id: "attachment-1",
+      kind: "image",
+      name: "diagram.png",
+      mime_type: "image/png",
+      size_bytes: 9,
+      workspace_path: ".holaboss/input-attachments/batch-1/diagram.png"
+    }
+  ]);
+
+  const historyResponse = await app.inject({
+    method: "GET",
+    url: `/api/v1/agent-sessions/session-main/history?workspace_id=${workspace.id}`
+  });
+
+  assert.equal(historyResponse.statusCode, 200);
+  assert.deepEqual(historyResponse.json().messages, [
+    {
+      id: `user-${response.json().input_id}`,
+      role: "user",
+      text: "",
+      created_at: historyResponse.json().messages[0]?.created_at,
+      metadata: {
+        attachments: [
+          {
+            id: "attachment-1",
+            kind: "image",
+            name: "diagram.png",
+            mime_type: "image/png",
+            size_bytes: 9,
+            workspace_path: ".holaboss/input-attachments/batch-1/diagram.png"
+          }
+        ]
+      }
+    }
+  ]);
+
+  await app.close();
+  store.close();
+});

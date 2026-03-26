@@ -72,6 +72,7 @@ export const opencodeHarnessDefinition: HarnessDefinition = {
         session_id: params.request.session_id,
         input_id: params.request.input_id,
         instruction: params.request.instruction,
+        attachments: params.request.attachments ?? [],
         debug: Boolean(params.request.debug),
         harness_session_id: params.bootstrap.requestedHarnessSessionId,
         persisted_harness_session_id: params.bootstrap.persistedHarnessSessionId,

@@ -136,6 +136,7 @@ test("decodeTsRunnerRequest decodes a valid runner request", () => {
     session_id: "session-1",
     input_id: "input-1",
     instruction: "hello",
+    attachments: [],
     context: { k: "v" },
     model: "openai/gpt-5.1",
     debug: true

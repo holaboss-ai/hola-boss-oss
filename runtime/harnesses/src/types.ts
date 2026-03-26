@@ -11,11 +11,21 @@ export interface HarnessToolRefPayload {
   tool_name: string;
 }
 
+export interface HarnessInputAttachmentPayload {
+  id: string;
+  kind: "image" | "file";
+  name: string;
+  mime_type: string;
+  size_bytes: number;
+  workspace_path: string;
+}
+
 export interface HarnessRunnerRequestLike {
   workspace_id: string;
   session_id: string;
   input_id: string;
   instruction: string;
+  attachments?: HarnessInputAttachmentPayload[];
   debug?: boolean;
 }
 

@@ -4,8 +4,43 @@ import test from "node:test";
 import {
   createOpencodeEventMapperState,
   mapOpencodeEvent,
+  promptPartsForRequest,
   shouldEmitOpencodeEvent,
 } from "./opencode.js";
+import type { OpencodeHarnessHostRequest } from "./contracts.js";
+
+function baseRequest(): OpencodeHarnessHostRequest {
+  return {
+    workspace_id: "workspace-1",
+    workspace_dir: "/tmp/workspace-1",
+    session_id: "session-1",
+    input_id: "input-1",
+    instruction: "Review the attachment",
+    attachments: [],
+    debug: false,
+    harness_session_id: undefined,
+    persisted_harness_session_id: undefined,
+    provider_id: "openai",
+    model_id: "gpt-5.1",
+    mode: "code",
+    opencode_base_url: "http://127.0.0.1:4096",
+    timeout_seconds: 30,
+    system_prompt: "system",
+    tools: { read: true },
+    workspace_tool_ids: [],
+    workspace_skill_ids: [],
+    mcp_servers: [],
+    output_format: null,
+    workspace_config_checksum: "checksum-1",
+    run_started_payload: { phase: "booting" },
+    model_client: {
+      model_proxy_provider: "openai_compatible",
+      api_key: "token",
+      base_url: "https://runtime.example/api/v1/model-proxy/openai/v1",
+      default_headers: null,
+    },
+  };
+}
 
 test("mapOpencodeEvent flushes buffered deltas once part type is known", () => {
   const state = createOpencodeEventMapperState();
@@ -233,4 +268,30 @@ test("shouldEmitOpencodeEvent filters step markers and prompt echo", () => {
     shouldEmitOpencodeEvent("output_delta", { delta: "hello world", source: "opencode" }, "hello"),
     true
   );
+});
+
+test("promptPartsForRequest adds staged attachments as file parts", () => {
+  const parts = promptPartsForRequest({
+    ...baseRequest(),
+    attachments: [
+      {
+        id: "attachment-1",
+        kind: "image",
+        name: "diagram.png",
+        mime_type: "image/png",
+        size_bytes: 42,
+        workspace_path: ".holaboss/input-attachments/batch-1/diagram.png",
+      },
+    ],
+  });
+
+  assert.deepEqual(parts, [
+    { type: "text", text: "Review the attachment" },
+    {
+      type: "file",
+      url: "file:///tmp/workspace-1/.holaboss/input-attachments/batch-1/diagram.png",
+      mime: "image/png",
+      filename: "diagram.png",
+    },
+  ]);
 });

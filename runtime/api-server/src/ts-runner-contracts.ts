@@ -2,6 +2,15 @@ export type JsonPrimitive = boolean | number | string | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
 export type JsonObject = { [key: string]: JsonValue };
 
+export interface TsRunnerInputAttachment {
+  id: string;
+  kind: "image" | "file";
+  name: string;
+  mime_type: string;
+  size_bytes: number;
+  workspace_path: string;
+}
+
 export type TsRunnerEventType =
   | "run_claimed"
   | "run_started"
@@ -17,6 +26,7 @@ export interface TsRunnerRequest {
   session_id: string;
   input_id: string;
   instruction: string;
+  attachments?: TsRunnerInputAttachment[];
   context: JsonObject;
   model?: string | null;
   debug: boolean;
@@ -87,6 +97,37 @@ function integerInRange(
   return Number(value);
 }
 
+function attachments(value: unknown): TsRunnerInputAttachment[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      if (!isRecord(item)) {
+        return null;
+      }
+      const id = typeof item.id === "string" ? item.id.trim() : "";
+      const name = typeof item.name === "string" ? item.name.trim() : "";
+      const mimeType = typeof item.mime_type === "string" ? item.mime_type.trim() : "";
+      const workspacePath = typeof item.workspace_path === "string" ? item.workspace_path.trim() : "";
+      const sizeBytes = typeof item.size_bytes === "number" && Number.isFinite(item.size_bytes) ? item.size_bytes : 0;
+      const kind =
+        item.kind === "image" ? "image" : item.kind === "file" ? "file" : mimeType.startsWith("image/") ? "image" : "file";
+      if (!id || !name || !mimeType || !workspacePath) {
+        throw new TsRunnerRequestError("attachments entries must include id, name, mime_type, and workspace_path");
+      }
+      return {
+        id,
+        kind,
+        name,
+        mime_type: mimeType,
+        size_bytes: sizeBytes,
+        workspace_path: workspacePath
+      } satisfies TsRunnerInputAttachment;
+    })
+    .filter((item): item is TsRunnerInputAttachment => Boolean(item));
+}
+
 export function decodeTsRunnerRequestPayload(encoded: string): unknown {
   const trimmed = encoded.trim();
   if (!trimmed) {
@@ -130,6 +171,7 @@ export function validateTsRunnerRequest(payload: unknown): TsRunnerRequest {
     session_id: requiredString(payload.session_id, "session_id"),
     input_id: requiredString(payload.input_id, "input_id"),
     instruction: requiredString(payload.instruction, "instruction"),
+    attachments: attachments(payload.attachments),
     context: context as JsonObject,
     model: payload.model === undefined || payload.model === null ? null : requiredString(payload.model, "model"),
     debug: debugValue ?? false

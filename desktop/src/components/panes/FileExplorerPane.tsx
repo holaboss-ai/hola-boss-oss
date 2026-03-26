@@ -16,6 +16,11 @@ import {
 } from "lucide-react";
 import { IconButton } from "@/components/ui/IconButton";
 import { PaneCard } from "@/components/ui/PaneCard";
+import {
+  EXPLORER_ATTACHMENT_DRAG_TYPE,
+  inferDraggedAttachmentKind,
+  serializeExplorerAttachmentDragPayload
+} from "@/lib/attachmentDrag";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 type TextPreviewMode = "preview" | "edit";
@@ -109,6 +114,53 @@ function formatModified(ts: string) {
   }).format(date);
 }
 
+function createAttachmentDragPreview(entry: LocalFileEntry) {
+  const preview = document.createElement("div");
+  preview.style.position = "fixed";
+  preview.style.top = "-1000px";
+  preview.style.left = "-1000px";
+  preview.style.display = "inline-flex";
+  preview.style.alignItems = "center";
+  preview.style.gap = "8px";
+  preview.style.maxWidth = "280px";
+  preview.style.padding = "8px 12px";
+  preview.style.border = "1px solid rgba(252, 127, 120, 0.34)";
+  preview.style.borderRadius = "999px";
+  preview.style.background = "rgba(255, 248, 247, 0.96)";
+  preview.style.boxShadow = "0 12px 30px rgba(45, 18, 16, 0.16)";
+  preview.style.backdropFilter = "blur(10px)";
+  preview.style.color = "rgba(49, 32, 29, 0.96)";
+  preview.style.fontFamily = "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  preview.style.pointerEvents = "none";
+  preview.style.zIndex = "2147483647";
+
+  const badge = document.createElement("span");
+  badge.textContent = inferDraggedAttachmentKind(entry.name) === "image" ? "IMG" : "FILE";
+  badge.style.display = "inline-flex";
+  badge.style.alignItems = "center";
+  badge.style.justifyContent = "center";
+  badge.style.height = "20px";
+  badge.style.padding = "0 8px";
+  badge.style.borderRadius = "999px";
+  badge.style.background = "rgba(252, 127, 120, 0.12)";
+  badge.style.color = "rgba(209, 71, 63, 0.92)";
+  badge.style.fontSize = "10px";
+  badge.style.fontWeight = "700";
+  badge.style.letterSpacing = "0.12em";
+
+  const label = document.createElement("span");
+  label.textContent = `${entry.name} ${entry.isDirectory ? "" : `(${formatFileSize(entry.size)})`}`.trim();
+  label.style.overflow = "hidden";
+  label.style.textOverflow = "ellipsis";
+  label.style.whiteSpace = "nowrap";
+  label.style.fontSize = "12px";
+  label.style.fontWeight = "600";
+
+  preview.append(badge, label);
+  document.body.append(preview);
+  return preview;
+}
+
 function getHighlightedHtml(preview: FilePreviewPayload | null, draft: string) {
   if (!preview || preview.kind !== "text") {
     return "";
@@ -126,6 +178,7 @@ function getHighlightedHtml(preview: FilePreviewPayload | null, draft: string) {
 
 export function FileExplorerPane() {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const dragPreviewRef = useRef<HTMLDivElement | null>(null);
   const [currentPath, setCurrentPath] = useState<string>("");
   const [parentPath, setParentPath] = useState<string | null>(null);
   const [entries, setEntries] = useState<LocalFileEntry[]>([]);
@@ -252,6 +305,13 @@ export function FileExplorerPane() {
     observer.observe(container);
 
     return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      dragPreviewRef.current?.remove();
+      dragPreviewRef.current = null;
+    };
   }, []);
 
   const canGoBack = historyIndex > 0;
@@ -648,6 +708,7 @@ export function FileExplorerPane() {
                       <button
                         type="button"
                         key={entry.absolutePath}
+                        draggable={!entry.isDirectory}
                         onClick={() => {
                           setSelectedPath(entry.absolutePath);
                         }}
@@ -659,11 +720,37 @@ export function FileExplorerPane() {
 
                           void openFilePreview(entry.absolutePath);
                         }}
+                        onDragStart={(event) => {
+                          if (entry.isDirectory) {
+                            event.preventDefault();
+                            return;
+                          }
+
+                          event.dataTransfer.effectAllowed = "copy";
+                          event.dataTransfer.setData(
+                            EXPLORER_ATTACHMENT_DRAG_TYPE,
+                            serializeExplorerAttachmentDragPayload({
+                              absolutePath: entry.absolutePath,
+                              name: entry.name,
+                              size: entry.size,
+                            })
+                          );
+                          event.dataTransfer.setData("text/plain", entry.name);
+                          const preview = createAttachmentDragPreview(entry);
+                          dragPreviewRef.current?.remove();
+                          dragPreviewRef.current = preview;
+                          event.dataTransfer.setDragImage(preview, 18, 18);
+                        }}
+                        onDragEnd={() => {
+                          dragPreviewRef.current?.remove();
+                          dragPreviewRef.current = null;
+                        }}
                         className={`group mb-1 w-full rounded-lg border px-2 py-2 text-left transition-all duration-150 ${
                           selected
                             ? "border-neon-green/35 bg-neon-green/10 text-neon-green"
                             : "border-transparent text-text-main/78 hover:bg-white/5"
-                        }`}
+                        } ${entry.isDirectory ? "" : "cursor-grab active:cursor-grabbing"}`}
+                        title={entry.isDirectory ? entry.name : `${entry.name} • drag into chat to attach`}
                       >
                         {isCompact ? (
                           <span className="flex min-w-0 flex-col gap-1">

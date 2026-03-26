@@ -121,6 +121,15 @@ function resolveCronWorker(
 
 type StringMap = Record<string, unknown>;
 
+interface SessionInputAttachmentPayload {
+  id: string;
+  kind: "image" | "file";
+  name: string;
+  mime_type: string;
+  size_bytes: number;
+  workspace_path: string;
+}
+
 function defaultWorkspaceRoot(): string | undefined {
   const sandboxRoot = (process.env.HB_SANDBOX_ROOT ?? "").trim();
   if (!sandboxRoot) {
@@ -211,6 +220,62 @@ function optionalStringList(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === "string");
 }
 
+function parseSessionInputAttachment(value: unknown): SessionInputAttachmentPayload | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const id = typeof value.id === "string" ? value.id.trim() : "";
+  const name = typeof value.name === "string" ? value.name.trim() : "";
+  const mimeType = typeof value.mime_type === "string" ? value.mime_type.trim() : "";
+  const workspacePath = typeof value.workspace_path === "string" ? value.workspace_path.trim() : "";
+  const sizeBytes = typeof value.size_bytes === "number" && Number.isFinite(value.size_bytes) ? value.size_bytes : 0;
+  const kind = value.kind === "image" ? "image" : value.kind === "file" ? "file" : mimeType.startsWith("image/") ? "image" : "file";
+
+  if (!id || !name || !mimeType || !workspacePath) {
+    return null;
+  }
+
+  return {
+    id,
+    kind,
+    name,
+    mime_type: mimeType,
+    size_bytes: sizeBytes,
+    workspace_path: workspacePath
+  };
+}
+
+function requiredSessionInputAttachments(value: unknown, workspaceDir: string): SessionInputAttachmentPayload[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("attachments must be an array");
+  }
+
+  return value.map((item, index) => {
+    const attachment = parseSessionInputAttachment(item);
+    if (!attachment) {
+      throw new Error(`attachments[${index}] is invalid`);
+    }
+
+    const fullPath = resolveWorkspaceFilePath(workspaceDir, attachment.workspace_path);
+    if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
+      throw new Error(`attachment file not found: ${attachment.workspace_path}`);
+    }
+
+    return attachment;
+  });
+}
+
+function attachmentsFromInputPayload(value: unknown): SessionInputAttachmentPayload[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item) => parseSessionInputAttachment(item)).filter((item): item is SessionInputAttachmentPayload => Boolean(item));
+}
+
 function workspaceRecordPayload(workspace: WorkspaceRecord): Record<string, unknown> {
   return {
     id: workspace.id,
@@ -246,13 +311,13 @@ function runtimeStatePayload(record: SessionRuntimeStateRecord): Record<string, 
   };
 }
 
-function sessionMessagePayload(record: SessionMessageRecord): Record<string, unknown> {
+function sessionMessagePayload(record: SessionMessageRecord, metadata?: Record<string, unknown>): Record<string, unknown> {
   return {
     id: record.id,
     role: record.role,
     text: record.text,
     created_at: record.createdAt,
-    metadata: record.metadata
+    metadata: metadata ?? record.metadata
   };
 }
 
@@ -1973,9 +2038,16 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 409, error instanceof Error ? error.message : "workspace main_session_id is not configured");
     }
 
-    const trimmedText = requiredString(request.body.text, "text").trim();
-    if (!trimmedText) {
-      return sendError(reply, 422, "text is required");
+    const workspaceDir = store.workspaceDir(workspaceId);
+    const trimmedText = (optionalString(request.body.text) ?? "").trim();
+    let attachments: SessionInputAttachmentPayload[];
+    try {
+      attachments = requiredSessionInputAttachments(request.body.attachments, workspaceDir);
+    } catch (error) {
+      return sendError(reply, 422, error instanceof Error ? error.message : "attachments are invalid");
+    }
+    if (!trimmedText && attachments.length === 0) {
+      return sendError(reply, 422, "text or attachments are required");
     }
 
     store.ensureRuntimeState({
@@ -1990,6 +2062,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       idempotencyKey: nullableString(request.body.idempotency_key) ?? null,
       payload: {
         text: trimmedText,
+        attachments,
         image_urls: Array.isArray(request.body.image_urls) ? request.body.image_urls : [],
         model: nullableString(request.body.model) ?? null,
         context: {}
@@ -2071,7 +2144,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const allMessages = store.listSessionMessages({ workspaceId, sessionId: params.sessionId });
     const messages = allMessages
       .slice(offset, offset + limit)
-      .map((message: SessionMessageRecord) => sessionMessagePayload(message));
+      .map((message: SessionMessageRecord) => {
+        const inputId = message.role === "user" && message.id.startsWith("user-") ? message.id.slice(5) : "";
+        const inputAttachments = inputId ? attachmentsFromInputPayload(store.getInput(inputId)?.payload.attachments) : [];
+        const metadata = inputAttachments.length > 0 ? { ...message.metadata, attachments: inputAttachments } : message.metadata;
+        return sessionMessagePayload(message, metadata);
+      });
     return {
       workspace_id: workspaceId,
       session_id: params.sessionId,

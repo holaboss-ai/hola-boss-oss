@@ -1339,6 +1339,41 @@ interface SessionHistoryMessagePayload {
   metadata: Record<string, unknown>;
 }
 
+interface SessionInputAttachmentPayload {
+  id: string;
+  kind: "image" | "file";
+  name: string;
+  mime_type: string;
+  size_bytes: number;
+  workspace_path: string;
+}
+
+interface StageSessionAttachmentFilePayload {
+  name: string;
+  mime_type?: string | null;
+  content_base64: string;
+}
+
+interface StageSessionAttachmentsPayload {
+  workspace_id: string;
+  files: StageSessionAttachmentFilePayload[];
+}
+
+interface StageSessionAttachmentPathPayload {
+  absolute_path: string;
+  name?: string | null;
+  mime_type?: string | null;
+}
+
+interface StageSessionAttachmentPathsPayload {
+  workspace_id: string;
+  files: StageSessionAttachmentPathPayload[];
+}
+
+interface StageSessionAttachmentsResponsePayload {
+  attachments: SessionInputAttachmentPayload[];
+}
+
 interface SessionHistoryResponsePayload {
   workspace_id: string;
   session_id: string;
@@ -1438,6 +1473,7 @@ interface HolabossQueueSessionInputPayload {
   text: string;
   workspace_id: string;
   image_urls: string[] | null;
+  attachments?: SessionInputAttachmentPayload[] | null;
   session_id?: string | null;
   idempotency_key?: string | null;
   priority?: number;
@@ -3697,6 +3733,75 @@ function workspaceDirectoryPath(workspaceId: string) {
   return path.join(runtimeWorkspaceRoot(), workspaceId);
 }
 
+function sanitizeAttachmentName(name: string): string {
+  const basename = path.basename(name || "").trim();
+  const sanitized = basename.replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "-").replace(/\s+/g, " ").trim();
+  return sanitized || "attachment";
+}
+
+function dedupeAttachmentName(name: string, usedNames: Set<string>): string {
+  const parsed = path.parse(name);
+  const basename = parsed.name || "attachment";
+  const extension = parsed.ext || "";
+  let candidate = `${basename}${extension}`;
+  let index = 2;
+  while (usedNames.has(candidate.toLowerCase())) {
+    candidate = `${basename}-${index}${extension}`;
+    index += 1;
+  }
+  usedNames.add(candidate.toLowerCase());
+  return candidate;
+}
+
+function attachmentMimeType(name: string, mimeType?: string | null): string {
+  const normalized = (mimeType ?? "").trim().toLowerCase();
+  if (normalized && normalized !== "application/octet-stream") {
+    return normalized;
+  }
+
+  switch (path.extname(name).toLowerCase()) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".webp":
+      return "image/webp";
+    case ".svg":
+      return "image/svg+xml";
+    case ".pdf":
+      return "application/pdf";
+    case ".md":
+      return "text/markdown";
+    case ".txt":
+      return "text/plain";
+    case ".json":
+      return "application/json";
+    case ".csv":
+      return "text/csv";
+    case ".ts":
+      return "text/typescript";
+    case ".tsx":
+      return "text/tsx";
+    case ".js":
+      return "text/javascript";
+    case ".jsx":
+      return "text/jsx";
+    case ".css":
+      return "text/css";
+    case ".html":
+      return "text/html";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function attachmentKind(mimeType: string): "image" | "file" {
+  return mimeType.startsWith("image/") ? "image" : "file";
+}
+
 function resolveWorkspaceMaterializedFilePath(workspaceRoot: string, relativePath: string) {
   const normalized = path.posix.normalize(relativePath.trim());
   if (!normalized || normalized === "." || normalized.startsWith("/") || normalized.startsWith("../")) {
@@ -3743,6 +3848,108 @@ async function applyMaterializedTemplateToWorkspace(
       await fs.chmod(absolutePath, 0o755);
     }
   }
+}
+
+async function stageSessionAttachments(
+  payload: StageSessionAttachmentsPayload
+): Promise<StageSessionAttachmentsResponsePayload> {
+  const workspaceId = payload.workspace_id?.trim();
+  if (!workspaceId) {
+    throw new Error("workspace_id is required");
+  }
+
+  const files = Array.isArray(payload.files) ? payload.files : [];
+  if (files.length === 0) {
+    return { attachments: [] };
+  }
+
+  const workspaceDir = workspaceDirectoryPath(workspaceId);
+  await fs.mkdir(workspaceDir, { recursive: true });
+
+  const batchId = randomUUID();
+  const relativeRoot = path.posix.join(".holaboss", "input-attachments", batchId);
+  const absoluteRoot = resolveWorkspaceMaterializedFilePath(workspaceDir, relativeRoot);
+  await fs.mkdir(absoluteRoot, { recursive: true });
+
+  const usedNames = new Set<string>();
+  const attachments: SessionInputAttachmentPayload[] = [];
+  for (const [index, file] of files.entries()) {
+    const contentBase64 = typeof file?.content_base64 === "string" ? file.content_base64.trim() : "";
+    if (!contentBase64) {
+      throw new Error(`files[${index}].content_base64 is required`);
+    }
+
+    const name = dedupeAttachmentName(sanitizeAttachmentName(file?.name ?? ""), usedNames);
+    const relativePath = path.posix.join(relativeRoot, name);
+    const absolutePath = resolveWorkspaceMaterializedFilePath(workspaceDir, relativePath);
+    const content = Buffer.from(contentBase64, "base64");
+    await fs.writeFile(absolutePath, content);
+
+    const mimeType = attachmentMimeType(name, file?.mime_type);
+    attachments.push({
+      id: randomUUID(),
+      kind: attachmentKind(mimeType),
+      name,
+      mime_type: mimeType,
+      size_bytes: content.byteLength,
+      workspace_path: relativePath
+    });
+  }
+
+  return { attachments };
+}
+
+async function stageSessionAttachmentPaths(
+  payload: StageSessionAttachmentPathsPayload
+): Promise<StageSessionAttachmentsResponsePayload> {
+  const workspaceId = payload.workspace_id?.trim();
+  if (!workspaceId) {
+    throw new Error("workspace_id is required");
+  }
+
+  const files = Array.isArray(payload.files) ? payload.files : [];
+  if (files.length === 0) {
+    return { attachments: [] };
+  }
+
+  const workspaceDir = workspaceDirectoryPath(workspaceId);
+  await fs.mkdir(workspaceDir, { recursive: true });
+
+  const batchId = randomUUID();
+  const relativeRoot = path.posix.join(".holaboss", "input-attachments", batchId);
+  const absoluteRoot = resolveWorkspaceMaterializedFilePath(workspaceDir, relativeRoot);
+  await fs.mkdir(absoluteRoot, { recursive: true });
+
+  const usedNames = new Set<string>();
+  const attachments: SessionInputAttachmentPayload[] = [];
+  for (const [index, file] of files.entries()) {
+    const absolutePath = typeof file?.absolute_path === "string" ? path.resolve(file.absolute_path) : "";
+    if (!absolutePath) {
+      throw new Error(`files[${index}].absolute_path is required`);
+    }
+
+    const stat = await fs.stat(absolutePath);
+    if (!stat.isFile()) {
+      throw new Error(`files[${index}] must reference a file`);
+    }
+
+    const name = dedupeAttachmentName(sanitizeAttachmentName(file?.name ?? path.basename(absolutePath)), usedNames);
+    const relativePath = path.posix.join(relativeRoot, name);
+    const targetPath = resolveWorkspaceMaterializedFilePath(workspaceDir, relativePath);
+    await fs.copyFile(absolutePath, targetPath);
+
+    const mimeType = attachmentMimeType(name, file?.mime_type);
+    attachments.push({
+      id: randomUUID(),
+      kind: attachmentKind(mimeType),
+      name,
+      mime_type: mimeType,
+      size_bytes: stat.size,
+      workspace_path: relativePath
+    });
+  }
+
+  return { attachments };
 }
 
 function insertSessionMessage(message: {
@@ -4173,6 +4380,7 @@ async function queueSessionInput(
       workspace_id: payload.workspace_id,
       text: payload.text,
       image_urls: payload.image_urls,
+      attachments: payload.attachments ?? null,
       session_id: payload.session_id,
       idempotency_key: payload.idempotency_key,
       priority: payload.priority ?? 0,
@@ -7523,6 +7731,12 @@ app.whenReady().then(async () => {
   handleTrustedIpc("workspace:listRuntimeStates", ["main"], async (_event, workspaceId: string) => listRuntimeStates(workspaceId));
   handleTrustedIpc("workspace:getSessionHistory", ["main"], async (_event, payload: { sessionId: string; workspaceId: string }) =>
     getSessionHistory(payload.sessionId, payload.workspaceId)
+  );
+  handleTrustedIpc("workspace:stageSessionAttachments", ["main"], async (_event, payload: StageSessionAttachmentsPayload) =>
+    stageSessionAttachments(payload)
+  );
+  handleTrustedIpc("workspace:stageSessionAttachmentPaths", ["main"], async (_event, payload: StageSessionAttachmentPathsPayload) =>
+    stageSessionAttachmentPaths(payload)
   );
   handleTrustedIpc("workspace:queueSessionInput", ["main"], async (_event, payload: HolabossQueueSessionInputPayload) =>
     queueSessionInput(payload)

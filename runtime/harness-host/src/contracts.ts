@@ -32,9 +32,19 @@ export interface RunnerRequest {
   session_id: string;
   input_id: string;
   instruction: string;
+  attachments?: HarnessHostInputAttachmentPayload[];
   context: JsonObject;
   model?: string | null;
   debug: boolean;
+}
+
+export interface HarnessHostInputAttachmentPayload {
+  id: string;
+  kind: "image" | "file";
+  name: string;
+  mime_type: string;
+  size_bytes: number;
+  workspace_path: string;
 }
 
 export interface HarnessHostModelClientPayload {
@@ -52,6 +62,7 @@ export interface HarnessHostOpencodeRequest {
   session_id: string;
   input_id: string;
   instruction: string;
+  attachments?: HarnessHostInputAttachmentPayload[];
   debug: boolean;
   harness_session_id?: string | null;
   persisted_harness_session_id?: string | null;
@@ -79,6 +90,7 @@ export interface HarnessHostPiRequest {
   session_id: string;
   input_id: string;
   instruction: string;
+  attachments?: HarnessHostInputAttachmentPayload[];
   debug: boolean;
   harness_session_id?: string | null;
   persisted_harness_session_id?: string | null;
@@ -313,6 +325,32 @@ function jsonObjectArray(value: unknown): JsonObject[] {
   return value.filter((item): item is JsonObject => isRecord(item) && isJsonValue(item));
 }
 
+function inputAttachments(value: unknown, fieldName: string): HarnessHostInputAttachmentPayload[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item, index) => {
+    if (!isRecord(item)) {
+      throw new Error(`${fieldName}[${index}] must be an object`);
+    }
+    const id = requiredString(item.id, `${fieldName}[${index}].id`);
+    const name = requiredString(item.name, `${fieldName}[${index}].name`);
+    const mimeType = requiredString(item.mime_type, `${fieldName}[${index}].mime_type`);
+    const workspacePath = requiredString(item.workspace_path, `${fieldName}[${index}].workspace_path`);
+    const sizeBytes = item.size_bytes === undefined ? 0 : requiredNumber(item.size_bytes, `${fieldName}[${index}].size_bytes`);
+    const kind =
+      item.kind === "image" ? "image" : item.kind === "file" ? "file" : mimeType.startsWith("image/") ? "image" : "file";
+    return {
+      id,
+      kind,
+      name,
+      mime_type: mimeType,
+      size_bytes: sizeBytes,
+      workspace_path: workspacePath,
+    };
+  });
+}
+
 function modelClientConfigPayload(value: unknown, fieldName: string): HarnessHostModelClientPayload {
   if (!isRecord(value)) {
     throw new Error(`${fieldName} must be an object`);
@@ -362,6 +400,7 @@ export function decodeRunnerRequestBase64(encoded: string): RunnerRequest {
     session_id: requiredString(parsed.session_id, "session_id"),
     input_id: requiredString(parsed.input_id, "input_id"),
     instruction: requiredString(parsed.instruction, "instruction"),
+    attachments: inputAttachments(parsed.attachments, "attachments"),
     context: jsonObject(parsed.context),
     model: optionalString(parsed.model),
     debug: optionalBoolean(parsed.debug, false),
@@ -379,6 +418,7 @@ export function decodeHarnessHostOpencodeRequestBase64(encoded: string): Harness
     session_id: requiredString(parsed.session_id, "session_id"),
     input_id: requiredString(parsed.input_id, "input_id"),
     instruction: requiredString(parsed.instruction, "instruction"),
+    attachments: inputAttachments(parsed.attachments, "attachments"),
     debug: optionalBoolean(parsed.debug, false),
     harness_session_id: optionalString(parsed.harness_session_id),
     persisted_harness_session_id: optionalString(parsed.persisted_harness_session_id),
@@ -412,6 +452,7 @@ export function decodeHarnessHostPiRequestBase64(encoded: string): HarnessHostPi
     session_id: requiredString(parsed.session_id, "session_id"),
     input_id: requiredString(parsed.input_id, "input_id"),
     instruction: requiredString(parsed.instruction, "instruction"),
+    attachments: inputAttachments(parsed.attachments, "attachments"),
     debug: optionalBoolean(parsed.debug, false),
     harness_session_id: optionalString(parsed.harness_session_id),
     persisted_harness_session_id: optionalString(parsed.persisted_harness_session_id),

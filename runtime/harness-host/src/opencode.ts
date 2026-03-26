@@ -5,6 +5,8 @@ import {
   type OutputFormat,
   type ToolPart,
 } from "@opencode-ai/sdk/v2";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import type { JsonObject, JsonValue, OpencodeHarnessHostRequest, RunnerEventType, RunnerOutputEventPayload } from "./contracts.js";
 
@@ -174,6 +176,24 @@ function sdkErrorMessage(error: unknown, prefix: string): string {
     detailParts.push(`provider=${providerID}`);
   }
   return detailParts.length > 0 ? `${summary} (${detailParts.join(", ")})` : summary;
+}
+
+export function promptPartsForRequest(request: OpencodeHarnessHostRequest) {
+  const parts: Array<
+    { type: "text"; text: string } | { type: "file"; url: string; mime: string; filename?: string }
+  > = [];
+  if (request.instruction.trim()) {
+    parts.push({ type: "text", text: request.instruction });
+  }
+  for (const attachment of request.attachments ?? []) {
+    parts.push({
+      type: "file",
+      url: pathToFileURL(path.resolve(request.workspace_dir, attachment.workspace_path)).toString(),
+      mime: attachment.mime_type,
+      filename: attachment.name,
+    });
+  }
+  return parts;
 }
 
 function requireData<T>(response: { data?: T; error?: unknown }, prefix: string): T {
@@ -906,7 +926,7 @@ export async function runOpencode(request: OpencodeHarnessHostRequest): Promise<
         tools: request.tools,
         format: (request.output_format as OutputFormat | null | undefined) ?? undefined,
         system: request.system_prompt,
-        parts: [{ type: "text", text: request.instruction }],
+        parts: promptPartsForRequest(request),
       });
       if (response.error !== undefined) {
         throw new Error(sdkErrorMessage(response.error, "OpenCode prompt submission failed"));

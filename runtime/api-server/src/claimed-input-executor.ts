@@ -12,8 +12,59 @@ const RUNTIME_EXEC_CONTEXT_KEY = "_sandbox_runtime_exec_v1";
 const RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY = "model_proxy_api_key";
 const RUNTIME_EXEC_SANDBOX_ID_KEY = "sandbox_id";
 
+interface SessionInputAttachment {
+  id: string;
+  kind: "image" | "file";
+  name: string;
+  mime_type: string;
+  size_bytes: number;
+  workspace_path: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseSessionInputAttachment(value: unknown): SessionInputAttachment | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const id = typeof value.id === "string" ? value.id.trim() : "";
+  const name = typeof value.name === "string" ? value.name.trim() : "";
+  const mimeType = typeof value.mime_type === "string" ? value.mime_type.trim() : "";
+  const workspacePath = typeof value.workspace_path === "string" ? value.workspace_path.trim() : "";
+  const sizeBytes = typeof value.size_bytes === "number" && Number.isFinite(value.size_bytes) ? value.size_bytes : 0;
+  const kind = value.kind === "image" ? "image" : value.kind === "file" ? "file" : mimeType.startsWith("image/") ? "image" : "file";
+  if (!id || !name || !mimeType || !workspacePath) {
+    return null;
+  }
+  return {
+    id,
+    kind,
+    name,
+    mime_type: mimeType,
+    size_bytes: sizeBytes,
+    workspace_path: workspacePath
+  };
+}
+
+function sessionInputAttachments(value: unknown): SessionInputAttachment[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item) => parseSessionInputAttachment(item)).filter((item): item is SessionInputAttachment => Boolean(item));
+}
+
+function defaultInstructionForAttachments(attachments: SessionInputAttachment[]): string {
+  if (attachments.length === 0) {
+    return "";
+  }
+  if (attachments.length === 1) {
+    return attachments[0].kind === "image" ? "Review the attached image." : "Review the attached file.";
+  }
+  return attachments.some((attachment) => attachment.kind === "image")
+    ? "Review the attached files and images."
+    : "Review the attached files.";
 }
 
 function selectedHarness(): string {
@@ -47,11 +98,12 @@ function buildOnboardingInstruction(params: {
   workspaceId: string;
   sessionId: string;
   text: string;
+  attachments: SessionInputAttachment[];
   workspace: WorkspaceRecord;
 }): string {
-  const trimmed = params.text.trim();
+  const trimmed = params.text.trim() || defaultInstructionForAttachments(params.attachments);
   if (!trimmed) {
-    throw new Error("text is required");
+    throw new Error("text or attachments are required");
   }
   const onboardingStatus = (params.workspace.onboardingStatus ?? "").trim().toLowerCase();
   const onboardingSessionId = (params.workspace.onboardingSessionId ?? "").trim();
@@ -160,12 +212,14 @@ export async function processClaimedInput(params: {
     sessionId: record.sessionId,
     harness
   });
+  const attachments = sessionInputAttachments(record.payload.attachments);
 
   const instruction = buildOnboardingInstruction({
     workspaceRoot: store.workspaceRoot,
     workspaceId: record.workspaceId,
     sessionId: record.sessionId,
     text: String(record.payload.text ?? ""),
+    attachments,
     workspace
   });
 
@@ -208,6 +262,7 @@ export async function processClaimedInput(params: {
     session_id: record.sessionId,
     input_id: record.inputId,
     instruction,
+    attachments,
     context: runtimeContext,
     model: record.payload.model ?? null,
     debug: false

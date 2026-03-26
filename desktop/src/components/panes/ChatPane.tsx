@@ -1,17 +1,44 @@
-import { FormEvent, KeyboardEvent, type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type DragEvent, FormEvent, KeyboardEvent, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { ArrowUp, ChevronDown, Loader2 } from "lucide-react";
+import { ArrowUp, ChevronDown, FileText, Image as ImageIcon, Loader2, Paperclip, X } from "lucide-react";
 import { PaneCard } from "@/components/ui/PaneCard";
+import {
+  EXPLORER_ATTACHMENT_DRAG_TYPE,
+  type ExplorerAttachmentDragPayload,
+  inferDraggedAttachmentKind,
+  parseExplorerAttachmentDragPayload
+} from "@/lib/attachmentDrag";
 import { preferredSessionId } from "@/lib/sessionRouting";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
+
+type ChatAttachment = SessionInputAttachmentPayload;
 
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
+  attachments?: ChatAttachment[];
   thinkingText?: string;
 }
+
+interface PendingLocalAttachmentFile {
+  id: string;
+  source: "local-file";
+  file: File;
+}
+
+interface PendingExplorerAttachmentFile {
+  id: string;
+  source: "explorer-path";
+  absolutePath: string;
+  name: string;
+  mime_type?: string | null;
+  size_bytes: number;
+  kind: "image" | "file";
+}
+
+type PendingAttachment = PendingLocalAttachmentFile | PendingExplorerAttachmentFile;
 
 interface StreamTelemetryEntry {
   id: string;
@@ -29,8 +56,89 @@ interface StreamTelemetryEntry {
 const STREAM_ATTACH_PENDING = "__stream_attach_pending__";
 const STREAM_TELEMETRY_LIMIT = 240;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function normalizeErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed.";
+}
+
+function normalizeChatAttachment(value: unknown): ChatAttachment | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const id = typeof value.id === "string" ? value.id.trim() : "";
+  const name = typeof value.name === "string" ? value.name.trim() : "";
+  const mimeType = typeof value.mime_type === "string" ? value.mime_type.trim() : "";
+  const workspacePath = typeof value.workspace_path === "string" ? value.workspace_path.trim() : "";
+  const sizeBytes = typeof value.size_bytes === "number" && Number.isFinite(value.size_bytes) ? value.size_bytes : 0;
+  const kind = value.kind === "image" ? "image" : value.kind === "file" ? "file" : mimeType.startsWith("image/") ? "image" : "file";
+
+  if (!id || !name || !mimeType || !workspacePath) {
+    return null;
+  }
+
+  return {
+    id,
+    kind,
+    name,
+    mime_type: mimeType,
+    size_bytes: sizeBytes,
+    workspace_path: workspacePath
+  };
+}
+
+function attachmentsFromMetadata(metadata: Record<string, unknown> | null | undefined): ChatAttachment[] {
+  const raw = metadata?.attachments;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.map((item) => normalizeChatAttachment(item)).filter((item): item is ChatAttachment => Boolean(item));
+}
+
+function hasRenderableMessageContent(text: string, attachments: ChatAttachment[]) {
+  return Boolean(text.trim()) || attachments.length > 0;
+}
+
+function formatAttachmentSize(sizeBytes: number) {
+  if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
+    return "";
+  }
+  if (sizeBytes >= 1024 * 1024) {
+    return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  if (sizeBytes >= 1024) {
+    return `${Math.round(sizeBytes / 1024)} KB`;
+  }
+  return `${sizeBytes} B`;
+}
+
+function attachmentButtonLabel(attachment: { name: string; size_bytes: number }) {
+  const sizeLabel = formatAttachmentSize(attachment.size_bytes);
+  return sizeLabel ? `${attachment.name} (${sizeLabel})` : attachment.name;
+}
+
+function attachmentUploadPayload(file: File): Promise<StageSessionAttachmentFilePayload> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error(`Failed to read ${file.name}`));
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      const separator = result.indexOf(",");
+      resolve({
+        name: file.name,
+        mime_type: file.type || null,
+        content_base64: separator >= 0 ? result.slice(separator + 1) : result
+      });
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function pendingAttachmentId(seed: string) {
+  return `${seed}-${crypto.randomUUID()}`;
 }
 
 function runtimeStateStatus(value: string | null | undefined): string {
@@ -90,6 +198,7 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
   const [liveToolActivities, setLiveToolActivities] = useState<string[]>([]);
   const [collapsedThinkingByMessageId, setCollapsedThinkingByMessageId] = useState<Record<string, boolean>>({});
   const [input, setInput] = useState("");
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
   const [chatErrorMessage, setChatErrorMessage] = useState("");
@@ -97,6 +206,7 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
   const [streamTelemetry, setStreamTelemetry] = useState<StreamTelemetryEntry[]>([]);
   const messagesRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const activeSessionIdRef = useRef<string | null>(null);
   const activeStreamIdRef = useRef<string | null>(null);
   const activeAssistantMessageIdRef = useRef<string | null>(null);
@@ -239,6 +349,10 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
   }, [selectedWorkspace]);
 
   useEffect(() => {
+    setPendingAttachments([]);
+  }, [selectedWorkspaceId]);
+
+  useEffect(() => {
     const textarea = textareaRef.current;
     if (!textarea) {
       return;
@@ -253,6 +367,7 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
       setMessages([]);
       resetLiveTurn();
       setCollapsedThinkingByMessageId({});
+      setPendingAttachments([]);
       setActiveSession(null);
       pendingInputIdRef.current = null;
       return;
@@ -291,12 +406,20 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
 
         setMessages(
           history.messages
-            .filter((message) => (message.role === "user" || message.role === "assistant") && Boolean(message.text.trim()))
-            .map((message) => ({
-              id: message.id || `history-${message.created_at ?? crypto.randomUUID()}`,
-              role: message.role as ChatMessage["role"],
-              text: message.text
-            }))
+            .map((message) => {
+              const attachments = attachmentsFromMetadata(message.metadata);
+              return {
+                id: message.id || `history-${message.created_at ?? crypto.randomUUID()}`,
+                role: message.role as ChatMessage["role"],
+                text: message.text,
+                attachments
+              };
+            })
+            .filter(
+              (message) =>
+                (message.role === "user" || message.role === "assistant") &&
+                hasRenderableMessageContent(message.text, message.attachments ?? [])
+            )
         );
         resetLiveTurn();
       } catch (error) {
@@ -802,7 +925,7 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
 
   async function sendMessage(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || isResponding) {
+    if ((!trimmed && pendingAttachments.length === 0) || isResponding) {
       return;
     }
     if (!selectedWorkspace) {
@@ -846,22 +969,71 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
       });
     }
 
-    const userMessage: ChatMessage = {
-      id: `user-${Date.now()}`,
-      role: "user",
-      text: trimmed
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
-    resetLiveTurn();
-    setInput("");
-    setIsResponding(true);
-    setLiveAgentStatus("Thinking...");
-    setChatErrorMessage("");
-    activeAssistantMessageIdRef.current = null;
-    pendingInputIdRef.current = STREAM_ATTACH_PENDING;
-
     try {
+      const attachmentEntries = [...pendingAttachments];
+      const localFiles = attachmentEntries.filter(
+        (entry): entry is PendingLocalAttachmentFile => entry.source === "local-file"
+      );
+      const explorerFiles = attachmentEntries.filter(
+        (entry): entry is PendingExplorerAttachmentFile => entry.source === "explorer-path"
+      );
+
+      const [stagedLocalAttachments, stagedExplorerAttachments] = await Promise.all([
+        localFiles.length > 0
+          ? window.electronAPI.workspace.stageSessionAttachments({
+              workspace_id: selectedWorkspace.id,
+              files: await Promise.all(localFiles.map((entry) => attachmentUploadPayload(entry.file)))
+            })
+          : Promise.resolve({ attachments: [] }),
+        explorerFiles.length > 0
+          ? window.electronAPI.workspace.stageSessionAttachmentPaths({
+              workspace_id: selectedWorkspace.id,
+              files: explorerFiles.map((entry) => ({
+                absolute_path: entry.absolutePath,
+                name: entry.name,
+                mime_type: entry.mime_type ?? null
+              }))
+            })
+          : Promise.resolve({ attachments: [] })
+      ]);
+
+      let localAttachmentIndex = 0;
+      let explorerAttachmentIndex = 0;
+      const stagedAttachments = attachmentEntries.map((entry) => {
+        if (entry.source === "local-file") {
+          const attachment = stagedLocalAttachments.attachments[localAttachmentIndex];
+          localAttachmentIndex += 1;
+          if (!attachment) {
+            throw new Error("Failed to stage a dropped file attachment.");
+          }
+          return attachment;
+        }
+
+        const attachment = stagedExplorerAttachments.attachments[explorerAttachmentIndex];
+        explorerAttachmentIndex += 1;
+        if (!attachment) {
+          throw new Error("Failed to stage an explorer attachment.");
+        }
+        return attachment;
+      });
+
+      const userMessage: ChatMessage = {
+        id: `user-${Date.now()}`,
+        role: "user",
+        text: trimmed,
+        attachments: stagedAttachments
+      };
+
+      setMessages((prev) => [...prev, userMessage]);
+      resetLiveTurn();
+      setInput("");
+      setPendingAttachments([]);
+      setIsResponding(true);
+      setLiveAgentStatus("Thinking...");
+      setChatErrorMessage("");
+      activeAssistantMessageIdRef.current = null;
+      pendingInputIdRef.current = STREAM_ATTACH_PENDING;
+
       const preOpenedStream = await window.electronAPI.workspace.openSessionOutputStream({
         sessionId: targetSessionId,
         workspaceId: selectedWorkspace.id,
@@ -884,6 +1056,7 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
         text: trimmed,
         workspace_id: selectedWorkspace.id,
         image_urls: null,
+        attachments: stagedAttachments,
         session_id: targetSessionId,
         priority: 0,
         model: runtimeConfig?.defaultModel ?? null
@@ -957,6 +1130,50 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
     }
   }
 
+  function appendPendingLocalFiles(files: File[]) {
+    if (files.length === 0) {
+      return;
+    }
+
+    setPendingAttachments((prev) => [
+      ...prev,
+      ...files.map((file) => ({
+        id: pendingAttachmentId(`${file.name}-${file.size}-${file.lastModified}`),
+        source: "local-file" as const,
+        file
+      }))
+    ]);
+  }
+
+  function appendPendingExplorerAttachments(files: ExplorerAttachmentDragPayload[]) {
+    if (files.length === 0) {
+      return;
+    }
+
+    setPendingAttachments((prev) => [
+      ...prev,
+      ...files.map((file) => ({
+        id: pendingAttachmentId(`${file.absolutePath}-${file.size}`),
+        source: "explorer-path" as const,
+        absolutePath: file.absolutePath,
+        name: file.name,
+        mime_type: file.mimeType ?? null,
+        size_bytes: file.size,
+        kind: inferDraggedAttachmentKind(file.name, file.mimeType)
+      }))
+    ]);
+  }
+
+  function onAttachmentInputChange(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    appendPendingLocalFiles(files);
+    event.target.value = "";
+  }
+
+  function removePendingAttachment(attachmentId: string) {
+    setPendingAttachments((prev) => prev.filter((item) => item.id !== attachmentId));
+  }
+
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     void sendMessage(input);
@@ -972,6 +1189,21 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
   const hasMessages = messages.length > 0 || Boolean(liveAssistantText) || Boolean(liveThinkingText);
   const showWorkingIndicator = isResponding && !liveAssistantText && !liveThinkingText;
   const streamTelemetryTail = useMemo(() => streamTelemetry.slice(-80).reverse(), [streamTelemetry]);
+  const pendingAttachmentItems = useMemo(
+    () =>
+      pendingAttachments.map((attachment) => ({
+        id: attachment.id,
+        kind:
+          attachment.source === "local-file"
+            ? attachment.file.type.startsWith("image/")
+              ? ("image" as const)
+              : ("file" as const)
+            : attachment.kind,
+        name: attachment.source === "local-file" ? attachment.file.name : attachment.name,
+        size_bytes: attachment.source === "local-file" ? attachment.file.size : attachment.size_bytes
+      })),
+    [pendingAttachments]
+  );
   const composerDisabled = !selectedWorkspace || !resolvedUserId || isLoadingHistory || isLoadingBootstrap;
 
   return (
@@ -1046,7 +1278,8 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
                         onToggle={() => toggleThinkingPanel(message.id)}
                       />
                     ) : null}
-                    {message.text}
+                    {message.attachments?.length ? <AttachmentList attachments={message.attachments} className="mb-3" /> : null}
+                    {message.text ? <div className="whitespace-pre-wrap">{message.text}</div> : null}
                   </div>
                 </div>
               ))}
@@ -1135,11 +1368,17 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
               <form onSubmit={onSubmit} className="mx-auto max-w-[760px]">
                 <Composer
                   input={input}
+                  attachments={pendingAttachmentItems}
                   isResponding={isResponding}
                   disabled={composerDisabled}
                   textareaRef={textareaRef}
+                  fileInputRef={fileInputRef}
                   onChange={setInput}
                   onKeyDown={onComposerKeyDown}
+                  onAttachmentInputChange={onAttachmentInputChange}
+                  onAddDroppedFiles={appendPendingLocalFiles}
+                  onAddExplorerAttachments={appendPendingExplorerAttachments}
+                  onRemoveAttachment={removePendingAttachment}
                 />
               </form>
             </div>
@@ -1151,11 +1390,17 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
             <form onSubmit={onSubmit} className="mx-auto max-w-[760px]">
               <Composer
                 input={input}
+                attachments={pendingAttachmentItems}
                 isResponding={isResponding}
                 disabled={composerDisabled}
                 textareaRef={textareaRef}
+                fileInputRef={fileInputRef}
                 onChange={setInput}
                 onKeyDown={onComposerKeyDown}
+                onAttachmentInputChange={onAttachmentInputChange}
+                onAddDroppedFiles={appendPendingLocalFiles}
+                onAddExplorerAttachments={appendPendingExplorerAttachments}
+                onRemoveAttachment={removePendingAttachment}
               />
             </form>
           </div>
@@ -1167,11 +1412,22 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
 
 interface ComposerProps {
   input: string;
+  attachments: Array<{
+    id: string;
+    kind: "image" | "file";
+    name: string;
+    size_bytes: number;
+  }>;
   isResponding: boolean;
   disabled: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
+  fileInputRef: RefObject<HTMLInputElement | null>;
   onChange: (value: string) => void;
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
+  onAttachmentInputChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onAddDroppedFiles: (files: File[]) => void;
+  onAddExplorerAttachments: (files: ExplorerAttachmentDragPayload[]) => void;
+  onRemoveAttachment: (attachmentId: string) => void;
 }
 
 interface ThinkingPanelProps {
@@ -1224,16 +1480,140 @@ function ThinkingPanel({ text, collapsed, onToggle, live = false }: ThinkingPane
   );
 }
 
+function AttachmentList({
+  attachments,
+  onRemove,
+  className = ""
+}: {
+  attachments: Array<{
+    id: string;
+    kind: "image" | "file";
+    name: string;
+    size_bytes: number;
+  }>;
+  onRemove?: (attachmentId: string) => void;
+  className?: string;
+}) {
+  return (
+    <div className={`flex flex-wrap gap-2 ${className}`.trim()}>
+      {attachments.map((attachment) => (
+        <div
+          key={attachment.id}
+          className="theme-control-surface inline-flex max-w-full items-center gap-2 rounded-full border border-panel-border/35 px-3 py-1.5 text-[11px] text-text-main/84"
+        >
+          {attachment.kind === "image" ? (
+            <ImageIcon size={12} className="shrink-0 text-neon-green/72" />
+          ) : (
+            <FileText size={12} className="shrink-0 text-neon-green/72" />
+          )}
+          <span className="truncate">{attachmentButtonLabel(attachment)}</span>
+          {onRemove ? (
+            <button
+              type="button"
+              onClick={() => onRemove(attachment.id)}
+              className="grid h-4 w-4 place-items-center rounded-full text-text-muted transition hover:text-text-main"
+              aria-label={`Remove ${attachment.name}`}
+            >
+              <X size={11} />
+            </button>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Composer({
   input,
+  attachments,
   isResponding,
   disabled,
   textareaRef,
+  fileInputRef,
   onChange,
-  onKeyDown
+  onKeyDown,
+  onAttachmentInputChange,
+  onAddDroppedFiles,
+  onAddExplorerAttachments,
+  onRemoveAttachment
 }: ComposerProps) {
+  const [isDragActive, setIsDragActive] = useState(false);
+
+  const allowAttachmentDrop = (dataTransfer: DataTransfer | null) => {
+    if (!dataTransfer || disabled || isResponding) {
+      return false;
+    }
+
+    const types = Array.from(dataTransfer.types ?? []);
+    if (types.includes(EXPLORER_ATTACHMENT_DRAG_TYPE)) {
+      return true;
+    }
+
+    if ((dataTransfer.files?.length ?? 0) > 0) {
+      return true;
+    }
+
+    return Array.from(dataTransfer.items ?? []).some((item) => item.kind === "file");
+  };
+
+  const onDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!allowAttachmentDrop(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    if (!isDragActive) {
+      setIsDragActive(true);
+    }
+  };
+
+  const onDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      return;
+    }
+    setIsDragActive(false);
+  };
+
+  const onDrop = (event: DragEvent<HTMLDivElement>) => {
+    if (!allowAttachmentDrop(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    setIsDragActive(false);
+
+    const explorerFiles: ExplorerAttachmentDragPayload[] = [];
+    const rawExplorerPayload = event.dataTransfer.getData(EXPLORER_ATTACHMENT_DRAG_TYPE);
+    const parsedExplorerPayload = parseExplorerAttachmentDragPayload(rawExplorerPayload);
+    if (parsedExplorerPayload) {
+      explorerFiles.push(parsedExplorerPayload);
+    }
+
+    const droppedFiles = Array.from(event.dataTransfer.files ?? []);
+    if (explorerFiles.length > 0) {
+      onAddExplorerAttachments(explorerFiles);
+    }
+    if (droppedFiles.length > 0) {
+      onAddDroppedFiles(droppedFiles);
+    }
+  };
+
   return (
-    <div className="glass-field overflow-hidden rounded-[calc(var(--theme-radius-card)+0.15rem)] border border-panel-border/35">
+    <div
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      className={`glass-field overflow-hidden rounded-[calc(var(--theme-radius-card)+0.15rem)] border transition ${
+        isDragActive ? "border-neon-green/45 bg-neon-green/[0.04]" : "border-panel-border/35"
+      }`}
+    >
+      <input ref={fileInputRef} type="file" multiple className="hidden" onChange={onAttachmentInputChange} />
+      {attachments.length > 0 ? (
+        <div className="border-b border-panel-border/20 px-4 py-3">
+          <AttachmentList attachments={attachments} onRemove={onRemoveAttachment} />
+        </div>
+      ) : null}
       <div className="px-4 pb-2 pt-4">
         <textarea
           ref={textareaRef}
@@ -1249,13 +1629,24 @@ function Composer({
 
       <div className="flex items-center gap-2 border-t border-panel-border/20 px-3 py-3 text-text-muted/72">
         <div className="min-w-0 flex-1 text-[11px] text-text-muted/74">
-          {disabled ? "Select a ready workspace to start chatting." : "Press Enter to send. Shift + Enter adds a new line."}
+          {disabled
+            ? "Select a ready workspace to start chatting."
+            : "Attach files or images, then press Enter to send. Shift + Enter adds a new line."}
         </div>
 
         <div className="ml-auto flex items-center gap-2">
           <button
+            type="button"
+            disabled={isResponding || disabled}
+            onClick={() => fileInputRef.current?.click()}
+            className="grid h-9 w-9 place-items-center rounded-[var(--theme-radius-pill)] border border-panel-border/40 text-text-muted transition hover:border-neon-green/35 hover:text-text-main disabled:cursor-not-allowed disabled:opacity-35"
+            aria-label="Attach files"
+          >
+            <Paperclip size={15} />
+          </button>
+          <button
             type="submit"
-            disabled={!input.trim() || isResponding || disabled}
+            disabled={(!input.trim() && attachments.length === 0) || isResponding || disabled}
             className="grid h-9 w-9 place-items-center rounded-[var(--theme-radius-pill)] bg-text-main text-[rgb(var(--color-obsidian))] transition hover:opacity-92 disabled:cursor-not-allowed disabled:opacity-35"
           >
             {isResponding ? <Loader2 size={16} className="animate-spin" /> : <ArrowUp size={16} />}

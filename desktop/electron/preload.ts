@@ -553,6 +553,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:listRuntimeStates", workspaceId) as Promise<SessionRuntimeStateListResponsePayload>,
     getSessionHistory: (payload: { sessionId: string; workspaceId: string }) =>
       ipcRenderer.invoke("workspace:getSessionHistory", payload) as Promise<SessionHistoryResponsePayload>,
+    stageSessionAttachments: (payload: StageSessionAttachmentsPayload) =>
+      ipcRenderer.invoke("workspace:stageSessionAttachments", payload) as Promise<StageSessionAttachmentsResponsePayload>,
+    stageSessionAttachmentPaths: (payload: StageSessionAttachmentPathsPayload) =>
+      ipcRenderer.invoke("workspace:stageSessionAttachmentPaths", payload) as Promise<StageSessionAttachmentsResponsePayload>,
     queueSessionInput: (payload: HolabossQueueSessionInputPayload) =>
       ipcRenderer.invoke("workspace:queueSessionInput", payload) as Promise<EnqueueSessionInputResponsePayload>,
     openSessionOutputStream: (payload: HolabossStreamSessionOutputsPayload) =>

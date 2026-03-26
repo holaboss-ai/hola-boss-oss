@@ -103,6 +103,7 @@ test("decodeRunnerRequestBase64 applies defaults for optional fields", () => {
     session_id: "session-1",
     input_id: "input-1",
     instruction: "Ship it",
+    attachments: [],
     context: {
       nested: {
         ok: true,
@@ -158,6 +159,7 @@ test("decodeOpencodeHarnessHostRequestBase64 validates and normalizes request pa
     session_id: "session-1",
     input_id: "input-1",
     instruction: "Do the thing",
+    attachments: [],
     debug: false,
     harness_session_id: undefined,
     persisted_harness_session_id: undefined,
@@ -246,6 +248,7 @@ test("decodeHarnessHostPiRequestBase64 validates and normalizes request payloads
     session_id: "session-1",
     input_id: "input-1",
     instruction: "Do the thing",
+    attachments: [],
     debug: false,
     harness_session_id: undefined,
     persisted_harness_session_id: undefined,

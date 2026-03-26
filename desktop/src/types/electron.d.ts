@@ -350,6 +350,41 @@ declare global {
     metadata: Record<string, unknown>;
   }
 
+  interface SessionInputAttachmentPayload {
+    id: string;
+    kind: "image" | "file";
+    name: string;
+    mime_type: string;
+    size_bytes: number;
+    workspace_path: string;
+  }
+
+  interface StageSessionAttachmentFilePayload {
+    name: string;
+    mime_type?: string | null;
+    content_base64: string;
+  }
+
+  interface StageSessionAttachmentsPayload {
+    workspace_id: string;
+    files: StageSessionAttachmentFilePayload[];
+  }
+
+  interface StageSessionAttachmentPathPayload {
+    absolute_path: string;
+    name?: string | null;
+    mime_type?: string | null;
+  }
+
+  interface StageSessionAttachmentPathsPayload {
+    workspace_id: string;
+    files: StageSessionAttachmentPathPayload[];
+  }
+
+  interface StageSessionAttachmentsResponsePayload {
+    attachments: SessionInputAttachmentPayload[];
+  }
+
   interface SessionHistoryResponsePayload {
     workspace_id: string;
     session_id: string;
@@ -469,6 +504,7 @@ declare global {
     text: string;
     workspace_id: string;
     image_urls: string[] | null;
+    attachments?: SessionInputAttachmentPayload[] | null;
     session_id?: string | null;
     idempotency_key?: string | null;
     priority?: number;
@@ -571,6 +607,10 @@ declare global {
       ) => Promise<DemoTaskProposalEnqueueResponsePayload>;
       listRuntimeStates: (workspaceId: string) => Promise<SessionRuntimeStateListResponsePayload>;
       getSessionHistory: (payload: { sessionId: string; workspaceId: string }) => Promise<SessionHistoryResponsePayload>;
+      stageSessionAttachments: (payload: StageSessionAttachmentsPayload) => Promise<StageSessionAttachmentsResponsePayload>;
+      stageSessionAttachmentPaths: (
+        payload: StageSessionAttachmentPathsPayload
+      ) => Promise<StageSessionAttachmentsResponsePayload>;
       queueSessionInput: (payload: HolabossQueueSessionInputPayload) => Promise<EnqueueSessionInputResponsePayload>;
       openSessionOutputStream: (payload: HolabossStreamSessionOutputsPayload) => Promise<HolabossSessionStreamHandlePayload>;
       closeSessionOutputStream: (streamId: string, reason?: string) => Promise<void>;

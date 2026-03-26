@@ -4,8 +4,20 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import JSZip from "jszip";
+import * as XLSX from "xlsx";
+
 import type { HarnessHostPiRequest } from "./contracts.js";
-import { buildPiMcpServerBindings, buildPiMcpToolName, createPiEventMapperState, createPiMcpCustomTools, mapPiSessionEvent, resolvePiSkillDirs, runPi } from "./pi.js";
+import {
+  buildPiPromptPayload,
+  buildPiMcpServerBindings,
+  buildPiMcpToolName,
+  createPiEventMapperState,
+  createPiMcpCustomTools,
+  mapPiSessionEvent,
+  resolvePiSkillDirs,
+  runPi
+} from "./pi.js";
 
 function baseRequest(): HarnessHostPiRequest {
   return {
@@ -35,6 +47,61 @@ function baseRequest(): HarnessHostPiRequest {
       },
     },
   };
+}
+
+async function createDocxBuffer(lines: string[]): Promise<Buffer> {
+  const zip = new JSZip();
+  const body = lines.map((line) => `<w:p><w:r><w:t>${line}</w:t></w:r></w:p>`).join("");
+  zip.file(
+    "word/document.xml",
+    `<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}</w:body></w:document>`
+  );
+  return Buffer.from(await zip.generateAsync({ type: "uint8array" }));
+}
+
+async function createPptxBuffer(slides: string[]): Promise<Buffer> {
+  const zip = new JSZip();
+  slides.forEach((slide, index) => {
+    zip.file(
+      `ppt/slides/slide${index + 1}.xml`,
+      `<?xml version="1.0" encoding="UTF-8"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:t>${slide}</a:t></p:sld>`
+    );
+  });
+  return Buffer.from(await zip.generateAsync({ type: "uint8array" }));
+}
+
+function createXlsxBuffer(rows: string[][]): Buffer {
+  const workbook = XLSX.utils.book_new();
+  const worksheet = XLSX.utils.aoa_to_sheet(rows);
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Sheet1");
+  return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
+function createPdfBuffer(text: string): Buffer {
+  const escapedText = text.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+  const stream = `BT\n/F1 24 Tf\n72 120 Td\n(${escapedText}) Tj\nET`;
+  const objects = [
+    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n",
+    `4 0 obj\n<< /Length ${Buffer.byteLength(stream, "utf8")} >>\nstream\n${stream}\nendstream\nendobj\n`,
+    "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+  ];
+
+  let output = "%PDF-1.4\n";
+  const offsets: number[] = [0];
+  for (const object of objects) {
+    offsets.push(Buffer.byteLength(output, "utf8"));
+    output += object;
+  }
+  const xrefOffset = Buffer.byteLength(output, "utf8");
+  output += `xref\n0 ${objects.length + 1}\n`;
+  output += "0000000000 65535 f \n";
+  for (const offset of offsets.slice(1)) {
+    output += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  }
+  output += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  return Buffer.from(output, "utf8");
 }
 
 test("mapPiSessionEvent maps text, thinking, tool, and completion events", () => {
@@ -374,13 +441,15 @@ test("createPiMcpCustomTools filters discovery to allowlisted tools and forwards
 test("runPi emits run_started and terminal success when the session completes", async () => {
   const request = baseRequest();
   const events: Array<{ event_type: string; payload: Record<string, unknown> }> = [];
+  let sentContent: unknown;
   const originalWrite = process.stdout.write.bind(process.stdout);
   const fakeSession = {
     subscribe(listener: (event: unknown) => void) {
       this.listener = listener;
       return () => {};
     },
-    async prompt() {
+    async sendUserMessage(content: unknown) {
+      sentContent = content;
       this.listener?.({
         type: "message_update",
         message: {},
@@ -426,9 +495,132 @@ test("runPi emits run_started and terminal success when the session completes", 
       events.map((event) => event.event_type),
       ["run_started", "output_delta", "run_completed"]
     );
+    assert.deepEqual(sentContent, [{ type: "text", text: "List the files" }]);
     assert.equal(events[0]?.payload.harness_session_id, "/tmp/pi-session.jsonl");
     assert.equal(events[2]?.payload.harness_session_id, "/tmp/pi-session.jsonl");
   } finally {
     process.stdout.write = originalWrite;
+  }
+});
+
+test("buildPiPromptPayload inlines native images, extracts common document formats, and falls back for binary files", async () => {
+  const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-attachments-"));
+  const attachmentsDir = path.join(workspaceDir, ".holaboss", "input-attachments", "batch-1");
+  const imagePath = path.join(attachmentsDir, "diagram.png");
+  const textPath = path.join(attachmentsDir, "notes.txt");
+  const docxPath = path.join(attachmentsDir, "notes.docx");
+  const pptxPath = path.join(attachmentsDir, "slides.pptx");
+  const xlsxPath = path.join(attachmentsDir, "sheet.xlsx");
+  const pdfPath = path.join(attachmentsDir, "summary.pdf");
+  const binaryPath = path.join(attachmentsDir, "archive.bin");
+  const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const docxBytes = await createDocxBuffer(["Quarterly plan", "Ship the feature"]);
+  const pptxBytes = await createPptxBuffer(["Roadmap", "Launch"]);
+  const xlsxBytes = createXlsxBuffer([
+    ["Name", "Value"],
+    ["alpha", "1"],
+  ]);
+  const pdfBytes = createPdfBuffer("Hello PDF");
+
+  fs.mkdirSync(attachmentsDir, { recursive: true });
+  fs.writeFileSync(imagePath, imageBytes);
+  fs.writeFileSync(textPath, "alpha\nbeta\n");
+  fs.writeFileSync(docxPath, docxBytes);
+  fs.writeFileSync(pptxPath, pptxBytes);
+  fs.writeFileSync(xlsxPath, xlsxBytes);
+  fs.writeFileSync(pdfPath, pdfBytes);
+  fs.writeFileSync(binaryPath, Buffer.from([0x00, 0x01, 0x02, 0x03]));
+
+  try {
+    const prompt = await buildPiPromptPayload({
+      ...baseRequest(),
+      workspace_dir: workspaceDir,
+      attachments: [
+        {
+          id: "attachment-image",
+          kind: "image",
+          name: "diagram.png",
+          mime_type: "image/png",
+          size_bytes: imageBytes.length,
+          workspace_path: ".holaboss/input-attachments/batch-1/diagram.png",
+        },
+        {
+          id: "attachment-text",
+          kind: "file",
+          name: "notes.txt",
+          mime_type: "text/plain",
+          size_bytes: 11,
+          workspace_path: ".holaboss/input-attachments/batch-1/notes.txt",
+        },
+        {
+          id: "attachment-docx",
+          kind: "file",
+          name: "notes.docx",
+          mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          size_bytes: docxBytes.length,
+          workspace_path: ".holaboss/input-attachments/batch-1/notes.docx",
+        },
+        {
+          id: "attachment-pptx",
+          kind: "file",
+          name: "slides.pptx",
+          mime_type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+          size_bytes: pptxBytes.length,
+          workspace_path: ".holaboss/input-attachments/batch-1/slides.pptx",
+        },
+        {
+          id: "attachment-xlsx",
+          kind: "file",
+          name: "sheet.xlsx",
+          mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          size_bytes: xlsxBytes.length,
+          workspace_path: ".holaboss/input-attachments/batch-1/sheet.xlsx",
+        },
+        {
+          id: "attachment-pdf",
+          kind: "file",
+          name: "summary.pdf",
+          mime_type: "application/pdf",
+          size_bytes: pdfBytes.length,
+          workspace_path: ".holaboss/input-attachments/batch-1/summary.pdf",
+        },
+        {
+          id: "attachment-binary",
+          kind: "file",
+          name: "archive.bin",
+          mime_type: "application/octet-stream",
+          size_bytes: 4,
+          workspace_path: ".holaboss/input-attachments/batch-1/archive.bin",
+        },
+      ],
+    });
+
+    assert.match(prompt.text, /Attached images:/);
+    assert.match(prompt.text, /diagram\.png \(image\/png\) at \.\/\.holaboss\/input-attachments\/batch-1\/diagram\.png/);
+    assert.match(prompt.text, /\[Document: notes\.txt\]/);
+    assert.match(prompt.text, /alpha\nbeta/);
+    assert.match(prompt.text, /\[Document: summary\.pdf\]/);
+    assert.match(prompt.text, /<pdf filename="summary\.pdf">/);
+    assert.match(prompt.text, /Hello PDF/);
+    assert.match(prompt.text, /\[Document: notes\.docx\]/);
+    assert.match(prompt.text, /<docx filename="notes\.docx">/);
+    assert.match(prompt.text, /Quarterly plan/);
+    assert.match(prompt.text, /\[Document: slides\.pptx\]/);
+    assert.match(prompt.text, /<pptx filename="slides\.pptx">/);
+    assert.match(prompt.text, /Roadmap/);
+    assert.match(prompt.text, /\[Document: sheet\.xlsx\]/);
+    assert.match(prompt.text, /<excel filename="sheet\.xlsx">/);
+    assert.match(prompt.text, /Name,Value/);
+    assert.match(prompt.text, /Other attachments are staged in the workspace and should be inspected from these paths:/);
+    assert.match(prompt.text, /archive\.bin \(file, application\/octet-stream\) at \.\/\.holaboss\/input-attachments\/batch-1\/archive\.bin/);
+    assert.deepEqual(prompt.images, [
+      {
+        type: "image",
+        data: imageBytes.toString("base64"),
+        mimeType: "image/png",
+      },
+    ]);
+  } finally {
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
   }
 });
