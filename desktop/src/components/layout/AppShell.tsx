@@ -25,9 +25,13 @@ const WORKBENCH_TAB_STORAGE_KEY = "holaboss-workbench-tab-v1";
 const LEFT_RAIL_OPEN_STORAGE_KEY = "holaboss-left-rail-open-v1";
 const OPERATIONS_DRAWER_OPEN_STORAGE_KEY = "holaboss-operations-drawer-open-v1";
 const OPERATIONS_DRAWER_TAB_STORAGE_KEY = "holaboss-operations-drawer-tab-v1";
-const THEMES = ["emerald", "cobalt", "ember", "glacier", "mono", "claude", "slate", "paper", "graphite"] as const;
+const THEMES = ["holaboss", "emerald", "cobalt", "ember", "glacier", "mono", "claude", "slate", "paper", "graphite"] as const;
 
 export type AppTheme = (typeof THEMES)[number];
+
+function isAppTheme(value: string): value is AppTheme {
+  return THEMES.includes(value as AppTheme);
+}
 
 type AgentView =
   | { type: "chat" }
@@ -94,14 +98,14 @@ function loadOperationsDrawerTab(): OperationsDrawerTab {
 function loadTheme(): AppTheme {
   try {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    if (stored && THEMES.includes(stored as AppTheme)) {
-      return stored as AppTheme;
+    if (stored && isAppTheme(stored)) {
+      return stored;
     }
   } catch {
     // ignore
   }
 
-  return "emerald";
+  return "holaboss";
 }
 
 function normalizeErrorMessage(error: unknown) {
@@ -224,24 +228,26 @@ function FirstWorkspacePane() {
 
   if (isCreatingWorkspace) {
     return (
-      <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[32px] border border-white/8 bg-[#0a0d12] px-6 py-10 shadow-[0_40px_120px_rgba(0,0,0,0.45)]">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(120,140,255,0.2),transparent_34%),radial-gradient(circle_at_80%_20%,rgba(100,214,255,0.14),transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0))]" />
-        <div className="relative w-full max-w-xl rounded-[28px] border border-white/10 bg-white/[0.03] px-6 py-8 text-center backdrop-blur-xl">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white/88">
+      <section className="theme-shell relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--theme-radius-card)] border border-panel-border/45 px-6 py-10 shadow-card">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(247,90,84,0.08),transparent_36%),radial-gradient(circle_at_82%_14%,rgba(233,117,109,0.1),transparent_34%)]" />
+        <div className="theme-subtle-surface relative w-full max-w-xl rounded-[26px] border border-panel-border/45 px-6 py-8 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-neon-green/30 bg-neon-green/10 text-neon-green">
             <Loader2 size={22} className="animate-spin" />
           </div>
-          <h2 className="mt-5 text-[30px] font-semibold tracking-[-0.04em] text-white">Building your workspace...</h2>
-          <p className="mt-3 text-[14px] leading-7 text-white/62">
+          <h2 className="mt-5 text-[30px] font-semibold tracking-[-0.04em] text-text-main">Building your workspace...</h2>
+          <p className="mt-3 text-[14px] leading-7 text-text-muted/84">
             Holaboss is preparing your workspace and wiring the desktop surface around it.
           </p>
-          <div className="mt-7 overflow-hidden rounded-full border border-white/8 bg-white/[0.04] p-1">
-            <div className="h-2 rounded-full bg-[linear-gradient(90deg,rgba(118,130,255,0.72),rgba(104,218,255,0.9),rgba(235,245,255,0.96))] animate-pulse" />
+          <div className="theme-control-surface mt-7 overflow-hidden rounded-full border border-panel-border/45 p-1">
+            <div className="h-2 rounded-full bg-[linear-gradient(90deg,rgba(247,90,84,0.56),rgba(233,117,109,0.72),rgba(247,170,126,0.78))] animate-pulse" />
           </div>
-          <div className="mt-4 flex items-center justify-center gap-2 text-[11px] uppercase tracking-[0.24em] text-white/38">
-            <span className="h-1.5 w-1.5 rounded-full bg-white/45" />
+          <div className="mt-4 flex items-center justify-center gap-2 text-[11px] uppercase tracking-[0.24em] text-text-dim/80">
+            <span className="h-1.5 w-1.5 rounded-full bg-neon-green/70" />
             <span>Provisioning runtime</span>
-            <span className="h-1.5 w-1.5 rounded-full bg-white/45" />
-            <span>Scaffolding files</span>
+            <span className="h-1.5 w-1.5 rounded-full bg-neon-green/55" />
+            <span>Scaffolding workspace</span>
+            <span className="h-1.5 w-1.5 rounded-full bg-neon-green/40" />
+            <span>Preparing desktop</span>
           </div>
         </div>
       </section>
@@ -250,17 +256,16 @@ function FirstWorkspacePane() {
 
   return (
     <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden px-3 py-3 sm:px-4 sm:py-4">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_18%,rgba(120,130,255,0.18),transparent_24%),radial-gradient(circle_at_82%_20%,rgba(90,170,255,0.12),transparent_24%),radial-gradient(circle_at_50%_100%,rgba(255,255,255,0.05),transparent_42%),linear-gradient(135deg,#090d14_0%,#0c1018_48%,#0a0d14_100%)]" />
-      <div className="pointer-events-none absolute inset-0 opacity-40 [background-image:linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] [background-size:96px_96px]" />
-      <div className="relative flex w-full max-w-[1380px] flex-1 items-center justify-center">
-        <div className="mx-auto w-full rounded-[34px] border border-white/8 bg-black/18 px-6 py-8 shadow-[0_30px_100px_rgba(0,0,0,0.34),inset_0_1px_0_rgba(255,255,255,0.03)] sm:px-8 sm:py-9 lg:px-12 lg:py-10">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_12%,rgba(247,90,84,0.08),transparent_28%),radial-gradient(circle_at_86%_14%,rgba(233,117,109,0.08),transparent_30%)]" />
+      <div className="relative flex w-full max-w-[1240px] flex-1 items-center justify-center">
+        <div className="theme-shell mx-auto w-full rounded-[var(--theme-radius-card)] border border-panel-border/45 px-6 py-8 shadow-card sm:px-8 sm:py-9 lg:px-12 lg:py-10">
           <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-[11px] uppercase tracking-[0.26em] text-white/52">
-              <Sparkles size={14} className="text-white/58" />
+            <div className="theme-control-surface inline-flex items-center gap-2 rounded-full border border-panel-border/45 px-4 py-2 text-[11px] uppercase tracking-[0.26em] text-text-dim/80">
+              <Sparkles size={14} className="text-neon-green/80" />
               <span>Workspace onboarding</span>
             </div>
-            <h1 className="mt-6 text-[38px] font-semibold tracking-[-0.05em] text-white sm:text-[50px]">Welcome to Holaboss</h1>
-            <p className="mt-3 max-w-2xl text-[15px] leading-8 text-white/62 sm:text-[16px]">
+            <h1 className="mt-6 text-[38px] font-semibold tracking-[-0.05em] text-text-main sm:text-[50px]">Welcome to Holaboss</h1>
+            <p className="mt-3 max-w-2xl text-[15px] leading-8 text-text-muted/84 sm:text-[16px]">
               Create a workspace to start building.
             </p>
           </div>
@@ -299,14 +304,14 @@ function FirstWorkspacePane() {
           </div>
 
           {!canUseMarketplaceTemplates && showMarketplaceAuthSheet ? (
-            <div className="mt-5 rounded-[24px] border border-white/10 bg-white/[0.045] p-5 backdrop-blur-xl">
+            <div className="theme-subtle-surface mt-5 rounded-[24px] border border-panel-border/45 p-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="max-w-2xl">
-                  <div className="text-[11px] uppercase tracking-[0.22em] text-white/40">Marketplace access</div>
-                  <div className="mt-2 text-[22px] font-medium tracking-[-0.03em] text-white">
+                  <div className="text-[11px] uppercase tracking-[0.22em] text-text-dim/76">Marketplace access</div>
+                  <div className="mt-2 text-[22px] font-medium tracking-[-0.03em] text-text-main">
                     Sign in only if you want Holaboss marketplace features
                   </div>
-                  <div className="mt-3 text-[14px] leading-7 text-white/60">
+                  <div className="mt-3 text-[14px] leading-7 text-text-muted/84">
                     Local workspaces stay completely free and available without an account. Sign in only to browse curated marketplace
                     templates and other Holaboss-specific features.
                   </div>
@@ -314,7 +319,7 @@ function FirstWorkspacePane() {
                 <button
                   type="button"
                   onClick={() => setShowMarketplaceAuthSheet(false)}
-                  className="inline-flex h-10 items-center justify-center rounded-[14px] border border-white/10 px-3 text-[12px] text-white/56 transition hover:border-white/16 hover:text-white/78"
+                  className="inline-flex h-10 items-center justify-center rounded-[14px] border border-panel-border/45 px-3 text-[12px] text-text-muted transition hover:border-neon-green/35 hover:text-text-main"
                 >
                   Not now
                 </button>
@@ -324,7 +329,7 @@ function FirstWorkspacePane() {
                   ref={authButtonRef}
                   type="button"
                   onClick={openAuthPopup}
-                  className="inline-flex h-11 items-center justify-center rounded-[16px] border border-white/12 bg-white/[0.08] px-4 text-[13px] font-medium text-white transition hover:border-white/18 hover:bg-white/[0.12]"
+                  className="inline-flex h-11 items-center justify-center rounded-[16px] border border-neon-green/40 bg-neon-green/10 px-4 text-[13px] font-medium text-neon-green transition hover:bg-neon-green/14"
                 >
                   Sign in to use Marketplace
                 </button>
@@ -334,7 +339,7 @@ function FirstWorkspacePane() {
                     setShowMarketplaceAuthSheet(false);
                     setTemplateSourceMode("local");
                   }}
-                  className="inline-flex h-11 items-center justify-center rounded-[16px] border border-white/10 px-4 text-[13px] text-white/62 transition hover:border-white/16 hover:text-white/82"
+                  className="inline-flex h-11 items-center justify-center rounded-[16px] border border-panel-border/45 px-4 text-[13px] text-text-muted transition hover:border-neon-green/35 hover:text-text-main"
                 >
                   Continue with Local Template
                 </button>
@@ -344,20 +349,20 @@ function FirstWorkspacePane() {
 
           <form
             onSubmit={handleCreateWorkspace}
-            className="mt-8 grid gap-5 rounded-[28px] border border-white/10 bg-white/[0.035] p-5 backdrop-blur-2xl sm:p-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)] lg:gap-6"
+            className="theme-subtle-surface mt-8 grid gap-5 rounded-[28px] border border-panel-border/45 p-5 sm:p-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)] lg:gap-6"
           >
             <div className="grid gap-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <div className="text-[11px] uppercase tracking-[0.24em] text-white/42">Workspace details</div>
-                  <div className="mt-2 text-[22px] font-medium tracking-[-0.03em] text-white">Configure your first workspace</div>
+                  <div className="text-[11px] uppercase tracking-[0.24em] text-text-dim/78">Workspace details</div>
+                  <div className="mt-2 text-[22px] font-medium tracking-[-0.03em] text-text-main">Configure your first workspace</div>
                 </div>
-                <div className="inline-flex rounded-full border border-white/10 bg-black/20 p-1">
+                <div className="theme-control-surface inline-flex rounded-full border border-panel-border/45 p-1">
                   <button
                     type="button"
                     onClick={() => setTemplateSourceMode("local")}
                     className={`rounded-full px-4 py-2 text-[12px] transition ${
-                      templateSourceMode === "local" ? "bg-white text-[#090d14]" : "text-white/56 hover:text-white"
+                      templateSourceMode === "local" ? "bg-neon-green/14 text-neon-green" : "text-text-muted hover:text-text-main"
                     }`}
                   >
                     Local
@@ -368,9 +373,9 @@ function FirstWorkspacePane() {
                     onClick={() => setTemplateSourceMode("marketplace")}
                     className={`rounded-full px-4 py-2 text-[12px] transition ${
                       templateSourceMode === "marketplace" && canUseMarketplaceTemplates
-                        ? "bg-white text-[#090d14]"
-                        : "text-white/56 hover:text-white"
-                    } disabled:cursor-not-allowed disabled:text-white/28`}
+                        ? "bg-neon-green/14 text-neon-green"
+                        : "text-text-muted hover:text-text-main"
+                    } disabled:cursor-not-allowed disabled:text-text-dim/40`}
                   >
                     Marketplace
                   </button>
@@ -379,23 +384,23 @@ function FirstWorkspacePane() {
 
               <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
                 <label className="grid gap-2">
-                  <span className="text-[11px] uppercase tracking-[0.22em] text-white/40">Workspace name</span>
+                  <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">Workspace name</span>
                   <input
                     value={newWorkspaceName}
                     onChange={(event) => setNewWorkspaceName(event.target.value)}
                     placeholder="My first workspace"
-                    className="h-12 rounded-[18px] border border-white/10 bg-black/25 px-4 text-[14px] text-white outline-none placeholder:text-white/28"
+                    className="theme-control-surface h-12 rounded-[18px] border border-panel-border/45 px-4 text-[14px] text-text-main outline-none placeholder:text-text-dim/50"
                   />
                 </label>
 
                 {templateSourceMode === "marketplace" ? (
                   <label className="grid gap-2">
-                    <span className="text-[11px] uppercase tracking-[0.22em] text-white/40">Template source</span>
+                    <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">Template source</span>
                     <select
                       value={selectedMarketplaceTemplate?.name || ""}
                       onChange={(event) => selectMarketplaceTemplate(event.target.value)}
                       disabled={!canUseMarketplaceTemplates || isLoadingMarketplaceTemplates || marketplaceTemplates.length === 0}
-                      className="h-12 rounded-[18px] border border-white/10 bg-black/25 px-4 text-[14px] text-white outline-none disabled:text-white/28"
+                      className="theme-control-surface h-12 rounded-[18px] border border-panel-border/45 px-4 text-[14px] text-text-main outline-none disabled:text-text-dim/50"
                     >
                       {isLoadingMarketplaceTemplates ? (
                         <option value="">Loading templates...</option>
@@ -412,16 +417,16 @@ function FirstWorkspacePane() {
                   </label>
                 ) : (
                   <div className="grid gap-2">
-                    <span className="text-[11px] uppercase tracking-[0.22em] text-white/40">Template source</span>
+                    <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">Template source</span>
                     <button
                       type="button"
                       onClick={() => void chooseTemplateFolder()}
-                      className="flex h-12 items-center justify-between rounded-[18px] border border-white/10 bg-black/25 px-4 text-left text-[14px] text-white transition hover:border-white/16"
+                      className="theme-control-surface flex h-12 items-center justify-between rounded-[18px] border border-panel-border/45 px-4 text-left text-[14px] text-text-main transition hover:border-neon-green/35"
                     >
                       <span className="truncate">
                         {selectedTemplateFolder?.templateName || selectedTemplateFolder?.rootPath || "Choose local folder"}
                       </span>
-                      <ArrowRight size={16} className="shrink-0 text-white/40" />
+                      <ArrowRight size={16} className="shrink-0 text-text-dim/75" />
                     </button>
                   </div>
                 )}
@@ -429,21 +434,21 @@ function FirstWorkspacePane() {
             </div>
 
             <div className="grid gap-4">
-              <div className="rounded-[22px] border border-white/8 bg-black/20 px-4 py-4 text-left lg:min-h-full">
-                <div className="flex items-center gap-2 text-[12px] font-medium text-white">
+              <div className="theme-control-surface rounded-[22px] border border-panel-border/45 px-4 py-4 text-left lg:min-h-full">
+                <div className="flex items-center gap-2 text-[12px] font-medium text-text-main">
                   {templateSourceMode === "marketplace" ? <Sparkles size={15} /> : <FolderOpen size={15} />}
                   <span>{templateSourceMode === "marketplace" ? "Marketplace Template" : "Local Template"}</span>
                   {templateSourceMode === "marketplace" ? (
-                    <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-white/48">
+                    <span className="theme-subtle-surface rounded-full border border-panel-border/50 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-text-dim/78">
                       Login Required
                     </span>
                   ) : (
-                    <span className="rounded-full border border-emerald-300/14 bg-emerald-300/10 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-emerald-100/80">
+                    <span className="rounded-full border border-neon-green/30 bg-neon-green/10 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-neon-green">
                       No login required
                     </span>
                   )}
                 </div>
-                <div className="mt-2 text-[13px] leading-7 text-white/58">
+                <div className="mt-2 text-[13px] leading-7 text-text-muted/84">
                   {templateSourceMode === "marketplace"
                     ? marketplaceTemplatesError ||
                       selectedMarketplaceTemplate?.long_description ||
@@ -457,7 +462,7 @@ function FirstWorkspacePane() {
                   <button
                     type="button"
                     onClick={() => setShowMarketplaceAuthSheet(true)}
-                    className="mt-4 inline-flex h-10 items-center justify-center rounded-[14px] border border-white/10 bg-white/[0.05] px-3 text-[12px] font-medium text-white transition hover:border-white/16 hover:bg-white/[0.08]"
+                    className="mt-4 inline-flex h-10 items-center justify-center rounded-[14px] border border-neon-green/40 bg-neon-green/10 px-3 text-[12px] font-medium text-neon-green transition hover:bg-neon-green/14"
                   >
                     Unlock Marketplace
                   </button>
@@ -466,7 +471,7 @@ function FirstWorkspacePane() {
               <button
                 type="submit"
                 disabled={createDisabled}
-                className="inline-flex h-12 items-center justify-center gap-3 self-end rounded-[18px] border border-white/12 bg-white px-5 text-[14px] font-medium text-[#090d14] transition hover:bg-white/92 disabled:cursor-not-allowed disabled:border-white/8 disabled:bg-white/10 disabled:text-white/35 lg:w-full"
+                className="inline-flex h-12 items-center justify-center gap-3 self-end rounded-[18px] border border-neon-green/40 bg-neon-green/14 px-5 text-[14px] font-medium text-neon-green transition hover:bg-neon-green/20 disabled:cursor-not-allowed disabled:border-panel-border/40 disabled:bg-transparent disabled:text-text-dim/50 lg:w-full"
               >
                 <span>Create Workspace</span>
                 <ArrowRight size={16} />
@@ -474,7 +479,7 @@ function FirstWorkspacePane() {
             </div>
 
             {workspaceErrorMessage ? (
-              <div className="rounded-[18px] border border-rose-200/12 bg-rose-200/8 px-4 py-3 text-[13px] leading-6 text-rose-100/88">
+              <div className="rounded-[18px] border border-rose-300/35 bg-rose-100/60 px-4 py-3 text-[13px] leading-6 text-rose-800">
                 {workspaceErrorMessage}
               </div>
             ) : null}
@@ -510,28 +515,28 @@ function FirstWorkspaceChoiceCard({
       onClick={onClick}
       className={`group relative overflow-hidden rounded-[26px] border p-5 text-left transition ${
         active
-          ? "border-white/20 bg-white/[0.08] shadow-[0_20px_50px_rgba(0,0,0,0.25)]"
+          ? "border-neon-green/35 bg-neon-green/10 shadow-[0_8px_24px_rgba(25,33,53,0.08)]"
           : muted
-            ? "border-white/8 bg-white/[0.025] opacity-80"
-            : "border-white/10 bg-white/[0.04] hover:border-white/16 hover:bg-white/[0.06]"
+            ? "border-panel-border/35 theme-control-surface opacity-80"
+            : "border-panel-border/45 theme-control-surface hover:border-neon-green/25 hover:bg-[var(--theme-hover-bg)]"
       }`}
     >
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.08),transparent_32%)] opacity-70" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(247,90,84,0.12),transparent_36%)] opacity-70" />
       <div className="relative">
         <div className="flex items-start justify-between gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-[16px] border border-white/10 bg-black/20 text-white/82">
+          <div className="theme-subtle-surface flex h-11 w-11 items-center justify-center rounded-[16px] border border-panel-border/45 text-text-main/88">
             {icon}
           </div>
           {badge ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-white/48">
+            <span className="theme-subtle-surface inline-flex items-center gap-1 rounded-full border border-panel-border/45 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-text-dim/78">
               <LockKeyhole size={11} />
               <span>{badge}</span>
             </span>
           ) : null}
         </div>
-        <div className="mt-6 text-[18px] font-medium tracking-[-0.02em] text-white">{title}</div>
-        <div className="mt-2 text-[14px] leading-7 text-white/64">{description}</div>
-        <div className="mt-4 text-[12px] uppercase tracking-[0.18em] text-white/38">{detail}</div>
+        <div className="mt-6 text-[18px] font-medium tracking-[-0.02em] text-text-main">{title}</div>
+        <div className="mt-2 text-[14px] leading-7 text-text-muted/84">{description}</div>
+        <div className="mt-4 text-[12px] uppercase tracking-[0.18em] text-text-dim/76">{detail}</div>
       </div>
     </button>
   );
@@ -706,6 +711,30 @@ function AppShellContent() {
     const unsubscribe = window.electronAPI.appUpdate.onStateChange((status) => {
       if (mounted) {
         setAppUpdateStatus(status);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!window.electronAPI) {
+      return;
+    }
+
+    let mounted = true;
+    void window.electronAPI.ui.getTheme().then((nextTheme) => {
+      if (mounted && isAppTheme(nextTheme)) {
+        setTheme(nextTheme);
+      }
+    });
+
+    const unsubscribe = window.electronAPI.ui.onThemeChange((nextTheme) => {
+      if (isAppTheme(nextTheme)) {
+        setTheme(nextTheme);
       }
     });
 
@@ -1100,8 +1129,6 @@ function AppShellContent() {
         {hasWorkspaces ? (
           <div className="relative min-w-0">
             <TopTabsBar
-              theme={theme}
-              onThemeChange={setTheme}
               agentMode={agentMode && hasWorkspaces}
               hasWorkspaces={hasWorkspaces}
               onOpenBrowserWorkbench={() => openWorkbench("browser")}

@@ -117,6 +117,7 @@ contextBridge.exposeInMainWorld("authPopup", {
   getUser: () => ipcRenderer.invoke("auth:getUser") as Promise<AuthUserPayload | null>,
   requestAuth: () => ipcRenderer.invoke("auth:requestAuth") as Promise<void>,
   signOut: () => ipcRenderer.invoke("auth:signOut") as Promise<void>,
+  setTheme: (theme: string) => ipcRenderer.invoke("ui:setTheme", theme) as Promise<void>,
   getRuntimeConfig: () => ipcRenderer.invoke("runtime:getConfig") as Promise<RuntimeConfigPayload>,
   getRuntimeStatus: () => ipcRenderer.invoke("runtime:getStatus") as Promise<RuntimeStatusPayload>,
   setRuntimeConfig: (payload: RuntimeConfigUpdatePayload) =>

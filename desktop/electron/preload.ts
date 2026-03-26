@@ -481,7 +481,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
   ui: {
-    setTheme: (theme: string) => ipcRenderer.invoke("ui:setTheme", theme) as Promise<void>
+    getTheme: () => ipcRenderer.invoke("ui:getTheme") as Promise<string>,
+    setTheme: (theme: string) => ipcRenderer.invoke("ui:setTheme", theme) as Promise<void>,
+    onThemeChange: (listener: (theme: string) => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, theme: string) => listener(theme);
+      ipcRenderer.on("ui:themeChanged", wrapped);
+      return () => ipcRenderer.removeListener("ui:themeChanged", wrapped);
+    }
   },
   appUpdate: {
     getStatus: () => ipcRenderer.invoke("appUpdate:getStatus") as Promise<AppUpdateStatusPayload>,

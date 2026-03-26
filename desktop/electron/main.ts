@@ -27,7 +27,7 @@ const OVERFLOW_POPUP_WIDTH = 220;
 const OVERFLOW_POPUP_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MIN_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MAX_HEIGHT = 320;
-const APP_THEMES = new Set(["emerald", "cobalt", "ember", "glacier", "mono", "claude", "slate", "paper", "graphite"]);
+const APP_THEMES = new Set(["holaboss", "emerald", "cobalt", "ember", "glacier", "mono", "claude", "slate", "paper", "graphite"]);
 const GITHUB_RELEASES_OWNER = "holaboss-ai";
 const GITHUB_RELEASES_REPO = "hola-boss-oss";
 const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
@@ -250,7 +250,7 @@ let historyPopupWindow: BrowserWindow | null = null;
 let overflowPopupWindow: BrowserWindow | null = null;
 let browserPopupWindow: BrowserWindow | null = null;
 let addressSuggestionsPopupWindow: BrowserWindow | null = null;
-let currentTheme = "emerald";
+let currentTheme = "holaboss";
 let browserBounds: BrowserBoundsPayload = { x: 0, y: 0, width: 0, height: 0 };
 let overflowAnchorBounds: BrowserAnchorBoundsPayload | null = null;
 let addressSuggestionsState: { suggestions: AddressSuggestionPayload[]; selectedIndex: number } = {
@@ -440,6 +440,15 @@ function emitWorkbenchOpenBrowser(payload?: WorkbenchOpenBrowserPayload) {
   }
 
   mainWindow.webContents.send("workbench:openBrowser", payload ?? {});
+}
+
+function emitThemeChanged() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("ui:themeChanged", currentTheme);
+  }
+  if (authPopupWindow && !authPopupWindow.isDestroyed()) {
+    authPopupWindow.webContents.send("ui:themeChanged", currentTheme);
+  }
 }
 
 function normalizeReleaseVersion(value: string): string {
@@ -714,6 +723,24 @@ interface PopupThemePalette {
 
 function getPopupThemePalette(theme: string): PopupThemePalette {
   switch (theme) {
+    case "holaboss":
+      return {
+        fontFamily: '"IBM Plex Sans", "Aptos", "Segoe UI Variable", sans-serif',
+        text: "rgba(33, 38, 49, 0.94)",
+        textMuted: "rgba(109, 117, 131, 0.84)",
+        textSubtle: "rgba(109, 117, 131, 0.68)",
+        accent: "rgb(247, 90, 84)",
+        accentStrong: "rgb(233, 117, 109)",
+        border: "rgba(224, 228, 236, 0.78)",
+        borderSoft: "rgba(224, 228, 236, 0.42)",
+        hover: "rgba(247, 90, 84, 0.08)",
+        panelBg: "rgba(255, 255, 255, 0.98)",
+        panelBgAlt: "rgba(248, 249, 252, 0.98)",
+        controlBg: "rgba(248, 250, 253, 0.94)",
+        shadow: "0 12px 30px rgba(25, 33, 53, 0.08)",
+        emptyBg: "rgba(250, 245, 244, 0.92)",
+        error: "rgba(184, 67, 67, 0.94)"
+      };
     case "claude":
       return {
         fontFamily: '"IBM Plex Sans", "Aptos", "Segoe UI Variable", sans-serif',
@@ -882,21 +909,40 @@ function getPopupThemePalette(theme: string): PopupThemePalette {
 
 function popupThemeCss(theme = currentTheme) {
   const palette = getPopupThemePalette(theme);
+  const isLightTheme = theme === "holaboss" || theme === "claude" || theme === "paper";
+  const surfaceSoft = `color-mix(in srgb, ${palette.controlBg} 72%, ${palette.panelBgAlt} 28%)`;
+  const surfaceSubtle = `color-mix(in srgb, ${palette.controlBg} 52%, ${palette.panelBgAlt} 48%)`;
   return `
-      :root { color-scheme: ${theme === "claude" || theme === "paper" ? "light" : "dark"}; }
+      :root { color-scheme: ${isLightTheme ? "light" : "dark"}; }
       body {
         font-family: ${palette.fontFamily};
         color: ${palette.text};
+        background: transparent;
       }
       .panel {
         border: 1px solid ${palette.border};
         background: linear-gradient(180deg, ${palette.panelBg}, ${palette.panelBgAlt});
         box-shadow: ${palette.shadow};
       }
+      .header {
+        border-bottom-color: ${palette.borderSoft};
+      }
+      .content {
+        background: color-mix(in srgb, ${palette.panelBg} 90%, transparent);
+      }
+      .avatar {
+        border-color: color-mix(in srgb, ${palette.accent} 30%, ${palette.borderSoft});
+        background: color-mix(in srgb, ${palette.accent} 14%, transparent);
+        color: ${palette.accentStrong};
+      }
+      .identityName, .rowLabel, .heroTitle, .statusDetail {
+        color: ${palette.text};
+      }
       .title, .identity, .filename, .title-row {
         color: ${palette.text};
       }
-      .summary, .url-row, .status, .section-title, .field label, .clock {
+      .summary, .url-row, .status, .section-title, .field label, .clock,
+      .identity, .rowValue, .heroDescription, .statusLabel, .footnote, .authSectionTitle, .advancedHint {
         color: ${palette.textSubtle};
       }
       .button, .action, .item, .remove {
@@ -908,23 +954,76 @@ function popupThemeCss(theme = currentTheme) {
       .button, .action, .badge, .input {
         background: ${palette.controlBg};
       }
-      .empty, .item {
-        background: ${palette.emptyBg};
+      .hero, .row, .section, .statusStep, .advancedToggle, .stateMessage, .message {
+        border-color: ${palette.borderSoft};
+        background: ${surfaceSoft};
+      }
+      .empty, .item, .statusStep.current {
+        background: ${surfaceSubtle};
+      }
+      .badge {
+        color: ${palette.textMuted};
+      }
+      .badge.idle {
+        background: ${surfaceSubtle};
+        color: ${palette.textMuted};
+      }
+      .badge.ready {
+        border-color: color-mix(in srgb, ${palette.accent} 42%, ${palette.borderSoft});
+        background: color-mix(in srgb, ${palette.accent} 16%, transparent);
+        color: ${palette.accentStrong};
+      }
+      .badge.syncing {
+        border-color: color-mix(in srgb, ${palette.accentStrong} 30%, ${palette.borderSoft});
+        background: color-mix(in srgb, ${palette.accentStrong} 12%, transparent);
+        color: ${palette.accentStrong};
+      }
+      .badge.error {
+        border-color: color-mix(in srgb, ${palette.error} 35%, ${palette.borderSoft});
+        background: color-mix(in srgb, ${palette.error} 10%, transparent);
+        color: ${palette.error};
       }
       .button.primary {
         border-color: ${palette.border};
-        background: color-mix(in srgb, ${palette.accent} 12%, transparent);
-        color: ${palette.accent};
+        background: color-mix(in srgb, ${palette.accent} 14%, transparent);
+        color: ${palette.accentStrong};
       }
       .button:hover, .action:hover, .item:hover, .item.active, .remove:hover {
         background: ${palette.hover};
-        color: ${palette.accent};
+        color: ${palette.accentStrong};
       }
       .input:focus {
         border-color: ${palette.accent};
       }
+      .input {
+        color: ${palette.text};
+      }
+      .input::placeholder {
+        color: ${palette.textSubtle};
+      }
+      .statusStep.done {
+        border-color: color-mix(in srgb, ${palette.accent} 42%, ${palette.borderSoft});
+        background: color-mix(in srgb, ${palette.accent} 14%, transparent);
+      }
+      .statusStep.error {
+        border-color: color-mix(in srgb, ${palette.error} 36%, ${palette.borderSoft});
+        background: color-mix(in srgb, ${palette.error} 10%, transparent);
+      }
+      .statusDot {
+        background: color-mix(in srgb, ${palette.textMuted} 62%, transparent);
+      }
+      .statusStep.done .statusDot {
+        background: ${palette.accentStrong};
+      }
+      .statusStep.current .statusDot {
+        background: ${palette.accent};
+      }
+      .statusStep.error .statusDot {
+        background: ${palette.error};
+      }
       .message.success {
-        color: ${palette.accent};
+        border-color: color-mix(in srgb, ${palette.accent} 40%, ${palette.borderSoft});
+        color: ${palette.accentStrong};
       }
       .message.error {
         color: ${palette.error};
@@ -4954,6 +5053,10 @@ function emitAddressSuggestionsState() {
 }
 
 function createAuthPopupHtml() {
+  const themeOptions = Array.from(APP_THEMES)
+    .map((theme) => `<option value="${theme}">${theme.charAt(0).toUpperCase()}${theme.slice(1)}</option>`)
+    .join("");
+
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -5274,6 +5377,30 @@ function createAuthPopupHtml() {
         line-height: 1.5;
         color: rgba(181, 195, 188, 0.72);
       }
+      .authSectionTitle {
+        margin: 14px 0 8px;
+        font-size: 10px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: rgba(181, 195, 188, 0.72);
+      }
+      .themeSection {
+        margin-top: 10px;
+      }
+      .themeSelectWrap {
+        margin-top: 8px;
+      }
+      .hero,
+      .list,
+      .statusSection,
+      #stateMessage,
+      #error,
+      #success,
+      #advancedToggle,
+      #advancedSection,
+      #exchange {
+        display: none !important;
+      }
       ${popupThemeCss()}
     </style>
   </head>
@@ -5312,18 +5439,28 @@ function createAuthPopupHtml() {
           </div>
         </div>
 
-        <div class="section">
+        <div class="section statusSection">
           <div class="section-title">Status</div>
           <div id="statusSummary" class="footnote" style="margin-top: 0;"></div>
           <div id="statusSteps" class="statusGrid"></div>
           <div id="statusError" class="message error" hidden></div>
         </div>
 
+        <div class="authSectionTitle">Account actions</div>
         <div class="actions">
           <button id="signIn" class="button primary" type="button">Sign in with browser</button>
           <button id="refresh" class="button" type="button">Refresh session</button>
           <button id="signOut" class="button" type="button">Sign out</button>
           <button id="exchange" class="button primary" type="button">Retry setup</button>
+        </div>
+
+        <div class="themeSection">
+          <div class="authSectionTitle" style="margin-top: 12px;">Theme selection</div>
+          <div class="themeSelectWrap">
+            <select id="themeSelect" class="input">
+              ${themeOptions}
+            </select>
+          </div>
         </div>
 
         <div id="stateMessage" class="stateMessage syncing" hidden></div>
@@ -5388,8 +5525,10 @@ function createAuthPopupHtml() {
         modelProxyBaseUrl: "",
         defaultModel: "",
         runtimeUserId: "",
-        sandboxId: ""
+        sandboxId: "",
+        theme: ${JSON.stringify(currentTheme)}
       };
+      const availableThemes = new Set(${JSON.stringify(Array.from(APP_THEMES))});
 
       const els = {
         identity: document.getElementById("identity"),
@@ -5420,6 +5559,7 @@ function createAuthPopupHtml() {
         runtimeUserId: document.getElementById("runtimeUserId"),
         modelProxyBaseUrl: document.getElementById("modelProxyBaseUrl"),
         defaultModel: document.getElementById("defaultModel"),
+        themeSelect: document.getElementById("themeSelect"),
         error: document.getElementById("error"),
         success: document.getElementById("success")
       };
@@ -5630,6 +5770,7 @@ function createAuthPopupHtml() {
         els.runtimeUserId.value = state.runtimeUserId;
         els.modelProxyBaseUrl.value = state.modelProxyBaseUrl;
         els.defaultModel.value = state.defaultModel;
+        els.themeSelect.value = state.theme;
         els.signIn.hidden = isSignedIn;
         els.signIn.disabled = state.isStartingSignIn || isSignedIn;
         els.signIn.textContent = state.isStartingSignIn ? "Opening sign-in..." : "Sign in with browser";
@@ -5703,6 +5844,20 @@ function createAuthPopupHtml() {
       });
       els.defaultModel.addEventListener("input", (event) => {
         state.defaultModel = event.target.value;
+      });
+      els.themeSelect.addEventListener("change", async (event) => {
+        const nextTheme = String(event.target.value || "").trim();
+        if (!availableThemes.has(nextTheme)) {
+          return;
+        }
+        state.theme = nextTheme;
+        render();
+        try {
+          await window.authPopup.setTheme(nextTheme);
+        } catch (error) {
+          state.authError = error instanceof Error ? error.message : "Failed to update theme.";
+          render();
+        }
       });
       els.advancedToggle.addEventListener("click", () => {
         state.isAdvancedOpen = !state.isAdvancedOpen;
@@ -7429,8 +7584,10 @@ app.whenReady().then(async () => {
     await emitRuntimeConfig(config);
     return config;
   });
+  ipcMain.handle("ui:getTheme", async () => currentTheme);
   ipcMain.handle("ui:setTheme", async (_event, theme: string) => {
-    currentTheme = APP_THEMES.has(theme) ? theme : "emerald";
+    currentTheme = APP_THEMES.has(theme) ? theme : "holaboss";
+    emitThemeChanged();
     authPopupWindow?.close();
     authPopupWindow = null;
     downloadsPopupWindow?.close();

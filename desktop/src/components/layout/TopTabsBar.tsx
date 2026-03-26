@@ -1,12 +1,9 @@
 import { FormEvent, useMemo, useRef, useState } from "react";
-import { Search, User2, Palette, Loader2, Plus, RefreshCcw, ChevronDown, FolderKanban, FolderOpen, Globe } from "lucide-react";
-import type { AppTheme } from "@/components/layout/AppShell";
+import { Search, User2, Loader2, Plus, ChevronDown, FolderKanban, FolderOpen, Globe } from "lucide-react";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 interface TopTabsBarProps {
-  theme: AppTheme;
-  onThemeChange: (theme: AppTheme) => void;
   agentMode?: boolean;
   hasWorkspaces?: boolean;
   onUserMenuToggle?: (anchorBounds: BrowserAnchorBoundsPayload) => void;
@@ -16,21 +13,7 @@ interface TopTabsBarProps {
   workbenchOpen?: boolean;
 }
 
-const THEME_OPTIONS: Array<{ value: AppTheme; label: string }> = [
-  { value: "emerald", label: "Emerald" },
-  { value: "cobalt", label: "Cobalt" },
-  { value: "ember", label: "Ember" },
-  { value: "glacier", label: "Glacier" },
-  { value: "mono", label: "Mono" },
-  { value: "claude", label: "Claude" },
-  { value: "slate", label: "Slate" },
-  { value: "paper", label: "Paper" },
-  { value: "graphite", label: "Graphite" }
-];
-
 export function TopTabsBar({
-  theme,
-  onThemeChange,
   agentMode = true,
   hasWorkspaces = true,
   onUserMenuToggle,
@@ -56,13 +39,11 @@ export function TopTabsBar({
     newWorkspaceName,
     setNewWorkspaceName,
     isLoadingBootstrap,
-    isRefreshing,
     isCreatingWorkspace,
     isLoadingMarketplaceTemplates,
     canUseMarketplaceTemplates,
     marketplaceTemplatesError,
     workspaceErrorMessage,
-    refreshWorkspaceData,
     chooseTemplateFolder,
     createWorkspace
   } = useWorkspaceDesktop();
@@ -70,6 +51,15 @@ export function TopTabsBar({
   const onCreateWorkspace = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     void createWorkspace();
+  };
+
+  const openAuthPopup = (anchor: DOMRect) => {
+    void window.electronAPI.auth.togglePopup({
+      x: anchor.left,
+      y: anchor.top,
+      width: anchor.width,
+      height: anchor.height
+    });
   };
 
   const filteredWorkspaces = useMemo(() => {
@@ -89,8 +79,7 @@ export function TopTabsBar({
 
   return (
     <header className="theme-shell rounded-[var(--theme-radius-card)] border border-neon-green/25 px-2.5 py-2.5 shadow-card sm:px-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-1 items-start gap-2.5 sm:gap-3">
+      <div className="flex min-w-0 items-start gap-2.5 sm:gap-3">
           <button
             ref={userButtonRef}
             type="button"
@@ -108,7 +97,7 @@ export function TopTabsBar({
                 height: rect.height
               });
             }}
-            className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-[var(--theme-radius-pill)] border border-neon-green/45 bg-neon-green/10 text-neon-green shadow-glow transition hover:border-neon-green/70 hover:bg-neon-green/16"
+            className="grid h-[42px] w-[42px] shrink-0 place-items-center rounded-[16px] border border-neon-green/45 bg-neon-green/10 text-neon-green shadow-glow transition hover:border-neon-green/70 hover:bg-neon-green/16"
           >
             <User2 size={15} />
           </button>
@@ -198,16 +187,6 @@ export function TopTabsBar({
                 <span>New workspace</span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => void refreshWorkspaceData()}
-                disabled={isRefreshing || isLoadingBootstrap}
-                className="inline-flex h-[42px] items-center justify-center gap-2 rounded-[16px] border border-panel-border/45 px-3 text-[12px] text-text-muted transition hover:border-neon-green/35 hover:text-text-main disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {isRefreshing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCcw size={14} />}
-                <span>Refresh</span>
-              </button>
-
               {agentMode && hasWorkspaces ? (
                 <>
                   <button
@@ -256,12 +235,11 @@ export function TopTabsBar({
                   <button
                     type="button"
                     onClick={() => setTemplateSourceMode("marketplace")}
-                    disabled={!canUseMarketplaceTemplates}
                     className={`inline-flex h-[38px] items-center justify-center rounded-[14px] border px-3 text-[11px] transition ${
                       templateSourceMode === "marketplace"
                         ? "border-neon-green/45 bg-neon-green/10 text-neon-green"
                         : "border-panel-border/45 text-text-muted hover:border-neon-green/35 hover:text-text-main"
-                    } disabled:cursor-not-allowed disabled:opacity-40`}
+                    }`}
                   >
                     Marketplace
                   </button>
@@ -269,27 +247,37 @@ export function TopTabsBar({
 
                 <div className="grid gap-2 xl:grid-cols-[minmax(220px,1.1fr)_minmax(220px,1.2fr)_auto]">
                   {templateSourceMode === "marketplace" ? (
-                    <label className="theme-control-surface flex min-w-0 items-center gap-2 rounded-[16px] border border-panel-border/45 px-3 py-2 text-left text-[12px] text-text-muted/82">
-                      <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-text-dim/72">Template</span>
-                      <select
-                        value={selectedMarketplaceTemplate?.name || ""}
-                        onChange={(event) => selectMarketplaceTemplate(event.target.value)}
-                        disabled={!canUseMarketplaceTemplates || isLoadingMarketplaceTemplates || marketplaceTemplates.length === 0}
-                        className="min-w-0 flex-1 bg-transparent text-[12px] text-text-main outline-none disabled:text-text-dim/50"
+                    canUseMarketplaceTemplates ? (
+                      <label className="theme-control-surface flex min-w-0 items-center gap-2 rounded-[16px] border border-panel-border/45 px-3 py-2 text-left text-[12px] text-text-muted/82">
+                        <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-text-dim/72">Template</span>
+                        <select
+                          value={selectedMarketplaceTemplate?.name || ""}
+                          onChange={(event) => selectMarketplaceTemplate(event.target.value)}
+                          disabled={isLoadingMarketplaceTemplates || marketplaceTemplates.length === 0}
+                          className="min-w-0 flex-1 bg-transparent text-[12px] text-text-main outline-none disabled:text-text-dim/50"
+                        >
+                          {isLoadingMarketplaceTemplates ? (
+                            <option value="">Loading templates...</option>
+                          ) : marketplaceTemplates.length ? (
+                            marketplaceTemplates.map((template) => (
+                              <option key={template.name} value={template.name} disabled={template.is_coming_soon}>
+                                {template.is_coming_soon ? `${template.name} (Coming soon)` : template.name}
+                              </option>
+                            ))
+                          ) : (
+                            <option value="">No marketplace templates</option>
+                          )}
+                        </select>
+                      </label>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(event) => openAuthPopup(event.currentTarget.getBoundingClientRect())}
+                        className="inline-flex h-[42px] min-w-0 items-center justify-center rounded-[16px] border border-neon-green/40 bg-neon-green/10 px-3 text-[12px] text-neon-green transition hover:bg-neon-green/14"
                       >
-                        {isLoadingMarketplaceTemplates ? (
-                          <option value="">Loading templates...</option>
-                        ) : marketplaceTemplates.length ? (
-                          marketplaceTemplates.map((template) => (
-                            <option key={template.name} value={template.name} disabled={template.is_coming_soon}>
-                              {template.is_coming_soon ? `${template.name} (Coming soon)` : template.name}
-                            </option>
-                          ))
-                        ) : (
-                          <option value="">No marketplace templates</option>
-                        )}
-                      </select>
-                    </label>
+                        Sign in to use Marketplace
+                      </button>
+                    )
                   ) : (
                     <button
                       type="button"
@@ -351,24 +339,6 @@ export function TopTabsBar({
               </div>
             ) : null}
           </div>
-        </div>
-
-        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-          <label className="theme-control-surface hidden items-center gap-2 rounded-[var(--theme-radius-pill)] border border-panel-border px-3 py-1.5 text-xs text-text-muted/85 lg:flex">
-            <Palette size={13} className="text-neon-green/80" />
-            <select
-              value={theme}
-              onChange={(event) => onThemeChange(event.target.value as AppTheme)}
-              className="bg-transparent pr-1 text-xs text-text-main/85 outline-none"
-            >
-              {THEME_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value} className="bg-obsidian text-text-main">
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
       </div>
     </header>
   );
