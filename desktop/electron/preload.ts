@@ -411,6 +411,13 @@ interface HolabossSessionStreamHandlePayload {
   streamId: string;
 }
 
+interface WorkspaceAppLifecycleActionPayload {
+  app_id: string;
+  status: string;
+  detail: string;
+  ports: Record<string, number>;
+}
+
 interface HolabossSessionStreamEventPayload {
   streamId: string;
   type: "event" | "error" | "done";
@@ -503,6 +510,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     listWorkspaces: () => ipcRenderer.invoke("workspace:listWorkspaces") as Promise<WorkspaceListResponsePayload>,
     listInstalledApps: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listInstalledApps", workspaceId) as Promise<InstalledWorkspaceAppListResponsePayload>,
+    startInstalledApp: (workspaceId: string, appId: string) =>
+      ipcRenderer.invoke("workspace:startInstalledApp", workspaceId, appId) as Promise<WorkspaceAppLifecycleActionPayload>,
+    stopInstalledApp: (workspaceId: string, appId: string) =>
+      ipcRenderer.invoke("workspace:stopInstalledApp", workspaceId, appId) as Promise<WorkspaceAppLifecycleActionPayload>,
     listOutputs: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listOutputs", workspaceId) as Promise<WorkspaceOutputListResponsePayload>,
     getWorkspaceRoot: (workspaceId: string) => ipcRenderer.invoke("workspace:getWorkspaceRoot", workspaceId) as Promise<string>,

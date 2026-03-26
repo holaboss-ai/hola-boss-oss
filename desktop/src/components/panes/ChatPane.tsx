@@ -973,68 +973,51 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
 
   const hasMessages = messages.length > 0 || Boolean(liveAssistantText) || Boolean(liveThinkingText);
   const showWorkingIndicator = isResponding && !liveAssistantText && !liveThinkingText;
-  const sessionTargetId = onboardingModeActive
-    ? (selectedWorkspace?.onboarding_session_id || "").trim() || activeSessionId
-    : (selectedWorkspace?.main_session_id || "").trim() || activeSessionId;
   const streamTelemetryTail = useMemo(() => streamTelemetry.slice(-80).reverse(), [streamTelemetry]);
   const composerDisabled = !selectedWorkspace || !resolvedUserId || isLoadingHistory || isLoadingBootstrap;
 
   return (
-    <PaneCard title="" className="shadow-glow">
+    <PaneCard className="shadow-glow">
       <div className="relative flex h-full min-h-0 min-w-0 flex-col">
         <div className="pointer-events-none absolute inset-x-8 bottom-0 h-44 rounded-[var(--theme-radius-pill)] bg-[radial-gradient(circle,rgba(87,255,173,0.08)_0%,rgba(87,255,173,0.01)_52%,transparent_76%)] blur-2xl" />
 
-        <div className="shrink-0 border-b border-neon-green/15 px-4 py-3 sm:px-5">
-          <div className="flex items-start gap-3">
-            <div className="min-w-0 flex-1">
-              <div className="text-[10px] tracking-[0.18em] text-neon-green/78">AGENT CHAT</div>
-              <div className="mt-1 text-[12px] text-text-main/92">
-                {selectedWorkspace
-                  ? `Chat directly with ${selectedWorkspace.name}. The workspace control flow lives in the top toolbar.`
-                  : "Choose a workspace from the top toolbar, then chat with the workspace agent here."}
+        {chatErrorMessage || verboseTelemetryEnabled ? (
+          <div className="shrink-0 px-4 pt-3 sm:px-5">
+            {chatErrorMessage ? (
+              <div className="theme-chat-system-bubble rounded-[14px] border px-3 py-2 text-[11px]">
+                {chatErrorMessage}
               </div>
-              {selectedWorkspace && sessionTargetId ? (
-                <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-text-dim">
-                  <span className="rounded-full border border-panel-border/45 px-2 py-1">session {sessionTargetId}</span>
+            ) : null}
+
+            {verboseTelemetryEnabled ? (
+              <div className="theme-subtle-surface mt-3 rounded-[14px] border border-panel-border/45 px-3 py-2">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-[10px] tracking-[0.12em] text-text-dim">
+                    Stream telemetry ({streamTelemetry.length})
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setStreamTelemetry([])}
+                    className="rounded border border-panel-border/50 px-2 py-1 text-[10px] text-text-muted transition hover:border-neon-green/35 hover:text-text-main"
+                  >
+                    Clear
+                  </button>
                 </div>
-              ) : null}
-            </div>
+                <div className="theme-control-surface max-h-36 overflow-y-auto rounded border border-panel-border/35 p-2 font-mono text-[10px] text-text-muted">
+                  {streamTelemetryTail.length === 0 ? (
+                    <div className="text-text-dim">No stream events yet.</div>
+                  ) : (
+                    streamTelemetryTail.map((entry) => (
+                      <div key={entry.id} className="whitespace-pre-wrap break-all">
+                        {`${entry.at} ${entry.action} stream=${entry.streamId} transport=${entry.transportType} event=${entry.eventType || entry.eventName} input=${entry.inputId || "-"} session=${entry.sessionId || "-"} detail=${entry.detail || "-"}`}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            ) : null}
           </div>
-
-          {chatErrorMessage ? (
-            <div className="theme-chat-system-bubble mt-3 rounded-[14px] border px-3 py-2 text-[11px]">
-              {chatErrorMessage}
-            </div>
-          ) : null}
-
-          {verboseTelemetryEnabled ? (
-            <div className="theme-subtle-surface mt-3 rounded-[14px] border border-panel-border/45 px-3 py-2">
-              <div className="mb-2 flex items-center justify-between">
-                <div className="text-[10px] tracking-[0.12em] text-text-dim">
-                  Stream telemetry ({streamTelemetry.length})
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setStreamTelemetry([])}
-                  className="rounded border border-panel-border/50 px-2 py-1 text-[10px] text-text-muted transition hover:border-neon-green/35 hover:text-text-main"
-                >
-                  Clear
-                </button>
-              </div>
-              <div className="theme-control-surface max-h-36 overflow-y-auto rounded border border-panel-border/35 p-2 font-mono text-[10px] text-text-muted">
-                {streamTelemetryTail.length === 0 ? (
-                  <div className="text-text-dim">No stream events yet.</div>
-                ) : (
-                  streamTelemetryTail.map((entry) => (
-                    <div key={entry.id} className="whitespace-pre-wrap break-all">
-                      {`${entry.at} ${entry.action} stream=${entry.streamId} transport=${entry.transportType} event=${entry.eventType || entry.eventName} input=${entry.inputId || "-"} session=${entry.sessionId || "-"} detail=${entry.detail || "-"}`}
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          ) : null}
-        </div>
+        ) : null}
 
         <div
           ref={messagesRef}

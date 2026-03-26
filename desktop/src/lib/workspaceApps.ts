@@ -7,6 +7,7 @@ export interface WorkspaceAppDefinition {
 
 export interface WorkspaceInstalledAppDefinition extends WorkspaceAppDefinition {
   configPath: string;
+  lifecycle: InstalledWorkspaceAppPayload["lifecycle"];
   buildStatus: InstalledWorkspaceAppPayload["build_status"];
 }
 
@@ -70,6 +71,7 @@ export function hydrateInstalledWorkspaceApps(
     return {
       ...catalogEntry,
       configPath: app.config_path,
+      lifecycle: app.lifecycle,
       buildStatus: app.build_status
     };
   });
