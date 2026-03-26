@@ -35,6 +35,7 @@ export const piHarnessDefinition: HarnessDefinition = {
         provider_id: params.runtimeConfig.provider_id,
         model_id: params.runtimeConfig.model_id,
         timeout_seconds: params.timeoutSeconds,
+        runtime_api_base_url: params.runtimeApiBaseUrl ?? null,
         system_prompt: params.runtimeConfig.system_prompt,
         workspace_skill_dirs: params.workspaceSkills.map((skill) => skill.source_dir),
         mcp_servers: params.mcpServers.map((server) => ({

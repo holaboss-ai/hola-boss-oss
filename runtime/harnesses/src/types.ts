@@ -58,6 +58,7 @@ export interface HarnessHostRequestBuildParams {
   request: HarnessRunnerRequestLike;
   bootstrap: HarnessBootstrapPayload;
   runtimeConfig: HarnessRuntimeConfigPayload;
+  runtimeApiBaseUrl?: string | null;
   workspaceSkills: Array<{
     skill_id: string;
     source_dir: string;

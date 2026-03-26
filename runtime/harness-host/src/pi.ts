@@ -30,6 +30,7 @@ import type {
   RunnerEventType,
   RunnerOutputEventPayload,
 } from "./contracts.js";
+import { resolvePiDesktopBrowserExtensionFactory } from "./pi-browser-tools.js";
 
 export type PiMappedEvent = {
   event_type: RunnerEventType;
@@ -503,10 +504,14 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     defaultThinkingLevel: "medium",
   });
   const skillDirs = resolvePiSkillDirs(request);
+  const browserExtensionFactory = await resolvePiDesktopBrowserExtensionFactory({
+    runtimeApiBaseUrl: request.runtime_api_base_url,
+  });
   const resourceLoader = new DefaultResourceLoader({
     cwd: request.workspace_dir,
     agentDir: stateDir,
     settingsManager,
+    extensionFactories: browserExtensionFactory ? [browserExtensionFactory] : [],
     noExtensions: true,
     noSkills: true,
     noPromptTemplates: true,

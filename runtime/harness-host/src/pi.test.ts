@@ -20,6 +20,7 @@ function baseRequest(): HarnessHostPiRequest {
     provider_id: "openai",
     model_id: "gpt-5.1",
     timeout_seconds: 30,
+    runtime_api_base_url: "http://127.0.0.1:5060",
     system_prompt: "You are concise.",
     workspace_skill_dirs: [],
     mcp_servers: [],

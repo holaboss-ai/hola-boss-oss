@@ -6,7 +6,6 @@ import {
   DESKTOP_BROWSER_TOOL_IDS,
   type DesktopBrowserToolId
 } from "./desktop-browser-tools.js";
-import { resolveProductRuntimeConfig, type ProductRuntimeConfig } from "./runtime-config.js";
 
 const OPENCODE_PLUGIN_PACKAGE_VERSION = "^1.3.2";
 const OPENCODE_PLUGIN_FILE_NAME = "holaboss-desktop-browser.js";
@@ -20,8 +19,14 @@ export interface OpencodeBrowserToolsCliResponse {
   tool_ids: string[];
 }
 
+export interface OpencodeBrowserToolsConfig {
+  desktopBrowserEnabled: boolean;
+  desktopBrowserUrl: string;
+  desktopBrowserAuthToken: string;
+}
+
 export interface OpencodeBrowserToolsOptions {
-  resolveConfig?: () => ProductRuntimeConfig;
+  resolveConfig: () => OpencodeBrowserToolsConfig;
 }
 
 function pluginRoot(workspaceDir: string): string {
@@ -36,7 +41,7 @@ function packageJsonPath(workspaceDir: string): string {
   return path.join(pluginRoot(workspaceDir), "package.json");
 }
 
-function browserToolsEnabled(config: ProductRuntimeConfig): boolean {
+function browserToolsEnabled(config: OpencodeBrowserToolsConfig): boolean {
   return Boolean(
     config.desktopBrowserEnabled && config.desktopBrowserUrl.trim() && config.desktopBrowserAuthToken.trim()
   );
@@ -214,17 +219,9 @@ function removePluginFile(workspaceDir: string): boolean {
 
 export function stageOpencodeDesktopBrowserPlugin(
   request: OpencodeBrowserToolsCliRequest,
-  options: OpencodeBrowserToolsOptions = {}
+  options: OpencodeBrowserToolsOptions
 ): OpencodeBrowserToolsCliResponse {
-  const config =
-    options.resolveConfig ??
-    (() =>
-      resolveProductRuntimeConfig({
-        requireAuth: false,
-        requireUser: false,
-        requireBaseUrl: false
-      }));
-  const browserEnabled = browserToolsEnabled(config());
+  const browserEnabled = browserToolsEnabled(options.resolveConfig());
   const workspaceDir = path.resolve(request.workspace_dir);
 
   if (!browserEnabled) {
