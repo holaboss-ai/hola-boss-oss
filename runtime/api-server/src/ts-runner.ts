@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -23,16 +22,11 @@ import {
   type RunningWorkspaceMcpSidecar
 } from "./runner-prep.js";
 import { compileWorkspaceRuntimePlanFromWorkspace } from "./runner-prep.js";
-import { stageWorkspaceCommands } from "./opencode-commands.js";
-import { type OpencodeConfigCliRequest, updateOpencodeConfig } from "./opencode-config.js";
 import {
   projectAgentRuntimeConfig,
   type AgentRuntimeConfigCliRequest,
   type AgentRuntimeConfigCliResponse
 } from "./agent-runtime-config.js";
-import { restartOpencodeSidecar, type OpencodeSidecarCliRequest } from "./opencode-sidecar.js";
-import { stageOpencodeSkills } from "./opencode-skills.js";
-import { stageOpencodeDesktopBrowserPlugin } from "./opencode-browser-tools.js";
 import {
   decodeTsRunnerRequestPayload,
   fallbackEventIdentity,
@@ -58,9 +52,8 @@ import { resolveProductRuntimeConfig } from "./runtime-config.js";
 import {
   normalizeHarnessId,
   requireRuntimeHarnessAdapter,
-  type HarnessBackendRestartRequest,
-  type HarnessModelConfigSyncRequest,
-  type HarnessModelConfigSyncResult
+  requireRuntimeHarnessPlugin,
+  type RuntimeHarnessPlugin
 } from "./harness-registry.js";
 import { startWorkspaceMcpSidecar, type WorkspaceMcpSidecarCliRequest } from "./workspace-mcp-sidecar.js";
 import type { CompiledWorkspaceRuntimePlan } from "./workspace-runtime-plan.js";
@@ -70,9 +63,6 @@ type LoggerLike = Pick<typeof console, "warn">;
 const TERMINAL_EVENT_TYPES = new Set<TsRunnerEvent["event_type"]>(["run_completed", "run_failed"]);
 const HARNESS_HOST_NOT_IMPLEMENTED_EXIT_CODE = 86;
 const RUNTIME_EXEC_CONTEXT_KEY = "_sandbox_runtime_exec_v1";
-const DEFAULT_OPENCODE_HOST = "127.0.0.1";
-const DEFAULT_OPENCODE_PORT = 4096;
-const DEFAULT_OPENCODE_READY_TIMEOUT_S = 30;
 const DEFAULT_OPENCODE_SESSION_MODE = "code";
 const DEFAULT_OPENCODE_PROVIDER_ID = "openai";
 const WORKSPACE_MCP_READY_TIMEOUT_S = 10;
@@ -118,7 +108,7 @@ export interface TsRunnerExecutionDeps {
   }) => Promise<PreparedMcpServerPayload[]>;
   compilePlan: (params: { workspaceId: string; workspaceDir: string }) => CompiledWorkspaceRuntimePlan;
   projectAgentRuntimeConfig: (request: AgentRuntimeConfigCliRequest) => AgentRuntimeConfigCliResponse;
-  restartHarnessBackend: (request: HarnessBackendRestartRequest) => Promise<void>;
+  resolveHarnessPlugin: (harness: string) => RuntimeHarnessPlugin;
   runHarnessHost: (params: {
     harness: string;
     requestPayload: Record<string, unknown>;
@@ -126,11 +116,7 @@ export interface TsRunnerExecutionDeps {
     emitEvent: (event: TsRunnerEvent) => Promise<void>;
     logger?: LoggerLike;
   }) => Promise<TsRunnerHarnessRelayResult>;
-  stageBrowserTools: (params: { workspaceDir: string }) => { changed: boolean; toolIds: string[] };
-  stageCommands: (params: { workspaceDir: string }) => { changed: boolean };
-  stageSkills: (params: { workspaceDir: string; runtimeRoot: string }) => { changed: boolean; skillIds: string[] };
   startWorkspaceMcpSidecar: (request: WorkspaceMcpSidecarCliRequest) => Promise<RunningWorkspaceMcpSidecar | null>;
-  syncHarnessModelConfig: (request: HarnessModelConfigSyncRequest) => HarnessModelConfigSyncResult;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -188,6 +174,35 @@ function runtimeRootDir(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 }
 
+function normalizeRuntimeApiHost(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "0.0.0.0" || trimmed === "::") {
+    return "127.0.0.1";
+  }
+  return trimmed;
+}
+
+function currentRuntimeApiUrl(): string | null {
+  const configured = (process.env.SANDBOX_RUNTIME_API_URL ?? "").trim();
+  if (configured) {
+    return configured.replace(/\/+$/, "");
+  }
+
+  const portValue = (process.env.SANDBOX_RUNTIME_API_PORT ?? process.env.SANDBOX_AGENT_BIND_PORT ?? "").trim();
+  if (!portValue) {
+    return null;
+  }
+  const port = Number.parseInt(portValue, 10);
+  if (!Number.isFinite(port) || port <= 0) {
+    return null;
+  }
+
+  const host = normalizeRuntimeApiHost(
+    process.env.SANDBOX_RUNTIME_API_HOST ?? process.env.SANDBOX_AGENT_BIND_HOST ?? "127.0.0.1"
+  );
+  return `http://${host}:${port}`;
+}
+
 function runtimeNodeBin(): string {
   return firstNonEmptyString(process.env.HOLABOSS_RUNTIME_NODE_BIN, process.execPath) ?? process.execPath;
 }
@@ -201,45 +216,6 @@ function workspaceMcpSandboxId(): string {
     "sandbox";
   const token = String(raw).trim().replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
   return token || "sandbox";
-}
-
-function opencodeServerHost(): string {
-  return firstNonEmptyString(process.env.OPENCODE_SERVER_HOST, DEFAULT_OPENCODE_HOST) ?? DEFAULT_OPENCODE_HOST;
-}
-
-function opencodeServerPort(): number {
-  const raw = firstNonEmptyString(process.env.OPENCODE_SERVER_PORT);
-  const value = raw ? Number.parseInt(raw, 10) : DEFAULT_OPENCODE_PORT;
-  if (!Number.isFinite(value)) {
-    return DEFAULT_OPENCODE_PORT;
-  }
-  return Math.max(1, Math.min(value, 65535));
-}
-
-function opencodeBaseUrl(): string {
-  const configured = firstNonEmptyString(process.env.OPENCODE_BASE_URL);
-  if (configured) {
-    return configured.replace(/\/+$/, "");
-  }
-  return `http://${opencodeServerHost()}:${opencodeServerPort()}`;
-}
-
-function opencodeTimeoutSeconds(): number {
-  const raw = firstNonEmptyString(process.env.OPENCODE_RUN_TIMEOUT_S);
-  const value = raw ? Number.parseInt(raw, 10) : 1800;
-  if (!Number.isFinite(value)) {
-    return 1800;
-  }
-  return Math.max(1, Math.min(value, 7200));
-}
-
-function opencodeReadyTimeoutSeconds(): number {
-  const raw = firstNonEmptyString(process.env.OPENCODE_READY_TIMEOUT_S);
-  const value = raw ? Number.parseFloat(raw) : DEFAULT_OPENCODE_READY_TIMEOUT_S;
-  if (!Number.isFinite(value)) {
-    return DEFAULT_OPENCODE_READY_TIMEOUT_S;
-  }
-  return Math.max(1, value);
 }
 
 function normalizeProviderId(value: string | null): string {
@@ -274,24 +250,6 @@ function opencodeExtraTools(): string[] {
     .filter(Boolean);
 }
 
-function opencodeSidecarFingerprint(
-  runtimeConfig: AgentRuntimeConfigCliResponse,
-  workspaceId: string
-): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify({
-        workspace_id: workspaceId,
-        provider_id: runtimeConfig.provider_id,
-        model_id: runtimeConfig.model_id,
-        mode: runtimeConfig.mode,
-        workspace_skill_ids: runtimeConfig.workspace_skill_ids
-      }),
-      "utf8"
-    )
-    .digest("hex");
-}
-
 function explicitHolabossUserId(request: TsRunnerRequest): string | undefined {
   return firstNonEmptyString(request.holaboss_user_id, request.context.holaboss_user_id) ?? undefined;
 }
@@ -316,6 +274,31 @@ function bootstrapStartedPayload(params: {
     structured_output_enabled: params.harnessSupportsStructuredOutput && Boolean(params.runtimeConfig.output_format),
     workspace_config_checksum: params.runtimeConfig.workspace_config_checksum
   };
+}
+
+function currentBrowserConfig(): {
+  desktopBrowserEnabled: boolean;
+  desktopBrowserUrl: string;
+  desktopBrowserAuthToken: string;
+} {
+  try {
+    const config = resolveProductRuntimeConfig({
+      requireAuth: false,
+      requireUser: false,
+      requireBaseUrl: false
+    });
+    return {
+      desktopBrowserEnabled: config.desktopBrowserEnabled,
+      desktopBrowserUrl: config.desktopBrowserUrl,
+      desktopBrowserAuthToken: config.desktopBrowserAuthToken
+    };
+  } catch {
+    return {
+      desktopBrowserEnabled: false,
+      desktopBrowserUrl: "",
+      desktopBrowserAuthToken: ""
+    };
+  }
 }
 
 function buildAgentRuntimeConfigRequest(params: {
@@ -579,43 +562,8 @@ function defaultExecutionDeps(): TsRunnerExecutionDeps {
         workspaceDir
       }),
     projectAgentRuntimeConfig: (request) => projectAgentRuntimeConfig(request),
-    restartHarnessBackend: async (request) => {
-      const opencodeRequest: OpencodeSidecarCliRequest = {
-        workspace_root: request.workspace_root,
-        workspace_id: request.workspace_id,
-        config_fingerprint: request.backend_fingerprint,
-        allow_reuse_existing: request.allow_reuse_existing,
-        host: request.host,
-        port: request.port,
-        readiness_url: request.readiness_url,
-        ready_timeout_s: request.ready_timeout_s
-      };
-      await restartOpencodeSidecar(opencodeRequest);
-    },
+    resolveHarnessPlugin: (harness) => requireRuntimeHarnessPlugin(harness),
     runHarnessHost: defaultRunHarnessHost,
-    stageBrowserTools: ({ workspaceDir }) => {
-      const result = stageOpencodeDesktopBrowserPlugin({
-        workspace_dir: workspaceDir
-      });
-      return {
-        changed: result.changed,
-        toolIds: result.tool_ids
-      };
-    },
-    stageCommands: ({ workspaceDir }) =>
-      stageWorkspaceCommands({
-        workspace_dir: workspaceDir
-      }),
-    stageSkills: ({ workspaceDir, runtimeRoot }) => {
-      const result = stageOpencodeSkills({
-        workspace_dir: workspaceDir,
-        runtime_root: runtimeRoot
-      });
-      return {
-        changed: result.changed,
-        skillIds: result.skill_ids
-      };
-    },
     startWorkspaceMcpSidecar: async (request) => {
       const result = await startWorkspaceMcpSidecar(request);
       return {
@@ -624,20 +572,6 @@ function defaultExecutionDeps(): TsRunnerExecutionDeps {
         pid: result.pid,
         reused: result.reused,
         timeout_ms: request.timeout_ms
-      };
-    },
-    syncHarnessModelConfig: (request) => {
-      const opencodeRequest: OpencodeConfigCliRequest = {
-        workspace_root: request.workspace_root,
-        provider_id: request.provider_id,
-        model_id: request.model_id,
-        model_client: request.model_client
-      };
-      const result = updateOpencodeConfig(opencodeRequest);
-      return {
-        path: result.path,
-        backend_config_changed: result.provider_config_changed,
-        model_selection_changed: result.model_selection_changed
       };
     }
   };
@@ -730,7 +664,8 @@ export async function executeTsRunnerRequest(
   const logger = options.logger ?? console;
   const deps = { ...defaultExecutionDeps(), ...options.deps };
   const bootstrap = resolveTsRunnerBootstrapState(request, { logger });
-  const harnessAdapter = requireRuntimeHarnessAdapter(bootstrap.harness);
+  const harnessPlugin = deps.resolveHarnessPlugin(bootstrap.harness);
+  const harnessAdapter = harnessPlugin.adapter;
 
   await relayTsRunnerEvent({
     emitEvent: options.emitEvent,
@@ -753,21 +688,19 @@ export async function executeTsRunnerRequest(
       request,
       bootstrap
     });
-    const stagedBrowserTools =
-      bootstrap.harness === "opencode"
-        ? deps.stageBrowserTools({
-            workspaceDir: bootstrap.workspaceDir
-          })
-        : { changed: false, toolIds: [] };
+    const stagedBrowserTools = harnessPlugin.stageBrowserTools({
+      workspaceDir: bootstrap.workspaceDir,
+      browserConfig: currentBrowserConfig()
+    });
     const workspaceSkills = resolveWorkspaceSkills(bootstrap.workspaceDir);
     const stagedSkills = runnerPrepPlan.stageWorkspaceSkills
-      ? deps.stageSkills({
+      ? harnessPlugin.stageSkills({
           workspaceDir: bootstrap.workspaceDir,
           runtimeRoot: runtimeRootDir()
         })
       : { changed: false, skillIds: [] };
     if (runnerPrepPlan.stageWorkspaceCommands) {
-      deps.stageCommands({
+      harnessPlugin.stageCommands({
         workspaceDir: bootstrap.workspaceDir
       });
     }
@@ -834,21 +767,12 @@ export async function executeTsRunnerRequest(
       })
     );
 
-    if (harnessAdapter.prepareRun) {
-      await harnessAdapter.prepareRun({
+    await harnessPlugin.prepareRun({
         request,
         bootstrap,
         runtimeConfig,
-        stagedSkillsChanged: stagedSkills.changed || stagedBrowserTools.changed,
-        syncModelConfig: deps.syncHarnessModelConfig,
-        restartBackend: deps.restartHarnessBackend,
-        backendBaseUrl: opencodeBaseUrl(),
-        backendHost: opencodeServerHost(),
-        backendPort: opencodeServerPort(),
-        backendReadyTimeoutSeconds: opencodeReadyTimeoutSeconds(),
-        buildBackendFingerprint: opencodeSidecarFingerprint
+        stagedSkillsChanged: stagedSkills.changed || stagedBrowserTools.changed
       });
-    }
 
     const harnessResult = await deps.runHarnessHost({
       harness: bootstrap.harness,
@@ -856,6 +780,7 @@ export async function executeTsRunnerRequest(
         request,
         bootstrap,
         runtimeConfig,
+        runtimeApiBaseUrl: currentRuntimeApiUrl(),
         workspaceSkills,
         mcpServers: effectiveMcpServers,
         mcpToolRefs: resolvedMcpToolRefs.map((toolRef) => ({
@@ -871,8 +796,8 @@ export async function executeTsRunnerRequest(
           mcpServers: effectiveMcpServers,
           sidecar
         }),
-        backendBaseUrl: opencodeBaseUrl(),
-        timeoutSeconds: opencodeTimeoutSeconds()
+        backendBaseUrl: harnessPlugin.backendBaseUrl(),
+        timeoutSeconds: harnessPlugin.timeoutSeconds()
       }),
       workspaceDir: bootstrap.workspaceDir,
       logger,

@@ -1,5 +1,6 @@
 export { opencodeHarnessDefinition } from "./opencode.js";
 export { piHarnessDefinition } from "./pi.js";
+export * from "./desktop-browser-tools.js";
 export * from "./types.js";
 
 import { opencodeHarnessDefinition } from "./opencode.js";

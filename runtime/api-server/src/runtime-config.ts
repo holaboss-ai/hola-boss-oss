@@ -1,8 +1,9 @@
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
-import { normalizeHarnessId, requireRuntimeHarnessAdapter } from "./harness-registry.js";
+import {
+  normalizeHarnessId,
+  requireRuntimeHarnessPlugin,
+} from "./harness-registry.js";
 
 const HOLABOSS_MODEL_PROXY_BASE_URL_ENV = "HOLABOSS_MODEL_PROXY_BASE_URL";
 const HOLABOSS_MODEL_PROXY_BASE_URL_DEFAULT_ENV = "HOLABOSS_MODEL_PROXY_BASE_URL_DEFAULT";
@@ -13,17 +14,10 @@ const OPENCODE_BOOT_MODEL_ENV = "OPENCODE_BOOT_MODEL";
 const HOLABOSS_RUNTIME_CONFIG_PATH_ENV = "HOLABOSS_RUNTIME_CONFIG_PATH";
 const HB_SANDBOX_ROOT_ENV = "HB_SANDBOX_ROOT";
 const SANDBOX_AGENT_HARNESS_ENV = "SANDBOX_AGENT_HARNESS";
-const OPENCODE_BASE_URL_ENV = "OPENCODE_BASE_URL";
-const OPENCODE_SERVER_HOST_ENV = "OPENCODE_SERVER_HOST";
-const OPENCODE_SERVER_PORT_ENV = "OPENCODE_SERVER_PORT";
-const OPENCODE_READY_TIMEOUT_S_ENV = "OPENCODE_READY_TIMEOUT_S";
 
 const DEFAULT_MODEL = "openai/gpt-5.1";
 const DEFAULT_RUNTIME_MODE = "oss";
 const HOLABOSS_PROXY_PROVIDER = "holaboss_model_proxy";
-const DEFAULT_OPENCODE_HOST = "127.0.0.1";
-const DEFAULT_OPENCODE_PORT = 4096;
-const DEFAULT_OPENCODE_READY_TIMEOUT_S = 30;
 
 type StringMap = Record<string, unknown>;
 
@@ -87,10 +81,6 @@ function sandboxRootPath(): string {
 
 function workspaceRootPath(): string {
   return path.join(sandboxRootPath(), "workspace");
-}
-
-function opencodeConfigPath(): string {
-  return path.join(workspaceRootPath(), "opencode.json");
 }
 
 function normalizeString(value: unknown): string {
@@ -263,36 +253,6 @@ function selectedHarness(): string {
   return normalizeHarnessId(firstEnvValue(SANDBOX_AGENT_HARNESS_ENV));
 }
 
-function opencodeBaseUrl(): string {
-  const configured = firstEnvValue(OPENCODE_BASE_URL_ENV).replace(/\/+$/, "");
-  if (configured) {
-    return configured;
-  }
-  return `http://${opencodeServerHost()}:${opencodeServerPort()}`;
-}
-
-function opencodeServerHost(): string {
-  return firstEnvValue(OPENCODE_SERVER_HOST_ENV) || DEFAULT_OPENCODE_HOST;
-}
-
-function opencodeServerPort(): number {
-  const raw = firstEnvValue(OPENCODE_SERVER_PORT_ENV) || String(DEFAULT_OPENCODE_PORT);
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) {
-    return DEFAULT_OPENCODE_PORT;
-  }
-  return Math.min(Math.max(parsed, 1), 65535);
-}
-
-function opencodeReadyTimeoutMs(): number {
-  const raw = firstEnvValue(OPENCODE_READY_TIMEOUT_S_ENV) || String(DEFAULT_OPENCODE_READY_TIMEOUT_S);
-  const parsed = Number.parseFloat(raw);
-  if (!Number.isFinite(parsed)) {
-    return DEFAULT_OPENCODE_READY_TIMEOUT_S * 1000;
-  }
-  return Math.max(parsed, 1.0) * 1000;
-}
-
 function defaultModel(payload: Record<string, string>): string {
   return payload.default_model || firstEnvValue(HOLABOSS_DEFAULT_MODEL_ENV, OPENCODE_BOOT_MODEL_ENV) || DEFAULT_MODEL;
 }
@@ -388,55 +348,6 @@ export function runtimeConfigHeaders(params?: {
   return headers;
 }
 
-function opencodeBootstrapPayload(config: ProductRuntimeConfig): Record<string, unknown> {
-  const modelProxyHeaders: Record<string, string> = {};
-  if (config.authToken) {
-    modelProxyHeaders["X-API-Key"] = config.authToken;
-  }
-  if (config.sandboxId) {
-    modelProxyHeaders["X-Holaboss-Sandbox-Id"] = config.sandboxId;
-  }
-  return {
-    $schema: "https://opencode.ai/config.json",
-    provider: {
-      openai: {
-        npm: "@ai-sdk/openai-compatible",
-        name: "Holaboss Model Proxy (OpenAI)",
-        options: {
-          apiKey: config.authToken,
-          baseURL: `${config.modelProxyBaseUrl}/openai/v1`,
-          headers: modelProxyHeaders
-        }
-      },
-      anthropic: {
-        npm: "@ai-sdk/anthropic",
-        name: "Holaboss Model Proxy (Anthropic)",
-        options: {
-          apiKey: config.authToken,
-          baseURL: `${config.modelProxyBaseUrl}/anthropic/v1`,
-          headers: modelProxyHeaders
-        }
-      }
-    },
-    model: config.defaultModel
-  };
-}
-
-function writeOpencodeBootstrapConfigIfAvailable(): void {
-  const config = resolveProductRuntimeConfig({
-    requireAuth: false,
-    requireUser: false,
-    requireBaseUrl: false,
-    includeDefaultBaseUrl: true
-  });
-  if (!config.authToken || !config.modelProxyBaseUrl) {
-    return;
-  }
-  const configPath = opencodeConfigPath();
-  fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(opencodeBootstrapPayload(config), null, 2), "utf8");
-}
-
 async function workspaceMcpIsReady(url: string, fetchImpl: typeof fetch): Promise<boolean> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 2000);
@@ -450,48 +361,6 @@ async function workspaceMcpIsReady(url: string, fetchImpl: typeof fetch): Promis
   }
 }
 
-async function ensureOpencodeSidecarReady(fetchImpl: typeof fetch): Promise<void> {
-  const readinessUrl = `${opencodeBaseUrl()}/mcp`;
-  if (await workspaceMcpIsReady(readinessUrl, fetchImpl)) {
-    return;
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    let settled = false;
-    const child = spawn("opencode", ["serve", "--hostname", opencodeServerHost(), "--port", String(opencodeServerPort())], {
-      cwd: workspaceRootPath(),
-      env: process.env,
-      stdio: "ignore",
-      detached: true
-    });
-    child.once("error", (error) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      reject(error);
-    });
-    const handle = setTimeout(() => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      child.unref();
-      resolve();
-    }, 100);
-    handle.unref();
-  });
-
-  const deadline = Date.now() + opencodeReadyTimeoutMs();
-  while (Date.now() < deadline) {
-    if (await workspaceMcpIsReady(readinessUrl, fetchImpl)) {
-      return;
-    }
-    await sleep(200);
-  }
-  throw new RuntimeConfigServiceError(400, "OpenCode sidecar did not become ready");
-}
-
 async function runtimeStatus(fetchImpl: typeof fetch): Promise<Record<string, unknown>> {
   const config = resolveProductRuntimeConfig({
     requireAuth: false,
@@ -499,13 +368,10 @@ async function runtimeStatus(fetchImpl: typeof fetch): Promise<Record<string, un
     requireBaseUrl: false
   });
   const harness = selectedHarness();
-  const harnessAdapter = requireRuntimeHarnessAdapter(harness);
+  const harnessPlugin = requireRuntimeHarnessPlugin(harness);
   const configPayload = runtimeConfigResponse(config);
-  const backendConfigPresent = harnessAdapter.capabilities.requiresBackend ? fs.existsSync(opencodeConfigPath()) : false;
-  const harnessStatus = await harnessAdapter.describeRuntimeStatus({
+  const status = await harnessPlugin.describeRuntimeStatus({
     configLoaded: Boolean(configPayload.loaded_from_file),
-    backendConfigPresent,
-    backendReadinessTarget: harnessAdapter.capabilities.requiresBackend ? `${opencodeBaseUrl()}/mcp` : null,
     probeBackendReadiness: (target) => workspaceMcpIsReady(target, fetchImpl)
   });
   const browserAvailable = Boolean(config.desktopBrowserEnabled && config.desktopBrowserUrl.trim());
@@ -517,10 +383,10 @@ async function runtimeStatus(fetchImpl: typeof fetch): Promise<Record<string, un
     harness,
     config_loaded: Boolean(configPayload.loaded_from_file),
     config_path: configPayload.config_path,
-    backend_config_present: backendConfigPresent,
-    opencode_config_present: backendConfigPresent,
-    harness_ready: harnessStatus.ready,
-    harness_state: harnessStatus.state,
+    backend_config_present: status.backendConfigPresent,
+    opencode_config_present: harness === "opencode" ? status.backendConfigPresent : false,
+    harness_ready: status.harnessStatus.ready,
+    harness_state: status.harnessStatus.state,
     browser_available: browserAvailable,
     browser_state: browserState,
     browser_url: config.desktopBrowserUrl || null
@@ -626,10 +492,7 @@ export class FileRuntimeConfigService implements RuntimeConfigServiceLike {
     this.#ensureSelectedHarnessReady =
       options.ensureSelectedHarnessReady ??
       (async () => {
-        const harnessAdapter = requireRuntimeHarnessAdapter(selectedHarness());
-        await harnessAdapter.ensureReady?.({
-          ensureHarnessBackendReady: () => ensureOpencodeSidecarReady(this.#fetch)
-        });
+        await requireRuntimeHarnessPlugin(selectedHarness()).ensureReady(this.#fetch);
       });
   }
 
@@ -658,9 +521,14 @@ export class FileRuntimeConfigService implements RuntimeConfigServiceLike {
   async updateConfig(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     try {
       const config = updateRuntimeConfigDocument(payload);
-      const harnessAdapter = requireRuntimeHarnessAdapter(selectedHarness());
-      await harnessAdapter.handleRuntimeConfigUpdated?.({
-        writeBootstrapConfigIfAvailable: writeOpencodeBootstrapConfigIfAvailable,
+      const harnessPlugin = requireRuntimeHarnessPlugin(selectedHarness());
+      await harnessPlugin.handleRuntimeConfigUpdated({
+        productConfig: {
+          authToken: config.authToken,
+          sandboxId: config.sandboxId,
+          modelProxyBaseUrl: config.modelProxyBaseUrl,
+          defaultModel: config.defaultModel
+        },
         ensureSelectedHarnessReady: this.#ensureSelectedHarnessReady
       });
       return runtimeConfigResponse(config);

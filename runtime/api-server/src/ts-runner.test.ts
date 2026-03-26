@@ -12,15 +12,36 @@ import {
   runTsRunnerCli,
   type TsRunnerExecutionDeps
 } from "./ts-runner.js";
-import { requireRuntimeHarnessAdapter } from "./harness-registry.js";
+import { requireRuntimeHarnessAdapter, type RuntimeHarnessPlugin } from "./harness-registry.js";
 
 const ORIGINAL_SANDBOX_ROOT = process.env.HB_SANDBOX_ROOT;
+const ORIGINAL_SANDBOX_RUNTIME_API_URL = process.env.SANDBOX_RUNTIME_API_URL;
+const ORIGINAL_SANDBOX_RUNTIME_API_HOST = process.env.SANDBOX_RUNTIME_API_HOST;
+const ORIGINAL_SANDBOX_RUNTIME_API_PORT = process.env.SANDBOX_RUNTIME_API_PORT;
 
 afterEach(() => {
   if (ORIGINAL_SANDBOX_ROOT === undefined) {
     delete process.env.HB_SANDBOX_ROOT;
   } else {
     process.env.HB_SANDBOX_ROOT = ORIGINAL_SANDBOX_ROOT;
+  }
+
+  if (ORIGINAL_SANDBOX_RUNTIME_API_URL === undefined) {
+    delete process.env.SANDBOX_RUNTIME_API_URL;
+  } else {
+    process.env.SANDBOX_RUNTIME_API_URL = ORIGINAL_SANDBOX_RUNTIME_API_URL;
+  }
+
+  if (ORIGINAL_SANDBOX_RUNTIME_API_HOST === undefined) {
+    delete process.env.SANDBOX_RUNTIME_API_HOST;
+  } else {
+    process.env.SANDBOX_RUNTIME_API_HOST = ORIGINAL_SANDBOX_RUNTIME_API_HOST;
+  }
+
+  if (ORIGINAL_SANDBOX_RUNTIME_API_PORT === undefined) {
+    delete process.env.SANDBOX_RUNTIME_API_PORT;
+  } else {
+    process.env.SANDBOX_RUNTIME_API_PORT = ORIGINAL_SANDBOX_RUNTIME_API_PORT;
   }
 });
 
@@ -67,12 +88,27 @@ function baseCompiledPlan() {
 function testDeps(params: {
   harnessEvents?: TsRunnerEvent[];
   harnessResult?: Partial<Awaited<ReturnType<NonNullable<TsRunnerExecutionDeps["runHarnessHost"]>>>>;
+  pluginOverrides?: Partial<RuntimeHarnessPlugin>;
 } = {}): Partial<TsRunnerExecutionDeps> {
   const harnessEvents = params.harnessEvents ?? [];
-  return {
+  const buildPlugin = (harness: string): RuntimeHarnessPlugin => ({
+    id: harness,
+    adapter: requireRuntimeHarnessAdapter(harness),
     stageBrowserTools: () => ({ changed: false, toolIds: [] }),
     stageSkills: () => ({ changed: false, skillIds: [] }),
     stageCommands: () => ({ changed: false }),
+    prepareRun: async () => {},
+    describeRuntimeStatus: async () => ({
+      backendConfigPresent: false,
+      harnessStatus: { ready: true, state: "ready" }
+    }),
+    handleRuntimeConfigUpdated: async () => {},
+    ensureReady: async () => {},
+    backendBaseUrl: () => "",
+    timeoutSeconds: () => 1800,
+    ...params.pluginOverrides
+  });
+  return {
     compilePlan: () => baseCompiledPlan() as never,
     startWorkspaceMcpSidecar: async () => null,
     bootstrapApplications: async () => [],
@@ -94,12 +130,7 @@ function testDeps(params: {
       output_format: null,
       workspace_config_checksum: "checksum-1"
     }),
-    syncHarnessModelConfig: () => ({
-      path: "/tmp/opencode.json",
-      backend_config_changed: false,
-      model_selection_changed: false
-    }),
-    restartHarnessBackend: async () => {},
+    resolveHarnessPlugin: (harness) => buildPlugin(harness),
     runHarnessHost: async ({ emitEvent }) => {
       for (const event of harnessEvents) {
         await emitEvent(event);
@@ -483,6 +514,8 @@ test("runTsRunnerCli passes MCP servers and tool refs into the pi harness reques
 test("runTsRunnerCli only advertises structured output when the selected harness supports it", async () => {
   const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-pi-structured-"));
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  process.env.SANDBOX_RUNTIME_API_HOST = "127.0.0.1";
+  process.env.SANDBOX_RUNTIME_API_PORT = "5060";
   let capturedRequestPayload: Record<string, unknown> | null = null;
 
   const exitCode = await runTsRunnerCli(
@@ -538,6 +571,10 @@ test("runTsRunnerCli only advertises structured output when the selected harness
 
   assert.equal(exitCode, 0);
   assert.ok(capturedRequestPayload);
+  assert.equal(
+    (capturedRequestPayload as { runtime_api_base_url?: string | null }).runtime_api_base_url,
+    "http://127.0.0.1:5060"
+  );
   assert.deepEqual((capturedRequestPayload as { run_started_payload: Record<string, unknown> }).run_started_payload, {
     instruction_preview: "hello world",
     provider_id: "openai",
@@ -648,11 +685,14 @@ test("runTsRunnerCli skips workspace command staging for harnesses that do not s
     ],
     {
       deps: {
-        ...testDeps(),
-        stageCommands: () => {
-          stageCommandsCalls += 1;
-          return { changed: false };
-        },
+        ...testDeps({
+          pluginOverrides: {
+            stageCommands: () => {
+              stageCommandsCalls += 1;
+              return { changed: false };
+            }
+          }
+        }),
         runHarnessHost: async () => ({
           exitCode: 0,
           stderr: "",
@@ -701,11 +741,14 @@ test("runTsRunnerCli skips skill staging when the harness prep plan disables it"
       ],
       {
         deps: {
-          ...testDeps(),
-          stageSkills: () => {
-            stageSkillsCalls += 1;
-            return { changed: false, skillIds: [] };
-          },
+          ...testDeps({
+            pluginOverrides: {
+              stageSkills: () => {
+                stageSkillsCalls += 1;
+                return { changed: false, skillIds: [] };
+              }
+            }
+          }),
           runHarnessHost: async () => ({
             exitCode: 0,
             stderr: "",
