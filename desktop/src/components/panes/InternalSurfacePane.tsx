@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, FileText, FileWarning, Loader2 } from "lucide-react";
+import { FileText, FileWarning, Loader2 } from "lucide-react";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 type InternalSurfaceType = "document" | "preview" | "file" | "event";
@@ -8,7 +8,6 @@ interface InternalSurfacePaneProps {
   surface: InternalSurfaceType;
   resourceId?: string | null;
   htmlContent?: string | null;
-  onReturnToChat: () => void;
 }
 
 function resolveWorkspaceTargetPath(workspaceRoot: string, resourceId: string): string {
@@ -26,20 +25,7 @@ function resolveWorkspaceTargetPath(workspaceRoot: string, resourceId: string): 
   return `${normalizedRoot}${separator}${normalizedResource}`;
 }
 
-function surfaceTitle(surface: InternalSurfaceType): string {
-  if (surface === "document") {
-    return "Document";
-  }
-  if (surface === "preview") {
-    return "Preview";
-  }
-  if (surface === "file") {
-    return "File";
-  }
-  return "Event";
-}
-
-export function InternalSurfacePane({ surface, resourceId, htmlContent, onReturnToChat }: InternalSurfacePaneProps) {
+export function InternalSurfacePane({ surface, resourceId, htmlContent }: InternalSurfacePaneProps) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const [preview, setPreview] = useState<FilePreviewPayload | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -178,23 +164,6 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent, onReturn
 
   return (
     <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
-      <div className="theme-header-surface flex items-center justify-between gap-3 border-b border-neon-green/15 px-5 py-4">
-        <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-[0.18em] text-neon-green/76">Internal surface</div>
-          <div className="mt-1 text-[18px] font-semibold tracking-[-0.02em] text-text-main">{surfaceTitle(surface)}</div>
-          <div className="mt-1 text-[12px] text-text-muted/78">{resourceId || "No resource target"}</div>
-        </div>
-
-        <button
-          type="button"
-          onClick={onReturnToChat}
-          className="inline-flex h-10 items-center gap-2 rounded-[16px] border border-panel-border/45 px-3 text-[12px] text-text-muted transition hover:border-neon-green/35 hover:text-text-main"
-        >
-          <ArrowLeft size={14} />
-          <span>Back to Agent</span>
-        </button>
-      </div>
-
       <div className="min-h-0 flex-1 overflow-auto p-5">{body}</div>
     </section>
   );

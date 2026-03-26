@@ -651,6 +651,27 @@ function appBuildPayload(record: AppBuildRecord): Record<string, unknown> {
   };
 }
 
+function fallbackAppBuildStatus(entry: Record<string, unknown>): string {
+  const lifecycle = isRecord(entry.lifecycle) ? entry.lifecycle : null;
+  return typeof lifecycle?.setup === "string" && lifecycle.setup.trim().length > 0 ? "pending" : "stopped";
+}
+
+function resolvedAppBuildStatus(params: {
+  store: RuntimeStateStore;
+  workspaceId: string;
+  appId: string;
+  entry?: Record<string, unknown> | null;
+}): string {
+  const build = params.store.getAppBuild({
+    workspaceId: params.workspaceId,
+    appId: params.appId
+  });
+  if (build?.status) {
+    return build.status;
+  }
+  return params.entry ? fallbackAppBuildStatus(params.entry) : "unknown";
+}
+
 async function runAppSetup(params: {
   store: RuntimeStateStore;
   workspaceDir: string;
@@ -1507,13 +1528,19 @@ print(files_written)
       return sendError(reply, statusCode, error instanceof Error ? error.message : "invalid app metadata");
     }
     try {
-      return await appLifecycleExecutor.startApp({
+      const result = await appLifecycleExecutor.startApp({
         appId,
         appDir: resolvedApp.appDir,
         httpPort: resolvedApp.ports.http,
         mcpPort: resolvedApp.ports.mcp,
         resolvedApp: resolvedApp.resolvedApp
       });
+      store.upsertAppBuild({
+        workspaceId,
+        appId,
+        status: result.status === "started" ? "running" : result.status
+      });
+      return result;
     } catch (error) {
       if (error instanceof AppLifecycleExecutorError) {
         return sendError(reply, error.statusCode, error.message);
@@ -1550,11 +1577,17 @@ print(files_written)
       return sendError(reply, statusCode, error instanceof Error ? error.message : "invalid app metadata");
     }
     try {
-      return await appLifecycleExecutor.stopApp({
+      const result = await appLifecycleExecutor.stopApp({
         appId,
         appDir: resolvedApp.appDir,
         resolvedApp: resolvedApp.resolvedApp
       });
+      store.upsertAppBuild({
+        workspaceId,
+        appId,
+        status: "stopped"
+      });
+      return result;
     } catch (error) {
       if (error instanceof AppLifecycleExecutorError) {
         return sendError(reply, error.statusCode, error.message);
@@ -1573,11 +1606,13 @@ print(files_written)
     } catch (error) {
       return sendError(reply, 400, error instanceof Error ? error.message : "invalid app_id");
     }
-    const record = store.getAppBuild({
-      workspaceId,
-      appId
-    });
-    return record ? appBuildPayload(record) : { status: "unknown" };
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+    const entry = listWorkspaceApplications(store.workspaceDir(workspaceId)).find((candidate) => candidate.app_id === appId) ?? null;
+    const record = store.getAppBuild({ workspaceId, appId });
+    return record ? appBuildPayload(record) : { status: entry ? fallbackAppBuildStatus(entry) : "unknown" };
   });
 
   app.get("/api/v1/apps", async (request, reply) => {
@@ -1589,17 +1624,11 @@ print(files_written)
     }
     const apps = listWorkspaceApplications(store.workspaceDir(workspaceId)).map((entry) => {
       const appId = typeof entry.app_id === "string" ? entry.app_id : "";
-      const build = appId
-        ? store.getAppBuild({
-            workspaceId,
-            appId
-          })
-        : null;
       return {
         app_id: appId,
         config_path: typeof entry.config_path === "string" ? entry.config_path : "",
         lifecycle: isRecord(entry.lifecycle) ? entry.lifecycle : null,
-        build_status: build?.status ?? "unknown"
+        build_status: appId ? resolvedAppBuildStatus({ store, workspaceId, appId, entry }) : "unknown"
       };
     });
     return {
@@ -1688,6 +1717,12 @@ print(files_written)
         detail: `Files written, ${queued.detail.toLowerCase()}`
       };
     }
+
+    store.upsertAppBuild({
+      workspaceId,
+      appId,
+      status: "stopped"
+    });
 
     return {
       app_id: appId,

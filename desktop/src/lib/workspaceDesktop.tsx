@@ -30,6 +30,7 @@ interface WorkspaceDesktopContextValue {
   selectedWorkspace: WorkspaceRecordPayload | null;
   installedApps: WorkspaceInstalledAppDefinition[];
   isLoadingInstalledApps: boolean;
+  refreshInstalledApps: () => Promise<void>;
   templateSourceMode: TemplateSourceMode;
   setTemplateSourceMode: (value: TemplateSourceMode) => void;
   selectedTemplateFolder: TemplateFolderSelectionPayload | null;
@@ -157,6 +158,25 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   function selectMarketplaceTemplate(templateName: string) {
     setWorkspaceErrorMessage("");
     setSelectedMarketplaceTemplateName(templateName);
+  }
+
+  async function refreshInstalledApps() {
+    if (!selectedWorkspaceId) {
+      setInstalledApps([]);
+      setIsLoadingInstalledApps(false);
+      return;
+    }
+
+    setIsLoadingInstalledApps(true);
+    try {
+      const response = await window.electronAPI.workspace.listInstalledApps(selectedWorkspaceId);
+      setInstalledApps(hydrateInstalledWorkspaceApps(response.apps));
+    } catch (error) {
+      setInstalledApps([]);
+      setWorkspaceErrorMessage((current) => current || normalizeErrorMessage(error));
+    } finally {
+      setIsLoadingInstalledApps(false);
+    }
   }
 
   useEffect(() => {
@@ -459,6 +479,29 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   }, [selectedWorkspace?.status, selectedWorkspace?.updated_at, selectedWorkspaceId]);
 
   useEffect(() => {
+    if (!selectedWorkspaceId) {
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void window.electronAPI.workspace
+        .listInstalledApps(selectedWorkspaceId)
+        .then((response) => {
+          if (!cancelled) {
+            setInstalledApps(hydrateInstalledWorkspaceApps(response.apps));
+          }
+        })
+        .catch(() => undefined);
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [selectedWorkspaceId]);
+
+  useEffect(() => {
     if (!selectedWorkspaceId || !onboardingModeActive) {
       return;
     }
@@ -610,6 +653,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       selectedWorkspace,
       installedApps,
       isLoadingInstalledApps,
+      refreshInstalledApps,
       templateSourceMode,
       setTemplateSourceMode,
       selectedTemplateFolder,
@@ -644,6 +688,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       selectedWorkspace,
       installedApps,
       isLoadingInstalledApps,
+      refreshInstalledApps,
       templateSourceMode,
       selectedTemplateFolder,
       marketplaceTemplates,

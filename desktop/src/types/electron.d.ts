@@ -397,6 +397,13 @@ declare global {
     count: number;
   }
 
+  interface WorkspaceAppLifecycleActionPayload {
+    app_id: string;
+    status: string;
+    detail: string;
+    ports: Record<string, number>;
+  }
+
   interface WorkspaceOutputRecordPayload {
     id: string;
     workspace_id: string;
@@ -540,6 +547,8 @@ declare global {
       pickTemplateFolder: () => Promise<TemplateFolderSelectionPayload>;
       listWorkspaces: () => Promise<WorkspaceListResponsePayload>;
       listInstalledApps: (workspaceId: string) => Promise<InstalledWorkspaceAppListResponsePayload>;
+      startInstalledApp: (workspaceId: string, appId: string) => Promise<WorkspaceAppLifecycleActionPayload>;
+      stopInstalledApp: (workspaceId: string, appId: string) => Promise<WorkspaceAppLifecycleActionPayload>;
       listOutputs: (workspaceId: string) => Promise<WorkspaceOutputListResponsePayload>;
       getWorkspaceRoot: (workspaceId: string) => Promise<string>;
       createWorkspace: (payload: HolabossCreateWorkspacePayload) => Promise<WorkspaceResponsePayload>;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowRight, FolderOpen, Loader2, LockKeyhole, PanelRightOpen, Sparkles } from "lucide-react";
+import { ArrowRight, Bell, ChevronRight, Clock3, FolderOpen, Loader2, LockKeyhole, PanelRightClose, PanelRightOpen, Sparkles } from "lucide-react";
 import { LeftNavigationRail, type LeftRailItem } from "@/components/layout/LeftNavigationRail";
 import {
   OperationsDrawer,
@@ -22,6 +22,7 @@ import { useWorkspaceSelection, WorkspaceSelectionProvider } from "@/lib/workspa
 
 const THEME_STORAGE_KEY = "holaboss-theme-v1";
 const WORKBENCH_TAB_STORAGE_KEY = "holaboss-workbench-tab-v1";
+const LEFT_RAIL_OPEN_STORAGE_KEY = "holaboss-left-rail-open-v1";
 const OPERATIONS_DRAWER_OPEN_STORAGE_KEY = "holaboss-operations-drawer-open-v1";
 const OPERATIONS_DRAWER_TAB_STORAGE_KEY = "holaboss-operations-drawer-tab-v1";
 const THEMES = ["emerald", "cobalt", "ember", "glacier", "mono", "claude", "slate", "paper", "graphite"] as const;
@@ -54,6 +55,19 @@ function loadWorkbenchTab(): WorkbenchTab {
 function loadOperationsDrawerOpen(): boolean {
   try {
     const raw = localStorage.getItem(OPERATIONS_DRAWER_OPEN_STORAGE_KEY);
+    if (raw === "0") {
+      return false;
+    }
+  } catch {
+    // ignore
+  }
+
+  return true;
+}
+
+function loadLeftRailOpen(): boolean {
+  try {
+    const raw = localStorage.getItem(LEFT_RAIL_OPEN_STORAGE_KEY);
     if (raw === "0") {
       return false;
     }
@@ -563,6 +577,7 @@ function AppShellContent() {
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [activeWorkbenchTab, setActiveWorkbenchTab] = useState<WorkbenchTab>(loadWorkbenchTab);
   const [lastManualWorkbenchTab, setLastManualWorkbenchTab] = useState<WorkbenchTab>(loadWorkbenchTab);
+  const [leftRailOpen, setLeftRailOpen] = useState(loadLeftRailOpen);
   const [activeLeftRailItem, setActiveLeftRailItem] = useState<LeftRailItem>("agent");
   const [agentView, setAgentView] = useState<AgentView>({ type: "chat" });
   const [operationsDrawerOpen, setOperationsDrawerOpen] = useState(loadOperationsDrawerOpen);
@@ -709,6 +724,10 @@ function AppShellContent() {
   useEffect(() => {
     localStorage.setItem(WORKBENCH_TAB_STORAGE_KEY, lastManualWorkbenchTab);
   }, [lastManualWorkbenchTab]);
+
+  useEffect(() => {
+    localStorage.setItem(LEFT_RAIL_OPEN_STORAGE_KEY, leftRailOpen ? "1" : "0");
+  }, [leftRailOpen]);
 
   useEffect(() => {
     localStorage.setItem(OPERATIONS_DRAWER_OPEN_STORAGE_KEY, operationsDrawerOpen ? "1" : "0");
@@ -975,6 +994,11 @@ function AppShellContent() {
     setOperationsDrawerOpen((open) => !open);
   };
 
+  const openOperationsDrawerTab = (tab: OperationsDrawerTab) => {
+    setActiveOperationsTab(tab);
+    setOperationsDrawerOpen(true);
+  };
+
   const handleLeftRailSelect = (item: LeftRailItem) => {
     setActiveLeftRailItem(item);
     if (item === "agent") {
@@ -1049,7 +1073,6 @@ function AppShellContent() {
           app={activeAppId === agentView.appId ? activeApp : getWorkspaceAppDefinition(agentView.appId, installedApps)}
           resourceId={agentView.resourceId}
           view={agentView.view}
-          onReturnToChat={openAgentChat}
         />
       );
     }
@@ -1059,7 +1082,6 @@ function AppShellContent() {
         surface={agentView.surface}
         resourceId={agentView.resourceId}
         htmlContent={agentView.htmlContent}
-        onReturnToChat={openAgentChat}
       />
     );
   }, [activeApp, activeAppId, agentView, hasSelectedWorkspace, installedApps, refreshRuntimeOutputs]);
@@ -1084,10 +1106,8 @@ function AppShellContent() {
               hasWorkspaces={hasWorkspaces}
               onOpenBrowserWorkbench={() => openWorkbench("browser")}
               onOpenFilesWorkbench={() => openWorkbench("files")}
-              onToggleOperationsDrawer={toggleOperationsDrawer}
               activeWorkbenchTab={activeWorkbenchTab}
               workbenchOpen={workbenchOpen}
-              operationsDrawerOpen={operationsDrawerOpen}
               onUserMenuToggle={(anchorBounds) => {
                 void window.electronAPI.auth.togglePopup(anchorBounds);
               }}
@@ -1100,9 +1120,13 @@ function AppShellContent() {
         ) : (
           <div
             className={`relative grid min-h-0 gap-3 overflow-hidden ${
-              agentMode && operationsDrawerOpen
-                ? "lg:grid-cols-[220px_minmax(0,1fr)_380px]"
-                : "lg:grid-cols-[220px_minmax(0,1fr)]"
+              operationsDrawerOpen
+                ? leftRailOpen
+                  ? "lg:grid-cols-[220px_minmax(0,1fr)_380px]"
+                  : "lg:grid-cols-[72px_minmax(0,1fr)_380px]"
+                : leftRailOpen
+                  ? "lg:grid-cols-[220px_minmax(0,1fr)]"
+                  : "lg:grid-cols-[72px_minmax(0,1fr)]"
             }`}
           >
             <LeftNavigationRail
@@ -1112,10 +1136,18 @@ function AppShellContent() {
               installedApps={installedApps}
               isLoadingApps={isLoadingInstalledApps}
               onSelectApp={handleSelectWorkspaceApp}
+              collapsed={!leftRailOpen}
+              onToggleCollapsed={() => setLeftRailOpen((open) => !open)}
             />
 
-            <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] gap-3 overflow-hidden">
-              <div className="min-h-0 overflow-hidden">
+            <div
+              className={
+                agentMode && workbenchOpen
+                  ? "grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] gap-3 overflow-hidden"
+                  : "h-full min-h-0 overflow-hidden"
+              }
+            >
+              <div className={agentMode && workbenchOpen ? "min-h-0 overflow-hidden" : "h-full min-h-0 overflow-hidden"}>
                 {activeLeftRailItem === "agent" ? (
                   agentContent
                 ) : activeLeftRailItem === "automations" ? (
@@ -1136,23 +1168,61 @@ function AppShellContent() {
               ) : null}
             </div>
 
-            {agentMode && !operationsDrawerOpen ? (
-              <button
-                type="button"
-                onClick={() => setOperationsDrawerOpen(true)}
-                className="absolute right-0 top-1/2 z-20 hidden -translate-y-1/2 items-center gap-2 rounded-l-[18px] border border-panel-border/50 bg-panel-bg/92 px-3 py-3 text-[11px] text-text-muted shadow-card backdrop-blur transition hover:border-neon-green/45 hover:text-neon-green lg:inline-flex"
-              >
-                <PanelRightOpen size={14} />
-                <span>Open panel</span>
-              </button>
-            ) : null}
+            <div className="pointer-events-none absolute right-0 top-0 z-20 hidden lg:block">
+              <div className="pointer-events-auto inline-flex items-center gap-1 rounded-bl-[16px] rounded-tr-[var(--theme-radius-card)] border border-panel-border/50 border-r-0 border-t-0 bg-panel-bg/94 px-2 py-2 text-text-muted shadow-card backdrop-blur">
+                {operationsDrawerOpen ? (
+                  <button
+                    type="button"
+                    onClick={() => toggleOperationsDrawer()}
+                    aria-label="Hide right panel"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-neon-green/45 bg-neon-green/10 text-neon-green transition hover:border-neon-green/60 hover:bg-neon-green/14"
+                  >
+                    <PanelRightClose size={14} />
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => openOperationsDrawerTab("inbox")}
+                      aria-label="Open inbox panel"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-panel-border/45 text-text-muted transition hover:border-neon-green/45 hover:text-neon-green"
+                    >
+                      <Bell size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openOperationsDrawerTab("running")}
+                      aria-label="Open running panel"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-panel-border/45 text-text-muted transition hover:border-neon-green/45 hover:text-neon-green"
+                    >
+                      <Clock3 size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openOperationsDrawerTab("outputs")}
+                      aria-label="Open outputs panel"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-panel-border/45 text-text-muted transition hover:border-neon-green/45 hover:text-neon-green"
+                    >
+                      <ChevronRight size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleOperationsDrawer()}
+                      aria-label="Show right panel"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-panel-border/45 text-text-muted transition hover:border-neon-green/45 hover:text-neon-green"
+                    >
+                      <PanelRightOpen size={14} />
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
 
-            {agentMode && operationsDrawerOpen ? (
+            {operationsDrawerOpen ? (
               <div className="min-h-0 overflow-hidden">
                 <OperationsDrawer
                   activeTab={activeOperationsTab}
                   onTabChange={setActiveOperationsTab}
-                  onClose={() => setOperationsDrawerOpen(false)}
                   proposals={taskProposals}
                   isLoadingProposals={isLoadingTaskProposals}
                   isTriggeringProposal={isTriggeringTaskProposal}

@@ -1197,6 +1197,13 @@ interface InstalledWorkspaceAppListResponsePayload {
   count: number;
 }
 
+interface WorkspaceAppLifecycleActionPayload {
+  app_id: string;
+  status: string;
+  detail: string;
+  ports: Record<string, number>;
+}
+
 interface WorkspaceOutputRecordPayload {
   id: string;
   workspace_id: string;
@@ -3398,7 +3405,8 @@ function runtimeErrorFromBody(statusCode: number, statusMessage: string | undefi
 async function requestRuntimeJsonViaHttp<T>(
   targetUrl: URL,
   method: "GET" | "POST" | "PATCH" | "DELETE",
-  payload?: unknown
+  payload?: unknown,
+  timeoutMs = 15000
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const request = httpRequest(
@@ -3410,7 +3418,7 @@ async function requestRuntimeJsonViaHttp<T>(
         headers: {
           "Content-Type": "application/json"
         },
-        timeout: 15000
+        timeout: timeoutMs
       },
       (response) => {
         const chunks: Buffer[] = [];
@@ -3455,12 +3463,14 @@ async function requestRuntimeJson<T>({
   method,
   path: requestPath,
   payload,
-  params
+  params,
+  timeoutMs
 }: {
   method: "GET" | "POST" | "PATCH" | "DELETE";
   path: string;
   payload?: unknown;
   params?: Record<string, string | number | boolean | null | undefined>;
+  timeoutMs?: number;
 }): Promise<T> {
   const attempts = method === "GET" ? 3 : 1;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -3475,7 +3485,7 @@ async function requestRuntimeJson<T>({
           url.searchParams.set(key, String(value));
         }
       }
-      return requestRuntimeJsonViaHttp<T>(url, method, payload);
+      return requestRuntimeJsonViaHttp<T>(url, method, payload, timeoutMs);
     } catch (error) {
       if (attempt < attempts && isTransientRuntimeError(error)) {
         await sleep(250 * attempt);
@@ -3705,6 +3715,28 @@ async function listInstalledApps(workspaceId: string): Promise<InstalledWorkspac
     params: {
       workspace_id: workspaceId
     }
+  });
+}
+
+async function startInstalledApp(workspaceId: string, appId: string): Promise<WorkspaceAppLifecycleActionPayload> {
+  return requestRuntimeJson<WorkspaceAppLifecycleActionPayload>({
+    method: "POST",
+    path: `/api/v1/apps/${encodeURIComponent(appId)}/start`,
+    payload: {
+      workspace_id: workspaceId
+    },
+    timeoutMs: 75000
+  });
+}
+
+async function stopInstalledApp(workspaceId: string, appId: string): Promise<WorkspaceAppLifecycleActionPayload> {
+  return requestRuntimeJson<WorkspaceAppLifecycleActionPayload>({
+    method: "POST",
+    path: `/api/v1/apps/${encodeURIComponent(appId)}/stop`,
+    payload: {
+      workspace_id: workspaceId
+    },
+    timeoutMs: 30000
   });
 }
 
@@ -7442,6 +7474,12 @@ app.whenReady().then(async () => {
   ipcMain.handle("workspace:pickTemplateFolder", async () => pickTemplateFolder());
   ipcMain.handle("workspace:listWorkspaces", async () => listWorkspaces());
   ipcMain.handle("workspace:listInstalledApps", async (_event, workspaceId: string) => listInstalledApps(workspaceId));
+  ipcMain.handle("workspace:startInstalledApp", async (_event, workspaceId: string, appId: string) =>
+    startInstalledApp(workspaceId, appId)
+  );
+  ipcMain.handle("workspace:stopInstalledApp", async (_event, workspaceId: string, appId: string) =>
+    stopInstalledApp(workspaceId, appId)
+  );
   ipcMain.handle("workspace:listOutputs", async (_event, workspaceId: string) => listOutputs(workspaceId));
   ipcMain.handle("workspace:getWorkspaceRoot", async (_event, workspaceId: string) => workspaceDirectoryPath(workspaceId));
   ipcMain.handle("workspace:createWorkspace", async (_event, payload: HolabossCreateWorkspacePayload) => createWorkspace(payload));

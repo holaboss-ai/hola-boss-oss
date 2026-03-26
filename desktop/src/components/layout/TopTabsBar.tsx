@@ -1,5 +1,5 @@
 import { FormEvent, useMemo, useRef, useState } from "react";
-import { Search, User2, Palette, Loader2, Plus, RefreshCcw, ChevronDown, FolderKanban, FolderOpen, Globe, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { Search, User2, Palette, Loader2, Plus, RefreshCcw, ChevronDown, FolderKanban, FolderOpen, Globe } from "lucide-react";
 import type { AppTheme } from "@/components/layout/AppShell";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
@@ -12,10 +12,8 @@ interface TopTabsBarProps {
   onUserMenuToggle?: (anchorBounds: BrowserAnchorBoundsPayload) => void;
   onOpenBrowserWorkbench?: () => void;
   onOpenFilesWorkbench?: () => void;
-  onToggleOperationsDrawer?: () => void;
   activeWorkbenchTab?: "browser" | "files" | null;
   workbenchOpen?: boolean;
-  operationsDrawerOpen?: boolean;
 }
 
 const THEME_OPTIONS: Array<{ value: AppTheme; label: string }> = [
@@ -38,10 +36,8 @@ export function TopTabsBar({
   onUserMenuToggle,
   onOpenBrowserWorkbench,
   onOpenFilesWorkbench,
-  onToggleOperationsDrawer,
   activeWorkbenchTab,
-  workbenchOpen,
-  operationsDrawerOpen
+  workbenchOpen
 }: TopTabsBarProps) {
   const userButtonRef = useRef<HTMLButtonElement | null>(null);
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = useState(false);
@@ -66,8 +62,6 @@ export function TopTabsBar({
     canUseMarketplaceTemplates,
     marketplaceTemplatesError,
     workspaceErrorMessage,
-    onboardingModeActive,
-    sessionModeLabel,
     refreshWorkspaceData,
     chooseTemplateFolder,
     createWorkspace
@@ -351,25 +345,6 @@ export function TopTabsBar({
               </form>
             ) : null}
 
-            {selectedWorkspace ? (
-              <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-text-dim">
-                <span className="rounded-full border border-panel-border/45 px-2 py-1">{selectedWorkspace.name}</span>
-                <span className="rounded-full border border-panel-border/45 px-2 py-1">status {selectedWorkspace.status}</span>
-                <span className="rounded-full border border-panel-border/45 px-2 py-1">
-                  onboarding {selectedWorkspace.onboarding_status}
-                </span>
-                <span
-                  className={`rounded-full border px-2 py-1 ${
-                    onboardingModeActive
-                      ? "border-[rgba(255,196,120,0.42)] bg-[rgba(255,196,120,0.1)] text-[rgba(255,220,171,0.95)]"
-                      : "border-panel-border/45"
-                  }`}
-                >
-                  mode {sessionModeLabel}
-                </span>
-              </div>
-            ) : null}
-
             {workspaceErrorMessage ? (
               <div className="mt-2 rounded-[14px] border border-[rgba(255,153,102,0.24)] bg-[rgba(255,153,102,0.08)] px-3 py-2 text-[11px] text-[rgba(255,212,189,0.92)]">
                 {workspaceErrorMessage}
@@ -393,20 +368,6 @@ export function TopTabsBar({
               ))}
             </select>
           </label>
-          {agentMode && hasWorkspaces ? (
-            <button
-              type="button"
-              onClick={onToggleOperationsDrawer}
-              className={`inline-flex h-8 items-center gap-2 rounded-[var(--theme-radius-pill)] border px-3 text-[11px] transition ${
-                operationsDrawerOpen
-                  ? "border-neon-green/45 bg-neon-green/10 text-neon-green"
-                  : "border-panel-border text-text-muted/85 hover:border-neon-green/50 hover:text-neon-green"
-              }`}
-            >
-              {operationsDrawerOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
-              <span className="hidden sm:inline">{operationsDrawerOpen ? "Hide panel" : "Show panel"}</span>
-            </button>
-          ) : null}
         </div>
       </div>
     </header>

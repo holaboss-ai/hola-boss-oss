@@ -31,7 +31,6 @@ export interface OperationsOutputEntry {
 interface OperationsDrawerProps {
   activeTab: OperationsDrawerTab;
   onTabChange: (tab: OperationsDrawerTab) => void;
-  onClose: () => void;
   proposals: TaskProposalRecordPayload[];
   isLoadingProposals: boolean;
   isTriggeringProposal: boolean;
@@ -55,7 +54,6 @@ interface OperationsDrawerProps {
 export function OperationsDrawer({
   activeTab,
   onTabChange,
-  onClose,
   proposals,
   isLoadingProposals,
   isTriggeringProposal,
@@ -97,15 +95,6 @@ export function OperationsDrawer({
             onClick={() => onTabChange("outputs")}
           />
         </div>
-
-        <button
-          type="button"
-          aria-label="Close operations drawer"
-          onClick={onClose}
-          className="grid h-9 w-9 place-items-center rounded-[var(--theme-radius-pill)] border border-panel-border/45 text-text-muted/78 transition hover:border-neon-green/45 hover:text-neon-green"
-        >
-          <X size={15} />
-        </button>
       </header>
 
       <div className="min-h-0 flex-1 overflow-hidden">
