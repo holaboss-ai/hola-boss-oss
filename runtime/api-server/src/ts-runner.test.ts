@@ -7,6 +7,7 @@ import { afterEach, test } from "node:test";
 import { decodeTsRunnerRequest, validateTsRunnerRequest } from "./ts-runner-contracts.js";
 import type { TsRunnerEvent, TsRunnerRequest } from "./ts-runner-contracts.js";
 import {
+  executeTsRunnerRequest,
   relayTsRunnerEvent,
   resolveTsRunnerBootstrapState,
   runTsRunnerCli,
@@ -268,13 +269,23 @@ test("runTsRunnerCli relays harness-host events after run_claimed", async () => 
   assert.equal(stderr, "");
 
   const lines = stdout.trim().split("\n").map((line) => JSON.parse(line));
-  assert.equal(lines.length, 3);
+  assert.equal(lines.length, 6);
   assert.equal(lines[0].event_type, "run_claimed");
   assert.equal(lines[0].payload.instruction_preview, "hello world");
-  assert.equal(lines[1].event_type, "run_started");
-  assert.equal(lines[1].payload.phase, "running");
-  assert.equal(lines[2].event_type, "run_completed");
-  assert.equal(lines[2].payload.status, "success");
+  assert.deepEqual(
+    lines.slice(1, 4).map((event) => [event.event_type, event.payload.phase]),
+    [
+      ["thinking_delta", "plan_compiled"],
+      ["thinking_delta", "runtime_config_ready"],
+      ["thinking_delta", "opencode_sidecar_ready"]
+    ]
+  );
+  assert.equal(lines[4].event_type, "run_started");
+  assert.equal(lines[4].sequence, 5);
+  assert.equal(lines[4].payload.phase, "running");
+  assert.equal(lines[5].event_type, "run_completed");
+  assert.equal(lines[5].sequence, 6);
+  assert.equal(lines[5].payload.status, "success");
   assert.deepEqual(
     JSON.parse(
       fs.readFileSync(path.join(sandboxRoot, "workspace", "workspace-1", ".holaboss", "harness-session-state.json"), "utf8")
@@ -347,9 +358,17 @@ test("runTsRunnerCli pushes emitted events with retry semantics", async () => {
   assert.equal(exitCode, 0);
   assert.deepEqual(
     attempts.map((attempt) => `${attempt.eventType}:${attempt.sequence}`),
-    ["run_claimed:1", "run_claimed:1", "run_started:1", "run_completed:2"]
+    [
+      "run_claimed:1",
+      "run_claimed:1",
+      "thinking_delta:2",
+      "thinking_delta:3",
+      "thinking_delta:4",
+      "run_started:5",
+      "run_completed:6"
+    ]
   );
-  assert.equal(stdout.trim().split("\n").length, 3);
+  assert.equal(stdout.trim().split("\n").length, 6);
 });
 
 test("runTsRunnerCli synthesizes run_failed when harness-host ends without a terminal event", async () => {
@@ -390,12 +409,54 @@ test("runTsRunnerCli synthesizes run_failed when harness-host ends without a ter
 
   assert.equal(exitCode, 0);
   const lines = stdout.trim().split("\n").map((line) => JSON.parse(line));
-  assert.equal(lines.length, 3);
-  assert.equal(lines[2].event_type, "run_failed");
-  assert.deepEqual(lines[2].payload, {
+  assert.equal(lines.length, 6);
+  assert.equal(lines[5].event_type, "run_failed");
+  assert.deepEqual(lines[5].payload, {
     type: "RuntimeError",
     message: "TypeScript OpenCode harness host ended before terminal event"
   });
+});
+
+test("executeTsRunnerRequest offsets harness event sequences after bootstrap status events", async () => {
+  const emitted: TsRunnerEvent[] = [];
+
+  await executeTsRunnerRequest(baseRequest(), {
+    deps: testDeps({
+      harnessEvents: [
+        {
+          session_id: "session-1",
+          input_id: "input-1",
+          sequence: 1,
+          event_type: "run_started",
+          timestamp: new Date().toISOString(),
+          payload: { phase: "running" }
+        },
+        {
+          session_id: "session-1",
+          input_id: "input-1",
+          sequence: 2,
+          event_type: "run_completed",
+          timestamp: new Date().toISOString(),
+          payload: { status: "success" }
+        }
+      ]
+    }),
+    emitEvent: async (event) => {
+      emitted.push(event);
+    }
+  });
+
+  assert.deepEqual(
+    emitted.map((event) => [event.event_type, event.sequence, event.payload.phase ?? null]),
+    [
+      ["run_claimed", 1, null],
+      ["thinking_delta", 2, "plan_compiled"],
+      ["thinking_delta", 3, "runtime_config_ready"],
+      ["thinking_delta", 4, "opencode_sidecar_ready"],
+      ["run_started", 5, "running"],
+      ["run_completed", 6, null]
+    ]
+  );
 });
 
 test("runTsRunnerCli appends bootstrapped app MCP servers into the harness-host request", async () => {

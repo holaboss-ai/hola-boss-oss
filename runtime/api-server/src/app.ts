@@ -74,6 +74,7 @@ import { startOpencodeApplications } from "./opencode-bootstrap-shared.js";
 import { buildAppSetupEnv } from "./app-setup-env.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 50;
+const DEFAULT_SSE_HEARTBEAT_INTERVAL_MS = 1000;
 const DEFAULT_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
 const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
 export interface BuildRuntimeApiServerOptions {
@@ -2482,6 +2483,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const stream = Readable.from(
       (async function* () {
         let lastEventId = includeHistory ? 0 : store.latestOutputEventId({ sessionId: params.sessionId, inputId });
+        let lastHeartbeatAt = Date.now();
         yield sseComment("connected");
 
         while (true) {
@@ -2500,9 +2502,15 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
                 return;
               }
             }
+            lastHeartbeatAt = Date.now();
             continue;
           }
 
+          const now = Date.now();
+          if (now - lastHeartbeatAt >= DEFAULT_SSE_HEARTBEAT_INTERVAL_MS) {
+            yield sseComment("ping");
+            lastHeartbeatAt = now;
+          }
           await sleep(DEFAULT_POLL_INTERVAL_MS);
         }
       })()

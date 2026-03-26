@@ -57,6 +57,15 @@ import { startWorkspaceMcpSidecar, type WorkspaceMcpSidecarCliRequest } from "./
 import type { CompiledWorkspaceRuntimePlan } from "./workspace-runtime-plan.js";
 
 type LoggerLike = Pick<typeof console, "warn">;
+type TsRunnerBootstrapPhase =
+  | "plan_compiled"
+  | "workspace_mcp_starting"
+  | "workspace_mcp_ready"
+  | "applications_starting"
+  | "applications_ready"
+  | "runtime_config_ready"
+  | "opencode_sidecar_starting"
+  | "opencode_sidecar_ready";
 
 const TERMINAL_EVENT_TYPES = new Set<TsRunnerEvent["event_type"]>(["run_completed", "run_failed"]);
 const HARNESS_HOST_NOT_IMPLEMENTED_EXIT_CODE = 86;
@@ -155,6 +164,28 @@ function firstNonEmptyString(...values: unknown[]): string | null {
 
 function jsonObject(value: Record<string, unknown>): JsonObject {
   return JSON.parse(JSON.stringify(value)) as JsonObject;
+}
+
+function buildTsRunnerBootstrapStatusEvent(params: {
+  request: TsRunnerRequest;
+  sequence: number;
+  phase: TsRunnerBootstrapPhase;
+  delta: string;
+  metadata?: Record<string, unknown>;
+}): TsRunnerEvent {
+  return buildTsRunnerEvent({
+    sessionId: params.request.session_id,
+    inputId: params.request.input_id,
+    sequence: params.sequence,
+    eventType: "thinking_delta",
+    payload: {
+      source: "ts_runner_bootstrap",
+      delta_kind: "status",
+      phase: params.phase,
+      delta: params.delta,
+      ...(params.metadata ?? {})
+    }
+  });
 }
 
 function runtimeExecContextString(request: TsRunnerRequest, key: string): string | null {
@@ -717,21 +748,45 @@ export async function executeTsRunnerRequest(
   const logger = options.logger ?? console;
   const deps = { ...defaultExecutionDeps(), ...options.deps };
   const bootstrap = resolveTsRunnerBootstrapState(request, { logger });
+  let emittedSequence = 0;
 
-  await relayTsRunnerEvent({
-    emitEvent: options.emitEvent,
-    workspaceDir: bootstrap.workspaceDir,
-    logger,
-    event: buildTsRunnerEvent({
+  async function emitBootstrapEvent(event: TsRunnerEvent): Promise<void> {
+    emittedSequence = Math.max(emittedSequence, event.sequence);
+    await relayTsRunnerEvent({
+      emitEvent: options.emitEvent,
+      workspaceDir: bootstrap.workspaceDir,
+      logger,
+      event
+    });
+  }
+
+  async function emitBootstrapStatus(
+    phase: TsRunnerBootstrapPhase,
+    delta: string,
+    metadata?: Record<string, unknown>
+  ): Promise<void> {
+    await emitBootstrapEvent(
+      buildTsRunnerBootstrapStatusEvent({
+        request,
+        sequence: emittedSequence + 1,
+        phase,
+        delta,
+        metadata
+      })
+    );
+  }
+
+  await emitBootstrapEvent(
+    buildTsRunnerEvent({
       sessionId: request.session_id,
       inputId: request.input_id,
-      sequence: 1,
+      sequence: emittedSequence + 1,
       eventType: "run_claimed",
       payload: {
         instruction_preview: request.instruction.slice(0, 120)
       }
     })
-  });
+  );
 
   try {
     const stagedSkills = deps.stageSkills({
@@ -746,6 +801,11 @@ export async function executeTsRunnerRequest(
       workspaceId: request.workspace_id,
       workspaceDir: bootstrap.workspaceDir
     });
+    await emitBootstrapStatus("plan_compiled", "Compiled workspace runtime plan.", {
+      workspace_mcp_server_count: compiledPlan.workspace_mcp_catalog.length,
+      application_count: compiledPlan.resolved_applications.length,
+      resolved_mcp_server_count: compiledPlan.resolved_mcp_servers.length
+    });
     const serverIdMap = mcpServerIdMap({
       workspaceId: request.workspace_id,
       sandboxId: workspaceMcpSandboxId(),
@@ -755,6 +815,9 @@ export async function executeTsRunnerRequest(
 
     let sidecar: RunningWorkspaceMcpSidecar | null = null;
     if (compiledPlan.workspace_mcp_catalog.length > 0) {
+      await emitBootstrapStatus("workspace_mcp_starting", "Starting workspace MCP sidecar...", {
+        workspace_mcp_server_count: compiledPlan.workspace_mcp_catalog.length
+      });
       let timeoutMs = 10000;
       for (const server of compiledPlan.resolved_mcp_servers) {
         if (server.server_id === "workspace") {
@@ -770,6 +833,10 @@ export async function executeTsRunnerRequest(
         readiness_timeout_s: WORKSPACE_MCP_READY_TIMEOUT_S,
         catalog_json_base64: encodeWorkspaceMcpCatalog(compiledPlan)
       });
+      await emitBootstrapStatus("workspace_mcp_ready", "Workspace MCP sidecar ready.", {
+        workspace_mcp_server_count: compiledPlan.workspace_mcp_catalog.length,
+        reused: sidecar?.reused ?? false
+      });
     }
 
     let effectiveMcpServers = effectiveMcpServerPayloads({
@@ -779,12 +846,24 @@ export async function executeTsRunnerRequest(
     });
 
     if (compiledPlan.resolved_applications.length > 0) {
+      await emitBootstrapStatus(
+        "applications_starting",
+        `Starting ${compiledPlan.resolved_applications.length} workspace application${
+          compiledPlan.resolved_applications.length === 1 ? "" : "s"
+        }...`,
+        { application_count: compiledPlan.resolved_applications.length }
+      );
       effectiveMcpServers = effectiveMcpServers.concat(
         await deps.bootstrapApplications({
           request,
           workspaceDir: bootstrap.workspaceDir,
           resolvedApplications: compiledPlan.resolved_applications
         })
+      );
+      await emitBootstrapStatus(
+        "applications_ready",
+        `Workspace application bootstrap complete (${compiledPlan.resolved_applications.length}).`,
+        { application_count: compiledPlan.resolved_applications.length }
       );
     }
 
@@ -796,6 +875,10 @@ export async function executeTsRunnerRequest(
         toolServerIdMap: serverIdMap
       })
     );
+    await emitBootstrapStatus("runtime_config_ready", "Projected OpenCode runtime config.", {
+      provider_id: runtimeConfig.provider_id,
+      model_id: runtimeConfig.model_id
+    });
 
     const configUpdate = deps.updateOpencodeConfig({
       workspace_root: bootstrap.workspaceRoot,
@@ -805,6 +888,10 @@ export async function executeTsRunnerRequest(
     });
 
     if (configUpdate.provider_config_changed || stagedSkills.changed) {
+      await emitBootstrapStatus("opencode_sidecar_starting", "Restarting OpenCode sidecar...", {
+        provider_config_changed: configUpdate.provider_config_changed,
+        skills_changed: stagedSkills.changed
+      });
       await deps.restartOpencodeSidecar({
         workspace_root: bootstrap.workspaceRoot,
         workspace_id: request.workspace_id,
@@ -816,7 +903,19 @@ export async function executeTsRunnerRequest(
         ready_timeout_s: opencodeReadyTimeoutSeconds()
       });
     }
+    await emitBootstrapStatus(
+      "opencode_sidecar_ready",
+      configUpdate.provider_config_changed || stagedSkills.changed
+        ? "OpenCode sidecar ready."
+        : "Reusing existing OpenCode sidecar.",
+      {
+        provider_config_changed: configUpdate.provider_config_changed,
+        skills_changed: stagedSkills.changed,
+        restarted: configUpdate.provider_config_changed || stagedSkills.changed
+      }
+    );
 
+    const harnessSequenceOffset = emittedSequence;
     const harnessResult = await deps.runHarnessHost({
       requestPayload: buildHarnessHostRequest({
         request,
@@ -834,44 +933,39 @@ export async function executeTsRunnerRequest(
       workspaceDir: bootstrap.workspaceDir,
       logger,
       emitEvent: async (event) => {
-        await relayTsRunnerEvent({
-          emitEvent: options.emitEvent,
-          event,
-          workspaceDir: bootstrap.workspaceDir,
-          logger
+        await emitBootstrapEvent({
+          ...event,
+          sequence: event.sequence + harnessSequenceOffset
         });
       }
     });
+    const harnessLastSequence = harnessResult.sawEvent
+      ? harnessResult.lastSequence + harnessSequenceOffset
+      : harnessResult.lastSequence;
 
     if (harnessResult.terminalEmitted) {
       return;
     }
 
-    await relayTsRunnerEvent({
-      emitEvent: options.emitEvent,
-      workspaceDir: bootstrap.workspaceDir,
-      logger,
-      event: buildTsRunnerFailureEvent({
+    await emitBootstrapEvent(
+      buildTsRunnerFailureEvent({
         sessionId: request.session_id,
         inputId: request.input_id,
-        sequence: harnessResult.sawEvent ? harnessResult.lastSequence + 1 : 1,
+        sequence: harnessResult.sawEvent ? harnessLastSequence + 1 : emittedSequence + 1,
         errorType: "RuntimeError",
         message: synthesizeHarnessHostFailureMessage(harnessResult)
       })
-    });
+    );
   } catch (error) {
-    await relayTsRunnerEvent({
-      emitEvent: options.emitEvent,
-      workspaceDir: bootstrap.workspaceDir,
-      logger,
-      event: buildTsRunnerFailureEvent({
+    await emitBootstrapEvent(
+      buildTsRunnerFailureEvent({
         sessionId: request.session_id,
         inputId: request.input_id,
-        sequence: 2,
+        sequence: emittedSequence + 1,
         errorType: errorTypeFor(error),
         message: `OpenCode execution failed: ${errorMessage(error)}`
       })
-    });
+    );
   }
 }
 

@@ -4277,7 +4277,7 @@ async function openSessionOutputStream(
             headers: {
               Accept: "text/event-stream"
             },
-            timeout: 30000
+            timeout: 0
           },
           (response) => {
             const statusCode = response.statusCode ?? 0;

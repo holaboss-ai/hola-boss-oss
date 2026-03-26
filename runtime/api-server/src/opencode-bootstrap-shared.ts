@@ -203,33 +203,32 @@ export async function bootstrapResolvedApplications(params: {
       mcp: APP_MCP_PORT_BASE + index
     }
   }));
-  const applications: OpencodeBootstrapApplication[] = [];
-  for (const preparedStart of preparedStarts) {
-    const build =
-      params.store && params.workspaceId
-        ? params.store.getAppBuild({
-          workspaceId: params.workspaceId,
-          appId: preparedStart.resolvedApp.appId
-        })
-        : null;
-    const started = await params.appLifecycleExecutor.startApp({
-      appId: preparedStart.resolvedApp.appId,
-      appDir: preparedStart.appDir,
-      httpPort: preparedStart.ports.http,
-      mcpPort: preparedStart.ports.mcp,
-      holabossUserId,
-      resolvedApp: preparedStart.resolvedApp,
-      skipSetup: appBuildHasCompletedSetup(build?.status)
-    });
-    applications.push(
-      normalizeOpencodeBootstrapApplication({
+  const applications = await Promise.all(
+    preparedStarts.map(async (preparedStart) => {
+      const build =
+        params.store && params.workspaceId
+          ? params.store.getAppBuild({
+            workspaceId: params.workspaceId,
+            appId: preparedStart.resolvedApp.appId
+          })
+          : null;
+      const started = await params.appLifecycleExecutor.startApp({
+        appId: preparedStart.resolvedApp.appId,
+        appDir: preparedStart.appDir,
+        httpPort: preparedStart.ports.http,
+        mcpPort: preparedStart.ports.mcp,
+        holabossUserId,
+        resolvedApp: preparedStart.resolvedApp,
+        skipSetup: appBuildHasCompletedSetup(build?.status)
+      });
+      return normalizeOpencodeBootstrapApplication({
         requestedAppId: preparedStart.resolvedApp.appId,
         started,
         mcpPath: preparedStart.resolvedApp.mcp.path,
         timeoutMs: preparedStart.resolvedApp.healthCheck.timeoutS * 1000
-      })
-    );
-  }
+      });
+    })
+  );
   return { applications };
 }
 

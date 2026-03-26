@@ -26,6 +26,23 @@ interface StreamTelemetryEntry {
   detail: string;
 }
 
+interface TurnTimingSnapshot {
+  sendStartedAt: number | null;
+  queueAckAt: number | null;
+  runClaimedAt: number | null;
+  planCompiledAt: number | null;
+  workspaceMcpReadyAt: number | null;
+  applicationsReadyAt: number | null;
+  runtimeConfigReadyAt: number | null;
+  opencodeSidecarReadyAt: number | null;
+  runStartedAt: number | null;
+  firstThinkingDeltaAt: number | null;
+  firstOutputDeltaAt: number | null;
+  firstToolCallAt: number | null;
+  terminalAt: number | null;
+  terminalEventType: string | null;
+}
+
 const STREAM_ATTACH_PENDING = "__stream_attach_pending__";
 const STREAM_TELEMETRY_LIMIT = 240;
 
@@ -70,7 +87,213 @@ function toolActivityLabel(eventType: string, payload: Record<string, unknown>):
     return `Finished ${label}`;
   }
 
+  if (eventType === "tool_call") {
+    const phase = typeof payload.phase === "string" ? payload.phase.trim().toLowerCase() : "";
+    if (phase === "started") {
+      return `Using ${label}`;
+    }
+    if (phase === "completed") {
+      return `Finished ${label}`;
+    }
+    if (phase === "error") {
+      return `Tool error: ${label}`;
+    }
+  }
+
   return null;
+}
+
+function bootstrapStatusMeta(payload: Record<string, unknown>): { phase: string; detail: string } | null {
+  const source = typeof payload.source === "string" ? payload.source.trim() : "";
+  const deltaKind = typeof payload.delta_kind === "string" ? payload.delta_kind.trim() : "";
+  const phase = typeof payload.phase === "string" ? payload.phase.trim() : "";
+  const detail = typeof payload.delta === "string" ? payload.delta : "";
+  if (source !== "ts_runner_bootstrap" || deltaKind !== "status" || !phase || !detail) {
+    return null;
+  }
+  return { phase, detail };
+}
+
+function createTurnTimingSnapshot(sendStartedAt: number | null = null): TurnTimingSnapshot {
+  return {
+    sendStartedAt,
+    queueAckAt: null,
+    runClaimedAt: null,
+    planCompiledAt: null,
+    workspaceMcpReadyAt: null,
+    applicationsReadyAt: null,
+    runtimeConfigReadyAt: null,
+    opencodeSidecarReadyAt: null,
+    runStartedAt: null,
+    firstThinkingDeltaAt: null,
+    firstOutputDeltaAt: null,
+    firstToolCallAt: null,
+    terminalAt: null,
+    terminalEventType: null
+  };
+}
+
+function formatElapsed(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) {
+    return "n/a";
+  }
+  if (ms < 1000) {
+    return `${Math.round(ms)}ms`;
+  }
+  if (ms < 10_000) {
+    return `${(ms / 1000).toFixed(1)}s`;
+  }
+  return `${Math.round(ms / 1000)}s`;
+}
+
+function summarizeTurnTiming(snapshot: TurnTimingSnapshot): {
+  milestones: string[];
+  coverage: string | null;
+  insight: string | null;
+} {
+  const start = snapshot.sendStartedAt;
+  if (start === null) {
+    return {
+      milestones: [],
+      coverage: null,
+      insight: null
+    };
+  }
+
+  const milestones: string[] = [];
+  const milestoneEntries = [
+    { label: "Queue ack", at: snapshot.queueAckAt },
+    { label: "Run claimed", at: snapshot.runClaimedAt },
+    { label: "Plan compiled", at: snapshot.planCompiledAt },
+    { label: "Workspace MCP ready", at: snapshot.workspaceMcpReadyAt },
+    { label: "Applications ready", at: snapshot.applicationsReadyAt },
+    { label: "Runtime config ready", at: snapshot.runtimeConfigReadyAt },
+    { label: "OpenCode sidecar ready", at: snapshot.opencodeSidecarReadyAt },
+    { label: "Run started", at: snapshot.runStartedAt },
+    { label: "First thinking delta", at: snapshot.firstThinkingDeltaAt },
+    { label: "First output delta", at: snapshot.firstOutputDeltaAt },
+    { label: "First tool call", at: snapshot.firstToolCallAt },
+    {
+      label: snapshot.terminalEventType ? `Terminal (${snapshot.terminalEventType})` : "Terminal",
+      at: snapshot.terminalAt
+    }
+  ]
+    .filter((entry): entry is { label: string; at: number } => entry.at !== null)
+    .sort((left, right) => left.at - right.at);
+
+  let previousAt = start;
+  for (const entry of milestoneEntries) {
+    const sinceSend = formatElapsed(entry.at - start);
+    const sincePrevious = previousAt === start ? "" : ` (+${formatElapsed(entry.at - previousAt)})`;
+    milestones.push(`${entry.label}: ${sinceSend}${sincePrevious}`);
+    previousAt = entry.at;
+  }
+
+  const firstStreamedContentAt =
+    snapshot.firstThinkingDeltaAt === null
+      ? snapshot.firstOutputDeltaAt
+      : snapshot.firstOutputDeltaAt === null
+        ? snapshot.firstThinkingDeltaAt
+        : Math.min(snapshot.firstThinkingDeltaAt, snapshot.firstOutputDeltaAt);
+
+  const coverage = [
+    `thinking=${snapshot.firstThinkingDeltaAt !== null ? "yes" : "no"}`,
+    `output=${snapshot.firstOutputDeltaAt !== null ? "yes" : "no"}`,
+    `tools=${snapshot.firstToolCallAt !== null ? "yes" : "no"}`
+  ].join(" ");
+
+  const segments: Array<{ label: string; durationMs: number; reason: string }> = [];
+  if (snapshot.queueAckAt !== null) {
+    segments.push({
+      label: "send -> queue ack",
+      durationMs: snapshot.queueAckAt - start,
+      reason: "desktop request + runtime queue enqueue"
+    });
+  }
+  if (snapshot.queueAckAt !== null && snapshot.runClaimedAt !== null) {
+    segments.push({
+      label: "queue ack -> run claimed",
+      durationMs: snapshot.runClaimedAt - snapshot.queueAckAt,
+      reason: "queue worker pickup and first persisted runtime event"
+    });
+  }
+
+  const bootstrapTimeline = [
+    { label: "run claimed", at: snapshot.runClaimedAt, reasonFromPrevious: null },
+    { label: "plan compiled", at: snapshot.planCompiledAt, reasonFromPrevious: "workspace staging and plan compilation" },
+    {
+      label: "workspace MCP ready",
+      at: snapshot.workspaceMcpReadyAt,
+      reasonFromPrevious: "workspace MCP sidecar bootstrap"
+    },
+    {
+      label: "applications ready",
+      at: snapshot.applicationsReadyAt,
+      reasonFromPrevious: "workspace application bootstrap"
+    },
+    {
+      label: "runtime config ready",
+      at: snapshot.runtimeConfigReadyAt,
+      reasonFromPrevious: "runtime config projection"
+    },
+    {
+      label: "OpenCode sidecar ready",
+      at: snapshot.opencodeSidecarReadyAt,
+      reasonFromPrevious: "OpenCode sidecar restart or reuse"
+    },
+    {
+      label: "run started",
+      at: snapshot.runStartedAt,
+      reasonFromPrevious: "harness host launch before the model request starts"
+    }
+  ].filter((entry): entry is { label: string; at: number; reasonFromPrevious: string | null } => entry.at !== null);
+
+  if (bootstrapTimeline.length <= 2 && snapshot.runClaimedAt !== null && snapshot.runStartedAt !== null) {
+    segments.push({
+      label: "run claimed -> run started",
+      durationMs: snapshot.runStartedAt - snapshot.runClaimedAt,
+      reason: "TS runner bootstrap before the model request starts"
+    });
+  } else {
+    for (let index = 1; index < bootstrapTimeline.length; index += 1) {
+      const previous = bootstrapTimeline[index - 1];
+      const current = bootstrapTimeline[index];
+      if (current.at < previous.at || !current.reasonFromPrevious) {
+        continue;
+      }
+      segments.push({
+        label: `${previous.label} -> ${current.label}`,
+        durationMs: current.at - previous.at,
+        reason: current.reasonFromPrevious
+      });
+    }
+  }
+  if (snapshot.runStartedAt !== null && firstStreamedContentAt !== null) {
+    segments.push({
+      label: "run started -> first streamed content",
+      durationMs: firstStreamedContentAt - snapshot.runStartedAt,
+      reason: "model/tool execution before the first visible delta"
+    });
+  }
+  if (snapshot.firstThinkingDeltaAt !== null && snapshot.firstOutputDeltaAt !== null && snapshot.firstOutputDeltaAt >= snapshot.firstThinkingDeltaAt) {
+    segments.push({
+      label: "first thinking -> first output",
+      durationMs: snapshot.firstOutputDeltaAt - snapshot.firstThinkingDeltaAt,
+      reason: "reasoning streamed before answer text"
+    });
+  }
+
+  const dominantGap = segments
+    .filter((segment) => segment.durationMs >= 0)
+    .sort((left, right) => right.durationMs - left.durationMs)[0];
+
+  return {
+    milestones,
+    coverage,
+    insight: dominantGap
+      ? `Largest gap: ${dominantGap.label} (${formatElapsed(dominantGap.durationMs)}), ${dominantGap.reason}.`
+      : null
+  };
 }
 
 export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }) {
@@ -97,6 +320,7 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
   const [chatErrorMessage, setChatErrorMessage] = useState("");
   const [verboseTelemetryEnabled, setVerboseTelemetryEnabled] = useState(false);
   const [streamTelemetry, setStreamTelemetry] = useState<StreamTelemetryEntry[]>([]);
+  const [turnTiming, setTurnTiming] = useState<TurnTimingSnapshot>(() => createTurnTimingSnapshot());
   const messagesRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const activeSessionIdRef = useRef<string | null>(null);
@@ -109,7 +333,39 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
   const liveThinkingTextRef = useRef("");
   const liveThinkingExpandedRef = useRef(false);
   const liveToolActivitiesRef = useRef<string[]>([]);
+  const turnTimingRef = useRef<TurnTimingSnapshot>(createTurnTimingSnapshot());
   const [activeSessionId, setActiveSessionId] = useState("");
+
+  function resetTurnTiming(sendStartedAt: number | null = null) {
+    const next = createTurnTimingSnapshot(sendStartedAt);
+    turnTimingRef.current = next;
+    setTurnTiming(next);
+  }
+
+  function markTurnTiming(mark: Exclude<keyof TurnTimingSnapshot, "terminalEventType">, at = Date.now()) {
+    if (turnTimingRef.current[mark] !== null) {
+      return;
+    }
+    const next = {
+      ...turnTimingRef.current,
+      [mark]: at
+    };
+    turnTimingRef.current = next;
+    setTurnTiming(next);
+  }
+
+  function markTurnTerminal(eventType: string, at = Date.now()) {
+    if (turnTimingRef.current.terminalAt !== null) {
+      return;
+    }
+    const next = {
+      ...turnTimingRef.current,
+      terminalAt: at,
+      terminalEventType: eventType
+    };
+    turnTimingRef.current = next;
+    setTurnTiming(next);
+  }
 
   function appendStreamTelemetry(entry: Omit<StreamTelemetryEntry, "id" | "at">) {
     if (!verboseTelemetryEnabled) {
@@ -257,6 +513,7 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
       setCollapsedThinkingByMessageId({});
       setActiveSession(null);
       pendingInputIdRef.current = null;
+      resetTurnTiming();
       return;
     }
 
@@ -277,6 +534,7 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
           setMessages([]);
           resetLiveTurn();
           setCollapsedThinkingByMessageId({});
+          resetTurnTiming();
         }
         setActiveSession(nextSessionId);
         if (!nextSessionId) {
@@ -481,6 +739,7 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
         activeAssistantMessageIdRef.current = null;
         activeStreamIdRef.current = null;
         pendingInputIdRef.current = null;
+        markTurnTerminal("stream_error");
         appendStreamTelemetry({
           streamId: payload.streamId,
           transportType: payload.type,
@@ -539,6 +798,7 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
         activeAssistantMessageIdRef.current = null;
         activeStreamIdRef.current = null;
         pendingInputIdRef.current = null;
+        markTurnTerminal("stream_done");
         appendStreamTelemetry({
           streamId: payload.streamId,
           transportType: payload.type,
@@ -601,15 +861,45 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
       }
 
       if (eventType === "run_claimed") {
+        markTurnTiming("runClaimedAt");
         setLiveAgentStatus("Preparing workspace context...");
       } else if (eventType === "run_started") {
+        markTurnTiming("runStartedAt");
         setLiveAgentStatus("Checking workspace context...");
       } else if (eventType === "run_waiting_user" || eventType === "awaiting_user_input") {
         setLiveAgentStatus("Waiting for your input...");
       }
 
+      const bootstrapStatus = eventType === "thinking_delta" ? bootstrapStatusMeta(eventPayload) : null;
+      if (bootstrapStatus) {
+        if (bootstrapStatus.phase === "plan_compiled") {
+          markTurnTiming("planCompiledAt");
+        } else if (bootstrapStatus.phase === "workspace_mcp_ready") {
+          markTurnTiming("workspaceMcpReadyAt");
+        } else if (bootstrapStatus.phase === "applications_ready") {
+          markTurnTiming("applicationsReadyAt");
+        } else if (bootstrapStatus.phase === "runtime_config_ready") {
+          markTurnTiming("runtimeConfigReadyAt");
+        } else if (bootstrapStatus.phase === "opencode_sidecar_ready") {
+          markTurnTiming("opencodeSidecarReadyAt");
+        }
+        setLiveAgentStatus(bootstrapStatus.detail);
+        appendStreamTelemetry({
+          streamId: payload.streamId,
+          transportType: payload.type,
+          eventName,
+          eventType,
+          inputId: eventInputId,
+          sessionId: eventSessionId,
+          action: "applied_bootstrap_status",
+          detail: `phase=${bootstrapStatus.phase} detail=${bootstrapStatus.detail}`
+        });
+        return;
+      }
+
       const toolActivity = toolActivityLabel(eventType, eventPayload);
       if (toolActivity) {
+        markTurnTiming("firstToolCallAt");
         setLiveAgentStatus("Using tools...");
         pushLiveToolActivity(toolActivity);
       }
@@ -631,6 +921,7 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
           return;
         }
 
+        markTurnTiming("firstOutputDeltaAt");
         const assistantMessageId = activeAssistantMessageIdRef.current ?? `assistant-${Date.now()}`;
         activeAssistantMessageIdRef.current = assistantMessageId;
         appendLiveAssistantDelta(delta);
@@ -663,6 +954,7 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
           });
           return;
         }
+        markTurnTiming("firstThinkingDeltaAt");
         appendLiveThinkingDelta(delta);
         appendStreamTelemetry({
           streamId: payload.streamId,
@@ -678,6 +970,7 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
       }
 
       if (eventType === "run_failed") {
+        markTurnTerminal("run_failed");
         const detail =
           typeof eventPayload.error === "string"
             ? eventPayload.error
@@ -705,6 +998,7 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
       }
 
       if (eventType === "run_completed") {
+        markTurnTerminal("run_completed");
         commitLiveAssistantMessage();
         setIsResponding(false);
         activeStreamIdRef.current = null;
@@ -862,6 +1156,7 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
     setChatErrorMessage("");
     activeAssistantMessageIdRef.current = null;
     pendingInputIdRef.current = STREAM_ATTACH_PENDING;
+    resetTurnTiming(Date.now());
 
     try {
       const preOpenedStream = await window.electronAPI.workspace.openSessionOutputStream({
@@ -892,6 +1187,7 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
       });
       setActiveSession(queued.session_id);
       pendingInputIdRef.current = queued.input_id;
+      markTurnTiming("queueAckAt");
       appendStreamTelemetry({
         streamId: "-",
         transportType: "client",
@@ -974,6 +1270,7 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
   const hasMessages = messages.length > 0 || Boolean(liveAssistantText) || Boolean(liveThinkingText);
   const showWorkingIndicator = isResponding && !liveAssistantText && !liveThinkingText;
   const streamTelemetryTail = useMemo(() => streamTelemetry.slice(-80).reverse(), [streamTelemetry]);
+  const turnTimingSummary = useMemo(() => summarizeTurnTiming(turnTiming), [turnTiming]);
   const composerDisabled = !selectedWorkspace || !resolvedUserId || isLoadingHistory || isLoadingBootstrap;
 
   return (
@@ -1003,6 +1300,21 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
                     Clear
                   </button>
                 </div>
+                {turnTimingSummary.coverage || turnTimingSummary.milestones.length > 0 || turnTimingSummary.insight ? (
+                  <div className="mb-2 rounded border border-panel-border/35 px-2 py-2 text-[10px] text-text-muted">
+                    {turnTimingSummary.coverage ? (
+                      <div className="whitespace-pre-wrap break-all">Streaming coverage: {turnTimingSummary.coverage}</div>
+                    ) : null}
+                    {turnTimingSummary.insight ? (
+                      <div className="mt-1 whitespace-pre-wrap break-all">{turnTimingSummary.insight}</div>
+                    ) : null}
+                    {turnTimingSummary.milestones.map((line) => (
+                      <div key={line} className="mt-1 whitespace-pre-wrap break-all">
+                        {line}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="theme-control-surface max-h-36 overflow-y-auto rounded border border-panel-border/35 p-2 font-mono text-[10px] text-text-muted">
                   {streamTelemetryTail.length === 0 ? (
                     <div className="text-text-dim">No stream events yet.</div>

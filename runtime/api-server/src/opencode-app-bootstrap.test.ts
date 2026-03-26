@@ -171,6 +171,81 @@ test("bootstrapResolvedApplications starts resolved apps without a runtime API h
   store.close();
 });
 
+test("bootstrapResolvedApplications starts multiple apps in parallel", async () => {
+  const root = makeTempDir("hb-opencode-bootstrap-parallel-");
+  const workspaceDir = path.join(root, "workspace", "workspace-1");
+  fs.mkdirSync(path.join(workspaceDir, "apps", "app-a"), { recursive: true });
+  fs.mkdirSync(path.join(workspaceDir, "apps", "app-b"), { recursive: true });
+
+  const startedAppIds: string[] = [];
+  let resolveBothStarted: (() => void) | null = null;
+  const bothStarted = new Promise<void>((resolve) => {
+    resolveBothStarted = resolve;
+  });
+  let releaseStarts: (() => void) | null = null;
+  const releaseGate = new Promise<void>((resolve) => {
+    releaseStarts = resolve;
+  });
+
+  const appLifecycleExecutor: AppLifecycleExecutorLike = {
+    async startApp(params) {
+      startedAppIds.push(params.appId);
+      if (startedAppIds.length === 2) {
+        resolveBothStarted?.();
+      }
+      await releaseGate;
+      return {
+        app_id: params.appId,
+        status: "running",
+        detail: "ok",
+        ports: { http: params.httpPort ?? 18080, mcp: params.mcpPort ?? 13100 }
+      };
+    },
+    async stopApp() {
+      throw new Error("not implemented");
+    },
+    async shutdownAll() {
+      throw new Error("not implemented");
+    }
+  };
+
+  const resultPromise = bootstrapResolvedApplications({
+    workspaceDir,
+    holabossUserId: "user-1",
+    resolvedApplications: [
+      {
+        app_id: "app-a",
+        mcp: { transport: "http-sse", port: 3099, path: "/mcp" },
+        health_check: { path: "/health", timeout_s: 60, interval_s: 5 },
+        env_contract: ["HOLABOSS_USER_ID"],
+        start_command: "npm run start",
+        base_dir: "apps/app-a",
+        lifecycle: { setup: "", start: "", stop: "" }
+      },
+      {
+        app_id: "app-b",
+        mcp: { transport: "http-sse", port: 3099, path: "/mcp" },
+        health_check: { path: "/health", timeout_s: 60, interval_s: 5 },
+        env_contract: ["HOLABOSS_USER_ID"],
+        start_command: "npm run start",
+        base_dir: "apps/app-b",
+        lifecycle: { setup: "", start: "", stop: "" }
+      }
+    ],
+    appLifecycleExecutor
+  });
+
+  await bothStarted;
+  assert.deepEqual(new Set(startedAppIds), new Set(["app-a", "app-b"]));
+  releaseStarts?.();
+
+  const result = await resultPromise;
+  assert.deepEqual(
+    result.applications.map((application) => application.app_id),
+    ["app-a", "app-b"]
+  );
+});
+
 test("runOpencodeAppBootstrapCli writes JSON response for a valid request", async () => {
   const root = makeTempDir("hb-opencode-bootstrap-cli-");
   const store = createStore(root);
