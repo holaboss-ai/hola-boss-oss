@@ -12,7 +12,7 @@ import {
   RuntimeAppLifecycleExecutor,
   type AppLifecycleExecutorLike
 } from "./app-lifecycle-worker.js";
-import { bootstrapResolvedApplications } from "./opencode-bootstrap-shared.js";
+import { bootstrapResolvedApplications } from "./resolved-app-bootstrap.js";
 import {
   effectiveMcpServerPayloads,
   encodeWorkspaceMcpCatalog,
@@ -21,15 +21,15 @@ import {
   workspaceMcpCatalogFingerprint,
   type PreparedMcpServerPayload,
   type RunningWorkspaceMcpSidecar
-} from "./opencode-runner-prep.js";
-import { compileWorkspaceRuntimePlanFromWorkspace } from "./opencode-runner-prep.js";
+} from "./runner-prep.js";
+import { compileWorkspaceRuntimePlanFromWorkspace } from "./runner-prep.js";
 import { stageWorkspaceCommands } from "./opencode-commands.js";
 import { type OpencodeConfigCliRequest, updateOpencodeConfig } from "./opencode-config.js";
 import {
-  projectOpencodeRuntimeConfig,
-  type OpencodeRuntimeConfigCliRequest,
-  type OpencodeRuntimeConfigCliResponse
-} from "./opencode-runtime-config.js";
+  projectAgentRuntimeConfig,
+  type AgentRuntimeConfigCliRequest,
+  type AgentRuntimeConfigCliResponse
+} from "./agent-runtime-config.js";
 import { restartOpencodeSidecar, type OpencodeSidecarCliRequest } from "./opencode-sidecar.js";
 import { stageOpencodeSkills } from "./opencode-skills.js";
 import {
@@ -52,7 +52,15 @@ import {
   readWorkspaceMainSessionId,
   workspaceDirForId
 } from "./ts-runner-session-state.js";
+import { resolveWorkspaceSkills } from "./workspace-skills.js";
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
+import {
+  normalizeHarnessId,
+  requireRuntimeHarnessAdapter,
+  type HarnessBackendRestartRequest,
+  type HarnessModelConfigSyncRequest,
+  type HarnessModelConfigSyncResult
+} from "./harness-registry.js";
 import { startWorkspaceMcpSidecar, type WorkspaceMcpSidecarCliRequest } from "./workspace-mcp-sidecar.js";
 import type { CompiledWorkspaceRuntimePlan } from "./workspace-runtime-plan.js";
 
@@ -83,6 +91,7 @@ const OPENCODE_DEFAULT_TOOLS = [
 type RuntimeExecContext = Record<string, unknown>;
 
 export interface TsRunnerBootstrapState {
+  harness: string;
   workspaceRoot: string;
   workspaceDir: string;
   runtimeExecContext: RuntimeExecContext | null;
@@ -107,9 +116,10 @@ export interface TsRunnerExecutionDeps {
     resolvedApplications: unknown[];
   }) => Promise<PreparedMcpServerPayload[]>;
   compilePlan: (params: { workspaceId: string; workspaceDir: string }) => CompiledWorkspaceRuntimePlan;
-  projectRuntimeConfig: (request: OpencodeRuntimeConfigCliRequest) => OpencodeRuntimeConfigCliResponse;
-  restartOpencodeSidecar: (request: OpencodeSidecarCliRequest) => Promise<void>;
+  projectAgentRuntimeConfig: (request: AgentRuntimeConfigCliRequest) => AgentRuntimeConfigCliResponse;
+  restartHarnessBackend: (request: HarnessBackendRestartRequest) => Promise<void>;
   runHarnessHost: (params: {
+    harness: string;
     requestPayload: Record<string, unknown>;
     workspaceDir: string;
     emitEvent: (event: TsRunnerEvent) => Promise<void>;
@@ -118,11 +128,7 @@ export interface TsRunnerExecutionDeps {
   stageCommands: (params: { workspaceDir: string }) => { changed: boolean };
   stageSkills: (params: { workspaceDir: string; runtimeRoot: string }) => { changed: boolean; skillIds: string[] };
   startWorkspaceMcpSidecar: (request: WorkspaceMcpSidecarCliRequest) => Promise<RunningWorkspaceMcpSidecar | null>;
-  updateOpencodeConfig: (request: OpencodeConfigCliRequest) => {
-    path: string;
-    provider_config_changed: boolean;
-    model_selection_changed: boolean;
-  };
+  syncHarnessModelConfig: (request: HarnessModelConfigSyncRequest) => HarnessModelConfigSyncResult;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -163,6 +169,13 @@ function runtimeExecContextString(request: TsRunnerRequest, key: string): string
     return null;
   }
   return firstNonEmptyString(value[key]);
+}
+
+function selectedHarness(request: TsRunnerRequest): string {
+  const runtimeHarness = isRecord(request.context[RUNTIME_EXEC_CONTEXT_KEY])
+    ? request.context[RUNTIME_EXEC_CONTEXT_KEY].harness
+    : undefined;
+  return normalizeHarnessId(runtimeHarness ?? process.env.SANDBOX_AGENT_HARNESS);
 }
 
 function runtimeRootDir(): string {
@@ -260,7 +273,7 @@ function opencodeExtraTools(): string[] {
 }
 
 function opencodeSidecarFingerprint(
-  runtimeConfig: OpencodeRuntimeConfigCliResponse,
+  runtimeConfig: AgentRuntimeConfigCliResponse,
   workspaceId: string
 ): string {
   return createHash("sha256")
@@ -283,7 +296,8 @@ function explicitHolabossUserId(request: TsRunnerRequest): string | undefined {
 
 function bootstrapStartedPayload(params: {
   request: TsRunnerRequest;
-  runtimeConfig: OpencodeRuntimeConfigCliResponse;
+  runtimeConfig: AgentRuntimeConfigCliResponse;
+  harnessSupportsStructuredOutput: boolean;
   mcpServerIdMap: Readonly<Record<string, string>>;
   mcpServers: PreparedMcpServerPayload[];
   sidecar: RunningWorkspaceMcpSidecar | null;
@@ -297,17 +311,18 @@ function bootstrapStartedPayload(params: {
     mcp_server_ids: params.mcpServers.map((server) => server.name),
     mcp_server_mappings: mcpServerMappingMetadata(params.mcpServerIdMap),
     workspace_mcp_sidecar_reused: Boolean(params.sidecar?.reused),
-    structured_output_enabled: Boolean(params.runtimeConfig.output_format),
+    structured_output_enabled: params.harnessSupportsStructuredOutput && Boolean(params.runtimeConfig.output_format),
     workspace_config_checksum: params.runtimeConfig.workspace_config_checksum
   };
 }
 
-function buildOpencodeRuntimeConfigRequest(params: {
+function buildAgentRuntimeConfigRequest(params: {
   request: TsRunnerRequest;
   compiledPlan: CompiledWorkspaceRuntimePlan;
   workspaceSkillIds: string[];
   toolServerIdMap: Readonly<Record<string, string>>;
-}): OpencodeRuntimeConfigCliRequest {
+  resolvedMcpToolRefs: CompiledWorkspaceRuntimePlan["resolved_mcp_tool_refs"];
+}): AgentRuntimeConfigCliRequest {
   const common = {
     session_id: params.request.session_id,
     workspace_id: params.request.workspace_id,
@@ -323,7 +338,7 @@ function buildOpencodeRuntimeConfigRequest(params: {
     default_tools: [...OPENCODE_DEFAULT_TOOLS],
     extra_tools: opencodeExtraTools(),
     tool_server_id_map: { ...params.toolServerIdMap },
-    resolved_mcp_tool_refs: params.compiledPlan.resolved_mcp_tool_refs.map((toolRef) => ({
+    resolved_mcp_tool_refs: params.resolvedMcpToolRefs.map((toolRef) => ({
       tool_id: toolRef.tool_id,
       server_id: toolRef.server_id,
       tool_name: toolRef.tool_name
@@ -362,48 +377,6 @@ function buildOpencodeRuntimeConfigRequest(params: {
       prompt: member.prompt,
       role: member.role
     }))
-  };
-}
-
-function buildHarnessHostRequest(params: {
-  request: TsRunnerRequest;
-  bootstrap: TsRunnerBootstrapState;
-  runtimeConfig: OpencodeRuntimeConfigCliResponse;
-  mcpServers: PreparedMcpServerPayload[];
-  runStartedPayload: Record<string, unknown>;
-}): Record<string, unknown> {
-  return {
-    workspace_id: params.request.workspace_id,
-    workspace_dir: params.bootstrap.workspaceDir,
-    session_id: params.request.session_id,
-    input_id: params.request.input_id,
-    instruction: params.request.instruction,
-    debug: Boolean(params.request.debug),
-    harness_session_id: params.bootstrap.requestedHarnessSessionId,
-    persisted_harness_session_id: params.bootstrap.persistedHarnessSessionId,
-    provider_id: params.runtimeConfig.provider_id,
-    model_id: params.runtimeConfig.model_id,
-    mode: params.runtimeConfig.mode,
-    opencode_base_url: opencodeBaseUrl(),
-    timeout_seconds: opencodeTimeoutSeconds(),
-    system_prompt: params.runtimeConfig.system_prompt,
-    tools: { ...params.runtimeConfig.tools },
-    workspace_tool_ids: [...params.runtimeConfig.workspace_tool_ids],
-    workspace_skill_ids: [...params.runtimeConfig.workspace_skill_ids],
-    mcp_servers: params.mcpServers.map((server) => ({
-      name: server.name,
-      config: { ...server.config },
-      ...(server._holaboss_force_refresh ? { _holaboss_force_refresh: true } : {})
-    })),
-    output_format: params.runtimeConfig.output_format,
-    workspace_config_checksum: params.runtimeConfig.workspace_config_checksum,
-    run_started_payload: params.runStartedPayload,
-    model_client: {
-      model_proxy_provider: params.runtimeConfig.model_client.model_proxy_provider,
-      api_key: params.runtimeConfig.model_client.api_key,
-      base_url: params.runtimeConfig.model_client.base_url,
-      default_headers: params.runtimeConfig.model_client.default_headers
-    }
   };
 }
 
@@ -510,6 +483,7 @@ async function defaultBootstrapApplications(params: {
 }
 
 async function defaultRunHarnessHost(params: {
+  harness: string;
   requestPayload: Record<string, unknown>;
   workspaceDir: string;
   emitEvent: (event: TsRunnerEvent) => Promise<void>;
@@ -529,10 +503,11 @@ async function defaultRunHarnessHost(params: {
   const requestBase64 = Buffer.from(JSON.stringify(params.requestPayload), "utf8").toString("base64");
 
   let child;
+  const harnessCommand = requireRuntimeHarnessAdapter(params.harness).hostCommand;
   try {
     child = spawn(
       runtimeNodeBin(),
-      [...argsPrefix, entryPath, "run-opencode", "--request-base64", requestBase64],
+      [...argsPrefix, entryPath, harnessCommand, "--request-base64", requestBase64],
       {
         cwd: runtimeRootDir(),
         env: { ...process.env },
@@ -599,9 +574,19 @@ function defaultExecutionDeps(): TsRunnerExecutionDeps {
         workspaceId,
         workspaceDir
       }),
-    projectRuntimeConfig: (request) => projectOpencodeRuntimeConfig(request),
-    restartOpencodeSidecar: async (request) => {
-      await restartOpencodeSidecar(request);
+    projectAgentRuntimeConfig: (request) => projectAgentRuntimeConfig(request),
+    restartHarnessBackend: async (request) => {
+      const opencodeRequest: OpencodeSidecarCliRequest = {
+        workspace_root: request.workspace_root,
+        workspace_id: request.workspace_id,
+        config_fingerprint: request.backend_fingerprint,
+        allow_reuse_existing: request.allow_reuse_existing,
+        host: request.host,
+        port: request.port,
+        readiness_url: request.readiness_url,
+        ready_timeout_s: request.ready_timeout_s
+      };
+      await restartOpencodeSidecar(opencodeRequest);
     },
     runHarnessHost: defaultRunHarnessHost,
     stageCommands: ({ workspaceDir }) =>
@@ -628,27 +613,38 @@ function defaultExecutionDeps(): TsRunnerExecutionDeps {
         timeout_ms: request.timeout_ms
       };
     },
-    updateOpencodeConfig: (request) => updateOpencodeConfig(request)
+    syncHarnessModelConfig: (request) => {
+      const opencodeRequest: OpencodeConfigCliRequest = {
+        workspace_root: request.workspace_root,
+        provider_id: request.provider_id,
+        model_id: request.model_id,
+        model_client: request.model_client
+      };
+      const result = updateOpencodeConfig(opencodeRequest);
+      return {
+        path: result.path,
+        backend_config_changed: result.provider_config_changed,
+        model_selection_changed: result.model_selection_changed
+      };
+    }
   };
 }
 
 function synthesizeHarnessHostFailureMessage(result: TsRunnerHarnessRelayResult): string {
   if (result.missingEntryPath) {
-    return `TypeScript OpenCode harness host entry not found at ${result.missingEntryPath}`;
+    return `TypeScript harness host entry not found at ${result.missingEntryPath}`;
   }
   if (result.spawnError) {
-    return `Failed to start TypeScript OpenCode harness host: ${result.spawnError}`;
+    return `Failed to start TypeScript harness host: ${result.spawnError}`;
   }
   if (!result.sawEvent && result.exitCode === HARNESS_HOST_NOT_IMPLEMENTED_EXIT_CODE) {
     return result.stderr
-      ? `TypeScript OpenCode harness host reported unimplemented OpenCode adapter: ${result.stderr}`
-      : "TypeScript OpenCode harness host reported unimplemented OpenCode adapter";
+      ? `TypeScript harness host reported unimplemented adapter: ${result.stderr}`
+      : "TypeScript harness host reported unimplemented adapter";
   }
 
   let message =
-    result.exitCode !== 0
-      ? `TypeScript OpenCode harness host failed with exit code ${result.exitCode}`
-      : "TypeScript OpenCode harness host ended before terminal event";
+    result.exitCode !== 0 ? `TypeScript harness host failed with exit code ${result.exitCode}` : "TypeScript harness host ended before terminal event";
   if (result.stderr) {
     message = `${message}: ${result.stderr}`;
   }
@@ -671,14 +667,17 @@ export function resolveTsRunnerBootstrapState(
 
   const resolvedExecContext = isRecord(runtimeExecContext) ? runtimeExecContext : null;
   const requestedHarnessSessionId = firstNonEmptyString(resolvedExecContext?.harness_session_id);
+  const harness = selectedHarness(request);
+  requireRuntimeHarnessAdapter(harness);
   const workspaceDir = workspaceDirForId(request.workspace_id);
   const persistedHarnessSessionId = readWorkspaceMainSessionId({
     workspaceDir,
-    harness: "opencode",
+    harness,
     logger
   });
 
   return {
+    harness,
     workspaceRoot: path.dirname(workspaceDir),
     workspaceDir,
     runtimeExecContext: resolvedExecContext,
@@ -690,6 +689,7 @@ export function resolveTsRunnerBootstrapState(
 export async function relayTsRunnerEvent(params: {
   emitEvent: (event: TsRunnerEvent) => Promise<void>;
   event: TsRunnerEvent;
+  harness: string;
   workspaceDir: string;
   logger?: LoggerLike;
 }): Promise<void> {
@@ -700,7 +700,7 @@ export async function relayTsRunnerEvent(params: {
   }
   persistWorkspaceMainSessionId({
     workspaceDir: params.workspaceDir,
-    harness: "opencode",
+    harness: params.harness,
     sessionId,
     logger: params.logger
   });
@@ -717,9 +717,11 @@ export async function executeTsRunnerRequest(
   const logger = options.logger ?? console;
   const deps = { ...defaultExecutionDeps(), ...options.deps };
   const bootstrap = resolveTsRunnerBootstrapState(request, { logger });
+  const harnessAdapter = requireRuntimeHarnessAdapter(bootstrap.harness);
 
   await relayTsRunnerEvent({
     emitEvent: options.emitEvent,
+    harness: bootstrap.harness,
     workspaceDir: bootstrap.workspaceDir,
     logger,
     event: buildTsRunnerEvent({
@@ -734,27 +736,39 @@ export async function executeTsRunnerRequest(
   });
 
   try {
-    const stagedSkills = deps.stageSkills({
-      workspaceDir: bootstrap.workspaceDir,
-      runtimeRoot: runtimeRootDir()
+    const runnerPrepPlan = harnessAdapter.buildRunnerPrepPlan({
+      request,
+      bootstrap
     });
-    deps.stageCommands({
-      workspaceDir: bootstrap.workspaceDir
-    });
+    const workspaceSkills = resolveWorkspaceSkills(bootstrap.workspaceDir);
+    const stagedSkills = runnerPrepPlan.stageWorkspaceSkills
+      ? deps.stageSkills({
+          workspaceDir: bootstrap.workspaceDir,
+          runtimeRoot: runtimeRootDir()
+        })
+      : { changed: false, skillIds: [] };
+    if (runnerPrepPlan.stageWorkspaceCommands) {
+      deps.stageCommands({
+        workspaceDir: bootstrap.workspaceDir
+      });
+    }
 
     const compiledPlan = deps.compilePlan({
       workspaceId: request.workspace_id,
       workspaceDir: bootstrap.workspaceDir
     });
-    const serverIdMap = mcpServerIdMap({
-      workspaceId: request.workspace_id,
-      sandboxId: workspaceMcpSandboxId(),
-      compiledPlan
-    });
+    const serverIdMap = runnerPrepPlan.prepareMcpTooling
+      ? mcpServerIdMap({
+          workspaceId: request.workspace_id,
+          sandboxId: workspaceMcpSandboxId(),
+          compiledPlan
+        })
+      : {};
+    const resolvedMcpToolRefs = runnerPrepPlan.prepareMcpTooling ? compiledPlan.resolved_mcp_tool_refs : [];
     const physicalWorkspaceServerId = serverIdMap.workspace ?? "workspace";
 
     let sidecar: RunningWorkspaceMcpSidecar | null = null;
-    if (compiledPlan.workspace_mcp_catalog.length > 0) {
+    if (runnerPrepPlan.startWorkspaceMcpSidecar && compiledPlan.workspace_mcp_catalog.length > 0) {
       let timeoutMs = 10000;
       for (const server of compiledPlan.resolved_mcp_servers) {
         if (server.server_id === "workspace") {
@@ -772,13 +786,15 @@ export async function executeTsRunnerRequest(
       });
     }
 
-    let effectiveMcpServers = effectiveMcpServerPayloads({
-      compiledPlan,
-      sidecar,
-      serverIdMap
-    });
+    let effectiveMcpServers = runnerPrepPlan.prepareMcpTooling
+      ? effectiveMcpServerPayloads({
+          compiledPlan,
+          sidecar,
+          serverIdMap
+        })
+      : [];
 
-    if (compiledPlan.resolved_applications.length > 0) {
+    if (runnerPrepPlan.bootstrapResolvedApplications && compiledPlan.resolved_applications.length > 0) {
       effectiveMcpServers = effectiveMcpServers.concat(
         await deps.bootstrapApplications({
           request,
@@ -788,48 +804,55 @@ export async function executeTsRunnerRequest(
       );
     }
 
-    const runtimeConfig = deps.projectRuntimeConfig(
-      buildOpencodeRuntimeConfigRequest({
+    const runtimeConfig = deps.projectAgentRuntimeConfig(
+      buildAgentRuntimeConfigRequest({
         request,
         compiledPlan,
-        workspaceSkillIds: stagedSkills.skillIds,
-        toolServerIdMap: serverIdMap
+        workspaceSkillIds: workspaceSkills.map((skill) => skill.skill_id),
+        toolServerIdMap: serverIdMap,
+        resolvedMcpToolRefs
       })
     );
 
-    const configUpdate = deps.updateOpencodeConfig({
-      workspace_root: bootstrap.workspaceRoot,
-      provider_id: runtimeConfig.provider_id,
-      model_id: runtimeConfig.model_id,
-      model_client: runtimeConfig.model_client
-    });
-
-    if (configUpdate.provider_config_changed || stagedSkills.changed) {
-      await deps.restartOpencodeSidecar({
-        workspace_root: bootstrap.workspaceRoot,
-        workspace_id: request.workspace_id,
-        config_fingerprint: opencodeSidecarFingerprint(runtimeConfig, request.workspace_id),
-        allow_reuse_existing: false,
-        host: opencodeServerHost(),
-        port: opencodeServerPort(),
-        readiness_url: `${opencodeBaseUrl()}/mcp`,
-        ready_timeout_s: opencodeReadyTimeoutSeconds()
+    if (harnessAdapter.prepareRun) {
+      await harnessAdapter.prepareRun({
+        request,
+        bootstrap,
+        runtimeConfig,
+        stagedSkillsChanged: stagedSkills.changed,
+        syncModelConfig: deps.syncHarnessModelConfig,
+        restartBackend: deps.restartHarnessBackend,
+        backendBaseUrl: opencodeBaseUrl(),
+        backendHost: opencodeServerHost(),
+        backendPort: opencodeServerPort(),
+        backendReadyTimeoutSeconds: opencodeReadyTimeoutSeconds(),
+        buildBackendFingerprint: opencodeSidecarFingerprint
       });
     }
 
     const harnessResult = await deps.runHarnessHost({
-      requestPayload: buildHarnessHostRequest({
+      harness: bootstrap.harness,
+      requestPayload: harnessAdapter.buildHarnessHostRequest({
         request,
         bootstrap,
         runtimeConfig,
+        workspaceSkills,
         mcpServers: effectiveMcpServers,
+        mcpToolRefs: resolvedMcpToolRefs.map((toolRef) => ({
+          tool_id: toolRef.tool_id,
+          server_id: serverIdMap[toolRef.server_id] ?? toolRef.server_id,
+          tool_name: toolRef.tool_name
+        })),
         runStartedPayload: bootstrapStartedPayload({
           request,
           runtimeConfig,
+          harnessSupportsStructuredOutput: harnessAdapter.capabilities.supportsStructuredOutput,
           mcpServerIdMap: serverIdMap,
           mcpServers: effectiveMcpServers,
           sidecar
-        })
+        }),
+        backendBaseUrl: opencodeBaseUrl(),
+        timeoutSeconds: opencodeTimeoutSeconds()
       }),
       workspaceDir: bootstrap.workspaceDir,
       logger,
@@ -837,6 +860,7 @@ export async function executeTsRunnerRequest(
         await relayTsRunnerEvent({
           emitEvent: options.emitEvent,
           event,
+          harness: bootstrap.harness,
           workspaceDir: bootstrap.workspaceDir,
           logger
         });
@@ -849,6 +873,7 @@ export async function executeTsRunnerRequest(
 
     await relayTsRunnerEvent({
       emitEvent: options.emitEvent,
+      harness: bootstrap.harness,
       workspaceDir: bootstrap.workspaceDir,
       logger,
       event: buildTsRunnerFailureEvent({
@@ -862,6 +887,7 @@ export async function executeTsRunnerRequest(
   } catch (error) {
     await relayTsRunnerEvent({
       emitEvent: options.emitEvent,
+      harness: bootstrap.harness,
       workspaceDir: bootstrap.workspaceDir,
       logger,
       event: buildTsRunnerFailureEvent({
@@ -869,7 +895,7 @@ export async function executeTsRunnerRequest(
         inputId: request.input_id,
         sequence: 2,
         errorType: errorTypeFor(error),
-        message: `OpenCode execution failed: ${errorMessage(error)}`
+        message: `${bootstrap.harness} execution failed: ${errorMessage(error)}`
       })
     });
   }

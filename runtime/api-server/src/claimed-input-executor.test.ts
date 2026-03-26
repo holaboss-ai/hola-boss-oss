@@ -99,7 +99,7 @@ test("claimed input marks missing workspace failed and runtime error", async () 
   store.close();
 });
 
-test("claimed input persists runner events, assistant text, and waiting_user state on success", async () => {
+test("claimed input persists runner events, assistant text, and idle state on success", async () => {
   const store = makeStore("hb-claimed-input-success-");
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
@@ -150,7 +150,7 @@ test("claimed input persists runner events, assistant text, and waiting_user sta
   assert.ok(updated);
   assert.equal(updated.status, "DONE");
   assert.ok(runtimeState);
-  assert.equal(runtimeState.status, "WAITING_USER");
+  assert.equal(runtimeState.status, "IDLE");
   assert.equal(runtimeState.currentInputId, null);
   assert.equal(runtimeState.currentWorkerId, null);
   assert.equal(runtimeState.lastError, null);
@@ -161,6 +161,100 @@ test("claimed input persists runner events, assistant text, and waiting_user sta
   assert.equal(messages.length, 1);
   assert.equal(messages[0].role, "assistant");
   assert.equal(messages[0].text, "Hello from TS");
+
+  store.close();
+});
+
+test("claimed input preserves waiting_user state when terminal payload requests it", async () => {
+  const store = makeStore("hb-claimed-input-waiting-user-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" }
+  });
+  setNodeRunnerCommand([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'run_completed', payload: { status: 'waiting_user' } }) + '\\n');`
+  ]);
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker"
+  });
+
+  const updated = store.getInput(queued.inputId);
+  const runtimeState = store.getRuntimeState({
+    workspaceId: workspace.id,
+    sessionId: "session-main"
+  });
+
+  assert.ok(updated);
+  assert.equal(updated.status, "DONE");
+  assert.ok(runtimeState);
+  assert.equal(runtimeState.status, "WAITING_USER");
+
+  store.close();
+});
+
+test("claimed input ignores waiting_user terminal status for harnesses that do not support it", async () => {
+  const store = makeStore("hb-claimed-input-pi-waiting-user-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" }
+  });
+  setNodeRunnerCommand([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'run_completed', payload: { status: 'waiting_user' } }) + '\\n');`
+  ]);
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker"
+  });
+
+  const updated = store.getInput(queued.inputId);
+  const runtimeState = store.getRuntimeState({
+    workspaceId: workspace.id,
+    sessionId: "session-main"
+  });
+
+  assert.ok(updated);
+  assert.equal(updated.status, "DONE");
+  assert.ok(runtimeState);
+  assert.equal(runtimeState.status, "IDLE");
 
   store.close();
 });

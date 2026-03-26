@@ -8,7 +8,7 @@ import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import type { AppLifecycleExecutorLike } from "./app-lifecycle-worker.js";
 import { runOpencodeAppBootstrapCli } from "./opencode-app-bootstrap.js";
-import { bootstrapResolvedApplications, startOpencodeApplications } from "./opencode-bootstrap-shared.js";
+import { bootstrapResolvedApplications, startResolvedApplications } from "./resolved-app-bootstrap.js";
 
 const tempDirs: string[] = [];
 
@@ -31,7 +31,7 @@ function createStore(root: string): RuntimeStateStore {
   });
 }
 
-test("startOpencodeApplications validates the workspace and starts resolved apps", async () => {
+test("startResolvedApplications validates the workspace and starts resolved apps", async () => {
   const root = makeTempDir("hb-opencode-bootstrap-");
   const store = createStore(root);
   const workspace = store.createWorkspace({
@@ -63,7 +63,7 @@ test("startOpencodeApplications validates the workspace and starts resolved apps
     }
   };
 
-  const result = await startOpencodeApplications({
+  const result = await startResolvedApplications({
     store,
     appLifecycleExecutor,
     workspaceId: workspace.id,

@@ -5,6 +5,7 @@ import type { RuntimeStateStore, SessionInputRecord, WorkspaceRecord } from "@ho
 
 import { buildRunFailedEvent, executeRunnerRequest, type RunnerEvent } from "./runner-worker.js";
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
+import { normalizeHarnessId, resolveRuntimeHarnessAdapter } from "./harness-registry.js";
 
 const ONBOARD_PROMPT_HEADER = "[Holaboss Workspace Onboarding v1]";
 const RUNTIME_EXEC_CONTEXT_KEY = "_sandbox_runtime_exec_v1";
@@ -16,8 +17,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function selectedHarness(): string {
-  const configured = (process.env.SANDBOX_AGENT_HARNESS ?? "").trim().toLowerCase();
-  return configured || "opencode";
+  return normalizeHarnessId(process.env.SANDBOX_AGENT_HARNESS);
 }
 
 function ensureLocalBinding(params: {
@@ -97,6 +97,14 @@ function payloadForEvent(event: RunnerEvent): Record<string, unknown> {
   return isRecord(event.payload) ? event.payload : {};
 }
 
+function terminalStatusForCompletedPayload(
+  payload: Record<string, unknown>,
+  supportsWaitingUser: boolean
+): "IDLE" | "WAITING_USER" {
+  const status = typeof payload.status === "string" ? payload.status.trim().toLowerCase() : "";
+  return supportsWaitingUser && status === "waiting_user" ? "WAITING_USER" : "IDLE";
+}
+
 function maybePersistHarnessSessionId(params: {
   store: RuntimeStateStore;
   workspaceId: string;
@@ -144,7 +152,8 @@ export async function processClaimedInput(params: {
     return;
   }
 
-  const harness = (workspace.harness ?? selectedHarness()).trim().toLowerCase() || selectedHarness();
+  const harness = normalizeHarnessId(workspace.harness ?? selectedHarness());
+  const harnessSupportsWaitingUser = resolveRuntimeHarnessAdapter(harness)?.capabilities.supportsWaitingUser ?? false;
   const harnessSessionId = ensureLocalBinding({
     store,
     workspaceId: record.workspaceId,
@@ -205,7 +214,7 @@ export async function processClaimedInput(params: {
   };
 
   const assistantParts: string[] = [];
-  let terminalStatus = "WAITING_USER";
+  let terminalStatus: "IDLE" | "WAITING_USER" | "ERROR" = "IDLE";
   let lastError: Record<string, unknown> | null = null;
   let lastSequence = 0;
 
@@ -235,6 +244,9 @@ export async function processClaimedInput(params: {
         });
         if (event.event_type === "output_delta" && typeof eventPayload.delta === "string") {
           assistantParts.push(eventPayload.delta);
+        }
+        if (event.event_type === "run_completed") {
+          terminalStatus = terminalStatusForCompletedPayload(eventPayload, harnessSupportsWaitingUser);
         }
         if (event.event_type === "run_failed") {
           terminalStatus = "ERROR";

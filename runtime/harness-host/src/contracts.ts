@@ -73,6 +73,35 @@ export interface HarnessHostOpencodeRequest {
 
 export type OpencodeHarnessHostRequest = HarnessHostOpencodeRequest;
 
+export interface HarnessHostPiRequest {
+  workspace_id: string;
+  workspace_dir: string;
+  session_id: string;
+  input_id: string;
+  instruction: string;
+  debug: boolean;
+  harness_session_id?: string | null;
+  persisted_harness_session_id?: string | null;
+  provider_id: string;
+  model_id: string;
+  timeout_seconds: number;
+  system_prompt: string;
+  workspace_skill_dirs: string[];
+  mcp_servers: JsonObject[];
+  mcp_tool_refs: HarnessHostPiMcpToolRef[];
+  workspace_config_checksum: string;
+  run_started_payload: JsonObject;
+  model_client: HarnessHostModelClientPayload;
+}
+
+export type PiHarnessHostRequest = HarnessHostPiRequest;
+
+export interface HarnessHostPiMcpToolRef {
+  tool_id: string;
+  server_id: string;
+  tool_name: string;
+}
+
 export interface WorkspaceMcpSidecarCliRequest {
   workspace_dir: string;
   physical_server_id: string;
@@ -118,14 +147,14 @@ export interface OpencodeConfigCliResponse {
   model_selection_changed: boolean;
 }
 
-export interface OpencodeRuntimeConfigGeneralMemberPayload {
+export interface AgentRuntimeConfigGeneralMemberPayload {
   id: string;
   model: string;
   prompt: string;
   role?: string | null;
 }
 
-export interface OpencodeRuntimeConfigCliRequest {
+export interface AgentRuntimeConfigCliRequest {
   session_id: string;
   workspace_id: string;
   input_id: string;
@@ -143,12 +172,12 @@ export interface OpencodeRuntimeConfigCliRequest {
   resolved_mcp_tool_refs: Array<Record<string, string>>;
   resolved_output_schemas: Record<string, JsonObject>;
   general_type: string;
-  single_agent?: OpencodeRuntimeConfigGeneralMemberPayload | null;
-  coordinator?: OpencodeRuntimeConfigGeneralMemberPayload | null;
-  members: OpencodeRuntimeConfigGeneralMemberPayload[];
+  single_agent?: AgentRuntimeConfigGeneralMemberPayload | null;
+  coordinator?: AgentRuntimeConfigGeneralMemberPayload | null;
+  members: AgentRuntimeConfigGeneralMemberPayload[];
 }
 
-export interface OpencodeRuntimeConfigCliResponse {
+export interface AgentRuntimeConfigCliResponse {
   provider_id: string;
   model_id: string;
   mode: string;
@@ -161,6 +190,10 @@ export interface OpencodeRuntimeConfigCliResponse {
   output_format?: JsonObject | null;
   workspace_config_checksum: string;
 }
+
+export type OpencodeRuntimeConfigGeneralMemberPayload = AgentRuntimeConfigGeneralMemberPayload;
+export type OpencodeRuntimeConfigCliRequest = AgentRuntimeConfigCliRequest;
+export type OpencodeRuntimeConfigCliResponse = AgentRuntimeConfigCliResponse;
 
 export interface OpencodeSkillsCliRequest {
   workspace_dir: string;
@@ -295,7 +328,7 @@ function modelClientConfigPayload(value: unknown, fieldName: string): HarnessHos
 function generalMemberPayload(
   value: unknown,
   fieldName: string
-): OpencodeRuntimeConfigGeneralMemberPayload | null | undefined {
+): AgentRuntimeConfigGeneralMemberPayload | null | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -368,7 +401,44 @@ export function decodeHarnessHostOpencodeRequestBase64(encoded: string): Harness
 
 export const decodeOpencodeHarnessHostRequestBase64 = decodeHarnessHostOpencodeRequestBase64;
 
-export function decodeOpencodeRuntimeConfigCliRequestBase64(encoded: string): OpencodeRuntimeConfigCliRequest {
+export function decodeHarnessHostPiRequestBase64(encoded: string): HarnessHostPiRequest {
+  const parsed = decodeRequestBase64<unknown>(encoded);
+  if (!isRecord(parsed)) {
+    throw new Error("pi harness request payload must be an object");
+  }
+  return {
+    workspace_id: requiredString(parsed.workspace_id, "workspace_id"),
+    workspace_dir: requiredString(parsed.workspace_dir, "workspace_dir"),
+    session_id: requiredString(parsed.session_id, "session_id"),
+    input_id: requiredString(parsed.input_id, "input_id"),
+    instruction: requiredString(parsed.instruction, "instruction"),
+    debug: optionalBoolean(parsed.debug, false),
+    harness_session_id: optionalString(parsed.harness_session_id),
+    persisted_harness_session_id: optionalString(parsed.persisted_harness_session_id),
+    provider_id: requiredString(parsed.provider_id, "provider_id"),
+    model_id: requiredString(parsed.model_id, "model_id"),
+    timeout_seconds: requiredInteger(parsed.timeout_seconds, "timeout_seconds"),
+    system_prompt: requiredString(parsed.system_prompt, "system_prompt"),
+    workspace_skill_dirs: stringArray(parsed.workspace_skill_dirs),
+    mcp_servers: jsonObjectArray(parsed.mcp_servers),
+    mcp_tool_refs: Array.isArray(parsed.mcp_tool_refs)
+      ? parsed.mcp_tool_refs
+          .filter(isRecord)
+          .map((toolRef) => ({
+            tool_id: requiredString(toolRef.tool_id, "mcp_tool_refs[].tool_id"),
+            server_id: requiredString(toolRef.server_id, "mcp_tool_refs[].server_id"),
+            tool_name: requiredString(toolRef.tool_name, "mcp_tool_refs[].tool_name"),
+          }))
+      : [],
+    workspace_config_checksum: requiredString(parsed.workspace_config_checksum, "workspace_config_checksum"),
+    run_started_payload: jsonObject(parsed.run_started_payload),
+    model_client: modelClientConfigPayload(parsed.model_client, "model_client"),
+  };
+}
+
+export const decodePiHarnessHostRequestBase64 = decodeHarnessHostPiRequestBase64;
+
+export function decodeAgentRuntimeConfigCliRequestBase64(encoded: string): AgentRuntimeConfigCliRequest {
   const parsed = decodeRequestBase64<unknown>(encoded);
   if (!isRecord(parsed)) {
     throw new Error("opencode runtime config request payload must be an object");
@@ -408,6 +478,8 @@ export function decodeOpencodeRuntimeConfigCliRequestBase64(encoded: string): Op
       : [],
   };
 }
+
+export const decodeOpencodeRuntimeConfigCliRequestBase64 = decodeAgentRuntimeConfigCliRequestBase64;
 
 export function decodeWorkspaceMcpSidecarCliRequestBase64(encoded: string): WorkspaceMcpSidecarCliRequest {
   const parsed = decodeRequestBase64<unknown>(encoded);

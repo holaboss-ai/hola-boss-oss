@@ -1,14 +1,14 @@
 import { pathToFileURL } from "node:url";
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
 
-type OpencodeRuntimeConfigGeneralMemberPayload = {
+export type AgentRuntimeConfigGeneralMemberPayload = {
   id: string;
   model: string;
   prompt: string;
   role?: string | null;
 };
 
-export interface OpencodeRuntimeConfigCliRequest {
+export interface AgentRuntimeConfigCliRequest {
   session_id: string;
   workspace_id: string;
   input_id: string;
@@ -25,12 +25,12 @@ export interface OpencodeRuntimeConfigCliRequest {
   resolved_mcp_tool_refs: Array<{ tool_id: string; server_id: string; tool_name: string }>;
   resolved_output_schemas: Record<string, Record<string, unknown>>;
   general_type: string;
-  single_agent?: OpencodeRuntimeConfigGeneralMemberPayload | null;
-  coordinator?: OpencodeRuntimeConfigGeneralMemberPayload | null;
-  members: OpencodeRuntimeConfigGeneralMemberPayload[];
+  single_agent?: AgentRuntimeConfigGeneralMemberPayload | null;
+  coordinator?: AgentRuntimeConfigGeneralMemberPayload | null;
+  members: AgentRuntimeConfigGeneralMemberPayload[];
 }
 
-export interface OpencodeRuntimeConfigCliResponse {
+export interface AgentRuntimeConfigCliResponse {
   provider_id: string;
   model_id: string;
   mode: string;
@@ -48,6 +48,10 @@ export interface OpencodeRuntimeConfigCliResponse {
   output_format?: Record<string, unknown> | null;
   workspace_config_checksum: string;
 }
+
+export type OpencodeRuntimeConfigGeneralMemberPayload = AgentRuntimeConfigGeneralMemberPayload;
+export type OpencodeRuntimeConfigCliRequest = AgentRuntimeConfigCliRequest;
+export type OpencodeRuntimeConfigCliResponse = AgentRuntimeConfigCliResponse;
 
 const MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE = "openai_compatible";
 const MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE = "anthropic_native";
@@ -73,7 +77,7 @@ function modelProxyBaseUrlForProvider(provider: string): string {
   return `${baseRoot}/openai/v1`;
 }
 
-function resolveModelClientConfig(request: OpencodeRuntimeConfigCliRequest, modelProxyProvider: string): {
+function resolveModelClientConfig(request: AgentRuntimeConfigCliRequest, modelProxyProvider: string): {
   model_proxy_provider: string;
   api_key: string;
   base_url?: string | null;
@@ -136,7 +140,7 @@ function resolveModelClientConfig(request: OpencodeRuntimeConfigCliRequest, mode
   throw new Error(message);
 }
 
-function decodeCliRequest(encoded: string): OpencodeRuntimeConfigCliRequest {
+function decodeCliRequest(encoded: string): AgentRuntimeConfigCliRequest {
   const trimmed = encoded.trim();
   if (!trimmed) {
     throw new Error("request_base64 is required");
@@ -146,7 +150,7 @@ function decodeCliRequest(encoded: string): OpencodeRuntimeConfigCliRequest {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("request payload must be an object");
   }
-  return parsed as OpencodeRuntimeConfigCliRequest;
+  return parsed as AgentRuntimeConfigCliRequest;
 }
 
 function normalizeModelProxyProvider(provider: string): string {
@@ -213,8 +217,8 @@ function opencodeToolNameFromMcpServerAndTool(serverId: string, toolName: string
 }
 
 function composeOpencodeTeamSystemPrompt(
-  coordinator: OpencodeRuntimeConfigGeneralMemberPayload,
-  members: OpencodeRuntimeConfigGeneralMemberPayload[]
+  coordinator: AgentRuntimeConfigGeneralMemberPayload,
+  members: AgentRuntimeConfigGeneralMemberPayload[]
 ): string {
   const lines = [
     "You are the workspace coordinator agent.",
@@ -234,7 +238,7 @@ function composeOpencodeTeamSystemPrompt(
 }
 
 function selectedOpencodeSchema(
-  request: OpencodeRuntimeConfigCliRequest
+  request: AgentRuntimeConfigCliRequest
 ): { outputSchemaMemberId: string | null; outputFormat: Record<string, unknown> | null } {
   if (request.general_type === "single") {
     const memberId = request.single_agent?.id?.trim() || null;
@@ -278,9 +282,9 @@ function selectedOpencodeSchema(
   };
 }
 
-export function projectOpencodeRuntimeConfig(
-  request: OpencodeRuntimeConfigCliRequest
-): OpencodeRuntimeConfigCliResponse {
+export function projectAgentRuntimeConfig(
+  request: AgentRuntimeConfigCliRequest
+): AgentRuntimeConfigCliResponse {
   let selectedModel = request.selected_model?.trim() ?? "";
   let systemPrompt = "";
 
@@ -341,11 +345,13 @@ export function projectOpencodeRuntimeConfig(
   };
 }
 
+export const projectOpencodeRuntimeConfig = projectAgentRuntimeConfig;
+
 export async function runOpencodeRuntimeConfigCli(
   argv: string[],
   options: {
     io?: { stdout: NodeJS.WritableStream; stderr: NodeJS.WritableStream };
-    projectConfig?: (request: OpencodeRuntimeConfigCliRequest) => OpencodeRuntimeConfigCliResponse;
+    projectConfig?: (request: AgentRuntimeConfigCliRequest) => AgentRuntimeConfigCliResponse;
   } = {}
 ): Promise<number> {
   const io = options.io ?? { stdout: process.stdout, stderr: process.stderr };
@@ -356,7 +362,7 @@ export async function runOpencodeRuntimeConfigCli(
   }
   try {
     const request = decodeCliRequest(requestBase64);
-    const result = (options.projectConfig ?? projectOpencodeRuntimeConfig)(request);
+    const result = (options.projectConfig ?? projectAgentRuntimeConfig)(request);
     io.stdout.write(JSON.stringify(result));
     return 0;
   } catch (error) {

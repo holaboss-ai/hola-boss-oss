@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { normalizeHarnessId, requireRuntimeHarnessAdapter } from "./harness-registry.js";
 
 const HOLABOSS_MODEL_PROXY_BASE_URL_ENV = "HOLABOSS_MODEL_PROXY_BASE_URL";
 const HOLABOSS_MODEL_PROXY_BASE_URL_DEFAULT_ENV = "HOLABOSS_MODEL_PROXY_BASE_URL_DEFAULT";
@@ -259,7 +260,7 @@ function modelProxyBaseRootUrl(
 }
 
 function selectedHarness(): string {
-  return firstEnvValue(SANDBOX_AGENT_HARNESS_ENV).toLowerCase() || "opencode";
+  return normalizeHarnessId(firstEnvValue(SANDBOX_AGENT_HARNESS_ENV));
 }
 
 function opencodeBaseUrl(): string {
@@ -498,22 +499,15 @@ async function runtimeStatus(fetchImpl: typeof fetch): Promise<Record<string, un
     requireBaseUrl: false
   });
   const harness = selectedHarness();
+  const harnessAdapter = requireRuntimeHarnessAdapter(harness);
   const configPayload = runtimeConfigResponse(config);
-  const opencodeConfigPresent = fs.existsSync(opencodeConfigPath());
-  let harnessReady = false;
-  let harnessState = "not_required";
-  if (harness === "opencode") {
-    harnessReady = await workspaceMcpIsReady(`${opencodeBaseUrl()}/mcp`, fetchImpl);
-    if (harnessReady) {
-      harnessState = "ready";
-    } else if (opencodeConfigPresent) {
-      harnessState = "configured";
-    } else if (Boolean(configPayload.loaded_from_file)) {
-      harnessState = "config_loaded";
-    } else {
-      harnessState = "pending_config";
-    }
-  }
+  const backendConfigPresent = harnessAdapter.capabilities.requiresBackend ? fs.existsSync(opencodeConfigPath()) : false;
+  const harnessStatus = await harnessAdapter.describeRuntimeStatus({
+    configLoaded: Boolean(configPayload.loaded_from_file),
+    backendConfigPresent,
+    backendReadinessTarget: harnessAdapter.capabilities.requiresBackend ? `${opencodeBaseUrl()}/mcp` : null,
+    probeBackendReadiness: (target) => workspaceMcpIsReady(target, fetchImpl)
+  });
   const browserAvailable = Boolean(config.desktopBrowserEnabled && config.desktopBrowserUrl.trim());
   let browserState = browserAvailable ? "available" : "unavailable";
   if (config.desktopBrowserEnabled && !browserAvailable) {
@@ -523,9 +517,10 @@ async function runtimeStatus(fetchImpl: typeof fetch): Promise<Record<string, un
     harness,
     config_loaded: Boolean(configPayload.loaded_from_file),
     config_path: configPayload.config_path,
-    opencode_config_present: opencodeConfigPresent,
-    harness_ready: harnessReady,
-    harness_state: harnessState,
+    backend_config_present: backendConfigPresent,
+    opencode_config_present: backendConfigPresent,
+    harness_ready: harnessStatus.ready,
+    harness_state: harnessStatus.state,
     browser_available: browserAvailable,
     browser_state: browserState,
     browser_url: config.desktopBrowserUrl || null
@@ -631,10 +626,10 @@ export class FileRuntimeConfigService implements RuntimeConfigServiceLike {
     this.#ensureSelectedHarnessReady =
       options.ensureSelectedHarnessReady ??
       (async () => {
-        if (selectedHarness() !== "opencode") {
-          return;
-        }
-        await ensureOpencodeSidecarReady(this.#fetch);
+        const harnessAdapter = requireRuntimeHarnessAdapter(selectedHarness());
+        await harnessAdapter.ensureReady?.({
+          ensureHarnessBackendReady: () => ensureOpencodeSidecarReady(this.#fetch)
+        });
       });
   }
 
@@ -663,10 +658,11 @@ export class FileRuntimeConfigService implements RuntimeConfigServiceLike {
   async updateConfig(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     try {
       const config = updateRuntimeConfigDocument(payload);
-      if (selectedHarness() === "opencode") {
-        writeOpencodeBootstrapConfigIfAvailable();
-        await this.#ensureSelectedHarnessReady();
-      }
+      const harnessAdapter = requireRuntimeHarnessAdapter(selectedHarness());
+      await harnessAdapter.handleRuntimeConfigUpdated?.({
+        writeBootstrapConfigIfAvailable: writeOpencodeBootstrapConfigIfAvailable,
+        ensureSelectedHarnessReady: this.#ensureSelectedHarnessReady
+      });
       return runtimeConfigResponse(config);
     } catch (error) {
       throw toRuntimeConfigServiceError(error, "runtime config update failed");

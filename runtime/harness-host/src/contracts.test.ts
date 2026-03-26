@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   decodeHarnessHostOpencodeRequestBase64,
+  decodeHarnessHostPiRequestBase64,
   decodeOpencodeCommandsCliRequestBase64,
   decodeOpencodeConfigCliRequestBase64,
   decodeOpencodeHarnessHostRequestBase64,
@@ -15,6 +16,8 @@ import {
 import type {
   HarnessHostModelClientPayload,
   HarnessHostOpencodeRequest,
+  HarnessHostPiMcpToolRef,
+  HarnessHostPiRequest,
   JsonObject,
   ModelClientConfigPayload,
   OpencodeHarnessHostRequest,
@@ -207,6 +210,61 @@ test("decodeOpencodeHarnessHostRequestBase64 rejects invalid model_client payloa
       ),
     /model_client must be an object/
   );
+});
+
+test("decodeHarnessHostPiRequestBase64 validates and normalizes request payloads", () => {
+  const request = decodeHarnessHostPiRequestBase64(
+    encode({
+      workspace_id: "workspace-1",
+      workspace_dir: "/tmp/workspace-1",
+      session_id: "session-1",
+      input_id: "input-1",
+      instruction: "Do the thing",
+      provider_id: "openai",
+      model_id: "gpt-5.1",
+      timeout_seconds: 30,
+      system_prompt: "system",
+      workspace_skill_dirs: ["/tmp/workspace-1/skills/skill-a"],
+      mcp_servers: [{ name: "workspace", config: { type: "remote", url: "http://127.0.0.1:5000" } }],
+      mcp_tool_refs: [{ tool_id: "workspace.lookup", server_id: "workspace", tool_name: "lookup" }],
+      workspace_config_checksum: "checksum-1",
+      run_started_payload: { phase: "booting" },
+      model_client: {
+        model_proxy_provider: "openai_compatible",
+        api_key: "token",
+        default_headers: {
+          "X-Test": "1",
+          ignore: 2,
+        },
+      },
+    })
+  );
+
+  assert.deepEqual(request, {
+    workspace_id: "workspace-1",
+    workspace_dir: "/tmp/workspace-1",
+    session_id: "session-1",
+    input_id: "input-1",
+    instruction: "Do the thing",
+    debug: false,
+    harness_session_id: undefined,
+    persisted_harness_session_id: undefined,
+    provider_id: "openai",
+    model_id: "gpt-5.1",
+    timeout_seconds: 30,
+    system_prompt: "system",
+    workspace_skill_dirs: ["/tmp/workspace-1/skills/skill-a"],
+    mcp_servers: [{ name: "workspace", config: { type: "remote", url: "http://127.0.0.1:5000" } }],
+    mcp_tool_refs: [{ tool_id: "workspace.lookup", server_id: "workspace", tool_name: "lookup" } satisfies HarnessHostPiMcpToolRef],
+    workspace_config_checksum: "checksum-1",
+    run_started_payload: { phase: "booting" },
+    model_client: {
+      model_proxy_provider: "openai_compatible",
+      api_key: "token",
+      base_url: undefined,
+      default_headers: { "X-Test": "1" },
+    },
+  } satisfies HarnessHostPiRequest);
 });
 
 test("decodeOpencodeRuntimeConfigCliRequestBase64 defaults optional arrays and objects", () => {

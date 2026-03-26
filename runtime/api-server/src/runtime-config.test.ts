@@ -153,12 +153,66 @@ test("file runtime config service returns harness and browser readiness state", 
     harness: "opencode",
     config_loaded: true,
     config_path: path.join(root, "state", "runtime-config.json"),
+    backend_config_present: true,
     opencode_config_present: true,
     harness_ready: true,
     harness_state: "ready",
     browser_available: true,
     browser_state: "available",
     browser_url: "http://127.0.0.1:8787/api/v1/browser"
+  });
+});
+
+test("file runtime config service treats pi harness as ready without opencode bootstrap", async () => {
+  const root = makeTempDir("hb-runtime-config-");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = path.join(root, "state", "runtime-config.json");
+  process.env.SANDBOX_AGENT_HARNESS = "pi";
+
+  fs.mkdirSync(path.join(root, "state"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "state", "runtime-config.json"),
+    `${JSON.stringify({
+      runtime: {
+        default_model: "openai/gpt-5.1",
+        sandbox_id: "sandbox-1",
+        default_provider: "holaboss_model_proxy"
+      },
+      providers: {
+        holaboss_model_proxy: {
+          kind: "openai_compatible",
+          base_url: "https://runtime.example/api/v1/model-proxy",
+          api_key: "token-1"
+        }
+      },
+      integrations: {
+        holaboss: {
+          enabled: true,
+          sandbox_id: "sandbox-1",
+          user_id: "user-1",
+          auth_token: "token-1"
+        }
+      }
+    }, null, 2)}\n`,
+    "utf8"
+  );
+  fs.mkdirSync(path.join(root, "workspace"), { recursive: true });
+  fs.writeFileSync(path.join(root, "workspace", "opencode.json"), "{}\n", "utf8");
+
+  const service = new FileRuntimeConfigService();
+  const status = await service.getStatus();
+
+  assert.deepEqual(status, {
+    harness: "pi",
+    config_loaded: true,
+    config_path: path.join(root, "state", "runtime-config.json"),
+    backend_config_present: false,
+    opencode_config_present: false,
+    harness_ready: true,
+    harness_state: "ready",
+    browser_available: false,
+    browser_state: "unavailable",
+    browser_url: null
   });
 });
 

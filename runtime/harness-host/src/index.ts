@@ -1,7 +1,8 @@
-import { decodeOpencodeHarnessHostRequestBase64 } from "./contracts.js";
-import { runOpencode } from "./opencode.js";
+import { fileURLToPath } from "node:url";
 
-function readRequestBase64(args: string[]) {
+import { requireHarnessHostPluginByCommand } from "./harness-registry.js";
+
+export function readRequestBase64(args: string[]) {
   const flagIndex = args.findIndex((arg) => arg === "--request-base64");
   if (flagIndex === -1) {
     throw new Error("missing required argument --request-base64");
@@ -13,27 +14,26 @@ function readRequestBase64(args: string[]) {
   return encoded;
 }
 
-async function main(argv: string[]) {
+export async function runHarnessHostCli(argv: string[]) {
   const [command, ...args] = argv;
   if (!command) {
     throw new Error("missing command");
   }
 
-  if (command === "run-opencode") {
-    const encoded = readRequestBase64(args);
-    const request = decodeOpencodeHarnessHostRequestBase64(encoded);
-    return await runOpencode(request);
-  }
-
-  throw new Error(`unsupported command: ${command}`);
+  const plugin = requireHarnessHostPluginByCommand(command);
+  const encoded = readRequestBase64(args);
+  const request = plugin.decodeRequestBase64(encoded);
+  return await plugin.run(request);
 }
 
-void main(process.argv.slice(2))
-  .then((exitCode) => {
-    process.exit(exitCode);
-  })
-  .catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`${message}\n`);
-    process.exit(1);
-  });
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  void runHarnessHostCli(process.argv.slice(2))
+    .then((exitCode) => {
+      process.exit(exitCode);
+    })
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`${message}\n`);
+      process.exit(1);
+    });
+}

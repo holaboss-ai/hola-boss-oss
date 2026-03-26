@@ -168,6 +168,7 @@ test("runtime config routes delegate to the runtime config executor", async () =
         harness: "opencode",
         config_loaded: true,
         config_path: "/tmp/runtime-config.json",
+        backend_config_present: true,
         opencode_config_present: true,
         harness_ready: true,
         harness_state: "ready",

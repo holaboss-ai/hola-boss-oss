@@ -1,0 +1,116 @@
+import {
+  bindHarnessHostPlugin,
+  type HarnessDefinition,
+  type HarnessPrepareRunParams,
+  type HarnessRuntimeStatus,
+  type HarnessRuntimeStatusContext,
+} from "./types.js";
+
+async function prepareOpencodeHarnessRun(params: HarnessPrepareRunParams): Promise<void> {
+  const configUpdate = params.syncModelConfig({
+    workspace_root: params.bootstrap.workspaceRoot,
+    provider_id: params.runtimeConfig.provider_id,
+    model_id: params.runtimeConfig.model_id,
+    model_client: params.runtimeConfig.model_client,
+  });
+
+  if (configUpdate.backend_config_changed || params.stagedSkillsChanged) {
+    await params.restartBackend({
+      workspace_root: params.bootstrap.workspaceRoot,
+      workspace_id: params.request.workspace_id,
+      backend_fingerprint: params.buildBackendFingerprint(params.runtimeConfig, params.request.workspace_id),
+      allow_reuse_existing: false,
+      host: params.backendHost,
+      port: params.backendPort,
+      readiness_url: `${params.backendBaseUrl}/mcp`,
+      ready_timeout_s: params.backendReadyTimeoutSeconds,
+    });
+  }
+}
+
+async function describeOpencodeRuntimeStatus(params: HarnessRuntimeStatusContext): Promise<HarnessRuntimeStatus> {
+  const readinessTarget = params.backendReadinessTarget?.trim() ?? "";
+  const ready = readinessTarget ? await params.probeBackendReadiness(readinessTarget) : false;
+  if (ready) {
+    return { ready: true, state: "ready" };
+  }
+  if (params.backendConfigPresent) {
+    return { ready: false, state: "configured" };
+  }
+  if (params.configLoaded) {
+    return { ready: false, state: "config_loaded" };
+  }
+  return { ready: false, state: "pending_config" };
+}
+
+export const opencodeHarnessDefinition: HarnessDefinition = {
+  id: "opencode",
+  hostCommand: "run-opencode",
+  runtimeAdapter: {
+    id: "opencode",
+    hostCommand: "run-opencode",
+    capabilities: {
+      requiresBackend: true,
+      supportsStructuredOutput: true,
+      supportsWaitingUser: true,
+      supportsSkills: true,
+      supportsMcpTools: true,
+    },
+    buildRunnerPrepPlan() {
+      return {
+        stageWorkspaceSkills: true,
+        stageWorkspaceCommands: true,
+        prepareMcpTooling: true,
+        startWorkspaceMcpSidecar: true,
+        bootstrapResolvedApplications: true,
+      };
+    },
+    buildHarnessHostRequest(params) {
+      return {
+        workspace_id: params.request.workspace_id,
+        workspace_dir: params.bootstrap.workspaceDir,
+        session_id: params.request.session_id,
+        input_id: params.request.input_id,
+        instruction: params.request.instruction,
+        debug: Boolean(params.request.debug),
+        harness_session_id: params.bootstrap.requestedHarnessSessionId,
+        persisted_harness_session_id: params.bootstrap.persistedHarnessSessionId,
+        provider_id: params.runtimeConfig.provider_id,
+        model_id: params.runtimeConfig.model_id,
+        mode: params.runtimeConfig.mode,
+        opencode_base_url: params.backendBaseUrl,
+        timeout_seconds: params.timeoutSeconds,
+        system_prompt: params.runtimeConfig.system_prompt,
+        tools: { ...params.runtimeConfig.tools },
+        workspace_tool_ids: [...params.runtimeConfig.workspace_tool_ids],
+        workspace_skill_ids: [...params.runtimeConfig.workspace_skill_ids],
+        mcp_servers: params.mcpServers.map((server) => ({
+          name: server.name,
+          config: { ...server.config },
+          ...(server._holaboss_force_refresh ? { _holaboss_force_refresh: true } : {}),
+        })),
+        output_format: params.runtimeConfig.output_format,
+        workspace_config_checksum: params.runtimeConfig.workspace_config_checksum,
+        run_started_payload: params.runStartedPayload,
+        model_client: {
+          model_proxy_provider: params.runtimeConfig.model_client.model_proxy_provider,
+          api_key: params.runtimeConfig.model_client.api_key,
+          base_url: params.runtimeConfig.model_client.base_url,
+          default_headers: params.runtimeConfig.model_client.default_headers,
+        },
+      };
+    },
+    prepareRun: prepareOpencodeHarnessRun,
+    describeRuntimeStatus: describeOpencodeRuntimeStatus,
+    async handleRuntimeConfigUpdated(params) {
+      params.writeBootstrapConfigIfAvailable();
+      await params.ensureSelectedHarnessReady();
+    },
+    async ensureReady(params) {
+      await params.ensureHarnessBackendReady();
+    },
+  },
+  bindHostPlugin(implementation) {
+    return bindHarnessHostPlugin(opencodeHarnessDefinition, implementation);
+  },
+};

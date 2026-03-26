@@ -1,0 +1,191 @@
+export interface HarnessBootstrapPayload {
+  workspaceRoot: string;
+  workspaceDir: string;
+  requestedHarnessSessionId: string | null;
+  persistedHarnessSessionId: string | null;
+}
+
+export interface HarnessToolRefPayload {
+  tool_id: string;
+  server_id: string;
+  tool_name: string;
+}
+
+export interface HarnessRunnerRequestLike {
+  workspace_id: string;
+  session_id: string;
+  input_id: string;
+  instruction: string;
+  debug?: boolean;
+}
+
+export interface HarnessModelClientPayload {
+  model_proxy_provider: string;
+  api_key: string;
+  base_url?: string | null;
+  default_headers?: Record<string, string> | null;
+}
+
+export interface HarnessRuntimeConfigPayload {
+  provider_id: string;
+  model_id: string;
+  mode: string;
+  system_prompt: string;
+  model_client: HarnessModelClientPayload;
+  tools: Record<string, boolean>;
+  workspace_tool_ids: string[];
+  workspace_skill_ids: string[];
+  output_schema_member_id?: string | null;
+  output_format?: Record<string, unknown> | null;
+  workspace_config_checksum: string;
+}
+
+export interface HarnessPreparedMcpServerPayload {
+  name: string;
+  config: {
+    type: "local" | "remote";
+    enabled: boolean;
+    command?: string[];
+    environment?: Record<string, string>;
+    headers?: Record<string, string>;
+    url?: string | null;
+    timeout: number;
+  };
+  _holaboss_force_refresh?: boolean;
+}
+
+export interface HarnessHostRequestBuildParams {
+  request: HarnessRunnerRequestLike;
+  bootstrap: HarnessBootstrapPayload;
+  runtimeConfig: HarnessRuntimeConfigPayload;
+  workspaceSkills: Array<{
+    skill_id: string;
+    source_dir: string;
+  }>;
+  mcpServers: HarnessPreparedMcpServerPayload[];
+  mcpToolRefs: HarnessToolRefPayload[];
+  runStartedPayload: Record<string, unknown>;
+  backendBaseUrl: string;
+  timeoutSeconds: number;
+}
+
+export interface HarnessModelConfigSyncRequest {
+  workspace_root: string;
+  provider_id: string;
+  model_id: string;
+  model_client: HarnessModelClientPayload;
+}
+
+export interface HarnessModelConfigSyncResult {
+  path: string;
+  backend_config_changed: boolean;
+  model_selection_changed: boolean;
+}
+
+export interface HarnessBackendRestartRequest {
+  workspace_root: string;
+  workspace_id: string;
+  backend_fingerprint: string;
+  allow_reuse_existing: boolean;
+  host: string;
+  port: number;
+  readiness_url: string;
+  ready_timeout_s: number;
+}
+
+export interface HarnessPrepareRunParams {
+  request: HarnessRunnerRequestLike;
+  bootstrap: HarnessBootstrapPayload;
+  runtimeConfig: HarnessRuntimeConfigPayload;
+  stagedSkillsChanged: boolean;
+  syncModelConfig: (request: HarnessModelConfigSyncRequest) => HarnessModelConfigSyncResult;
+  restartBackend: (request: HarnessBackendRestartRequest) => Promise<void>;
+  backendBaseUrl: string;
+  backendHost: string;
+  backendPort: number;
+  backendReadyTimeoutSeconds: number;
+  buildBackendFingerprint: (runtimeConfig: HarnessRuntimeConfigPayload, workspaceId: string) => string;
+}
+
+export interface HarnessRuntimeStatusContext {
+  configLoaded: boolean;
+  backendConfigPresent: boolean;
+  backendReadinessTarget: string | null;
+  probeBackendReadiness: (target: string) => Promise<boolean>;
+}
+
+export interface HarnessRuntimeStatus {
+  ready: boolean;
+  state: string;
+}
+
+export interface HarnessCapabilities {
+  requiresBackend: boolean;
+  supportsStructuredOutput: boolean;
+  supportsWaitingUser: boolean;
+  supportsSkills: boolean;
+  supportsMcpTools: boolean;
+}
+
+export interface HarnessRunnerPrepPlan {
+  stageWorkspaceSkills: boolean;
+  stageWorkspaceCommands: boolean;
+  prepareMcpTooling: boolean;
+  startWorkspaceMcpSidecar: boolean;
+  bootstrapResolvedApplications: boolean;
+}
+
+export interface HarnessRuntimeConfigUpdateContext {
+  writeBootstrapConfigIfAvailable: () => void;
+  ensureSelectedHarnessReady: () => Promise<void>;
+}
+
+export interface HarnessEnsureReadyContext {
+  ensureHarnessBackendReady: () => Promise<void>;
+}
+
+export interface RuntimeHarnessAdapter {
+  id: string;
+  hostCommand: string;
+  capabilities: HarnessCapabilities;
+  buildRunnerPrepPlan: (params: {
+    request: HarnessRunnerRequestLike;
+    bootstrap: HarnessBootstrapPayload;
+  }) => HarnessRunnerPrepPlan;
+  buildHarnessHostRequest: (params: HarnessHostRequestBuildParams) => Record<string, unknown>;
+  prepareRun?: (params: HarnessPrepareRunParams) => Promise<void>;
+  describeRuntimeStatus: (params: HarnessRuntimeStatusContext) => Promise<HarnessRuntimeStatus>;
+  handleRuntimeConfigUpdated?: (params: HarnessRuntimeConfigUpdateContext) => Promise<void>;
+  ensureReady?: (params: HarnessEnsureReadyContext) => Promise<void>;
+}
+
+export interface HarnessHostPlugin {
+  id: string;
+  command: string;
+  decodeRequestBase64: (encoded: string) => unknown;
+  run: (request: unknown) => Promise<number>;
+}
+
+export interface HarnessHostImplementation {
+  decodeRequestBase64: (encoded: string) => unknown;
+  run: (request: unknown) => Promise<number>;
+}
+
+export interface HarnessDefinition {
+  id: string;
+  hostCommand: string;
+  runtimeAdapter: RuntimeHarnessAdapter;
+  bindHostPlugin: (implementation: HarnessHostImplementation) => HarnessHostPlugin;
+}
+
+export function bindHarnessHostPlugin(
+  definition: Pick<HarnessDefinition, "id" | "hostCommand">,
+  implementation: HarnessHostImplementation
+): HarnessHostPlugin {
+  return {
+    id: definition.id,
+    command: definition.hostCommand,
+    decodeRequestBase64: implementation.decodeRequestBase64,
+    run: implementation.run,
+  };
+}

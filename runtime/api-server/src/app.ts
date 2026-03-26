@@ -70,7 +70,7 @@ import {
   RunnerExecutorError,
   type RunnerExecutorLike,
 } from "./runner-worker.js";
-import { startOpencodeApplications } from "./opencode-bootstrap-shared.js";
+import { startResolvedApplications } from "./resolved-app-bootstrap.js";
 import { buildAppSetupEnv } from "./app-setup-env.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 50;
@@ -1040,7 +1040,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
     const params = request.params as { workspaceId: string };
     try {
-      return await startOpencodeApplications({
+      return await startResolvedApplications({
         store,
         appLifecycleExecutor,
         workspaceId: requiredString(params.workspaceId, "workspaceId"),

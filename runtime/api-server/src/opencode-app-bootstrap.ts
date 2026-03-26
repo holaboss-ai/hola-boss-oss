@@ -9,7 +9,7 @@ import {
   type AppLifecycleExecutorLike,
   RuntimeAppLifecycleExecutor
 } from "./app-lifecycle-worker.js";
-import { startOpencodeApplications } from "./opencode-bootstrap-shared.js";
+import { startResolvedApplications } from "./resolved-app-bootstrap.js";
 
 export interface OpencodeBootstrapCliRequest {
   workspace_id: string;
@@ -64,7 +64,7 @@ export async function runOpencodeAppBootstrapCli(
 
   try {
     const request = decodeCliRequest(requestBase64);
-    const result = await startOpencodeApplications({
+    const result = await startResolvedApplications({
       store,
       appLifecycleExecutor,
       workspaceId: request.workspace_id,

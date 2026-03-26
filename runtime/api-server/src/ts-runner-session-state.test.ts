@@ -33,14 +33,17 @@ test("persistWorkspaceMainSessionId writes the expected session state payload", 
   });
 
   assert.deepEqual(readWorkspaceSessionState(workspaceDir), {
-    version: 1,
-    harness: "opencode",
-    main_session_id: "session-123"
+    version: 2,
+    harness_sessions: {
+      opencode: {
+        main_session_id: "session-123"
+      }
+    }
   });
   assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "opencode" }), "session-123");
 });
 
-test("readWorkspaceMainSessionId ignores harness mismatches", () => {
+test("readWorkspaceMainSessionId keeps legacy harness payloads readable", () => {
   const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-state-mismatch-"));
   const statePath = workspaceSessionStatePath(workspaceDir);
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
@@ -57,7 +60,7 @@ test("readWorkspaceMainSessionId ignores harness mismatches", () => {
   assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "opencode" }), null);
 });
 
-test("persistWorkspaceMainSessionId refuses to overwrite a different harness", () => {
+test("persistWorkspaceMainSessionId stores multiple harness session ids side by side", () => {
   const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-state-refuse-"));
   const statePath = workspaceSessionStatePath(workspaceDir);
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
@@ -78,8 +81,16 @@ test("persistWorkspaceMainSessionId refuses to overwrite a different harness", (
   });
 
   assert.deepEqual(readWorkspaceSessionState(workspaceDir), {
-    version: 1,
-    harness: "other",
-    main_session_id: "session-123"
+    version: 2,
+    harness_sessions: {
+      opencode: {
+        main_session_id: "session-456"
+      },
+      other: {
+        main_session_id: "session-123"
+      }
+    }
   });
+  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "other" }), "session-123");
+  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "opencode" }), "session-456");
 });

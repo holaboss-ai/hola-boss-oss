@@ -4,10 +4,12 @@ import path from "node:path";
 const WORKSPACE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SESSION_STATE_DIR_NAME = ".holaboss";
 const SESSION_STATE_FILE_NAME = "harness-session-state.json";
-const SESSION_STATE_VERSION = 1;
+const SESSION_STATE_VERSION = 2;
 const SESSION_STATE_MAIN_SESSION_KEY = "main_session_id";
+const SESSION_STATE_HARNESS_SESSIONS_KEY = "harness_sessions";
 
 type LoggerLike = Pick<typeof console, "warn">;
+type HarnessSessionStateMap = Map<string, string>;
 
 function defaultLogger(): LoggerLike {
   return console;
@@ -44,6 +46,48 @@ export function workspaceSessionStatePath(workspaceDir: string): string {
   return path.join(path.resolve(workspaceDir), SESSION_STATE_DIR_NAME, SESSION_STATE_FILE_NAME);
 }
 
+function normalizeHarness(value: unknown): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function readHarnessSessionStateMap(
+  state: Record<string, unknown> | null,
+  options: { logger?: LoggerLike } = {}
+): HarnessSessionStateMap {
+  const logger = options.logger ?? defaultLogger();
+  const sessions = new Map<string, string>();
+  if (!state) {
+    return sessions;
+  }
+
+  const harnessSessions = state[SESSION_STATE_HARNESS_SESSIONS_KEY];
+  if (harnessSessions && typeof harnessSessions === "object" && !Array.isArray(harnessSessions)) {
+    for (const [harness, entry] of Object.entries(harnessSessions)) {
+      const normalizedHarness = normalizeHarness(harness);
+      if (!normalizedHarness || !entry || typeof entry !== "object" || Array.isArray(entry)) {
+        continue;
+      }
+      const sessionId = entry[SESSION_STATE_MAIN_SESSION_KEY];
+      if (typeof sessionId === "string" && sessionId.trim()) {
+        sessions.set(normalizedHarness, sessionId.trim());
+      }
+    }
+    return sessions;
+  }
+
+  const legacyHarness = normalizeHarness(state.harness);
+  const legacySessionId = state[SESSION_STATE_MAIN_SESSION_KEY];
+  if (legacyHarness && typeof legacySessionId === "string" && legacySessionId.trim()) {
+    sessions.set(legacyHarness, legacySessionId.trim());
+    return sessions;
+  }
+
+  if (state.harness !== undefined || state[SESSION_STATE_MAIN_SESSION_KEY] !== undefined) {
+    logger.warn("Ignoring incomplete legacy workspace session state payload");
+  }
+  return sessions;
+}
+
 export function readWorkspaceSessionState(
   workspaceDir: string,
   options: { logger?: LoggerLike } = {}
@@ -78,21 +122,11 @@ export function readWorkspaceMainSessionId(params: {
 }): string | null {
   const logger = params.logger ?? defaultLogger();
   const state = readWorkspaceSessionState(params.workspaceDir, { logger });
-  if (!state) {
+  const requestedHarness = normalizeHarness(params.harness);
+  if (!requestedHarness) {
     return null;
   }
-
-  const stateHarness = String(state.harness ?? "").trim().toLowerCase();
-  const requestedHarness = params.harness.trim().toLowerCase();
-  if (stateHarness && stateHarness !== requestedHarness) {
-    logger.warn(
-      `Workspace session state harness mismatch workspace=${params.workspaceDir} state_harness=${stateHarness} requested_harness=${requestedHarness}`
-    );
-    return null;
-  }
-
-  const value = state[SESSION_STATE_MAIN_SESSION_KEY];
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+  return readHarnessSessionStateMap(state, { logger }).get(requestedHarness) ?? null;
 }
 
 export function persistWorkspaceMainSessionId(params: {
@@ -102,28 +136,24 @@ export function persistWorkspaceMainSessionId(params: {
   logger?: LoggerLike;
 }): void {
   const logger = params.logger ?? defaultLogger();
-  const resolvedHarness = params.harness.trim().toLowerCase();
+  const resolvedHarness = normalizeHarness(params.harness);
   const resolvedSessionId = params.sessionId.trim();
   if (!resolvedHarness || !resolvedSessionId) {
     return;
   }
 
   const existingState = readWorkspaceSessionState(params.workspaceDir, { logger });
-  if (existingState) {
-    const existingHarness = String(existingState.harness ?? "").trim().toLowerCase();
-    if (existingHarness && existingHarness !== resolvedHarness) {
-      logger.warn(
-        `Refusing to overwrite workspace session state harness workspace=${params.workspaceDir} state_harness=${existingHarness} requested_harness=${resolvedHarness}`
-      );
-      return;
-    }
-  }
+  const sessions = readHarnessSessionStateMap(existingState, { logger });
+  sessions.set(resolvedHarness, resolvedSessionId);
 
   const statePath = workspaceSessionStatePath(params.workspaceDir);
   const payload = {
     version: SESSION_STATE_VERSION,
-    harness: resolvedHarness,
-    [SESSION_STATE_MAIN_SESSION_KEY]: resolvedSessionId
+    [SESSION_STATE_HARNESS_SESSIONS_KEY]: Object.fromEntries(
+      [...sessions.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([harness, sessionId]) => [harness, { [SESSION_STATE_MAIN_SESSION_KEY]: sessionId }])
+    )
   };
   try {
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
