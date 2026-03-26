@@ -513,3 +513,76 @@ test("task proposals round trip supports create, list, unreviewed, get, and stat
   assert.equal(updated.state, "accepted");
   store.close();
 });
+
+test("allocateAppPort assigns sequential ports starting from 3001", () => {
+  const root = makeTempDir("hb-store-ports-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "test.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const p1 = store.allocateAppPort({ workspaceId: "ws-1", appId: "gmail" });
+  const p2 = store.allocateAppPort({ workspaceId: "ws-1", appId: "sheets" });
+
+  assert.equal(p1.port, 3001);
+  assert.equal(p2.port, 3002);
+  assert.equal(p1.appId, "gmail");
+  assert.equal(p2.appId, "sheets");
+
+  store.close();
+});
+
+test("allocateAppPort reuses existing port for same app", () => {
+  const root = makeTempDir("hb-store-ports-reuse-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "test.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const p1 = store.allocateAppPort({ workspaceId: "ws-1", appId: "gmail" });
+  const p2 = store.allocateAppPort({ workspaceId: "ws-1", appId: "gmail" });
+
+  assert.equal(p1.port, p2.port);
+
+  store.close();
+});
+
+test("listAppPorts returns all ports for workspace", () => {
+  const root = makeTempDir("hb-store-ports-list-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "test.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  store.allocateAppPort({ workspaceId: "ws-1", appId: "gmail" });
+  store.allocateAppPort({ workspaceId: "ws-1", appId: "sheets" });
+  store.allocateAppPort({ workspaceId: "ws-2", appId: "github" });
+
+  const ws1Ports = store.listAppPorts({ workspaceId: "ws-1" });
+  assert.equal(ws1Ports.length, 2);
+
+  const ws2Ports = store.listAppPorts({ workspaceId: "ws-2" });
+  assert.equal(ws2Ports.length, 1);
+
+  store.close();
+});
+
+test("deleteAppPort removes port and frees it for reuse", () => {
+  const root = makeTempDir("hb-store-ports-delete-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "test.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const p1 = store.allocateAppPort({ workspaceId: "ws-1", appId: "gmail" });
+  store.deleteAppPort({ workspaceId: "ws-1", appId: "gmail" });
+
+  const deleted = store.getAppPort({ workspaceId: "ws-1", appId: "gmail" });
+  assert.equal(deleted, null);
+
+  // Port should be available again
+  const p2 = store.allocateAppPort({ workspaceId: "ws-1", appId: "twitter" });
+  assert.equal(p2.port, p1.port);
+
+  store.close();
+});

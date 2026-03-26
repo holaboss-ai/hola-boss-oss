@@ -1,5 +1,6 @@
 export {
   type AppBuildRecord,
+  type AppPortRecord,
   RuntimeStateStore,
   runtimeDbPath,
   sanitizeWorkspaceId,

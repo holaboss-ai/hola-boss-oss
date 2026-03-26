@@ -135,6 +135,14 @@ export interface AppBuildRecord {
   updatedAt: string;
 }
 
+export interface AppPortRecord {
+  workspaceId: string;
+  appId: string;
+  port: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CronjobRecord {
   id: string;
   workspaceId: string;
@@ -1268,6 +1276,94 @@ export class RuntimeStateStore {
     return result.changes > 0;
   }
 
+  // --- App Ports ---
+
+  allocateAppPort(params: { workspaceId: string; appId: string }): AppPortRecord {
+    const now = utcNowIso();
+
+    // Check if this app already has a port assigned
+    const existing = this.getAppPort({ workspaceId: params.workspaceId, appId: params.appId });
+    if (existing) {
+      return existing;
+    }
+
+    // Find next available port
+    const port = this.findAvailablePort();
+
+    // Upsert
+    this.db().prepare(`
+      INSERT INTO app_ports (workspace_id, app_id, port, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (workspace_id, app_id)
+      DO UPDATE SET port = ?, updated_at = ?
+    `).run(params.workspaceId, params.appId, port, now, now, port, now);
+
+    return { workspaceId: params.workspaceId, appId: params.appId, port, createdAt: now, updatedAt: now };
+  }
+
+  getAppPort(params: { workspaceId: string; appId: string }): AppPortRecord | null {
+    const row = this.db()
+      .prepare<[string, string], Record<string, unknown>>(
+        "SELECT * FROM app_ports WHERE workspace_id = ? AND app_id = ? LIMIT 1"
+      )
+      .get(params.workspaceId, params.appId);
+    return row ? this.rowToAppPort(row) : null;
+  }
+
+  listAppPorts(params: { workspaceId: string }): AppPortRecord[] {
+    const rows = this.db()
+      .prepare<[string], Record<string, unknown>>(
+        "SELECT * FROM app_ports WHERE workspace_id = ?"
+      )
+      .all(params.workspaceId);
+    return rows.map((row) => this.rowToAppPort(row));
+  }
+
+  listAllAppPorts(): AppPortRecord[] {
+    const rows = this.db()
+      .prepare<[], Record<string, unknown>>(
+        "SELECT * FROM app_ports"
+      )
+      .all();
+    return rows.map((row) => this.rowToAppPort(row));
+  }
+
+  deleteAppPort(params: { workspaceId: string; appId: string }): boolean {
+    const result = this.db()
+      .prepare("DELETE FROM app_ports WHERE workspace_id = ? AND app_id = ?")
+      .run(params.workspaceId, params.appId);
+    return result.changes > 0;
+  }
+
+  private findAvailablePort(): number {
+    const BASE_PORT = 3001;
+    const MAX_PORT = 3100;
+
+    const allocated = new Set(
+      this.db()
+        .prepare<[], { port: number }>("SELECT port FROM app_ports")
+        .all()
+        .map((r) => r.port)
+    );
+
+    for (let port = BASE_PORT; port <= MAX_PORT; port++) {
+      if (!allocated.has(port)) {
+        return port;
+      }
+    }
+    throw new Error("No available ports in range 3001-3100");
+  }
+
+  private rowToAppPort(row: Record<string, unknown>): AppPortRecord {
+    return {
+      workspaceId: String(row.workspace_id ?? ""),
+      appId: String(row.app_id ?? ""),
+      port: Number(row.port ?? 0),
+      createdAt: String(row.created_at ?? ""),
+      updatedAt: String(row.updated_at ?? ""),
+    };
+  }
+
   createCronjob(params: {
     workspaceId: string;
     initiatedBy: string;
@@ -1696,6 +1792,18 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_app_builds_workspace
           ON app_builds (workspace_id);
+
+      CREATE TABLE IF NOT EXISTS app_ports (
+          workspace_id TEXT NOT NULL,
+          app_id TEXT NOT NULL,
+          port INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, app_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_app_ports_workspace
+          ON app_ports (workspace_id);
 
       CREATE TABLE IF NOT EXISTS cronjobs (
           id TEXT PRIMARY KEY,
