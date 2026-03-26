@@ -45,6 +45,21 @@ stage_node_package() {
   )
 }
 
+stage_source_package() {
+  local package_dir="$1"
+  local output_name="$2"
+
+  if [ ! -f "${package_dir}/package.json" ]; then
+    return
+  fi
+
+  mkdir -p "${OUTPUT_ROOT}/${output_name}"
+  cp "${package_dir}/package.json" "${OUTPUT_ROOT}/${output_name}/package.json"
+  if [ -d "${package_dir}/src" ]; then
+    cp -R "${package_dir}/src" "${OUTPUT_ROOT}/${output_name}/src"
+  fi
+}
+
 RUNTIME_VERSION="$(runtime_version)"
 if [ -z "${RUNTIME_VERSION}" ]; then
   echo "failed to resolve runtime version from runtime/api-server/package.json" >&2
@@ -59,6 +74,7 @@ BUILD_TIMESTAMP_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 rm -rf "${OUTPUT_ROOT}"
 mkdir -p "${OUTPUT_ROOT}/bin"
 
+stage_source_package "${RUNTIME_ROOT}/harnesses" "harnesses"
 stage_node_package "${RUNTIME_ROOT}/harness-host" "harness-host"
 stage_node_package "${RUNTIME_ROOT}/state-store" "state-store"
 stage_node_package "${RUNTIME_ROOT}/api-server" "api-server"

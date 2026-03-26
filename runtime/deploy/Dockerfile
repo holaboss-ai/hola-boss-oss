@@ -4,6 +4,8 @@ FROM ${TOOLCHAIN_IMAGE}
 WORKDIR /tmp/runtime-source
 
 COPY runtime/deploy/ /tmp/runtime-source/deploy/
+COPY runtime/harnesses/package.json /tmp/runtime-source/harnesses/package.json
+COPY runtime/harnesses/src/ /tmp/runtime-source/harnesses/src/
 COPY runtime/harness-host/package.json /tmp/runtime-source/harness-host/package.json
 COPY runtime/harness-host/package-lock.json /tmp/runtime-source/harness-host/package-lock.json
 COPY runtime/harness-host/tsconfig.json /tmp/runtime-source/harness-host/tsconfig.json
