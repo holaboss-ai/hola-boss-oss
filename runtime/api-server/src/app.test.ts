@@ -1336,7 +1336,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
         envContract: [],
         startCommand: "",
         baseDir: "apps/app-b",
-        lifecycle: { setup: "", start: "", stop: "" }
+        lifecycle: { setup: "", start: "", stop: "" }, tools: []
       }
     },
     {
@@ -1350,7 +1350,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
         envContract: [],
         startCommand: "",
         baseDir: "apps/app-b",
-        lifecycle: { setup: "", start: "", stop: "" }
+        lifecycle: { setup: "", start: "", stop: "" }, tools: []
       }
     },
     {
@@ -1364,7 +1364,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
         envContract: [],
         startCommand: "",
         baseDir: "apps/app-b",
-        lifecycle: { setup: "", start: "", stop: "" }
+        lifecycle: { setup: "", start: "", stop: "" }, tools: []
       }
     }
   ]);
@@ -1495,7 +1495,7 @@ test("internal opencode app bootstrap route starts resolved apps and returns MCP
           env_contract: ["HOLABOSS_USER_ID"],
           start_command: "",
           base_dir: "apps/app-a",
-          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
+          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }, tools: []
         },
         {
           app_id: "app-b",
@@ -1504,7 +1504,7 @@ test("internal opencode app bootstrap route starts resolved apps and returns MCP
           env_contract: [],
           start_command: "npm run legacy-start",
           base_dir: "apps/app-b",
-          lifecycle: { setup: "", start: "", stop: "" }
+          lifecycle: { setup: "", start: "", stop: "" }, tools: []
         }
       ]
     }
@@ -1543,7 +1543,7 @@ test("internal opencode app bootstrap route starts resolved apps and returns MCP
         envContract: ["HOLABOSS_USER_ID"],
         startCommand: "",
         baseDir: "apps/app-a",
-        lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
+        lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }, tools: []
       }
     },
     {
@@ -1561,7 +1561,7 @@ test("internal opencode app bootstrap route starts resolved apps and returns MCP
         envContract: [],
         startCommand: "npm run legacy-start",
         baseDir: "apps/app-b",
-        lifecycle: { setup: "", start: "", stop: "" }
+        lifecycle: { setup: "", start: "", stop: "" }, tools: []
       }
     }
   ]);
@@ -1612,7 +1612,7 @@ test("internal opencode app bootstrap route rejects base_dir that escapes the wo
           env_contract: [],
           start_command: "",
           base_dir: "../escape",
-          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
+          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }, tools: []
         }
       ]
     }
@@ -1671,7 +1671,7 @@ test("internal opencode app bootstrap route prevalidates all app dirs before sta
           env_contract: [],
           start_command: "",
           base_dir: "apps/app-a",
-          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
+          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }, tools: []
         },
         {
           app_id: "app-b",
@@ -1680,7 +1680,7 @@ test("internal opencode app bootstrap route prevalidates all app dirs before sta
           env_contract: [],
           start_command: "",
           base_dir: "../escape",
-          lifecycle: { setup: "", start: "npm run other-start", stop: "npm run other-stop" }
+          lifecycle: { setup: "", start: "npm run other-start", stop: "npm run other-stop" }, tools: []
         }
       ]
     }
@@ -1738,7 +1738,7 @@ test("internal opencode app bootstrap route rejects missing expected workspace d
           env_contract: [],
           start_command: "",
           base_dir: "apps/app-a",
-          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
+          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }, tools: []
         }
       ]
     }
@@ -1790,7 +1790,7 @@ test("internal opencode app bootstrap route rejects unknown workspace ids before
           env_contract: [],
           start_command: "",
           base_dir: "apps/app-a",
-          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
+          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }, tools: []
         }
       ]
     }
@@ -1848,7 +1848,7 @@ test("internal opencode app bootstrap route rejects workspace_dir mismatches bef
           env_contract: [],
           start_command: "",
           base_dir: "apps/app-a",
-          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
+          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }, tools: []
         }
       ]
     }
@@ -1905,7 +1905,7 @@ test("internal opencode app bootstrap route rejects duplicate app ids", async ()
           env_contract: [],
           start_command: "",
           base_dir: "apps/app-a",
-          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
+          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }, tools: []
         },
         {
           app_id: "app-a",
@@ -1914,7 +1914,7 @@ test("internal opencode app bootstrap route rejects duplicate app ids", async ()
           env_contract: [],
           start_command: "",
           base_dir: "apps/app-a-2",
-          lifecycle: { setup: "", start: "npm run other-start", stop: "npm run other-stop" }
+          lifecycle: { setup: "", start: "npm run other-start", stop: "npm run other-stop" }, tools: []
         }
       ]
     }
@@ -2021,7 +2021,7 @@ test("internal opencode app bootstrap route rejects mismatched lifecycle respons
           env_contract: [],
           start_command: "",
           base_dir: "apps/app-a",
-          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
+          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }, tools: []
         }
       ]
     }

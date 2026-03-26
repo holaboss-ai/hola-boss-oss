@@ -480,33 +480,54 @@ async function defaultBootstrapApplications(params: {
   if (params.resolvedApplications.length === 0) {
     return [];
   }
-  const appLifecycleExecutor: AppLifecycleExecutorLike = new RuntimeAppLifecycleExecutor();
-  const store = new RuntimeStateStore({
-    workspaceRoot: path.dirname(path.resolve(params.workspaceDir))
-  });
-  try {
-    const result = await bootstrapResolvedApplications({
-      workspaceDir: params.workspaceDir,
-      holabossUserId: explicitHolabossUserId(params.request),
-      resolvedApplications: params.resolvedApplications,
-      store,
-      workspaceId: params.request.workspace_id,
-      appLifecycleExecutor
-    });
 
-    return result.applications.map((application: { app_id: string; mcp_url: string; timeout_ms: number }) => ({
-      name: application.app_id,
-      config: {
-        type: "remote" as const,
-        enabled: true,
-        url: application.mcp_url,
-        headers: { "X-Workspace-Id": params.request.workspace_id },
-        timeout: application.timeout_ms
-      }
-    }));
-  } finally {
-    store.close();
+  // Read tool schemas from app.runtime.yaml files — no app startup needed
+  const { listWorkspaceToolSchemas } = await import("./workspace-apps.js");
+  const toolSchemas = listWorkspaceToolSchemas(params.workspaceDir);
+
+  if (toolSchemas.length === 0) {
+    // No tool schemas in config — fall back to legacy bootstrap
+    const appLifecycleExecutor: AppLifecycleExecutorLike = new RuntimeAppLifecycleExecutor();
+    const store = new RuntimeStateStore({
+      workspaceRoot: path.dirname(path.resolve(params.workspaceDir))
+    });
+    try {
+      const result = await bootstrapResolvedApplications({
+        workspaceDir: params.workspaceDir,
+        holabossUserId: explicitHolabossUserId(params.request),
+        resolvedApplications: params.resolvedApplications,
+        store,
+        workspaceId: params.request.workspace_id,
+        appLifecycleExecutor
+      });
+      return result.applications.map((application: { app_id: string; mcp_url: string; timeout_ms: number }) => ({
+        name: application.app_id,
+        config: {
+          type: "remote" as const,
+          enabled: true,
+          url: application.mcp_url,
+          headers: { "X-Workspace-Id": params.request.workspace_id },
+          timeout: application.timeout_ms
+        }
+      }));
+    } finally {
+      store.close();
+    }
   }
+
+  // Return MCP server configs pointing to app ports — apps may or may not be running
+  // The MCP client will get a connection error if the app isn't running,
+  // which the agent can handle gracefully
+  return toolSchemas.map((schema) => ({
+    name: schema.appId,
+    config: {
+      type: "remote" as const,
+      enabled: true,
+      url: `http://localhost:${schema.mcpPort}${schema.mcpPath}`,
+      headers: { "X-Workspace-Id": params.request.workspace_id },
+      timeout: 30000
+    }
+  }));
 }
 
 async function defaultRunHarnessHost(params: {

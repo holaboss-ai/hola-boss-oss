@@ -38,6 +38,7 @@ export type ResolvedApplicationRuntime = {
     start: string;
     stop: string;
   };
+  tools?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
 };
 
 export type ResolvedWorkspaceApp = {
@@ -163,6 +164,12 @@ export function parseResolvedAppRuntime(
       : undefined);
   const lifecycle = isRecord(loaded.lifecycle) ? loaded.lifecycle : {};
   const envContract = Array.isArray(loaded.env_contract) ? loaded.env_contract.filter((value) => typeof value === "string") : [];
+  const rawTools = Array.isArray(loaded.tools) ? loaded.tools : [];
+  const tools = rawTools.filter(isRecord).map((tool) => ({
+    name: typeof tool.name === "string" ? tool.name : "",
+    description: typeof tool.description === "string" ? tool.description : "",
+    parameters: isRecord(tool.parameters) ? tool.parameters : {},
+  }));
   const configDir = path.posix.dirname(configPath);
   return {
     appId: declaredAppId,
@@ -189,7 +196,8 @@ export function parseResolvedAppRuntime(
       setup: typeof lifecycle.setup === "string" ? lifecycle.setup : "",
       start: typeof lifecycle.start === "string" ? lifecycle.start : "",
       stop: typeof lifecycle.stop === "string" ? lifecycle.stop : ""
-    }
+    },
+    tools
   };
 }
 
@@ -280,4 +288,45 @@ export function listWorkspaceComposeShutdownTargets(workspaceDir: string): Works
     }
   }
   return targets;
+}
+
+export function listWorkspaceToolSchemas(workspaceDir: string): Array<{
+  appId: string;
+  mcpPort: number;
+  mcpPath: string;
+  tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
+}> {
+  const applications = listWorkspaceApplications(workspaceDir);
+  const result: Array<{
+    appId: string;
+    mcpPort: number;
+    mcpPath: string;
+    tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
+  }> = [];
+
+  for (const entry of applications) {
+    const appId = typeof entry.app_id === "string" ? entry.app_id : "";
+    const configPath = typeof entry.config_path === "string" ? entry.config_path : "";
+    if (!appId || !configPath) continue;
+
+    const fullConfigPath = path.join(workspaceDir, configPath);
+    if (!fs.existsSync(fullConfigPath)) continue;
+
+    try {
+      const rawYaml = fs.readFileSync(fullConfigPath, "utf-8");
+      const resolved = parseResolvedAppRuntime(rawYaml, appId, configPath);
+      if (resolved.tools && resolved.tools.length > 0) {
+        result.push({
+          appId: resolved.appId,
+          mcpPort: resolved.mcp.port,
+          mcpPath: resolved.mcp.path,
+          tools: resolved.tools,
+        });
+      }
+    } catch {
+      // Skip apps with invalid config
+    }
+  }
+
+  return result;
 }

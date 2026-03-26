@@ -115,7 +115,14 @@ export function parseResolvedApplicationRuntimePayload(value: unknown): Resolved
       setup: optionalString(lifecycle.setup) ?? "",
       start: optionalString(lifecycle.start) ?? "",
       stop: optionalString(lifecycle.stop) ?? ""
-    }
+    },
+    tools: (Array.isArray(payload.tools) ? payload.tools : [])
+      .filter(isRecord)
+      .map((tool: StringMap) => ({
+        name: typeof tool.name === "string" ? tool.name : "",
+        description: typeof tool.description === "string" ? tool.description : "",
+        parameters: isRecord(tool.parameters) ? tool.parameters : {},
+      }))
   };
 }
 
