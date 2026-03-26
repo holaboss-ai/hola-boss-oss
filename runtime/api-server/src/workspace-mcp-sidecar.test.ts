@@ -30,8 +30,7 @@ function makeRequest(workspaceDir: string) {
     expected_fingerprint: "fp-1",
     timeout_ms: 45000,
     readiness_timeout_s: 2,
-    catalog_json_base64: Buffer.from("{}", "utf8").toString("base64"),
-    python_executable: "python3"
+    catalog_json_base64: Buffer.from("{}", "utf8").toString("base64")
   } as const;
 }
 
@@ -163,8 +162,7 @@ test("startWorkspaceMcpSidecar terminates stale state, spawns, and persists the 
     catalog_json_base64: request.catalog_json_base64,
     host: "127.0.0.1",
     port: 24567,
-    server_name: request.physical_server_id,
-    python_executable: request.python_executable
+    server_name: request.physical_server_id
   });
   assert.equal(capturedSpawnCall.options.cwd, path.resolve(workspaceDir));
   assert.equal(capturedSpawnCall.options.detached, true);

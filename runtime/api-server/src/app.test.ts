@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, test } from "node:test";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
+import yazl from "yazl";
 
 import { buildRuntimeApiServer, type BuildRuntimeApiServerOptions } from "./app.js";
 import { appLocalNpmCacheDir, buildAppSetupEnv } from "./app-setup-env.js";
@@ -37,6 +40,75 @@ function buildTestRuntimeApiServer(options: BuildRuntimeApiServerOptions) {
     cronWorker: null,
     bridgeWorker: null
   });
+}
+
+async function createZipBuffer(
+  entries: Array<{ path: string; content: string | Buffer; mode?: number }>
+): Promise<Buffer> {
+  const zipFile = new yazl.ZipFile();
+  for (const entry of entries) {
+    zipFile.addBuffer(
+      Buffer.isBuffer(entry.content) ? entry.content : Buffer.from(entry.content, "utf8"),
+      entry.path,
+      entry.mode ? { mode: entry.mode } : undefined
+    );
+  }
+
+  const chunks: Buffer[] = [];
+  const output = zipFile.outputStream;
+  output.on("data", (chunk) => {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  });
+
+  const completed = new Promise<Buffer>((resolve, reject) => {
+    output.once("error", reject);
+    output.once("end", () => {
+      resolve(Buffer.concat(chunks));
+    });
+  });
+
+  zipFile.end();
+  return completed;
+}
+
+function rewriteZipEntryName(archive: Buffer, fromPath: string, toPath: string): Buffer {
+  const from = Buffer.from(fromPath, "utf8");
+  const to = Buffer.from(toPath, "utf8");
+  assert.equal(from.length, to.length, "zip entry rewrite must preserve encoded path length");
+
+  const mutated = Buffer.from(archive);
+  let offset = 0;
+  let replaced = 0;
+  while (offset >= 0) {
+    offset = mutated.indexOf(from, offset);
+    if (offset < 0) {
+      break;
+    }
+    to.copy(mutated, offset);
+    offset += from.length;
+    replaced += 1;
+  }
+
+  assert.ok(replaced >= 2, "expected to rewrite local and central directory zip entries");
+  return mutated;
+}
+
+async function startStaticHttpServer(
+  handler: (request: IncomingMessage, response: ServerResponse) => void
+): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = http.createServer(handler);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    close: async () => {
+      server.close();
+      await once(server, "close");
+    }
+  };
 }
 
 test("healthz returns ok", async () => {
@@ -949,6 +1021,118 @@ test("workspace template, file, and snapshot routes preserve local payload shape
   store.close();
 });
 
+test("workspace apply-template-from-url downloads and extracts a zip archive", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: {
+      name: "Workspace Template URL",
+      harness: "opencode",
+      status: "active"
+    }
+  });
+  const workspace = created.json().workspace as { id: string };
+  const workspaceDir = path.join(workspaceRoot, workspace.id);
+  fs.writeFileSync(path.join(workspaceDir, "stale.txt"), "stale\n", "utf8");
+
+  const zipArchive = await createZipBuffer([
+    { path: "README.md", content: "# Remote Template\n" },
+    { path: "scripts/run.sh", content: "echo remote\n", mode: 0o755 }
+  ]);
+  const requests: string[] = [];
+  const server = await startStaticHttpServer((request, response) => {
+    requests.push(String(request.headers["x-api-key"] ?? ""));
+    response.writeHead(200, { "content-type": "application/zip" });
+    response.end(zipArchive);
+  });
+
+  try {
+    const applied = await app.inject({
+      method: "POST",
+      url: `/api/v1/workspaces/${workspace.id}/apply-template-from-url`,
+      payload: {
+        url: `${server.url}/template.zip`,
+        api_key: "template-key",
+        replace_existing: true
+      }
+    });
+
+    assert.equal(applied.statusCode, 200);
+    assert.equal(applied.json().files_written, 2);
+    assert.deepEqual(requests, ["template-key"]);
+    assert.equal(fs.existsSync(path.join(workspaceDir, "stale.txt")), false);
+    assert.equal(
+      fs.readFileSync(path.join(workspaceDir, "README.md"), "utf8"),
+      "# Remote Template\n"
+    );
+    assert.equal(
+      fs.readFileSync(path.join(workspaceDir, "scripts", "run.sh"), "utf8"),
+      "echo remote\n"
+    );
+    assert.notEqual(fs.statSync(path.join(workspaceDir, "scripts", "run.sh")).mode & 0o111, 0);
+  } finally {
+    await server.close();
+    await app.close();
+    store.close();
+  }
+});
+
+test("workspace apply-template-from-url rejects invalid archive paths", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const created = await app.inject({
+    method: "POST",
+    url: "/api/v1/workspaces",
+    payload: {
+      name: "Workspace Template Invalid URL",
+      harness: "opencode",
+      status: "active"
+    }
+  });
+  const workspace = created.json().workspace as { id: string };
+  const zipArchive = rewriteZipEntryName(
+    await createZipBuffer([{ path: "good/file.x", content: "owned\n" }]),
+    "good/file.x",
+    "../evil.txt"
+  );
+  const server = await startStaticHttpServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/zip" });
+    response.end(zipArchive);
+  });
+
+  try {
+    const applied = await app.inject({
+      method: "POST",
+      url: `/api/v1/workspaces/${workspace.id}/apply-template-from-url`,
+      payload: {
+        url: `${server.url}/template.zip`
+      }
+    });
+
+    assert.equal(applied.statusCode, 400);
+    assert.match(applied.json().detail, /invalid relative path|path traversal not allowed/i);
+    assert.equal(fs.existsSync(path.join(workspaceRoot, "evil.txt")), false);
+  } finally {
+    await server.close();
+    await app.close();
+    store.close();
+  }
+});
+
 test("workspace export route streams a tar.gz with the workspace files", async () => {
   const root = makeTempDir("hb-runtime-api-");
   const workspaceRoot = path.join(root, "workspace");
@@ -1050,7 +1234,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
   store.upsertAppBuild({
     workspaceId: workspace.id,
     appId: "app-b",
-    status: "building"
+    status: "completed"
   });
 
   const workspaceDir = path.join(workspaceRoot, workspace.id);
@@ -1098,7 +1282,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
   const started = await app.inject({
     method: "POST",
     url: "/api/v1/apps/app-b/start",
-    payload: { workspace_id: workspace.id }
+    payload: { workspace_id: workspace.id, holaboss_user_id: "user-1" }
   });
 
   assert.equal(started.statusCode, 200);
@@ -1143,6 +1327,8 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
       appDir: path.join(workspaceDir, "apps", "app-b"),
       httpPort: 18081,
       mcpPort: 13101,
+      holabossUserId: "user-1",
+      skipSetup: true,
       resolvedApp: {
         appId: "app-b",
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
@@ -1267,6 +1453,11 @@ test("internal opencode app bootstrap route starts resolved apps and returns MCP
     harness: "opencode",
     status: "active"
   });
+  store.upsertAppBuild({
+    workspaceId: "workspace-1",
+    appId: "app-a",
+    status: "completed"
+  });
   fs.mkdirSync(path.join(workspaceRoot, "workspace-1", "apps", "app-a"), { recursive: true });
   fs.mkdirSync(path.join(workspaceRoot, "workspace-1", "apps", "app-b"), { recursive: true });
 
@@ -1344,6 +1535,7 @@ test("internal opencode app bootstrap route starts resolved apps and returns MCP
       httpPort: 18080,
       mcpPort: 13100,
       holabossUserId: "user-1",
+      skipSetup: true,
       resolvedApp: {
         appId: "app-a",
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
@@ -1361,6 +1553,7 @@ test("internal opencode app bootstrap route starts resolved apps and returns MCP
       httpPort: 18081,
       mcpPort: 13101,
       holabossUserId: "user-1",
+      skipSetup: false,
       resolvedApp: {
         appId: "app-b",
         mcp: { transport: "http-sse", port: 4200, path: "/mcp" },

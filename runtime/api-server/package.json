@@ -21,6 +21,7 @@
     "build": "tsup --config tsup.config.ts",
     "clean": "rm -rf dist",
     "test": "node --import tsx --test src/**/*.test.ts",
+    "ts-runner": "node --import tsx src/ts-runner.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -30,12 +31,16 @@
     "cron-parser": "^5.5.0",
     "fastify": "^5.6.1",
     "js-yaml": "^4.1.1",
+    "yauzl": "^3.2.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
+    "@types/yauzl": "^2.10.3",
+    "@types/yazl": "^3.3.0",
     "tsup": "^8.5.0",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "yazl": "^3.3.1"
   }
 }

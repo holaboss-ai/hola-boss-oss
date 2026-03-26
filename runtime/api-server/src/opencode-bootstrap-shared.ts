@@ -6,6 +6,7 @@ import type { RuntimeStateStore } from "@holaboss/runtime-state-store";
 import {
   AppLifecycleExecutorError,
   type AppLifecycleActionResult,
+  appBuildHasCompletedSetup,
   type AppLifecycleExecutorLike
 } from "./app-lifecycle-worker.js";
 import type { ResolvedApplicationRuntime } from "./workspace-apps.js";
@@ -161,27 +162,20 @@ function normalizeOpencodeBootstrapApplication(params: {
   };
 }
 
-export async function startOpencodeApplications(params: {
-  store: RuntimeStateStore;
+export async function bootstrapResolvedApplications(params: {
+  workspaceDir: string;
+  holabossUserId?: string;
+  resolvedApplications?: unknown;
+  store?: RuntimeStateStore;
+  workspaceId?: string;
   appLifecycleExecutor: AppLifecycleExecutorLike;
-  workspaceId: string;
-  body: OpencodeBootstrapRequestPayload;
 }): Promise<OpencodeBootstrapResponse> {
-  const workspace = params.store.getWorkspace(params.workspaceId);
-  if (!workspace) {
-    throw new AppLifecycleExecutorError(404, "workspace not found");
-  }
-  const expectedWorkspaceDir = path.resolve(params.store.workspaceDir(workspace.id));
-  const workspaceDir = optionalString(params.body.workspace_dir) ?? expectedWorkspaceDir;
-  const resolvedWorkspaceDir = path.resolve(workspaceDir);
-  if (resolvedWorkspaceDir !== expectedWorkspaceDir) {
-    throw new AppLifecycleExecutorError(400, `workspace_dir does not match workspace '${params.workspaceId}'`);
-  }
+  const resolvedWorkspaceDir = path.resolve(params.workspaceDir);
   if (!fs.existsSync(resolvedWorkspaceDir) || !fs.statSync(resolvedWorkspaceDir).isDirectory()) {
-    throw new AppLifecycleExecutorError(404, `workspace_dir not found: '${workspaceDir}'`);
+    throw new AppLifecycleExecutorError(404, `workspace_dir not found: '${params.workspaceDir}'`);
   }
-  const holabossUserId = optionalString(params.body.holaboss_user_id);
-  const rawResolvedApps = Array.isArray(params.body.resolved_applications) ? params.body.resolved_applications : null;
+  const holabossUserId = optionalString(params.holabossUserId);
+  const rawResolvedApps = Array.isArray(params.resolvedApplications) ? params.resolvedApplications : null;
   if (!rawResolvedApps) {
     throw new AppLifecycleExecutorError(400, "resolved_applications must be an array");
   }
@@ -211,13 +205,21 @@ export async function startOpencodeApplications(params: {
   }));
   const applications: OpencodeBootstrapApplication[] = [];
   for (const preparedStart of preparedStarts) {
+    const build =
+      params.store && params.workspaceId
+        ? params.store.getAppBuild({
+          workspaceId: params.workspaceId,
+          appId: preparedStart.resolvedApp.appId
+        })
+        : null;
     const started = await params.appLifecycleExecutor.startApp({
       appId: preparedStart.resolvedApp.appId,
       appDir: preparedStart.appDir,
       httpPort: preparedStart.ports.http,
       mcpPort: preparedStart.ports.mcp,
       holabossUserId,
-      resolvedApp: preparedStart.resolvedApp
+      resolvedApp: preparedStart.resolvedApp,
+      skipSetup: appBuildHasCompletedSetup(build?.status)
     });
     applications.push(
       normalizeOpencodeBootstrapApplication({
@@ -229,4 +231,30 @@ export async function startOpencodeApplications(params: {
     );
   }
   return { applications };
+}
+
+export async function startOpencodeApplications(params: {
+  store: RuntimeStateStore;
+  appLifecycleExecutor: AppLifecycleExecutorLike;
+  workspaceId: string;
+  body: OpencodeBootstrapRequestPayload;
+}): Promise<OpencodeBootstrapResponse> {
+  const workspace = params.store.getWorkspace(params.workspaceId);
+  if (!workspace) {
+    throw new AppLifecycleExecutorError(404, "workspace not found");
+  }
+  const expectedWorkspaceDir = path.resolve(params.store.workspaceDir(workspace.id));
+  const workspaceDir = optionalString(params.body.workspace_dir) ?? expectedWorkspaceDir;
+  const resolvedWorkspaceDir = path.resolve(workspaceDir);
+  if (resolvedWorkspaceDir !== expectedWorkspaceDir) {
+    throw new AppLifecycleExecutorError(400, `workspace_dir does not match workspace '${params.workspaceId}'`);
+  }
+  return await bootstrapResolvedApplications({
+    workspaceDir: resolvedWorkspaceDir,
+    holabossUserId: params.body.holaboss_user_id,
+    resolvedApplications: params.body.resolved_applications,
+    store: params.store,
+    workspaceId: params.workspaceId,
+    appLifecycleExecutor: params.appLifecycleExecutor
+  });
 }

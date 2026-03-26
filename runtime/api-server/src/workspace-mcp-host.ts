@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -6,6 +5,12 @@ import { pathToFileURL } from "node:url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+
+import {
+  decodeWorkspaceMcpCatalog,
+  formatWorkspaceToolBridgeError,
+  loadNodeWorkspaceTool,
+} from "./workspace-tool-loader.js";
 
 const MCP_METHOD_NOT_ALLOWED = {
   jsonrpc: "2.0",
@@ -22,7 +27,6 @@ export interface WorkspaceMcpHostCliRequest {
   host: string;
   port: number;
   server_name: string;
-  python_executable: string;
 }
 
 export interface WorkspaceMcpToolDefinition {
@@ -42,34 +46,13 @@ export interface WorkspaceMcpToolCallResult {
   _meta?: Record<string, unknown>;
 }
 
-type JsonCommandRunner = (
-  command: string,
-  args: string[],
-  options: { cwd: string; env: NodeJS.ProcessEnv }
-) => Promise<unknown>;
-
 type WorkspaceMcpHostDeps = {
   createHttpServer?: typeof createServer;
-  runJsonCommand?: JsonCommandRunner;
   logger?: Pick<typeof console, "error" | "info">;
-};
-
-type WorkspaceToolBridgeRequest = {
-  workspace_dir: string;
-  catalog_json_base64: string;
-};
-
-type WorkspaceToolCallBridgeRequest = WorkspaceToolBridgeRequest & {
-  tool_name: string;
-  arguments: Record<string, unknown>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function isToolCallResult(value: unknown): value is WorkspaceMcpToolCallResult {
-  return isRecord(value) && Array.isArray(value.content);
 }
 
 function requiredString(value: unknown, key: string): string {
@@ -101,8 +84,7 @@ export function decodeWorkspaceMcpHostCliRequest(encoded: string): WorkspaceMcpH
     catalog_json_base64: requiredString(parsed.catalog_json_base64, "catalog_json_base64"),
     host: requiredString(parsed.host ?? "127.0.0.1", "host"),
     port: requiredPositiveInteger(parsed.port, "port"),
-    server_name: requiredString(parsed.server_name ?? "workspace", "server_name"),
-    python_executable: requiredString(parsed.python_executable, "python_executable")
+    server_name: requiredString(parsed.server_name ?? "workspace", "server_name")
   };
 }
 
@@ -110,94 +92,22 @@ function resolveWorkspaceDir(value: string): string {
   return path.resolve(value);
 }
 
-function encodeBridgeRequest(payload: WorkspaceToolBridgeRequest | WorkspaceToolCallBridgeRequest): string {
-  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
-}
-
-function buildBridgeEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  const pythonpath = (env.PYTHONPATH ?? "").trim();
-  if (!pythonpath) {
-    env.PYTHONPATH = "/app";
-  } else if (!pythonpath.split(":").includes("/app")) {
-    env.PYTHONPATH = `/app:${pythonpath}`;
-  }
-  return env;
-}
-
-async function defaultRunJsonCommand(
-  command: string,
-  args: string[],
-  options: { cwd: string; env: NodeJS.ProcessEnv }
-): Promise<unknown> {
-  const child = spawn(command, args, {
-    cwd: options.cwd,
-    env: options.env,
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-  let stdout = "";
-  let stderr = "";
-  child.stdout?.setEncoding("utf8");
-  child.stderr?.setEncoding("utf8");
-  child.stdout?.on("data", (chunk) => {
-    stdout += chunk;
-  });
-  child.stderr?.on("data", (chunk) => {
-    stderr += chunk;
-  });
-
-  const exitCode = await new Promise<number>((resolve, reject) => {
-    child.once("error", reject);
-    child.once("close", (code) => resolve(code ?? 0));
-  });
-
-  if (exitCode !== 0) {
-    const detail = stderr.trim() || stdout.trim() || `command exited with code ${exitCode}`;
-    throw new Error(detail);
-  }
-  return JSON.parse(stdout);
-}
-
-async function runWorkspaceToolBridge(
-  request: WorkspaceMcpHostCliRequest,
-  operation: "inspect" | "call",
-  payload: WorkspaceToolBridgeRequest | WorkspaceToolCallBridgeRequest,
-  deps: WorkspaceMcpHostDeps = {}
-): Promise<unknown> {
-  const runJsonCommand = deps.runJsonCommand ?? defaultRunJsonCommand;
-  return runJsonCommand(
-    request.python_executable,
-    [
-      "-m",
-      "sandbox_agent_runtime.workspace_tool_bridge",
-      operation,
-      "--request-base64",
-      encodeBridgeRequest(payload)
-    ],
-    {
-      cwd: resolveWorkspaceDir(request.workspace_dir),
-      env: buildBridgeEnv()
-    }
-  );
-}
-
 export async function inspectWorkspaceTools(
   request: WorkspaceMcpHostCliRequest,
-  deps: WorkspaceMcpHostDeps = {}
+  _deps: WorkspaceMcpHostDeps = {}
 ): Promise<WorkspaceMcpToolDefinition[]> {
-  const payload = await runWorkspaceToolBridge(
-    request,
-    "inspect",
-    {
-      workspace_dir: resolveWorkspaceDir(request.workspace_dir),
-      catalog_json_base64: request.catalog_json_base64
-    },
-    deps
-  );
-  if (!isRecord(payload) || !Array.isArray(payload.tools)) {
-    throw new Error("workspace tool bridge returned an invalid inspect payload");
+  const workspaceDir = resolveWorkspaceDir(request.workspace_dir);
+  const catalog = decodeWorkspaceMcpCatalog(request.catalog_json_base64);
+  const tools: WorkspaceMcpToolDefinition[] = [];
+  for (const entry of catalog) {
+    try {
+      const loadedTool = await loadNodeWorkspaceTool(workspaceDir, entry);
+      tools.push(loadedTool.definition);
+    } catch (error) {
+      throw new Error(formatWorkspaceToolBridgeError(error));
+    }
   }
-  return payload.tools as WorkspaceMcpToolDefinition[];
+  return tools;
 }
 
 function toolErrorResult(message: string): WorkspaceMcpToolCallResult {
@@ -211,23 +121,20 @@ export async function callWorkspaceTool(
   request: WorkspaceMcpHostCliRequest,
   toolName: string,
   args: Record<string, unknown>,
-  deps: WorkspaceMcpHostDeps = {}
+  _deps: WorkspaceMcpHostDeps = {}
 ): Promise<WorkspaceMcpToolCallResult> {
-  const payload = await runWorkspaceToolBridge(
-    request,
-    "call",
-    {
-      workspace_dir: resolveWorkspaceDir(request.workspace_dir),
-      catalog_json_base64: request.catalog_json_base64,
-      tool_name: toolName,
-      arguments: args
-    },
-    deps
-  );
-  if (!isToolCallResult(payload)) {
-    throw new Error("workspace tool bridge returned an invalid call payload");
+  const workspaceDir = resolveWorkspaceDir(request.workspace_dir);
+  const catalog = decodeWorkspaceMcpCatalog(request.catalog_json_base64);
+  const matchingEntry = catalog.find((entry) => entry.tool_name === toolName);
+  if (!matchingEntry) {
+    throw new Error(`Unknown tool: ${toolName}`);
   }
-  return payload;
+  try {
+    const loadedTool = await loadNodeWorkspaceTool(workspaceDir, matchingEntry);
+    return await loadedTool.invoke(args);
+  } catch (error) {
+    throw new Error(formatWorkspaceToolBridgeError(error));
+  }
 }
 
 function jsonResponse(response: ServerResponse, statusCode: number, payload: Record<string, unknown>): void {

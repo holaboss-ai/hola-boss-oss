@@ -12,8 +12,6 @@ Prerequisites:
 
 - Node.js 22+
 - npm
-- Python 3.12
-- `uv`
 
 Common local flow:
 

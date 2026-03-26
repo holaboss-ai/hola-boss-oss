@@ -5,7 +5,7 @@ This repo now contains both the local desktop app and the runtime it embeds.
 ## What This Repo Is
 
 - `desktop/`: Electron desktop workspace app
-- `runtime/`: packaged Python runtime, tests, and bundle tooling
+- `runtime/`: packaged TypeScript runtime, tests, and bundle tooling
 - `.github/workflows/`: release and publishing workflows
 
 This repository is public OSS. It supports local development and local runtime packaging without requiring login.
@@ -29,8 +29,6 @@ Backend-connected Holaboss product behavior is separate from the baseline local 
 
 - Node.js 22+
 - npm
-- Python 3.12
-- `uv`
 
 ## Quick Start
 
@@ -186,7 +184,7 @@ holaboss-runtime
 
 ### Notes
 
-- The packaged bundle includes the runtime app, bundled Python, and packaged Python dependencies.
+- The packaged bundle includes the runtime app and its packaged runtime dependencies.
 - The current bootstrap still expects a working `node` binary on the host machine at runtime. Install Node.js 22+ on the target machine before starting the runtime.
 - The desktop app launches the same `bin/sandbox-runtime` entrypoint and passes the same bind host, bind port, sandbox root, and sidecar-related environment variables.
 
@@ -194,7 +192,7 @@ holaboss-runtime
 
 The root `package.json` is just a thin command wrapper for the desktop app. The actual desktop project still lives in `desktop/package.json`.
 
-`runtime/` remains independently buildable and testable. The desktop app consumes its packaged output rather than importing Python source files directly.
+`runtime/` remains independently buildable and testable. The desktop app consumes its packaged output rather than importing runtime source files directly.
 
 For local desktop work, the default flow is:
 

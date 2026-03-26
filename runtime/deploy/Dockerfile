@@ -19,22 +19,16 @@ COPY runtime/api-server/package-lock.json /tmp/runtime-source/api-server/package
 COPY runtime/api-server/tsconfig.json /tmp/runtime-source/api-server/tsconfig.json
 COPY runtime/api-server/tsup.config.ts /tmp/runtime-source/api-server/tsup.config.ts
 COPY runtime/api-server/src/ /tmp/runtime-source/api-server/src/
-COPY runtime/src/ /tmp/runtime-source/src/
-COPY runtime/pyproject.toml /tmp/runtime-source/pyproject.toml
-COPY runtime/uv.lock /tmp/runtime-source/uv.lock
 RUN chmod +x /tmp/runtime-source/deploy/build_runtime_root.sh \
     && /tmp/runtime-source/deploy/build_runtime_root.sh /opt/holaboss-runtime
 
 WORKDIR /app
 
-RUN cp /opt/holaboss-runtime/app/pyproject.toml /app/pyproject.toml \
-    && cp /opt/holaboss-runtime/app/uv.lock /app/uv.lock
-RUN uv sync --frozen --no-dev --no-install-project
 RUN mkdir -p /app \
-    && cp -R /opt/holaboss-runtime/app/. /app/ \
     && cp -R /opt/holaboss-runtime/api-server /app/api-server \
     && cp -R /opt/holaboss-runtime/harness-host /app/harness-host \
     && cp -R /opt/holaboss-runtime/state-store /app/state-store \
+    && cp /opt/holaboss-runtime/metadata.json /app/metadata.json \
     && cp /opt/holaboss-runtime/bin/hb /usr/local/bin/hb \
     && chmod +x /usr/local/bin/hb \
     && chmod +x /opt/holaboss-runtime/bootstrap/*.sh

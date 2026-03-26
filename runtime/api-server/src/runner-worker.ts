@@ -3,8 +3,8 @@ import { Buffer } from "node:buffer";
 import { Readable } from "node:stream";
 
 const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
-const DEFAULT_AGENT_RUNNER_COMMAND_TEMPLATE =
-  "cd {runtime_app_root} && {runtime_python} -m sandbox_agent_runtime.runner --request-base64 {request_base64}";
+const DEFAULT_TS_RUNNER_COMMAND_TEMPLATE =
+  "cd {runtime_root}/api-server && {runtime_node} dist/ts-runner.mjs --request-base64 {request_base64}";
 const HEARTBEAT_INTERVAL_MS = 5000;
 
 export interface RunnerExecutorLike {
@@ -43,8 +43,14 @@ function runtimeAppRoot(): string {
   return (process.env.HOLABOSS_RUNTIME_APP_ROOT ?? "/app").trim() || "/app";
 }
 
-function runtimePython(): string {
-  return (process.env.HOLABOSS_RUNTIME_PYTHON ?? "/opt/venv/bin/python").trim() || "/opt/venv/bin/python";
+function runtimeRoot(): string {
+  const configured = (process.env.HOLABOSS_RUNTIME_ROOT ?? "").trim();
+  return configured || "/runtime";
+}
+
+function runtimeNode(): string {
+  const configured = (process.env.HOLABOSS_RUNTIME_NODE_BIN ?? "").trim();
+  return configured || "node";
 }
 
 function runnerTimeoutSeconds(): number {
@@ -95,20 +101,24 @@ export function buildRunnerEnv(): NodeJS.ProcessEnv {
 }
 
 function runnerCommand(payload: Record<string, unknown>): string {
-  const template = process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE ?? DEFAULT_AGENT_RUNNER_COMMAND_TEMPLATE;
+  const template = process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE ?? DEFAULT_TS_RUNNER_COMMAND_TEMPLATE;
   const replacements: Record<string, string> = {
     request_base64: shellQuote(encodeRequest(payload)),
     runtime_app_root: shellQuote(runtimeAppRoot()),
-    runtime_python: shellQuote(runtimePython())
+    runtime_root: shellQuote(runtimeRoot()),
+    runtime_node: shellQuote(runtimeNode())
   };
   try {
-    const rendered = template.replace(/\{(request_base64|runtime_app_root|runtime_python)\}/g, (match, key) => {
-      const replacement = replacements[key];
-      if (replacement === undefined) {
-        throw new Error(`missing placeholder: ${key}`);
+    const rendered = template.replace(
+      /\{(request_base64|runtime_app_root|runtime_root|runtime_node)\}/g,
+      (match, key) => {
+        const replacement = replacements[key];
+        if (replacement === undefined) {
+          throw new Error(`missing placeholder: ${key}`);
+        }
+        return replacement;
       }
-      return replacement;
-    });
+    );
     if (/\{[^{}]+\}/.test(rendered)) {
       throw new Error("unresolved template placeholders");
     }

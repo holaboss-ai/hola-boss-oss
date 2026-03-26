@@ -27,8 +27,8 @@ For this runtime, RPC is the better fit.
 
 Reasoning:
 
-- our runtime is Python, not Node/TypeScript
-- the SDK would require a Node embedding layer or sidecar anyway
+- the runtime already orchestrates harnesses from TypeScript through subprocess boundaries
+- the SDK would couple Pi more tightly to the runtime process than the existing harness model requires
 - Pi explicitly documents RPC as the non-Node integration path
 - RPC already exposes prompting, streaming, session state, session switching, compaction, and tool execution events over JSONL
 
@@ -110,8 +110,8 @@ This is enough to implement runtime event translation without an HTTP sidecar.
 
 Add `pi` as a third harness in:
 
-- [runner.py](/Users/jeffrey/Desktop/holaboss/hola-boss-oss/runtime/src/sandbox_agent_runtime/runner.py)
-- [api.py](/Users/jeffrey/Desktop/holaboss/hola-boss-oss/runtime/src/sandbox_agent_runtime/api.py)
+- [runner-worker.ts](/Users/jeffrey/Desktop/holaboss/typescript-migration/runtime/api-server/src/runner-worker.ts)
+- [ts-runner.ts](/Users/jeffrey/Desktop/holaboss/typescript-migration/runtime/api-server/src/ts-runner.ts)
 
 `pi` should be implemented as a spawned subprocess, not as an HTTP service.
 
@@ -152,7 +152,7 @@ Recommended `pi` readiness definition:
 - minimal startup command succeeds, or
 - runtime marks it as configured/available based on binary discovery alone
 
-`api.py` should not reuse the current `/mcp`-based readiness logic for `pi`.
+The TS runtime API should not reuse the current `/mcp`-based readiness logic for `pi`.
 
 ## Proposed Delivery Plan
 
@@ -193,7 +193,7 @@ This is the parity work required before changing defaults.
 
 Using the Pi SDK from this runtime would mean:
 
-- adding Node as a mandatory embedding layer for the Python runtime
+- embedding the Pi SDK directly into the runtime process instead of keeping the existing subprocess harness boundary
 - creating a custom bridge for events and session control
 - carrying more packaging and operational complexity than the RPC approach
 
@@ -203,10 +203,10 @@ Because Pi already ships a documented subprocess RPC mode for non-Node integrati
 
 Current local integration points:
 
-- [runner.py](/Users/jeffrey/Desktop/holaboss/hola-boss-oss/runtime/src/sandbox_agent_runtime/runner.py)
-- [api.py](/Users/jeffrey/Desktop/holaboss/hola-boss-oss/runtime/src/sandbox_agent_runtime/api.py)
-- [hb_cli.py](/Users/jeffrey/Desktop/holaboss/hola-boss-oss/runtime/src/sandbox_agent_runtime/hb_cli.py)
-- [shared.sh](/Users/jeffrey/Desktop/holaboss/hola-boss-oss/runtime/deploy/bootstrap/shared.sh)
+- [runner-worker.ts](/Users/jeffrey/Desktop/holaboss/typescript-migration/runtime/api-server/src/runner-worker.ts)
+- [ts-runner.ts](/Users/jeffrey/Desktop/holaboss/typescript-migration/runtime/api-server/src/ts-runner.ts)
+- [app.ts](/Users/jeffrey/Desktop/holaboss/typescript-migration/runtime/api-server/src/app.ts)
+- [shared.sh](/Users/jeffrey/Desktop/holaboss/typescript-migration/runtime/deploy/bootstrap/shared.sh)
 
 Important implementation note:
 

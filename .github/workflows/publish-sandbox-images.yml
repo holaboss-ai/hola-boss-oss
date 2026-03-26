@@ -7,9 +7,6 @@ on:
       - main
     paths:
       - "runtime/deploy/**"
-      - "runtime/src/**"
-      - "runtime/pyproject.toml"
-      - "runtime/uv.lock"
       - ".github/workflows/publish-sandbox-images.yml"
 
 permissions:

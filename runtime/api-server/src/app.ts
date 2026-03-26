@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
@@ -6,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
+import yauzl from "yauzl";
 
 import {
   type AppBuildRecord,
@@ -37,6 +39,7 @@ import {
 } from "./bridge-worker.js";
 import {
   AppLifecycleExecutorError,
+  appBuildHasCompletedSetup,
   type AppLifecycleExecutorLike,
   RuntimeAppLifecycleExecutor
 } from "./app-lifecycle-worker.js";
@@ -439,6 +442,127 @@ function resolveWorkspaceFilePath(workspaceDir: string, relativePath: string): s
     throw new Error("path traversal not allowed");
   }
   return fullPath;
+}
+
+class InvalidTemplateArchiveError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidTemplateArchiveError";
+  }
+}
+
+function invalidTemplateArchiveMessage(error: unknown): string | null {
+  if (!(error instanceof Error)) {
+    return null;
+  }
+  if (error instanceof InvalidTemplateArchiveError) {
+    return error.message;
+  }
+  if (
+    error.message === "path traversal not allowed" ||
+    /invalid relative path|absolute path|invalid characters/i.test(error.message)
+  ) {
+    return error.message;
+  }
+  return null;
+}
+
+function openZipFile(zipPath: string): Promise<yauzl.ZipFile> {
+  return new Promise((resolve, reject) => {
+    yauzl.open(zipPath, { lazyEntries: true }, (error, zipFile) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      if (!zipFile) {
+        reject(new Error("template extract failed"));
+        return;
+      }
+      resolve(zipFile);
+    });
+  });
+}
+
+function openZipEntryReadStream(zipFile: yauzl.ZipFile, entry: yauzl.Entry): Promise<NodeJS.ReadableStream> {
+  return new Promise((resolve, reject) => {
+    zipFile.openReadStream(entry, (error, stream) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      if (!stream) {
+        reject(new Error(`missing zip stream for entry: ${entry.fileName}`));
+        return;
+      }
+      resolve(stream);
+    });
+  });
+}
+
+async function extractTemplateZipArchive(zipPath: string, workspaceDir: string): Promise<number> {
+  const resolvedWorkspaceDir = path.resolve(workspaceDir);
+  const zipFile = await openZipFile(zipPath);
+  let filesWritten = 0;
+
+  return await new Promise<number>((resolve, reject) => {
+    let settled = false;
+
+    const finish = (fn: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      zipFile.close();
+      fn();
+    };
+
+    zipFile.on("error", (error) => {
+      const message = invalidTemplateArchiveMessage(error);
+      finish(() => reject(message ? new InvalidTemplateArchiveError(message) : error));
+    });
+
+    zipFile.on("entry", (entry) => {
+      void (async () => {
+        const validationError = yauzl.validateFileName(entry.fileName);
+        if (validationError) {
+          throw new InvalidTemplateArchiveError(validationError);
+        }
+
+        const normalizedPath = entry.fileName.replace(/\/+$/, "");
+        if (!normalizedPath) {
+          zipFile.readEntry();
+          return;
+        }
+
+        const targetPath = resolveWorkspaceFilePath(resolvedWorkspaceDir, normalizedPath);
+        if (/\/$/.test(entry.fileName)) {
+          fs.mkdirSync(targetPath, { recursive: true });
+          zipFile.readEntry();
+          return;
+        }
+
+        fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+        const source = await openZipEntryReadStream(zipFile, entry);
+        const destination = fs.createWriteStream(targetPath, { mode: 0o644 });
+        await pipeline(source, destination);
+
+        const mode = (entry.externalFileAttributes >> 16) & 0o777;
+        if (mode) {
+          fs.chmodSync(targetPath, mode);
+        }
+        filesWritten += 1;
+        zipFile.readEntry();
+      })().catch((error) => {
+        finish(() => reject(error));
+      });
+    });
+
+    zipFile.on("end", () => {
+      finish(() => resolve(filesWritten));
+    });
+
+    zipFile.readEntry();
+  });
 }
 
 function sanitizeAppId(appId: string): string {
@@ -1324,49 +1448,16 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       const archive = Buffer.from(await response.arrayBuffer());
       fs.writeFileSync(zipPath, archive);
 
-      const extractScript = `
-import os
-import pathlib
-import shutil
-import sys
-import zipfile
-
-zip_path = pathlib.Path(sys.argv[1]).resolve()
-workspace_dir = pathlib.Path(sys.argv[2]).resolve()
-files_written = 0
-
-with zipfile.ZipFile(zip_path) as zf:
-    for info in zf.infolist():
-        rel_path = pathlib.PurePosixPath(info.filename)
-        target_path = (workspace_dir / rel_path).resolve()
-        if target_path != workspace_dir and workspace_dir not in target_path.parents:
-            raise SystemExit(f"path traversal detected: {info.filename}")
-        if info.is_dir():
-            target_path.mkdir(parents=True, exist_ok=True)
-            continue
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        with zf.open(info, "r") as src, open(target_path, "wb") as dst:
-            shutil.copyfileobj(src, dst)
-        mode = (info.external_attr >> 16) & 0o777
-        if mode:
-            os.chmod(target_path, mode)
-        files_written += 1
-
-print(files_written)
-`.trim();
-      const extract = spawnSync("python3", ["-c", extractScript, zipPath, workspaceDir], {
-        encoding: "utf8"
-      });
-      if (extract.status !== 0) {
-        return sendError(reply, 500, extract.stderr.trim() || extract.stdout.trim() || "template extract failed");
-      }
-
-      const filesWritten = Number.parseInt(extract.stdout.trim(), 10);
+      const filesWritten = await extractTemplateZipArchive(zipPath, workspaceDir);
       return reply.send({
         status: "applied",
         files_written: Number.isFinite(filesWritten) ? filesWritten : 0
       });
     } catch (error) {
+      const invalidArchiveMessage = invalidTemplateArchiveMessage(error);
+      if (invalidArchiveMessage) {
+        return sendError(reply, 400, invalidArchiveMessage);
+      }
       return sendError(reply, 500, error instanceof Error ? error.message : "template download failed");
     } finally {
       fs.rmSync(zipPath, { force: true });
@@ -1528,12 +1619,16 @@ print(files_written)
       return sendError(reply, statusCode, error instanceof Error ? error.message : "invalid app metadata");
     }
     try {
+      const holabossUserId = optionalString(request.body.holaboss_user_id);
+      const build = store.getAppBuild({ workspaceId, appId });
       const result = await appLifecycleExecutor.startApp({
         appId,
         appDir: resolvedApp.appDir,
         httpPort: resolvedApp.ports.http,
         mcpPort: resolvedApp.ports.mcp,
-        resolvedApp: resolvedApp.resolvedApp
+        holabossUserId,
+        resolvedApp: resolvedApp.resolvedApp,
+        skipSetup: appBuildHasCompletedSetup(build?.status)
       });
       store.upsertAppBuild({
         workspaceId,

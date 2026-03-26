@@ -14,6 +14,12 @@ require_cmd() {
   fi
 }
 
+runtime_version() {
+  require_cmd node
+  node -p "const pkg = require(process.argv[1]); if (!pkg.version) throw new Error('missing version'); pkg.version" \
+    "${RUNTIME_ROOT}/api-server/package.json"
+}
+
 stage_node_package() {
   local package_dir="$1"
   local output_name="$2"
@@ -39,9 +45,9 @@ stage_node_package() {
   )
 }
 
-RUNTIME_VERSION="$(awk -F' = ' '$1=="version" {gsub(/"/, "", $2); print $2; exit}' "${RUNTIME_ROOT}/pyproject.toml")"
+RUNTIME_VERSION="$(runtime_version)"
 if [ -z "${RUNTIME_VERSION}" ]; then
-  echo "failed to resolve runtime version from pyproject.toml" >&2
+  echo "failed to resolve runtime version from runtime/api-server/package.json" >&2
   exit 1
 fi
 
@@ -51,11 +57,8 @@ SCHEMA_VERSION="${HOLABOSS_RUNTIME_SCHEMA_VERSION:-1}"
 BUILD_TIMESTAMP_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 rm -rf "${OUTPUT_ROOT}"
-mkdir -p "${OUTPUT_ROOT}/app" "${OUTPUT_ROOT}/bin"
+mkdir -p "${OUTPUT_ROOT}/bin"
 
-cp "${RUNTIME_ROOT}/pyproject.toml" "${OUTPUT_ROOT}/app/pyproject.toml"
-cp "${RUNTIME_ROOT}/uv.lock" "${OUTPUT_ROOT}/app/uv.lock"
-cp -R "${RUNTIME_ROOT}/src/sandbox_agent_runtime" "${OUTPUT_ROOT}/app/sandbox_agent_runtime"
 stage_node_package "${RUNTIME_ROOT}/harness-host" "harness-host"
 stage_node_package "${RUNTIME_ROOT}/state-store" "state-store"
 stage_node_package "${RUNTIME_ROOT}/api-server" "api-server"
@@ -90,7 +93,7 @@ cat > "${OUTPUT_ROOT}/metadata.json" <<EOF
   "git_sha": "${GIT_SHA}",
   "build_id": "${BUILD_ID}",
   "built_at_utc": "${BUILD_TIMESTAMP_UTC}",
-  "source_path": "runtime/src"
+  "source_path": "runtime"
 }
 EOF
 
