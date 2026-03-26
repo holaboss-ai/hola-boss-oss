@@ -21,7 +21,7 @@ RUN apt-get update \
       > /etc/apt/sources.list.d/docker.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends nodejs docker-ce docker-ce-cli containerd.io docker-compose-plugin fuse-overlayfs tini \
-    && npm install -g npm@latest \
+    && npm install -g npm@latest pm2 \
     && if [ "${INSTALL_QMD}" = "1" ]; then npm install -g @tobilu/qmd; fi \
     && if [ "${INSTALL_QMD}" = "1" ] && [ "${ENABLE_QMD_PREWARM}" = "1" ]; then \
          mkdir -p /tmp/qmd-preload-build \
