@@ -178,10 +178,10 @@ jobs:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -190,7 +190,7 @@ jobs:
             desktop/package-lock.json
 
       - name: Download macOS runtime artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: ${{ env.RUNTIME_ARTIFACT_NAME }}
           path: out/runtime-artifact
@@ -245,7 +245,7 @@ jobs:
           node scripts/run-electron-builder.mjs --projectDir "$PWD" --publish never --mac dmg --arm64
 
       - name: Upload macOS desktop DMG artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.DESKTOP_ASSET_PREFIX }}-${{ github.sha }}
           path: desktop/out/release/*.dmg
