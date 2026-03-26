@@ -2,7 +2,19 @@ import "dotenv/config";
 import { electronClient } from "@better-auth/electron/client";
 import { storage as electronAuthStorage } from "@better-auth/electron/storage";
 import { createAuthClient } from "better-auth/client";
-import { app, BrowserView, BrowserWindow, DownloadItem, dialog, ipcMain, screen, session, shell, type OpenDialogOptions } from "electron";
+import {
+  app,
+  BrowserView,
+  BrowserWindow,
+  DownloadItem,
+  dialog,
+  ipcMain,
+  screen,
+  session,
+  shell,
+  type IpcMainInvokeEvent,
+  type OpenDialogOptions
+} from "electron";
 import Database from "better-sqlite3";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -378,6 +390,41 @@ const DESKTOP_RUNTIME_BINDING_EXCHANGE_PATH = "/api/v1/desktop-runtime/bindings/
 const AUTH_CALLBACK_PROTOCOL = "ai.holaboss.app";
 const LOCAL_RUNTIME_SCHEMA_VERSION = 1;
 const RUNTIME_BINDING_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
+
+type TrustedIpcSenderScope = "main" | "auth-popup";
+
+function trustedIpcSenderWindow(scope: TrustedIpcSenderScope): BrowserWindow | null {
+  if (scope === "main") {
+    return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  }
+  return authPopupWindow && !authPopupWindow.isDestroyed() ? authPopupWindow : null;
+}
+
+function assertTrustedIpcSender(
+  event: IpcMainInvokeEvent,
+  channel: string,
+  allowedScopes: TrustedIpcSenderScope[]
+) {
+  const sender = event.sender;
+  const allowed = allowedScopes.some((scope) => {
+    const allowedWindow = trustedIpcSenderWindow(scope);
+    return Boolean(allowedWindow && allowedWindow.webContents === sender);
+  });
+  if (!allowed) {
+    throw new Error(`Unauthorized IPC sender for ${channel}.`);
+  }
+}
+
+function handleTrustedIpc<Args extends unknown[], Result>(
+  channel: string,
+  allowedScopes: TrustedIpcSenderScope[],
+  handler: (event: IpcMainInvokeEvent, ...args: Args) => Result | Promise<Result>
+) {
+  ipcMain.handle(channel, (event, ...args: Args) => {
+    assertTrustedIpcSender(event, channel, allowedScopes);
+    return handler(event, ...args);
+  });
+}
 
 function configureStableUserDataPath() {
   const explicit = process.env.HOLABOSS_DESKTOP_USER_DATA_PATH?.trim();
@@ -4605,14 +4652,44 @@ async function stopEmbeddedRuntime() {
   }
 
   await new Promise<void>((resolve) => {
-    running.once("exit", () => resolve());
-    running.kill("SIGTERM");
-    setTimeout(() => {
-      if (!running.killed) {
-        running.kill("SIGKILL");
+    let settled = false;
+    let forceSettleTimer: NodeJS.Timeout | null = null;
+    const settle = () => {
+      if (settled) {
+        return;
       }
+      settled = true;
+      if (forceSettleTimer) {
+        clearTimeout(forceSettleTimer);
+      }
+      clearTimeout(sigkillTimer);
+      running.removeListener("exit", onExit);
       resolve();
-    }, 3000).unref();
+    };
+    const onExit = () => settle();
+    const sigkillTimer = setTimeout(() => {
+      if (running.exitCode === null && running.signalCode === null) {
+        try {
+          running.kill("SIGKILL");
+        } catch {
+          settle();
+          return;
+        }
+      }
+      forceSettleTimer = setTimeout(() => settle(), 1000);
+      forceSettleTimer.unref();
+    }, 3000);
+    sigkillTimer.unref();
+
+    running.once("exit", onExit);
+    try {
+      const signalSent = running.kill("SIGTERM");
+      if (!signalSent && (running.exitCode !== null || running.signalCode !== null)) {
+        settle();
+      }
+    } catch {
+      settle();
+    }
   });
 }
 
@@ -7517,11 +7594,13 @@ app.whenReady().then(async () => {
   await bootstrapRuntimeDatabase();
   registerDownloadTracking();
 
-  ipcMain.handle("fs:listDirectory", async (_event, targetPath?: string | null) => listDirectory(targetPath));
-  ipcMain.handle("fs:readFilePreview", async (_event, targetPath: string) => readFilePreview(targetPath));
-  ipcMain.handle("fs:writeTextFile", async (_event, targetPath: string, content: string) => writeTextFile(targetPath, content));
-  ipcMain.handle("fs:getBookmarks", () => fileBookmarks);
-  ipcMain.handle("fs:addBookmark", async (_event, targetPath: string, label?: string) => {
+  handleTrustedIpc("fs:listDirectory", ["main"], async (_event, targetPath?: string | null) => listDirectory(targetPath));
+  handleTrustedIpc("fs:readFilePreview", ["main"], async (_event, targetPath: string) => readFilePreview(targetPath));
+  handleTrustedIpc("fs:writeTextFile", ["main"], async (_event, targetPath: string, content: string) =>
+    writeTextFile(targetPath, content)
+  );
+  handleTrustedIpc("fs:getBookmarks", ["main"], () => fileBookmarks);
+  handleTrustedIpc("fs:addBookmark", ["main"], async (_event, targetPath: string, label?: string) => {
     const resolvedPath = path.resolve(targetPath);
     const stat = await fs.stat(resolvedPath);
     const nextLabel = label?.trim() || path.basename(resolvedPath) || resolvedPath;
@@ -7555,22 +7634,22 @@ app.whenReady().then(async () => {
     await persistFileBookmarks();
     return fileBookmarks;
   });
-  ipcMain.handle("fs:removeBookmark", async (_event, bookmarkId: string) => {
+  handleTrustedIpc("fs:removeBookmark", ["main"], async (_event, bookmarkId: string) => {
     fileBookmarks = fileBookmarks.filter((bookmark) => bookmark.id !== bookmarkId);
     emitFileBookmarksState();
     await persistFileBookmarks();
     return fileBookmarks;
   });
-  ipcMain.handle("runtime:getStatus", () => refreshRuntimeStatus());
-  ipcMain.handle("runtime:restart", async () => {
+  handleTrustedIpc("runtime:getStatus", ["main", "auth-popup"], () => refreshRuntimeStatus());
+  handleTrustedIpc("runtime:restart", ["main"], async () => {
     await stopEmbeddedRuntime();
     return startEmbeddedRuntime();
   });
-  ipcMain.handle("auth:getUser", async () => getAuthenticatedUser());
-  ipcMain.handle("auth:requestAuth", async () => {
+  handleTrustedIpc("auth:getUser", ["main", "auth-popup"], async () => getAuthenticatedUser());
+  handleTrustedIpc("auth:requestAuth", ["main", "auth-popup"], async () => {
     await requireAuthClient().requestAuth();
   });
-  ipcMain.handle("auth:signOut", async () => {
+  handleTrustedIpc("auth:signOut", ["main", "auth-popup"], async () => {
     await requireAuthClient().signOut();
     const runtimeConfig = await readRuntimeConfigFile();
     if (runtimeConfigIsControlPlaneManaged(runtimeConfig) && runtimeModelProxyApiKeyFromConfig(runtimeConfig)) {
@@ -7578,14 +7657,14 @@ app.whenReady().then(async () => {
     }
     emitAuthUserUpdated(null);
   });
-  ipcMain.handle("auth:togglePopup", (_event, anchorBounds: BrowserAnchorBoundsPayload) => {
+  handleTrustedIpc("auth:togglePopup", ["main"], (_event, anchorBounds: BrowserAnchorBoundsPayload) => {
     toggleAuthPopup(anchorBounds);
   });
-  ipcMain.handle("auth:closePopup", () => {
+  handleTrustedIpc("auth:closePopup", ["main", "auth-popup"], () => {
     authPopupWindow?.hide();
   });
-  ipcMain.handle("runtime:getConfig", () => getRuntimeConfig());
-  ipcMain.handle("runtime:setConfig", async (_event, payload: RuntimeConfigUpdatePayload) => {
+  handleTrustedIpc("runtime:getConfig", ["main", "auth-popup"], () => getRuntimeConfig());
+  handleTrustedIpc("runtime:setConfig", ["main", "auth-popup"], async (_event, payload: RuntimeConfigUpdatePayload) => {
     const currentConfig = await readRuntimeConfigFile();
     const nextConfig = await writeRuntimeConfigFile(payload);
     await restartEmbeddedRuntimeIfNeeded(currentConfig, nextConfig);
@@ -7593,8 +7672,8 @@ app.whenReady().then(async () => {
     await emitRuntimeConfig(config);
     return config;
   });
-  ipcMain.handle("ui:getTheme", async () => currentTheme);
-  ipcMain.handle("ui:toggleWindowSize", async (event) => {
+  handleTrustedIpc("ui:getTheme", ["main", "auth-popup"], async () => currentTheme);
+  handleTrustedIpc("ui:toggleWindowSize", ["main"], async (event) => {
     const senderWindow = BrowserWindow.fromWebContents(event.sender);
     const targetWindow = senderWindow && !senderWindow.isDestroyed() ? senderWindow : mainWindow;
     if (!targetWindow || targetWindow.isDestroyed()) {
@@ -7613,7 +7692,7 @@ app.whenReady().then(async () => {
 
     targetWindow.maximize();
   });
-  ipcMain.handle("ui:setTheme", async (_event, theme: string) => {
+  handleTrustedIpc("ui:setTheme", ["main", "auth-popup"], async (_event, theme: string) => {
     currentTheme = APP_THEMES.has(theme) ? theme : "holaboss";
     emitThemeChanged();
     authPopupWindow?.close();
@@ -7627,13 +7706,13 @@ app.whenReady().then(async () => {
     addressSuggestionsPopupWindow?.close();
     addressSuggestionsPopupWindow = null;
   });
-  ipcMain.handle("appUpdate:getStatus", async () => appUpdateStatus);
-  ipcMain.handle("appUpdate:checkNow", async () => checkForAppUpdates());
-  ipcMain.handle("appUpdate:dismiss", async (_event, releaseTag?: string | null) => dismissAppUpdate(releaseTag));
-  ipcMain.handle("appUpdate:openDownload", async () => {
+  handleTrustedIpc("appUpdate:getStatus", ["main"], async () => appUpdateStatus);
+  handleTrustedIpc("appUpdate:checkNow", ["main"], async () => checkForAppUpdates());
+  handleTrustedIpc("appUpdate:dismiss", ["main"], async (_event, releaseTag?: string | null) => dismissAppUpdate(releaseTag));
+  handleTrustedIpc("appUpdate:openDownload", ["main"], async () => {
     await openAppUpdateDownload();
   });
-  ipcMain.handle("runtime:exchangeBinding", async (_event, sandboxId: string) => {
+  handleTrustedIpc("runtime:exchangeBinding", ["main", "auth-popup"], async (_event, sandboxId: string) => {
     const binding = await exchangeDesktopRuntimeBinding(sandboxId);
     const modelProxyApiKey = runtimeBindingModelProxyApiKey(binding);
     if (!modelProxyApiKey) {
@@ -7654,52 +7733,52 @@ app.whenReady().then(async () => {
     await emitRuntimeConfig(config);
     return config;
   });
-  ipcMain.handle("workspace:getClientConfig", () => getHolabossClientConfig());
-  ipcMain.handle("workspace:listMarketplaceTemplates", async () => listMarketplaceTemplates());
-  ipcMain.handle("workspace:pickTemplateFolder", async () => pickTemplateFolder());
-  ipcMain.handle("workspace:listWorkspaces", async () => listWorkspaces());
-  ipcMain.handle("workspace:listInstalledApps", async (_event, workspaceId: string) => listInstalledApps(workspaceId));
-  ipcMain.handle("workspace:startInstalledApp", async (_event, workspaceId: string, appId: string) =>
+  handleTrustedIpc("workspace:getClientConfig", ["main"], () => getHolabossClientConfig());
+  handleTrustedIpc("workspace:listMarketplaceTemplates", ["main"], async () => listMarketplaceTemplates());
+  handleTrustedIpc("workspace:pickTemplateFolder", ["main"], async () => pickTemplateFolder());
+  handleTrustedIpc("workspace:listWorkspaces", ["main", "auth-popup"], async () => listWorkspaces());
+  handleTrustedIpc("workspace:listInstalledApps", ["main"], async (_event, workspaceId: string) => listInstalledApps(workspaceId));
+  handleTrustedIpc("workspace:startInstalledApp", ["main"], async (_event, workspaceId: string, appId: string) =>
     startInstalledApp(workspaceId, appId)
   );
-  ipcMain.handle("workspace:stopInstalledApp", async (_event, workspaceId: string, appId: string) =>
+  handleTrustedIpc("workspace:stopInstalledApp", ["main"], async (_event, workspaceId: string, appId: string) =>
     stopInstalledApp(workspaceId, appId)
   );
-  ipcMain.handle("workspace:listOutputs", async (_event, workspaceId: string) => listOutputs(workspaceId));
-  ipcMain.handle("workspace:getWorkspaceRoot", async (_event, workspaceId: string) => workspaceDirectoryPath(workspaceId));
-  ipcMain.handle("workspace:createWorkspace", async (_event, payload: HolabossCreateWorkspacePayload) => createWorkspace(payload));
-  ipcMain.handle("workspace:listCronjobs", async (_event, workspaceId: string, enabledOnly?: boolean) =>
+  handleTrustedIpc("workspace:listOutputs", ["main"], async (_event, workspaceId: string) => listOutputs(workspaceId));
+  handleTrustedIpc("workspace:getWorkspaceRoot", ["main"], async (_event, workspaceId: string) => workspaceDirectoryPath(workspaceId));
+  handleTrustedIpc("workspace:createWorkspace", ["main"], async (_event, payload: HolabossCreateWorkspacePayload) => createWorkspace(payload));
+  handleTrustedIpc("workspace:listCronjobs", ["main"], async (_event, workspaceId: string, enabledOnly?: boolean) =>
     listCronjobs(workspaceId, enabledOnly)
   );
-  ipcMain.handle("workspace:createCronjob", async (_event, payload: CronjobCreatePayload) => createCronjob(payload));
-  ipcMain.handle("workspace:updateCronjob", async (_event, jobId: string, payload: CronjobUpdatePayload) =>
+  handleTrustedIpc("workspace:createCronjob", ["main"], async (_event, payload: CronjobCreatePayload) => createCronjob(payload));
+  handleTrustedIpc("workspace:updateCronjob", ["main"], async (_event, jobId: string, payload: CronjobUpdatePayload) =>
     updateCronjob(jobId, payload)
   );
-  ipcMain.handle("workspace:deleteCronjob", async (_event, jobId: string) => deleteCronjob(jobId));
-  ipcMain.handle("workspace:listTaskProposals", async (_event, workspaceId: string) => listTaskProposals(workspaceId));
-  ipcMain.handle("workspace:updateTaskProposalState", async (_event, proposalId: string, state: string) =>
+  handleTrustedIpc("workspace:deleteCronjob", ["main"], async (_event, jobId: string) => deleteCronjob(jobId));
+  handleTrustedIpc("workspace:listTaskProposals", ["main"], async (_event, workspaceId: string) => listTaskProposals(workspaceId));
+  handleTrustedIpc("workspace:updateTaskProposalState", ["main"], async (_event, proposalId: string, state: string) =>
     updateTaskProposalState(proposalId, state)
   );
-  ipcMain.handle("workspace:enqueueRemoteDemoTaskProposal", async (_event, payload: DemoTaskProposalRequestPayload) =>
+  handleTrustedIpc("workspace:enqueueRemoteDemoTaskProposal", ["main"], async (_event, payload: DemoTaskProposalRequestPayload) =>
     enqueueRemoteDemoTaskProposal(payload)
   );
-  ipcMain.handle("workspace:listRuntimeStates", async (_event, workspaceId: string) => listRuntimeStates(workspaceId));
-  ipcMain.handle("workspace:getSessionHistory", async (_event, payload: { sessionId: string; workspaceId: string }) =>
+  handleTrustedIpc("workspace:listRuntimeStates", ["main"], async (_event, workspaceId: string) => listRuntimeStates(workspaceId));
+  handleTrustedIpc("workspace:getSessionHistory", ["main"], async (_event, payload: { sessionId: string; workspaceId: string }) =>
     getSessionHistory(payload.sessionId, payload.workspaceId)
   );
-  ipcMain.handle("workspace:queueSessionInput", async (_event, payload: HolabossQueueSessionInputPayload) =>
+  handleTrustedIpc("workspace:queueSessionInput", ["main"], async (_event, payload: HolabossQueueSessionInputPayload) =>
     queueSessionInput(payload)
   );
-  ipcMain.handle("workspace:openSessionOutputStream", async (_event, payload: HolabossStreamSessionOutputsPayload) =>
+  handleTrustedIpc("workspace:openSessionOutputStream", ["main"], async (_event, payload: HolabossStreamSessionOutputsPayload) =>
     openSessionOutputStream(payload)
   );
-  ipcMain.handle("workspace:closeSessionOutputStream", async (_event, streamId: string, reason?: string) =>
+  handleTrustedIpc("workspace:closeSessionOutputStream", ["main"], async (_event, streamId: string, reason?: string) =>
     closeSessionOutputStream(streamId, reason)
   );
-  ipcMain.handle("workspace:getSessionStreamDebug", async () =>
+  handleTrustedIpc("workspace:getSessionStreamDebug", ["main"], async () =>
     verboseTelemetryEnabled ? sessionStreamDebugLog.slice(-600) : []
   );
-  ipcMain.handle("workspace:isVerboseTelemetryEnabled", async () => verboseTelemetryEnabled);
+  handleTrustedIpc("workspace:isVerboseTelemetryEnabled", ["main"], async () => verboseTelemetryEnabled);
   ipcMain.handle("browser:getState", () => {
     ensureBrowserTabs();
     return getBrowserTabsSnapshot();
