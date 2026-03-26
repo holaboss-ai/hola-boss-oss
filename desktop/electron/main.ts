@@ -33,8 +33,10 @@ const DOWNLOADS_POPUP_WIDTH = 360;
 const DOWNLOADS_POPUP_HEIGHT = 340;
 const HISTORY_POPUP_WIDTH = 420;
 const HISTORY_POPUP_HEIGHT = 420;
-const AUTH_POPUP_WIDTH = 440;
-const AUTH_POPUP_HEIGHT = 500;
+const AUTH_POPUP_WIDTH = 380;
+const AUTH_POPUP_HEIGHT = 460;
+const AUTH_POPUP_CLOSE_DELAY_MS = 260;
+const AUTH_POPUP_HOVER_BRIDGE_PX = 24;
 const OVERFLOW_POPUP_WIDTH = 220;
 const OVERFLOW_POPUP_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MIN_HEIGHT = 88;
@@ -46,6 +48,9 @@ const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const APP_UPDATE_REQUEST_TIMEOUT_MS = 15000;
 const APP_UPDATE_MACOS_ASSET_NAME = "Holaboss-macos-arm64.dmg";
 const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
+const HOLABOSS_HOME_URL = "https://holaboss.ai";
+const HOLABOSS_DOCS_URL = `https://github.com/${GITHUB_RELEASES_OWNER}/${GITHUB_RELEASES_REPO}`;
+const HOLABOSS_HELP_URL = `${HOLABOSS_DOCS_URL}/issues`;
 
 interface DirectoryEntryPayload {
   name: string;
@@ -153,6 +158,8 @@ interface BrowserAnchorBoundsPayload {
   height: number;
 }
 
+type UiSettingsPaneSection = "account" | "settings" | "about";
+
 interface AddressSuggestionPayload {
   id: string;
   url: string;
@@ -257,6 +264,7 @@ interface WorkbenchOpenBrowserPayload {
 
 let mainWindow: BrowserWindow | null = null;
 let authPopupWindow: BrowserWindow | null = null;
+let authPopupCloseTimer: ReturnType<typeof setTimeout> | null = null;
 let downloadsPopupWindow: BrowserWindow | null = null;
 let historyPopupWindow: BrowserWindow | null = null;
 let overflowPopupWindow: BrowserWindow | null = null;
@@ -714,6 +722,28 @@ async function openAppUpdateDownload(): Promise<void> {
   await shell.openExternal(targetUrl);
 }
 
+async function openExternalUrl(rawUrl: string): Promise<void> {
+  const normalizedUrl = rawUrl.trim();
+  if (!normalizedUrl) {
+    throw new Error("No external URL was provided.");
+  }
+
+  const parsed = new URL(normalizedUrl);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Only http and https URLs are supported.");
+  }
+
+  await shell.openExternal(parsed.toString());
+}
+
+function emitOpenSettingsPane(section: UiSettingsPaneSection = "settings") {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  mainWindow.webContents.send("ui:openSettingsPane", section);
+}
+
 configureStableUserDataPath();
 appUpdatePreferences = loadAppUpdatePreferences();
 appUpdateStatus = {
@@ -960,7 +990,22 @@ function popupThemeCss(theme = currentTheme) {
   const surfaceSoft = `color-mix(in srgb, ${palette.controlBg} 72%, ${palette.panelBgAlt} 28%)`;
   const surfaceSubtle = `color-mix(in srgb, ${palette.controlBg} 52%, ${palette.panelBgAlt} 48%)`;
   return `
-      :root { color-scheme: ${isLightTheme ? "light" : "dark"}; }
+      :root {
+        color-scheme: ${isLightTheme ? "light" : "dark"};
+        --popup-text: ${palette.text};
+        --popup-text-muted: ${palette.textMuted};
+        --popup-text-subtle: ${palette.textSubtle};
+        --popup-accent: ${palette.accent};
+        --popup-accent-strong: ${palette.accentStrong};
+        --popup-border: ${palette.border};
+        --popup-border-soft: ${palette.borderSoft};
+        --popup-hover: ${palette.hover};
+        --popup-panel-bg: ${palette.panelBg};
+        --popup-panel-bg-alt: ${palette.panelBgAlt};
+        --popup-control-bg: ${palette.controlBg};
+        --popup-shadow: ${palette.shadow};
+        --popup-error: ${palette.error};
+      }
       body {
         font-family: ${palette.fontFamily};
         color: ${palette.text};
@@ -5130,10 +5175,6 @@ function emitAddressSuggestionsState() {
 }
 
 function createAuthPopupHtml() {
-  const themeOptions = Array.from(APP_THEMES)
-    .map((theme) => `<option value="${theme}">${theme.charAt(0).toUpperCase()}${theme.slice(1)}</option>`)
-    .join("");
-
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -5141,60 +5182,71 @@ function createAuthPopupHtml() {
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Account</title>
     <style>
-      :root { color-scheme: dark; }
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        font-family: "IBM Plex Sans", "Segoe UI Variable", sans-serif;
+        min-height: 100vh;
         background: transparent;
-        color: #deeee6;
+        color: var(--popup-text);
+      }
+      @keyframes auth-popup-enter {
+        from {
+          opacity: 0;
+          transform: translateY(-8px) scale(0.975);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
       }
       .panel {
-        margin: 10px;
-        height: calc(100vh - 20px);
-        border-radius: 22px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: linear-gradient(180deg, rgba(23, 19, 16, 0.98), rgba(13, 10, 8, 0.98));
-        box-shadow: 0 18px 42px rgba(0, 0, 0, 0.45);
+        margin: ${AUTH_POPUP_HOVER_BRIDGE_PX}px 8px 8px;
+        height: calc(100vh - ${AUTH_POPUP_HOVER_BRIDGE_PX + 8}px);
+        border-radius: 26px;
         display: flex;
         flex-direction: column;
         overflow: hidden;
+        transform-origin: top right;
+        will-change: transform, opacity;
       }
-      .header {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 18px 18px 14px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+      body.popup-opening .panel {
+        animation: auth-popup-enter 180ms cubic-bezier(0.22, 1, 0.36, 1);
       }
-      .account {
+      @media (prefers-reduced-motion: reduce) {
+        body.popup-opening .panel {
+          animation: none;
+        }
+      }
+      .profile {
+        padding: 18px;
+        border-bottom: 1px solid var(--popup-border-soft);
+      }
+      .profileRow {
         display: flex;
-        align-items: flex-start;
+        align-items: center;
         gap: 12px;
-        min-width: 0;
       }
       .avatar {
         flex: 0 0 auto;
-        width: 42px;
-        height: 42px;
+        width: 46px;
+        height: 46px;
         border-radius: 999px;
         display: grid;
         place-items: center;
-        border: 1px solid rgba(185, 138, 54, 0.35);
-        background: rgba(140, 101, 23, 0.2);
-        color: #f4d28d;
-        font-size: 16px;
+        font-size: 18px;
         font-weight: 600;
+      }
+      .identityWrap {
+        min-width: 0;
+        flex: 1 1 auto;
       }
       .identityName {
         font-size: 15px;
-        color: rgba(236, 239, 243, 0.96);
+        font-weight: 600;
       }
       .identity {
         margin-top: 4px;
         font-size: 12px;
-        color: rgba(181, 195, 188, 0.8);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -5202,443 +5254,297 @@ function createAuthPopupHtml() {
       .badge {
         flex: 0 0 auto;
         border-radius: 999px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        padding: 8px 12px;
+        padding: 8px 11px;
         font-size: 10px;
         letter-spacing: 0.14em;
         text-transform: uppercase;
       }
-      .badge.idle {
-        background: rgba(255, 255, 255, 0.03);
-        color: rgba(181, 195, 188, 0.82);
-      }
-      .badge.ready {
-        border-color: rgba(87, 255, 173, 0.22);
-        background: rgba(87, 255, 173, 0.08);
-        color: rgba(87, 255, 173, 0.92);
-      }
-      .badge.syncing {
-        border-color: rgba(252, 211, 77, 0.22);
-        background: rgba(252, 211, 77, 0.08);
-        color: rgba(255, 233, 177, 0.92);
-      }
-      .badge.error {
-        border-color: rgba(251, 146, 146, 0.24);
-        background: rgba(251, 146, 146, 0.08);
-        color: rgba(255, 203, 203, 0.94);
-      }
-      .content {
-        min-height: 0;
-        overflow-y: auto;
-        padding: 16px 18px 18px;
-      }
-      .hero {
-        border-radius: 18px;
-        border: 1px solid rgba(91, 70, 35, 0.55);
-        background: rgba(35, 27, 18, 0.92);
-        padding: 14px 16px;
-      }
-      .hero[hidden] {
-        display: none;
-      }
-      .heroTitle {
-        font-size: 13px;
-        color: rgba(222, 238, 230, 0.94);
-      }
-      .heroDescription {
-        margin-top: 6px;
-        font-size: 11px;
-        line-height: 1.5;
-        color: rgba(181, 195, 188, 0.72);
-      }
-      .list {
+      .runtimeLine {
         margin-top: 14px;
-        display: grid;
-        gap: 8px;
-      }
-      .row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
         border-radius: 16px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(33, 25, 20, 0.72);
-        padding: 13px 14px;
-      }
-      .rowLabel {
-        font-size: 11px;
-        color: rgba(236, 239, 243, 0.92);
-      }
-      .rowValue {
-        max-width: 58%;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        text-align: right;
-        font-size: 11px;
-        color: rgba(181, 195, 188, 0.8);
-      }
-      .actions {
-        margin-top: 14px;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-      }
-      .button {
-        border-radius: 16px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(27, 23, 20, 0.96);
-        color: rgba(236, 239, 243, 0.92);
-        padding: 11px 14px;
-        font-size: 12px;
-        cursor: pointer;
-        transition: border-color 120ms ease, background 120ms ease;
-      }
-      .button.primary {
-        border-color: rgba(185, 138, 54, 0.35);
-        background: rgba(140, 101, 23, 0.16);
-        color: #f4d28d;
-      }
-      .button:hover { border-color: rgba(185, 138, 54, 0.3); }
-      .button:disabled {
-        cursor: not-allowed;
-        opacity: 0.5;
-      }
-      .stateMessage {
-        margin-top: 12px;
-        border-radius: 16px;
+        border: 1px solid var(--popup-border-soft);
+        background: color-mix(in srgb, var(--popup-control-bg) 68%, transparent);
         padding: 12px 14px;
-        font-size: 11px;
-        line-height: 1.5;
       }
-      .stateMessage.ready {
-        border: 1px solid rgba(87, 255, 173, 0.18);
-        background: rgba(87, 255, 173, 0.08);
-        color: rgba(87, 255, 173, 0.9);
-      }
-      .stateMessage.syncing {
-        border: 1px solid rgba(252, 211, 77, 0.18);
-        background: rgba(252, 211, 77, 0.08);
-        color: rgba(255, 233, 177, 0.92);
-      }
-      .message {
-        margin-top: 12px;
-        border-radius: 16px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        padding: 12px 14px;
-        font-size: 11px;
-        line-height: 1.5;
-      }
-      .message.error {
-        border-color: rgba(251, 146, 146, 0.28);
-        color: rgba(255, 203, 203, 0.94);
-      }
-      .message.success {
-        border-color: rgba(87, 255, 173, 0.24);
-        color: rgba(87, 255, 173, 0.92);
-      }
-      .advancedToggle {
-        margin-top: 14px;
-        width: 100%;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        border-radius: 16px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(29, 23, 20, 0.8);
-        color: rgba(236, 239, 243, 0.92);
-        padding: 12px 14px;
-        font-size: 11px;
-        cursor: pointer;
-      }
-      .advancedHint {
-        color: rgba(181, 195, 188, 0.72);
-      }
-      .section {
-        margin-top: 12px;
-        border-radius: 18px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(27, 23, 20, 0.75);
-        padding: 14px;
-      }
-      .section[hidden] {
-        display: none;
-      }
-      .section-title {
-        margin-bottom: 10px;
+      .runtimeLabel {
         font-size: 10px;
         letter-spacing: 0.16em;
         text-transform: uppercase;
-        color: rgba(181, 195, 188, 0.72);
+        color: var(--popup-text-subtle);
       }
-      .statusGrid {
+      .runtimeValue {
+        margin-top: 6px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--popup-text);
+      }
+      .content {
+        min-height: 0;
         display: grid;
-        gap: 10px;
+        gap: 12px;
+        overflow-y: auto;
+        padding: 12px;
       }
-      .statusStep {
-        border-radius: 16px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(255, 255, 255, 0.03);
-        padding: 12px 14px;
-      }
-      .statusStep.done {
-        border-color: rgba(87, 255, 173, 0.2);
-        background: rgba(87, 255, 173, 0.08);
-      }
-      .statusStep.current {
-        border-color: rgba(125, 211, 252, 0.22);
-        background: rgba(125, 211, 252, 0.08);
-      }
-      .statusStep.error {
-        border-color: rgba(251, 146, 146, 0.24);
-        background: rgba(251, 146, 146, 0.08);
-      }
-      .statusHeader {
-        display: flex;
+      .button {
+        width: 100%;
+        display: inline-flex;
         align-items: center;
+        justify-content: center;
         gap: 8px;
+        border-radius: 16px;
+        border: 1px solid var(--popup-border-soft);
+        padding: 12px 14px;
+        font-size: 12px;
+        cursor: pointer;
+        transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
       }
-      .statusDot {
-        width: 8px;
-        height: 8px;
-        border-radius: 999px;
-        background: rgba(181, 195, 188, 0.5);
+      .button:disabled,
+      .menuItem:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
       }
-      .statusStep.done .statusDot {
-        background: rgba(87, 255, 173, 0.95);
-      }
-      .statusStep.current .statusDot {
-        background: rgba(125, 211, 252, 0.95);
-      }
-      .statusStep.error .statusDot {
-        background: rgba(251, 146, 146, 0.95);
-      }
-      .statusLabel {
-        font-size: 10px;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
-        color: rgba(181, 195, 188, 0.72);
-      }
-      .statusDetail {
-        margin-top: 8px;
+      .message {
+        margin: 0;
+        border-radius: 16px;
+        border: 1px solid var(--popup-border-soft);
+        padding: 12px 14px;
         font-size: 11px;
         line-height: 1.6;
-        color: rgba(236, 239, 243, 0.88);
       }
-      .field {
+      .menuSection {
         display: grid;
         gap: 6px;
-        margin-bottom: 10px;
       }
-      .field label {
-        font-size: 10px;
-        letter-spacing: 0.12em;
-        color: rgba(181, 195, 188, 0.72);
+      .menuSection + .menuSection {
+        padding-top: 10px;
+        border-top: 1px solid var(--popup-border-soft);
       }
-      .input {
+      .menuItem {
         width: 100%;
-        border-radius: 14px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        background: rgba(255, 255, 255, 0.03);
-        color: rgba(236, 239, 243, 0.94);
-        padding: 10px 12px;
-        font-size: 12px;
-        outline: none;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        border-radius: 18px;
+        border: 1px solid transparent;
+        background: transparent;
+        padding: 11px 12px;
+        text-align: left;
+        color: var(--popup-text);
+        cursor: pointer;
+        transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
       }
-      .input:focus { border-color: rgba(185, 138, 54, 0.45); }
-      .footnote {
-        margin-top: 10px;
-        font-size: 11px;
-        line-height: 1.5;
-        color: rgba(181, 195, 188, 0.72);
+      .menuItem:hover {
+        transform: translateY(-1px);
+        border-color: var(--popup-border-soft);
+        background: color-mix(in srgb, var(--popup-control-bg) 72%, transparent);
       }
-      .authSectionTitle {
-        margin: 14px 0 8px;
+      .menuLead {
+        min-width: 0;
+        flex: 1 1 auto;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .menuIcon {
+        width: 36px;
+        height: 36px;
+        flex: 0 0 auto;
+        display: grid;
+        place-items: center;
+        border-radius: 12px;
+        border: 1px solid var(--popup-border-soft);
+        background: color-mix(in srgb, var(--popup-control-bg) 85%, transparent);
+        color: var(--popup-text-muted);
+      }
+      .menuIcon svg {
+        width: 17px;
+        height: 17px;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.85;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .menuCopy {
+        min-width: 0;
+        flex: 1 1 auto;
+      }
+      .menuTitle {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .menuMeta {
+        display: block;
+        margin-top: 3px;
         font-size: 10px;
-        letter-spacing: 0.14em;
-        text-transform: uppercase;
-        color: rgba(181, 195, 188, 0.72);
+        line-height: 1.35;
+        color: var(--popup-text-subtle);
       }
-      .themeSection {
-        margin-top: 10px;
+      .menuArrow {
+        flex: 0 0 auto;
+        font-size: 16px;
+        color: var(--popup-text-subtle);
       }
-      .themeSelectWrap {
-        margin-top: 8px;
+      .menuItem:not(.detailed) .menuTitle {
+        font-size: 12.5px;
+        font-weight: 500;
       }
-      .hero,
-      .list,
-      .statusSection,
-      #stateMessage,
-      #error,
-      #success,
-      #advancedToggle,
-      #advancedSection,
-      #exchange {
+      .menuItem:not(.detailed) .menuCopy {
+        display: flex;
+        align-items: center;
+      }
+      .menuItem.danger {
+        color: var(--popup-error);
+      }
+      .menuItem.danger .menuIcon {
+        border-color: color-mix(in srgb, var(--popup-error) 28%, var(--popup-border-soft));
+        background: color-mix(in srgb, var(--popup-error) 10%, transparent);
+        color: var(--popup-error);
+      }
+      .menuItem.danger .menuMeta,
+      .menuItem.danger .menuArrow {
+        color: color-mix(in srgb, var(--popup-error) 70%, var(--popup-text-subtle));
+      }
+      .menuItem[hidden],
+      .button[hidden],
+      .message[hidden] {
         display: none !important;
       }
       ${popupThemeCss()}
     </style>
   </head>
   <body>
-    <div class="panel">
-      <div class="header">
-        <div class="account">
+    <div id="panel" class="panel">
+      <div class="profile">
+        <div class="profileRow">
           <div id="avatar" class="avatar">H</div>
-          <div style="min-width: 0;">
+          <div class="identityWrap">
             <div id="identityName" class="identityName">Holaboss account</div>
             <div id="identity" class="identity">Loading session...</div>
           </div>
+          <div id="badge" class="badge idle">Checking</div>
         </div>
-        <div id="badge" class="badge idle">Checking session</div>
+
+        <div class="runtimeLine">
+          <div class="runtimeLabel">Desktop status</div>
+          <div id="runtimeValue" class="runtimeValue">Checking local runtime connection...</div>
+        </div>
       </div>
+
       <div class="content">
-        <div id="hero" class="hero">
-          <div id="heroTitle" class="heroTitle">Sign in to connect this desktop runtime</div>
-          <div id="heroDescription" class="heroDescription">
-            Use your Holaboss account to connect this desktop app and enable synced product features.
-          </div>
+        <button id="signIn" class="button primary" type="button">Sign in with browser</button>
+        <div id="notice" class="message success" hidden></div>
+
+        <div class="menuSection">
+          <button id="accountAction" class="item menuItem detailed" type="button">
+            <span class="menuLead">
+              <span class="menuIcon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M19 21a7 7 0 0 0-14 0"/><circle cx="12" cy="8" r="4"/></svg>
+              </span>
+              <span class="menuCopy">
+                <span class="menuTitle">Account</span>
+                <span id="accountMeta" class="menuMeta">Connected</span>
+              </span>
+            </span>
+            <span class="menuArrow">&#8250;</span>
+          </button>
+          <button id="settingsAction" class="item menuItem" type="button">
+            <span class="menuLead">
+              <span class="menuIcon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M4 7h10"/><path d="M4 17h16"/><path d="M14 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/><path d="M10 21a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/></svg>
+              </span>
+              <span class="menuCopy">
+                <span class="menuTitle">Settings</span>
+              </span>
+            </span>
+            <span class="menuArrow">&#8250;</span>
+          </button>
+          <button id="homeAction" class="item menuItem" type="button">
+            <span class="menuLead">
+              <span class="menuIcon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="m3 10 9-7 9 7"/><path d="M5 9.5V20h14V9.5"/><path d="M9 20v-6h6v6"/></svg>
+              </span>
+              <span class="menuCopy">
+                <span class="menuTitle">Homepage</span>
+              </span>
+            </span>
+            <span class="menuArrow">&#8250;</span>
+          </button>
+          <button id="docsAction" class="item menuItem" type="button">
+            <span class="menuLead">
+              <span class="menuIcon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M6 4.5h9a3 3 0 0 1 3 3V20l-4-2-4 2-4-2-4 2V7.5a3 3 0 0 1 3-3Z"/></svg>
+              </span>
+              <span class="menuCopy">
+                <span class="menuTitle">Docs</span>
+              </span>
+            </span>
+            <span class="menuArrow">&#8250;</span>
+          </button>
+          <button id="helpAction" class="item menuItem" type="button">
+            <span class="menuLead">
+              <span class="menuIcon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 1 1 5.8 1c0 2-3 2-3 4"/><path d="M12 17h.01"/></svg>
+              </span>
+              <span class="menuCopy">
+                <span class="menuTitle">Get help</span>
+              </span>
+            </span>
+            <span class="menuArrow">&#8250;</span>
+          </button>
         </div>
 
-        <div class="list">
-          <div class="row">
-            <div class="rowLabel">Profile</div>
-            <div id="profileStatus" class="rowValue">Sign in required</div>
-          </div>
-          <div class="row">
-            <div class="rowLabel">Runtime</div>
-            <div id="runtimeStatus" class="rowValue">Offline</div>
-          </div>
-          <div class="row">
-            <div class="rowLabel">Sandbox</div>
-            <div id="sandboxStatus" class="rowValue">Will be assigned automatically</div>
-          </div>
+        <div class="menuSection">
+          <button id="signOut" class="menuItem danger" type="button">
+            <span class="menuLead">
+              <span class="menuIcon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M20 19V5"/></svg>
+              </span>
+              <span class="menuCopy">
+                <span class="menuTitle">Sign out</span>
+              </span>
+            </span>
+            <span class="menuArrow">&#8250;</span>
+          </button>
         </div>
-
-        <div class="section statusSection">
-          <div class="section-title">Status</div>
-          <div id="statusSummary" class="footnote" style="margin-top: 0;"></div>
-          <div id="statusSteps" class="statusGrid"></div>
-          <div id="statusError" class="message error" hidden></div>
-        </div>
-
-        <div class="authSectionTitle">Account actions</div>
-        <div class="actions">
-          <button id="signIn" class="button primary" type="button">Sign in with browser</button>
-          <button id="refresh" class="button" type="button">Refresh session</button>
-          <button id="signOut" class="button" type="button">Sign out</button>
-          <button id="exchange" class="button primary" type="button">Retry setup</button>
-        </div>
-
-        <div class="themeSection">
-          <div class="authSectionTitle" style="margin-top: 12px;">Theme selection</div>
-          <div class="themeSelectWrap">
-            <select id="themeSelect" class="input">
-              ${themeOptions}
-            </select>
-          </div>
-        </div>
-
-        <div id="stateMessage" class="stateMessage syncing" hidden></div>
-
-        <div id="error" class="message error" hidden></div>
-        <div id="success" class="message success" hidden></div>
-
-        <button id="advancedToggle" class="advancedToggle" type="button">
-          <span>Advanced runtime settings</span>
-          <span id="advancedHint" class="advancedHint">Show</span>
-        </button>
-
-        <div id="advancedSection" class="section" hidden>
-          <div class="section-title">Runtime Product Config</div>
-
-          <div class="field">
-            <label for="sandboxId">Runtime sandbox ID</label>
-            <input id="sandboxId" class="input" type="text" />
-          </div>
-
-          <div class="field">
-            <label for="runtimeUserId">Runtime user ID</label>
-            <input id="runtimeUserId" class="input" type="text" />
-          </div>
-
-          <div class="field">
-            <label for="modelProxyBaseUrl">Model proxy base URL</label>
-            <input id="modelProxyBaseUrl" class="input" type="url" />
-          </div>
-
-          <div class="field">
-            <label for="defaultModel">Default model</label>
-            <input id="defaultModel" class="input" type="text" />
-          </div>
-
-          <div class="actions">
-            <button id="exchangeAdvanced" class="button" type="button">Refresh runtime binding</button>
-            <button id="save" class="button primary" type="button">Save runtime config</button>
-          </div>
-
-          <div id="summary" class="footnote"></div>
-          <div class="footnote">
-            Sign-in is handled on the hosted Holaboss sign-in page. Runtime binding is provisioned automatically after sign-in. Use "Retry runtime binding" only if the automatic exchange fails.
-          </div>
-        </div>
-
       </div>
     </div>
     <script>
+      const LINKS = {
+        home: ${JSON.stringify(HOLABOSS_HOME_URL)},
+        docs: ${JSON.stringify(HOLABOSS_DOCS_URL)},
+        help: ${JSON.stringify(HOLABOSS_HELP_URL)}
+      };
+
       const state = {
         user: null,
         runtimeConfig: null,
         runtimeStatus: null,
-        workspaces: [],
         isPending: true,
         isStartingSignIn: false,
-        isSaving: false,
-        isExchanging: false,
-        isAdvancedOpen: false,
+        isSigningOut: false,
         authError: "",
-        authMessage: "",
-        modelProxyBaseUrl: "",
-        defaultModel: "",
-        runtimeUserId: "",
-        sandboxId: "",
-        theme: ${JSON.stringify(currentTheme)}
+        authMessage: ""
       };
-      const availableThemes = new Set(${JSON.stringify(Array.from(APP_THEMES))});
 
       const els = {
-        identity: document.getElementById("identity"),
-        identityName: document.getElementById("identityName"),
+        panel: document.getElementById("panel"),
         avatar: document.getElementById("avatar"),
-        summary: document.getElementById("summary"),
-        hero: document.getElementById("hero"),
-        heroTitle: document.getElementById("heroTitle"),
-        heroDescription: document.getElementById("heroDescription"),
+        identityName: document.getElementById("identityName"),
+        identity: document.getElementById("identity"),
         badge: document.getElementById("badge"),
-        profileStatus: document.getElementById("profileStatus"),
-        runtimeStatus: document.getElementById("runtimeStatus"),
-        sandboxStatus: document.getElementById("sandboxStatus"),
-        statusSummary: document.getElementById("statusSummary"),
-        statusSteps: document.getElementById("statusSteps"),
-        statusError: document.getElementById("statusError"),
+        runtimeValue: document.getElementById("runtimeValue"),
+        notice: document.getElementById("notice"),
         signIn: document.getElementById("signIn"),
-        refresh: document.getElementById("refresh"),
         signOut: document.getElementById("signOut"),
-        exchange: document.getElementById("exchange"),
-        exchangeAdvanced: document.getElementById("exchangeAdvanced"),
-        save: document.getElementById("save"),
-        stateMessage: document.getElementById("stateMessage"),
-        advancedToggle: document.getElementById("advancedToggle"),
-        advancedHint: document.getElementById("advancedHint"),
-        advancedSection: document.getElementById("advancedSection"),
-        sandboxId: document.getElementById("sandboxId"),
-        runtimeUserId: document.getElementById("runtimeUserId"),
-        modelProxyBaseUrl: document.getElementById("modelProxyBaseUrl"),
-        defaultModel: document.getElementById("defaultModel"),
-        themeSelect: document.getElementById("themeSelect"),
-        error: document.getElementById("error"),
-        success: document.getElementById("success")
+        accountAction: document.getElementById("accountAction"),
+        accountMeta: document.getElementById("accountMeta"),
+        settingsAction: document.getElementById("settingsAction"),
+        homeAction: document.getElementById("homeAction"),
+        docsAction: document.getElementById("docsAction"),
+        helpAction: document.getElementById("helpAction")
       };
 
       const sessionUserId = (user) => user && typeof user.id === "string" ? user.id : "";
@@ -5661,219 +5567,62 @@ function createAuthPopupHtml() {
         return (email[0] || "H").toUpperCase();
       };
 
-      const runtimeSummary = (config) => {
-        if (!config) {
-          return "runtime config unavailable";
-        }
+      const runtimeBindingReady = () => Boolean(state.runtimeConfig?.authTokenPresent)
+        && Boolean((state.runtimeConfig?.sandboxId || "").trim())
+        && Boolean((state.runtimeConfig?.modelProxyBaseUrl || "").trim());
 
-        const parts = [
-          config.loadedFromFile ? "runtime config loaded" : "runtime config empty",
-          config.authTokenPresent ? "token present" : "token missing",
-          config.userId ? "user " + config.userId : "user missing",
-          config.sandboxId ? "sandbox " + config.sandboxId : "sandbox missing"
-        ];
-        return parts.join(" - ");
+      const runtimeStatusLabel = (isSignedIn) => {
+        if (state.runtimeStatus?.status === "running") {
+          return "Runtime connected and running.";
+        }
+        if (state.runtimeStatus?.status === "starting") {
+          return "Runtime is starting.";
+        }
+        if (state.runtimeStatus?.status === "error") {
+          return state.runtimeStatus?.lastError || "Runtime needs attention.";
+        }
+        if (runtimeBindingReady()) {
+          return "Runtime connected and ready.";
+        }
+        return isSignedIn ? "Finishing runtime setup." : "Sign in to connect desktop features.";
       };
 
-      const runtimeStateLabel = (runtimeStatus, isSignedIn, runtimeBindingReady) => {
-        if (runtimeStatus?.status === "running") {
-          return "Running";
-        }
-        if (runtimeStatus?.status === "starting") {
-          return "Starting";
-        }
-        if (runtimeStatus?.status === "error") {
-          return "Error";
-        }
-        if (runtimeStatus?.status === "missing") {
-          return "Missing";
-        }
-        if (runtimeStatus?.status === "disabled") {
-          return "Disabled";
-        }
-        if (runtimeStatus?.status === "stopped") {
-          return "Stopped";
-        }
-        if (runtimeBindingReady) {
-          return "Ready";
-        }
-        return isSignedIn ? "Finishing setup" : "Offline";
-      };
-
-      const normalizedWorkspaceStatus = (workspace) => ((workspace && typeof workspace.status === "string" ? workspace.status : "").trim().toLowerCase());
-
-      const pickStatusWorkspace = (workspaces) => {
-        if (!Array.isArray(workspaces) || workspaces.length === 0) {
-          return null;
-        }
-        return workspaces.find((workspace) => normalizedWorkspaceStatus(workspace) === "active") || workspaces[0] || null;
-      };
-
-      const lifecycleSteps = () => {
-        const isSignedIn = Boolean(sessionUserId(state.user));
-        const runtimeProvisioned = Boolean(state.runtimeConfig?.authTokenPresent);
-        const sandboxAssigned = Boolean((state.runtimeConfig?.sandboxId || "").trim());
-        const desktopBrowserReady = Boolean(state.runtimeStatus?.desktopBrowserReady);
-        const runtimeFailed = state.runtimeStatus?.status === "error";
-        const workspace = pickStatusWorkspace(state.workspaces);
-        const workspaceStatus = normalizedWorkspaceStatus(workspace);
-        const workspaceFailed = workspaceStatus === "error";
-        const workspaceReady = workspaceStatus === "active";
-
-        return [
-          {
-            label: "Signed in",
-            state: isSignedIn ? "done" : "current",
-            detail: isSignedIn ? "Desktop auth session is available." : "Sign in to sync product-backed desktop state."
-          },
-          {
-            label: "Runtime provisioned",
-            state: runtimeFailed ? "error" : runtimeProvisioned ? "done" : isSignedIn ? "current" : "pending",
-            detail: runtimeFailed
-              ? state.runtimeStatus?.lastError || "Embedded runtime failed to start."
-              : runtimeProvisioned
-                ? "Runtime token and binding are loaded."
-                : "Waiting for runtime token provisioning."
-          },
-          {
-            label: "Sandbox assigned",
-            state: sandboxAssigned ? "done" : runtimeProvisioned ? "current" : "pending",
-            detail: sandboxAssigned
-              ? "Sandbox " + state.runtimeConfig.sandboxId
-              : "Waiting for a sandbox assignment in runtime config."
-          },
-          {
-            label: "Desktop browser ready",
-            state: desktopBrowserReady ? "done" : state.runtimeStatus?.status === "starting" ? "current" : "pending",
-            detail: desktopBrowserReady
-              ? "Desktop browser service is registered for agent-triggered browsing."
-              : "Desktop browser service has not finished registering yet."
-          },
-          {
-            label: "Workspace ready",
-            state: workspaceFailed ? "error" : workspaceReady ? "done" : workspace ? "current" : "pending",
-            detail: workspaceFailed
-              ? workspace?.error_message || "Workspace provisioning failed."
-              : workspaceReady
-                ? (workspace?.name || "Workspace") + " is active."
-                : workspace
-                  ? "Current workspace status: " + workspace.status + "."
-                  : "Create or select a workspace to finish desktop routing."
-          }
-        ];
-      };
-
-      const statusSummary = () => {
-        const workspace = pickStatusWorkspace(state.workspaces);
-        const parts = [];
-        parts.push(Array.isArray(state.workspaces) && state.workspaces.length ? state.workspaces.length + " workspace" + (state.workspaces.length === 1 ? "" : "s") : "no workspaces");
-        if (workspace) {
-          parts.push("focused status " + workspace.name);
-        }
-        if (state.runtimeStatus?.status) {
-          parts.push("runtime " + state.runtimeStatus.status);
-        }
-        return parts.join(" - ");
-      };
-
-      const renderLifecycleSteps = () => {
-        const steps = lifecycleSteps();
-        els.statusSummary.textContent = statusSummary();
-        els.statusSteps.innerHTML = steps.map((step) => (
-          '<div class="statusStep ' + step.state + '">' +
-            '<div class="statusHeader">' +
-              '<span class="statusDot"></span>' +
-              '<span class="statusLabel">' + step.label + '</span>' +
-            '</div>' +
-            '<div class="statusDetail">' + step.detail + '</div>' +
-          '</div>'
-        )).join("");
-
-        const workspaceError = pickStatusWorkspace(state.workspaces)?.error_message || "";
-        els.statusError.hidden = !workspaceError;
-        els.statusError.textContent = workspaceError;
-      };
-
-      const syncFormFromConfig = (config) => {
-        const defaults = window.authPopup.getDefaults();
-        state.runtimeConfig = config;
-        state.modelProxyBaseUrl = config?.modelProxyBaseUrl || defaults.modelProxyBaseUrl;
-        state.defaultModel = config?.defaultModel || defaults.defaultModel;
-        state.runtimeUserId = config?.userId || sessionUserId(state.user);
-        state.sandboxId = config?.sandboxId || ("desktop:" + crypto.randomUUID());
+      const restartOpenAnimation = () => {
+        document.body.classList.remove("popup-opening");
+        void document.body.offsetWidth;
+        document.body.classList.add("popup-opening");
       };
 
       const render = () => {
         const isSignedIn = Boolean(sessionUserId(state.user));
-        const resolvedUserId = state.runtimeUserId.trim() || sessionUserId(state.user);
-        const runtimeBindingReady = Boolean(state.runtimeConfig?.authTokenPresent)
-          && Boolean((state.runtimeConfig?.sandboxId || "").trim())
-          && Boolean((state.runtimeConfig?.modelProxyBaseUrl || "").trim());
         const hasError = Boolean(state.authError);
-        const isFinishingSetup = isSignedIn && !runtimeBindingReady && !hasError;
-        const badgeTone = hasError ? "error" : runtimeBindingReady ? "ready" : isFinishingSetup ? "syncing" : "idle";
-        const badgeLabel = state.isPending ? "Checking session" : hasError ? "Needs attention" : runtimeBindingReady ? "Connected" : isSignedIn ? "Finishing setup" : "Signed out";
-        const heroTitle = !isSignedIn
-          ? "Sign in to connect this desktop runtime"
-          : runtimeBindingReady
-            ? "Desktop runtime is connected"
-            : hasError
-              ? "We couldn't finish desktop setup"
-              : "Finishing desktop setup";
-        const heroDescription = !isSignedIn
-          ? "Use your Holaboss account to connect this desktop app and enable synced product features."
-          : runtimeBindingReady
-            ? "Your desktop runtime is bound to your Holaboss account and ready to use product features."
-            : hasError
-              ? "Your account session is active, but the desktop runtime binding needs to be refreshed."
-              : "Sign-in succeeded. Holaboss is finishing the local runtime setup in the background.";
+        const ready = runtimeBindingReady();
+        const badgeTone = hasError ? "error" : ready ? "ready" : isSignedIn ? "syncing" : "idle";
+        const badgeLabel = state.isPending ? "Checking" : hasError ? "Needs help" : ready ? "Connected" : isSignedIn ? "Syncing" : "Signed out";
+        const noticeText = state.authError || state.authMessage;
 
-        els.identityName.textContent = isSignedIn ? (sessionDisplayName(state.user) || "Holaboss account") : "Holaboss account";
-        els.identity.textContent = isSignedIn
-          ? (sessionEmail(state.user) || resolvedUserId || "Signed in")
-          : "Not connected";
         els.avatar.textContent = sessionInitials(state.user);
-        els.heroTitle.textContent = heroTitle;
-        els.heroDescription.textContent = heroDescription;
-        els.hero.hidden = runtimeBindingReady && !hasError;
-        els.summary.textContent = runtimeSummary(state.runtimeConfig);
-        els.badge.textContent = badgeLabel;
+        els.identityName.textContent = isSignedIn ? (sessionDisplayName(state.user) || "Holaboss account") : "Holaboss account";
+        els.identity.textContent = isSignedIn ? (sessionEmail(state.user) || sessionUserId(state.user) || "Signed in") : "Not connected";
         els.badge.className = "badge " + badgeTone;
-        els.profileStatus.textContent = isSignedIn ? "Connected" : "Sign in required";
-        els.runtimeStatus.textContent = runtimeStateLabel(state.runtimeStatus, isSignedIn, runtimeBindingReady);
-        els.sandboxStatus.textContent = state.sandboxId || "Will be assigned automatically";
-        renderLifecycleSteps();
-        els.sandboxId.value = state.sandboxId;
-        els.runtimeUserId.value = state.runtimeUserId;
-        els.modelProxyBaseUrl.value = state.modelProxyBaseUrl;
-        els.defaultModel.value = state.defaultModel;
-        els.themeSelect.value = state.theme;
+        els.badge.textContent = badgeLabel;
+        els.runtimeValue.textContent = runtimeStatusLabel(isSignedIn);
+        els.accountMeta.textContent = isSignedIn ? (ready ? "Connected" : "Syncing setup") : "Sign in required";
+
         els.signIn.hidden = isSignedIn;
-        els.signIn.disabled = state.isStartingSignIn || isSignedIn;
-        els.signIn.textContent = state.isStartingSignIn ? "Opening sign-in..." : "Sign in with browser";
-        els.refresh.disabled = state.isPending;
-        els.signOut.disabled = !isSignedIn;
-        els.exchange.hidden = !isSignedIn || runtimeBindingReady;
-        els.exchange.disabled = state.isExchanging;
-        els.exchange.textContent = state.isExchanging ? "Retrying setup..." : "Retry setup";
-        els.exchangeAdvanced.disabled = state.isExchanging || !isSignedIn;
-        els.exchangeAdvanced.textContent = state.isExchanging ? "Refreshing..." : "Refresh runtime binding";
-        els.save.disabled = state.isSaving;
-        els.save.textContent = state.isSaving ? "Saving runtime config..." : "Save runtime config";
-        els.stateMessage.hidden = !(isFinishingSetup || (runtimeBindingReady && !state.authMessage && !state.authError));
-        if (runtimeBindingReady && !state.authMessage && !state.authError) {
-          els.stateMessage.className = "stateMessage ready";
-          els.stateMessage.textContent = "Connected. Remote proactive and marketplace features are available on this desktop runtime.";
-        } else if (isFinishingSetup) {
-          els.stateMessage.className = "stateMessage syncing";
-          els.stateMessage.textContent = "Sign-in completed. Holaboss is finishing local runtime setup.";
-        }
-        els.error.hidden = !state.authError;
-        els.error.textContent = state.authError;
-        els.success.hidden = !state.authMessage;
-        els.success.textContent = state.authMessage;
-        els.advancedSection.hidden = !state.isAdvancedOpen;
-        els.advancedHint.textContent = state.isAdvancedOpen ? "Hide" : "Show";
+        els.signIn.disabled = state.isStartingSignIn;
+        els.signIn.textContent = state.isStartingSignIn ? "Opening sign-in..." : "Connect account";
+
+        els.signOut.hidden = !isSignedIn;
+        els.signOut.disabled = state.isSigningOut;
+        els.notice.hidden = !noticeText;
+        els.notice.className = "message " + (state.authError ? "error" : "success");
+        els.notice.textContent = noticeText;
+      };
+
+      const closeAndScheduleNothing = () => {
+        void window.authPopup.cancelClose();
+        void window.authPopup.close();
       };
 
       const refreshSession = async () => {
@@ -5881,9 +5630,6 @@ function createAuthPopupHtml() {
         render();
         try {
           state.user = await window.authPopup.getUser();
-          if (!state.runtimeUserId.trim()) {
-            state.runtimeUserId = sessionUserId(state.user);
-          }
           state.authError = "";
         } catch (error) {
           state.authError = error instanceof Error ? error.message : "Failed to refresh session.";
@@ -5894,51 +5640,39 @@ function createAuthPopupHtml() {
       };
 
       const refreshConfig = async () => {
-        const config = await window.authPopup.getRuntimeConfig();
-        syncFormFromConfig(config);
-        render();
+        try {
+          state.runtimeConfig = await window.authPopup.getRuntimeConfig();
+        } catch (error) {
+          state.authError = error instanceof Error ? error.message : "Failed to load runtime config.";
+        } finally {
+          render();
+        }
       };
 
       const refreshRuntimeStatus = async () => {
-        state.runtimeStatus = await window.authPopup.getRuntimeStatus();
-        render();
-      };
-
-      const refreshWorkspaces = async () => {
-        const response = await window.authPopup.listWorkspaces();
-        state.workspaces = Array.isArray(response?.items) ? response.items : [];
-        render();
-      };
-
-      els.sandboxId.addEventListener("input", (event) => {
-        state.sandboxId = event.target.value;
-      });
-      els.runtimeUserId.addEventListener("input", (event) => {
-        state.runtimeUserId = event.target.value;
-      });
-      els.modelProxyBaseUrl.addEventListener("input", (event) => {
-        state.modelProxyBaseUrl = event.target.value;
-      });
-      els.defaultModel.addEventListener("input", (event) => {
-        state.defaultModel = event.target.value;
-      });
-      els.themeSelect.addEventListener("change", async (event) => {
-        const nextTheme = String(event.target.value || "").trim();
-        if (!availableThemes.has(nextTheme)) {
-          return;
-        }
-        state.theme = nextTheme;
-        render();
         try {
-          await window.authPopup.setTheme(nextTheme);
+          state.runtimeStatus = await window.authPopup.getRuntimeStatus();
         } catch (error) {
-          state.authError = error instanceof Error ? error.message : "Failed to update theme.";
+          state.authError = error instanceof Error ? error.message : "Failed to load runtime status.";
+        } finally {
           render();
         }
+      };
+
+      document.body.addEventListener("pointerenter", () => {
+        void window.authPopup.cancelClose();
       });
-      els.advancedToggle.addEventListener("click", () => {
-        state.isAdvancedOpen = !state.isAdvancedOpen;
-        render();
+      document.body.addEventListener("pointerleave", () => {
+        void window.authPopup.scheduleClose();
+      });
+      els.panel?.addEventListener("animationend", () => {
+        document.body.classList.remove("popup-opening");
+      });
+      els.panel?.addEventListener("pointerenter", () => {
+        void window.authPopup.cancelClose();
+      });
+      els.panel?.addEventListener("pointerleave", () => {
+        void window.authPopup.scheduleClose();
       });
 
       els.signIn.addEventListener("click", async () => {
@@ -5948,7 +5682,7 @@ function createAuthPopupHtml() {
         render();
         try {
           await window.authPopup.requestAuth();
-          state.authMessage = "Sign-in opened in the browser. Complete the flow on the Holaboss sign-in page.";
+          state.authMessage = "Sign-in opened in your browser. Finish the flow there to connect this desktop.";
         } catch (error) {
           state.authError = error instanceof Error ? error.message : "Failed to start sign-in.";
         } finally {
@@ -5957,85 +5691,52 @@ function createAuthPopupHtml() {
         }
       });
 
-      els.refresh.addEventListener("click", () => {
-        state.authError = "";
-        state.authMessage = "";
-        void refreshSession();
-      });
-
       els.signOut.addEventListener("click", async () => {
+        state.isSigningOut = true;
         state.authError = "";
         state.authMessage = "";
         render();
         try {
           await window.authPopup.signOut();
           state.user = null;
-          state.runtimeUserId = "";
+          state.runtimeConfig = null;
+          state.authMessage = "Signed out from this desktop session.";
         } catch (error) {
           state.authError = error instanceof Error ? error.message : "Failed to sign out.";
         } finally {
+          state.isSigningOut = false;
           render();
         }
       });
 
-      els.save.addEventListener("click", async () => {
-        state.isSaving = true;
-        state.authError = "";
-        state.authMessage = "";
-        render();
-        try {
-          const nextConfig = await window.authPopup.setRuntimeConfig({
-            userId: state.runtimeUserId.trim() || sessionUserId(state.user) || null,
-            sandboxId: state.sandboxId.trim() || null,
-            modelProxyBaseUrl: state.modelProxyBaseUrl.trim() || null,
-            defaultModel: state.defaultModel.trim() || null
-          });
-          syncFormFromConfig(nextConfig);
-          state.authMessage = "Runtime config updated. The runtime was restarted with the new settings.";
-        } catch (error) {
-          state.authError = error instanceof Error ? error.message : "Failed to update runtime config.";
-        } finally {
-          state.isSaving = false;
-          render();
-        }
+      els.accountAction.addEventListener("click", async () => {
+        await window.authPopup.openSettingsPane("account");
+        closeAndScheduleNothing();
       });
-
-      const exchangeBinding = async () => {
-        if (!sessionUserId(state.user)) {
-          state.authError = "Sign in first.";
-          state.authMessage = "";
-          render();
-          return;
-        }
-
-        state.isExchanging = true;
-        state.authError = "";
-        state.authMessage = "";
-        render();
-        try {
-          const sandboxId = state.sandboxId.trim() || ("desktop:" + crypto.randomUUID());
-          const nextConfig = await window.authPopup.exchangeBinding(sandboxId);
-          syncFormFromConfig(nextConfig);
-          state.authMessage = "Runtime binding refreshed and local runtime config updated.";
-        } catch (error) {
-          state.authError = error instanceof Error ? error.message : "Failed to exchange runtime binding.";
-        } finally {
-          state.isExchanging = false;
-          render();
-        }
-      };
-
-      els.exchange.addEventListener("click", () => { void exchangeBinding(); });
-      els.exchangeAdvanced.addEventListener("click", () => { void exchangeBinding(); });
+      els.settingsAction.addEventListener("click", async () => {
+        await window.authPopup.openSettingsPane("settings");
+        closeAndScheduleNothing();
+      });
+      els.homeAction.addEventListener("click", async () => {
+        await window.authPopup.openExternalUrl(LINKS.home);
+        closeAndScheduleNothing();
+      });
+      els.docsAction.addEventListener("click", async () => {
+        await window.authPopup.openExternalUrl(LINKS.docs);
+        closeAndScheduleNothing();
+      });
+      els.helpAction.addEventListener("click", async () => {
+        await window.authPopup.openExternalUrl(LINKS.help);
+        closeAndScheduleNothing();
+      });
 
       window.authPopup.onAuthenticated((user) => {
         state.user = user;
         state.isPending = false;
         state.authError = "";
-        if (!state.runtimeUserId.trim()) {
-          state.runtimeUserId = sessionUserId(user);
-        }
-        void refreshWorkspaces();
+        state.authMessage = "Desktop account connected.";
+        void refreshConfig();
+        void refreshRuntimeStatus();
         render();
       });
 
@@ -6043,10 +5744,6 @@ function createAuthPopupHtml() {
         state.user = user;
         state.isPending = false;
         state.authError = "";
-        if (!state.runtimeUserId.trim()) {
-          state.runtimeUserId = sessionUserId(user);
-        }
-        void refreshWorkspaces();
         render();
       });
 
@@ -6057,7 +5754,7 @@ function createAuthPopupHtml() {
       });
 
       window.authPopup.onRuntimeConfigChange((config) => {
-        syncFormFromConfig(config);
+        state.runtimeConfig = config;
         render();
       });
 
@@ -6066,7 +5763,12 @@ function createAuthPopupHtml() {
         render();
       });
 
-      Promise.all([refreshSession(), refreshConfig(), refreshRuntimeStatus(), refreshWorkspaces()]).then(() => render());
+      window.authPopup.onOpened(() => {
+        void window.authPopup.cancelClose();
+        restartOpenAnimation();
+      });
+
+      Promise.all([refreshSession(), refreshConfig(), refreshRuntimeStatus()]).then(() => render());
     </script>
   </body>
 </html>`;
@@ -6732,10 +6434,11 @@ function ensureAuthPopupWindow() {
   });
 
   authPopupWindow.on("blur", () => {
-    authPopupWindow?.hide();
+    hideAuthPopup();
   });
 
   authPopupWindow.on("closed", () => {
+    clearScheduledAuthPopupHide();
     authPopupWindow = null;
   });
 
@@ -6744,18 +6447,49 @@ function ensureAuthPopupWindow() {
   return authPopupWindow;
 }
 
-function toggleAuthPopup(anchorBounds: BrowserAnchorBoundsPayload) {
+function clearScheduledAuthPopupHide() {
+  if (!authPopupCloseTimer) {
+    return;
+  }
+
+  clearTimeout(authPopupCloseTimer);
+  authPopupCloseTimer = null;
+}
+
+function scheduleAuthPopupHide(delayMs = AUTH_POPUP_CLOSE_DELAY_MS) {
+  clearScheduledAuthPopupHide();
+  authPopupCloseTimer = setTimeout(() => {
+    authPopupCloseTimer = null;
+    hideAuthPopup();
+  }, Math.max(0, delayMs));
+}
+
+function notifyAuthPopupOpened(popup: BrowserWindow) {
+  if (popup.webContents.isLoadingMainFrame()) {
+    popup.webContents.once("did-finish-load", () => {
+      if (!popup.isDestroyed()) {
+        popup.webContents.send("auth:opened");
+      }
+    });
+    return;
+  }
+
+  popup.webContents.send("auth:opened");
+}
+
+function hideAuthPopup() {
+  clearScheduledAuthPopupHide();
+  authPopupWindow?.hide();
+}
+
+function showAuthPopup(anchorBounds: BrowserAnchorBoundsPayload) {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
   }
 
+  clearScheduledAuthPopupHide();
   const popup = ensureAuthPopupWindow();
   if (!popup) {
-    return;
-  }
-
-  if (popup.isVisible()) {
-    popup.hide();
     return;
   }
 
@@ -6766,7 +6500,7 @@ function toggleAuthPopup(anchorBounds: BrowserAnchorBoundsPayload) {
       contentBounds.x + contentBounds.width - AUTH_POPUP_WIDTH - 8
     )
   );
-  const y = Math.round(contentBounds.y + anchorBounds.y + anchorBounds.height + 8);
+  const y = Math.round(contentBounds.y + anchorBounds.y + anchorBounds.height - AUTH_POPUP_HOVER_BRIDGE_PX);
 
   popup.setBounds({
     x,
@@ -6774,8 +6508,11 @@ function toggleAuthPopup(anchorBounds: BrowserAnchorBoundsPayload) {
     width: AUTH_POPUP_WIDTH,
     height: AUTH_POPUP_HEIGHT
   });
-  popup.show();
-  popup.focus();
+  if (popup.isVisible()) {
+    return;
+  }
+  popup.showInactive();
+  notifyAuthPopupOpened(popup);
   emitPendingAuthState();
 }
 
@@ -7657,11 +7394,20 @@ app.whenReady().then(async () => {
     }
     emitAuthUserUpdated(null);
   });
+  handleTrustedIpc("auth:showPopup", ["main"], (_event, anchorBounds: BrowserAnchorBoundsPayload) => {
+    showAuthPopup(anchorBounds);
+  });
   handleTrustedIpc("auth:togglePopup", ["main"], (_event, anchorBounds: BrowserAnchorBoundsPayload) => {
-    toggleAuthPopup(anchorBounds);
+    showAuthPopup(anchorBounds);
+  });
+  handleTrustedIpc("auth:scheduleClosePopup", ["main", "auth-popup"], (_event, delayMs?: number) => {
+    scheduleAuthPopupHide(typeof delayMs === "number" ? delayMs : AUTH_POPUP_CLOSE_DELAY_MS);
+  });
+  handleTrustedIpc("auth:cancelClosePopup", ["main", "auth-popup"], () => {
+    clearScheduledAuthPopupHide();
   });
   handleTrustedIpc("auth:closePopup", ["main", "auth-popup"], () => {
-    authPopupWindow?.hide();
+    hideAuthPopup();
   });
   handleTrustedIpc("runtime:getConfig", ["main", "auth-popup"], () => getRuntimeConfig());
   handleTrustedIpc("runtime:setConfig", ["main", "auth-popup"], async (_event, payload: RuntimeConfigUpdatePayload) => {
@@ -7673,6 +7419,18 @@ app.whenReady().then(async () => {
     return config;
   });
   handleTrustedIpc("ui:getTheme", ["main", "auth-popup"], async () => currentTheme);
+  handleTrustedIpc("ui:openSettingsPane", ["main", "auth-popup"], async (_event, section?: UiSettingsPaneSection) => {
+    emitOpenSettingsPane(section ?? "settings");
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      mainWindow.focus();
+    }
+  });
+  handleTrustedIpc("ui:openExternalUrl", ["main", "auth-popup"], async (_event, rawUrl: string) => {
+    await openExternalUrl(rawUrl);
+  });
   handleTrustedIpc("ui:toggleWindowSize", ["main"], async (event) => {
     const senderWindow = BrowserWindow.fromWebContents(event.sender);
     const targetWindow = senderWindow && !senderWindow.isDestroyed() ? senderWindow : mainWindow;

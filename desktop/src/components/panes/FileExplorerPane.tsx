@@ -615,7 +615,7 @@ export function FileExplorerPane() {
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  className="w-full bg-transparent text-xs text-text-main/90 outline-none placeholder:text-text-muted/40"
+                  className="embedded-input w-full bg-transparent text-xs text-text-main/90 outline-none placeholder:text-text-muted/40"
                   placeholder={isCompact ? "Search files" : currentPath || "Search files"}
                 />
               </div>
@@ -659,10 +659,10 @@ export function FileExplorerPane() {
 
                           void openFilePreview(entry.absolutePath);
                         }}
-                        className={`group mb-1 w-full rounded-lg px-2 py-2 text-left transition-all duration-150 ${
+                        className={`group mb-1 w-full rounded-lg border px-2 py-2 text-left transition-all duration-150 ${
                           selected
-                            ? "bg-neon-green/14 text-neon-green shadow-[inset_0_0_0_1px_rgba(87,255,173,0.5)]"
-                            : "text-text-main/78 hover:bg-white/5"
+                            ? "border-neon-green/35 bg-neon-green/10 text-neon-green"
+                            : "border-transparent text-text-main/78 hover:bg-white/5"
                         }`}
                       >
                         {isCompact ? (

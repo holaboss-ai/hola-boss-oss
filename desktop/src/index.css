@@ -469,6 +469,21 @@ body {
   background: linear-gradient(180deg, rgb(var(--color-obsidian-soft) / 0.95), rgb(var(--color-obsidian) / 0.95));
   border: 1px solid rgb(var(--color-neon-green) / var(--theme-glass-border-opacity));
   box-shadow: var(--theme-glass-shadow);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.glass-field:focus-within {
+  border-color: rgb(var(--color-neon-green) / 0.34);
+  box-shadow: var(--theme-glass-shadow), 0 0 0 3px rgb(var(--color-neon-green) / 0.08);
+}
+
+.focus-shell {
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.focus-shell:focus-within {
+  border-color: rgb(var(--color-neon-green) / 0.34);
+  box-shadow: 0 0 0 3px rgb(var(--color-neon-green) / 0.08);
 }
 
 .theme-shell {
@@ -485,6 +500,12 @@ body {
 
 .theme-subtle-surface {
   background: var(--theme-subtle-bg);
+}
+
+:where(button, [role="button"], input, select, textarea, a, summary):focus-visible {
+  outline: 2px solid rgb(var(--color-neon-green) / 0.72);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px rgb(var(--color-neon-green) / 0.14);
 }
 
 .theme-chat-user-bubble {
@@ -509,6 +530,25 @@ body {
 
 .theme-chat-thinking-inner {
   background: var(--theme-chat-thinking-inner-bg);
+}
+
+.theme-chat-composer-glow {
+  background: radial-gradient(
+    circle,
+    rgb(var(--color-neon-green) / 0.035) 0%,
+    rgb(var(--color-neon-green) / 0.008) 52%,
+    transparent 76%
+  );
+}
+
+.composer-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.embedded-input:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
 .soft-vignette::after {

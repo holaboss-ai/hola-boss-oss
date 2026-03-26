@@ -52,6 +52,8 @@ interface BrowserAnchorBoundsPayload {
   height: number;
 }
 
+type UiSettingsPaneSection = "account" | "settings" | "about";
+
 interface BrowserStatePayload {
   id: string;
   url: string;
@@ -484,10 +486,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getTheme: () => ipcRenderer.invoke("ui:getTheme") as Promise<string>,
     toggleWindowSize: () => ipcRenderer.invoke("ui:toggleWindowSize") as Promise<void>,
     setTheme: (theme: string) => ipcRenderer.invoke("ui:setTheme", theme) as Promise<void>,
+    openSettingsPane: (section?: UiSettingsPaneSection) => ipcRenderer.invoke("ui:openSettingsPane", section) as Promise<void>,
+    openExternalUrl: (url: string) => ipcRenderer.invoke("ui:openExternalUrl", url) as Promise<void>,
     onThemeChange: (listener: (theme: string) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, theme: string) => listener(theme);
       ipcRenderer.on("ui:themeChanged", wrapped);
       return () => ipcRenderer.removeListener("ui:themeChanged", wrapped);
+    },
+    onOpenSettingsPane: (listener: (section: UiSettingsPaneSection) => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, section: UiSettingsPaneSection) => listener(section);
+      ipcRenderer.on("ui:openSettingsPane", wrapped);
+      return () => ipcRenderer.removeListener("ui:openSettingsPane", wrapped);
     }
   },
   appUpdate: {
@@ -563,7 +572,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getUser: () => ipcRenderer.invoke("auth:getUser") as Promise<AuthUserPayload | null>,
     requestAuth: () => ipcRenderer.invoke("auth:requestAuth") as Promise<void>,
     signOut: () => ipcRenderer.invoke("auth:signOut") as Promise<void>,
+    showPopup: (anchorBounds: BrowserAnchorBoundsPayload) => ipcRenderer.invoke("auth:showPopup", anchorBounds) as Promise<void>,
     togglePopup: (anchorBounds: BrowserAnchorBoundsPayload) => ipcRenderer.invoke("auth:togglePopup", anchorBounds) as Promise<void>,
+    scheduleClosePopup: (delayMs?: number) => ipcRenderer.invoke("auth:scheduleClosePopup", delayMs) as Promise<void>,
+    cancelClosePopup: () => ipcRenderer.invoke("auth:cancelClosePopup") as Promise<void>,
     closePopup: () => ipcRenderer.invoke("auth:closePopup") as Promise<void>,
     onAuthenticated: (listener: (user: AuthUserPayload) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, user: AuthUserPayload) => listener(user);

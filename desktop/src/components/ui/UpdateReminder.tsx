@@ -11,8 +11,8 @@ export function UpdateReminder({ status, onDismiss, onDownload }: UpdateReminder
 
   return (
     <div className="pointer-events-none absolute inset-0 z-40 flex items-start justify-center px-4 pt-20">
-      <div className="pointer-events-auto w-full max-w-[460px] overflow-hidden rounded-[22px] border border-neon-green/35 bg-[linear-gradient(180deg,rgba(13,21,18,0.98),rgba(8,12,10,0.98))] shadow-[0_28px_80px_rgba(0,0,0,0.45)] backdrop-blur">
-        <div className="flex items-start justify-between gap-4 border-b border-neon-green/15 px-5 py-4">
+      <div className="theme-shell soft-vignette neon-border pointer-events-auto w-full max-w-[460px] overflow-hidden rounded-[22px] shadow-card backdrop-blur">
+        <div className="theme-header-surface flex items-start justify-between gap-4 border-b border-neon-green/15 px-5 py-4">
           <div className="min-w-0">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-neon-green/78">Update available</div>
             <div className="mt-1 text-[18px] font-semibold tracking-[-0.02em] text-text-main">Holaboss {releaseLabel} is ready</div>
@@ -31,7 +31,7 @@ export function UpdateReminder({ status, onDismiss, onDownload }: UpdateReminder
         </div>
 
         <div className="px-5 py-4">
-          <div className="rounded-[18px] border border-panel-border/30 bg-black/20 px-4 py-3">
+          <div className="theme-subtle-surface rounded-[18px] border border-panel-border/30 px-4 py-3">
             <div className="flex items-center justify-between gap-4 text-[11px]">
               <span className="uppercase tracking-[0.14em] text-text-muted/62">Current</span>
               <span className="font-medium text-text-main/92">{status.currentVersion}</span>

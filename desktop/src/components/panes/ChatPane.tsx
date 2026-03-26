@@ -1,6 +1,6 @@
 import { FormEvent, KeyboardEvent, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { ArrowUp, ChevronDown, Loader2, Mic, Plus } from "lucide-react";
+import { ArrowUp, ChevronDown, Loader2 } from "lucide-react";
 import { PaneCard } from "@/components/ui/PaneCard";
 import { preferredSessionId } from "@/lib/sessionRouting";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
@@ -80,8 +80,6 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
     selectedWorkspace,
     resolvedUserId,
     isLoadingBootstrap,
-    onboardingModeActive,
-    sessionModeLabel,
     refreshWorkspaceData
   } = useWorkspaceDesktop();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -977,9 +975,9 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
   const composerDisabled = !selectedWorkspace || !resolvedUserId || isLoadingHistory || isLoadingBootstrap;
 
   return (
-    <PaneCard className="shadow-glow">
+      <PaneCard className="shadow-glow">
       <div className="relative flex h-full min-h-0 min-w-0 flex-col">
-        <div className="pointer-events-none absolute inset-x-8 bottom-0 h-44 rounded-[var(--theme-radius-pill)] bg-[radial-gradient(circle,rgba(87,255,173,0.08)_0%,rgba(87,255,173,0.01)_52%,transparent_76%)] blur-2xl" />
+        <div className="theme-chat-composer-glow pointer-events-none absolute inset-x-8 bottom-0 h-44 rounded-[var(--theme-radius-pill)] blur-2xl" />
 
         {chatErrorMessage || verboseTelemetryEnabled ? (
           <div className="shrink-0 px-4 pt-3 sm:px-5">
@@ -1108,6 +1106,7 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
                       <ThinkingPanel
                         text={liveThinkingText}
                         collapsed={!liveThinkingExpanded}
+                        live
                         onToggle={() => {
                           const next = !liveThinkingExpandedRef.current;
                           liveThinkingExpandedRef.current = next;
@@ -1141,8 +1140,6 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
                   textareaRef={textareaRef}
                   onChange={setInput}
                   onKeyDown={onComposerKeyDown}
-                  onboardingModeActive={onboardingModeActive}
-                  sessionModeLabel={sessionModeLabel}
                 />
               </form>
             </div>
@@ -1159,8 +1156,6 @@ export function ChatPane({ onOutputsChanged }: { onOutputsChanged?: () => void }
                 textareaRef={textareaRef}
                 onChange={setInput}
                 onKeyDown={onComposerKeyDown}
-                onboardingModeActive={onboardingModeActive}
-                sessionModeLabel={sessionModeLabel}
               />
             </form>
           </div>
@@ -1174,8 +1169,6 @@ interface ComposerProps {
   input: string;
   isResponding: boolean;
   disabled: boolean;
-  onboardingModeActive: boolean;
-  sessionModeLabel: string;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   onChange: (value: string) => void;
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
@@ -1185,6 +1178,7 @@ interface ThinkingPanelProps {
   text: string;
   collapsed: boolean;
   onToggle: () => void;
+  live?: boolean;
 }
 
 function summarizeThinking(text: string) {
@@ -1197,7 +1191,7 @@ function summarizeThinking(text: string) {
   return firstContentLine.length > 88 ? `${firstContentLine.slice(0, 85).trimEnd()}...` : firstContentLine;
 }
 
-function ThinkingPanel({ text, collapsed, onToggle }: ThinkingPanelProps) {
+function ThinkingPanel({ text, collapsed, onToggle, live = false }: ThinkingPanelProps) {
   const summary = summarizeThinking(text);
 
   return (
@@ -1205,14 +1199,17 @@ function ThinkingPanel({ text, collapsed, onToggle }: ThinkingPanelProps) {
       <button
         type="button"
         onClick={onToggle}
+        aria-expanded={!collapsed}
         className="theme-header-surface flex w-full items-center justify-between gap-3 rounded-[16px] border border-panel-border/45 px-3 py-2.5 text-left transition hover:border-neon-green/30"
       >
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-medium tracking-[0.12em] text-neon-green/78">Thinking</span>
-            <span className="rounded-full border border-neon-green/18 px-2 py-0.5 text-[9px] tracking-[0.14em] text-neon-green/62">
-              LIVE
-            </span>
+            <span className="text-[11px] font-medium tracking-[0.12em] text-neon-green/78">{live ? "Thinking" : "Reasoning"}</span>
+            {live ? (
+              <span className="rounded-full border border-neon-green/18 px-2 py-0.5 text-[9px] tracking-[0.14em] text-neon-green/62">
+                LIVE
+              </span>
+            ) : null}
           </div>
           <div className="mt-1 truncate text-[11px] text-text-muted/76">{collapsed ? summary : "Expanded reasoning trace"}</div>
         </div>
@@ -1231,22 +1228,12 @@ function Composer({
   input,
   isResponding,
   disabled,
-  onboardingModeActive,
-  sessionModeLabel,
   textareaRef,
   onChange,
   onKeyDown
 }: ComposerProps) {
   return (
     <div className="glass-field overflow-hidden rounded-[calc(var(--theme-radius-card)+0.15rem)] border border-panel-border/35">
-      <div className="flex items-center justify-between gap-3 border-b border-panel-border/18 px-4 py-2.5">
-        <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">
-          {onboardingModeActive ? "Onboarding conversation" : "Workspace conversation"}
-        </div>
-        <div className="rounded-full border border-panel-border/45 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-text-dim/78">
-          mode {sessionModeLabel}
-        </div>
-      </div>
       <div className="px-4 pb-2 pt-4">
         <textarea
           ref={textareaRef}
@@ -1256,42 +1243,16 @@ function Composer({
           rows={1}
           disabled={disabled}
           placeholder={disabled ? "Create/select a workspace and finish runtime setup first" : "Ask anything"}
-          className="block max-h-[220px] min-h-[76px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-7 text-text-main/92 outline-none placeholder:text-text-muted/42 disabled:cursor-not-allowed disabled:opacity-55"
+          className="composer-input block max-h-[220px] min-h-[76px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-7 text-text-main/92 outline-none placeholder:text-text-muted/42 disabled:cursor-not-allowed disabled:opacity-55"
         />
       </div>
 
       <div className="flex items-center gap-2 border-t border-panel-border/20 px-3 py-3 text-text-muted/72">
-        <button
-          type="button"
-          className="grid h-8 w-8 place-items-center rounded-[var(--theme-radius-pill)] transition hover:bg-[var(--theme-hover-bg)] hover:text-text-main/88"
-        >
-          <Plus size={16} />
-        </button>
-
-        <button
-          type="button"
-          className="inline-flex h-8 items-center gap-1 rounded-[var(--theme-radius-pill)] px-2.5 text-[14px] transition hover:bg-[var(--theme-hover-bg)] hover:text-text-main/88"
-        >
-          <span>Live API</span>
-          <ChevronDown size={14} />
-        </button>
-
-        <button
-          type="button"
-          className="inline-flex h-8 items-center gap-1 rounded-[var(--theme-radius-pill)] px-2.5 text-[14px] transition hover:bg-[var(--theme-hover-bg)] hover:text-text-main/88"
-        >
-          <span>Default model</span>
-          <ChevronDown size={14} />
-        </button>
+        <div className="min-w-0 flex-1 text-[11px] text-text-muted/74">
+          {disabled ? "Select a ready workspace to start chatting." : "Press Enter to send. Shift + Enter adds a new line."}
+        </div>
 
         <div className="ml-auto flex items-center gap-2">
-          <button
-            type="button"
-            className="grid h-8 w-8 place-items-center rounded-[var(--theme-radius-pill)] transition hover:bg-[var(--theme-hover-bg)] hover:text-text-main/88"
-          >
-            <Mic size={15} />
-          </button>
-
           <button
             type="submit"
             disabled={!input.trim() || isResponding || disabled}

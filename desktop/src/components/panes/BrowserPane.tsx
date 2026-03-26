@@ -460,7 +460,7 @@ export function BrowserPane() {
                   }}
                   onBlur={() => window.setTimeout(() => setAddressFocused(false), 120)}
                   onKeyDown={onAddressKeyDown}
-                  className="w-full bg-transparent text-[11px] text-text-main/90 outline-none placeholder:text-text-muted/40"
+                  className="embedded-input w-full bg-transparent text-[11px] text-text-main/90 outline-none placeholder:text-text-muted/40"
                   placeholder="Enter URL or search"
                 />
                 <button

@@ -33,11 +33,11 @@ export function LeftNavigationRail({
 }: LeftNavigationRailProps) {
   return (
     <aside
-      className={`theme-shell soft-vignette neon-border relative hidden h-full min-h-0 flex-col overflow-hidden rounded-[var(--theme-radius-card)] p-3 shadow-card transition-[min-width,max-width,padding] duration-300 ease-out lg:flex ${
-        collapsed ? "min-w-[72px] max-w-[72px]" : "min-w-[210px] max-w-[230px]"
+      className={`theme-shell soft-vignette neon-border relative hidden h-full min-h-0 flex-col overflow-hidden rounded-[var(--theme-radius-card)] shadow-card transition-[min-width,max-width,padding] duration-300 ease-out lg:flex ${
+        collapsed ? "min-w-[72px] max-w-[72px] px-2.5 py-3" : "min-w-[210px] max-w-[230px] p-3"
       }`}
     >
-      <div className="mb-2 flex justify-start px-1">
+      <div className={`mb-2 flex ${collapsed ? "justify-center" : "justify-start px-1"}`}>
         <button
           type="button"
           onClick={onToggleCollapsed}
@@ -52,7 +52,7 @@ export function LeftNavigationRail({
         </button>
       </div>
 
-      <nav className="grid gap-1 px-1">
+      <nav className={`grid gap-1 ${collapsed ? "justify-items-center" : "px-1"}`}>
         {PRIMARY_ITEMS.map((item) => {
           const isActive = item.id === activeItem;
           return (
@@ -62,7 +62,7 @@ export function LeftNavigationRail({
               title={collapsed ? item.label : undefined}
               onClick={() => onSelectItem(item.id)}
               className={`flex items-center rounded-[16px] py-2.5 text-left text-[12px] transition-all duration-200 ${
-                collapsed ? "justify-center px-2" : "gap-3 px-3"
+                collapsed ? "w-11 justify-center px-0" : "gap-3 px-3"
               } ${
                 isActive
                   ? "border border-neon-green/35 bg-neon-green/10 text-text-main"
@@ -82,10 +82,10 @@ export function LeftNavigationRail({
         })}
       </nav>
 
-      <div className="mt-6 border-t border-panel-border/30 px-3 pt-3">
+      <div className={`mt-6 border-t border-panel-border/30 pt-3 ${collapsed ? "mx-auto w-11 px-0" : "px-3"}`}>
         {!collapsed ? <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/70">Apps</div> : null}
 
-        <div className="mt-3 grid gap-2">
+        <div className={`mt-3 grid gap-2 ${collapsed ? "justify-items-center" : ""}`}>
           {isLoadingApps ? (
             <div className="rounded-[14px] border border-panel-border/35 px-2 py-2 text-[11px] text-text-dim/78">
               Loading workspace apps...
@@ -98,7 +98,7 @@ export function LeftNavigationRail({
                 title={collapsed ? item.label : undefined}
                 onClick={() => onSelectApp(item.id)}
                 className={`flex items-center rounded-[14px] border px-2 py-2 text-left text-[12px] transition-all duration-200 ${
-                  collapsed ? "justify-center" : "gap-3"
+                  collapsed ? "w-11 justify-center px-0" : "gap-3"
                 } ${
                   activeItem === "agent" && activeAppId === item.id
                     ? "border-neon-green/35 bg-neon-green/10 text-text-main"

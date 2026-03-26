@@ -53,6 +53,8 @@ declare global {
     height: number;
   }
 
+  type UiSettingsPaneSection = "account" | "settings" | "about";
+
   interface BrowserStatePayload {
     id: string;
     url: string;
@@ -532,7 +534,10 @@ declare global {
       getTheme: () => Promise<string>;
       toggleWindowSize: () => Promise<void>;
       setTheme: (theme: string) => Promise<void>;
+      openSettingsPane: (section?: UiSettingsPaneSection) => Promise<void>;
+      openExternalUrl: (url: string) => Promise<void>;
       onThemeChange: (listener: (theme: string) => void) => () => void;
+      onOpenSettingsPane: (listener: (section: UiSettingsPaneSection) => void) => () => void;
     };
     appUpdate: {
       getStatus: () => Promise<AppUpdateStatusPayload>;
@@ -577,7 +582,10 @@ declare global {
       getUser: () => Promise<AuthUserPayload | null>;
       requestAuth: () => Promise<void>;
       signOut: () => Promise<void>;
+      showPopup: (anchorBounds: BrowserAnchorBoundsPayload) => Promise<void>;
       togglePopup: (anchorBounds: BrowserAnchorBoundsPayload) => Promise<void>;
+      scheduleClosePopup: (delayMs?: number) => Promise<void>;
+      cancelClosePopup: () => Promise<void>;
       closePopup: () => Promise<void>;
       onAuthenticated: (callback: (user: AuthUserPayload) => unknown) => () => void;
       onUserUpdated: (callback: (user: AuthUserPayload | null) => unknown) => () => void;

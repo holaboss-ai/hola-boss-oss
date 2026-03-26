@@ -76,6 +76,8 @@ interface WorkspaceListResponsePayload {
   offset: number;
 }
 
+type UiSettingsPaneSection = "account" | "settings" | "about";
+
 const INTERNAL_DEV_BACKEND_OVERRIDES_ENABLED =
   Boolean(process.env.VITE_DEV_SERVER_URL) || process.env.HOLABOSS_INTERNAL_DEV?.trim() === "1";
 const normalizeBaseUrl = (value: string): string => value.trim().replace(/\/+$/, "");
@@ -124,6 +126,10 @@ contextBridge.exposeInMainWorld("authPopup", {
     ipcRenderer.invoke("runtime:setConfig", payload) as Promise<RuntimeConfigPayload>,
   exchangeBinding: (sandboxId: string) => ipcRenderer.invoke("runtime:exchangeBinding", sandboxId) as Promise<RuntimeConfigPayload>,
   listWorkspaces: () => ipcRenderer.invoke("workspace:listWorkspaces") as Promise<WorkspaceListResponsePayload>,
+  openSettingsPane: (section?: UiSettingsPaneSection) => ipcRenderer.invoke("ui:openSettingsPane", section) as Promise<void>,
+  openExternalUrl: (url: string) => ipcRenderer.invoke("ui:openExternalUrl", url) as Promise<void>,
+  scheduleClose: (delayMs?: number) => ipcRenderer.invoke("auth:scheduleClosePopup", delayMs) as Promise<void>,
+  cancelClose: () => ipcRenderer.invoke("auth:cancelClosePopup") as Promise<void>,
   close: () => ipcRenderer.invoke("auth:closePopup") as Promise<void>,
   onAuthenticated: (listener: (user: AuthUserPayload) => void) => {
     const wrapped = (_event: Electron.IpcRendererEvent, user: AuthUserPayload) => listener(user);
@@ -149,5 +155,10 @@ contextBridge.exposeInMainWorld("authPopup", {
     const wrapped = (_event: Electron.IpcRendererEvent, payload: RuntimeStatusPayload) => listener(payload);
     ipcRenderer.on("runtime:state", wrapped);
     return () => ipcRenderer.removeListener("runtime:state", wrapped);
+  },
+  onOpened: (listener: () => void) => {
+    const wrapped = () => listener();
+    ipcRenderer.on("auth:opened", wrapped);
+    return () => ipcRenderer.removeListener("auth:opened", wrapped);
   }
 });

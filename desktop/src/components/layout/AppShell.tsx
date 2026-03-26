@@ -6,6 +6,7 @@ import {
   type OperationsDrawerTab,
   type OperationsOutputEntry
 } from "@/components/layout/OperationsDrawer";
+import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
 import { WorkbenchPanel, type WorkbenchTab } from "@/components/layout/WorkbenchPanel";
 import { AutomationsPane } from "@/components/panes/AutomationsPane";
@@ -31,6 +32,10 @@ export type AppTheme = (typeof THEMES)[number];
 
 function isAppTheme(value: string): value is AppTheme {
   return THEMES.includes(value as AppTheme);
+}
+
+function isSettingsPaneSection(value: string): value is UiSettingsPaneSection {
+  return value === "account" || value === "settings" || value === "about";
 }
 
 type AgentView =
@@ -199,7 +204,7 @@ function FirstWorkspacePane() {
       return;
     }
     const rect = authButtonRef.current.getBoundingClientRect();
-    void window.electronAPI.auth.togglePopup({
+    void window.electronAPI.auth.showPopup({
       x: rect.left,
       y: rect.top,
       width: rect.width,
@@ -291,7 +296,7 @@ function FirstWorkspacePane() {
               }
               icon={<Sparkles size={18} />}
               active={templateSourceMode === "marketplace" && canUseMarketplaceTemplates}
-              badge="Login Required"
+              badge={!canUseMarketplaceTemplates ? "Login Required" : undefined}
               muted={!canUseMarketplaceTemplates}
               onClick={() => {
                 if (!canUseMarketplaceTemplates) {
@@ -357,28 +362,13 @@ function FirstWorkspacePane() {
                   <div className="text-[11px] uppercase tracking-[0.24em] text-text-dim/78">Workspace details</div>
                   <div className="mt-2 text-[22px] font-medium tracking-[-0.03em] text-text-main">Configure your first workspace</div>
                 </div>
-                <div className="theme-control-surface inline-flex rounded-full border border-panel-border/45 p-1">
-                  <button
-                    type="button"
-                    onClick={() => setTemplateSourceMode("local")}
-                    className={`rounded-full px-4 py-2 text-[12px] transition ${
-                      templateSourceMode === "local" ? "bg-neon-green/14 text-neon-green" : "text-text-muted hover:text-text-main"
-                    }`}
-                  >
-                    Local
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!canUseMarketplaceTemplates}
-                    onClick={() => setTemplateSourceMode("marketplace")}
-                    className={`rounded-full px-4 py-2 text-[12px] transition ${
-                      templateSourceMode === "marketplace" && canUseMarketplaceTemplates
-                        ? "bg-neon-green/14 text-neon-green"
-                        : "text-text-muted hover:text-text-main"
-                    } disabled:cursor-not-allowed disabled:text-text-dim/40`}
-                  >
-                    Marketplace
-                  </button>
+                <div className="theme-control-surface inline-flex items-center gap-2 rounded-full border border-panel-border/45 px-3 py-2 text-[11px] uppercase tracking-[0.18em] text-text-dim/78">
+                  {templateSourceMode === "marketplace" ? (
+                    <Sparkles size={13} className="text-neon-green/82" />
+                  ) : (
+                    <FolderOpen size={13} className="text-neon-green/82" />
+                  )}
+                  <span>{templateSourceMode === "marketplace" ? "Marketplace source" : "Local source"}</span>
                 </div>
               </div>
 
@@ -439,8 +429,14 @@ function FirstWorkspacePane() {
                   {templateSourceMode === "marketplace" ? <Sparkles size={15} /> : <FolderOpen size={15} />}
                   <span>{templateSourceMode === "marketplace" ? "Marketplace Template" : "Local Template"}</span>
                   {templateSourceMode === "marketplace" ? (
-                    <span className="theme-subtle-surface rounded-full border border-panel-border/50 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-text-dim/78">
-                      Login Required
+                    <span
+                      className={`rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.16em] ${
+                        canUseMarketplaceTemplates
+                          ? "border-neon-green/30 bg-neon-green/10 text-neon-green"
+                          : "theme-chat-system-bubble"
+                      }`}
+                    >
+                      {canUseMarketplaceTemplates ? "Marketplace ready" : "Login required"}
                     </span>
                   ) : (
                     <span className="rounded-full border border-neon-green/30 bg-neon-green/10 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-neon-green">
@@ -479,7 +475,7 @@ function FirstWorkspacePane() {
             </div>
 
             {workspaceErrorMessage ? (
-              <div className="rounded-[18px] border border-rose-300/35 bg-rose-100/60 px-4 py-3 text-[13px] leading-6 text-rose-800">
+              <div className="theme-chat-system-bubble rounded-[18px] border px-4 py-3 text-[13px] leading-6">
                 {workspaceErrorMessage}
               </div>
             ) : null}
@@ -554,26 +550,126 @@ function EmptyWorkspacePane() {
 
 function WorkspaceBootstrapPane() {
   return (
-    <section className="theme-shell relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--theme-radius-card)] border border-panel-border/45 shadow-card">
-      <div className="theme-subtle-surface w-full max-w-[540px] rounded-[24px] border border-panel-border/45 px-6 py-7">
-        <div className="flex items-center gap-3">
-          <div className="inline-flex h-10 w-10 items-center justify-center rounded-[14px] border border-neon-green/35 bg-neon-green/10 text-neon-green">
-            <Loader2 size={16} className="animate-spin" />
+    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_14%,rgba(247,90,84,0.1),transparent_26%),radial-gradient(circle_at_86%_16%,rgba(233,117,109,0.08),transparent_22%),radial-gradient(circle_at_50%_110%,rgba(247,170,126,0.08),transparent_28%)]" />
+
+      <div className="relative grid w-full max-w-[1120px] gap-6 px-5 py-5 lg:grid-cols-[minmax(0,1.15fr)_340px] lg:px-8 lg:py-8">
+        <div className="theme-subtle-surface relative overflow-hidden rounded-[30px] border border-panel-border/45 p-4 sm:p-5">
+          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.03),transparent_42%,rgba(247,90,84,0.05)_100%)]" />
+
+          <div className="relative flex items-center justify-between gap-3 rounded-[22px] border border-panel-border/35 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <div className="h-10 w-40 rounded-[16px] border border-panel-border/35 bg-black/10" />
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="h-10 w-24 rounded-[16px] border border-panel-border/35 bg-black/10" />
+              <div className="h-10 w-10 rounded-[16px] border border-panel-border/35 bg-black/10" />
+            </div>
           </div>
-          <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/76">Workspace</div>
-            <div className="mt-1 text-[18px] font-medium tracking-[-0.02em] text-text-main">Loading your workspace</div>
+
+          <div className="relative mt-5 grid min-h-[420px] gap-4 lg:grid-cols-[96px_minmax(0,1fr)_280px]">
+            <div className="theme-shell flex flex-col items-center gap-4 rounded-[24px] border border-panel-border/35 px-3 py-4">
+              <div className="h-11 w-11 rounded-[16px] border border-neon-green/30 bg-neon-green/12" />
+              <div className="h-11 w-11 rounded-[16px] border border-panel-border/35 bg-black/10" />
+              <div className="h-11 w-11 rounded-[16px] border border-panel-border/35 bg-black/10" />
+              <div className="mt-auto h-24 w-full rounded-[18px] border border-panel-border/30 bg-black/10" />
+            </div>
+
+            <div className="grid gap-4">
+              <div className="theme-shell rounded-[24px] border border-panel-border/35 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.2em] text-neon-green/74">Workspace</div>
+                    <div className="mt-2 text-[28px] font-semibold tracking-[-0.04em] text-text-main">Loading your workspace</div>
+                  </div>
+                  <div className="grid h-12 w-12 place-items-center rounded-[18px] border border-neon-green/35 bg-neon-green/10 text-neon-green">
+                    <Loader2 size={18} className="animate-spin" />
+                  </div>
+                </div>
+                <div className="mt-3 max-w-[560px] text-[14px] leading-7 text-text-muted/84">
+                  Restoring workspace state, session history, and desktop surfaces so the shell opens in a ready-to-work state.
+                </div>
+                <div className="mt-5 overflow-hidden rounded-full border border-panel-border/35 bg-black/10 p-1">
+                  <div className="h-2 rounded-full bg-[linear-gradient(90deg,rgba(247,90,84,0.62),rgba(233,117,109,0.82),rgba(247,170,126,0.72))] animate-pulse" />
+                </div>
+                <div className="mt-4 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-text-dim/74">
+                  <span className="rounded-full border border-panel-border/35 bg-black/10 px-2.5 py-1">Hydrating workspace</span>
+                  <span className="rounded-full border border-panel-border/35 bg-black/10 px-2.5 py-1">Restoring agent state</span>
+                  <span className="rounded-full border border-panel-border/35 bg-black/10 px-2.5 py-1">Attaching desktop surfaces</span>
+                </div>
+              </div>
+
+              <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+                <div className="theme-shell rounded-[24px] border border-panel-border/35 p-4">
+                  <div className="h-4 w-28 rounded-full bg-black/10" />
+                  <div className="mt-4 space-y-3">
+                    <div className="h-14 rounded-[18px] border border-panel-border/30 bg-black/10" />
+                    <div className="h-24 rounded-[22px] border border-panel-border/30 bg-black/10" />
+                    <div className="h-11 rounded-[16px] border border-panel-border/30 bg-black/10" />
+                  </div>
+                </div>
+
+                <div className="theme-shell rounded-[24px] border border-panel-border/35 p-4">
+                  <div className="h-4 w-24 rounded-full bg-black/10" />
+                  <div className="mt-4 space-y-3">
+                    <div className="h-16 rounded-[18px] border border-panel-border/30 bg-black/10" />
+                    <div className="h-16 rounded-[18px] border border-panel-border/30 bg-black/10" />
+                    <div className="h-16 rounded-[18px] border border-panel-border/30 bg-black/10" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="theme-shell hidden rounded-[24px] border border-panel-border/35 p-4 lg:block">
+              <div className="h-4 w-28 rounded-full bg-black/10" />
+              <div className="mt-4 space-y-3">
+                <div className="h-20 rounded-[18px] border border-panel-border/30 bg-black/10" />
+                <div className="h-20 rounded-[18px] border border-panel-border/30 bg-black/10" />
+                <div className="h-20 rounded-[18px] border border-panel-border/30 bg-black/10" />
+                <div className="h-20 rounded-[18px] border border-panel-border/30 bg-black/10" />
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="mt-5 theme-control-surface overflow-hidden rounded-full border border-panel-border/45 p-1">
-          <div className="h-1.5 rounded-full bg-[linear-gradient(90deg,rgba(247,90,84,0.45),rgba(233,117,109,0.65),rgba(247,170,126,0.55))] animate-pulse" />
-        </div>
+        <div className="theme-subtle-surface relative overflow-hidden rounded-[28px] border border-panel-border/45 p-5">
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(247,90,84,0.1),transparent_34%)]" />
+          <div className="relative">
+            <div className="inline-flex items-center gap-2 rounded-full border border-panel-border/35 bg-black/10 px-3 py-1.5 text-[10px] uppercase tracking-[0.22em] text-text-dim/74">
+              <Sparkles size={12} className="text-neon-green/82" />
+              <span>Bring-up</span>
+            </div>
+            <div className="mt-4 text-[24px] font-semibold tracking-[-0.04em] text-text-main">Preparing the desktop shell</div>
+            <div className="mt-3 text-[13px] leading-7 text-text-muted/84">
+              This should only take a moment. The app is syncing your workspace list and restoring the last active desktop state.
+            </div>
 
-        <div className="mt-5 grid gap-2">
-          <div className="theme-control-surface h-9 rounded-[12px] border border-panel-border/35" />
-          <div className="theme-control-surface h-9 rounded-[12px] border border-panel-border/35" />
-          <div className="theme-control-surface h-9 rounded-[12px] border border-panel-border/35" />
+            <div className="mt-6 grid gap-3">
+              {[
+                "Syncing workspace records",
+                "Restoring recent session context",
+                "Initializing browser and file surfaces"
+              ].map((step, index) => (
+                <div key={step} className="flex items-center gap-3 rounded-[18px] border border-panel-border/35 bg-black/10 px-4 py-3">
+                  <div
+                    className={`grid h-8 w-8 shrink-0 place-items-center rounded-[12px] border ${
+                      index === 0
+                        ? "border-neon-green/35 bg-neon-green/12 text-neon-green"
+                        : "border-panel-border/35 bg-panel-bg/40 text-text-dim/74"
+                    }`}
+                  >
+                    {index === 0 ? <Loader2 size={14} className="animate-spin" /> : <span className="text-[11px]">{index + 1}</span>}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[12px] font-medium text-text-main">{step}</div>
+                    <div className="mt-1 text-[11px] text-text-dim/72">
+                      {index === 0 ? "In progress" : "Queued next"}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -608,6 +704,8 @@ function AppShellContent() {
   const [theme, setTheme] = useState<AppTheme>(loadTheme);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatusPayload | null>(null);
   const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatusPayload | null>(null);
+  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+  const [settingsDialogSection, setSettingsDialogSection] = useState<UiSettingsPaneSection>("settings");
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [activeWorkbenchTab, setActiveWorkbenchTab] = useState<WorkbenchTab>(loadWorkbenchTab);
   const [lastManualWorkbenchTab, setLastManualWorkbenchTab] = useState<WorkbenchTab>(loadWorkbenchTab);
@@ -715,6 +813,20 @@ function AppShellContent() {
       return;
     }
 
+    const unsubscribe = window.electronAPI.ui.onOpenSettingsPane((section) => {
+      setSettingsDialogSection(isSettingsPaneSection(section) ? section : "settings");
+      setSettingsDialogOpen(true);
+      void window.electronAPI.auth.closePopup();
+    });
+
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    if (!window.electronAPI) {
+      return;
+    }
+
     const unsubscribe = window.electronAPI.workbench.onOpenBrowser(() => {
       setActiveLeftRailItem("agent");
       setAgentView({ type: "chat" });
@@ -778,6 +890,16 @@ function AppShellContent() {
     localStorage.setItem(THEME_STORAGE_KEY, theme);
     void window.electronAPI.ui.setTheme(theme);
   }, [theme]);
+
+  const handleThemeChange = useCallback((nextTheme: string) => {
+    if (isAppTheme(nextTheme)) {
+      setTheme(nextTheme);
+    }
+  }, []);
+
+  const handleOpenExternalUrl = useCallback((url: string) => {
+    void window.electronAPI.ui.openExternalUrl(url);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(WORKBENCH_TAB_STORAGE_KEY, lastManualWorkbenchTab);
@@ -1155,7 +1277,11 @@ function AppShellContent() {
       <div className="theme-orb-primary pointer-events-none absolute -left-32 -top-32 h-80 w-80 rounded-full blur-3xl" />
       <div className="theme-orb-secondary pointer-events-none absolute -bottom-40 right-12 h-96 w-96 rounded-full blur-3xl" />
 
-      <div className="relative z-10 grid h-full w-full grid-rows-[auto_minmax(0,1fr)] gap-2 p-2 sm:gap-3 sm:p-3">
+      <div
+        className={`relative z-10 grid h-full w-full grid-rows-[auto_minmax(0,1fr)] gap-2 p-2 ${
+          isMacDesktop ? "sm:gap-2.5 sm:px-3 sm:pb-3 sm:pt-2.5" : "sm:gap-3 sm:p-3"
+        }`}
+      >
         {appUpdateStatus?.available ? (
           <UpdateReminder status={appUpdateStatus} onDismiss={handleDismissUpdate} onDownload={handleDownloadUpdate} />
         ) : null}
@@ -1169,9 +1295,6 @@ function AppShellContent() {
               onOpenBrowserWorkbench={() => openWorkbench("browser")}
               activeWorkbenchTab={activeWorkbenchTab}
               workbenchOpen={workbenchOpen}
-              onUserMenuToggle={(anchorBounds) => {
-                void window.electronAPI.auth.togglePopup(anchorBounds);
-              }}
             />
           </div>
         ) : null}
@@ -1311,6 +1434,17 @@ function AppShellContent() {
           </div>
         )}
       </div>
+
+      <SettingsDialog
+        open={settingsDialogOpen}
+        activeSection={settingsDialogSection}
+        onSectionChange={setSettingsDialogSection}
+        onClose={() => setSettingsDialogOpen(false)}
+        theme={theme}
+        themes={THEMES}
+        onThemeChange={handleThemeChange}
+        onOpenExternalUrl={handleOpenExternalUrl}
+      />
     </main>
   );
 }
