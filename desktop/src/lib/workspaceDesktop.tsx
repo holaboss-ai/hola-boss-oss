@@ -27,6 +27,7 @@ interface WorkspaceDesktopContextValue {
   runtimeStatus: RuntimeStatusPayload | null;
   clientConfig: HolabossClientConfigPayload | null;
   workspaces: WorkspaceRecordPayload[];
+  hasHydratedWorkspaceList: boolean;
   selectedWorkspace: WorkspaceRecordPayload | null;
   installedApps: WorkspaceInstalledAppDefinition[];
   isLoadingInstalledApps: boolean;
@@ -118,6 +119,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatusPayload | null>(null);
   const [clientConfig, setClientConfig] = useState<HolabossClientConfigPayload | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceRecordPayload[]>([]);
+  const [hasHydratedWorkspaceList, setHasHydratedWorkspaceList] = useState(false);
   const [installedApps, setInstalledApps] = useState<WorkspaceInstalledAppDefinition[]>([]);
   const [templateSourceMode, setTemplateSourceModeState] = useState<TemplateSourceMode>("local");
   const [selectedTemplateFolder, setSelectedTemplateFolder] = useState<TemplateFolderSelectionPayload | null>(null);
@@ -404,6 +406,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       } finally {
         if (!cancelled) {
           setIsRefreshing(false);
+          setHasHydratedWorkspaceList(true);
         }
       }
     }
@@ -650,6 +653,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       runtimeStatus,
       clientConfig,
       workspaces,
+      hasHydratedWorkspaceList,
       selectedWorkspace,
       installedApps,
       isLoadingInstalledApps,
@@ -685,6 +689,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       runtimeStatus,
       clientConfig,
       workspaces,
+      hasHydratedWorkspaceList,
       selectedWorkspace,
       installedApps,
       isLoadingInstalledApps,

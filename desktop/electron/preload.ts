@@ -482,6 +482,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   ui: {
     getTheme: () => ipcRenderer.invoke("ui:getTheme") as Promise<string>,
+    toggleWindowSize: () => ipcRenderer.invoke("ui:toggleWindowSize") as Promise<void>,
     setTheme: (theme: string) => ipcRenderer.invoke("ui:setTheme", theme) as Promise<void>,
     onThemeChange: (listener: (theme: string) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, theme: string) => listener(theme);

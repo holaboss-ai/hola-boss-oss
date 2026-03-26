@@ -215,7 +215,7 @@ function InboxPanel({
         </div>
 
         {proposalStatusMessage ? (
-          <div className="mt-3 rounded-[14px] border border-panel-border/35 bg-black/15 px-3 py-2 text-[11px] text-text-muted">
+          <div className="theme-subtle-surface mt-3 rounded-[14px] border border-panel-border/35 px-3 py-2 text-[11px] text-text-muted">
             {proposalStatusMessage}
           </div>
         ) : null}
@@ -231,7 +231,7 @@ function InboxPanel({
             {proposals.map((proposal) => {
               const isActing = proposalAction?.proposalId === proposal.proposal_id;
               return (
-                <article key={proposal.proposal_id} className="rounded-[18px] border border-panel-border/35 bg-black/10 px-4 py-4">
+                <article key={proposal.proposal_id} className="theme-subtle-surface rounded-[18px] border border-panel-border/35 px-4 py-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="text-[12px] font-medium text-text-main">{proposal.task_name}</div>
@@ -277,7 +277,7 @@ function InboxPanel({
 function RunningPanel() {
   return (
     <div className="flex h-full items-center justify-center p-6">
-      <div className="max-w-[260px] rounded-[20px] border border-panel-border/35 bg-black/10 px-5 py-5 text-center">
+      <div className="theme-subtle-surface max-w-[260px] rounded-[20px] border border-panel-border/35 px-5 py-5 text-center">
         <div className="text-[11px] uppercase tracking-[0.16em] text-neon-green/76">Running</div>
         <div className="mt-2 text-[15px] font-medium text-text-main">Execution stream coming next</div>
         <div className="mt-2 text-[12px] leading-6 text-text-muted/82">
@@ -326,7 +326,7 @@ function OutputsPanel({
                   className={`min-w-[120px] rounded-[14px] border px-3 py-2 text-left transition ${
                     selectedOutput?.id === entry.id
                       ? outputToneClasses(entry.tone, true)
-                      : "border-panel-border/35 bg-black/10 text-text-main/86 hover:border-neon-green/30"
+                      : "theme-subtle-surface border-panel-border/35 text-text-main/86 hover:border-neon-green/30"
                   }`}
                 >
                   <div className="truncate text-[11px] font-medium">{entry.title}</div>
@@ -384,7 +384,7 @@ function openOutputLabel(entry: OperationsOutputEntry, installedApps: WorkspaceI
 
 function EmptyNotice({ message }: { message: string }) {
   return (
-    <div className="rounded-[18px] border border-panel-border/35 bg-black/10 px-4 py-5 text-[12px] leading-6 text-text-dim/78">
+    <div className="theme-subtle-surface rounded-[18px] border border-panel-border/35 px-4 py-5 text-[12px] leading-6 text-text-dim/78">
       {message}
     </div>
   );
@@ -411,5 +411,5 @@ function outputToneClasses(tone: OperationsOutputEntry["tone"], compact: boolean
   }
   return compact
     ? "border-panel-border/45 bg-[var(--theme-subtle-bg)] text-text-main/88"
-    : "border-panel-border/35 bg-black/10";
+    : "border-panel-border/35 bg-[var(--theme-subtle-bg)]";
 }

@@ -7392,6 +7392,14 @@ function toggleOverflowPopup(anchorBounds: BrowserAnchorBoundsPayload) {
 }
 
 function createMainWindow() {
+  const macTitleBarOptions =
+    process.platform === "darwin"
+      ? {
+          titleBarStyle: "hiddenInset" as const,
+          trafficLightPosition: { x: 14, y: 30 }
+        }
+      : {};
+
   const win = new BrowserWindow({
     width: 1600,
     height: 980,
@@ -7401,6 +7409,7 @@ function createMainWindow() {
     center: true,
     backgroundColor: "#050907",
     autoHideMenuBar: true,
+    ...macTitleBarOptions,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -7585,6 +7594,25 @@ app.whenReady().then(async () => {
     return config;
   });
   ipcMain.handle("ui:getTheme", async () => currentTheme);
+  ipcMain.handle("ui:toggleWindowSize", async (event) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    const targetWindow = senderWindow && !senderWindow.isDestroyed() ? senderWindow : mainWindow;
+    if (!targetWindow || targetWindow.isDestroyed()) {
+      return;
+    }
+
+    if (targetWindow.isFullScreen()) {
+      targetWindow.setFullScreen(false);
+      return;
+    }
+
+    if (targetWindow.isMaximized()) {
+      targetWindow.unmaximize();
+      return;
+    }
+
+    targetWindow.maximize();
+  });
   ipcMain.handle("ui:setTheme", async (_event, theme: string) => {
     currentTheme = APP_THEMES.has(theme) ? theme : "holaboss";
     emitThemeChanged();

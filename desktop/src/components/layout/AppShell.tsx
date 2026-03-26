@@ -552,6 +552,34 @@ function EmptyWorkspacePane() {
   );
 }
 
+function WorkspaceBootstrapPane() {
+  return (
+    <section className="theme-shell relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--theme-radius-card)] border border-panel-border/45 shadow-card">
+      <div className="theme-subtle-surface w-full max-w-[540px] rounded-[24px] border border-panel-border/45 px-6 py-7">
+        <div className="flex items-center gap-3">
+          <div className="inline-flex h-10 w-10 items-center justify-center rounded-[14px] border border-neon-green/35 bg-neon-green/10 text-neon-green">
+            <Loader2 size={16} className="animate-spin" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/76">Workspace</div>
+            <div className="mt-1 text-[18px] font-medium tracking-[-0.02em] text-text-main">Loading your workspace</div>
+          </div>
+        </div>
+
+        <div className="mt-5 theme-control-surface overflow-hidden rounded-full border border-panel-border/45 p-1">
+          <div className="h-1.5 rounded-full bg-[linear-gradient(90deg,rgba(247,90,84,0.45),rgba(233,117,109,0.65),rgba(247,170,126,0.55))] animate-pulse" />
+        </div>
+
+        <div className="mt-5 grid gap-2">
+          <div className="theme-control-surface h-9 rounded-[12px] border border-panel-border/35" />
+          <div className="theme-control-surface h-9 rounded-[12px] border border-panel-border/35" />
+          <div className="theme-control-surface h-9 rounded-[12px] border border-panel-border/35" />
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function FocusPlaceholder({
   eyebrow,
   title,
@@ -575,7 +603,8 @@ function FocusPlaceholder({
 
 function AppShellContent() {
   const { selectedWorkspaceId } = useWorkspaceSelection();
-  const { runtimeConfig, workspaces, selectedWorkspace, installedApps, isLoadingInstalledApps } = useWorkspaceDesktop();
+  const { runtimeConfig, workspaces, hasHydratedWorkspaceList, selectedWorkspace, installedApps, isLoadingInstalledApps } =
+    useWorkspaceDesktop();
   const [theme, setTheme] = useState<AppTheme>(loadTheme);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatusPayload | null>(null);
   const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatusPayload | null>(null);
@@ -1032,6 +1061,10 @@ function AppShellContent() {
     setActiveLeftRailItem(item);
     if (item === "agent") {
       setAgentView({ type: "chat" });
+      return;
+    }
+    if (item === "files") {
+      openWorkbench("files");
     }
   };
 
@@ -1069,11 +1102,12 @@ function AppShellContent() {
     setAgentView({ type: "chat" });
   };
 
-  const agentMode = activeLeftRailItem === "agent";
+  const agentMode = activeLeftRailItem === "agent" || activeLeftRailItem === "files";
   const activeAppId = activeLeftRailItem === "agent" && agentView.type === "app" ? agentView.appId : null;
   const activeApp = getWorkspaceAppDefinition(activeAppId, installedApps);
   const hasWorkspaces = workspaces.length > 0;
   const hasSelectedWorkspace = Boolean(selectedWorkspace);
+  const isMacDesktop = window.electronAPI?.platform === "darwin";
   const combinedOutputEntries = useMemo(() => {
     const merged = [...runtimeOutputEntries, ...outputEntries];
     const seen = new Set<string>();
@@ -1127,12 +1161,12 @@ function AppShellContent() {
         ) : null}
 
         {hasWorkspaces ? (
-          <div className="relative min-w-0">
+          <div className={`${isMacDesktop ? "window-drag " : ""}relative min-w-0`}>
             <TopTabsBar
               agentMode={agentMode && hasWorkspaces}
               hasWorkspaces={hasWorkspaces}
+              integratedTitleBar={isMacDesktop}
               onOpenBrowserWorkbench={() => openWorkbench("browser")}
-              onOpenFilesWorkbench={() => openWorkbench("files")}
               activeWorkbenchTab={activeWorkbenchTab}
               workbenchOpen={workbenchOpen}
               onUserMenuToggle={(anchorBounds) => {
@@ -1142,19 +1176,22 @@ function AppShellContent() {
           </div>
         ) : null}
 
-        {!hasWorkspaces ? (
+        {!hasHydratedWorkspaceList ? (
+          <WorkspaceBootstrapPane />
+        ) : !hasWorkspaces ? (
           <FirstWorkspacePane />
         ) : (
           <div
-            className={`relative grid min-h-0 gap-3 overflow-hidden ${
+            className={`relative grid min-h-0 gap-y-3 overflow-hidden transition-[grid-template-columns,column-gap] duration-300 ease-in-out ${
               operationsDrawerOpen
                 ? leftRailOpen
                   ? "lg:grid-cols-[220px_minmax(0,1fr)_380px]"
                   : "lg:grid-cols-[72px_minmax(0,1fr)_380px]"
                 : leftRailOpen
-                  ? "lg:grid-cols-[220px_minmax(0,1fr)]"
-                  : "lg:grid-cols-[72px_minmax(0,1fr)]"
+                  ? "lg:grid-cols-[220px_minmax(0,1fr)_0px]"
+                  : "lg:grid-cols-[72px_minmax(0,1fr)_0px]"
             }`}
+            style={{ columnGap: operationsDrawerOpen ? "0.75rem" : "0rem" }}
           >
             <LeftNavigationRail
               activeItem={activeLeftRailItem}
@@ -1175,7 +1212,7 @@ function AppShellContent() {
               }
             >
               <div className={agentMode && workbenchOpen ? "min-h-0 overflow-hidden" : "h-full min-h-0 overflow-hidden"}>
-                {activeLeftRailItem === "agent" ? (
+                {activeLeftRailItem === "agent" || activeLeftRailItem === "files" ? (
                   agentContent
                 ) : activeLeftRailItem === "automations" ? (
                   <AutomationsPane />
@@ -1202,7 +1239,7 @@ function AppShellContent() {
                     type="button"
                     onClick={() => toggleOperationsDrawer()}
                     aria-label="Hide right panel"
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-neon-green/45 bg-neon-green/10 text-neon-green transition hover:border-neon-green/60 hover:bg-neon-green/14"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-neon-green/45 bg-neon-green/10 text-neon-green transition-all duration-200 hover:border-neon-green/60 hover:bg-neon-green/14 active:scale-95"
                   >
                     <PanelRightClose size={14} />
                   </button>
@@ -1212,7 +1249,7 @@ function AppShellContent() {
                       type="button"
                       onClick={() => openOperationsDrawerTab("inbox")}
                       aria-label="Open inbox panel"
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-panel-border/45 text-text-muted transition hover:border-neon-green/45 hover:text-neon-green"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-panel-border/45 text-text-muted transition-all duration-200 hover:border-neon-green/45 hover:text-neon-green active:scale-95"
                     >
                       <Bell size={13} />
                     </button>
@@ -1220,7 +1257,7 @@ function AppShellContent() {
                       type="button"
                       onClick={() => openOperationsDrawerTab("running")}
                       aria-label="Open running panel"
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-panel-border/45 text-text-muted transition hover:border-neon-green/45 hover:text-neon-green"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-panel-border/45 text-text-muted transition-all duration-200 hover:border-neon-green/45 hover:text-neon-green active:scale-95"
                     >
                       <Clock3 size={13} />
                     </button>
@@ -1228,7 +1265,7 @@ function AppShellContent() {
                       type="button"
                       onClick={() => openOperationsDrawerTab("outputs")}
                       aria-label="Open outputs panel"
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-panel-border/45 text-text-muted transition hover:border-neon-green/45 hover:text-neon-green"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-panel-border/45 text-text-muted transition-all duration-200 hover:border-neon-green/45 hover:text-neon-green active:scale-95"
                     >
                       <ChevronRight size={13} />
                     </button>
@@ -1236,7 +1273,7 @@ function AppShellContent() {
                       type="button"
                       onClick={() => toggleOperationsDrawer()}
                       aria-label="Show right panel"
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-panel-border/45 text-text-muted transition hover:border-neon-green/45 hover:text-neon-green"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-panel-border/45 text-text-muted transition-all duration-200 hover:border-neon-green/45 hover:text-neon-green active:scale-95"
                     >
                       <PanelRightOpen size={14} />
                     </button>
@@ -1245,29 +1282,32 @@ function AppShellContent() {
               </div>
             </div>
 
-            {operationsDrawerOpen ? (
-              <div className="min-h-0 overflow-hidden">
-                <OperationsDrawer
-                  activeTab={activeOperationsTab}
-                  onTabChange={setActiveOperationsTab}
-                  proposals={taskProposals}
-                  isLoadingProposals={isLoadingTaskProposals}
-                  isTriggeringProposal={isTriggeringTaskProposal}
-                  proposalStatusMessage={taskProposalStatusMessage}
-                  proposalAction={proposalAction}
-                  outputs={combinedOutputEntries}
-                  installedApps={installedApps}
-                  selectedOutputId={selectedOutputId}
-                  onSelectOutput={setSelectedOutputId}
-                  onOpenOutput={handleOpenOutput}
-                  onRefreshProposals={() => void refreshTaskProposals({ logErrors: true })}
-                  onTriggerProposal={() => void triggerRemoteTaskProposal()}
-                  onAcceptProposal={(proposal) => void acceptTaskProposal(proposal)}
-                  onDismissProposal={(proposal) => void dismissTaskProposal(proposal)}
-                  hasWorkspace={hasSelectedWorkspace}
-                />
-              </div>
-            ) : null}
+            <div
+              className={`min-h-0 min-w-0 overflow-hidden transition-all duration-300 ease-out ${
+                operationsDrawerOpen ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-6 opacity-0"
+              }`}
+              aria-hidden={!operationsDrawerOpen}
+            >
+              <OperationsDrawer
+                activeTab={activeOperationsTab}
+                onTabChange={setActiveOperationsTab}
+                proposals={taskProposals}
+                isLoadingProposals={isLoadingTaskProposals}
+                isTriggeringProposal={isTriggeringTaskProposal}
+                proposalStatusMessage={taskProposalStatusMessage}
+                proposalAction={proposalAction}
+                outputs={combinedOutputEntries}
+                installedApps={installedApps}
+                selectedOutputId={selectedOutputId}
+                onSelectOutput={setSelectedOutputId}
+                onOpenOutput={handleOpenOutput}
+                onRefreshProposals={() => void refreshTaskProposals({ logErrors: true })}
+                onTriggerProposal={() => void triggerRemoteTaskProposal()}
+                onAcceptProposal={(proposal) => void acceptTaskProposal(proposal)}
+                onDismissProposal={(proposal) => void dismissTaskProposal(proposal)}
+                hasWorkspace={hasSelectedWorkspace}
+              />
+            </div>
           </div>
         )}
       </div>

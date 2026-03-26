@@ -134,7 +134,7 @@
   --color-text-muted: 109 117 131;
   --color-body-text: 33 38 49;
   --theme-bg-primary: #f5f6fa;
-  --theme-bg-secondary: #f8e4e1;
+  --theme-bg-secondary: #f6f7fa;
   --theme-scroll-track: rgba(223, 227, 235, 0.72);
   --theme-scroll-thumb-top: rgb(var(--color-neon-green) / 0.38);
   --theme-scroll-thumb-bottom: rgb(var(--color-neon-green-soft) / 0.28);
@@ -151,9 +151,9 @@
   --theme-card-shadow: 0 12px 30px rgba(25, 33, 53, 0.06);
   --theme-glass-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72), 0 4px 14px rgba(25, 33, 53, 0.05);
   --theme-shell-bg: rgba(255, 255, 255, 0.9);
-  --theme-header-bg: linear-gradient(180deg, rgba(250, 239, 237, 0.86), rgba(248, 250, 253, 0.8));
+  --theme-header-bg: rgba(248, 250, 253, 0.92);
   --theme-control-bg: rgba(248, 250, 253, 0.94);
-  --theme-subtle-bg: linear-gradient(180deg, rgba(250, 239, 237, 0.58), rgba(255, 255, 255, 0.78));
+  --theme-subtle-bg: rgba(250, 251, 253, 0.9);
   --theme-hover-bg: rgba(247, 90, 84, 0.08);
   --theme-active-bg: rgb(var(--color-neon-green) / 0.14);
   --theme-chat-user-bg: linear-gradient(180deg, rgb(var(--color-neon-green) / 0.2), rgb(var(--color-neon-green-soft) / 0.12));
@@ -420,6 +420,28 @@ body {
 
 * {
   box-sizing: border-box;
+}
+
+.window-drag {
+  -webkit-app-region: drag;
+}
+
+.window-drag button,
+.window-drag input,
+.window-drag select,
+.window-drag textarea,
+.window-drag a,
+.window-drag [role="button"] {
+  -webkit-app-region: no-drag;
+}
+
+.window-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+.window-drag .window-no-drag,
+.window-drag .window-no-drag * {
+  -webkit-app-region: no-drag;
 }
 
 ::-webkit-scrollbar {
