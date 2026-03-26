@@ -14,7 +14,8 @@ export default defineConfig({
     "src/opencode-skills.ts",
     "src/workspace-mcp-host.ts",
     "src/workspace-mcp-sidecar.ts",
-    "src/opencode-sidecar.ts"
+    "src/opencode-sidecar.ts",
+    "src/ts-runner.ts"
   ],
   format: ["esm"],
   outDir: "dist",

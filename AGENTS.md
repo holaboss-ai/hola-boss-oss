@@ -19,4 +19,4 @@ feat: add cronjobs API and expand proactive analyst bootstrap context
 - add/adjust tests for API, client, and prompt behavior
 ```
 
-PRs should describe context, validation commands (e.g., `make check`, `uv run pytest`), linked issues, and screenshots/log excerpts for API or UI-affecting work. Highlight any Supabase branch or migration impacts and note required environment tweaks.
+PRs should describe context, validation commands (e.g., `make check`, `npm run runtime:test`), linked issues, and screenshots/log excerpts for API or UI-affecting work. Highlight any Supabase branch or migration impacts and note required environment tweaks.

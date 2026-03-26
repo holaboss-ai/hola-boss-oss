@@ -15,115 +15,72 @@
 ## P1
 
 ### T-027 (2026-03-24): Establish phased TypeScript runtime migration plan
-- `Status`: pending
+- `Status`: done
 - `Background`:
-  - The current runtime is Python-led across the agent API, harness execution, runtime-local state, CLI helpers, and packaging/bootstrap.
+  - This migration planning entry is now historical.
+  - The runtime is now TypeScript-led across the API server, harness execution, local state, CLI helpers, and packaging/bootstrap.
   - A full rewrite in one shot would couple harness changes, persistence changes, API changes, and packaging changes into a single high-risk migration.
-  - The next step is to move agent harnesses to TypeScript first, then port the rest of the runtime behind stable contracts.
+  - The migration sequence has been completed and the old runtime tree has been removed.
 - `TODO`:
-  - Freeze the current runtime event contract (`run_started`, deltas, tool calls, terminal events) and treat it as the compatibility boundary during migration.
-  - Freeze the current runtime-local SQLite schema and treat DB compatibility as a separate concern from harness migration.
-  - Document the target architecture: Python control plane first, TypeScript harness host second, then gradual control-plane replacement.
-  - Define explicit migration phases, ownership boundaries, and rollback rules before implementation starts.
-  - Keep desktop-facing API routes and SSE payloads stable until the TypeScript API replacement reaches parity.
+  - Preserve this entry as the historical sequencing record for the completed migration.
 - `Validation`:
-  - The migration plan identifies which Python modules stay authoritative in each phase and which new TypeScript modules replace them.
-  - Runtime events, persisted session bindings, and desktop API responses are explicitly called out as compatibility contracts.
-  - Each later migration task can reference this entry as the sequencing source of truth.
+  - The runtime is now TS-only in code, tests, bundle assembly, and local bundle packaging.
+  - Historical migration sequencing is preserved here for reference only.
 
 ### T-028 (2026-03-24): Move OpenCode harness execution into a TypeScript harness host
-- `Status`: pending
+- `Status`: done
 - `Background`:
-  - The current harness seam already exists, but `opencode` execution, session management, config persistence, and event mapping are still embedded in
-    [runtime/src/sandbox_agent_runtime/runner.py](/Users/jeffrey/Desktop/hola-boss-oss/runtime/src/sandbox_agent_runtime/runner.py).
-  - OpenCode is the lowest-risk harness to move first because it is already the default non-OSS path and has extensive Python tests.
-  - Moving OpenCode first proves the TypeScript harness-host boundary without forcing a full runtime rewrite.
+  - OpenCode harness execution now runs through the TypeScript harness host and TS runner path.
+  - This entry is kept as historical migration context.
 - `TODO`:
-  - Create a bundled TypeScript `harness-host` package under `runtime/` with a small JSONL stdio protocol for `run`, event streaming, and terminal status.
-  - Keep Python responsible for workspace runtime-plan compilation, workspace MCP sidecar startup, application lifecycle startup, and runtime-state persistence.
-  - Port OpenCode-specific logic out of the Python runner:
-    - provider/model config writing
-    - OpenCode session create/existence/reuse handling
-    - OpenCode event stream reads
-    - OpenCode event normalization into runtime output events
-  - Make the Python runner invoke the TypeScript harness host behind a feature flag while preserving current event payloads.
-  - Persist any harness-session replacement emitted by the TypeScript host back into the existing runtime-local binding tables.
-  - Add parity tests comparing Python and TypeScript OpenCode execution paths.
+  - Preserve this entry as the historical record of the completed harness migration.
 - `Validation`:
-  - OpenCode runs can execute entirely through the TypeScript harness host while desktop clients observe unchanged runtime events and SSE payloads.
-  - Harness session replacement/recovery behavior still updates `harness_session_id` correctly.
-  - Existing OpenCode runner tests have TypeScript-path coverage for session reuse, stream mapping, and terminal failures.
+  - OpenCode runs now execute through `runtime/harness-host` and `runtime/api-server/src/ts-runner.ts`.
+  - Runtime events and harness-session persistence are covered by the current TS test suite.
 
 ### T-029 (2026-03-24): Port runtime local state and event persistence to TypeScript
-- `Status`: pending
+- `Status`: done
 - `Background`:
-  - Runtime-local SQLite state underpins workspaces, session bindings, queue items, runtime state, outputs, cronjobs, and task proposals.
-  - Rewriting the API before the persistence layer would either duplicate business logic or force unstable cross-language ownership.
-  - After the harness host exists, the next stable seam is the persistence layer.
+  - This entry is now historical.
+  - Runtime-local SQLite state, session bindings, queue items, runtime state, and output persistence now run through the TS runtime path.
 - `TODO`:
-  - Reimplement the runtime-local database access layer in TypeScript against the existing schema first.
-  - Preserve table names, indexes, and payload shapes before making any schema changes.
-  - Move queue-claim helpers, output event append/list behavior, session history reads, and binding upserts into the TypeScript layer.
-  - Introduce side-by-side compatibility tests against the existing Python implementation for representative DB operations.
-  - Leave the Python API in place temporarily, calling into the TypeScript state layer only after parity is demonstrated.
+  - Preserve this entry as the historical record of the completed local-state migration.
 - `Validation`:
-  - TypeScript persistence code can read and write the existing runtime DB without requiring a schema migration.
-  - Session bindings, output events, and runtime-state transitions match current Python behavior for the same inputs.
-  - Mixed Python and TypeScript phases can safely share the same local database during rollout.
+  - The TS runtime reads and writes the existing runtime DB schema without a Python runtime dependency.
+  - Session bindings, output events, and runtime-state transitions are covered by the current TS test suite.
 
 ### T-030 (2026-03-24): Replace FastAPI runtime endpoints with a TypeScript API service
-- `Status`: pending
+- `Status`: done
 - `Background`:
-  - The current FastAPI app exposes workspace, agent-session, memory, cronjob, task-proposal, lifecycle, and app-management endpoints.
-  - Desktop currently assumes that route surface and payload shape, so the API migration must preserve compatibility while the implementation moves.
-  - Once harness execution and persistence are in TypeScript, the API can move with much lower risk.
+  - This entry is now historical.
+  - The runtime API surface is now served by the TypeScript API server and no Python fallback remains in the runtime path.
 - `TODO`:
-  - Recreate the current runtime API surface in TypeScript with route and payload compatibility as the first goal.
-  - Preserve existing SSE and long-poll response shapes used by the desktop app.
-  - Keep Python API startup available as a fallback until endpoint parity is demonstrated.
-  - Move workspace/session queue handling and stream fanout to TypeScript after local-state parity is in place.
-  - Add endpoint parity coverage for the highest-risk routes:
-    - session queue
-    - output event/history reads
-    - workspace CRUD
-    - runtime status/config
-    - lifecycle control
+  - Preserve this entry as the historical record of the completed API migration.
 - `Validation`:
-  - The desktop app can talk to the TypeScript API without route or payload changes.
-  - Existing session queueing, output streaming, and runtime-status flows behave the same against the TypeScript API.
-  - Python FastAPI can be disabled without regressions in primary desktop workflows.
+  - The desktop app talks to the TS API without a separate Python service.
+  - Session queueing, output streaming, runtime status, and lifecycle flows are validated through the current TS runtime tests.
 
 ### T-031 (2026-03-24): Port runtime CLI and workflow helpers to TypeScript
-- `Status`: pending
+- `Status`: done
 - `Background`:
-  - The `hb` CLI currently exposes runtime info, memory commands, onboarding helpers, and cronjob-related workflow helpers.
-  - Those commands are part of the runtime contract used by agents and bootstrap scripts, so they need a stable replacement before Python can be removed.
+  - This entry is now historical.
+  - The shipped `hb` runtime CLI path now comes from the TS runtime bundle and packaging flow.
 - `TODO`:
-  - Recreate the `hb` CLI surface in TypeScript with argument and JSON-output compatibility first.
-  - Port runtime info, memory commands, onboarding helpers, and cronjob helper flows incrementally.
-  - Preserve current command names, default values, and error payload conventions during the transition.
-  - Update harness-host and runtime bootstrap flows to use the TypeScript CLI only after parity is reached.
+  - Preserve this entry as the historical record of the completed CLI migration.
 - `Validation`:
-  - Existing CLI invocations return equivalent JSON payloads and exit codes from the TypeScript implementation.
-  - Agents can continue calling `hb` commands without prompt or workflow changes.
-  - Python CLI entrypoints can be removed only after all currently used commands have TypeScript replacements.
+  - Runtime bundle launchers and helpers use the TS runtime CLI path.
+  - Local bundle packaging starts and serves the runtime without Python CLI entrypoints.
 
 ### T-032 (2026-03-24): Replace Python-led runtime packaging and bootstrap with a TypeScript runtime bundle
-- `Status`: pending
+- `Status`: done
 - `Background`:
-  - Runtime bundle assembly, packaged Python installation, and bootstrap startup are currently centered around Python.
-  - Packaging should be the last migration step, once harness, state, API, and CLI ownership have already moved.
-  - Flipping packaging too early would force operational changes while the runtime internals are still in flux.
+  - This entry is now historical.
+  - Runtime bundle assembly, bootstrap startup, and release packaging now center on the TypeScript runtime bundle.
 - `TODO`:
-  - Update runtime bundle assembly to package the TypeScript runtime and harness host as first-class artifacts.
-  - Remove mandatory bundled Python once no runtime entrypoint or fallback path depends on it.
-  - Replace Python bootstrap scripts with TypeScript/Node bootstrap commands while preserving current environment-variable contracts where possible.
-  - Update desktop runtime detection and staging to treat the TypeScript runtime bundle as canonical.
-  - Keep an explicit rollback path until packaged desktop and local-dev flows are stable on the new bundle.
+  - Preserve this entry as the historical record of the completed packaging migration.
 - `Validation`:
-  - Local dev, packaged desktop, and release-built runtime bundles can start the TypeScript runtime without Python.
-  - Desktop runtime staging and health checks work unchanged from the user’s perspective.
-  - Python packaging assets can be deleted only after release pipeline parity is confirmed.
+  - Local dev, packaged desktop, and release-built runtime bundles start the TS runtime without legacy language-runtime payloads.
+  - Runtime bundle assembly and local packaging no longer stage Python source or Python dependency payloads.
 
 
 ### T-017 (2026-03-06): Redesign proactive agent to workspace-first scanning and learning
@@ -150,8 +107,7 @@
 - `Background`:
   - Cronjob delivery channel contract now separates `session_run` from `system_notification`.
   - Current `system_notification` branch is intentionally a no-op placeholder for minimal viability.
-  - Current no-op implementation lives at
-    `src/services/cronjobs/cronjob_runner.py::_default_system_notification_executor`.
+  - The current no-op implementation still uses the default system-notification executor placeholder in the cronjob delivery path.
   - User-visible reminders/notifications require an actual delivery integration and observability around failures.
 - `TODO`:
   - Implement a real `system_notification` dispatcher for cronjobs (channel gateway / notification sink integration).

@@ -36,7 +36,6 @@ export interface WorkspaceMcpSidecarCliRequest {
   timeout_ms: number;
   readiness_timeout_s: number;
   catalog_json_base64: string;
-  python_executable: string;
 }
 
 export interface WorkspaceMcpSidecarCliResponse {
@@ -51,7 +50,6 @@ type WorkspaceMcpHostCliRequest = {
   host: string;
   port: number;
   server_name: string;
-  python_executable: string;
 };
 
 function sanitizeId(value: string): string {
@@ -289,8 +287,7 @@ export async function startWorkspaceMcpSidecar(
       catalog_json_base64: request.catalog_json_base64,
       host: "127.0.0.1",
       port,
-      server_name: request.physical_server_id,
-      python_executable: request.python_executable
+      server_name: request.physical_server_id
     });
     child = (deps.spawnProcess ?? defaultSpawnProcess)(
       hostCommand.command,

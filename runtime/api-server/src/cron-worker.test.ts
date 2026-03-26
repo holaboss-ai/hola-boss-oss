@@ -29,7 +29,7 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
-test("cronjob helpers preserve Python scheduling behavior", () => {
+test("cronjob helpers preserve legacy scheduling behavior", () => {
   const dueJob = {
     enabled: true,
     cron: "0 9 * * *",

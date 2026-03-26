@@ -5,16 +5,11 @@ ARG INSTALL_QMD=1
 ARG ENABLE_QMD_PREWARM=0
 
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    UV_SYSTEM_PYTHON=1 \
-    UV_HTTP_TIMEOUT=120 \
-    UV_LINK_MODE=copy \
-    UV_PROJECT_ENVIRONMENT=/opt/venv \
-    PATH="/opt/venv/bin:/root/.local/bin:${PATH}"
+    PYTHONDONTWRITEBYTECODE=1
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-      bash coreutils curl git ca-certificates procps iproute2 gnupg gcc python3-dev libpq-dev \
+      bash coreutils curl git ca-certificates procps iproute2 gnupg gcc libpq-dev \
     && mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
       | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
@@ -39,5 +34,4 @@ RUN apt-get update \
     && npm install -g opencode-ai@latest \
     && opencode --version \
     && apt-get purge -y --auto-remove gnupg \
-    && rm -rf /var/lib/apt/lists/* \
-    && curl -LsSf https://astral.sh/uv/install.sh | sh
+    && rm -rf /var/lib/apt/lists/*

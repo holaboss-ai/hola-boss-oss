@@ -8,7 +8,7 @@ import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import type { AppLifecycleExecutorLike } from "./app-lifecycle-worker.js";
 import { runOpencodeAppBootstrapCli } from "./opencode-app-bootstrap.js";
-import { startOpencodeApplications } from "./opencode-bootstrap-shared.js";
+import { bootstrapResolvedApplications, startOpencodeApplications } from "./opencode-bootstrap-shared.js";
 
 const tempDirs: string[] = [];
 
@@ -93,6 +93,61 @@ test("startOpencodeApplications validates the workspace and starts resolved apps
   assert.equal(calls[0]?.appId, "app-a");
   assert.equal(calls[0]?.appDir, path.join(store.workspaceDir(workspace.id), "apps", "app-a"));
   store.close();
+});
+
+test("bootstrapResolvedApplications starts resolved apps without a runtime API hop", async () => {
+  const root = makeTempDir("hb-opencode-bootstrap-direct-");
+  const workspaceDir = path.join(root, "workspace", "workspace-1");
+  fs.mkdirSync(path.join(workspaceDir, "apps", "app-a"), { recursive: true });
+  const calls: Array<Record<string, unknown>> = [];
+  const appLifecycleExecutor: AppLifecycleExecutorLike = {
+    async startApp(params) {
+      calls.push(params as Record<string, unknown>);
+      return {
+        app_id: params.appId,
+        status: "running",
+        detail: "ok",
+        ports: { http: params.httpPort ?? 18080, mcp: params.mcpPort ?? 13100 }
+      };
+    },
+    async stopApp() {
+      throw new Error("not implemented");
+    },
+    async shutdownAll() {
+      throw new Error("not implemented");
+    }
+  };
+
+  const result = await bootstrapResolvedApplications({
+    workspaceDir,
+    holabossUserId: "user-1",
+    resolvedApplications: [
+      {
+        app_id: "app-a",
+        mcp: { transport: "http-sse", port: 3099, path: "/mcp" },
+        health_check: { path: "/health", timeout_s: 60, interval_s: 5 },
+        env_contract: ["HOLABOSS_USER_ID"],
+        start_command: "npm run start",
+        base_dir: "apps/app-a",
+        lifecycle: { setup: "", start: "", stop: "" }
+      }
+    ],
+    appLifecycleExecutor
+  });
+
+  assert.deepEqual(result, {
+    applications: [
+      {
+        app_id: "app-a",
+        mcp_url: "http://localhost:13100/mcp",
+        timeout_ms: 60000,
+        ports: { http: 18080, mcp: 13100 }
+      }
+    ]
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.appId, "app-a");
+  assert.equal(calls[0]?.appDir, path.join(workspaceDir, "apps", "app-a"));
 });
 
 test("runOpencodeAppBootstrapCli writes JSON response for a valid request", async () => {

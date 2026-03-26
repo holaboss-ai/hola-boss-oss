@@ -41,21 +41,20 @@ jobs:
           cache: npm
           cache-dependency-path: |
             runtime/api-server/package-lock.json
+            runtime/harness-host/package-lock.json
             runtime/state-store/package-lock.json
-
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v7
 
       - name: Install runtime state store dependencies
         run: npm --prefix runtime/state-store ci
 
       - name: Build runtime state store
         run: npm --prefix runtime/state-store run build
+
+      - name: Install runtime harness host dependencies
+        run: npm --prefix runtime/harness-host ci
+
+      - name: Build runtime harness host
+        run: npm --prefix runtime/harness-host run build
 
       - name: Install runtime API server dependencies
         run: npm --prefix runtime/api-server ci

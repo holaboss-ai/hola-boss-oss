@@ -32,6 +32,11 @@ export type RunningWorkspaceMcpSidecar = {
   reused: boolean;
 };
 
+export type McpServerMappingMetadata = {
+  logical_id: string;
+  physical_id: string;
+};
+
 function assertSafeRelativePath(relativePath: string): string {
   const normalized = path.normalize(relativePath);
   if (!normalized || path.isAbsolute(normalized) || normalized.split(path.sep).includes("..")) {
@@ -138,6 +143,29 @@ export function workspaceMcpCatalogFingerprint(compiledPlan: CompiledWorkspaceRu
     ),
   };
   return createHash("sha256").update(JSON.stringify(payload), "utf8").digest("hex");
+}
+
+export function encodeWorkspaceMcpCatalog(compiledPlan: CompiledWorkspaceRuntimePlan): string {
+  return Buffer.from(
+    JSON.stringify(
+      compiledPlan.workspace_mcp_catalog.map((entry) => ({
+        tool_id: entry.tool_id,
+        tool_name: entry.tool_name,
+        module_path: entry.module_path,
+        symbol_name: entry.symbol_name
+      }))
+    ),
+    "utf8"
+  ).toString("base64");
+}
+
+export function mcpServerMappingMetadata(
+  serverIdMap: Readonly<Record<string, string>>
+): McpServerMappingMetadata[] {
+  return Object.entries(serverIdMap)
+    .filter(([logicalId, physicalId]) => logicalId !== physicalId)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([logical_id, physical_id]) => ({ logical_id, physical_id }));
 }
 
 export function mcpServerPayloads(

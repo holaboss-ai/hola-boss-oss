@@ -24,6 +24,6 @@
     "runtime:api-server:test": "npm --prefix runtime/api-server run test",
     "runtime:api-server:typecheck": "npm --prefix runtime/api-server run typecheck",
     "runtime:clean": "rm -rf out/runtime-macos out/runtime-root runtime/out",
-    "runtime:test": "cd runtime && uv run python -m pytest"
+    "runtime:test": "npm run runtime:state-store:test && npm run runtime:harness-host:test && npm run runtime:api-server:test"
   }
 }

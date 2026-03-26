@@ -1,4 +1,4 @@
-import { decodeRequestBase64, type OpencodeHarnessHostRequest } from "./contracts.js";
+import { decodeOpencodeHarnessHostRequestBase64 } from "./contracts.js";
 import { runOpencode } from "./opencode.js";
 
 function readRequestBase64(args: string[]) {
@@ -21,7 +21,7 @@ async function main(argv: string[]) {
 
   if (command === "run-opencode") {
     const encoded = readRequestBase64(args);
-    const request = decodeRequestBase64<OpencodeHarnessHostRequest>(encoded);
+    const request = decodeOpencodeHarnessHostRequestBase64(encoded);
     return await runOpencode(request);
   }
 

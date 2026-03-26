@@ -6,7 +6,9 @@ import test from "node:test";
 
 import {
   compileWorkspaceRuntimePlanFromWorkspace,
+  encodeWorkspaceMcpCatalog,
   effectiveMcpServerPayloads,
+  mcpServerMappingMetadata,
   mcpServerIdMap,
   readWorkspaceRuntimePlanReferences,
   workspaceMcpCatalogFingerprint,
@@ -79,6 +81,46 @@ test("workspaceMcpCatalogFingerprint is stable for equivalent plans", () => {
   } as never;
 
   assert.equal(workspaceMcpCatalogFingerprint(planA), workspaceMcpCatalogFingerprint(planB));
+});
+
+test("encodeWorkspaceMcpCatalog preserves the workspace MCP catalog shape", () => {
+  const compiledPlan = {
+    workspace_mcp_catalog: [
+      {
+        tool_id: "workspace.lookup",
+        tool_name: "lookup",
+        module_path: "tools/a.py",
+        symbol_name: "lookup_tool"
+      }
+    ]
+  } as never;
+
+  assert.deepEqual(
+    JSON.parse(Buffer.from(encodeWorkspaceMcpCatalog(compiledPlan), "base64").toString("utf8")),
+    [
+      {
+        tool_id: "workspace.lookup",
+        tool_name: "lookup",
+        module_path: "tools/a.py",
+        symbol_name: "lookup_tool"
+      }
+    ]
+  );
+});
+
+test("mcpServerMappingMetadata reports only rewritten logical ids", () => {
+  assert.deepEqual(
+    mcpServerMappingMetadata({
+      workspace: "workspace__abc",
+      twitter: "twitter"
+    }),
+    [
+      {
+        logical_id: "workspace",
+        physical_id: "workspace__abc"
+      }
+    ]
+  );
 });
 
 test("effectiveMcpServerPayloads replaces logical workspace server with sidecar payload", () => {

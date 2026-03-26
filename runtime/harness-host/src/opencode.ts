@@ -6,11 +6,11 @@ import {
   type ToolPart,
 } from "@opencode-ai/sdk/v2";
 
-import type { OpencodeHarnessHostRequest, RunnerEventType, RunnerOutputEventPayload } from "./contracts.js";
+import type { JsonObject, JsonValue, OpencodeHarnessHostRequest, RunnerEventType, RunnerOutputEventPayload } from "./contracts.js";
 
 export type OpencodeMappedEvent = {
   event_type: RunnerEventType;
-  payload: Record<string, unknown>;
+  payload: JsonObject;
 };
 
 export type ToolSnapshot = {
@@ -31,7 +31,7 @@ function emitRunnerEvent(
   request: OpencodeHarnessHostRequest,
   sequence: number,
   eventType: RunnerEventType,
-  payload: Record<string, unknown>
+  payload: JsonObject
 ): void {
   const event: RunnerOutputEventPayload = {
     session_id: request.session_id,
@@ -101,7 +101,7 @@ function getPath(record: Record<string, unknown> | null, path: string): unknown 
   return current;
 }
 
-function jsonValue(value: unknown): unknown {
+function jsonValue(value: unknown): JsonValue {
   if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
     return value;
   }
@@ -110,12 +110,20 @@ function jsonValue(value: unknown): unknown {
   }
   if (value && typeof value === "object") {
     try {
-      return JSON.parse(JSON.stringify(value)) as unknown;
+      return JSON.parse(JSON.stringify(value)) as JsonValue;
     } catch {
       return String(value);
     }
   }
   return value === undefined ? null : String(value);
+}
+
+function jsonObjectValue(value: unknown): JsonObject | null {
+  const normalized = jsonValue(value);
+  if (!normalized || typeof normalized !== "object" || Array.isArray(normalized)) {
+    return null;
+  }
+  return normalized;
 }
 
 function snapshotValue(value: unknown): string {
@@ -324,7 +332,7 @@ function opencodeToolPayload(
   part: ToolPart | Record<string, unknown>,
   eventName: string,
   snapshots: Map<string, ToolSnapshot>
-): Record<string, unknown> | null {
+): JsonObject | null {
   const record = asRecord(part);
   const state = asRecord(record?.state);
   const status = normalizePartType(state?.status);
@@ -354,7 +362,7 @@ function opencodeToolPayload(
   };
 }
 
-function questionToolTerminalPayload(toolPayload: Record<string, unknown>): Record<string, unknown> | null {
+function questionToolTerminalPayload(toolPayload: JsonObject): JsonObject | null {
   if (normalizePartType(toolPayload.tool_name) !== "question") {
     return null;
   }
@@ -369,10 +377,11 @@ function questionToolTerminalPayload(toolPayload: Record<string, unknown>): Reco
   const toolArgs = asRecord(toolPayload.tool_args);
   const result = asRecord(toolPayload.result);
   const questionData = toolArgs && Object.keys(toolArgs).length > 0 ? toolArgs : result;
-  if (!questionData) {
+  const questionPayload = jsonObjectValue(questionData);
+  if (!questionPayload) {
     return null;
   }
-  if (!questionData.questions && !questionData.question) {
+  if (!questionPayload.questions && !questionPayload.question) {
     return null;
   }
 
@@ -381,7 +390,7 @@ function questionToolTerminalPayload(toolPayload: Record<string, unknown>): Reco
     event: asString(toolPayload.event) || "message.part.updated",
     interaction_type: "question",
     tool_name: "question",
-    question: questionData,
+    question: questionPayload,
     call_id: toolPayload.call_id ?? null,
   };
 }
@@ -434,7 +443,7 @@ function messageUpdatedEvents(
   return outputEvents;
 }
 
-function eventErrorPayload(rawEvent: unknown): Record<string, unknown> {
+function eventErrorPayload(rawEvent: unknown): JsonObject {
   const payload = asRecord(rawEvent);
   const properties = asRecord(payload?.properties);
   const error = asRecord(properties?.error);
@@ -470,7 +479,7 @@ function eventErrorPayload(rawEvent: unknown): Record<string, unknown> {
     detailParts.push(`provider=${providerID}`);
   }
 
-  const result: Record<string, unknown> = {
+  const result: JsonObject = {
     message: detailParts.length > 0 ? `${summary} (${detailParts.join(", ")})` : summary,
   };
   if (errorName) {
@@ -732,7 +741,7 @@ export function mapOpencodeEvent(
 
 export function shouldEmitOpencodeEvent(
   eventType: RunnerEventType,
-  payload: Record<string, unknown>,
+  payload: JsonObject,
   instruction: string
 ): boolean {
   if (eventType === "thinking_delta") {
@@ -976,7 +985,7 @@ export async function runOpencode(request: OpencodeHarnessHostRequest): Promise<
     void iterator.return?.(undefined);
     return 0;
   } catch (error: unknown) {
-    const payload: Record<string, unknown> = {
+    const payload: JsonObject = {
       type: error instanceof Error ? error.name || "RuntimeError" : "RuntimeError",
       message: error instanceof Error ? error.message : String(error),
     };

@@ -44,6 +44,12 @@ function makeStore(prefix: string): RuntimeStateStore {
   });
 }
 
+function setNodeRunnerCommand(lines: string[]): void {
+  const scriptBase64 = Buffer.from(lines.join("\n"), "utf8").toString("base64");
+  process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE =
+    `printf '%s' '${scriptBase64}' | base64 --decode | {runtime_node} - {request_base64}`;
+}
+
 test("claimed input marks missing workspace failed and runtime error", async () => {
   const store = makeStore("hb-claimed-input-missing-workspace-");
   const workspace = store.createWorkspace({
@@ -107,12 +113,13 @@ test("claimed input persists runner events, assistant text, and waiting_user sta
     sessionId: "session-main",
     payload: { text: "hello" }
   });
-  process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE = `python - <<'PY'
-import json
-print(json.dumps(dict(session_id="session-main", input_id="${queued.inputId}", sequence=1, event_type="run_started", payload=dict(instruction_preview="hello"))))
-print(json.dumps(dict(session_id="session-main", input_id="${queued.inputId}", sequence=2, event_type="output_delta", payload=dict(delta="Hello from TS"))))
-print(json.dumps(dict(session_id="session-main", input_id="${queued.inputId}", sequence=3, event_type="run_completed", payload=dict(status="ok"))))
-PY`;
+  setNodeRunnerCommand([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'output_delta', payload: { delta: 'Hello from TS' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 3, event_type: 'run_completed', payload: { status: 'ok' } }) + '\\n');`
+  ]);
 
   const claimed = store.claimInputs({
     limit: 1,
@@ -172,10 +179,11 @@ test("claimed input synthesizes run_failed when runner exits without terminal ev
     sessionId: "session-main",
     payload: { text: "hello" }
   });
-  process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE = `python - <<'PY'
-import json
-print(json.dumps(dict(session_id="session-main", input_id="${queued.inputId}", sequence=1, event_type="run_started", payload=dict(instruction_preview="hello"))))
-PY`;
+  setNodeRunnerCommand([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');`
+  ]);
 
   const claimed = store.claimInputs({
     limit: 1,
@@ -234,7 +242,13 @@ test("claimed input hydrates runtime exec context from runtime config", async ()
     sessionId: "session-main",
     payload: { text: "hello", context: {} }
   });
-  process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE = `python -c "import base64, json, sys; payload=json.loads(base64.b64decode(sys.argv[1])); ctx=payload['context']['_sandbox_runtime_exec_v1']; print(json.dumps(dict(session_id=payload['session_id'], input_id=payload['input_id'], sequence=1, event_type='run_started', payload=dict(runtime_exec_context=ctx)))); print(json.dumps(dict(session_id=payload['session_id'], input_id=payload['input_id'], sequence=2, event_type='run_completed', payload=dict(status='ok'))))" {request_base64}`;
+  setNodeRunnerCommand([
+    "const encoded = process.argv.at(-1) ?? '';",
+    "const payload = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));",
+    "const ctx = payload.context._sandbox_runtime_exec_v1;",
+    "process.stdout.write(JSON.stringify({ session_id: payload.session_id, input_id: payload.input_id, sequence: 1, event_type: 'run_started', payload: { runtime_exec_context: ctx } }) + '\\n');",
+    "process.stdout.write(JSON.stringify({ session_id: payload.session_id, input_id: payload.input_id, sequence: 2, event_type: 'run_completed', payload: { status: 'ok' } }) + '\\n');"
+  ]);
 
   const claimed = store.claimInputs({
     limit: 1,
@@ -282,11 +296,12 @@ test("claimed input persists replacement harness session id from terminal runner
     sessionId: "session-main",
     payload: { text: "hello" }
   });
-  process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE = `python - <<'PY'
-import json
-print(json.dumps(dict(session_id="session-main", input_id="${queued.inputId}", sequence=1, event_type="run_started", payload=dict(status="started"))))
-print(json.dumps(dict(session_id="session-main", input_id="${queued.inputId}", sequence=2, event_type="run_completed", payload=dict(status="ok", harness_session_id="replacement-session"))))
-PY`;
+  setNodeRunnerCommand([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { status: 'started' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'run_completed', payload: { status: 'ok', harness_session_id: 'replacement-session' } }) + '\\n');`
+  ]);
 
   const claimed = store.claimInputs({
     limit: 1,

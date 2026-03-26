@@ -9,9 +9,6 @@ on:
       - "desktop/**"
       - "runtime/api-server/**"
       - "runtime/deploy/**"
-      - "runtime/src/**"
-      - "runtime/pyproject.toml"
-      - "runtime/uv.lock"
       - ".github/workflows/publish-runtime-bundles.yml"
   workflow_dispatch:
 
@@ -131,23 +128,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
       - name: Set up Node 22
         uses: actions/setup-node@v6
         with:
           node-version: "22"
 
-      - name: Install uv
-        run: |
-          "${{ env.pythonLocation }}/bin/python" -m pip install uv
-
       - name: Build macOS runtime bundle
-        env:
-          HOLABOSS_MACOS_PYTHON_BIN: ${{ env.pythonLocation }}/bin/python
         run: |
           bash runtime/deploy/package_macos_runtime.sh "out/${OUTPUT_DIR}"
 
@@ -294,23 +280,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
       - name: Set up Node 22
         uses: actions/setup-node@v6
         with:
           node-version: "22"
 
-      - name: Install uv
-        run: |
-          "${{ env.pythonLocation }}/bin/python" -m pip install uv
-
       - name: Build Linux runtime bundle
-        env:
-          HOLABOSS_LINUX_PYTHON_BIN: ${{ env.pythonLocation }}/bin/python
         run: |
           bash runtime/deploy/package_linux_runtime.sh "out/${OUTPUT_DIR}"
 
