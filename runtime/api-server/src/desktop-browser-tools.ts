@@ -1,0 +1,614 @@
+import { resolveProductRuntimeConfig, type ProductRuntimeConfig } from "./runtime-config.js";
+
+export const DESKTOP_BROWSER_TOOL_IDS = [
+  "browser_navigate",
+  "browser_get_state",
+  "browser_click",
+  "browser_type",
+  "browser_press",
+  "browser_scroll",
+  "browser_back",
+  "browser_forward",
+  "browser_reload",
+  "browser_screenshot",
+  "browser_list_tabs"
+] as const;
+
+export type DesktopBrowserToolId = typeof DESKTOP_BROWSER_TOOL_IDS[number];
+
+export interface DesktopBrowserToolDefinition {
+  id: DesktopBrowserToolId;
+  description: string;
+  input_schema: Record<string, unknown>;
+}
+
+export interface DesktopBrowserToolServiceLike {
+  getStatus(): Promise<Record<string, unknown>>;
+  execute(toolId: string, args: Record<string, unknown>): Promise<Record<string, unknown>>;
+}
+
+export interface DesktopBrowserToolServiceOptions {
+  fetchImpl?: typeof fetch;
+  resolveConfig?: () => ProductRuntimeConfig;
+}
+
+type BrowserFetchOptions = {
+  method: "GET" | "POST";
+  path: string;
+  body?: Record<string, unknown>;
+};
+
+const INTERACTIVE_ELEMENTS_SELECTOR = [
+  "a[href]",
+  "button",
+  "input",
+  "textarea",
+  "select",
+  "[role='button']",
+  "[role='link']",
+  "[contenteditable='true']",
+  "[tabindex]"
+].join(",");
+
+export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = [
+  {
+    id: "browser_navigate",
+    description: "Navigate the desktop browser to a URL.",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["url"],
+      properties: {
+        url: { type: "string", minLength: 1 }
+      }
+    }
+  },
+  {
+    id: "browser_get_state",
+    description: "Read the current desktop browser page, visible interactive elements, and optional screenshot.",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        include_screenshot: { type: "boolean" }
+      }
+    }
+  },
+  {
+    id: "browser_click",
+    description: "Click an interactive element from browser_get_state by index.",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["index"],
+      properties: {
+        index: { type: "integer", minimum: 1 }
+      }
+    }
+  },
+  {
+    id: "browser_type",
+    description: "Type text into an interactive element from browser_get_state by index.",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["index", "text"],
+      properties: {
+        index: { type: "integer", minimum: 1 },
+        text: { type: "string" },
+        clear: { type: "boolean" },
+        submit: { type: "boolean" }
+      }
+    }
+  },
+  {
+    id: "browser_press",
+    description: "Send a keyboard key to the currently focused element.",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["key"],
+      properties: {
+        key: { type: "string", minLength: 1 }
+      }
+    }
+  },
+  {
+    id: "browser_scroll",
+    description: "Scroll the current page vertically.",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        direction: { type: "string", enum: ["up", "down"] },
+        amount: { type: "integer", minimum: 1 },
+        delta_y: { type: "integer" }
+      }
+    }
+  },
+  {
+    id: "browser_back",
+    description: "Go back in the active browser tab history.",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {}
+    }
+  },
+  {
+    id: "browser_forward",
+    description: "Go forward in the active browser tab history.",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {}
+    }
+  },
+  {
+    id: "browser_reload",
+    description: "Reload the active browser tab.",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {}
+    }
+  },
+  {
+    id: "browser_screenshot",
+    description: "Capture a screenshot of the active browser tab.",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        format: { type: "string", enum: ["png", "jpeg"] },
+        quality: { type: "integer", minimum: 0, maximum: 100 }
+      }
+    }
+  },
+  {
+    id: "browser_list_tabs",
+    description: "List open browser tabs and the active tab id.",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {}
+    }
+  }
+];
+
+export class DesktopBrowserToolServiceError extends Error {
+  readonly statusCode: number;
+  readonly code: string;
+
+  constructor(statusCode: number, code: string, message: string) {
+    super(message);
+    this.statusCode = statusCode;
+    this.code = code;
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function optionalBoolean(value: unknown, defaultValue = false): boolean {
+  return typeof value === "boolean" ? value : defaultValue;
+}
+
+function optionalInteger(value: unknown): number | null {
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return value;
+  }
+  return null;
+}
+
+function requiredString(value: unknown, fieldName: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new DesktopBrowserToolServiceError(400, "browser_tool_invalid_args", `${fieldName} is required`);
+  }
+  return value.trim();
+}
+
+function requiredPositiveInteger(value: unknown, fieldName: string): number {
+  const parsed = optionalInteger(value);
+  if (!parsed || parsed <= 0) {
+    throw new DesktopBrowserToolServiceError(
+      400,
+      "browser_tool_invalid_args",
+      `${fieldName} must be a positive integer`
+    );
+  }
+  return parsed;
+}
+
+function browserToolDefinition(toolId: string): DesktopBrowserToolDefinition | null {
+  return DESKTOP_BROWSER_TOOL_DEFINITIONS.find((tool) => tool.id === toolId) ?? null;
+}
+
+function browserToolHeaders(config: ProductRuntimeConfig): Record<string, string> {
+  return {
+    "content-type": "application/json; charset=utf-8",
+    "x-holaboss-desktop-token": config.desktopBrowserAuthToken
+  };
+}
+
+function browserBaseUrl(config: ProductRuntimeConfig): string {
+  return config.desktopBrowserUrl.replace(/\/+$/, "");
+}
+
+function ensureDesktopBrowserConfig(config: ProductRuntimeConfig): void {
+  if (!config.desktopBrowserEnabled || !config.desktopBrowserUrl.trim() || !config.desktopBrowserAuthToken.trim()) {
+    throw new DesktopBrowserToolServiceError(
+      409,
+      "desktop_browser_unavailable",
+      "Desktop browser capability is not available in this runtime."
+    );
+  }
+}
+
+function evaluateExpressionPayload(expression: string): Record<string, unknown> {
+  return { expression };
+}
+
+function serializedValue(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function interactiveElementsExpression(): string {
+  return `(() => {
+    const selector = ${serializedValue(INTERACTIVE_ELEMENTS_SELECTOR)};
+    const isVisible = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+    };
+    const describe = (element, index) => {
+      const rect = element.getBoundingClientRect();
+      const tagName = element.tagName.toLowerCase();
+      const role = element.getAttribute("role") || "";
+      const type = "type" in element ? String(element.type || "") : "";
+      const text = (element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 300);
+      const label = [
+        element.getAttribute("aria-label") || "",
+        "placeholder" in element ? String(element.placeholder || "") : "",
+        "value" in element ? String(element.value || "") : "",
+        text
+      ].find((value) => Boolean(value)) || "";
+      return {
+        index,
+        tag_name: tagName,
+        role,
+        type,
+        text,
+        label,
+        disabled: "disabled" in element ? Boolean(element.disabled) : false,
+        href: "href" in element ? String(element.href || "") : "",
+        bounding_box: {
+          x: Math.round(rect.left),
+          y: Math.round(rect.top),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height)
+        }
+      };
+    };
+    const nodes = Array.from(document.querySelectorAll(selector))
+      .filter((element) => isVisible(element))
+      .filter((element, index, all) => all.indexOf(element) === index);
+    return {
+      url: location.href,
+      title: document.title,
+      text: (document.body?.innerText || "").replace(/\\s+/g, " ").trim().slice(0, 12000),
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      scroll: { x: Math.round(window.scrollX), y: Math.round(window.scrollY) },
+      elements: nodes.map((element, idx) => describe(element, idx + 1))
+    };
+  })()`;
+}
+
+function clickExpression(index: number): string {
+  return `(() => {
+    const selector = ${serializedValue(INTERACTIVE_ELEMENTS_SELECTOR)};
+    const isVisible = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+    };
+    const target = Array.from(document.querySelectorAll(selector)).filter((element) => isVisible(element))[${index - 1}] || null;
+    if (!target) {
+      throw new Error(${serializedValue(`No interactive element found for index ${index}.`)});
+    }
+    target.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    if (typeof target.focus === "function") target.focus();
+    if (typeof target.click === "function") target.click();
+    return {
+      ok: true,
+      index: ${index},
+      tag_name: target.tagName.toLowerCase(),
+      text: (target.innerText || target.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 200)
+    };
+  })()`;
+}
+
+function typeExpression(params: {
+  index: number;
+  text: string;
+  clear: boolean;
+  submit: boolean;
+}): string {
+  return `(() => {
+    const selector = ${serializedValue(INTERACTIVE_ELEMENTS_SELECTOR)};
+    const isVisible = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+    };
+    const target = Array.from(document.querySelectorAll(selector)).filter((element) => isVisible(element))[${params.index - 1}] || null;
+    if (!target) {
+      throw new Error(${serializedValue(`No interactive element found for index ${params.index}.`)});
+    }
+    target.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    if (typeof target.focus === "function") target.focus();
+    const nextText = ${serializedValue(params.text)};
+    const clear = ${params.clear ? "true" : "false"};
+    const submit = ${params.submit ? "true" : "false"};
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+      const prototype = Object.getPrototypeOf(target);
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+      const prefix = clear ? "" : String(target.value || "");
+      const value = prefix + nextText;
+      if (descriptor && typeof descriptor.set === "function") {
+        descriptor.set.call(target, value);
+      } else {
+        target.value = value;
+      }
+      target.dispatchEvent(new Event("input", { bubbles: true }));
+      target.dispatchEvent(new Event("change", { bubbles: true }));
+      if (submit && target.form && typeof target.form.requestSubmit === "function") {
+        target.form.requestSubmit();
+      }
+      return { ok: true, index: ${params.index}, value: target.value };
+    }
+    if (target instanceof HTMLElement && target.isContentEditable) {
+      const prefix = clear ? "" : String(target.innerText || "");
+      target.innerText = prefix + nextText;
+      target.dispatchEvent(new Event("input", { bubbles: true }));
+      if (submit) {
+        target.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      }
+      return { ok: true, index: ${params.index}, value: target.innerText };
+    }
+    throw new Error(${serializedValue(`Element at index ${params.index} is not text-editable.`)});
+  })()`;
+}
+
+function pressExpression(key: string): string {
+  return `(() => {
+    const target = document.activeElement instanceof HTMLElement ? document.activeElement : document.body;
+    const key = ${serializedValue(key)};
+    for (const type of ["keydown", "keypress", "keyup"]) {
+      target.dispatchEvent(new KeyboardEvent(type, { key, bubbles: true }));
+    }
+    if (key === "Enter" && target instanceof HTMLInputElement && target.form && typeof target.form.requestSubmit === "function") {
+      target.form.requestSubmit();
+    }
+    return {
+      ok: true,
+      key,
+      active_tag: target.tagName ? target.tagName.toLowerCase() : "body"
+    };
+  })()`;
+}
+
+function scrollExpression(deltaY: number): string {
+  return `(() => {
+    window.scrollBy({ top: ${deltaY}, left: 0, behavior: "instant" });
+    return {
+      ok: true,
+      scroll_y: Math.round(window.scrollY)
+    };
+  })()`;
+}
+
+function historyExpression(direction: "back" | "forward"): string {
+  return `(() => {
+    history.${direction}();
+    return { ok: true, direction: ${serializedValue(direction)} };
+  })()`;
+}
+
+function reloadExpression(): string {
+  return `(() => {
+    location.reload();
+    return { ok: true };
+  })()`;
+}
+
+export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike {
+  readonly #fetch: typeof fetch;
+  readonly #resolveConfig: () => ProductRuntimeConfig;
+
+  constructor(options: DesktopBrowserToolServiceOptions = {}) {
+    this.#fetch = options.fetchImpl ?? fetch;
+    this.#resolveConfig =
+      options.resolveConfig ??
+      (() =>
+        resolveProductRuntimeConfig({
+          requireAuth: false,
+          requireUser: false,
+          requireBaseUrl: false
+        }));
+  }
+
+  async getStatus(): Promise<Record<string, unknown>> {
+    const config = this.#resolveConfig();
+    const configured = Boolean(
+      config.desktopBrowserEnabled && config.desktopBrowserUrl.trim() && config.desktopBrowserAuthToken.trim()
+    );
+    let reachable = false;
+    if (configured) {
+      try {
+        await this.#browserFetch(config, { method: "GET", path: "/health" });
+        reachable = true;
+      } catch {
+        reachable = false;
+      }
+    }
+    return {
+      available: configured && reachable,
+      configured,
+      reachable,
+      backend: configured ? "desktop_http" : null,
+      tools: DESKTOP_BROWSER_TOOL_DEFINITIONS
+    };
+  }
+
+  async execute(toolId: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const definition = browserToolDefinition(toolId);
+    if (!definition) {
+      throw new DesktopBrowserToolServiceError(404, "browser_tool_unknown", `Unknown browser tool '${toolId}'`);
+    }
+
+    const config = this.#resolveConfig();
+    ensureDesktopBrowserConfig(config);
+
+    switch (definition.id) {
+      case "browser_navigate": {
+        const url = requiredString(args.url, "url");
+        const result = await this.#browserFetch(config, {
+          method: "POST",
+          path: "/navigate",
+          body: { url }
+        });
+        return { ok: true, navigation: result };
+      }
+      case "browser_get_state": {
+        const page = await this.#browserFetch(config, { method: "GET", path: "/page" });
+        const state = await this.#evaluate(config, interactiveElementsExpression());
+        const payload: Record<string, unknown> = {
+          ok: true,
+          page,
+          state
+        };
+        if (optionalBoolean(args.include_screenshot, false)) {
+          payload.screenshot = await this.#browserFetch(config, {
+            method: "POST",
+            path: "/screenshot",
+            body: { format: "png" }
+          });
+        }
+        return payload;
+      }
+      case "browser_click": {
+        const index = requiredPositiveInteger(args.index, "index");
+        const result = await this.#evaluate(config, clickExpression(index));
+        const page = await this.#browserFetch(config, { method: "GET", path: "/page" });
+        return { ok: true, action: result, page };
+      }
+      case "browser_type": {
+        const index = requiredPositiveInteger(args.index, "index");
+        const text = requiredString(args.text, "text");
+        const result = await this.#evaluate(
+          config,
+          typeExpression({
+            index,
+            text,
+            clear: optionalBoolean(args.clear, true),
+            submit: optionalBoolean(args.submit, false)
+          })
+        );
+        const page = await this.#browserFetch(config, { method: "GET", path: "/page" });
+        return { ok: true, action: result, page };
+      }
+      case "browser_press": {
+        const key = requiredString(args.key, "key");
+        const result = await this.#evaluate(config, pressExpression(key));
+        const page = await this.#browserFetch(config, { method: "GET", path: "/page" });
+        return { ok: true, action: result, page };
+      }
+      case "browser_scroll": {
+        const explicitDelta = optionalInteger(args.delta_y);
+        const amount = optionalInteger(args.amount) ?? 600;
+        const direction = args.direction === "up" ? "up" : "down";
+        const deltaY = explicitDelta ?? (direction === "up" ? -Math.abs(amount) : Math.abs(amount));
+        const result = await this.#evaluate(config, scrollExpression(deltaY));
+        const page = await this.#browserFetch(config, { method: "GET", path: "/page" });
+        return { ok: true, action: result, page };
+      }
+      case "browser_back": {
+        const result = await this.#evaluate(config, historyExpression("back"));
+        const page = await this.#browserFetch(config, { method: "GET", path: "/page" });
+        return { ok: true, action: result, page };
+      }
+      case "browser_forward": {
+        const result = await this.#evaluate(config, historyExpression("forward"));
+        const page = await this.#browserFetch(config, { method: "GET", path: "/page" });
+        return { ok: true, action: result, page };
+      }
+      case "browser_reload": {
+        const result = await this.#evaluate(config, reloadExpression());
+        const page = await this.#browserFetch(config, { method: "GET", path: "/page" });
+        return { ok: true, action: result, page };
+      }
+      case "browser_screenshot": {
+        const format = args.format === "jpeg" ? "jpeg" : "png";
+        const quality = optionalInteger(args.quality);
+        return {
+          ok: true,
+          screenshot: await this.#browserFetch(config, {
+            method: "POST",
+            path: "/screenshot",
+            body: {
+              format,
+              ...(quality !== null ? { quality } : {})
+            }
+          })
+        };
+      }
+      case "browser_list_tabs": {
+        return {
+          ok: true,
+          tabs: await this.#browserFetch(config, { method: "GET", path: "/tabs" })
+        };
+      }
+    }
+  }
+
+  async #evaluate(config: ProductRuntimeConfig, expression: string): Promise<Record<string, unknown>> {
+    const response = await this.#browserFetch(config, {
+      method: "POST",
+      path: "/evaluate",
+      body: evaluateExpressionPayload(expression)
+    });
+    const payload = asRecord(response);
+    return asRecord(payload?.result) ?? {};
+  }
+
+  async #browserFetch(config: ProductRuntimeConfig, options: BrowserFetchOptions): Promise<Record<string, unknown>> {
+    const requestUrl = `${browserBaseUrl(config)}${options.path}`;
+    const response = await this.#fetch(requestUrl, {
+      method: options.method,
+      headers: browserToolHeaders(config),
+      body: options.body ? JSON.stringify(options.body) : undefined
+    });
+    let payload: unknown = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+    if (!response.ok) {
+      const message = asRecord(payload)?.error;
+      throw new DesktopBrowserToolServiceError(
+        response.status,
+        "desktop_browser_request_failed",
+        typeof message === "string" && message.trim()
+          ? message.trim()
+          : `Desktop browser request failed with status ${response.status}`
+      );
+    }
+    return asRecord(payload) ?? {};
+  }
+}
