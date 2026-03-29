@@ -554,7 +554,7 @@ test("task proposals round trip supports create, list, unreviewed, get, and stat
   store.close();
 });
 
-test("allocateAppPort assigns sequential ports starting from 3001", () => {
+test("allocateAppPort assigns sequential ports starting from 38080", () => {
   const root = makeTempDir("hb-store-ports-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "test.db"),

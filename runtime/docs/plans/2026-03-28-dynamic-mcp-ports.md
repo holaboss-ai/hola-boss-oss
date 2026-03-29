@@ -4,7 +4,7 @@
 
 **Goal:** Replace hardcoded `13100 + index` MCP port allocation with persistent dynamic allocation via the existing state-store `allocateAppPort()` infrastructure.
 
-**Architecture:** The state-store already has an `app_ports` SQLite table with UNIQUE constraint on port and (workspace_id, app_id) primary key. We fix its port range (3001-3100 → 13100-13999), wire it into the bootstrap/lifecycle code, and fix the ts-runner's MCP server merge semantics.
+**Architecture:** The state-store already has an `app_ports` SQLite table with UNIQUE constraint on port and (workspace_id, app_id) primary key. Port range is 38080-38979 (dynamic allocation gated by `HOLABOSS_EMBEDDED_RUNTIME=1` for desktop; static fallback 18080+i/13100+i for container deployments). Remote's `portsForWorkspaceApp` helper and `mergePreparedMcpServerPayloads` superseded the original local plan.
 
 **Tech Stack:** TypeScript, Node.js, SQLite (better-sqlite3), node:test
 
