@@ -3,6 +3,8 @@ import path from "node:path";
 
 import yaml from "js-yaml";
 
+import type { RuntimeStateStore } from "@holaboss/runtime-state-store";
+
 const APP_HTTP_PORT_BASE = 18080;
 const APP_MCP_PORT_BASE = 13100;
 
@@ -251,7 +253,30 @@ export function resolveWorkspaceAppRuntime(workspaceDir: string, targetAppId: st
   };
 }
 
-export function listWorkspaceApplicationPorts(workspaceDir: string): Record<string, { http: number; mcp: number }> {
+export function listWorkspaceApplicationPorts(
+  workspaceDir: string,
+  store?: RuntimeStateStore,
+  workspaceId?: string
+): Record<string, { http: number; mcp: number }> {
+  if (store && workspaceId) {
+    const records = store.listAppPorts({ workspaceId });
+    if (records.length > 0) {
+      const result: Record<string, { http: number; mcp: number }> = {};
+      for (const record of records) {
+        const match = record.appId.match(/^(.+)__(http|mcp)$/);
+        if (!match) {
+          continue;
+        }
+        const appId = match[1]!;
+        const kind = match[2] as "http" | "mcp";
+        if (!result[appId]) {
+          result[appId] = { http: 0, mcp: 0 };
+        }
+        result[appId][kind] = record.port;
+      }
+      return result;
+    }
+  }
   const result: Record<string, { http: number; mcp: number }> = {};
   for (const [index, entry] of listWorkspaceApplications(workspaceDir).entries()) {
     const appId = typeof entry.app_id === "string" ? entry.app_id : "";

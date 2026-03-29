@@ -1333,8 +1333,8 @@ export class RuntimeStateStore {
   }
 
   private findAvailablePort(): number {
-    const BASE_PORT = 3001;
-    const MAX_PORT = 3100;
+    const BASE_PORT = 13100;
+    const MAX_PORT = 13999;
 
     const allocated = new Set(
       this.db()
@@ -1348,7 +1348,7 @@ export class RuntimeStateStore {
         return port;
       }
     }
-    throw new Error("No available ports in range 3001-3100");
+    throw new Error("No available ports in range 13100-13999");
   }
 
   private rowToAppPort(row: Record<string, unknown>): AppPortRecord {

@@ -747,13 +747,19 @@ export async function executeTsRunnerRequest(
       : [];
 
     if (runnerPrepPlan.bootstrapResolvedApplications && compiledPlan.resolved_applications.length > 0) {
-      effectiveMcpServers = effectiveMcpServers.concat(
-        await deps.bootstrapApplications({
-          request,
-          workspaceDir: bootstrap.workspaceDir,
-          resolvedApplications: compiledPlan.resolved_applications
-        })
-      );
+      const bootstrapServers = await deps.bootstrapApplications({
+        request,
+        workspaceDir: bootstrap.workspaceDir,
+        resolvedApplications: compiledPlan.resolved_applications
+      });
+      for (const server of bootstrapServers) {
+        const existingIndex = effectiveMcpServers.findIndex((s) => s.name === server.name);
+        if (existingIndex >= 0) {
+          effectiveMcpServers[existingIndex] = server;
+        } else {
+          effectiveMcpServers.push(server);
+        }
+      }
     }
 
     const runtimeConfig = deps.projectAgentRuntimeConfig(

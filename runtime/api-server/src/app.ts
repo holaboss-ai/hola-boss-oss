@@ -1687,7 +1687,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!workspaceDir || !fs.existsSync(path.join(workspaceDir, "workspace.yaml"))) {
       return {};
     }
-    return listWorkspaceApplicationPorts(workspaceDir);
+    const effectiveWorkspaceId = workspaceId ?? path.basename(workspaceDir);
+    return listWorkspaceApplicationPorts(workspaceDir, store, effectiveWorkspaceId);
   });
 
   app.post("/api/v1/apps/:appId/start", async (request, reply) => {

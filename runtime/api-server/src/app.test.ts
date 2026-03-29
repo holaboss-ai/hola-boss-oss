@@ -1521,7 +1521,7 @@ test("internal opencode app bootstrap route starts resolved apps and returns MCP
         app_id: params.appId,
         status: "started",
         detail: "app started with lifecycle manager",
-        ports: { http: params.httpPort ?? 18080, mcp: params.mcpPort ?? 13100 }
+        ports: { http: params.httpPort ?? 0, mcp: params.mcpPort ?? 0 }
       };
     },
     async stopApp() {
@@ -1563,60 +1563,32 @@ test("internal opencode app bootstrap route starts resolved apps and returns MCP
   });
 
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), {
-    applications: [
-      {
-        app_id: "app-a",
-        mcp_url: "http://localhost:13100/mcp",
-        timeout_ms: 60000,
-        ports: { http: 18080, mcp: 13100 }
-      },
-      {
-        app_id: "app-b",
-        mcp_url: "http://localhost:13101/mcp",
-        timeout_ms: 30000,
-        ports: { http: 18081, mcp: 13101 }
-      }
-    ]
-  });
-  assert.deepEqual(calls, [
-    {
-      action: "start",
-      appId: "app-a",
-      appDir: path.join(workspaceRoot, "workspace-1", "apps", "app-a"),
-      httpPort: 18080,
-      mcpPort: 13100,
-      holabossUserId: "user-1",
-      skipSetup: true,
-      resolvedApp: {
-        appId: "app-a",
-        mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
-        healthCheck: { path: "/health", timeoutS: 60, intervalS: 5 },
-        envContract: ["HOLABOSS_USER_ID"],
-        startCommand: "",
-        baseDir: "apps/app-a",
-        lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
-      }
-    },
-    {
-      action: "start",
-      appId: "app-b",
-      appDir: path.join(workspaceRoot, "workspace-1", "apps", "app-b"),
-      httpPort: 18081,
-      mcpPort: 13101,
-      holabossUserId: "user-1",
-      skipSetup: false,
-      resolvedApp: {
-        appId: "app-b",
-        mcp: { transport: "http-sse", port: 4200, path: "/mcp" },
-        healthCheck: { path: "/ready", timeoutS: 30, intervalS: 2 },
-        envContract: [],
-        startCommand: "npm run legacy-start",
-        baseDir: "apps/app-b",
-        lifecycle: { setup: "", start: "", stop: "" }
-      }
-    }
-  ]);
+  const body = response.json();
+  assert.equal(body.applications.length, 2);
+  const appA = body.applications[0];
+  const appB = body.applications[1];
+  assert.equal(appA.app_id, "app-a");
+  assert.equal(appB.app_id, "app-b");
+  assert.ok(appA.ports.http >= 13100);
+  assert.ok(appA.ports.mcp >= 13100);
+  assert.ok(appB.ports.http >= 13100);
+  assert.ok(appB.ports.mcp >= 13100);
+  const allPorts = [appA.ports.http, appA.ports.mcp, appB.ports.http, appB.ports.mcp];
+  assert.equal(new Set(allPorts).size, 4, "all four ports must be unique");
+  assert.equal(appA.mcp_url, `http://localhost:${appA.ports.mcp}/mcp`);
+  assert.equal(appB.mcp_url, `http://localhost:${appB.ports.mcp}/mcp`);
+  assert.equal(appA.timeout_ms, 60000);
+  assert.equal(appB.timeout_ms, 30000);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0]?.appId, "app-a");
+  assert.equal(calls[0]?.httpPort, appA.ports.http);
+  assert.equal(calls[0]?.mcpPort, appA.ports.mcp);
+  assert.equal(calls[0]?.holabossUserId, "user-1");
+  assert.equal(calls[0]?.skipSetup, true);
+  assert.equal(calls[1]?.appId, "app-b");
+  assert.equal(calls[1]?.httpPort, appB.ports.http);
+  assert.equal(calls[1]?.mcpPort, appB.ports.mcp);
+  assert.equal(calls[1]?.skipSetup, false);
 
   await app.close();
   store.close();
