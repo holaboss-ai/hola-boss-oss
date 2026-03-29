@@ -65,6 +65,7 @@ import {
   listWorkspaceApplications,
   parseInstalledAppRuntime,
   portsForAppIndex,
+  releaseWorkspaceAppPorts,
   removeWorkspaceApplication,
   resolveWorkspaceApp,
   resolveWorkspaceAppRuntime,
@@ -80,6 +81,7 @@ import { buildAppSetupEnv } from "./app-setup-env.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 50;
 const DEFAULT_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
+const DEFAULT_APP_SETUP_TIMEOUT_MS = 900_000;
 const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
 export interface BuildRuntimeApiServerOptions {
   logger?: boolean;
@@ -117,6 +119,32 @@ function resolveCronWorker(
     return options.cronWorker;
   }
   return new RuntimeCronWorker({ store, logger: app.log, queueWorker });
+}
+
+function resolveBridgeWorker(
+  options: BuildRuntimeApiServerOptions,
+  app: FastifyInstance,
+  store: RuntimeStateStore,
+  memoryService: MemoryServiceLike
+): BridgeWorkerLike | null {
+  if (options.bridgeWorker !== undefined) {
+    return options.bridgeWorker;
+  }
+  if (!tsBridgeWorkerEnabled()) {
+    return null;
+  }
+  try {
+    return new RuntimeRemoteBridgeWorker({ logger: app.log, store, memoryService });
+  } catch (error) {
+    app.log.warn(
+      {
+        event: "runtime.proactive_bridge.disabled",
+        reason: error instanceof Error ? error.message : String(error)
+      },
+      "Remote proactive bridge disabled during startup"
+    );
+    return null;
+  }
 }
 
 type StringMap = Record<string, unknown>;
@@ -202,6 +230,17 @@ function optionalInteger(value: unknown, defaultValue: number): number {
   return defaultValue;
 }
 
+function appSetupTimeoutMs(): number {
+  const rawValue = process.env.HB_APP_SETUP_TIMEOUT_MS ?? process.env.APP_SETUP_TIMEOUT_MS;
+  if (typeof rawValue === "string" && rawValue.trim().length > 0) {
+    const parsed = Number.parseInt(rawValue.trim(), 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return DEFAULT_APP_SETUP_TIMEOUT_MS;
+}
+
 function optionalDict(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
 }
@@ -218,6 +257,14 @@ function optionalStringList(value: unknown): string[] {
     return [];
   }
   return value.filter((item): item is string => typeof item === "string");
+}
+
+function headerString(headers: Record<string, unknown>, key: string): string {
+  const raw = headers[key];
+  if (Array.isArray(raw)) {
+    return typeof raw[0] === "string" ? raw[0].trim() : "";
+  }
+  return typeof raw === "string" ? raw.trim() : "";
 }
 
 function parseSessionInputAttachment(value: unknown): SessionInputAttachmentPayload | null {
@@ -867,6 +914,31 @@ function resolvedAppBuildStatus(params: {
   return params.entry ? fallbackAppBuildStatus(params.entry) : "unknown";
 }
 
+function blockingWorkspaceApps(params: {
+  store: RuntimeStateStore;
+  workspaceId: string;
+}): Array<{ appId: string; status: string }> {
+  return listWorkspaceApplications(params.store.workspaceDir(params.workspaceId))
+    .map((entry) => {
+      const appId = typeof entry.app_id === "string" ? entry.app_id : "";
+      return {
+        appId,
+        status: appId ? resolvedAppBuildStatus({ ...params, appId, entry }) : "unknown"
+      };
+    })
+    .filter((entry) => entry.appId.length > 0 && entry.status !== "running");
+}
+
+function blockingWorkspaceAppsMessage(entries: Array<{ appId: string; status: string }>): string {
+  if (entries.some((entry) => entry.status === "failed")) {
+    return `workspace apps failed to start: ${entries.map((entry) => `${entry.appId} (${entry.status})`).join(", ")}`;
+  }
+  if (entries.some((entry) => entry.status === "building")) {
+    return `workspace apps are still building: ${entries.map((entry) => `${entry.appId} (${entry.status})`).join(", ")}`;
+  }
+  return `workspace apps are still starting: ${entries.map((entry) => `${entry.appId} (${entry.status})`).join(", ")}`;
+}
+
 async function runAppSetup(params: {
   store: RuntimeStateStore;
   workspaceDir: string;
@@ -880,6 +952,7 @@ async function runAppSetup(params: {
     appId: params.appId,
     status: "building"
   });
+  const setupTimeoutMs = appSetupTimeoutMs();
 
   try {
     const result = await new Promise<{ code: number | null; timedOut: boolean; stderr: string }>((resolve, reject) => {
@@ -898,7 +971,7 @@ async function runAppSetup(params: {
         settled = true;
         child.kill("SIGKILL");
         resolve({ code: null, timedOut: true, stderr });
-      }, 300_000);
+      }, setupTimeoutMs);
 
       child.stderr?.on("data", (chunk: Buffer | string) => {
         if (stderr.length >= 2000) {
@@ -926,11 +999,12 @@ async function runAppSetup(params: {
     });
 
     if (result.timedOut) {
+      const timeoutSeconds = Math.max(1, Math.round(setupTimeoutMs / 1000));
       params.store.upsertAppBuild({
         workspaceId: params.workspaceId,
         appId: params.appId,
         status: "failed",
-        error: "setup timed out after 300s"
+        error: `setup timed out after ${timeoutSeconds}s`
       });
       return;
     }
@@ -1025,12 +1099,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
   const queueWorker = resolveQueueWorker(options, app, store);
   const cronWorker = resolveCronWorker(options, app, store, queueWorker);
-  const bridgeWorker =
-    options.bridgeWorker === undefined
-      ? tsBridgeWorkerEnabled()
-        ? new RuntimeRemoteBridgeWorker({ logger: app.log, store, memoryService })
-        : null
-      : options.bridgeWorker;
+  const bridgeWorker = resolveBridgeWorker(options, app, store, memoryService);
 
   app.addHook("onClose", async () => {
     await bridgeWorker?.close();
@@ -1092,9 +1161,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   });
 
   app.get("/api/v1/capabilities/browser", async (request, reply) => {
-    void request;
+    const workspaceId = headerString(request.headers as Record<string, unknown>, "x-holaboss-workspace-id");
     try {
-      return await browserToolService.getStatus();
+      return await browserToolService.getStatus({ workspaceId });
     } catch (error) {
       if (error instanceof DesktopBrowserToolServiceError) {
         return sendError(reply, error.statusCode, error.message);
@@ -1108,8 +1177,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     const params = request.params as { toolId: string };
+    const workspaceId = headerString(request.headers as Record<string, unknown>, "x-holaboss-workspace-id");
     try {
-      return await browserToolService.execute(requiredString(params.toolId, "toolId"), request.body);
+      return await browserToolService.execute(requiredString(params.toolId, "toolId"), request.body, { workspaceId });
     } catch (error) {
       if (error instanceof DesktopBrowserToolServiceError) {
         return sendError(reply, error.statusCode, error.message);
@@ -1687,8 +1757,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!workspaceDir || !fs.existsSync(path.join(workspaceDir, "workspace.yaml"))) {
       return {};
     }
-    const effectiveWorkspaceId = workspaceId ?? path.basename(workspaceDir);
-    return listWorkspaceApplicationPorts(workspaceDir, store, effectiveWorkspaceId);
+    return listWorkspaceApplicationPorts(workspaceDir, {
+      store,
+      workspaceId: workspaceId ?? null,
+      allocatePorts: true
+    });
   });
 
   app.post("/api/v1/apps/:appId/start", async (request, reply) => {
@@ -1710,7 +1783,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const workspaceDir = store.workspaceDir(workspaceId);
     let resolvedApp;
     try {
-      resolvedApp = resolveWorkspaceAppRuntime(workspaceDir, appId);
+      resolvedApp = resolveWorkspaceAppRuntime(workspaceDir, appId, {
+        store,
+        workspaceId,
+        allocatePorts: true
+      });
     } catch (error) {
       const statusCode =
         typeof error === "object" && error !== null && "statusCode" in error && typeof (error as { statusCode: unknown }).statusCode === "number"
@@ -1721,6 +1798,57 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     try {
       const holabossUserId = optionalString(request.body.holaboss_user_id);
       const build = store.getAppBuild({ workspaceId, appId });
+      const needsSetup =
+        !appBuildHasCompletedSetup(build?.status) &&
+        resolvedApp.resolvedApp.lifecycle.setup.trim().length > 0;
+
+      if (needsSetup) {
+        store.upsertAppBuild({
+          workspaceId,
+          appId,
+          status: "building"
+        });
+        void appLifecycleExecutor
+          .startApp({
+            appId,
+            appDir: resolvedApp.appDir,
+            httpPort: resolvedApp.ports.http,
+            mcpPort: resolvedApp.ports.mcp,
+            holabossUserId,
+            resolvedApp: resolvedApp.resolvedApp,
+            skipSetup: false
+          })
+          .then((result) => {
+            store.upsertAppBuild({
+              workspaceId,
+              appId,
+              status: result.status === "started" ? "running" : result.status
+            });
+          })
+          .catch((error) => {
+            store.upsertAppBuild({
+              workspaceId,
+              appId,
+              status: "failed",
+              error: error instanceof Error ? error.message : String(error)
+            });
+            app.log.error(
+              {
+                workspaceId,
+                appId,
+                error: error instanceof Error ? error.message : String(error)
+              },
+              "background app start failed"
+            );
+          });
+        return {
+          app_id: appId,
+          status: "building",
+          detail: "App start queued in background",
+          ports: { http: resolvedApp.ports.http, mcp: resolvedApp.ports.mcp }
+        };
+      }
+
       const result = await appLifecycleExecutor.startApp({
         appId,
         appDir: resolvedApp.appDir,
@@ -1763,7 +1891,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const workspaceDir = store.workspaceDir(workspaceId);
     let resolvedApp;
     try {
-      resolvedApp = resolveWorkspaceAppRuntime(workspaceDir, appId);
+      resolvedApp = resolveWorkspaceAppRuntime(workspaceDir, appId, {
+        store,
+        workspaceId
+      });
     } catch (error) {
       const statusCode =
         typeof error === "object" && error !== null && "statusCode" in error && typeof (error as { statusCode: unknown }).statusCode === "number"
@@ -2001,7 +2132,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const workspaceDir = store.workspaceDir(workspaceId);
 
     try {
-      const resolvedApp = resolveWorkspaceAppRuntime(workspaceDir, appId);
+      const resolvedApp = resolveWorkspaceAppRuntime(workspaceDir, appId, {
+        store,
+        workspaceId
+      });
       await appLifecycleExecutor.stopApp({
         appId,
         appDir: resolvedApp.appDir,
@@ -2013,6 +2147,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
     fs.rmSync(path.join(workspaceDir, "apps", appId), { recursive: true, force: true });
     removeWorkspaceApplication(workspaceDir, appId);
+    releaseWorkspaceAppPorts({ store, workspaceId, appId });
     store.deleteAppBuild({ workspaceId, appId });
     return {
       app_id: appId,
@@ -2030,6 +2165,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const workspace = store.getWorkspace(workspaceId);
     if (!workspace) {
       return sendError(reply, 404, "workspace not found");
+    }
+    const blockingApps = blockingWorkspaceApps({ store, workspaceId });
+    if (blockingApps.length > 0) {
+      return sendError(reply, 409, blockingWorkspaceAppsMessage(blockingApps));
     }
 
     let resolvedSessionId: string;

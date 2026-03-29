@@ -15,6 +15,7 @@ import { bootstrapResolvedApplications } from "./resolved-app-bootstrap.js";
 import {
   effectiveMcpServerPayloads,
   encodeWorkspaceMcpCatalog,
+  mergePreparedMcpServerPayloads,
   mcpServerIdMap,
   mcpServerMappingMetadata,
   workspaceMcpCatalogFingerprint,
@@ -747,19 +748,14 @@ export async function executeTsRunnerRequest(
       : [];
 
     if (runnerPrepPlan.bootstrapResolvedApplications && compiledPlan.resolved_applications.length > 0) {
-      const bootstrapServers = await deps.bootstrapApplications({
-        request,
-        workspaceDir: bootstrap.workspaceDir,
-        resolvedApplications: compiledPlan.resolved_applications
-      });
-      for (const server of bootstrapServers) {
-        const existingIndex = effectiveMcpServers.findIndex((s) => s.name === server.name);
-        if (existingIndex >= 0) {
-          effectiveMcpServers[existingIndex] = server;
-        } else {
-          effectiveMcpServers.push(server);
-        }
-      }
+      effectiveMcpServers = mergePreparedMcpServerPayloads(
+        effectiveMcpServers,
+        await deps.bootstrapApplications({
+          request,
+          workspaceDir: bootstrap.workspaceDir,
+          resolvedApplications: compiledPlan.resolved_applications
+        })
+      );
     }
 
     const runtimeConfig = deps.projectAgentRuntimeConfig(
@@ -779,6 +775,14 @@ export async function executeTsRunnerRequest(
         runtimeConfig,
         stagedSkillsChanged: stagedSkills.changed || stagedBrowserTools.changed
       });
+
+    const backendBaseUrl = harnessPlugin.backendBaseUrl({
+      workspaceId: request.workspace_id,
+      workspaceDir: bootstrap.workspaceDir
+    });
+    if (harnessAdapter.capabilities.requiresBackend && !backendBaseUrl.trim()) {
+      throw new Error(`backend base URL was not resolved for harness '${bootstrap.harness}'`);
+    }
 
     const harnessResult = await deps.runHarnessHost({
       harness: bootstrap.harness,
@@ -802,7 +806,7 @@ export async function executeTsRunnerRequest(
           mcpServers: effectiveMcpServers,
           sidecar
         }),
-        backendBaseUrl: harnessPlugin.backendBaseUrl(),
+        backendBaseUrl,
         timeoutSeconds: harnessPlugin.timeoutSeconds()
       }),
       workspaceDir: bootstrap.workspaceDir,

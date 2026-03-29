@@ -1,12 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import yaml from "js-yaml";
-
 import type { RuntimeStateStore } from "@holaboss/runtime-state-store";
+import yaml from "js-yaml";
 
 const APP_HTTP_PORT_BASE = 18080;
 const APP_MCP_PORT_BASE = 13100;
+const EMBEDDED_RUNTIME_FLAG = "HOLABOSS_EMBEDDED_RUNTIME";
 
 type StringMap = Record<string, unknown>;
 
@@ -75,11 +75,64 @@ function isRecord(value: unknown): value is StringMap {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function embeddedRuntimePortIsolationEnabled(): boolean {
+  return (process.env[EMBEDDED_RUNTIME_FLAG] ?? "").trim() === "1";
+}
+
 export function portsForAppIndex(index: number): { http: number; mcp: number } {
   return {
     http: APP_HTTP_PORT_BASE + index,
     mcp: APP_MCP_PORT_BASE + index
   };
+}
+
+function appPortAllocationKey(appId: string, kind: "http" | "mcp"): string {
+  return `${appId}__${kind}`;
+}
+
+export function portsForWorkspaceApp(params: {
+  appId: string;
+  fallbackIndex: number;
+  store?: RuntimeStateStore | null;
+  workspaceId?: string | null;
+  allocate?: boolean;
+}): { http: number; mcp: number } {
+  if (!embeddedRuntimePortIsolationEnabled() || !params.store || !params.workspaceId) {
+    return portsForAppIndex(params.fallbackIndex);
+  }
+
+  const resolvePort = (kind: "http" | "mcp"): number | null => {
+    const key = appPortAllocationKey(params.appId, kind);
+    if (params.allocate) {
+      return params.store!.allocateAppPort({ workspaceId: params.workspaceId!, appId: key }).port;
+    }
+    return params.store!.getAppPort({ workspaceId: params.workspaceId!, appId: key })?.port ?? null;
+  };
+
+  const http = resolvePort("http");
+  const mcp = resolvePort("mcp");
+  if (http && mcp) {
+    return { http, mcp };
+  }
+  return portsForAppIndex(params.fallbackIndex);
+}
+
+export function releaseWorkspaceAppPorts(params: {
+  appId: string;
+  store?: RuntimeStateStore | null;
+  workspaceId?: string | null;
+}): void {
+  if (!embeddedRuntimePortIsolationEnabled() || !params.store || !params.workspaceId) {
+    return;
+  }
+  params.store.deleteAppPort({
+    workspaceId: params.workspaceId,
+    appId: appPortAllocationKey(params.appId, "http")
+  });
+  params.store.deleteAppPort({
+    workspaceId: params.workspaceId,
+    appId: appPortAllocationKey(params.appId, "mcp")
+  });
 }
 
 export function readWorkspaceYamlDocument(workspaceDir: string): Record<string, unknown> {
@@ -215,7 +268,11 @@ export function appendWorkspaceApplication(
   });
 }
 
-export function resolveWorkspaceApp(workspaceDir: string, targetAppId: string): ResolvedWorkspaceApp {
+export function resolveWorkspaceApp(
+  workspaceDir: string,
+  targetAppId: string,
+  options?: { store?: RuntimeStateStore | null; workspaceId?: string | null; allocatePorts?: boolean }
+): ResolvedWorkspaceApp {
   const workspaceYamlPath = path.join(workspaceDir, "workspace.yaml");
   if (!fs.existsSync(workspaceYamlPath)) {
     throw new WorkspaceAppsError(404, "workspace.yaml not found");
@@ -235,14 +292,24 @@ export function resolveWorkspaceApp(workspaceDir: string, targetAppId: string): 
       configPath,
       appDir: path.join(workspaceDir, configPath ? path.dirname(configPath) : path.join("apps", appId)),
       index,
-      ports: portsForAppIndex(index)
+      ports: portsForWorkspaceApp({
+        appId,
+        fallbackIndex: index,
+        store: options?.store,
+        workspaceId: options?.workspaceId,
+        allocate: options?.allocatePorts === true
+      })
     };
   }
   throw new WorkspaceAppsError(404, `app '${targetAppId}' not found in workspace.yaml`);
 }
 
-export function resolveWorkspaceAppRuntime(workspaceDir: string, targetAppId: string): ResolvedWorkspaceAppRuntime {
-  const resolved = resolveWorkspaceApp(workspaceDir, targetAppId);
+export function resolveWorkspaceAppRuntime(
+  workspaceDir: string,
+  targetAppId: string,
+  options?: { store?: RuntimeStateStore | null; workspaceId?: string | null; allocatePorts?: boolean }
+): ResolvedWorkspaceAppRuntime {
+  const resolved = resolveWorkspaceApp(workspaceDir, targetAppId, options);
   const fullPath = path.join(workspaceDir, resolved.configPath);
   if (!fs.existsSync(fullPath)) {
     throw new WorkspaceAppsError(404, `app config not found: '${resolved.configPath}'`);
@@ -255,35 +322,21 @@ export function resolveWorkspaceAppRuntime(workspaceDir: string, targetAppId: st
 
 export function listWorkspaceApplicationPorts(
   workspaceDir: string,
-  store?: RuntimeStateStore,
-  workspaceId?: string
+  options?: { store?: RuntimeStateStore | null; workspaceId?: string | null; allocatePorts?: boolean }
 ): Record<string, { http: number; mcp: number }> {
-  if (store && workspaceId) {
-    const records = store.listAppPorts({ workspaceId });
-    if (records.length > 0) {
-      const result: Record<string, { http: number; mcp: number }> = {};
-      for (const record of records) {
-        const match = record.appId.match(/^(.+)__(http|mcp)$/);
-        if (!match) {
-          continue;
-        }
-        const appId = match[1]!;
-        const kind = match[2] as "http" | "mcp";
-        if (!result[appId]) {
-          result[appId] = { http: 0, mcp: 0 };
-        }
-        result[appId][kind] = record.port;
-      }
-      return result;
-    }
-  }
   const result: Record<string, { http: number; mcp: number }> = {};
   for (const [index, entry] of listWorkspaceApplications(workspaceDir).entries()) {
     const appId = typeof entry.app_id === "string" ? entry.app_id : "";
     if (!appId) {
       continue;
     }
-    result[appId] = portsForAppIndex(index);
+    result[appId] = portsForWorkspaceApp({
+      appId,
+      fallbackIndex: index,
+      store: options?.store,
+      workspaceId: options?.workspaceId,
+      allocate: options?.allocatePorts === true
+    });
   }
   return result;
 }

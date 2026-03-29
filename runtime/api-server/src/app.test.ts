@@ -127,6 +127,52 @@ test("healthz returns ok", async () => {
   store.close();
 });
 
+test("healthz still returns ok when remote bridge is enabled without product auth", async () => {
+  const root = makeTempDir("hb-runtime-api-bridge-disabled-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const previousBridge = process.env.PROACTIVE_ENABLE_REMOTE_BRIDGE;
+  const previousAuth = process.env.HOLABOSS_SANDBOX_AUTH_TOKEN;
+  const previousConfigPath = process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+
+  process.env.PROACTIVE_ENABLE_REMOTE_BRIDGE = "1";
+  delete process.env.HOLABOSS_SANDBOX_AUTH_TOKEN;
+  delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+
+  try {
+    const app = buildRuntimeApiServer({
+      store,
+      queueWorker: null,
+      cronWorker: null
+    });
+
+    const response = await app.inject({ method: "GET", url: "/healthz" });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), { ok: true });
+    await app.close();
+  } finally {
+    if (previousBridge === undefined) {
+      delete process.env.PROACTIVE_ENABLE_REMOTE_BRIDGE;
+    } else {
+      process.env.PROACTIVE_ENABLE_REMOTE_BRIDGE = previousBridge;
+    }
+    if (previousAuth === undefined) {
+      delete process.env.HOLABOSS_SANDBOX_AUTH_TOKEN;
+    } else {
+      process.env.HOLABOSS_SANDBOX_AUTH_TOKEN = previousAuth;
+    }
+    if (previousConfigPath === undefined) {
+      delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+    } else {
+      process.env.HOLABOSS_RUNTIME_CONFIG_PATH = previousConfigPath;
+    }
+    store.close();
+  }
+});
+
 test("browser capability routes proxy to the browser tool service", async () => {
   const root = makeTempDir("hb-runtime-api-browser-capability-");
   const store = new RuntimeStateStore({
@@ -134,15 +180,17 @@ test("browser capability routes proxy to the browser tool service", async () => 
     workspaceRoot: path.join(root, "workspace")
   });
   const browserToolService = {
-    async getStatus() {
+    async getStatus(context?: { workspaceId?: string | null }) {
       return {
         available: true,
+        workspace_id: context?.workspaceId ?? null,
         tools: [{ id: "browser_get_state" }]
       };
     },
-    async execute(toolId: string, args: Record<string, unknown>) {
+    async execute(toolId: string, args: Record<string, unknown>, context?: { workspaceId?: string | null }) {
       return {
         tool_id: toolId,
+        workspace_id: context?.workspaceId ?? null,
         args
       };
     }
@@ -151,17 +199,24 @@ test("browser capability routes proxy to the browser tool service", async () => 
 
   const statusResponse = await app.inject({
     method: "GET",
-    url: "/api/v1/capabilities/browser"
+    url: "/api/v1/capabilities/browser",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1"
+    }
   });
   assert.equal(statusResponse.statusCode, 200);
   assert.deepEqual(statusResponse.json(), {
     available: true,
+    workspace_id: "workspace-1",
     tools: [{ id: "browser_get_state" }]
   });
 
   const executeResponse = await app.inject({
     method: "POST",
     url: "/api/v1/capabilities/browser/tools/browser_click",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1"
+    },
     payload: {
       index: 3
     }
@@ -169,6 +224,7 @@ test("browser capability routes proxy to the browser tool service", async () => 
   assert.equal(executeResponse.statusCode, 200);
   assert.deepEqual(executeResponse.json(), {
     tool_id: "browser_click",
+    workspace_id: "workspace-1",
     args: {
       index: 3
     }
@@ -1429,6 +1485,93 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
   store.close();
 });
 
+test("app start queues lifecycle setup apps in background", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace Apps",
+    harness: "opencode",
+    status: "active"
+  });
+
+  const workspaceDir = path.join(workspaceRoot, workspace.id);
+  fs.mkdirSync(path.join(workspaceDir, "apps", "app-a"), { recursive: true });
+  fs.writeFileSync(
+    path.join(workspaceDir, "apps", "app-a", "app.runtime.yaml"),
+    [
+      "app_id: app-a",
+      "mcp:",
+      "  port: 4100",
+      "healthchecks:",
+      "  mcp:",
+      "    path: /health",
+      "    timeout_s: 30",
+      "lifecycle:",
+      "  setup: npm install",
+      "  start: npm run start"
+    ].join("\n"),
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(workspaceDir, "workspace.yaml"),
+    [
+      "applications:",
+      "  - app_id: app-a",
+      "    config_path: apps/app-a/app.runtime.yaml"
+    ].join("\n"),
+    "utf8"
+  );
+
+  const calls: Array<Record<string, unknown>> = [];
+  const executor: AppLifecycleExecutorLike = {
+    async startApp(params) {
+      calls.push({ action: "start", ...params });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return {
+        app_id: params.appId,
+        status: "started",
+        detail: "app started with lifecycle manager",
+        ports: { http: params.httpPort ?? 18080, mcp: params.mcpPort ?? 13100 }
+      };
+    },
+    async stopApp() {
+      throw new Error("not used");
+    },
+    async shutdownAll() {
+      throw new Error("not used");
+    }
+  };
+  const app = buildTestRuntimeApiServer({ store, appLifecycleExecutor: executor });
+
+  const started = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/app-a/start",
+    payload: { workspace_id: workspace.id, holaboss_user_id: "user-1" }
+  });
+
+  assert.equal(started.statusCode, 200);
+  assert.deepEqual(started.json(), {
+    app_id: "app-a",
+    status: "building",
+    detail: "App start queued in background",
+    ports: { http: 18080, mcp: 13100 }
+  });
+  assert.equal(store.getAppBuild({ workspaceId: workspace.id, appId: "app-a" })?.status, "building");
+
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.equal(store.getAppBuild({ workspaceId: workspace.id, appId: "app-a" })?.status, "running");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.skipSetup, false);
+
+  await app.close();
+  store.close();
+});
+
 test("app setup route does not start duplicate setup for an app already building", async () => {
   const root = makeTempDir("hb-runtime-api-");
   const workspaceRoot = path.join(root, "workspace");
@@ -1490,6 +1633,63 @@ test("app setup route does not start duplicate setup for an app already building
 
   await app.close();
   store.close();
+});
+
+test("app setup timeout honors configured timeout", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-timeout",
+    name: "Workspace Apps",
+    harness: "opencode",
+    status: "active"
+  });
+  const workspaceDir = path.join(workspaceRoot, workspace.id);
+  const appDir = path.join(workspaceDir, "apps", "app-a");
+  fs.mkdirSync(appDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(appDir, "app.runtime.yaml"),
+    [
+      "app_id: app-a",
+      "mcp:",
+      "  port: 4100",
+      "lifecycle:",
+      "  setup: 'node -e \"setTimeout(() => {}, 1000)\"'"
+    ].join("\n"),
+    "utf8"
+  );
+
+  const previousTimeout = process.env.HB_APP_SETUP_TIMEOUT_MS;
+  process.env.HB_APP_SETUP_TIMEOUT_MS = "50";
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/apps/app-a/setup",
+      payload: { workspace_id: workspace.id }
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().status, "setup_started");
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const build = store.getAppBuild({ workspaceId: workspace.id, appId: "app-a" });
+    assert.equal(build?.status, "failed");
+    assert.equal(build?.error, "setup timed out after 1s");
+  } finally {
+    if (previousTimeout === undefined) {
+      delete process.env.HB_APP_SETUP_TIMEOUT_MS;
+    } else {
+      process.env.HB_APP_SETUP_TIMEOUT_MS = previousTimeout;
+    }
+    await app.close();
+    store.close();
+  }
 });
 
 test("internal opencode app bootstrap route starts resolved apps and returns MCP urls", async () => {
@@ -2327,6 +2527,58 @@ test("queue route persists input, user message, and runtime state", async () => 
   assert.equal(history.length, 1);
   assert.equal(history[0].role, "user");
   assert.equal(history[0].text, "hello world");
+
+  await app.close();
+  store.close();
+});
+
+test("queue route rejects inputs while workspace apps are still building", async () => {
+  const root = makeTempDir("hb-runtime-api-queue-app-build-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+
+  const workspaceDir = store.workspaceDir(workspace.id);
+  fs.mkdirSync(path.join(workspaceDir, "apps", "gmail"), { recursive: true });
+  fs.writeFileSync(
+    path.join(workspaceDir, "workspace.yaml"),
+    [
+      "applications:",
+      "  - app_id: gmail",
+      "    config_path: apps/gmail/app.runtime.yaml",
+      "    lifecycle:",
+      "      setup: npm run build"
+    ].join("\n"),
+    "utf8"
+  );
+  store.upsertAppBuild({
+    workspaceId: workspace.id,
+    appId: "gmail",
+    status: "building"
+  });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/agent-sessions/queue",
+    payload: {
+      workspace_id: workspace.id,
+      text: "hello world"
+    }
+  });
+
+  assert.equal(response.statusCode, 409);
+  assert.equal(response.json().detail, "workspace apps are still building: gmail (building)");
+  assert.equal(store.listRuntimeStates(workspace.id).length, 0);
 
   await app.close();
   store.close();

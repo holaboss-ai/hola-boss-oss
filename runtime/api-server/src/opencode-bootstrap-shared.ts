@@ -9,10 +9,7 @@ import {
   appBuildHasCompletedSetup,
   type AppLifecycleExecutorLike
 } from "./app-lifecycle-worker.js";
-import type { ResolvedApplicationRuntime } from "./workspace-apps.js";
-
-const APP_HTTP_PORT_BASE_FALLBACK = 18080;
-const APP_MCP_PORT_BASE_FALLBACK = 13100;
+import { portsForWorkspaceApp, type ResolvedApplicationRuntime } from "./workspace-apps.js";
 
 type StringMap = Record<string, unknown>;
 
@@ -220,24 +217,17 @@ export async function bootstrapResolvedApplications(params: {
     }
     seenAppIds.add(resolvedApp.appId);
   }
-  const preparedStarts = parsedResolvedApps.map((resolvedApp, index) => {
-    const appDir = appDirForResolvedApplication(resolvedWorkspaceDir, resolvedApp);
-    let ports: { http: number; mcp: number };
-    if (params.store && params.workspaceId) {
-      const httpRecord = params.store.allocateAppPort({
-        workspaceId: params.workspaceId,
-        appId: `${resolvedApp.appId}__http`
-      });
-      const mcpRecord = params.store.allocateAppPort({
-        workspaceId: params.workspaceId,
-        appId: `${resolvedApp.appId}__mcp`
-      });
-      ports = { http: httpRecord.port, mcp: mcpRecord.port };
-    } else {
-      ports = { http: APP_HTTP_PORT_BASE_FALLBACK + index, mcp: APP_MCP_PORT_BASE_FALLBACK + index };
-    }
-    return { resolvedApp, appDir, ports };
-  });
+  const preparedStarts = parsedResolvedApps.map((resolvedApp, index) => ({
+    resolvedApp,
+    appDir: appDirForResolvedApplication(resolvedWorkspaceDir, resolvedApp),
+    ports: portsForWorkspaceApp({
+      appId: resolvedApp.appId,
+      fallbackIndex: index,
+      store: params.store,
+      workspaceId: params.workspaceId,
+      allocate: true
+    })
+  }));
   const applications: OpencodeBootstrapApplication[] = [];
   for (const preparedStart of preparedStarts) {
     let build =

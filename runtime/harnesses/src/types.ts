@@ -100,7 +100,6 @@ export interface HarnessBackendRestartRequest {
   allow_reuse_existing: boolean;
   host: string;
   port: number;
-  readiness_url: string;
   ready_timeout_s: number;
 }
 

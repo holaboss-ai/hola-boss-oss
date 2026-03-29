@@ -599,7 +599,7 @@ export function FileExplorerPane() {
         <div ref={containerRef} className="flex h-full min-h-0">
           {fileBookmarks.length > 0 ? (
             <aside className="theme-subtle-surface flex w-12 flex-col items-center gap-2 border-r border-neon-green/15 py-3">
-              <div className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto px-1">
+              <div className="chat-scrollbar-hidden flex min-h-0 flex-1 flex-col items-center gap-2 overflow-x-hidden overflow-y-auto px-1">
                 {fileBookmarks.map((bookmark) => {
                   const isActive = activeBookmarkId === bookmark.targetPath;
                   const Icon = bookmark.isDirectory ? Folder : FileText;
@@ -658,9 +658,7 @@ export function FileExplorerPane() {
                     </button>
                   ) : null}
                 </div>
-                <span className="theme-control-surface min-w-0 flex-1 truncate rounded-full border border-neon-green/35 px-2.5 py-1 text-[11px] tracking-wide text-neon-green/90">
-                  {currentPath ? getFolderName(currentPath) : "Loading..."}
-                </span>
+                <div className="min-w-0 flex-1" />
                 <IconButton
                   icon={<Star size={13} className={activeBookmark ? "fill-current" : ""} />}
                   label={activeBookmark ? "Remove bookmark" : "Add bookmark"}
@@ -676,7 +674,7 @@ export function FileExplorerPane() {
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   className="embedded-input w-full bg-transparent text-xs text-text-main/90 outline-none placeholder:text-text-muted/40"
-                  placeholder={isCompact ? "Search files" : currentPath || "Search files"}
+                  placeholder="Search files"
                 />
               </div>
               <div className="mt-2 truncate text-[10px] uppercase tracking-[0.16em] text-text-muted/50">
@@ -692,7 +690,7 @@ export function FileExplorerPane() {
               </div>
             ) : null}
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 pt-1">
+            <div className="chat-scrollbar-hidden min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pb-2 pt-1">
               {loading ? <div className="px-3 py-4 text-xs text-text-muted/75">Loading directory...</div> : null}
 
               {error ? <div className="px-3 py-3 text-xs text-rose-300/90">{error}</div> : null}

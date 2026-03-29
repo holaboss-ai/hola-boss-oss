@@ -13,9 +13,17 @@ export {
   type DesktopBrowserToolId,
 } from "../../harnesses/src/desktop-browser-tools.js";
 
+export interface DesktopBrowserToolExecutionContext {
+  workspaceId?: string | null;
+}
+
 export interface DesktopBrowserToolServiceLike {
-  getStatus(): Promise<Record<string, unknown>>;
-  execute(toolId: string, args: Record<string, unknown>): Promise<Record<string, unknown>>;
+  getStatus(context?: DesktopBrowserToolExecutionContext): Promise<Record<string, unknown>>;
+  execute(
+    toolId: string,
+    args: Record<string, unknown>,
+    context?: DesktopBrowserToolExecutionContext
+  ): Promise<Record<string, unknown>>;
 }
 
 export interface DesktopBrowserToolServiceOptions {
@@ -27,6 +35,7 @@ type BrowserFetchOptions = {
   method: "GET" | "POST";
   path: string;
   body?: Record<string, unknown>;
+  workspaceId?: string | null;
 };
 
 const INTERACTIVE_ELEMENTS_SELECTOR = [
@@ -91,11 +100,19 @@ function browserToolDefinition(toolId: string): DesktopBrowserToolDefinition | n
   return DESKTOP_BROWSER_TOOL_DEFINITIONS.find((tool) => tool.id === toolId) ?? null;
 }
 
-function browserToolHeaders(config: ProductRuntimeConfig): Record<string, string> {
-  return {
+function browserToolHeaders(
+  config: ProductRuntimeConfig,
+  context: DesktopBrowserToolExecutionContext = {}
+): Record<string, string> {
+  const headers: Record<string, string> = {
     "content-type": "application/json; charset=utf-8",
     "x-holaboss-desktop-token": config.desktopBrowserAuthToken
   };
+  const workspaceId = typeof context.workspaceId === "string" ? context.workspaceId.trim() : "";
+  if (workspaceId) {
+    headers["x-holaboss-workspace-id"] = workspaceId;
+  }
+  return headers;
 }
 
 function browserBaseUrl(config: ProductRuntimeConfig): string {
@@ -308,7 +325,7 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
         }));
   }
 
-  async getStatus(): Promise<Record<string, unknown>> {
+  async getStatus(context: DesktopBrowserToolExecutionContext = {}): Promise<Record<string, unknown>> {
     const config = this.#resolveConfig();
     const configured = Boolean(
       config.desktopBrowserEnabled && config.desktopBrowserUrl.trim() && config.desktopBrowserAuthToken.trim()
@@ -316,7 +333,7 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
     let reachable = false;
     if (configured) {
       try {
-        await this.#browserFetch(config, { method: "GET", path: "/health" });
+        await this.#browserFetch(config, { method: "GET", path: "/health", workspaceId: context.workspaceId });
         reachable = true;
       } catch {
         reachable = false;
@@ -331,7 +348,11 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
     };
   }
 
-  async execute(toolId: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+  async execute(
+    toolId: string,
+    args: Record<string, unknown>,
+    context: DesktopBrowserToolExecutionContext = {}
+  ): Promise<Record<string, unknown>> {
     const definition = browserToolDefinition(toolId);
     if (!definition) {
       throw new DesktopBrowserToolServiceError(404, "browser_tool_unknown", `Unknown browser tool '${toolId}'`);
@@ -346,13 +367,14 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
         const result = await this.#browserFetch(config, {
           method: "POST",
           path: "/navigate",
-          body: { url }
+          body: { url },
+          workspaceId: context.workspaceId
         });
         return { ok: true, navigation: result };
       }
       case "browser_get_state": {
-        const page = await this.#browserFetch(config, { method: "GET", path: "/page" });
-        const state = await this.#evaluate(config, interactiveElementsExpression());
+        const page = await this.#browserFetch(config, { method: "GET", path: "/page", workspaceId: context.workspaceId });
+        const state = await this.#evaluate(config, interactiveElementsExpression(), context);
         const payload: Record<string, unknown> = {
           ok: true,
           page,
@@ -362,15 +384,16 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
           payload.screenshot = await this.#browserFetch(config, {
             method: "POST",
             path: "/screenshot",
-            body: { format: "png" }
+            body: { format: "png" },
+            workspaceId: context.workspaceId
           });
         }
         return payload;
       }
       case "browser_click": {
         const index = requiredPositiveInteger(args.index, "index");
-        const result = await this.#evaluate(config, clickExpression(index));
-        const page = await this.#browserFetch(config, { method: "GET", path: "/page" });
+        const result = await this.#evaluate(config, clickExpression(index), context);
+        const page = await this.#browserFetch(config, { method: "GET", path: "/page", workspaceId: context.workspaceId });
         return { ok: true, action: result, page };
       }
       case "browser_type": {
@@ -383,15 +406,16 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
             text,
             clear: optionalBoolean(args.clear, true),
             submit: optionalBoolean(args.submit, false)
-          })
+          }),
+          context
         );
-        const page = await this.#browserFetch(config, { method: "GET", path: "/page" });
+        const page = await this.#browserFetch(config, { method: "GET", path: "/page", workspaceId: context.workspaceId });
         return { ok: true, action: result, page };
       }
       case "browser_press": {
         const key = requiredString(args.key, "key");
-        const result = await this.#evaluate(config, pressExpression(key));
-        const page = await this.#browserFetch(config, { method: "GET", path: "/page" });
+        const result = await this.#evaluate(config, pressExpression(key), context);
+        const page = await this.#browserFetch(config, { method: "GET", path: "/page", workspaceId: context.workspaceId });
         return { ok: true, action: result, page };
       }
       case "browser_scroll": {
@@ -399,23 +423,23 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
         const amount = optionalInteger(args.amount) ?? 600;
         const direction = args.direction === "up" ? "up" : "down";
         const deltaY = explicitDelta ?? (direction === "up" ? -Math.abs(amount) : Math.abs(amount));
-        const result = await this.#evaluate(config, scrollExpression(deltaY));
-        const page = await this.#browserFetch(config, { method: "GET", path: "/page" });
+        const result = await this.#evaluate(config, scrollExpression(deltaY), context);
+        const page = await this.#browserFetch(config, { method: "GET", path: "/page", workspaceId: context.workspaceId });
         return { ok: true, action: result, page };
       }
       case "browser_back": {
-        const result = await this.#evaluate(config, historyExpression("back"));
-        const page = await this.#browserFetch(config, { method: "GET", path: "/page" });
+        const result = await this.#evaluate(config, historyExpression("back"), context);
+        const page = await this.#browserFetch(config, { method: "GET", path: "/page", workspaceId: context.workspaceId });
         return { ok: true, action: result, page };
       }
       case "browser_forward": {
-        const result = await this.#evaluate(config, historyExpression("forward"));
-        const page = await this.#browserFetch(config, { method: "GET", path: "/page" });
+        const result = await this.#evaluate(config, historyExpression("forward"), context);
+        const page = await this.#browserFetch(config, { method: "GET", path: "/page", workspaceId: context.workspaceId });
         return { ok: true, action: result, page };
       }
       case "browser_reload": {
-        const result = await this.#evaluate(config, reloadExpression());
-        const page = await this.#browserFetch(config, { method: "GET", path: "/page" });
+        const result = await this.#evaluate(config, reloadExpression(), context);
+        const page = await this.#browserFetch(config, { method: "GET", path: "/page", workspaceId: context.workspaceId });
         return { ok: true, action: result, page };
       }
       case "browser_screenshot": {
@@ -429,24 +453,30 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
             body: {
               format,
               ...(quality !== null ? { quality } : {})
-            }
+            },
+            workspaceId: context.workspaceId
           })
         };
       }
       case "browser_list_tabs": {
         return {
           ok: true,
-          tabs: await this.#browserFetch(config, { method: "GET", path: "/tabs" })
+          tabs: await this.#browserFetch(config, { method: "GET", path: "/tabs", workspaceId: context.workspaceId })
         };
       }
     }
   }
 
-  async #evaluate(config: ProductRuntimeConfig, expression: string): Promise<Record<string, unknown>> {
+  async #evaluate(
+    config: ProductRuntimeConfig,
+    expression: string,
+    context: DesktopBrowserToolExecutionContext = {}
+  ): Promise<Record<string, unknown>> {
     const response = await this.#browserFetch(config, {
       method: "POST",
       path: "/evaluate",
-      body: evaluateExpressionPayload(expression)
+      body: evaluateExpressionPayload(expression),
+      workspaceId: context.workspaceId
     });
     const payload = asRecord(response);
     return asRecord(payload?.result) ?? {};
@@ -456,7 +486,7 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
     const requestUrl = `${browserBaseUrl(config)}${options.path}`;
     const response = await this.#fetch(requestUrl, {
       method: options.method,
-      headers: browserToolHeaders(config),
+      headers: browserToolHeaders(config, { workspaceId: options.workspaceId }),
       body: options.body ? JSON.stringify(options.body) : undefined
     });
     let payload: unknown = null;

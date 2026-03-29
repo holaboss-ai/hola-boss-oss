@@ -84,7 +84,7 @@ test("restartOpencodeSidecar reuses a healthy matching sidecar", async () => {
   assert.deepEqual(result, {
     outcome: "reused",
     pid: 321,
-    url: request.readiness_url
+    url: "http://127.0.0.1:4096"
   });
 });
 
@@ -132,7 +132,7 @@ test("restartOpencodeSidecar restarts sidecar, writes state, and uses log file",
   assert.deepEqual(result, {
     outcome: "started",
     pid: 789,
-    url: request.readiness_url
+    url: "http://127.0.0.1:4096"
   });
   assert.deepEqual(termSignals, [111]);
   assert.deepEqual(killSignals, []);
@@ -150,7 +150,7 @@ test("restartOpencodeSidecar restarts sidecar, writes state, and uses log file",
     version: 1,
     sidecar: {
       pid: 789,
-      url: request.readiness_url,
+      url: "http://127.0.0.1:4096",
       workspace_id: request.workspace_id,
       config_fingerprint: request.config_fingerprint
     }
@@ -252,7 +252,7 @@ test("runOpencodeSidecarCli writes JSON response for a valid request", async () 
         return {
           outcome: "started",
           pid: 999,
-          url: request.readiness_url
+          url: "http://127.0.0.1:4096"
         };
       }
     }
@@ -263,7 +263,7 @@ test("runOpencodeSidecarCli writes JSON response for a valid request", async () 
   assert.deepEqual(JSON.parse(stdout), {
     outcome: "started",
     pid: 999,
-    url: request.readiness_url
+    url: "http://127.0.0.1:4096"
   });
 });
 

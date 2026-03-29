@@ -32,6 +32,13 @@ export function WorkspaceSelectionProvider({ children }: { children: ReactNode }
     }
   }, [selectedWorkspaceId]);
 
+  useEffect(() => {
+    if (!window.electronAPI) {
+      return;
+    }
+    void window.electronAPI.browser.setActiveWorkspace(selectedWorkspaceId || null);
+  }, [selectedWorkspaceId]);
+
   const value = useMemo(
     () => ({
       selectedWorkspaceId,

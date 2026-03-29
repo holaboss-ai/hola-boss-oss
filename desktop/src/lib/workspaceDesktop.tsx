@@ -12,8 +12,30 @@ import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 const ONBOARDING_ACTIVE_STATUSES = new Set(["pending", "awaiting_confirmation", "in_progress"]);
 const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
-type TemplateSourceMode = "local" | "marketplace";
+const DEFAULT_WORKSPACE_HARNESS: WorkspaceHarnessId = "opencode";
+type TemplateSourceMode = "local" | "marketplace" | "empty";
 type LifecycleStepState = "pending" | "current" | "done" | "error";
+
+export interface WorkspaceHarnessOption {
+  id: "opencode" | "pi";
+  label: string;
+  description: string;
+}
+
+type WorkspaceHarnessId = WorkspaceHarnessOption["id"];
+
+const WORKSPACE_HARNESS_OPTIONS: WorkspaceHarnessOption[] = [
+  {
+    id: "opencode",
+    label: "OpenCode",
+    description: "Default harness with backend bootstrapping and structured output support."
+  },
+  {
+    id: "pi",
+    label: "Pi",
+    description: "Lean harness path without backend bootstrapping."
+  }
+];
 
 export interface DesktopLifecycleStep {
   id: "signed_in" | "runtime_provisioned" | "sandbox_assigned" | "desktop_browser_ready" | "workspace_ready";
@@ -31,9 +53,15 @@ interface WorkspaceDesktopContextValue {
   selectedWorkspace: WorkspaceRecordPayload | null;
   installedApps: WorkspaceInstalledAppDefinition[];
   isLoadingInstalledApps: boolean;
+  isActivatingWorkspace: boolean;
+  workspaceAppsReady: boolean;
+  workspaceBlockingReason: string;
   refreshInstalledApps: () => Promise<void>;
   templateSourceMode: TemplateSourceMode;
   setTemplateSourceMode: (value: TemplateSourceMode) => void;
+  createHarnessOptions: WorkspaceHarnessOption[];
+  selectedCreateHarness: WorkspaceHarnessId;
+  setSelectedCreateHarness: (value: string) => void;
   selectedTemplateFolder: TemplateFolderSelectionPayload | null;
   marketplaceTemplates: TemplateMetadataPayload[];
   selectedMarketplaceTemplate: TemplateMetadataPayload | null;
@@ -44,6 +72,7 @@ interface WorkspaceDesktopContextValue {
   isLoadingBootstrap: boolean;
   isRefreshing: boolean;
   isCreatingWorkspace: boolean;
+  deletingWorkspaceId: string | null;
   isLoadingMarketplaceTemplates: boolean;
   canUseMarketplaceTemplates: boolean;
   marketplaceTemplatesError: string;
@@ -60,6 +89,7 @@ interface WorkspaceDesktopContextValue {
   refreshWorkspaceData: () => Promise<void>;
   chooseTemplateFolder: () => Promise<void>;
   createWorkspace: () => Promise<void>;
+  deleteWorkspace: (workspaceId: string) => Promise<void>;
 }
 
 const WorkspaceDesktopContext = createContext<WorkspaceDesktopContextValue | null>(null);
@@ -75,6 +105,10 @@ function sessionUserId(session: AuthSession | null): string {
   }
 
   return typeof maybeUser.id === "string" ? maybeUser.id : "";
+}
+
+function normalizeWorkspaceHarness(value: string | null | undefined): WorkspaceHarnessId {
+  return value?.trim().toLowerCase() === "pi" ? "pi" : "opencode";
 }
 
 function normalizeErrorMessage(error: unknown) {
@@ -122,6 +156,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [hasHydratedWorkspaceList, setHasHydratedWorkspaceList] = useState(false);
   const [installedApps, setInstalledApps] = useState<WorkspaceInstalledAppDefinition[]>([]);
   const [templateSourceMode, setTemplateSourceModeState] = useState<TemplateSourceMode>("local");
+  const [selectedCreateHarness, setSelectedCreateHarnessState] = useState<WorkspaceHarnessId>(DEFAULT_WORKSPACE_HARNESS);
   const [selectedTemplateFolder, setSelectedTemplateFolder] = useState<TemplateFolderSelectionPayload | null>(null);
   const [marketplaceTemplates, setMarketplaceTemplates] = useState<TemplateMetadataPayload[]>([]);
   const [selectedMarketplaceTemplateName, setSelectedMarketplaceTemplateName] = useState("");
@@ -129,15 +164,19 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [isLoadingBootstrap, setIsLoadingBootstrap] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
+  const [deletingWorkspaceId, setDeletingWorkspaceId] = useState<string | null>(null);
   const [isLoadingMarketplaceTemplates, setIsLoadingMarketplaceTemplates] = useState(false);
   const [marketplaceTemplatesError, setMarketplaceTemplatesError] = useState("");
   const [workspaceErrorMessage, setWorkspaceErrorMessage] = useState("");
   const [isLoadingInstalledApps, setIsLoadingInstalledApps] = useState(false);
+  const [isActivatingWorkspace, setIsActivatingWorkspace] = useState(false);
+  const [workspaceAppsReady, setWorkspaceAppsReady] = useState(false);
+  const [workspaceBlockingReason, setWorkspaceBlockingReason] = useState("");
   const [recentAuthCompletedAt, setRecentAuthCompletedAt] = useState<number | null>(null);
 
   const isSignedIn = Boolean(sessionUserId(session));
   const resolvedUserId = runtimeConfig?.userId?.trim() || sessionUserId(session);
-  const canUseMarketplaceTemplates = isSignedIn && Boolean(runtimeConfig?.authTokenPresent);
+  const canUseMarketplaceTemplates = Boolean(runtimeConfig?.authTokenPresent) && Boolean((resolvedUserId || "").trim());
   const selectedWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
     [selectedWorkspaceId, workspaces]
@@ -151,10 +190,16 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const sessionTargetId = onboardingModeActive
     ? (selectedWorkspace?.onboarding_session_id || "").trim()
     : (selectedWorkspace?.main_session_id || "").trim();
+  const runtimeReadyForWorkspaceData = runtimeStatus?.status === "running";
 
   function setTemplateSourceMode(value: TemplateSourceMode) {
     setWorkspaceErrorMessage("");
     setTemplateSourceModeState(value);
+  }
+
+  function setSelectedCreateHarness(value: string) {
+    setWorkspaceErrorMessage("");
+    setSelectedCreateHarnessState(normalizeWorkspaceHarness(value));
   }
 
   function selectMarketplaceTemplate(templateName: string) {
@@ -162,19 +207,38 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     setSelectedMarketplaceTemplateName(templateName);
   }
 
+  function applyWorkspaceLifecycle(lifecycle: WorkspaceLifecyclePayload) {
+    setInstalledApps(hydrateInstalledWorkspaceApps(lifecycle.applications));
+    setWorkspaceAppsReady(lifecycle.ready);
+    setWorkspaceBlockingReason((lifecycle.phase_detail || lifecycle.reason || "").trim());
+    setWorkspaces((current) => {
+      const nextWorkspace = lifecycle.workspace;
+      const existingIndex = current.findIndex((workspace) => workspace.id === nextWorkspace.id);
+      if (existingIndex === -1) {
+        return [nextWorkspace, ...current];
+      }
+      const next = [...current];
+      next[existingIndex] = { ...next[existingIndex], ...nextWorkspace };
+      return next;
+    });
+  }
+
   async function refreshInstalledApps() {
     if (!selectedWorkspaceId) {
       setInstalledApps([]);
       setIsLoadingInstalledApps(false);
+      setWorkspaceAppsReady(false);
+      setWorkspaceBlockingReason("");
       return;
     }
 
     setIsLoadingInstalledApps(true);
     try {
-      const response = await window.electronAPI.workspace.listInstalledApps(selectedWorkspaceId);
-      setInstalledApps(hydrateInstalledWorkspaceApps(response.apps));
+      const response = await window.electronAPI.workspace.getWorkspaceLifecycle(selectedWorkspaceId);
+      applyWorkspaceLifecycle(response);
     } catch (error) {
       setInstalledApps([]);
+      setWorkspaceAppsReady(false);
       setWorkspaceErrorMessage((current) => current || normalizeErrorMessage(error));
     } finally {
       setIsLoadingInstalledApps(false);
@@ -257,17 +321,21 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     };
   }, []);
 
-  async function loadWorkspaceData(preserveSelection = true) {
+  async function loadWorkspaceData(options: { preserveSelection?: boolean; allowEmpty?: boolean } = {}) {
+    const { preserveSelection = true, allowEmpty = false } = options;
     const workspaceResponse = await window.electronAPI.workspace.listWorkspaces();
     const nextWorkspaces = workspaceResponse.items;
-    setWorkspaces(nextWorkspaces);
+    const shouldKeepPreviousWorkspaces = !allowEmpty && nextWorkspaces.length === 0 && workspaces.length > 0;
+    const resolvedWorkspaces = shouldKeepPreviousWorkspaces ? workspaces : nextWorkspaces;
+
+    setWorkspaces(resolvedWorkspaces);
 
     setSelectedWorkspaceId((current) => {
       const stored = preserveSelection ? current : "";
-      if (stored && nextWorkspaces.some((workspace) => workspace.id === stored)) {
+      if (stored && resolvedWorkspaces.some((workspace) => workspace.id === stored)) {
         return stored;
       }
-      return nextWorkspaces[0]?.id ?? "";
+      return resolvedWorkspaces[0]?.id ?? "";
     });
   }
 
@@ -281,10 +349,15 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       ]);
       setRuntimeConfig(nextRuntimeConfig);
       setRuntimeStatus(nextRuntimeStatus);
-      await loadWorkspaceData(true);
+      if (nextRuntimeStatus.status === "running") {
+        await loadWorkspaceData({ preserveSelection: true });
+      } else if (nextRuntimeStatus.status === "error" && nextRuntimeStatus.lastError.trim()) {
+        setWorkspaceErrorMessage(nextRuntimeStatus.lastError.trim());
+      }
     } catch (error) {
       setWorkspaceErrorMessage(normalizeErrorMessage(error));
     } finally {
+      setHasHydratedWorkspaceList((current) => current || workspaces.length > 0);
       setIsRefreshing(false);
     }
   }
@@ -297,18 +370,27 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       let response: WorkspaceResponsePayload;
       if (templateSourceMode === "marketplace") {
         if (!canUseMarketplaceTemplates) {
-          throw new Error("Sign in and finish runtime setup to use marketplace templates.");
+          throw new Error("Runtime binding is required to use marketplace templates.");
         }
         if (!resolvedUserId) {
-          throw new Error("Signed-in user id is required for marketplace templates.");
+          throw new Error("A runtime user id is required for marketplace templates.");
         }
         if (!selectedMarketplaceTemplate) {
           throw new Error("Choose a marketplace template first.");
         }
         response = await window.electronAPI.workspace.createWorkspace({
           holaboss_user_id: resolvedUserId,
+          harness: selectedCreateHarness,
           name: trimmedWorkspaceName,
+          template_mode: "template",
           template_name: selectedMarketplaceTemplate.name
+        });
+      } else if (templateSourceMode === "empty") {
+        response = await window.electronAPI.workspace.createWorkspace({
+          holaboss_user_id: resolvedUserId || LOCAL_OSS_TEMPLATE_USER_ID,
+          harness: selectedCreateHarness,
+          name: trimmedWorkspaceName,
+          template_mode: "empty"
         });
       } else {
         if (!selectedTemplateFolder?.rootPath) {
@@ -316,17 +398,37 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
         }
         response = await window.electronAPI.workspace.createWorkspace({
           holaboss_user_id: resolvedUserId || LOCAL_OSS_TEMPLATE_USER_ID,
+          harness: selectedCreateHarness,
           name: trimmedWorkspaceName,
+          template_mode: "template",
           template_root_path: selectedTemplateFolder.rootPath
         });
       }
       setNewWorkspaceName("");
-      await loadWorkspaceData(false);
+      await loadWorkspaceData({ preserveSelection: false, allowEmpty: true });
       setSelectedWorkspaceId(response.workspace.id);
     } catch (error) {
       setWorkspaceErrorMessage(normalizeErrorMessage(error));
     } finally {
       setIsCreatingWorkspace(false);
+    }
+  }
+
+  async function deleteWorkspace(workspaceId: string) {
+    const trimmedWorkspaceId = workspaceId.trim();
+    if (!trimmedWorkspaceId) {
+      throw new Error("workspaceId is required");
+    }
+    setDeletingWorkspaceId(trimmedWorkspaceId);
+    setWorkspaceErrorMessage("");
+    try {
+      await window.electronAPI.workspace.deleteWorkspace(trimmedWorkspaceId);
+      await loadWorkspaceData({ preserveSelection: true, allowEmpty: true });
+    } catch (error) {
+      setWorkspaceErrorMessage(normalizeErrorMessage(error));
+      throw error;
+    } finally {
+      setDeletingWorkspaceId((current) => (current === trimmedWorkspaceId ? null : current));
     }
   }
 
@@ -394,11 +496,28 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   useEffect(() => {
     let cancelled = false;
 
+    if (isLoadingBootstrap) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (!runtimeReadyForWorkspaceData) {
+      setIsRefreshing(false);
+      setHasHydratedWorkspaceList((current) => current || workspaces.length > 0);
+      if (runtimeStatus?.status === "error" && runtimeStatus.lastError.trim()) {
+        setWorkspaceErrorMessage((current) => current || runtimeStatus.lastError.trim());
+      }
+      return () => {
+        cancelled = true;
+      };
+    }
+
     async function refresh() {
       setIsRefreshing(true);
       setWorkspaceErrorMessage("");
       try {
-        await loadWorkspaceData(true);
+        await loadWorkspaceData({ preserveSelection: true });
       } catch (error) {
         if (!cancelled) {
           setWorkspaceErrorMessage(normalizeErrorMessage(error));
@@ -415,7 +534,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     return () => {
       cancelled = true;
     };
-  }, [resolvedUserId]);
+  }, [isLoadingBootstrap, resolvedUserId, runtimeReadyForWorkspaceData, runtimeStatus?.lastError, runtimeStatus?.status, workspaces.length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -448,51 +567,56 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   }, [session]);
 
   useEffect(() => {
-    if (!selectedWorkspaceId) {
+    if (!selectedWorkspaceId || !runtimeReadyForWorkspaceData) {
       setInstalledApps([]);
       setIsLoadingInstalledApps(false);
+      setWorkspaceAppsReady(false);
+      setWorkspaceBlockingReason("");
       return;
     }
 
     let cancelled = false;
 
-    async function loadInstalledApps() {
+    async function activateSelectedWorkspace() {
       setIsLoadingInstalledApps(true);
+      setIsActivatingWorkspace(true);
       try {
-        const response = await window.electronAPI.workspace.listInstalledApps(selectedWorkspaceId);
+        const response = await window.electronAPI.workspace.activateWorkspace(selectedWorkspaceId);
         if (!cancelled) {
-          setInstalledApps(hydrateInstalledWorkspaceApps(response.apps));
+          applyWorkspaceLifecycle(response);
         }
       } catch (error) {
         if (!cancelled) {
           setInstalledApps([]);
+          setWorkspaceAppsReady(false);
           setWorkspaceErrorMessage((current) => current || normalizeErrorMessage(error));
         }
       } finally {
         if (!cancelled) {
           setIsLoadingInstalledApps(false);
+          setIsActivatingWorkspace(false);
         }
       }
     }
 
-    void loadInstalledApps();
+    void activateSelectedWorkspace();
     return () => {
       cancelled = true;
     };
-  }, [selectedWorkspace?.status, selectedWorkspace?.updated_at, selectedWorkspaceId]);
+  }, [runtimeReadyForWorkspaceData, selectedWorkspace?.status, selectedWorkspace?.updated_at, selectedWorkspaceId]);
 
   useEffect(() => {
-    if (!selectedWorkspaceId) {
+    if (!selectedWorkspaceId || !runtimeReadyForWorkspaceData) {
       return;
     }
 
     let cancelled = false;
     const timer = window.setInterval(() => {
       void window.electronAPI.workspace
-        .listInstalledApps(selectedWorkspaceId)
+        .getWorkspaceLifecycle(selectedWorkspaceId)
         .then((response) => {
           if (!cancelled) {
-            setInstalledApps(hydrateInstalledWorkspaceApps(response.apps));
+            applyWorkspaceLifecycle(response);
           }
         })
         .catch(() => undefined);
@@ -502,7 +626,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [selectedWorkspaceId]);
+  }, [runtimeReadyForWorkspaceData, selectedWorkspaceId]);
 
   useEffect(() => {
     if (!selectedWorkspaceId || !onboardingModeActive) {
@@ -546,7 +670,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     const runtimeProvisioned = Boolean(runtimeConfig?.authTokenPresent);
     const sandboxAssigned = Boolean(runtimeConfig?.sandboxId?.trim());
     const desktopBrowserReady = Boolean(runtimeStatus?.desktopBrowserReady);
-    const workspaceReady = Boolean(selectedWorkspace && selectedWorkspace.status.trim().toLowerCase() === "active");
+    const workspaceReady = Boolean(selectedWorkspace && workspaceAppsReady);
     const runtimeFailed = runtimeStatus?.status === "error";
     const workspaceFailed = Boolean(selectedWorkspace && selectedWorkspace.status.trim().toLowerCase() === "error");
 
@@ -590,13 +714,13 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
         detail: workspaceFailed
           ? selectedWorkspace?.error_message || "Workspace provisioning failed."
           : workspaceReady
-            ? `${selectedWorkspace?.name || "Workspace"} is active.`
+            ? `${selectedWorkspace?.name || "Workspace"} is active and apps are running.`
             : selectedWorkspace
-              ? `Current workspace status: ${selectedWorkspace.status}.`
+              ? workspaceBlockingReason || `Current workspace status: ${selectedWorkspace.status}.`
               : "Create or select a workspace to finish desktop routing."
       }
     ];
-  }, [isSignedIn, runtimeConfig, runtimeStatus, selectedWorkspace]);
+  }, [isSignedIn, runtimeConfig, runtimeStatus, selectedWorkspace, workspaceAppsReady, workspaceBlockingReason]);
 
   const setupStatus = useMemo(() => {
     if (!clientConfig && !runtimeConfig && !runtimeStatus) {
@@ -657,9 +781,15 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       selectedWorkspace,
       installedApps,
       isLoadingInstalledApps,
+      isActivatingWorkspace,
+      workspaceAppsReady,
+      workspaceBlockingReason,
       refreshInstalledApps,
       templateSourceMode,
       setTemplateSourceMode,
+      createHarnessOptions: WORKSPACE_HARNESS_OPTIONS,
+      selectedCreateHarness,
+      setSelectedCreateHarness,
       selectedTemplateFolder,
       marketplaceTemplates,
       selectedMarketplaceTemplate,
@@ -670,6 +800,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       isLoadingBootstrap,
       isRefreshing,
       isCreatingWorkspace,
+      deletingWorkspaceId,
       isLoadingMarketplaceTemplates,
       canUseMarketplaceTemplates,
       marketplaceTemplatesError,
@@ -682,7 +813,8 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       sessionTargetId,
       refreshWorkspaceData,
       chooseTemplateFolder,
-      createWorkspace
+      createWorkspace,
+      deleteWorkspace
     }),
     [
       runtimeConfig,
@@ -693,8 +825,12 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       selectedWorkspace,
       installedApps,
       isLoadingInstalledApps,
+      isActivatingWorkspace,
+      workspaceAppsReady,
+      workspaceBlockingReason,
       refreshInstalledApps,
       templateSourceMode,
+      selectedCreateHarness,
       selectedTemplateFolder,
       marketplaceTemplates,
       selectedMarketplaceTemplate,
@@ -703,6 +839,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       isLoadingBootstrap,
       isRefreshing,
       isCreatingWorkspace,
+      deletingWorkspaceId,
       isLoadingMarketplaceTemplates,
       canUseMarketplaceTemplates,
       marketplaceTemplatesError,
@@ -712,7 +849,9 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       setupStatus,
       onboardingModeActive,
       sessionModeLabel,
-      sessionTargetId
+      sessionTargetId,
+      workspaceAppsReady,
+      workspaceBlockingReason
     ]
   );
 

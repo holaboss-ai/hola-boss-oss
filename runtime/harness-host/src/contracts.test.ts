@@ -185,6 +185,61 @@ test("decodeOpencodeHarnessHostRequestBase64 validates and normalizes request pa
   });
 });
 
+test("decodeOpencodeHarnessHostRequestBase64 allows empty or missing system_prompt", () => {
+  const emptyPrompt = decodeOpencodeHarnessHostRequestBase64(
+    encode({
+      workspace_id: "workspace-1",
+      workspace_dir: "/tmp/workspace-1",
+      session_id: "session-1",
+      input_id: "input-1",
+      instruction: "Do the thing",
+      provider_id: "openai",
+      model_id: "gpt-5.1",
+      mode: "code",
+      opencode_base_url: "http://127.0.0.1:4096",
+      timeout_seconds: 30,
+      system_prompt: "",
+      tools: {},
+      workspace_tool_ids: [],
+      workspace_skill_ids: [],
+      mcp_servers: [],
+      workspace_config_checksum: "checksum-1",
+      run_started_payload: {},
+      model_client: {
+        model_proxy_provider: "openai_compatible",
+        api_key: "token"
+      }
+    })
+  );
+  const missingPrompt = decodeOpencodeHarnessHostRequestBase64(
+    encode({
+      workspace_id: "workspace-1",
+      workspace_dir: "/tmp/workspace-1",
+      session_id: "session-1",
+      input_id: "input-1",
+      instruction: "Do the thing",
+      provider_id: "openai",
+      model_id: "gpt-5.1",
+      mode: "code",
+      opencode_base_url: "http://127.0.0.1:4096",
+      timeout_seconds: 30,
+      tools: {},
+      workspace_tool_ids: [],
+      workspace_skill_ids: [],
+      mcp_servers: [],
+      workspace_config_checksum: "checksum-1",
+      run_started_payload: {},
+      model_client: {
+        model_proxy_provider: "openai_compatible",
+        api_key: "token"
+      }
+    })
+  );
+
+  assert.equal(emptyPrompt.system_prompt, "");
+  assert.equal(missingPrompt.system_prompt, "");
+});
+
 test("decodeOpencodeHarnessHostRequestBase64 rejects invalid model_client payloads", () => {
   assert.throws(
     () =>
@@ -270,6 +325,55 @@ test("decodeHarnessHostPiRequestBase64 validates and normalizes request payloads
       default_headers: { "X-Test": "1" },
     },
   } satisfies HarnessHostPiRequest);
+});
+
+test("decodeHarnessHostPiRequestBase64 allows empty or missing system_prompt", () => {
+  const emptyPrompt = decodeHarnessHostPiRequestBase64(
+    encode({
+      workspace_id: "workspace-1",
+      workspace_dir: "/tmp/workspace-1",
+      session_id: "session-1",
+      input_id: "input-1",
+      instruction: "Do the thing",
+      provider_id: "openai",
+      model_id: "gpt-5.1",
+      timeout_seconds: 30,
+      system_prompt: "",
+      workspace_skill_dirs: [],
+      mcp_servers: [],
+      mcp_tool_refs: [],
+      workspace_config_checksum: "checksum-1",
+      run_started_payload: {},
+      model_client: {
+        model_proxy_provider: "openai_compatible",
+        api_key: "token"
+      }
+    })
+  );
+  const missingPrompt = decodeHarnessHostPiRequestBase64(
+    encode({
+      workspace_id: "workspace-1",
+      workspace_dir: "/tmp/workspace-1",
+      session_id: "session-1",
+      input_id: "input-1",
+      instruction: "Do the thing",
+      provider_id: "openai",
+      model_id: "gpt-5.1",
+      timeout_seconds: 30,
+      workspace_skill_dirs: [],
+      mcp_servers: [],
+      mcp_tool_refs: [],
+      workspace_config_checksum: "checksum-1",
+      run_started_payload: {},
+      model_client: {
+        model_proxy_provider: "openai_compatible",
+        api_key: "token"
+      }
+    })
+  );
+
+  assert.equal(emptyPrompt.system_prompt, "");
+  assert.equal(missingPrompt.system_prompt, "");
 });
 
 test("decodeOpencodeRuntimeConfigCliRequestBase64 defaults optional arrays and objects", () => {

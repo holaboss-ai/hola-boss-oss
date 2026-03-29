@@ -104,7 +104,7 @@ function testDeps(params: {
     }),
     handleRuntimeConfigUpdated: async () => {},
     ensureReady: async () => {},
-    backendBaseUrl: () => "",
+    backendBaseUrl: () => "http://127.0.0.1:4096",
     timeoutSeconds: () => 1800,
     ...params.pluginOverrides
   });

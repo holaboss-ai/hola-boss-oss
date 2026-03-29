@@ -817,6 +817,7 @@ async function ensureMcpServers(
 ): Promise<void> {
   const statusResponse = await client.mcp.status();
   const statusMap = asRecord(statusResponse.data) ?? {};
+  const seenServerNames = new Set<string>();
 
   for (const rawServer of request.mcp_servers) {
     const server = asRecord(rawServer);
@@ -825,6 +826,10 @@ async function ensureMcpServers(
     if (!name || !isMcpConfig(config)) {
       continue;
     }
+    if (seenServerNames.has(name)) {
+      continue;
+    }
+    seenServerNames.add(name);
     const forceRefresh = Boolean(server?._holaboss_force_refresh);
     const currentStatus = normalizePartType(asRecord(statusMap[name])?.status);
 

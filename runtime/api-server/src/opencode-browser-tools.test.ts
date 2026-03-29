@@ -65,6 +65,8 @@ test("stageOpencodeDesktopBrowserPlugin writes the project plugin and package de
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
 
   assert.match(pluginSource, /SANDBOX_RUNTIME_API_URL/);
+  assert.match(pluginSource, /HOLABOSS_WORKSPACE_ID/);
+  assert.match(pluginSource, /x-holaboss-workspace-id/);
   assert.match(pluginSource, /browser_get_state/);
   assert.match(pluginSource, /JSON\.stringify\(payload, null, 2\)/);
   assert.equal(packageJson.dependencies["@opencode-ai/plugin"], "^1.3.2");

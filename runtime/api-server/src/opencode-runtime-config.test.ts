@@ -44,7 +44,10 @@ test("projectOpencodeRuntimeConfig maps builtin tools, workspace tools, and skil
 
     assert.equal(result.provider_id, "openai");
     assert.equal(result.model_id, "gpt-5.2");
-    assert.equal(result.system_prompt, "You are concise.");
+    assert.match(result.system_prompt, /^You are concise\./);
+    assert.match(result.system_prompt, /MCP tool naming:/);
+    assert.match(result.system_prompt, /workspace\.read_file -> workspace_read_file/);
+    assert.match(result.system_prompt, /remote\.lookup -> remote_lookup/);
     assert.equal(result.model_client.model_proxy_provider, "openai_compatible");
     assert.equal(result.model_client.api_key, "hbrt.v1.token");
     assert.equal(result.model_client.base_url, "https://runtime.example/api/v1/model-proxy/openai/v1");

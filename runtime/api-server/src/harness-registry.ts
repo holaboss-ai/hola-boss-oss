@@ -26,7 +26,7 @@ import {
 import { stageOpencodeDesktopBrowserPlugin } from "./opencode-browser-tools.js";
 import { stageWorkspaceCommands } from "./opencode-commands.js";
 import { opencodeProxyConfigPath, updateOpencodeConfig } from "./opencode-config.js";
-import { restartOpencodeSidecar } from "./opencode-sidecar.js";
+import { readOpencodeSidecarBaseUrl, restartOpencodeSidecar } from "./opencode-sidecar.js";
 import { stageOpencodeSkills } from "./opencode-skills.js";
 
 const HB_SANDBOX_ROOT_ENV = "HB_SANDBOX_ROOT";
@@ -107,7 +107,7 @@ export interface RuntimeHarnessPlugin {
     ensureSelectedHarnessReady: () => Promise<void>;
   }) => Promise<void>;
   ensureReady: (fetchImpl: typeof fetch) => Promise<void>;
-  backendBaseUrl: () => string;
+  backendBaseUrl: (params: { workspaceId: string; workspaceDir: string }) => string;
   timeoutSeconds: () => number;
 }
 
@@ -134,6 +134,10 @@ function workspaceRootPath(): string {
   return path.join(sandboxRootPath(), "workspace");
 }
 
+function opencodeWorkspaceRoot(workspaceDir: string): string {
+  return path.resolve(workspaceDir);
+}
+
 function opencodeServerHost(): string {
   return firstEnvValue(OPENCODE_SERVER_HOST_ENV) || DEFAULT_OPENCODE_HOST;
 }
@@ -153,6 +157,22 @@ function opencodeBaseUrl(): string {
     return configured;
   }
   return `http://${opencodeServerHost()}:${opencodeServerPort()}`;
+}
+
+function opencodeBaseUrlForWorkspace(workspaceDir: string): string {
+  const configured = firstEnvValue(OPENCODE_BASE_URL_ENV).replace(/\/+$/, "");
+  if (configured) {
+    return configured;
+  }
+  const persisted = readOpencodeSidecarBaseUrl(opencodeWorkspaceRoot(workspaceDir));
+  if (persisted) {
+    return persisted;
+  }
+  const explicitPort = firstEnvValue(OPENCODE_SERVER_PORT_ENV);
+  if (explicitPort) {
+    return `http://${opencodeServerHost()}:${opencodeServerPort()}`;
+  }
+  return "";
 }
 
 function opencodeReadyTimeoutSeconds(): number {
@@ -329,6 +349,7 @@ const opencodeRuntimeHarnessPlugin: RuntimeHarnessPlugin = {
     };
   },
   async prepareRun(params) {
+    const backendBaseUrl = opencodeBaseUrlForWorkspace(params.bootstrap.workspaceDir);
     await opencodeAdapter.prepareRun?.({
       ...params,
       syncModelConfig: (request) => {
@@ -347,13 +368,12 @@ const opencodeRuntimeHarnessPlugin: RuntimeHarnessPlugin = {
           allow_reuse_existing: request.allow_reuse_existing,
           host: request.host,
           port: request.port,
-          readiness_url: request.readiness_url,
           ready_timeout_s: request.ready_timeout_s
         });
       },
-      backendBaseUrl: opencodeBaseUrl(),
+      backendBaseUrl,
       backendHost: opencodeServerHost(),
-      backendPort: opencodeServerPort(),
+      backendPort: firstEnvValue(OPENCODE_SERVER_PORT_ENV) ? opencodeServerPort() : 0,
       backendReadyTimeoutSeconds: opencodeReadyTimeoutSeconds(),
       buildBackendFingerprint: opencodeSidecarFingerprint
     });
@@ -382,8 +402,8 @@ const opencodeRuntimeHarnessPlugin: RuntimeHarnessPlugin = {
       ensureHarnessBackendReady: () => ensureOpencodeBackendReady(fetchImpl)
     });
   },
-  backendBaseUrl() {
-    return opencodeBaseUrl();
+  backendBaseUrl(params) {
+    return opencodeBaseUrlForWorkspace(params.workspaceDir);
   },
   timeoutSeconds() {
     return defaultHarnessTimeoutSeconds();
@@ -450,7 +470,7 @@ const piRuntimeHarnessPlugin: RuntimeHarnessPlugin = {
       }
     });
   },
-  backendBaseUrl() {
+  backendBaseUrl(_params) {
     return "";
   },
   timeoutSeconds() {

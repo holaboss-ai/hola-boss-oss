@@ -657,6 +657,22 @@ export class RuntimeStateStore {
     return Boolean(row);
   }
 
+  listExpiredClaimedInputs(nowIso = utcNowIso()): SessionInputRecord[] {
+    const rows = this.db()
+      .prepare<[string], Record<string, unknown>>(`
+        SELECT *
+        FROM agent_session_inputs
+        WHERE status = 'CLAIMED'
+          AND claimed_until IS NOT NULL
+          AND datetime(claimed_until) <= datetime(?)
+        ORDER BY datetime(claimed_until) ASC, datetime(updated_at) ASC
+      `)
+      .all(nowIso);
+    return rows
+      .map((row) => this.rowToInput(row))
+      .filter((row): row is SessionInputRecord => row !== null);
+  }
+
   ensureRuntimeState(params: {
     workspaceId: string;
     sessionId: string;
@@ -1333,8 +1349,8 @@ export class RuntimeStateStore {
   }
 
   private findAvailablePort(): number {
-    const BASE_PORT = 13100;
-    const MAX_PORT = 13999;
+    const BASE_PORT = 38080;
+    const MAX_PORT = 38979;
 
     const allocated = new Set(
       this.db()
@@ -1348,7 +1364,7 @@ export class RuntimeStateStore {
         return port;
       }
     }
-    throw new Error("No available ports in range 13100-13999");
+    throw new Error(`No available ports in range ${BASE_PORT}-${MAX_PORT}`);
   }
 
   private rowToAppPort(row: Record<string, unknown>): AppPortRecord {

@@ -216,6 +216,32 @@ function opencodeToolNameFromMcpServerAndTool(serverId: string, toolName: string
   return `${serverId}_${toolName}`;
 }
 
+function appendOpencodeMcpToolAliasGuidance(
+  systemPrompt: string,
+  resolvedMcpToolRefs: AgentRuntimeConfigCliRequest["resolved_mcp_tool_refs"]
+): string {
+  if (resolvedMcpToolRefs.length === 0) {
+    return systemPrompt.trim();
+  }
+
+  const aliasLines = resolvedMcpToolRefs.map((toolRef) => {
+    const callableName = opencodeToolNameFromMcpServerAndTool(toolRef.server_id, toolRef.tool_name);
+    return `- ${toolRef.tool_id} -> ${callableName}`;
+  });
+
+  return [
+    systemPrompt.trim(),
+    "",
+    "MCP tool naming:",
+    "Workspace configuration and workspace.yaml list MCP tool ids as `server.tool`.",
+    "When calling MCP tools through OpenCode, use these callable tool names:",
+    ...aliasLines,
+    "Use the callable OpenCode tool name for tool invocation."
+  ]
+    .join("\n")
+    .trim();
+}
+
 function composeOpencodeTeamSystemPrompt(
   coordinator: AgentRuntimeConfigGeneralMemberPayload,
   members: AgentRuntimeConfigGeneralMemberPayload[]
@@ -305,6 +331,7 @@ export function projectAgentRuntimeConfig(
   } else {
     throw new Error(`unsupported general runtime mode: ${request.general_type}`);
   }
+  systemPrompt = appendOpencodeMcpToolAliasGuidance(systemPrompt, request.resolved_mcp_tool_refs);
 
   const [providerId, modelId] = resolveOpencodeProviderAndModel(selectedModel, request.default_provider_id);
   const modelProxyProvider =

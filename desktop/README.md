@@ -32,6 +32,7 @@ Built with Electron + React + TypeScript + Vite + Tailwind CSS.
 
 ```bash
 npm install
+cp .env.example .env
 GITHUB_TOKEN="$(gh auth token)" npm run prepare:runtime
 npm run dev
 ```
@@ -55,6 +56,12 @@ npm run dev:cp:prod
 ```
 
 The repo does not ship remote endpoint URLs. Remote auth/backend access is configured entirely through environment variables outside the public repo. Local/dev backend overrides are only honored when `HOLABOSS_INTERNAL_DEV=1` is set or when running the unpackaged dev app through the internal preset scripts above.
+
+Before running `npm run dev`, copy `desktop/.env.example` to `desktop/.env` and fill in the required remote values:
+
+```bash
+cp .env.example .env
+```
 
 `prepare:runtime` downloads the latest runtime bundle for the current host platform from GitHub Releases and stages it into `out/runtime-<platform>/`.
 
@@ -141,6 +148,12 @@ Remote configuration:
 - `HOLABOSS_BACKEND_BASE_URL` for the Holaboss backend base URL used by the desktop
 - `HOLABOSS_INTERNAL_DEV=1` to allow non-production backend overrides in packaged runs
 - `HOLABOSS_PACKAGED_APP_BIN` for an explicit packaged binary path
+
+Start by copying the template:
+
+```bash
+cp .env.example .env
+```
 
 Optional internal-only overrides:
 - `HOLABOSS_PROJECTS_URL`

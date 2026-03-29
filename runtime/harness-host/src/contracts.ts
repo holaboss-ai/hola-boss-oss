@@ -263,6 +263,16 @@ function optionalString(value: unknown): string | null | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function stringOrEmpty(value: unknown, fieldName: string): string {
+  if (value === undefined || value === null) {
+    return "";
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${fieldName} must be a string`);
+  }
+  return value;
+}
+
 function requiredBoolean(value: unknown, fieldName: string): boolean {
   if (typeof value !== "boolean") {
     throw new Error(`${fieldName} must be a boolean`);
@@ -428,7 +438,7 @@ export function decodeHarnessHostOpencodeRequestBase64(encoded: string): Harness
     mode: requiredString(parsed.mode, "mode"),
     opencode_base_url: requiredString(parsed.opencode_base_url, "opencode_base_url"),
     timeout_seconds: requiredInteger(parsed.timeout_seconds, "timeout_seconds"),
-    system_prompt: requiredString(parsed.system_prompt, "system_prompt"),
+    system_prompt: stringOrEmpty(parsed.system_prompt, "system_prompt"),
     tools: booleanRecord(parsed.tools),
     workspace_tool_ids: stringArray(parsed.workspace_tool_ids),
     workspace_skill_ids: stringArray(parsed.workspace_skill_ids),
@@ -461,7 +471,7 @@ export function decodeHarnessHostPiRequestBase64(encoded: string): HarnessHostPi
     model_id: requiredString(parsed.model_id, "model_id"),
     timeout_seconds: requiredInteger(parsed.timeout_seconds, "timeout_seconds"),
     runtime_api_base_url: optionalString(parsed.runtime_api_base_url),
-    system_prompt: requiredString(parsed.system_prompt, "system_prompt"),
+    system_prompt: stringOrEmpty(parsed.system_prompt, "system_prompt"),
     workspace_skill_dirs: stringArray(parsed.workspace_skill_dirs),
     mcp_servers: jsonObjectArray(parsed.mcp_servers),
     mcp_tool_refs: Array.isArray(parsed.mcp_tool_refs)

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Check, Clock3, Loader2, RefreshCcw, Trash2 } from "lucide-react";
+import { Check, Clock3, Loader2, Trash2 } from "lucide-react";
 import { PaneCard } from "@/components/ui/PaneCard";
-import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 function normalizeErrorMessage(error: unknown) {
@@ -21,7 +20,6 @@ function formatTimestamp(value: string | null): string {
 
 export function AutomationsPane() {
   const { selectedWorkspaceId } = useWorkspaceSelection();
-  const { selectedWorkspace } = useWorkspaceDesktop();
   const [cronjobs, setCronjobs] = useState<CronjobRecordPayload[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
@@ -90,30 +88,10 @@ export function AutomationsPane() {
   return (
     <PaneCard className="shadow-glow">
       <div className="flex h-full min-h-0 flex-col">
-        <div className="shrink-0 border-b border-panel-border/35 px-4 py-3">
-          <div>
-            <div>
-              <div className="text-[10px] uppercase tracking-[0.16em] text-neon-green/76">Workspace cronjobs</div>
-              <div className="mt-1 text-[12px] text-text-main/88">
-                {selectedWorkspace ? `Manage scheduled runs for ${selectedWorkspace.name}.` : "Select a workspace to manage cronjobs."}
-              </div>
-            </div>
-            <div className="mt-3 flex items-center justify-start">
-              <button
-                type="button"
-                onClick={() => void refreshCronjobs()}
-                disabled={isLoading}
-                className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-panel-border/45 px-3 text-[11px] text-text-muted transition hover:border-neon-green/35 hover:text-text-main disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {isLoading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCcw size={12} />}
-                <span>Refresh</span>
-              </button>
-            </div>
-          </div>
-
-          {statusMessage ? (
+        {statusMessage ? (
+          <div className="shrink-0 border-b border-panel-border/35 px-4 py-3">
             <div
-              className={`mt-3 rounded-[14px] border px-3 py-2 text-[11px] ${
+              className={`rounded-[14px] border px-3 py-2 text-[11px] ${
                 statusTone === "success"
                   ? "border-neon-green/30 bg-neon-green/10 text-text-main/92"
                   : statusTone === "error"
@@ -123,10 +101,16 @@ export function AutomationsPane() {
             >
               {statusMessage}
             </div>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        <div
+          className={
+            !selectedWorkspaceId || sortedCronjobs.length === 0
+              ? "min-h-0 flex flex-1 items-center justify-center p-4"
+              : "min-h-0 flex-1 overflow-y-auto p-4"
+          }
+        >
           {!selectedWorkspaceId ? (
             <EmptyState message="Choose a workspace from the top bar to view and manage cronjobs." />
           ) : sortedCronjobs.length === 0 ? (
@@ -195,8 +179,14 @@ export function AutomationsPane() {
 
 function EmptyState({ message }: { message: string }) {
   return (
-    <div className="rounded-[16px] border border-panel-border/35 bg-black/10 px-4 py-5 text-[12px] leading-6 text-text-dim/78">
-      {message}
+    <div className="flex h-full min-h-full w-full items-center justify-center px-6 py-8">
+      <div className="w-full max-w-[420px] rounded-[24px] border border-panel-border/30 bg-[linear-gradient(180deg,rgba(255,255,255,0.74),rgba(255,255,255,0.42))] px-8 py-9 text-center shadow-card">
+        <div className="mx-auto grid h-10 w-10 place-items-center rounded-full border border-[rgba(247,90,84,0.18)] text-[rgba(247,90,84,0.84)]">
+          <Clock3 size={18} />
+        </div>
+        <div className="mt-3 text-[15px] font-medium text-text-main">No automations yet</div>
+        <div className="mt-2 text-[12px] leading-6 text-text-muted/82">{message}</div>
+      </div>
     </div>
   );
 }

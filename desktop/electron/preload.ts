@@ -161,6 +161,7 @@ interface AppUpdateStatusPayload {
 }
 
 interface WorkbenchOpenBrowserPayload {
+  workspaceId?: string | null;
   url?: string | null;
 }
 
@@ -363,6 +364,23 @@ interface SessionHistoryResponsePayload {
   raw: unknown | null;
 }
 
+interface SessionOutputEventPayload {
+  id: number;
+  workspace_id: string;
+  session_id: string;
+  input_id: string;
+  sequence: number;
+  event_type: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+interface SessionOutputEventListResponsePayload {
+  items: SessionOutputEventPayload[];
+  count: number;
+  last_event_id: number;
+}
+
 interface EnqueueSessionInputResponsePayload {
   input_id: string;
   session_id: string;
@@ -413,11 +431,49 @@ interface HolabossSessionStreamHandlePayload {
   streamId: string;
 }
 
+type WorkspaceAppBuildStatus =
+  | "unknown"
+  | "pending"
+  | "building"
+  | "completed"
+  | "failed"
+  | "running"
+  | "stopped";
+
+interface InstalledWorkspaceAppPayload {
+  app_id: string;
+  config_path: string;
+  lifecycle: Record<string, string> | null;
+  build_status: WorkspaceAppBuildStatus;
+}
+
+interface InstalledWorkspaceAppListResponsePayload {
+  apps: InstalledWorkspaceAppPayload[];
+  count: number;
+}
+
 interface WorkspaceAppLifecycleActionPayload {
   app_id: string;
   status: string;
   detail: string;
   ports: Record<string, number>;
+}
+
+interface WorkspaceLifecycleBlockingAppPayload {
+  app_id: string;
+  status: string;
+  error: string | null;
+}
+
+interface WorkspaceLifecyclePayload {
+  workspace: WorkspaceRecordPayload;
+  applications: InstalledWorkspaceAppPayload[];
+  ready: boolean;
+  reason: string | null;
+  phase: string;
+  phase_label: string;
+  phase_detail: string | null;
+  blocking_apps: WorkspaceLifecycleBlockingAppPayload[];
 }
 
 interface HolabossSessionStreamEventPayload {
@@ -524,6 +580,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     pickTemplateFolder: () =>
       ipcRenderer.invoke("workspace:pickTemplateFolder") as Promise<TemplateFolderSelectionPayload>,
     listWorkspaces: () => ipcRenderer.invoke("workspace:listWorkspaces") as Promise<WorkspaceListResponsePayload>,
+    getWorkspaceLifecycle: (workspaceId: string) =>
+      ipcRenderer.invoke("workspace:getWorkspaceLifecycle", workspaceId) as Promise<WorkspaceLifecyclePayload>,
+    activateWorkspace: (workspaceId: string) =>
+      ipcRenderer.invoke("workspace:activateWorkspace", workspaceId) as Promise<WorkspaceLifecyclePayload>,
     listInstalledApps: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listInstalledApps", workspaceId) as Promise<InstalledWorkspaceAppListResponsePayload>,
     startInstalledApp: (workspaceId: string, appId: string) =>
@@ -532,9 +592,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:stopInstalledApp", workspaceId, appId) as Promise<WorkspaceAppLifecycleActionPayload>,
     listOutputs: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listOutputs", workspaceId) as Promise<WorkspaceOutputListResponsePayload>,
+    listSkills: (workspaceId: string) =>
+      ipcRenderer.invoke("workspace:listSkills", workspaceId) as Promise<WorkspaceSkillListResponsePayload>,
     getWorkspaceRoot: (workspaceId: string) => ipcRenderer.invoke("workspace:getWorkspaceRoot", workspaceId) as Promise<string>,
     createWorkspace: (payload: HolabossCreateWorkspacePayload) =>
       ipcRenderer.invoke("workspace:createWorkspace", payload) as Promise<WorkspaceResponsePayload>,
+    deleteWorkspace: (workspaceId: string) =>
+      ipcRenderer.invoke("workspace:deleteWorkspace", workspaceId) as Promise<WorkspaceResponsePayload>,
     listCronjobs: (workspaceId: string, enabledOnly?: boolean) =>
       ipcRenderer.invoke("workspace:listCronjobs", workspaceId, enabledOnly) as Promise<CronjobListResponsePayload>,
     createCronjob: (payload: CronjobCreatePayload) =>
@@ -553,6 +617,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:listRuntimeStates", workspaceId) as Promise<SessionRuntimeStateListResponsePayload>,
     getSessionHistory: (payload: { sessionId: string; workspaceId: string }) =>
       ipcRenderer.invoke("workspace:getSessionHistory", payload) as Promise<SessionHistoryResponsePayload>,
+    getSessionOutputEvents: (payload: { sessionId: string }) =>
+      ipcRenderer.invoke("workspace:getSessionOutputEvents", payload) as Promise<SessionOutputEventListResponsePayload>,
     stageSessionAttachments: (payload: StageSessionAttachmentsPayload) =>
       ipcRenderer.invoke("workspace:stageSessionAttachments", payload) as Promise<StageSessionAttachmentsResponsePayload>,
     stageSessionAttachmentPaths: (payload: StageSessionAttachmentPathsPayload) =>
@@ -598,6 +664,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
   browser: {
+    setActiveWorkspace: (workspaceId?: string | null) =>
+      ipcRenderer.invoke("browser:setActiveWorkspace", workspaceId) as Promise<BrowserTabListPayload>,
     getState: () => ipcRenderer.invoke("browser:getState") as Promise<BrowserTabListPayload>,
     setBounds: (bounds: BrowserBoundsPayload) => ipcRenderer.invoke("browser:setBounds", bounds) as Promise<BrowserTabListPayload>,
     navigate: (targetUrl: string) => ipcRenderer.invoke("browser:navigate", targetUrl) as Promise<BrowserTabListPayload>,

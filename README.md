@@ -38,6 +38,12 @@ Install desktop dependencies:
 npm run desktop:install
 ```
 
+Copy the desktop env template and fill in the required values:
+
+```bash
+cp desktop/.env.example desktop/.env
+```
+
 Build and stage a local runtime bundle from this repo into `desktop/out/runtime-macos`:
 
 ```bash
@@ -198,6 +204,7 @@ For local desktop work, the default flow is:
 
 ```bash
 npm run desktop:install
+cp desktop/.env.example desktop/.env
 npm run desktop:prepare-runtime:local
 npm run desktop:dev
 ```

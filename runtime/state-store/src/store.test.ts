@@ -315,6 +315,46 @@ test("runtime state round trip supports ensure, update, list, and lookup", () =>
   store.close();
 });
 
+test("state store lists expired claimed inputs", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    payload: { text: "queued" }
+  });
+  const stale = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    payload: { text: "stale" }
+  });
+  const active = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    payload: { text: "active" }
+  });
+
+  store.updateInput(stale.inputId, {
+    status: "CLAIMED",
+    claimedBy: "worker-old",
+    claimedUntil: "2000-01-01T00:00:00.000Z"
+  });
+  store.updateInput(active.inputId, {
+    status: "CLAIMED",
+    claimedBy: "worker-new",
+    claimedUntil: "2999-01-01T00:00:00.000Z"
+  });
+
+  const expired = store.listExpiredClaimedInputs("2026-01-01T00:00:00.000Z");
+
+  assert.deepEqual(expired.map((record) => record.inputId), [stale.inputId]);
+  store.close();
+});
+
 test("session messages preserve ascending order and include metadata placeholder", () => {
   const root = makeTempDir("hb-state-store-");
   const store = new RuntimeStateStore({
@@ -514,7 +554,7 @@ test("task proposals round trip supports create, list, unreviewed, get, and stat
   store.close();
 });
 
-test("allocateAppPort assigns sequential ports starting from 13100", () => {
+test("allocateAppPort assigns sequential ports starting from 3001", () => {
   const root = makeTempDir("hb-store-ports-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "test.db"),
@@ -524,8 +564,8 @@ test("allocateAppPort assigns sequential ports starting from 13100", () => {
   const p1 = store.allocateAppPort({ workspaceId: "ws-1", appId: "gmail" });
   const p2 = store.allocateAppPort({ workspaceId: "ws-1", appId: "sheets" });
 
-  assert.equal(p1.port, 13100);
-  assert.equal(p2.port, 13101);
+  assert.equal(p1.port, 38080);
+  assert.equal(p2.port, 38081);
   assert.equal(p1.appId, "gmail");
   assert.equal(p2.appId, "sheets");
 

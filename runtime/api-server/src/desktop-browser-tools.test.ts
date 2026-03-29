@@ -56,7 +56,7 @@ test("desktop browser tool service reports unavailable when runtime lacks browse
 });
 
 test("desktop browser tool service executes browser_get_state against the desktop browser service", async () => {
-  const requests: Array<{ path: string; token: string; body: string }> = [];
+  const requests: Array<{ path: string; token: string; workspaceId: string; body: string }> = [];
   const browserServer = await startBrowserServer(async (request, response) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) {
@@ -66,6 +66,7 @@ test("desktop browser tool service executes browser_get_state against the deskto
     requests.push({
       path: request.url ?? "",
       token: String(request.headers["x-holaboss-desktop-token"] ?? ""),
+      workspaceId: String(request.headers["x-holaboss-workspace-id"] ?? ""),
       body
     });
     response.setHeader("content-type", "application/json; charset=utf-8");
@@ -128,7 +129,7 @@ test("desktop browser tool service executes browser_get_state against the deskto
       })
     });
 
-    const result = await service.execute("browser_get_state", { include_screenshot: true });
+    const result = await service.execute("browser_get_state", { include_screenshot: true }, { workspaceId: "workspace-1" });
     assert.deepEqual(result, {
       ok: true,
       page: { tabId: "tab-1", url: "https://example.com", title: "Example" },
@@ -149,11 +150,11 @@ test("desktop browser tool service executes browser_get_state against the deskto
       }
     });
     assert.deepEqual(
-      requests.map((entry) => [entry.path, entry.token]),
+      requests.map((entry) => [entry.path, entry.token, entry.workspaceId]),
       [
-        ["/api/v1/browser/page", "browser-token"],
-        ["/api/v1/browser/evaluate", "browser-token"],
-        ["/api/v1/browser/screenshot", "browser-token"]
+        ["/api/v1/browser/page", "browser-token", "workspace-1"],
+        ["/api/v1/browser/evaluate", "browser-token", "workspace-1"],
+        ["/api/v1/browser/screenshot", "browser-token", "workspace-1"]
       ]
     );
   } finally {

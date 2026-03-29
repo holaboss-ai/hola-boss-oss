@@ -54,6 +54,30 @@ mcp_registry:
   assert.deepEqual(plan.schema_aliases, {});
 });
 
+test("compileWorkspaceRuntimePlan accepts the minimal empty workspace scaffold", () => {
+  const plan = compileWorkspaceRuntimePlan({
+    workspace_id: "workspace-empty",
+    workspace_yaml: `
+agents:
+  id: workspace.general
+  model: openai/gpt-5
+skills:
+  path: skills
+mcp_registry:
+  allowlist:
+    tool_ids: []
+  servers: {}
+`,
+    references: {}
+  });
+
+  assert.equal(plan.general_config.type, "single");
+  assert.equal(plan.general_config.agent.id, "workspace.general");
+  assert.equal(plan.general_config.agent.model, "openai/gpt-5");
+  assert.deepEqual(plan.mcp_tool_allowlist, []);
+  assert.deepEqual(plan.resolved_mcp_servers.map((server) => server.server_id), []);
+});
+
 test("compileWorkspaceRuntimePlan loads prompt and applications", () => {
   const plan = compileWorkspaceRuntimePlan({
     workspace_id: "ws-test",

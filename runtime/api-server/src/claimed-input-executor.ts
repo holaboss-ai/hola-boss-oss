@@ -229,8 +229,8 @@ export async function processClaimedInput(params: {
     status: "BUSY",
     currentInputId: record.inputId,
     currentWorkerId: params.claimedBy ?? "sandbox-agent-ts-worker",
-    leaseUntil: null,
-    heartbeatAt: null,
+    leaseUntil: record.claimedUntil,
+    heartbeatAt: undefined,
     lastError: null
   });
 
@@ -276,6 +276,17 @@ export async function processClaimedInput(params: {
   try {
     const executeRunner = params.executeRunnerRequestFn ?? executeRunnerRequest;
     const execution = await executeRunner(payload, {
+      onHeartbeat: () => {
+        store.updateRuntimeState({
+          workspaceId: record.workspaceId,
+          sessionId: record.sessionId,
+          status: "BUSY",
+          currentInputId: record.inputId,
+          currentWorkerId: params.claimedBy ?? "sandbox-agent-ts-worker",
+          leaseUntil: record.claimedUntil,
+          lastError: null
+        });
+      },
       onEvent: async (event) => {
         const sequence = typeof event.sequence === "number" ? event.sequence : 0;
         lastSequence = Math.max(lastSequence, sequence);
