@@ -140,7 +140,16 @@ test("restartOpencodeSidecar restarts sidecar, writes state, and uses log file",
   assert.ok(spawnCall);
   const capturedSpawnCall = spawnCall as { command: string; args: string[]; options: SpawnOptions };
   assert.equal(capturedSpawnCall.command, "opencode");
-  assert.deepEqual(capturedSpawnCall.args, ["serve", "--hostname", "127.0.0.1", "--port", "4096"]);
+  assert.deepEqual(capturedSpawnCall.args, [
+    "serve",
+    "--print-logs",
+    "--log-level",
+    "DEBUG",
+    "--hostname",
+    "127.0.0.1",
+    "--port",
+    "4096"
+  ]);
   assert.equal(capturedSpawnCall.options.cwd, path.resolve(workspaceRoot));
   assert.equal(capturedSpawnCall.options.detached, true);
   assert.equal(Array.isArray(capturedSpawnCall.options.stdio), true);

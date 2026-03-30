@@ -76,6 +76,8 @@ export function LeftNavigationRail({
             <nav className="chat-scrollbar-hidden flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-x-hidden overflow-y-auto pb-1">
               {installedApps.map((app) => {
                 const isActive = activeAppId === app.id;
+                const isReady = "ready" in app && app.ready;
+                const hasError = "error" in app && typeof app.error === "string" && app.error;
                 return (
                   <div key={app.id} className="group relative">
                     <button
@@ -83,7 +85,7 @@ export function LeftNavigationRail({
                       aria-label={app.label}
                       title={app.label}
                       onClick={() => onSelectApp?.(app.id)}
-                      className={`flex h-10 w-10 items-center justify-center rounded-[14px] border text-[10px] font-semibold uppercase tracking-[0.08em] transition-all duration-200 ${
+                      className={`relative flex h-10 w-10 items-center justify-center rounded-[14px] border text-[10px] font-semibold uppercase tracking-[0.08em] transition-all duration-200 ${
                         isActive
                           ? "border-neon-green/45 bg-neon-green/10 text-text-main shadow-[0_10px_18px_rgba(64,201,162,0.16)]"
                           : "border-panel-border/35 bg-panel-bg/55 text-text-muted hover:border-panel-border/55 hover:bg-[var(--theme-hover-bg)] hover:text-text-main"
@@ -94,6 +96,15 @@ export function LeftNavigationRail({
                       >
                         {appInitials(app.label)}
                       </span>
+                      <span
+                        className={`absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-[rgb(var(--color-panel-bg))] ${
+                          hasError
+                            ? "bg-rose-400"
+                            : isReady
+                              ? "bg-neon-green"
+                              : "animate-pulse bg-sky-400"
+                        }`}
+                      />
                     </button>
                     <div className={tooltipClassName}>{app.label}</div>
                   </div>

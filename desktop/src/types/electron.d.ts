@@ -431,32 +431,18 @@ declare global {
     hasApiKey: boolean;
   }
 
-  type WorkspaceAppBuildStatus =
-    | "unknown"
-    | "pending"
-    | "building"
-    | "completed"
-    | "failed"
-    | "running"
-    | "stopped";
-
   interface InstalledWorkspaceAppPayload {
     app_id: string;
     config_path: string;
     lifecycle: Record<string, string> | null;
-    build_status: WorkspaceAppBuildStatus;
+    build_status?: string;
+    ready: boolean;
+    error: string | null;
   }
 
   interface InstalledWorkspaceAppListResponsePayload {
     apps: InstalledWorkspaceAppPayload[];
     count: number;
-  }
-
-  interface WorkspaceAppLifecycleActionPayload {
-    app_id: string;
-    status: string;
-    detail: string;
-    ports: Record<string, number>;
   }
 
   interface WorkspaceLifecycleBlockingAppPayload {
@@ -642,6 +628,13 @@ declare global {
     workbench: {
       onOpenBrowser: (listener: (payload: WorkbenchOpenBrowserPayload) => void) => () => void;
     };
+    appSurface: {
+      navigate(workspaceId: string, appId: string, path?: string): Promise<void>;
+      setBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
+      reload(appId: string): Promise<void>;
+      destroy(appId: string): Promise<void>;
+      hide(): Promise<void>;
+    };
     workspace: {
       getClientConfig: () => Promise<HolabossClientConfigPayload>;
       listMarketplaceTemplates: () => Promise<TemplateListResponsePayload>;
@@ -650,8 +643,7 @@ declare global {
       getWorkspaceLifecycle: (workspaceId: string) => Promise<WorkspaceLifecyclePayload>;
       activateWorkspace: (workspaceId: string) => Promise<WorkspaceLifecyclePayload>;
       listInstalledApps: (workspaceId: string) => Promise<InstalledWorkspaceAppListResponsePayload>;
-      startInstalledApp: (workspaceId: string, appId: string) => Promise<WorkspaceAppLifecycleActionPayload>;
-      stopInstalledApp: (workspaceId: string, appId: string) => Promise<WorkspaceAppLifecycleActionPayload>;
+      removeInstalledApp: (workspaceId: string, appId: string) => Promise<void>;
       listOutputs: (workspaceId: string) => Promise<WorkspaceOutputListResponsePayload>;
       listSkills: (workspaceId: string) => Promise<WorkspaceSkillListResponsePayload>;
       getWorkspaceRoot: (workspaceId: string) => Promise<string>;

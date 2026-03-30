@@ -13,6 +13,10 @@ import {
   type TsRunnerExecutionDeps
 } from "./ts-runner.js";
 import { requireRuntimeHarnessAdapter, type RuntimeHarnessPlugin } from "./harness-registry.js";
+import {
+  persistWorkspaceMainSessionId,
+  readWorkspaceMainSessionId
+} from "./ts-runner-session-state.js";
 
 const ORIGINAL_SANDBOX_ROOT = process.env.HB_SANDBOX_ROOT;
 const ORIGINAL_SANDBOX_RUNTIME_API_URL = process.env.SANDBOX_RUNTIME_API_URL;
@@ -260,6 +264,35 @@ test("relayTsRunnerEvent persists harness_session_id from terminal events", asyn
       }
     }
   );
+});
+
+test("relayTsRunnerEvent clears persisted harness session ids after run_failed", async () => {
+  const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-relay-clear-"));
+  persistWorkspaceMainSessionId({
+    workspaceDir,
+    harness: "opencode",
+    sessionId: "persisted-session-2"
+  });
+
+  await relayTsRunnerEvent({
+    harness: "opencode",
+    workspaceDir,
+    event: {
+      session_id: "session-1",
+      input_id: "input-1",
+      sequence: 4,
+      event_type: "run_failed",
+      timestamp: new Date().toISOString(),
+      payload: {
+        type: "OpenCodeSessionError",
+        message: "boom",
+        harness_session_id: "failed-session-1"
+      }
+    },
+    emitEvent: async () => {}
+  });
+
+  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "opencode" }), null);
 });
 
 test("runTsRunnerCli relays harness-host events after run_claimed", async () => {

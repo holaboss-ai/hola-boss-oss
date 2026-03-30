@@ -55,6 +55,8 @@ export type OpencodeRuntimeConfigCliResponse = AgentRuntimeConfigCliResponse;
 
 const MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE = "openai_compatible";
 const MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE = "anthropic_native";
+const OPENCODE_OPENAI_COMPATIBLE_PROVIDER_ID = "hb_openai";
+const OPENCODE_ANTHROPIC_PROVIDER_ID = "hb_anthropic";
 const DEFAULT_OPENCODE_STRUCTURED_RETRY_COUNT = 2;
 const DIRECT_OPENAI_FALLBACK_FLAG = "SANDBOX_MODEL_PROXY_ENABLE_DIRECT_OPENAI_FALLBACK";
 
@@ -198,9 +200,9 @@ function resolveModelProxyProviderAndModelId(modelToken: string, defaultProvider
 function resolveOpencodeProviderAndModel(model: string, defaultProviderId: string): [string, string] {
   const [provider, modelId] = resolveModelProxyProviderAndModelId(model, defaultProviderId);
   if (provider === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE) {
-    return ["anthropic", modelId];
+    return [OPENCODE_ANTHROPIC_PROVIDER_ID, modelId];
   }
-  return ["openai", modelId];
+  return [OPENCODE_OPENAI_COMPATIBLE_PROVIDER_ID, modelId];
 }
 
 function opencodeStructuredRetryCount(): number {
@@ -335,7 +337,9 @@ export function projectAgentRuntimeConfig(
 
   const [providerId, modelId] = resolveOpencodeProviderAndModel(selectedModel, request.default_provider_id);
   const modelProxyProvider =
-    providerId === "anthropic" ? MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE : MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE;
+    providerId === OPENCODE_ANTHROPIC_PROVIDER_ID
+      ? MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE
+      : MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE;
   const workspaceToolIds = request.resolved_mcp_tool_refs.map((toolRef) => toolRef.tool_id);
   const tools: Record<string, boolean> = {};
   for (const toolName of request.default_tools) {

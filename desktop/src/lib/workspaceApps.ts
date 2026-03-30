@@ -8,7 +8,8 @@ export interface WorkspaceAppDefinition {
 export interface WorkspaceInstalledAppDefinition extends WorkspaceAppDefinition {
   configPath: string;
   lifecycle: InstalledWorkspaceAppPayload["lifecycle"];
-  buildStatus: InstalledWorkspaceAppPayload["build_status"];
+  ready: boolean;
+  error: string | null;
 }
 
 const APP_CATALOG: Record<string, WorkspaceAppDefinition> = {
@@ -72,7 +73,8 @@ export function hydrateInstalledWorkspaceApps(
       ...catalogEntry,
       configPath: app.config_path,
       lifecycle: app.lifecycle,
-      buildStatus: app.build_status
+      ready: app.ready,
+      error: app.error ?? null
     };
   });
 }

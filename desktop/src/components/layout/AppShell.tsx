@@ -1,8 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import {
   ArrowRight,
   Bell,
   ChevronRight,
+  CircleCheck,
   Clock3,
   FolderOpen,
   Loader2,
@@ -10,13 +20,17 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Sparkles,
-  TriangleAlert
+  TriangleAlert,
+  XCircle,
 } from "lucide-react";
-import { LeftNavigationRail, type LeftRailItem } from "@/components/layout/LeftNavigationRail";
+import {
+  LeftNavigationRail,
+  type LeftRailItem,
+} from "@/components/layout/LeftNavigationRail";
 import {
   OperationsDrawer,
   type OperationsDrawerTab,
-  type OperationsOutputEntry
+  type OperationsOutputEntry,
 } from "@/components/layout/OperationsDrawer";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
@@ -29,9 +43,18 @@ import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { SkillsPane } from "@/components/panes/SkillsPane";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
 import { preferredSessionId } from "@/lib/sessionRouting";
-import { getWorkspaceAppDefinition, inferInstalledWorkspaceAppIdFromText } from "@/lib/workspaceApps";
-import { useWorkspaceDesktop, WorkspaceDesktopProvider } from "@/lib/workspaceDesktop";
-import { useWorkspaceSelection, WorkspaceSelectionProvider } from "@/lib/workspaceSelection";
+import {
+  getWorkspaceAppDefinition,
+  inferInstalledWorkspaceAppIdFromText,
+} from "@/lib/workspaceApps";
+import {
+  useWorkspaceDesktop,
+  WorkspaceDesktopProvider,
+} from "@/lib/workspaceDesktop";
+import {
+  useWorkspaceSelection,
+  WorkspaceSelectionProvider,
+} from "@/lib/workspaceSelection";
 
 const THEME_STORAGE_KEY = "holaboss-theme-v1";
 const OPERATIONS_DRAWER_OPEN_STORAGE_KEY = "holaboss-operations-drawer-open-v1";
@@ -39,7 +62,18 @@ const OPERATIONS_DRAWER_TAB_STORAGE_KEY = "holaboss-operations-drawer-tab-v1";
 const FILES_PANE_WIDTH_STORAGE_KEY = "holaboss-files-pane-width-v1";
 const BROWSER_PANE_WIDTH_STORAGE_KEY = "holaboss-browser-pane-width-v1";
 const SPACE_VISIBILITY_STORAGE_KEY = "holaboss-space-visibility-v1";
-const THEMES = ["holaboss", "emerald", "cobalt", "ember", "glacier", "mono", "claude", "slate", "paper", "graphite"] as const;
+const THEMES = [
+  "holaboss",
+  "emerald",
+  "cobalt",
+  "ember",
+  "glacier",
+  "mono",
+  "claude",
+  "slate",
+  "paper",
+  "graphite",
+] as const;
 const MIN_UTILITY_PANE_WIDTH = 200;
 const MAX_UTILITY_PANE_WIDTH = 720;
 const LEGACY_DEFAULT_FILES_PANE_WIDTH = 420;
@@ -74,7 +108,7 @@ const FIXED_SPACE_ORDER: SpaceComponentId[] = ["files", "browser", "agent"];
 const DEFAULT_SPACE_VISIBILITY: SpaceVisibilityState = {
   agent: true,
   files: true,
-  browser: true
+  browser: true,
 };
 
 export type AppTheme = (typeof THEMES)[number];
@@ -89,7 +123,12 @@ function isSettingsPaneSection(value: string): value is UiSettingsPaneSection {
 
 type AgentView =
   | { type: "chat" }
-  | { type: "app"; appId: string; resourceId?: string | null; view?: string | null }
+  | {
+      type: "app";
+      appId: string;
+      resourceId?: string | null;
+      view?: string | null;
+    }
   | {
       type: "internal";
       surface: "document" | "preview" | "file" | "event";
@@ -109,7 +148,10 @@ function loadFilesPaneWidth(): number {
       if (parsed === LEGACY_DEFAULT_FILES_PANE_WIDTH) {
         return DEFAULT_FILES_PANE_WIDTH;
       }
-      return Math.max(MIN_UTILITY_PANE_WIDTH, Math.min(parsed, MAX_UTILITY_PANE_WIDTH));
+      return Math.max(
+        MIN_UTILITY_PANE_WIDTH,
+        Math.min(parsed, MAX_UTILITY_PANE_WIDTH),
+      );
     }
   } catch {
     // ignore
@@ -123,7 +165,10 @@ function loadBrowserPaneWidth(): number {
     const raw = localStorage.getItem(BROWSER_PANE_WIDTH_STORAGE_KEY);
     const parsed = Number(raw);
     if (Number.isFinite(parsed)) {
-      return Math.max(MIN_UTILITY_PANE_WIDTH, Math.min(parsed, MAX_UTILITY_PANE_WIDTH));
+      return Math.max(
+        MIN_UTILITY_PANE_WIDTH,
+        Math.min(parsed, MAX_UTILITY_PANE_WIDTH),
+      );
     }
   } catch {
     // ignore
@@ -183,26 +228,30 @@ function spaceComponentLabel(componentId: SpaceComponentId) {
 
 function spaceResizeHandleSpec(
   leftPaneId: SpaceComponentId,
-  rightPaneId: SpaceComponentId
-): { leftPaneId: SpaceComponentId; rightPaneId: SpaceComponentId; label: string } {
+  rightPaneId: SpaceComponentId,
+): {
+  leftPaneId: SpaceComponentId;
+  rightPaneId: SpaceComponentId;
+  label: string;
+} {
   if (leftPaneId === "agent") {
     return {
       leftPaneId,
       rightPaneId,
-      label: `Resize ${spaceComponentLabel(rightPaneId).toLowerCase()} pane`
+      label: `Resize ${spaceComponentLabel(rightPaneId).toLowerCase()} pane`,
     };
   }
   if (rightPaneId === "agent") {
     return {
       leftPaneId,
       rightPaneId,
-      label: `Resize ${spaceComponentLabel(leftPaneId).toLowerCase()} pane`
+      label: `Resize ${spaceComponentLabel(leftPaneId).toLowerCase()} pane`,
     };
   }
   return {
     leftPaneId,
     rightPaneId,
-    label: `Resize ${spaceComponentLabel(leftPaneId).toLowerCase()} and ${spaceComponentLabel(rightPaneId).toLowerCase()} panes`
+    label: `Resize ${spaceComponentLabel(leftPaneId).toLowerCase()} and ${spaceComponentLabel(rightPaneId).toLowerCase()} panes`,
   };
 }
 
@@ -210,7 +259,9 @@ function normalizeErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed.";
 }
 
-function inferInternalSurfaceFromOutputType(outputType: string): "document" | "preview" | "file" | "event" {
+function inferInternalSurfaceFromOutputType(
+  outputType: string,
+): "document" | "preview" | "file" | "event" {
   const normalized = outputType.trim().toLowerCase();
   if (normalized === "document") {
     return "document";
@@ -229,7 +280,11 @@ function runtimeOutputTone(status: string): OperationsOutputEntry["tone"] {
   if (normalized === "failed" || normalized === "error") {
     return "error";
   }
-  if (normalized === "completed" || normalized === "ready" || normalized === "active") {
+  if (
+    normalized === "completed" ||
+    normalized === "ready" ||
+    normalized === "active"
+  ) {
     return "success";
   }
   return "info";
@@ -237,20 +292,22 @@ function runtimeOutputTone(status: string): OperationsOutputEntry["tone"] {
 
 function runtimeOutputToEntry(
   output: WorkspaceOutputRecordPayload,
-  installedAppIds: Set<string>
+  installedAppIds: Set<string>,
 ): OperationsOutputEntry {
   const moduleId = (output.module_id || "").trim().toLowerCase();
-  const title = output.title.trim() || output.output_type.trim() || "Workspace output";
+  const title =
+    output.title.trim() || output.output_type.trim() || "Workspace output";
   const detailParts = [
     output.status ? `Status: ${output.status}` : "",
     output.file_path ? `File: ${output.file_path}` : "",
-    output.platform ? `Platform: ${output.platform}` : ""
+    output.platform ? `Platform: ${output.platform}` : "",
   ].filter(Boolean);
 
   return {
     id: `runtime-output:${output.id}`,
     title,
-    detail: detailParts.join(" | ") || "Runtime output generated for this workspace.",
+    detail:
+      detailParts.join(" | ") || "Runtime output generated for this workspace.",
     createdAt: output.created_at,
     tone: runtimeOutputTone(output.status),
     sessionId: output.session_id,
@@ -259,15 +316,16 @@ function runtimeOutputToEntry(
         ? {
             type: "app",
             appId: moduleId,
-            resourceId: output.module_resource_id || output.artifact_id || output.id,
-            view: output.output_type || "home"
+            resourceId:
+              output.module_resource_id || output.artifact_id || output.id,
+            view: output.output_type || "home",
           }
         : {
             type: "internal",
             surface: inferInternalSurfaceFromOutputType(output.output_type),
             resourceId: output.file_path || output.artifact_id || output.id,
-            htmlContent: output.html_content
-          }
+            htmlContent: output.html_content,
+          },
   };
 }
 
@@ -291,10 +349,12 @@ function FirstWorkspacePane() {
     marketplaceTemplatesError,
     workspaceErrorMessage,
     chooseTemplateFolder,
-    createWorkspace
+    createWorkspace,
   } = useWorkspaceDesktop();
   const selectedCreateHarnessOption =
-    createHarnessOptions.find((option) => option.id === selectedCreateHarness) ?? createHarnessOptions[0];
+    createHarnessOptions.find(
+      (option) => option.id === selectedCreateHarness,
+    ) ?? createHarnessOptions[0];
   const sourceLabel =
     templateSourceMode === "marketplace"
       ? "Marketplace template"
@@ -315,11 +375,14 @@ function FirstWorkspacePane() {
   const sourceChoiceDetail =
     templateSourceMode === "marketplace"
       ? canUseMarketplaceTemplates
-        ? selectedMarketplaceTemplate?.name || `${marketplaceTemplates.length} templates available`
+        ? selectedMarketplaceTemplate?.name ||
+          `${marketplaceTemplates.length} templates available`
         : "Sign in required"
       : templateSourceMode === "empty"
         ? "Blank scaffold"
-        : selectedTemplateFolder?.templateName || selectedTemplateFolder?.rootPath || "Choose local folder";
+        : selectedTemplateFolder?.templateName ||
+          selectedTemplateFolder?.rootPath ||
+          "Choose local folder";
 
   const openAuthPopup = () => {
     if (!authButtonRef.current) {
@@ -330,7 +393,7 @@ function FirstWorkspacePane() {
       x: rect.left,
       y: rect.top,
       width: rect.width,
-      height: rect.height
+      height: rect.height,
     });
   };
 
@@ -338,7 +401,9 @@ function FirstWorkspacePane() {
     isCreatingWorkspace ||
     !newWorkspaceName.trim() ||
     (templateSourceMode === "marketplace"
-      ? !canUseMarketplaceTemplates || !selectedMarketplaceTemplate || selectedMarketplaceTemplate.is_coming_soon
+      ? !canUseMarketplaceTemplates ||
+        !selectedMarketplaceTemplate ||
+        selectedMarketplaceTemplate.is_coming_soon
       : templateSourceMode === "local"
         ? !selectedTemplateFolder?.rootPath
         : false);
@@ -367,7 +432,9 @@ function FirstWorkspacePane() {
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-neon-green/30 bg-neon-green/10 text-neon-green">
             <Loader2 size={22} className="animate-spin" />
           </div>
-          <h2 className="mt-5 text-[30px] font-semibold tracking-[-0.04em] text-text-main">{createTitle}</h2>
+          <h2 className="mt-5 text-[30px] font-semibold tracking-[-0.04em] text-text-main">
+            {createTitle}
+          </h2>
           <p className="mt-3 text-[14px] leading-7 text-text-muted/84">
             {createDetail}
           </p>
@@ -388,12 +455,14 @@ function FirstWorkspacePane() {
   }
 
   return (
-    <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden px-3 py-3 sm:px-4 sm:py-4">
+    <section className="relative flex h-full min-h-0 min-w-0 items-start justify-center overflow-y-auto px-3 py-3 sm:px-4 sm:py-4">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_12%,rgba(247,90,84,0.08),transparent_28%),radial-gradient(circle_at_86%_14%,rgba(233,117,109,0.08),transparent_30%)]" />
-      <div className="relative flex w-full max-w-[1080px] flex-1 items-center justify-center">
-        <div className="theme-shell mx-auto w-full rounded-[var(--theme-radius-card)] border border-panel-border/45 px-6 py-8 shadow-card sm:px-8 sm:py-9 lg:px-12 lg:py-10">
+      <div className="relative flex w-full max-w-[1080px] items-start justify-center py-4">
+        <div className="theme-shell mx-auto w-full rounded-[var(--theme-radius-card)] border border-panel-border/45 px-6 py-6 shadow-card sm:px-8 sm:py-7 lg:px-10 lg:py-8">
           <div className="max-w-3xl">
-            <div className="text-[11px] uppercase tracking-[0.24em] text-text-dim/78">New workspace</div>
+            <div className="text-[11px] uppercase tracking-[0.24em] text-text-dim/78">
+              New workspace
+            </div>
             <h1 className="mt-3 text-[34px] font-semibold tracking-[-0.05em] text-text-main sm:text-[42px]">
               Create a workspace
             </h1>
@@ -404,11 +473,13 @@ function FirstWorkspacePane() {
 
           <form
             onSubmit={handleCreateWorkspace}
-            className="theme-subtle-surface mt-8 rounded-[28px] border border-panel-border/45 p-5 sm:p-6"
+            className="theme-subtle-surface mt-6 rounded-[28px] border border-panel-border/45 p-4 sm:p-5"
           >
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)]">
               <div>
-                <div className="text-[11px] uppercase tracking-[0.22em] text-text-dim/76">Source</div>
+                <div className="text-[11px] uppercase tracking-[0.22em] text-text-dim/76">
+                  Source
+                </div>
                 <div className="mt-2 text-[22px] font-medium tracking-[-0.03em] text-text-main">
                   Choose how it starts
                 </div>
@@ -416,7 +487,11 @@ function FirstWorkspacePane() {
                   <FirstWorkspaceChoiceCard
                     title="Local Template"
                     description="Use a folder already on this machine."
-                    detail={selectedTemplateFolder?.templateName || selectedTemplateFolder?.rootPath || "Choose local folder"}
+                    detail={
+                      selectedTemplateFolder?.templateName ||
+                      selectedTemplateFolder?.rootPath ||
+                      "Choose local folder"
+                    }
                     icon={<FolderOpen size={18} />}
                     active={templateSourceMode === "local"}
                     onClick={() => {
@@ -428,12 +503,15 @@ function FirstWorkspacePane() {
                     description="Start from a curated Holaboss starter."
                     detail={
                       canUseMarketplaceTemplates
-                        ? selectedMarketplaceTemplate?.name || `${marketplaceTemplates.length} templates available`
+                        ? selectedMarketplaceTemplate?.name ||
+                          `${marketplaceTemplates.length} templates available`
                         : "Sign in required"
                     }
                     icon={<Sparkles size={18} />}
                     active={templateSourceMode === "marketplace"}
-                    badge={!canUseMarketplaceTemplates ? "Login Required" : undefined}
+                    badge={
+                      !canUseMarketplaceTemplates ? "Login Required" : undefined
+                    }
                     onClick={() => {
                       setTemplateSourceMode("marketplace");
                     }}
@@ -452,26 +530,36 @@ function FirstWorkspacePane() {
               </div>
 
               <div className="rounded-[24px] border border-panel-border/40 bg-black/8 p-4 sm:p-5">
-                <div className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">Workspace</div>
+                <div className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
+                  Workspace
+                </div>
                 <div className="mt-2 text-[22px] font-medium tracking-[-0.03em] text-text-main">
                   Name and harness
                 </div>
                 <div className="mt-4 grid gap-4">
                   <label className="grid gap-2">
-                    <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">Workspace name</span>
+                    <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
+                      Workspace name
+                    </span>
                     <input
                       value={newWorkspaceName}
-                      onChange={(event) => setNewWorkspaceName(event.target.value)}
+                      onChange={(event) =>
+                        setNewWorkspaceName(event.target.value)
+                      }
                       placeholder="My first workspace"
                       className="theme-control-surface h-12 rounded-[18px] border border-panel-border/45 px-4 text-[14px] text-text-main outline-none placeholder:text-text-dim/50"
                     />
                   </label>
 
                   <label className="grid gap-2">
-                    <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">Harness</span>
+                    <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
+                      Harness
+                    </span>
                     <select
                       value={selectedCreateHarness}
-                      onChange={(event) => setSelectedCreateHarness(event.target.value)}
+                      onChange={(event) =>
+                        setSelectedCreateHarness(event.target.value)
+                      }
                       className="theme-control-surface h-12 rounded-[18px] border border-panel-border/45 px-4 text-[14px] text-text-main outline-none"
                     >
                       {createHarnessOptions.map((option) => (
@@ -481,34 +569,53 @@ function FirstWorkspacePane() {
                       ))}
                     </select>
                     <span className="text-[12px] leading-6 text-text-muted/74">
-                      {selectedCreateHarnessOption?.description || "Default harness with backend bootstrapping and structured output support."}
+                      {selectedCreateHarnessOption?.description ||
+                        "Default harness with backend bootstrapping and structured output support."}
                     </span>
                   </label>
 
                   <div className="rounded-[18px] border border-panel-border/35 bg-panel-bg/18 px-4 py-3">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">Selection</div>
-                    <div className="mt-2 text-[14px] font-medium text-text-main">{sourceLabel}</div>
-                    <div className="mt-1 text-[12px] leading-6 text-text-muted/76">{sourceChoiceDetail}</div>
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">
+                      Selection
+                    </div>
+                    <div className="mt-2 text-[14px] font-medium text-text-main">
+                      {sourceLabel}
+                    </div>
+                    <div className="mt-1 text-[12px] leading-6 text-text-muted/76">
+                      {sourceChoiceDetail}
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="mt-6 rounded-[24px] border border-panel-border/40 bg-black/10 p-4 sm:p-5">
+            <div className="mt-4 rounded-[20px] border border-panel-border/40 bg-black/10 p-4">
               <div className="border-b border-panel-border/30 pb-4">
                 <div>
-                  <div className="text-[11px] uppercase tracking-[0.22em] text-text-dim/76">Source details</div>
+                  <div className="text-[11px] uppercase tracking-[0.22em] text-text-dim/76">
+                    Source details
+                  </div>
                   <div className="mt-2 flex items-center gap-2 text-[18px] font-medium tracking-[-0.03em] text-text-main">
                     {templateSourceMode === "marketplace" ? (
-                      <Sparkles size={16} className="text-[rgba(206,92,84,0.9)]" />
+                      <Sparkles
+                        size={16}
+                        className="text-[rgba(206,92,84,0.9)]"
+                      />
                     ) : templateSourceMode === "empty" ? (
-                      <span className="text-[18px] leading-none text-[rgba(206,92,84,0.9)]">+</span>
+                      <span className="text-[18px] leading-none text-[rgba(206,92,84,0.9)]">
+                        +
+                      </span>
                     ) : (
-                      <FolderOpen size={16} className="text-[rgba(206,92,84,0.9)]" />
+                      <FolderOpen
+                        size={16}
+                        className="text-[rgba(206,92,84,0.9)]"
+                      />
                     )}
                     <span>{sourceLabel}</span>
                   </div>
-                  <div className="mt-2 max-w-3xl text-[12px] leading-6 text-text-muted/76">{sourceDescription}</div>
+                  <div className="mt-2 max-w-3xl text-[12px] leading-6 text-text-muted/76">
+                    {sourceDescription}
+                  </div>
                 </div>
               </div>
 
@@ -517,31 +624,49 @@ function FirstWorkspacePane() {
                   canUseMarketplaceTemplates ? (
                     <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.9fr)]">
                       <label className="grid gap-2">
-                        <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">Marketplace template</span>
+                        <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
+                          Marketplace template
+                        </span>
                         <select
                           value={selectedMarketplaceTemplate?.name || ""}
-                          onChange={(event) => selectMarketplaceTemplate(event.target.value)}
-                          disabled={isLoadingMarketplaceTemplates || marketplaceTemplates.length === 0}
+                          onChange={(event) =>
+                            selectMarketplaceTemplate(event.target.value)
+                          }
+                          disabled={
+                            isLoadingMarketplaceTemplates ||
+                            marketplaceTemplates.length === 0
+                          }
                           className="theme-control-surface h-12 rounded-[18px] border border-panel-border/45 px-4 text-[14px] text-text-main outline-none disabled:text-text-dim/50"
                         >
                           {isLoadingMarketplaceTemplates ? (
                             <option value="">Loading templates...</option>
                           ) : marketplaceTemplates.length ? (
                             marketplaceTemplates.map((template) => (
-                              <option key={template.name} value={template.name} disabled={template.is_coming_soon}>
-                                {template.is_coming_soon ? `${template.name} (Coming soon)` : template.name}
+                              <option
+                                key={template.name}
+                                value={template.name}
+                                disabled={template.is_coming_soon}
+                              >
+                                {template.is_coming_soon
+                                  ? `${template.name} (Coming soon)`
+                                  : template.name}
                               </option>
                             ))
                           ) : (
-                            <option value="">No marketplace templates available</option>
+                            <option value="">
+                              No marketplace templates available
+                            </option>
                           )}
                         </select>
                       </label>
 
                       <div className="rounded-[18px] border border-[rgba(247,90,84,0.16)] bg-[rgba(247,90,84,0.04)] px-4 py-3">
-                        <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">Preview</div>
+                        <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">
+                          Preview
+                        </div>
                         <div className="mt-2 text-[13px] font-medium text-text-main">
-                          {selectedMarketplaceTemplate?.name || "Choose a marketplace template"}
+                          {selectedMarketplaceTemplate?.name ||
+                            "Choose a marketplace template"}
                         </div>
                         <div className="mt-2 text-[12px] leading-6 text-text-muted/78">
                           {marketplaceTemplatesError ||
@@ -554,9 +679,12 @@ function FirstWorkspacePane() {
                     <div className="rounded-[20px] border border-[rgba(247,90,84,0.22)] bg-[rgba(247,90,84,0.05)] p-4">
                       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                         <div className="max-w-2xl">
-                          <div className="text-[13px] font-medium text-text-main">Sign in to use marketplace templates</div>
+                          <div className="text-[13px] font-medium text-text-main">
+                            Sign in to use marketplace templates
+                          </div>
                           <div className="mt-1 text-[12px] leading-6 text-text-muted/78">
-                            Local folders and empty workspaces still work without an account.
+                            Local folders and empty workspaces still work
+                            without an account.
                           </div>
                         </div>
                         <div className="flex flex-wrap gap-2">
@@ -574,38 +702,52 @@ function FirstWorkspacePane() {
                   )
                 ) : templateSourceMode === "empty" ? (
                   <div className="rounded-[18px] border border-panel-border/35 bg-panel-bg/18 px-4 py-3">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">Scaffold</div>
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">
+                      Scaffold
+                    </div>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {["workspace.yaml", "AGENTS.md", "skills/"].map((item) => (
-                        <span
-                          key={item}
-                          className="rounded-full border border-panel-border/35 bg-black/10 px-3 py-1.5 text-[11px] uppercase tracking-[0.14em] text-text-dim/74"
-                        >
-                          {item}
-                        </span>
-                      ))}
+                      {["workspace.yaml", "AGENTS.md", "skills/"].map(
+                        (item) => (
+                          <span
+                            key={item}
+                            className="rounded-full border border-panel-border/35 bg-black/10 px-3 py-1.5 text-[11px] uppercase tracking-[0.14em] text-text-dim/74"
+                          >
+                            {item}
+                          </span>
+                        ),
+                      )}
                     </div>
                   </div>
                 ) : (
                   <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.9fr)]">
                     <div className="grid gap-2">
-                      <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">Local template folder</span>
+                      <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
+                        Local template folder
+                      </span>
                       <button
                         type="button"
                         onClick={() => void chooseTemplateFolder()}
                         className="theme-control-surface flex h-12 items-center justify-between rounded-[18px] border border-panel-border/45 px-4 text-left text-[14px] text-text-main transition hover:border-[rgba(247,90,84,0.3)]"
                       >
                         <span className="truncate">
-                          {selectedTemplateFolder?.templateName || selectedTemplateFolder?.rootPath || "Choose local folder"}
+                          {selectedTemplateFolder?.templateName ||
+                            selectedTemplateFolder?.rootPath ||
+                            "Choose local folder"}
                         </span>
-                        <ArrowRight size={16} className="shrink-0 text-text-dim/75" />
+                        <ArrowRight
+                          size={16}
+                          className="shrink-0 text-text-dim/75"
+                        />
                       </button>
                     </div>
 
                     <div className="rounded-[18px] border border-panel-border/35 bg-panel-bg/18 px-4 py-3">
-                      <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">Path</div>
+                      <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">
+                        Path
+                      </div>
                       <div className="mt-2 text-[12px] leading-6 text-text-muted/78">
-                        {selectedTemplateFolder?.rootPath || "Choose a folder and Holaboss will use it as the source template for the new workspace."}
+                        {selectedTemplateFolder?.rootPath ||
+                          "Choose a folder and Holaboss will use it as the source template for the new workspace."}
                       </div>
                     </div>
                   </div>
@@ -619,11 +761,22 @@ function FirstWorkspacePane() {
               </div>
             ) : null}
 
-            <div className="mt-6 flex flex-col gap-4 border-t border-panel-border/35 pt-5 md:flex-row md:items-center md:justify-end">
+            <div className="mt-4 flex flex-col gap-3 border-t border-panel-border/35 pt-4 md:flex-row md:items-center md:justify-between">
+              <div className="text-[12px] leading-5 text-text-muted/70">
+                {!newWorkspaceName.trim()
+                  ? "Enter a workspace name to continue."
+                  : templateSourceMode === "marketplace" &&
+                      !canUseMarketplaceTemplates
+                    ? "Sign in to use marketplace templates."
+                    : templateSourceMode === "local" &&
+                        !selectedTemplateFolder?.rootPath
+                      ? "Choose a local template folder."
+                      : "\u00A0"}
+              </div>
               <button
                 type="submit"
                 disabled={createDisabled}
-                className="inline-flex h-12 items-center justify-center gap-3 rounded-[18px] border border-[rgba(247,90,84,0.38)] bg-[rgba(247,90,84,0.9)] px-5 text-[14px] font-medium text-white transition hover:bg-[rgba(226,79,74,0.94)] disabled:cursor-not-allowed disabled:border-panel-border/40 disabled:bg-transparent disabled:text-text-dim/50"
+                className="inline-flex h-12 items-center justify-center gap-3 rounded-[18px] border border-[rgba(247,90,84,0.38)] bg-[rgba(247,90,84,0.9)] px-5 text-[14px] font-medium text-white transition hover:bg-[rgba(226,79,74,0.94)] disabled:cursor-not-allowed disabled:border-panel-border/45 disabled:bg-panel-bg/60 disabled:text-text-dim/60"
               >
                 <span>Create Workspace</span>
                 <ArrowRight size={16} />
@@ -643,7 +796,7 @@ function FirstWorkspaceChoiceCard({
   icon,
   active,
   badge,
-  onClick
+  onClick,
 }: {
   title: string;
   description: string;
@@ -657,7 +810,7 @@ function FirstWorkspaceChoiceCard({
     <button
       type="button"
       onClick={onClick}
-      className={`group relative overflow-hidden rounded-[22px] border p-4 text-left transition-all duration-200 ${
+      className={`group relative overflow-hidden rounded-[18px] border p-3 text-left transition-all duration-200 ${
         active
           ? "border-[rgba(247,90,84,0.32)] bg-[linear-gradient(145deg,rgba(247,90,84,0.1),rgba(255,255,255,0.03))] shadow-[0_10px_28px_rgba(25,33,53,0.08)]"
           : "border-panel-border/45 theme-control-surface hover:border-[rgba(247,90,84,0.24)] hover:bg-[var(--theme-hover-bg)]"
@@ -676,9 +829,15 @@ function FirstWorkspaceChoiceCard({
             </span>
           ) : null}
         </div>
-        <div className="mt-4 text-[16px] font-medium tracking-[-0.02em] text-text-main">{title}</div>
-        <div className="mt-1.5 text-[13px] leading-6 text-text-muted/82">{description}</div>
-        <div className="mt-3 text-[11px] uppercase tracking-[0.14em] text-text-dim/72">{detail}</div>
+        <div className="mt-2.5 text-[14px] font-medium tracking-[-0.02em] text-text-main">
+          {title}
+        </div>
+        <div className="mt-1 text-[12px] leading-5 text-text-muted/82">
+          {description}
+        </div>
+        <div className="mt-2 text-[10px] uppercase tracking-[0.14em] text-text-dim/72">
+          {detail}
+        </div>
       </div>
     </button>
   );
@@ -695,7 +854,11 @@ function EmptyWorkspacePane() {
 }
 
 function WorkspaceBootstrapPane() {
-  const startupStages = ["Loading workspace records", "Restoring recent context", "Attaching desktop surfaces"] as const;
+  const startupStages = [
+    "Loading workspace records",
+    "Restoring recent context",
+    "Attaching desktop surfaces",
+  ] as const;
 
   return (
     <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden">
@@ -712,9 +875,12 @@ function WorkspaceBootstrapPane() {
           <Loader2 size={20} className="animate-spin" />
         </div>
 
-        <div className="mt-6 text-[34px] font-semibold tracking-[-0.05em] text-text-main sm:text-[40px]">Preparing the desktop shell</div>
+        <div className="mt-6 text-[34px] font-semibold tracking-[-0.05em] text-text-main sm:text-[40px]">
+          Preparing the desktop shell
+        </div>
         <div className="mt-3 max-w-[520px] text-[14px] leading-7 text-text-muted/82 sm:text-[15px]">
-          Restoring workspace state so the desktop opens in the last ready-to-work context.
+          Restoring workspace state so the desktop opens in the last
+          ready-to-work context.
         </div>
 
         <div className="mt-8 w-full">
@@ -751,10 +917,97 @@ function WorkspaceBootstrapPane() {
   );
 }
 
+function WorkspaceInitializingGate({
+  apps,
+}: {
+  apps: Array<{
+    id: string;
+    label: string;
+    ready: boolean;
+    error: string | null;
+  }>;
+}) {
+  const hasErrors = apps.some((app) => app.error);
+  const readyCount = apps.filter((app) => app.ready).length;
+
+  return (
+    <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_28%,rgba(247,90,84,0.12),transparent_18%),radial-gradient(circle_at_50%_56%,rgba(247,170,126,0.08),transparent_24%)]" />
+      <div className="pointer-events-none absolute left-1/2 top-1/2 h-[420px] w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(247,90,84,0.08),transparent_62%)] blur-3xl" />
+
+      <div className="relative flex w-full max-w-[560px] flex-col items-center px-6 text-center">
+        <div className="inline-flex items-center gap-2 rounded-full border border-panel-border/35 bg-white/45 px-3 py-1.5 text-[10px] uppercase tracking-[0.22em] text-text-dim/74 backdrop-blur">
+          <Sparkles size={12} className="text-[rgba(206,92,84,0.88)]" />
+          <span>{hasErrors ? "Needs attention" : "Setting up workspace"}</span>
+        </div>
+
+        {hasErrors ? (
+          <div className="mt-6 flex h-14 w-14 items-center justify-center rounded-full border border-rose-400/22 bg-rose-400/8 text-rose-400">
+            <TriangleAlert size={20} />
+          </div>
+        ) : (
+          <div className="mt-6 flex h-14 w-14 items-center justify-center rounded-full border border-[rgba(247,90,84,0.22)] bg-[rgba(247,90,84,0.08)] text-[rgba(206,92,84,0.94)]">
+            <Loader2 size={20} className="animate-spin" />
+          </div>
+        )}
+
+        <div className="mt-6 text-[34px] font-semibold tracking-[-0.05em] text-text-main sm:text-[40px]">
+          {hasErrors ? "Some apps need attention" : "Setting up workspace"}
+        </div>
+        <div className="mt-3 max-w-[520px] text-[14px] leading-7 text-text-muted/82 sm:text-[15px]">
+          {hasErrors
+            ? "Some workspace apps encountered errors. You can retry or remove them."
+            : "Starting workspace apps. This may take a few minutes on first setup."}
+        </div>
+
+        <div className="mt-8 w-full space-y-3">
+          {apps.map((app) => (
+            <div
+              key={app.id}
+              className="flex items-center gap-3 rounded-[18px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-3"
+            >
+              {app.ready ? (
+                <CircleCheck size={16} className="shrink-0 text-neon-green" />
+              ) : app.error ? (
+                <XCircle size={16} className="shrink-0 text-rose-400" />
+              ) : (
+                <Loader2
+                  size={16}
+                  className="shrink-0 animate-spin text-[rgba(206,92,84,0.88)]"
+                />
+              )}
+              <span className="min-w-0 flex-1 text-left text-[13px] font-medium text-text-main">
+                {app.label}
+              </span>
+              <span
+                className={`text-[11px] uppercase tracking-[0.14em] ${
+                  app.ready
+                    ? "text-neon-green"
+                    : app.error
+                      ? "text-rose-400"
+                      : "text-[rgba(206,92,84,0.88)]"
+                }`}
+              >
+                {app.ready ? "Ready" : app.error ? "Failed" : "Initializing..."}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {!hasErrors ? (
+          <div className="mt-4 text-[12px] leading-6 text-text-muted/74">
+            {readyCount} of {apps.length} apps ready
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 function FocusPlaceholder({
   eyebrow,
   title,
-  description
+  description,
 }: {
   eyebrow: string;
   title: string;
@@ -764,9 +1017,15 @@ function FocusPlaceholder({
     <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(87,255,173,0.08),transparent_45%)]" />
       <div className="relative max-w-[520px] px-8 text-center">
-        <div className="text-[10px] uppercase tracking-[0.18em] text-neon-green/78">{eyebrow}</div>
-        <div className="mt-3 text-[28px] font-semibold tracking-[-0.03em] text-text-main">{title}</div>
-        <div className="mt-3 text-[13px] leading-7 text-text-muted/84">{description}</div>
+        <div className="text-[10px] uppercase tracking-[0.18em] text-neon-green/78">
+          {eyebrow}
+        </div>
+        <div className="mt-3 text-[28px] font-semibold tracking-[-0.03em] text-text-main">
+          {title}
+        </div>
+        <div className="mt-3 text-[13px] leading-7 text-text-muted/84">
+          {description}
+        </div>
       </div>
     </section>
   );
@@ -782,15 +1041,19 @@ function WorkspaceStartupErrorPane({ message }: { message: string }) {
             <TriangleAlert size={12} />
             <span>Desktop startup blocked</span>
           </div>
-          <div className="mt-6 text-[30px] font-semibold tracking-[-0.04em] text-text-main">The local runtime failed to start</div>
+          <div className="mt-6 text-[30px] font-semibold tracking-[-0.04em] text-text-main">
+            The local runtime failed to start
+          </div>
           <div className="mt-3 text-[14px] leading-7 text-text-muted/84">
-            The desktop shell cannot finish restoring workspaces until the embedded runtime comes online.
+            The desktop shell cannot finish restoring workspaces until the
+            embedded runtime comes online.
           </div>
           <div className="mt-6 rounded-[20px] border border-[rgba(247,90,84,0.22)] bg-[rgba(247,90,84,0.06)] px-4 py-4 text-[13px] leading-7 text-text-main">
             {message}
           </div>
           <div className="mt-5 text-[12px] leading-6 text-text-muted/76">
-            Check `runtime.log` in the Electron userData directory and confirm the required desktop runtime configuration is present.
+            Check `runtime.log` in the Electron userData directory and confirm
+            the required desktop runtime configuration is present.
           </div>
         </div>
       </div>
@@ -806,34 +1069,50 @@ function AppShellContent() {
     hasHydratedWorkspaceList,
     selectedWorkspace,
     installedApps,
-    workspaceErrorMessage
-  } =
-    useWorkspaceDesktop();
+    workspaceErrorMessage,
+  } = useWorkspaceDesktop();
   const [theme, setTheme] = useState<AppTheme>(loadTheme);
-  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatusPayload | null>(null);
-  const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatusPayload | null>(null);
+  const [runtimeStatus, setRuntimeStatus] =
+    useState<RuntimeStatusPayload | null>(null);
+  const [appUpdateStatus, setAppUpdateStatus] =
+    useState<AppUpdateStatusPayload | null>(null);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
-  const [settingsDialogSection, setSettingsDialogSection] = useState<UiSettingsPaneSection>("settings");
-  const [activeLeftRailItem, setActiveLeftRailItem] = useState<LeftRailItem>("space");
+  const [settingsDialogSection, setSettingsDialogSection] =
+    useState<UiSettingsPaneSection>("settings");
+  const [activeLeftRailItem, setActiveLeftRailItem] =
+    useState<LeftRailItem>("space");
   const [agentView, setAgentView] = useState<AgentView>({ type: "chat" });
   const [chatFocusRequestKey, setChatFocusRequestKey] = useState(1);
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = useState(false);
-  const [spaceVisibility, setSpaceVisibility] = useState<SpaceVisibilityState>(loadSpaceVisibility);
+  const [spaceVisibility, setSpaceVisibility] =
+    useState<SpaceVisibilityState>(loadSpaceVisibility);
   const [filesPaneWidth, setFilesPaneWidth] = useState(loadFilesPaneWidth);
-  const [browserPaneWidth, setBrowserPaneWidth] = useState(loadBrowserPaneWidth);
+  const [browserPaneWidth, setBrowserPaneWidth] =
+    useState(loadBrowserPaneWidth);
   const [isUtilityPaneResizing, setIsUtilityPaneResizing] = useState(false);
-  const [operationsDrawerOpen, setOperationsDrawerOpen] = useState(loadOperationsDrawerOpen);
-  const [activeOperationsTab, setActiveOperationsTab] = useState<OperationsDrawerTab>(loadOperationsDrawerTab);
-  const [taskProposals, setTaskProposals] = useState<TaskProposalRecordPayload[]>([]);
+  const [operationsDrawerOpen, setOperationsDrawerOpen] = useState(
+    loadOperationsDrawerOpen,
+  );
+  const [activeOperationsTab, setActiveOperationsTab] =
+    useState<OperationsDrawerTab>(loadOperationsDrawerTab);
+  const [taskProposals, setTaskProposals] = useState<
+    TaskProposalRecordPayload[]
+  >([]);
   const [isLoadingTaskProposals, setIsLoadingTaskProposals] = useState(false);
-  const [isTriggeringTaskProposal, setIsTriggeringTaskProposal] = useState(false);
-  const [taskProposalStatusMessage, setTaskProposalStatusMessage] = useState("");
+  const [isTriggeringTaskProposal, setIsTriggeringTaskProposal] =
+    useState(false);
+  const [taskProposalStatusMessage, setTaskProposalStatusMessage] =
+    useState("");
   const [proposalAction, setProposalAction] = useState<{
     proposalId: string;
     action: "accept" | "dismiss";
   } | null>(null);
-  const [outputEntries, setOutputEntries] = useState<OperationsOutputEntry[]>([]);
-  const [runtimeOutputEntries, setRuntimeOutputEntries] = useState<OperationsOutputEntry[]>([]);
+  const [outputEntries, setOutputEntries] = useState<OperationsOutputEntry[]>(
+    [],
+  );
+  const [runtimeOutputEntries, setRuntimeOutputEntries] = useState<
+    OperationsOutputEntry[]
+  >([]);
   const [selectedOutputId, setSelectedOutputId] = useState<string | null>(null);
   const outputRefreshTimerRef = useRef<number | null>(null);
   const utilityPaneHostRef = useRef<HTMLDivElement | null>(null);
@@ -847,75 +1126,135 @@ function AppShellContent() {
   spaceVisibilityRef.current = spaceVisibility;
 
   const clampUtilityPaneWidth = useCallback(
-    (paneId: UtilityPaneId, width: number, options?: { filesWidth?: number; browserWidth?: number }) => {
-      const hostWidth = utilityPaneHostRef.current?.getBoundingClientRect().width ?? 0;
-      const effectiveFilesWidth = options?.filesWidth ?? filesPaneWidthRef.current;
-      const effectiveBrowserWidth = options?.browserWidth ?? browserPaneWidthRef.current;
-      const visiblePaneIds = FIXED_SPACE_ORDER.filter((pane) => spaceVisibilityRef.current[pane]);
-      const flexPaneId = visiblePaneIds.includes("agent") ? "agent" : visiblePaneIds[visiblePaneIds.length - 1] ?? null;
+    (
+      paneId: UtilityPaneId,
+      width: number,
+      options?: { filesWidth?: number; browserWidth?: number },
+    ) => {
+      const hostWidth =
+        utilityPaneHostRef.current?.getBoundingClientRect().width ?? 0;
+      const effectiveFilesWidth =
+        options?.filesWidth ?? filesPaneWidthRef.current;
+      const effectiveBrowserWidth =
+        options?.browserWidth ?? browserPaneWidthRef.current;
+      const visiblePaneIds = FIXED_SPACE_ORDER.filter(
+        (pane) => spaceVisibilityRef.current[pane],
+      );
+      const flexPaneId = visiblePaneIds.includes("agent")
+        ? "agent"
+        : (visiblePaneIds[visiblePaneIds.length - 1] ?? null);
       const resizerCount = Math.max(0, visiblePaneIds.length - 1);
       const fixedOtherWidths = visiblePaneIds.reduce((total, visiblePaneId) => {
-        if (visiblePaneId === paneId || visiblePaneId === flexPaneId || visiblePaneId === "agent") {
+        if (
+          visiblePaneId === paneId ||
+          visiblePaneId === flexPaneId ||
+          visiblePaneId === "agent"
+        ) {
           return total;
         }
-        return total + (visiblePaneId === "files" ? effectiveFilesWidth : effectiveBrowserWidth);
+        return (
+          total +
+          (visiblePaneId === "files"
+            ? effectiveFilesWidth
+            : effectiveBrowserWidth)
+        );
       }, 0);
-      const minFlexibleWidth = flexPaneId === "agent" ? MIN_AGENT_CONTENT_WIDTH : MIN_UTILITY_PANE_WIDTH;
+      const minFlexibleWidth =
+        flexPaneId === "agent"
+          ? MIN_AGENT_CONTENT_WIDTH
+          : MIN_UTILITY_PANE_WIDTH;
       const maxWidth =
         hostWidth > 0
           ? Math.min(
               MAX_UTILITY_PANE_WIDTH,
               Math.max(
                 MIN_UTILITY_PANE_WIDTH,
-                hostWidth - fixedOtherWidths - minFlexibleWidth - resizerCount * UTILITY_PANE_RESIZER_WIDTH
-              )
+                hostWidth -
+                  fixedOtherWidths -
+                  minFlexibleWidth -
+                  resizerCount * UTILITY_PANE_RESIZER_WIDTH,
+              ),
             )
           : MAX_UTILITY_PANE_WIDTH;
       return Math.max(MIN_UTILITY_PANE_WIDTH, Math.min(width, maxWidth));
     },
-    []
+    [],
   );
 
   const clampPairedUtilityPaneWidths = useCallback(
-    (leftPaneId: UtilityPaneId, rightPaneId: UtilityPaneId, leftWidth: number, rightWidth: number) => {
-      const hostWidth = utilityPaneHostRef.current?.getBoundingClientRect().width ?? 0;
+    (
+      leftPaneId: UtilityPaneId,
+      rightPaneId: UtilityPaneId,
+      leftWidth: number,
+      rightWidth: number,
+    ) => {
+      const hostWidth =
+        utilityPaneHostRef.current?.getBoundingClientRect().width ?? 0;
       if (hostWidth <= 0) {
         return {
-          leftWidth: Math.max(MIN_UTILITY_PANE_WIDTH, Math.min(leftWidth, MAX_UTILITY_PANE_WIDTH)),
-          rightWidth: Math.max(MIN_UTILITY_PANE_WIDTH, Math.min(rightWidth, MAX_UTILITY_PANE_WIDTH))
+          leftWidth: Math.max(
+            MIN_UTILITY_PANE_WIDTH,
+            Math.min(leftWidth, MAX_UTILITY_PANE_WIDTH),
+          ),
+          rightWidth: Math.max(
+            MIN_UTILITY_PANE_WIDTH,
+            Math.min(rightWidth, MAX_UTILITY_PANE_WIDTH),
+          ),
         };
       }
 
       const effectiveFilesWidth =
-        leftPaneId === "files" ? leftWidth : rightPaneId === "files" ? rightWidth : filesPaneWidthRef.current;
+        leftPaneId === "files"
+          ? leftWidth
+          : rightPaneId === "files"
+            ? rightWidth
+            : filesPaneWidthRef.current;
       const effectiveBrowserWidth =
-        leftPaneId === "browser" ? leftWidth : rightPaneId === "browser" ? rightWidth : browserPaneWidthRef.current;
-      const visiblePaneIds = FIXED_SPACE_ORDER.filter((pane) => spaceVisibilityRef.current[pane]);
+        leftPaneId === "browser"
+          ? leftWidth
+          : rightPaneId === "browser"
+            ? rightWidth
+            : browserPaneWidthRef.current;
+      const visiblePaneIds = FIXED_SPACE_ORDER.filter(
+        (pane) => spaceVisibilityRef.current[pane],
+      );
       const resizerCount = Math.max(0, visiblePaneIds.length - 1);
       const fixedOtherWidths = visiblePaneIds.reduce((total, visiblePaneId) => {
-        if (visiblePaneId === "agent" || visiblePaneId === leftPaneId || visiblePaneId === rightPaneId) {
+        if (
+          visiblePaneId === "agent" ||
+          visiblePaneId === leftPaneId ||
+          visiblePaneId === rightPaneId
+        ) {
           return total;
         }
-        return total + (visiblePaneId === "files" ? effectiveFilesWidth : effectiveBrowserWidth);
+        return (
+          total +
+          (visiblePaneId === "files"
+            ? effectiveFilesWidth
+            : effectiveBrowserWidth)
+        );
       }, 0);
       const maxCombinedWidth = Math.min(
         MAX_UTILITY_PANE_WIDTH * 2,
         Math.max(
           MIN_UTILITY_PANE_WIDTH * 2,
-          hostWidth - fixedOtherWidths - MIN_AGENT_CONTENT_WIDTH - resizerCount * UTILITY_PANE_RESIZER_WIDTH
-        )
+          hostWidth -
+            fixedOtherWidths -
+            MIN_AGENT_CONTENT_WIDTH -
+            resizerCount * UTILITY_PANE_RESIZER_WIDTH,
+        ),
       );
       const combinedWidth = Math.min(leftWidth + rightWidth, maxCombinedWidth);
       const nextLeftWidth = Math.max(
         MIN_UTILITY_PANE_WIDTH,
-        Math.min(leftWidth, combinedWidth - MIN_UTILITY_PANE_WIDTH)
+        Math.min(leftWidth, combinedWidth - MIN_UTILITY_PANE_WIDTH),
       );
       return {
         leftWidth: nextLeftWidth,
-        rightWidth: combinedWidth - nextLeftWidth
+        rightWidth: combinedWidth - nextLeftWidth,
       };
     },
-    []
+    [],
   );
 
   const refreshRuntimeOutputs = useCallback(async () => {
@@ -924,9 +1263,14 @@ function AppShellContent() {
       return;
     }
     try {
-      const response = await window.electronAPI.workspace.listOutputs(selectedWorkspaceId);
+      const response =
+        await window.electronAPI.workspace.listOutputs(selectedWorkspaceId);
       const installedAppIds = new Set(installedApps.map((app) => app.id));
-      setRuntimeOutputEntries(response.items.map((item) => runtimeOutputToEntry(item, installedAppIds)));
+      setRuntimeOutputEntries(
+        response.items.map((item) =>
+          runtimeOutputToEntry(item, installedAppIds),
+        ),
+      );
     } catch {
       setRuntimeOutputEntries([]);
     }
@@ -942,29 +1286,36 @@ function AppShellContent() {
   }, [refreshRuntimeOutputs, runtimeStatus?.status, selectedWorkspaceId]);
 
   useEffect(() => {
-    const unsubscribe = window.electronAPI.workspace.onSessionStreamEvent((payload) => {
-      if (payload.type !== "event") {
-        return;
-      }
-      const data =
-        payload.event?.data && typeof payload.event.data === "object" && !Array.isArray(payload.event.data)
-          ? (payload.event.data as {
-              event_type?: string;
-              session_id?: string;
-            })
-          : null;
-      const eventType = typeof data?.event_type === "string" ? data.event_type : payload.event?.event || "";
-      if (eventType === "output_delta" || eventType === "thinking_delta") {
-        return;
-      }
-      if (outputRefreshTimerRef.current !== null) {
-        window.clearTimeout(outputRefreshTimerRef.current);
-      }
-      outputRefreshTimerRef.current = window.setTimeout(() => {
-        outputRefreshTimerRef.current = null;
-        void refreshRuntimeOutputs();
-      }, 250);
-    });
+    const unsubscribe = window.electronAPI.workspace.onSessionStreamEvent(
+      (payload) => {
+        if (payload.type !== "event") {
+          return;
+        }
+        const data =
+          payload.event?.data &&
+          typeof payload.event.data === "object" &&
+          !Array.isArray(payload.event.data)
+            ? (payload.event.data as {
+                event_type?: string;
+                session_id?: string;
+              })
+            : null;
+        const eventType =
+          typeof data?.event_type === "string"
+            ? data.event_type
+            : payload.event?.event || "";
+        if (eventType === "output_delta" || eventType === "thinking_delta") {
+          return;
+        }
+        if (outputRefreshTimerRef.current !== null) {
+          window.clearTimeout(outputRefreshTimerRef.current);
+        }
+        outputRefreshTimerRef.current = window.setTimeout(() => {
+          outputRefreshTimerRef.current = null;
+          void refreshRuntimeOutputs();
+        }, 250);
+      },
+    );
 
     return () => {
       if (outputRefreshTimerRef.current !== null) {
@@ -1005,7 +1356,9 @@ function AppShellContent() {
     }
 
     const unsubscribe = window.electronAPI.ui.onOpenSettingsPane((section) => {
-      setSettingsDialogSection(isSettingsPaneSection(section) ? section : "settings");
+      setSettingsDialogSection(
+        isSettingsPaneSection(section) ? section : "settings",
+      );
       setSettingsDialogOpen(true);
       void window.electronAPI.auth.closePopup();
     });
@@ -1018,16 +1371,21 @@ function AppShellContent() {
       return;
     }
 
-    const unsubscribe = window.electronAPI.workbench.onOpenBrowser((payload) => {
-      if (payload.workspaceId && payload.workspaceId !== selectedWorkspaceId) {
-        return;
-      }
-      setActiveLeftRailItem("space");
-      setSpaceVisibility((previous) => ({
-        ...previous,
-        browser: true
-      }));
-    });
+    const unsubscribe = window.electronAPI.workbench.onOpenBrowser(
+      (payload) => {
+        if (
+          payload.workspaceId &&
+          payload.workspaceId !== selectedWorkspaceId
+        ) {
+          return;
+        }
+        setActiveLeftRailItem("space");
+        setSpaceVisibility((previous) => ({
+          ...previous,
+          browser: true,
+        }));
+      },
+    );
 
     return unsubscribe;
   }, [selectedWorkspaceId]);
@@ -1097,11 +1455,17 @@ function AppShellContent() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(OPERATIONS_DRAWER_OPEN_STORAGE_KEY, operationsDrawerOpen ? "1" : "0");
+    localStorage.setItem(
+      OPERATIONS_DRAWER_OPEN_STORAGE_KEY,
+      operationsDrawerOpen ? "1" : "0",
+    );
   }, [operationsDrawerOpen]);
 
   useEffect(() => {
-    localStorage.setItem(OPERATIONS_DRAWER_TAB_STORAGE_KEY, activeOperationsTab);
+    localStorage.setItem(
+      OPERATIONS_DRAWER_TAB_STORAGE_KEY,
+      activeOperationsTab,
+    );
   }, [activeOperationsTab]);
 
   useEffect(() => {
@@ -1109,11 +1473,17 @@ function AppShellContent() {
   }, [filesPaneWidth]);
 
   useEffect(() => {
-    localStorage.setItem(BROWSER_PANE_WIDTH_STORAGE_KEY, String(browserPaneWidth));
+    localStorage.setItem(
+      BROWSER_PANE_WIDTH_STORAGE_KEY,
+      String(browserPaneWidth),
+    );
   }, [browserPaneWidth]);
 
   useEffect(() => {
-    localStorage.setItem(SPACE_VISIBILITY_STORAGE_KEY, JSON.stringify(spaceVisibility));
+    localStorage.setItem(
+      SPACE_VISIBILITY_STORAGE_KEY,
+      JSON.stringify(spaceVisibility),
+    );
   }, [spaceVisibility]);
 
   useEffect(() => {
@@ -1122,15 +1492,17 @@ function AppShellContent() {
     }
     setSpaceVisibility((previous) => ({
       ...previous,
-      agent: true
+      agent: true,
     }));
   }, [spaceVisibility.agent]);
 
-  const appendOutputEntry = (entry: Omit<OperationsOutputEntry, "id" | "createdAt">) => {
+  const appendOutputEntry = (
+    entry: Omit<OperationsOutputEntry, "id" | "createdAt">,
+  ) => {
     const nextEntry: OperationsOutputEntry = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       createdAt: new Date().toISOString(),
-      ...entry
+      ...entry,
     };
     setOutputEntries((previous) => [nextEntry, ...previous].slice(0, 16));
     setSelectedOutputId(nextEntry.id);
@@ -1146,7 +1518,9 @@ function AppShellContent() {
     setTaskProposalStatusMessage("");
     setIsLoadingTaskProposals(true);
     try {
-      const response = await window.electronAPI.workspace.listTaskProposals(selectedWorkspace.id);
+      const response = await window.electronAPI.workspace.listTaskProposals(
+        selectedWorkspace.id,
+      );
       setTaskProposals(response.proposals);
     } catch (error) {
       const message = normalizeErrorMessage(error);
@@ -1158,8 +1532,8 @@ function AppShellContent() {
           tone: "error",
           renderer: {
             type: "internal",
-            surface: "event"
-          }
+            surface: "event",
+          },
         });
       }
     } finally {
@@ -1174,9 +1548,10 @@ function AppShellContent() {
     setIsTriggeringTaskProposal(true);
     setTaskProposalStatusMessage("");
     try {
-      const response = await window.electronAPI.workspace.enqueueRemoteDemoTaskProposal({
-        workspace_id: selectedWorkspaceId
-      });
+      const response =
+        await window.electronAPI.workspace.enqueueRemoteDemoTaskProposal({
+          workspace_id: selectedWorkspaceId,
+        });
       const detail = `Remote proactive job queued. Pending cloud jobs: ${response.pending_count}.`;
       setTaskProposalStatusMessage(detail);
       appendOutputEntry({
@@ -1185,8 +1560,8 @@ function AppShellContent() {
         tone: "success",
         renderer: {
           type: "internal",
-          surface: "event"
-        }
+          surface: "event",
+        },
       });
       void refreshRuntimeOutputs();
       window.setTimeout(() => {
@@ -1201,8 +1576,8 @@ function AppShellContent() {
         tone: "error",
         renderer: {
           type: "internal",
-          surface: "event"
-        }
+          surface: "event",
+        },
       });
       void refreshRuntimeOutputs();
     } finally {
@@ -1218,8 +1593,14 @@ function AppShellContent() {
     setProposalAction({ proposalId: proposal.proposal_id, action: "accept" });
     setTaskProposalStatusMessage("");
     try {
-      const runtimeStatesResponse = await window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId);
-      const targetSessionId = preferredSessionId(selectedWorkspace, runtimeStatesResponse.items);
+      const runtimeStatesResponse =
+        await window.electronAPI.workspace.listRuntimeStates(
+          selectedWorkspaceId,
+        );
+      const targetSessionId = preferredSessionId(
+        selectedWorkspace,
+        runtimeStatesResponse.items,
+      );
       if (!targetSessionId) {
         throw new Error("No active session found for this workspace.");
       }
@@ -1230,14 +1611,17 @@ function AppShellContent() {
         image_urls: null,
         session_id: targetSessionId,
         priority: 0,
-        model: runtimeConfig?.defaultModel ?? null
+        model: runtimeConfig?.defaultModel ?? null,
       });
-      await window.electronAPI.workspace.updateTaskProposalState(proposal.proposal_id, "accepted");
+      await window.electronAPI.workspace.updateTaskProposalState(
+        proposal.proposal_id,
+        "accepted",
+      );
 
       const detail = `Queued "${proposal.task_name}" into session ${targetSessionId}.`;
       const inferredAppId = inferInstalledWorkspaceAppIdFromText(
         `${proposal.task_name}\n${proposal.task_prompt}`,
-        installedApps
+        installedApps,
       );
       setTaskProposalStatusMessage(detail);
       appendOutputEntry({
@@ -1250,12 +1634,12 @@ function AppShellContent() {
               type: "app",
               appId: inferredAppId,
               resourceId: proposal.proposal_id,
-              view: "editor"
+              view: "editor",
             }
           : {
               type: "internal",
-              surface: "event"
-            }
+              surface: "event",
+            },
       });
       void refreshRuntimeOutputs();
       await refreshTaskProposals();
@@ -1268,8 +1652,8 @@ function AppShellContent() {
         tone: "error",
         renderer: {
           type: "internal",
-          surface: "event"
-        }
+          surface: "event",
+        },
       });
       void refreshRuntimeOutputs();
     } finally {
@@ -1281,7 +1665,10 @@ function AppShellContent() {
     setProposalAction({ proposalId: proposal.proposal_id, action: "dismiss" });
     setTaskProposalStatusMessage("");
     try {
-      await window.electronAPI.workspace.updateTaskProposalState(proposal.proposal_id, "dismissed");
+      await window.electronAPI.workspace.updateTaskProposalState(
+        proposal.proposal_id,
+        "dismissed",
+      );
       const detail = `Dismissed "${proposal.task_name}" and persisted the update back to the backend.`;
       setTaskProposalStatusMessage(detail);
       appendOutputEntry({
@@ -1290,8 +1677,8 @@ function AppShellContent() {
         tone: "info",
         renderer: {
           type: "internal",
-          surface: "event"
-        }
+          surface: "event",
+        },
       });
       void refreshRuntimeOutputs();
       await refreshTaskProposals();
@@ -1304,8 +1691,8 @@ function AppShellContent() {
         tone: "error",
         renderer: {
           type: "internal",
-          surface: "event"
-        }
+          surface: "event",
+        },
       });
       void refreshRuntimeOutputs();
     } finally {
@@ -1325,7 +1712,9 @@ function AppShellContent() {
 
     const load = async () => {
       try {
-        const response = await window.electronAPI.workspace.listTaskProposals(selectedWorkspace.id);
+        const response = await window.electronAPI.workspace.listTaskProposals(
+          selectedWorkspace.id,
+        );
         if (!cancelled) {
           setTaskProposals(response.proposals);
         }
@@ -1354,7 +1743,9 @@ function AppShellContent() {
   }, [selectedWorkspace, selectedWorkspaceId]);
 
   const handleDismissUpdate = () => {
-    void window.electronAPI.appUpdate.dismiss(appUpdateStatus?.releaseTag ?? null);
+    void window.electronAPI.appUpdate.dismiss(
+      appUpdateStatus?.releaseTag ?? null,
+    );
   };
 
   const handleDownloadUpdate = () => {
@@ -1375,9 +1766,13 @@ function AppShellContent() {
       setActiveLeftRailItem("space");
       if (agentView.type === "app") {
         setAgentView({ type: "chat" });
+        void window.electronAPI.appSurface.hide();
       }
       setChatFocusRequestKey((current) => current + 1);
       return;
+    }
+    if (activeLeftRailItem === "app" && item !== "app") {
+      void window.electronAPI.appSurface.hide();
     }
     setActiveLeftRailItem(item);
   };
@@ -1386,7 +1781,7 @@ function AppShellContent() {
     setActiveLeftRailItem("app");
     setAgentView({
       type: "app",
-      appId
+      appId,
     });
   };
 
@@ -1397,7 +1792,7 @@ function AppShellContent() {
         type: "app",
         appId: entry.renderer.appId,
         resourceId: entry.renderer.resourceId,
-        view: entry.renderer.view
+        view: entry.renderer.view,
       });
       return;
     }
@@ -1405,30 +1800,49 @@ function AppShellContent() {
     setActiveLeftRailItem("space");
     setSpaceVisibility((previous) => ({
       ...previous,
-      agent: true
+      agent: true,
     }));
     setAgentView({
       type: "internal",
       surface: entry.renderer.surface,
       resourceId: entry.renderer.resourceId ?? entry.id,
-      htmlContent: entry.renderer.htmlContent
+      htmlContent: entry.renderer.htmlContent,
     });
   };
 
   const spaceMode = activeLeftRailItem === "space";
   const appMode = activeLeftRailItem === "app";
-  const activeAppId = appMode && agentView.type === "app" ? agentView.appId : null;
+  const activeAppId =
+    appMode && agentView.type === "app" ? agentView.appId : null;
   const activeApp = getWorkspaceAppDefinition(activeAppId, installedApps);
   const hasWorkspaces = workspaces.length > 0;
   const hasSelectedWorkspace = Boolean(selectedWorkspace);
-  const visibleSpacePaneIds = hasWorkspaces && spaceMode ? FIXED_SPACE_ORDER.filter((paneId) => spaceVisibility[paneId]) : [];
+  const allAppsReady =
+    installedApps.length === 0 || installedApps.every((app) => app.ready);
+  const showInitializingGate =
+    hasSelectedWorkspace && installedApps.length > 0 && !allAppsReady;
+
+  // Hide app surface BrowserView when initializing gate is shown or when not in app mode.
+  useEffect(() => {
+    if (showInitializingGate || !appMode) {
+      void window.electronAPI.appSurface.hide();
+    }
+  }, [showInitializingGate, appMode]);
+
+  const visibleSpacePaneIds =
+    hasWorkspaces && spaceMode
+      ? FIXED_SPACE_ORDER.filter((paneId) => spaceVisibility[paneId])
+      : [];
   const flexSpacePaneId = visibleSpacePaneIds.includes("agent")
     ? "agent"
-    : visibleSpacePaneIds[visibleSpacePaneIds.length - 1] ?? null;
-  const showOperationsDrawer = spaceMode && spaceVisibility.agent && operationsDrawerOpen;
+    : (visibleSpacePaneIds[visibleSpacePaneIds.length - 1] ?? null);
+  const showOperationsDrawer =
+    spaceMode && spaceVisibility.agent && operationsDrawerOpen;
   const bootstrapErrorMessage =
     !hasHydratedWorkspaceList && runtimeStatus?.status === "error"
-      ? runtimeStatus.lastError.trim() || workspaceErrorMessage || "Embedded runtime failed to start."
+      ? runtimeStatus.lastError.trim() ||
+        workspaceErrorMessage ||
+        "Embedded runtime failed to start."
       : "";
   const isMacDesktop = window.electronAPI?.platform === "darwin";
   const combinedOutputEntries = useMemo(() => {
@@ -1449,14 +1863,23 @@ function AppShellContent() {
     }
 
     if (agentView.type === "chat") {
-      return <ChatPane onOutputsChanged={() => void refreshRuntimeOutputs()} focusRequestKey={chatFocusRequestKey} />;
+      return (
+        <ChatPane
+          onOutputsChanged={() => void refreshRuntimeOutputs()}
+          focusRequestKey={chatFocusRequestKey}
+        />
+      );
     }
 
     if (agentView.type === "app") {
       return (
         <AppSurfacePane
           appId={agentView.appId}
-          app={activeAppId === agentView.appId ? activeApp : getWorkspaceAppDefinition(agentView.appId, installedApps)}
+          app={
+            activeAppId === agentView.appId
+              ? activeApp
+              : getWorkspaceAppDefinition(agentView.appId, installedApps)
+          }
           resourceId={agentView.resourceId}
           view={agentView.view}
         />
@@ -1470,7 +1893,15 @@ function AppShellContent() {
         htmlContent={agentView.htmlContent}
       />
     );
-  }, [activeApp, activeAppId, agentView, chatFocusRequestKey, hasSelectedWorkspace, installedApps, refreshRuntimeOutputs]);
+  }, [
+    activeApp,
+    activeAppId,
+    agentView,
+    chatFocusRequestKey,
+    hasSelectedWorkspace,
+    installedApps,
+    refreshRuntimeOutputs,
+  ]);
 
   const spacePanes = useMemo(
     () =>
@@ -1478,26 +1909,44 @@ function AppShellContent() {
         id: paneId,
         flex: paneId === flexSpacePaneId,
         width:
-          paneId === "files" ? filesPaneWidth : paneId === "browser" ? browserPaneWidth : 0,
+          paneId === "files"
+            ? filesPaneWidth
+            : paneId === "browser"
+              ? browserPaneWidth
+              : 0,
         content:
-          paneId === "agent"
-            ? agentContent
-            : paneId === "files"
-              ? <FileExplorerPane />
-              : (
-                  <BrowserPane
-                    suspendNativeView={
-                      isUtilityPaneResizing || workspaceSwitcherOpen || settingsDialogOpen
-                    }
-                    layoutSyncKey={`${visibleSpacePaneIds.join("|")}:${filesPaneWidth}:${browserPaneWidth}:${showOperationsDrawer ? 1 : 0}`}
-                  />
-                )
+          paneId === "agent" ? (
+            agentContent
+          ) : paneId === "files" ? (
+            <FileExplorerPane />
+          ) : (
+            <BrowserPane
+              suspendNativeView={
+                isUtilityPaneResizing ||
+                workspaceSwitcherOpen ||
+                settingsDialogOpen
+              }
+              layoutSyncKey={`${visibleSpacePaneIds.join("|")}:${filesPaneWidth}:${browserPaneWidth}:${showOperationsDrawer ? 1 : 0}`}
+            />
+          ),
       })),
-    [agentContent, browserPaneWidth, filesPaneWidth, flexSpacePaneId, isUtilityPaneResizing, showOperationsDrawer, visibleSpacePaneIds]
+    [
+      agentContent,
+      browserPaneWidth,
+      filesPaneWidth,
+      flexSpacePaneId,
+      isUtilityPaneResizing,
+      showOperationsDrawer,
+      visibleSpacePaneIds,
+    ],
   );
 
   const startUtilityPaneResize = useCallback(
-    (leftPaneId: SpaceComponentId, rightPaneId: SpaceComponentId, event: ReactPointerEvent<HTMLDivElement>) => {
+    (
+      leftPaneId: SpaceComponentId,
+      rightPaneId: SpaceComponentId,
+      event: ReactPointerEvent<HTMLDivElement>,
+    ) => {
       if (leftPaneId !== "agent" && rightPaneId !== "agent") {
         if (!spaceVisibility[leftPaneId] || !spaceVisibility[rightPaneId]) {
           return;
@@ -1506,9 +1955,11 @@ function AppShellContent() {
           mode: "pair",
           leftPaneId,
           rightPaneId,
-          startLeftWidth: leftPaneId === "files" ? filesPaneWidth : browserPaneWidth,
-          startRightWidth: rightPaneId === "files" ? filesPaneWidth : browserPaneWidth,
-          startX: event.clientX
+          startLeftWidth:
+            leftPaneId === "files" ? filesPaneWidth : browserPaneWidth,
+          startRightWidth:
+            rightPaneId === "files" ? filesPaneWidth : browserPaneWidth,
+          startX: event.clientX,
         };
       } else {
         const paneId = leftPaneId === "agent" ? rightPaneId : leftPaneId;
@@ -1520,7 +1971,7 @@ function AppShellContent() {
           paneId,
           startWidth: paneId === "files" ? filesPaneWidth : browserPaneWidth,
           startX: event.clientX,
-          direction: leftPaneId === "agent" ? -1 : 1
+          direction: leftPaneId === "agent" ? -1 : 1,
         };
       }
 
@@ -1530,14 +1981,19 @@ function AppShellContent() {
         // BrowserView resizing falls back to the window listeners below.
       }
       if (spaceVisibility.browser) {
-        void window.electronAPI.browser.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+        void window.electronAPI.browser.setBounds({
+          x: 0,
+          y: 0,
+          width: 0,
+          height: 0,
+        });
       }
       setIsUtilityPaneResizing(true);
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
       event.preventDefault();
     },
-    [browserPaneWidth, filesPaneWidth, spaceVisibility]
+    [browserPaneWidth, filesPaneWidth, spaceVisibility],
   );
 
   useEffect(() => {
@@ -1550,7 +2006,9 @@ function AppShellContent() {
         setFilesPaneWidth((current) => clampUtilityPaneWidth("files", current));
       }
       if (spaceVisibility.browser && flexSpacePaneId !== "browser") {
-        setBrowserPaneWidth((current) => clampUtilityPaneWidth("browser", current));
+        setBrowserPaneWidth((current) =>
+          clampUtilityPaneWidth("browser", current),
+        );
       }
     };
 
@@ -1559,7 +2017,12 @@ function AppShellContent() {
     return () => {
       window.removeEventListener("resize", syncWidth);
     };
-  }, [clampUtilityPaneWidth, flexSpacePaneId, spaceVisibility, visibleSpacePaneIds.length]);
+  }, [
+    clampUtilityPaneWidth,
+    flexSpacePaneId,
+    spaceVisibility,
+    visibleSpacePaneIds.length,
+  ]);
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
@@ -1574,7 +2037,7 @@ function AppShellContent() {
           resizeState.leftPaneId,
           resizeState.rightPaneId,
           resizeState.startLeftWidth + delta,
-          resizeState.startRightWidth - delta
+          resizeState.startRightWidth - delta,
         );
         if (resizeState.leftPaneId === "files") {
           setFilesPaneWidth(leftWidth);
@@ -1591,7 +2054,8 @@ function AppShellContent() {
 
       const nextWidth = clampUtilityPaneWidth(
         resizeState.paneId,
-        resizeState.startWidth + resizeState.direction * (event.clientX - resizeState.startX)
+        resizeState.startWidth +
+          resizeState.direction * (event.clientX - resizeState.startX),
       );
       if (resizeState.paneId === "files") {
         setFilesPaneWidth(nextWidth);
@@ -1630,12 +2094,20 @@ function AppShellContent() {
 
       <div
         className={`relative z-10 grid h-full w-full grid-rows-[auto_minmax(0,1fr)] gap-2 p-2 ${
-          isMacDesktop ? "sm:gap-2.5 sm:px-3 sm:pb-3 sm:pt-2.5" : "sm:gap-3 sm:p-3"
+          isMacDesktop
+            ? "sm:gap-2.5 sm:px-3 sm:pb-3 sm:pt-2.5"
+            : "sm:gap-3 sm:p-3"
         }`}
       >
-        {isUtilityPaneResizing ? <div className="absolute inset-0 z-30 cursor-col-resize" /> : null}
+        {isUtilityPaneResizing ? (
+          <div className="absolute inset-0 z-30 cursor-col-resize" />
+        ) : null}
         {appUpdateStatus?.available ? (
-          <UpdateReminder status={appUpdateStatus} onDismiss={handleDismissUpdate} onDownload={handleDownloadUpdate} />
+          <UpdateReminder
+            status={appUpdateStatus}
+            onDismiss={handleDismissUpdate}
+            onDownload={handleDownloadUpdate}
+          />
         ) : null}
 
         {hasWorkspaces ? (
@@ -1648,9 +2120,15 @@ function AppShellContent() {
         ) : null}
 
         {!hasHydratedWorkspaceList ? (
-          bootstrapErrorMessage ? <WorkspaceStartupErrorPane message={bootstrapErrorMessage} /> : <WorkspaceBootstrapPane />
+          bootstrapErrorMessage ? (
+            <WorkspaceStartupErrorPane message={bootstrapErrorMessage} />
+          ) : (
+            <WorkspaceBootstrapPane />
+          )
         ) : !hasWorkspaces ? (
           <FirstWorkspacePane />
+        ) : showInitializingGate ? (
+          <WorkspaceInitializingGate apps={installedApps} />
         ) : (
           <div
             className={`relative grid h-full min-h-0 gap-y-3 overflow-hidden transition-[grid-template-columns,column-gap] duration-300 ease-in-out ${
@@ -1672,18 +2150,27 @@ function AppShellContent() {
               <div className="min-h-0 flex-1 overflow-hidden">
                 {spaceMode ? (
                   <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
-                    <div ref={utilityPaneHostRef} className="min-h-0 flex-1 overflow-hidden">
+                    <div
+                      ref={utilityPaneHostRef}
+                      className="min-h-0 flex-1 overflow-hidden"
+                    >
                       {spacePanes.length > 0 ? (
                         <div className="flex h-full min-h-0 min-w-0 items-stretch overflow-hidden">
                           {spacePanes.map((pane, index) => {
                             const nextPane = spacePanes[index + 1] ?? null;
-                            const resizeHandle = nextPane ? spaceResizeHandleSpec(pane.id, nextPane.id) : null;
+                            const resizeHandle = nextPane
+                              ? spaceResizeHandleSpec(pane.id, nextPane.id)
+                              : null;
 
                             return (
                               <div key={pane.id} className="contents">
                                 <div
                                   className={`relative min-h-0 min-w-0 overflow-hidden ${pane.flex ? "flex-1" : "shrink-0"}`}
-                                  style={pane.flex ? undefined : { width: `${pane.width}px` }}
+                                  style={
+                                    pane.flex
+                                      ? undefined
+                                      : { width: `${pane.width}px` }
+                                  }
                                 >
                                   {pane.content}
                                 </div>
@@ -1693,7 +2180,13 @@ function AppShellContent() {
                                     role="separator"
                                     aria-label={resizeHandle.label}
                                     aria-orientation="vertical"
-                                    onPointerDown={(event) => startUtilityPaneResize(resizeHandle.leftPaneId, resizeHandle.rightPaneId, event)}
+                                    onPointerDown={(event) =>
+                                      startUtilityPaneResize(
+                                        resizeHandle.leftPaneId,
+                                        resizeHandle.rightPaneId,
+                                        event,
+                                      )
+                                    }
                                     className="group relative z-10 flex w-4 shrink-0 cursor-col-resize touch-none items-center justify-center"
                                   >
                                     <div className="pointer-events-none absolute inset-y-2 left-1/2 w-px -translate-x-1/2 rounded-full bg-panel-border/55 transition-all duration-150 group-hover:w-[2px] group-hover:bg-[rgba(247,90,84,0.5)]" />
@@ -1707,9 +2200,12 @@ function AppShellContent() {
                       ) : (
                         <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-[var(--theme-radius-card)] border border-panel-border/45 shadow-card">
                           <div className="max-w-[360px] px-6 text-center">
-                            <div className="text-[22px] font-medium tracking-[-0.03em] text-text-main">Turn on a space surface</div>
+                            <div className="text-[22px] font-medium tracking-[-0.03em] text-text-main">
+                              Turn on a space surface
+                            </div>
                             <div className="mt-3 text-[13px] leading-6 text-text-muted/78">
-                              Space keeps your files, browser, and agent panes available together.
+                              Space keeps your files, browser, and agent panes
+                              available together.
                             </div>
                           </div>
                         </section>
@@ -1721,16 +2217,26 @@ function AppShellContent() {
                     {agentView.type === "app" ? (
                       <AppSurfacePane
                         appId={agentView.appId}
-                        app={activeAppId === agentView.appId ? activeApp : getWorkspaceAppDefinition(agentView.appId, installedApps)}
+                        app={
+                          activeAppId === agentView.appId
+                            ? activeApp
+                            : getWorkspaceAppDefinition(
+                                agentView.appId,
+                                installedApps,
+                              )
+                        }
                         resourceId={agentView.resourceId}
                         view={agentView.view}
                       />
                     ) : (
                       <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-[var(--theme-radius-card)] border border-panel-border/45 shadow-card">
                         <div className="max-w-[360px] px-6 text-center">
-                          <div className="text-[22px] font-medium tracking-[-0.03em] text-text-main">Choose an app</div>
+                          <div className="text-[22px] font-medium tracking-[-0.03em] text-text-main">
+                            Choose an app
+                          </div>
                           <div className="mt-3 text-[13px] leading-6 text-text-muted/78">
-                            Select a workspace app from the left rail to open its dedicated screen.
+                            Select a workspace app from the left rail to open
+                            its dedicated screen.
                           </div>
                         </div>
                       </section>
@@ -1815,10 +2321,16 @@ function AppShellContent() {
                   selectedOutputId={selectedOutputId}
                   onSelectOutput={setSelectedOutputId}
                   onOpenOutput={handleOpenOutput}
-                  onRefreshProposals={() => void refreshTaskProposals({ logErrors: true })}
+                  onRefreshProposals={() =>
+                    void refreshTaskProposals({ logErrors: true })
+                  }
                   onTriggerProposal={() => void triggerRemoteTaskProposal()}
-                  onAcceptProposal={(proposal) => void acceptTaskProposal(proposal)}
-                  onDismissProposal={(proposal) => void dismissTaskProposal(proposal)}
+                  onAcceptProposal={(proposal) =>
+                    void acceptTaskProposal(proposal)
+                  }
+                  onDismissProposal={(proposal) =>
+                    void dismissTaskProposal(proposal)
+                  }
                   hasWorkspace={hasSelectedWorkspace}
                 />
               </div>

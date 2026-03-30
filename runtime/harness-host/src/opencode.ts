@@ -5,10 +5,17 @@ import {
   type OutputFormat,
   type ToolPart,
 } from "@opencode-ai/sdk/v2";
+import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import type { JsonObject, JsonValue, OpencodeHarnessHostRequest, RunnerEventType, RunnerOutputEventPayload } from "./contracts.js";
+import type {
+  JsonObject,
+  JsonValue,
+  OpencodeHarnessHostRequest,
+  RunnerEventType,
+  RunnerOutputEventPayload,
+} from "./contracts.js";
 
 export type OpencodeMappedEvent = {
   event_type: RunnerEventType;
@@ -27,13 +34,64 @@ export type OpencodeEventMapperState = {
   pendingPartDeltas: Map<string, Array<[string, string]>>;
 };
 
-const TERMINAL_EVENT_TYPES = new Set<RunnerEventType>(["run_completed", "run_failed"]);
+const TERMINAL_EVENT_TYPES = new Set<RunnerEventType>([
+  "run_completed",
+  "run_failed",
+]);
+const SESSION_PERSIST_EVENT_TYPES = new Set<RunnerEventType>(["run_completed"]);
+const DIAGNOSTIC_REDACTED_VALUE = "[redacted]";
+const DIAGNOSTIC_HEADER_REDACT_PATTERN =
+  /(authorization|api[-_]?key|token|secret|cookie)/i;
+
+function opencodeDiagnosticLogPath(workspaceDir: string): string {
+  return path.join(workspaceDir, ".holaboss", "opencode-harness.log");
+}
+
+export function sanitizeDiagnosticHeaders(
+  headers: Record<string, unknown> | null | undefined,
+): Record<string, string> {
+  if (!headers) {
+    return {};
+  }
+  const sanitized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    sanitized[key] = DIAGNOSTIC_HEADER_REDACT_PATTERN.test(key)
+      ? DIAGNOSTIC_REDACTED_VALUE
+      : value;
+  }
+  return sanitized;
+}
+
+export function appendOpencodeDiagnosticLog(
+  workspaceDir: string,
+  event: string,
+  details: Record<string, unknown> = {},
+): void {
+  try {
+    const logPath = opencodeDiagnosticLogPath(workspaceDir);
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    fs.appendFileSync(
+      logPath,
+      `${JSON.stringify({
+        at: new Date().toISOString(),
+        event,
+        details: jsonValue(details),
+      })}\n`,
+      "utf8",
+    );
+  } catch {
+    // Best-effort diagnostics only.
+  }
+}
 
 function emitRunnerEvent(
   request: OpencodeHarnessHostRequest,
   sequence: number,
   eventType: RunnerEventType,
-  payload: JsonObject
+  payload: JsonObject,
 ): void {
   const event: RunnerOutputEventPayload = {
     session_id: request.session_id,
@@ -88,7 +146,10 @@ function firstNumber(...values: unknown[]): number | undefined {
   return undefined;
 }
 
-function getPath(record: Record<string, unknown> | null, path: string): unknown {
+function getPath(
+  record: Record<string, unknown> | null,
+  path: string,
+): unknown {
   if (!record) {
     return undefined;
   }
@@ -104,7 +165,12 @@ function getPath(record: Record<string, unknown> | null, path: string): unknown 
 }
 
 function jsonValue(value: unknown): JsonValue {
-  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
     return value;
   }
   if (Array.isArray(value)) {
@@ -122,7 +188,11 @@ function jsonValue(value: unknown): JsonValue {
 
 function jsonObjectValue(value: unknown): JsonObject | null {
   const normalized = jsonValue(value);
-  if (!normalized || typeof normalized !== "object" || Array.isArray(normalized)) {
+  if (
+    !normalized ||
+    typeof normalized !== "object" ||
+    Array.isArray(normalized)
+  ) {
     return null;
   }
   return normalized;
@@ -143,7 +213,7 @@ function extractErrorMessage(value: unknown): string | undefined {
     getPath(record, "error.message"),
     record?.detail,
     getPath(record, "error.detail"),
-    typeof value === "string" ? value : undefined
+    typeof value === "string" ? value : undefined,
   );
 }
 
@@ -154,11 +224,24 @@ function sdkErrorMessage(error: unknown, prefix: string): string {
   const message = firstNonEmptyString(
     extractErrorMessage(data),
     extractErrorMessage(record),
-    prefix
+    prefix,
   );
-  const statusCode = firstNumber(data?.statusCode, data?.status, record?.statusCode, record?.status);
-  const providerID = firstNonEmptyString(data?.providerID, data?.provider_id, getPath(data, "provider.id"));
-  const errorCode = firstNonEmptyString(data?.code, getPath(data, "error.code"), record?.code);
+  const statusCode = firstNumber(
+    data?.statusCode,
+    data?.status,
+    record?.statusCode,
+    record?.status,
+  );
+  const providerID = firstNonEmptyString(
+    data?.providerID,
+    data?.provider_id,
+    getPath(data, "provider.id"),
+  );
+  const errorCode = firstNonEmptyString(
+    data?.code,
+    getPath(data, "error.code"),
+    record?.code,
+  );
 
   let summary = message ?? prefix;
   if (name && !summary.startsWith(`${name}:`)) {
@@ -175,12 +258,15 @@ function sdkErrorMessage(error: unknown, prefix: string): string {
   if (providerID) {
     detailParts.push(`provider=${providerID}`);
   }
-  return detailParts.length > 0 ? `${summary} (${detailParts.join(", ")})` : summary;
+  return detailParts.length > 0
+    ? `${summary} (${detailParts.join(", ")})`
+    : summary;
 }
 
 export function promptPartsForRequest(request: OpencodeHarnessHostRequest) {
   const parts: Array<
-    { type: "text"; text: string } | { type: "file"; url: string; mime: string; filename?: string }
+    | { type: "text"; text: string }
+    | { type: "file"; url: string; mime: string; filename?: string }
   > = [];
   if (request.instruction.trim()) {
     parts.push({ type: "text", text: request.instruction });
@@ -188,7 +274,9 @@ export function promptPartsForRequest(request: OpencodeHarnessHostRequest) {
   for (const attachment of request.attachments ?? []) {
     parts.push({
       type: "file",
-      url: pathToFileURL(path.resolve(request.workspace_dir, attachment.workspace_path)).toString(),
+      url: pathToFileURL(
+        path.resolve(request.workspace_dir, attachment.workspace_path),
+      ).toString(),
       mime: attachment.mime_type,
       filename: attachment.name,
     });
@@ -196,7 +284,10 @@ export function promptPartsForRequest(request: OpencodeHarnessHostRequest) {
   return parts;
 }
 
-function requireData<T>(response: { data?: T; error?: unknown }, prefix: string): T {
+function requireData<T>(
+  response: { data?: T; error?: unknown },
+  prefix: string,
+): T {
   if (response.data !== undefined) {
     return response.data;
   }
@@ -207,7 +298,10 @@ function normalizePartType(value: unknown): string {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
-function partValue(part: Record<string, unknown> | null, ...keys: string[]): unknown {
+function partValue(
+  part: Record<string, unknown> | null,
+  ...keys: string[]
+): unknown {
   if (!part) {
     return undefined;
   }
@@ -231,7 +325,7 @@ function eventSessionId(rawEvent: unknown): string {
       part?.sessionID,
       part?.session_id,
       info?.sessionID,
-      info?.session_id
+      info?.session_id,
     ) ?? ""
   );
 }
@@ -248,7 +342,10 @@ function eventPart(rawEvent: unknown): Record<string, unknown> | null {
   return asRecord(properties?.part);
 }
 
-function eventPartId(rawEvent: unknown, part: Record<string, unknown> | null): string {
+function eventPartId(
+  rawEvent: unknown,
+  part: Record<string, unknown> | null,
+): string {
   const payload = asRecord(rawEvent);
   const properties = asRecord(payload?.properties);
   return (
@@ -257,7 +354,7 @@ function eventPartId(rawEvent: unknown, part: Record<string, unknown> | null): s
       properties?.partID,
       properties?.partId,
       properties?.part_id,
-      properties?.id
+      properties?.id,
     ) ?? ""
   );
 }
@@ -269,7 +366,11 @@ function eventSessionStatusType(rawEvent: unknown): string {
   return firstNonEmptyString(status?.type) ?? "";
 }
 
-function textDeltaFromValues(partID: string, text: string, snapshots: Map<string, string>): string {
+function textDeltaFromValues(
+  partID: string,
+  text: string,
+  snapshots: Map<string, string>,
+): string {
   const normalizedPartID = partID.trim();
   if (!normalizedPartID) {
     return "";
@@ -282,8 +383,12 @@ function textDeltaFromValues(partID: string, text: string, snapshots: Map<string
   return text.startsWith(previous) ? text.slice(previous.length) : text;
 }
 
-function textDelta(part: Record<string, unknown> | null, snapshots: Map<string, string>): string {
-  const partID = firstNonEmptyString(partValue(part, "id", "part_id", "partID")) ?? "";
+function textDelta(
+  part: Record<string, unknown> | null,
+  snapshots: Map<string, string>,
+): string {
+  const partID =
+    firstNonEmptyString(partValue(part, "id", "part_id", "partID")) ?? "";
   if (!partID) {
     return "";
   }
@@ -294,15 +399,19 @@ function textDelta(part: Record<string, unknown> | null, snapshots: Map<string, 
   return textDeltaFromValues(partID, text, snapshots);
 }
 
-function partStreamEventType(partType: string): [RunnerEventType, "thinking" | "output"] {
-  return normalizePartType(partType) === "reasoning" ? ["thinking_delta", "thinking"] : ["output_delta", "output"];
+function partStreamEventType(
+  partType: string,
+): [RunnerEventType, "thinking" | "output"] {
+  return normalizePartType(partType) === "reasoning"
+    ? ["thinking_delta", "thinking"]
+    : ["output_delta", "output"];
 }
 
 function queuedPartDeltaEvents(
   partID: string,
   partType: string,
   eventName: string,
-  pendingPartDeltas: Map<string, Array<[string, string]>>
+  pendingPartDeltas: Map<string, Array<[string, string]>>,
 ): OpencodeMappedEvent[] {
   const queued = pendingPartDeltas.get(partID) ?? [];
   pendingPartDeltas.delete(partID);
@@ -323,7 +432,9 @@ function queuedPartDeltaEvents(
   }));
 }
 
-function flushPendingPartDeltas(pendingPartDeltas: Map<string, Array<[string, string]>>): OpencodeMappedEvent[] {
+function flushPendingPartDeltas(
+  pendingPartDeltas: Map<string, Array<[string, string]>>,
+): OpencodeMappedEvent[] {
   const flushed: OpencodeMappedEvent[] = [];
   for (const [partID, queued] of pendingPartDeltas.entries()) {
     for (const [eventName, delta] of queued) {
@@ -351,7 +462,7 @@ function flushPendingPartDeltas(pendingPartDeltas: Map<string, Array<[string, st
 function opencodeToolPayload(
   part: ToolPart | Record<string, unknown>,
   eventName: string,
-  snapshots: Map<string, ToolSnapshot>
+  snapshots: Map<string, ToolSnapshot>,
 ): JsonObject | null {
   const record = asRecord(part);
   const state = asRecord(record?.state);
@@ -360,12 +471,19 @@ function opencodeToolPayload(
     return null;
   }
 
-  const phase = status === "pending" || status === "running" ? "started" : status;
+  const phase =
+    status === "pending" || status === "running" ? "started" : status;
   const partID = firstNonEmptyString(record?.id) ?? "";
-  const snapshot = snapshotValue(status === "completed" ? state?.output : state?.error);
+  const snapshot = snapshotValue(
+    status === "completed" ? state?.output : state?.error,
+  );
   const previous = snapshots.get(partID);
   const current = { status, snapshot };
-  if (previous && previous.status === current.status && previous.snapshot === current.snapshot) {
+  if (
+    previous &&
+    previous.status === current.status &&
+    previous.snapshot === current.snapshot
+  ) {
     return null;
   }
   snapshots.set(partID, current);
@@ -382,7 +500,9 @@ function opencodeToolPayload(
   };
 }
 
-function questionToolTerminalPayload(toolPayload: JsonObject): JsonObject | null {
+function questionToolTerminalPayload(
+  toolPayload: JsonObject,
+): JsonObject | null {
   if (normalizePartType(toolPayload.tool_name) !== "question") {
     return null;
   }
@@ -396,7 +516,8 @@ function questionToolTerminalPayload(toolPayload: JsonObject): JsonObject | null
 
   const toolArgs = asRecord(toolPayload.tool_args);
   const result = asRecord(toolPayload.result);
-  const questionData = toolArgs && Object.keys(toolArgs).length > 0 ? toolArgs : result;
+  const questionData =
+    toolArgs && Object.keys(toolArgs).length > 0 ? toolArgs : result;
   const questionPayload = jsonObjectValue(questionData);
   if (!questionPayload) {
     return null;
@@ -420,7 +541,7 @@ function messageUpdatedEvents(
   eventName: string,
   textSnapshots: Map<string, string>,
   partTypeSnapshots: Map<string, string>,
-  pendingPartDeltas: Map<string, Array<[string, string]>>
+  pendingPartDeltas: Map<string, Array<[string, string]>>,
 ): OpencodeMappedEvent[] {
   const payload = asRecord(rawEvent);
   const properties = asRecord(payload?.properties);
@@ -442,8 +563,14 @@ function messageUpdatedEvents(
     }
     const partID = firstNonEmptyString(part.id) ?? `message-updated-${index}`;
     partTypeSnapshots.set(partID, partType);
-    const delta = textDeltaFromValues(partID, String(part.text ?? ""), textSnapshots);
-    outputEvents.push(...queuedPartDeltaEvents(partID, partType, eventName, pendingPartDeltas));
+    const delta = textDeltaFromValues(
+      partID,
+      String(part.text ?? ""),
+      textSnapshots,
+    );
+    outputEvents.push(
+      ...queuedPartDeltaEvents(partID, partType, eventName, pendingPartDeltas),
+    );
     if (!delta) {
       continue;
     }
@@ -477,11 +604,24 @@ function eventErrorPayload(rawEvent: unknown): JsonObject {
     extractErrorMessage(data),
     extractErrorMessage(error),
     errorName,
-    "OpenCode session reported an error"
+    "OpenCode session reported an error",
   ) as string;
-  const statusCode = firstNumber(data?.statusCode, data?.status, error.statusCode, error.status);
-  const errorCode = firstNonEmptyString(data?.code, getPath(data, "error.code"), error.code);
-  const providerID = firstNonEmptyString(data?.providerID, data?.provider_id, getPath(data, "provider.id"));
+  const statusCode = firstNumber(
+    data?.statusCode,
+    data?.status,
+    error.statusCode,
+    error.status,
+  );
+  const errorCode = firstNonEmptyString(
+    data?.code,
+    getPath(data, "error.code"),
+    error.code,
+  );
+  const providerID = firstNonEmptyString(
+    data?.providerID,
+    data?.provider_id,
+    getPath(data, "provider.id"),
+  );
 
   let summary = message;
   if (errorName && !summary.startsWith(`${errorName}:`)) {
@@ -500,7 +640,10 @@ function eventErrorPayload(rawEvent: unknown): JsonObject {
   }
 
   const result: JsonObject = {
-    message: detailParts.length > 0 ? `${summary} (${detailParts.join(", ")})` : summary,
+    message:
+      detailParts.length > 0
+        ? `${summary} (${detailParts.join(", ")})`
+        : summary,
   };
   if (errorName) {
     result.error_name = errorName;
@@ -529,9 +672,10 @@ export function createOpencodeEventMapperState(): OpencodeEventMapperState {
 export function mapOpencodeEvent(
   rawEvent: unknown,
   targetSessionID: string,
-  state: OpencodeEventMapperState
+  state: OpencodeEventMapperState,
 ): OpencodeMappedEvent[] {
-  const { textSnapshots, toolSnapshots, partTypeSnapshots, pendingPartDeltas } = state;
+  const { textSnapshots, toolSnapshots, partTypeSnapshots, pendingPartDeltas } =
+    state;
   const payload = asRecord(rawEvent);
   const eventName = firstNonEmptyString(payload?.type) ?? "";
   if (!eventName) {
@@ -550,7 +694,9 @@ export function mapOpencodeEvent(
           type: "OpenCodeSessionError",
           message: String(errorPayload.message),
           event: eventName,
-          ...Object.fromEntries(Object.entries(errorPayload).filter(([key]) => key !== "message")),
+          ...Object.fromEntries(
+            Object.entries(errorPayload).filter(([key]) => key !== "message"),
+          ),
         },
       },
     ];
@@ -563,7 +709,10 @@ export function mapOpencodeEvent(
   if (eventName === "session.idle") {
     return [
       ...flushPendingPartDeltas(pendingPartDeltas),
-      { event_type: "run_completed", payload: { status: "success", event: eventName } },
+      {
+        event_type: "run_completed",
+        payload: { status: "success", event: eventName },
+      },
     ];
   }
 
@@ -586,10 +735,19 @@ export function mapOpencodeEvent(
   }
 
   if (eventName === "message.updated") {
-    return messageUpdatedEvents(rawEvent, eventName, textSnapshots, partTypeSnapshots, pendingPartDeltas);
+    return messageUpdatedEvents(
+      rawEvent,
+      eventName,
+      textSnapshots,
+      partTypeSnapshots,
+      pendingPartDeltas,
+    );
   }
 
-  if (eventName !== "message.part.updated" && eventName !== "message.part.delta") {
+  if (
+    eventName !== "message.part.updated" &&
+    eventName !== "message.part.delta"
+  ) {
     return [];
   }
 
@@ -599,14 +757,19 @@ export function mapOpencodeEvent(
   if (partID && partType) {
     partTypeSnapshots.set(partID, partType);
   }
-  const resolvedPartType = partID ? partTypeSnapshots.get(partID) ?? partType : partType;
+  const resolvedPartType = partID
+    ? (partTypeSnapshots.get(partID) ?? partType)
+    : partType;
 
   if (eventName === "message.part.delta") {
     const rawDelta = eventDelta(rawEvent);
     if (!rawDelta) {
       return [];
     }
-    if (resolvedPartType && !["text", "reasoning", "snapshot"].includes(resolvedPartType)) {
+    if (
+      resolvedPartType &&
+      !["text", "reasoning", "snapshot"].includes(resolvedPartType)
+    ) {
       return [];
     }
     if (partID && !resolvedPartType) {
@@ -622,13 +785,22 @@ export function mapOpencodeEvent(
       if (text) {
         delta = textDeltaFromValues(partID, text, textSnapshots);
       } else {
-        textSnapshots.set(partID, `${textSnapshots.get(partID) ?? ""}${rawDelta}`);
+        textSnapshots.set(
+          partID,
+          `${textSnapshots.get(partID) ?? ""}${rawDelta}`,
+        );
       }
     }
     const [eventType, deltaKind] = partStreamEventType(resolvedPartType);
-    const queuedEvents = partID && resolvedPartType
-      ? queuedPartDeltaEvents(partID, resolvedPartType, eventName, pendingPartDeltas)
-      : [];
+    const queuedEvents =
+      partID && resolvedPartType
+        ? queuedPartDeltaEvents(
+            partID,
+            resolvedPartType,
+            eventName,
+            pendingPartDeltas,
+          )
+        : [];
     if (!delta) {
       return queuedEvents;
     }
@@ -658,14 +830,24 @@ export function mapOpencodeEvent(
         delta = textDeltaFromValues(partID, text, textSnapshots);
       } else if (rawDelta) {
         delta = rawDelta;
-        textSnapshots.set(partID, `${textSnapshots.get(partID) ?? ""}${rawDelta}`);
+        textSnapshots.set(
+          partID,
+          `${textSnapshots.get(partID) ?? ""}${rawDelta}`,
+        );
       }
     } else if (rawDelta) {
       delta = rawDelta;
     } else {
       delta = textDelta(part, textSnapshots);
     }
-    const queuedEvents = partID ? queuedPartDeltaEvents(partID, resolvedPartType, eventName, pendingPartDeltas) : [];
+    const queuedEvents = partID
+      ? queuedPartDeltaEvents(
+          partID,
+          resolvedPartType,
+          eventName,
+          pendingPartDeltas,
+        )
+      : [];
     if (!delta) {
       return queuedEvents;
     }
@@ -690,7 +872,14 @@ export function mapOpencodeEvent(
     if (!delta) {
       return [];
     }
-    const queuedEvents = partID ? queuedPartDeltaEvents(partID, resolvedPartType, eventName, pendingPartDeltas) : [];
+    const queuedEvents = partID
+      ? queuedPartDeltaEvents(
+          partID,
+          resolvedPartType,
+          eventName,
+          pendingPartDeltas,
+        )
+      : [];
     return [
       ...queuedEvents,
       {
@@ -728,12 +917,18 @@ export function mapOpencodeEvent(
   }
 
   if (resolvedPartType === "tool") {
-    const toolPayload = opencodeToolPayload(part ?? {}, eventName, toolSnapshots);
+    const toolPayload = opencodeToolPayload(
+      part ?? {},
+      eventName,
+      toolSnapshots,
+    );
     if (!toolPayload) {
       return [];
     }
     const terminalPayload = questionToolTerminalPayload(toolPayload);
-    const events: OpencodeMappedEvent[] = [{ event_type: "tool_call", payload: toolPayload }];
+    const events: OpencodeMappedEvent[] = [
+      { event_type: "tool_call", payload: toolPayload },
+    ];
     if (terminalPayload) {
       events.push({ event_type: "run_completed", payload: terminalPayload });
     }
@@ -762,7 +957,7 @@ export function mapOpencodeEvent(
 export function shouldEmitOpencodeEvent(
   eventType: RunnerEventType,
   payload: JsonObject,
-  instruction: string
+  instruction: string,
 ): boolean {
   if (eventType === "thinking_delta") {
     const delta = asString(payload.delta);
@@ -799,7 +994,9 @@ async function sleep(ms: number): Promise<void> {
   });
 }
 
-function isMcpConfig(value: unknown): value is McpLocalConfig | McpRemoteConfig {
+function isMcpConfig(
+  value: unknown,
+): value is McpLocalConfig | McpRemoteConfig {
   const record = asRecord(value);
   const type = normalizePartType(record?.type);
   if (type === "local") {
@@ -813,7 +1010,7 @@ function isMcpConfig(value: unknown): value is McpLocalConfig | McpRemoteConfig 
 
 async function ensureMcpServers(
   client: ReturnType<typeof createOpencodeClient>,
-  request: OpencodeHarnessHostRequest
+  request: OpencodeHarnessHostRequest,
 ): Promise<void> {
   const statusResponse = await client.mcp.status();
   const statusMap = asRecord(statusResponse.data) ?? {};
@@ -833,10 +1030,19 @@ async function ensureMcpServers(
     const forceRefresh = Boolean(server?._holaboss_force_refresh);
     const currentStatus = normalizePartType(asRecord(statusMap[name])?.status);
 
-    if (forceRefresh || !currentStatus || ["failed", "disabled", "needs_auth", "needs_client_registration"].includes(currentStatus)) {
+    if (
+      forceRefresh ||
+      !currentStatus ||
+      [
+        "failed",
+        "disabled",
+        "needs_auth",
+        "needs_client_registration",
+      ].includes(currentStatus)
+    ) {
       requireData(
         await client.mcp.add({ name, config }),
-        `OpenCode MCP registration failed for '${name}'`
+        `OpenCode MCP registration failed for '${name}'`,
       );
       statusMap[name] = { status: "connected" };
     }
@@ -844,7 +1050,7 @@ async function ensureMcpServers(
     if (forceRefresh || currentStatus !== "connected") {
       requireData(
         await client.mcp.connect({ name }),
-        `OpenCode MCP connect failed for '${name}'`
+        `OpenCode MCP connect failed for '${name}'`,
       );
       statusMap[name] = { status: "connected" };
     }
@@ -853,7 +1059,7 @@ async function ensureMcpServers(
 
 async function sessionExists(
   client: ReturnType<typeof createOpencodeClient>,
-  sessionID: string
+  sessionID: string,
 ): Promise<boolean> {
   const trimmed = sessionID.trim();
   if (!trimmed) {
@@ -863,10 +1069,12 @@ async function sessionExists(
   return response.data !== undefined;
 }
 
-async function createSession(client: ReturnType<typeof createOpencodeClient>): Promise<string> {
+async function createSession(
+  client: ReturnType<typeof createOpencodeClient>,
+): Promise<string> {
   const session = requireData(
     await client.session.create({ title: "Holaboss Runtime Session" }),
-    "OpenCode session creation failed"
+    "OpenCode session creation failed",
   );
   const sessionID = firstNonEmptyString(asRecord(session)?.id);
   if (!sessionID) {
@@ -900,7 +1108,7 @@ export async function resolveOpencodeSessionId(params: {
 
 async function ensureSession(
   client: ReturnType<typeof createOpencodeClient>,
-  request: OpencodeHarnessHostRequest
+  request: OpencodeHarnessHostRequest,
 ): Promise<string> {
   return await resolveOpencodeSessionId({
     requestedSessionId: request.harness_session_id,
@@ -910,7 +1118,43 @@ async function ensureSession(
   });
 }
 
-export async function runOpencode(request: OpencodeHarnessHostRequest): Promise<number> {
+async function probeModelClient(request: OpencodeHarnessHostRequest): Promise<void> {
+  const baseUrl = firstNonEmptyString(request.model_client.base_url);
+  if (!baseUrl) {
+    appendOpencodeDiagnosticLog(request.workspace_dir, "model_proxy_probe_skipped", {
+      reason: "missing_base_url",
+    });
+    return;
+  }
+
+  const target = `${baseUrl.replace(/\/+$/, "")}/models`;
+  appendOpencodeDiagnosticLog(request.workspace_dir, "model_proxy_probe_start", {
+    url: target,
+    headers: sanitizeDiagnosticHeaders(request.model_client.default_headers),
+  });
+  try {
+    const response = await fetch(target, {
+      method: "GET",
+      headers: request.model_client.default_headers ?? undefined,
+      signal: AbortSignal.timeout(2000),
+    });
+    appendOpencodeDiagnosticLog(request.workspace_dir, "model_proxy_probe_result", {
+      url: target,
+      status: response.status,
+      status_text: response.statusText,
+    });
+  } catch (error) {
+    appendOpencodeDiagnosticLog(request.workspace_dir, "model_proxy_probe_error", {
+      url: target,
+      error_name: error instanceof Error ? error.name : "Error",
+      error_message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export async function runOpencode(
+  request: OpencodeHarnessHostRequest,
+): Promise<number> {
   let sequence = 0;
   let activeSessionID: string | null = null;
   const nextSequence = () => {
@@ -919,7 +1163,24 @@ export async function runOpencode(request: OpencodeHarnessHostRequest): Promise<
   };
 
   try {
-    emitRunnerEvent(request, nextSequence(), "run_started", { ...request.run_started_payload });
+    appendOpencodeDiagnosticLog(request.workspace_dir, "run_opencode_start", {
+      workspace_id: request.workspace_id,
+      session_id: request.session_id,
+      input_id: request.input_id,
+      provider_id: request.provider_id,
+      model_id: request.model_id,
+      opencode_base_url: request.opencode_base_url,
+      model_client: {
+        model_proxy_provider: request.model_client.model_proxy_provider,
+        base_url: request.model_client.base_url ?? null,
+        default_headers: sanitizeDiagnosticHeaders(
+          request.model_client.default_headers,
+        ),
+      },
+    });
+    emitRunnerEvent(request, nextSequence(), "run_started", {
+      ...request.run_started_payload,
+    });
 
     const client = createOpencodeClient({
       baseUrl: request.opencode_base_url,
@@ -927,31 +1188,80 @@ export async function runOpencode(request: OpencodeHarnessHostRequest): Promise<
       experimental_workspaceID: request.workspace_id,
     });
 
-    await ensureMcpServers(client, request);
+    await probeModelClient(request);
+
+    // await ensureMcpServers(client, request);
+    appendOpencodeDiagnosticLog(request.workspace_dir, "ensure_session_start", {
+      requested_harness_session_id: request.harness_session_id ?? null,
+      persisted_harness_session_id:
+        request.persisted_harness_session_id ?? null,
+    });
     const opencodeSessionID = await ensureSession(client, request);
     activeSessionID = opencodeSessionID;
+    appendOpencodeDiagnosticLog(request.workspace_dir, "ensure_session_complete", {
+      opencode_session_id: opencodeSessionID,
+    });
 
+    appendOpencodeDiagnosticLog(request.workspace_dir, "event_subscribe_start");
     const events = await client.event.subscribe();
     const iterator = events.stream[Symbol.asyncIterator]();
     const mapperState = createOpencodeEventMapperState();
+    appendOpencodeDiagnosticLog(
+      request.workspace_dir,
+      "event_subscribe_complete",
+    );
 
     const promptTask = (async () => {
-      const response = await client.session.promptAsync({
-        sessionID: opencodeSessionID,
-        model: {
-          providerID: request.provider_id,
-          modelID: request.model_id,
-        },
-        agent: mapModeToAgent(request.mode),
-        tools: request.tools,
-        format: (request.output_format as OutputFormat | null | undefined) ?? undefined,
-        system: request.system_prompt,
-        parts: promptPartsForRequest(request),
+      appendOpencodeDiagnosticLog(request.workspace_dir, "prompt_async_start", {
+        opencode_session_id: opencodeSessionID,
+        provider_id: request.provider_id,
+        model_id: request.model_id,
+        agent: mapModeToAgent(request.mode) ?? null,
+        has_output_format: Boolean(request.output_format),
       });
-      if (response.error !== undefined) {
-        throw new Error(sdkErrorMessage(response.error, "OpenCode prompt submission failed"));
+      try {
+        const response = await client.session.promptAsync({
+          sessionID: opencodeSessionID,
+          model: {
+            providerID: request.provider_id,
+            modelID: request.model_id,
+          },
+          agent: mapModeToAgent(request.mode),
+          tools: request.tools,
+          format:
+            (request.output_format as OutputFormat | null | undefined) ??
+            undefined,
+          system: request.system_prompt,
+          parts: promptPartsForRequest(request),
+        });
+        appendOpencodeDiagnosticLog(
+          request.workspace_dir,
+          "prompt_async_response",
+          {
+            has_data: response.data !== undefined,
+            has_error: response.error !== undefined,
+            error_message:
+              response.error !== undefined
+                ? sdkErrorMessage(
+                    response.error,
+                    "OpenCode prompt submission failed",
+                  )
+                : null,
+          },
+        );
+        if (response.error !== undefined) {
+          throw new Error(
+            sdkErrorMessage(response.error, "OpenCode prompt submission failed"),
+          );
+        }
+        return response.data;
+      } catch (error) {
+        appendOpencodeDiagnosticLog(request.workspace_dir, "prompt_async_error", {
+          error_name: error instanceof Error ? error.name : "Error",
+          error_message: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
       }
-      return response.data;
     })();
 
     let promptError: unknown = null;
@@ -979,8 +1289,13 @@ export async function runOpencode(request: OpencodeHarnessHostRequest): Promise<
       const currentEventPromise = nextEventPromise;
 
       const winner = await Promise.race([
-        currentEventPromise.then((result) => ({ kind: "event" as const, result })),
-        sleep(Math.min(1000, remainingMs)).then(() => ({ kind: "tick" as const })),
+        currentEventPromise.then((result) => ({
+          kind: "event" as const,
+          result,
+        })),
+        sleep(Math.min(1000, remainingMs)).then(() => ({
+          kind: "tick" as const,
+        })),
       ]);
 
       if (winner.kind === "tick") {
@@ -995,24 +1310,55 @@ export async function runOpencode(request: OpencodeHarnessHostRequest): Promise<
       const mappedEvents = mapOpencodeEvent(
         winner.result.value,
         opencodeSessionID,
-        mapperState
+        mapperState,
       );
 
       for (const mappedEvent of mappedEvents) {
-        if (!shouldEmitOpencodeEvent(mappedEvent.event_type, mappedEvent.payload, request.instruction)) {
+        if (
+          !shouldEmitOpencodeEvent(
+            mappedEvent.event_type,
+            mappedEvent.payload,
+            request.instruction,
+          )
+        ) {
           continue;
         }
 
-        if (TERMINAL_EVENT_TYPES.has(mappedEvent.event_type)) {
+        if (mappedEvent.event_type === "run_failed") {
+          appendOpencodeDiagnosticLog(
+            request.workspace_dir,
+            "stream_run_failed_event",
+            {
+              opencode_session_id: opencodeSessionID,
+              raw_event: jsonValue(winner.result.value),
+              mapped_payload: mappedEvent.payload,
+            },
+          );
+        }
+
+        if (SESSION_PERSIST_EVENT_TYPES.has(mappedEvent.event_type)) {
           mappedEvent.payload = {
             ...mappedEvent.payload,
             harness_session_id: opencodeSessionID,
           };
         }
 
-        emitRunnerEvent(request, nextSequence(), mappedEvent.event_type, mappedEvent.payload);
+        emitRunnerEvent(
+          request,
+          nextSequence(),
+          mappedEvent.event_type,
+          mappedEvent.payload,
+        );
         if (TERMINAL_EVENT_TYPES.has(mappedEvent.event_type)) {
           terminalEmitted = true;
+          appendOpencodeDiagnosticLog(
+            request.workspace_dir,
+            "terminal_event_emitted",
+            {
+              event_type: mappedEvent.event_type,
+              opencode_session_id: opencodeSessionID,
+            },
+          );
           break;
         }
       }
@@ -1023,16 +1369,27 @@ export async function runOpencode(request: OpencodeHarnessHostRequest): Promise<
     }
 
     void iterator.return?.(undefined);
+    appendOpencodeDiagnosticLog(request.workspace_dir, "run_opencode_complete", {
+      opencode_session_id: opencodeSessionID,
+    });
     return 0;
   } catch (error: unknown) {
+    appendOpencodeDiagnosticLog(request.workspace_dir, "run_opencode_failure", {
+      error_name: error instanceof Error ? error.name : "Error",
+      error_message: error instanceof Error ? error.message : String(error),
+      opencode_session_id: activeSessionID,
+    });
     const payload: JsonObject = {
-      type: error instanceof Error ? error.name || "RuntimeError" : "RuntimeError",
+      type:
+        error instanceof Error ? error.name || "RuntimeError" : "RuntimeError",
       message: error instanceof Error ? error.message : String(error),
     };
-    if (activeSessionID) {
-      payload.harness_session_id = activeSessionID;
-    }
-    emitRunnerEvent(request, sequence === 0 ? 1 : nextSequence(), "run_failed", payload);
+    emitRunnerEvent(
+      request,
+      sequence === 0 ? 1 : nextSequence(),
+      "run_failed",
+      payload,
+    );
     return 1;
   }
 }

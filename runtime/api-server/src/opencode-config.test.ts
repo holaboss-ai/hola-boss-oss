@@ -27,7 +27,7 @@ function makeTempWorkspaceRoot(prefix: string): string {
 function makeRequest(workspaceRoot: string) {
   return {
     workspace_root: workspaceRoot,
-    provider_id: "holaboss_proxy",
+    provider_id: "hb_openai",
     model_id: "gpt-5.1",
     model_client: {
       model_proxy_provider: "openai_compatible",
@@ -43,7 +43,7 @@ function makeRequest(workspaceRoot: string) {
 }
 
 test("buildOpencodeProviderConfigPayload preserves only allowlisted headers", () => {
-  const payload = buildOpencodeProviderConfigPayload("holaboss_proxy", "gpt-5.1", {
+  const payload = buildOpencodeProviderConfigPayload("hb_openai", "gpt-5.1", {
     model_proxy_provider: "openai_compatible",
     api_key: "hbrt.v1.proxy-user-key",
     base_url: "http://sandbox-runtime:3060/api/v1/model-proxy/openai/v1",
@@ -54,7 +54,7 @@ test("buildOpencodeProviderConfigPayload preserves only allowlisted headers", ()
     }
   });
 
-  const provider = (payload.provider as Record<string, unknown>).holaboss_proxy as Record<string, unknown>;
+  const provider = (payload.provider as Record<string, unknown>).hb_openai as Record<string, unknown>;
   const options = provider.options as Record<string, unknown>;
   const headers = options.headers as Record<string, string>;
   assert.equal(headers["X-API-Key"], "hbrt.v1.proxy-user-key");
@@ -69,8 +69,8 @@ test("updateOpencodeConfig writes provider config and model selection", () => {
   assert.equal(result.provider_config_changed, true);
   assert.equal(result.model_selection_changed, false);
   const payload = JSON.parse(fs.readFileSync(path.join(workspaceRoot, "opencode.json"), "utf8"));
-  assert.equal(payload.model, "holaboss_proxy/gpt-5.1");
-  assert.equal(payload.provider.holaboss_proxy.options.baseURL, "http://sandbox-runtime:3060/api/v1/model-proxy/openai/v1");
+  assert.equal(payload.model, "hb_openai/gpt-5.1");
+  assert.equal(payload.provider.hb_openai.options.baseURL, "http://sandbox-runtime:3060/api/v1/model-proxy/openai/v1");
 });
 
 test("updateOpencodeConfig rewrites provider config when the stored top-level model drifts", () => {
@@ -78,7 +78,7 @@ test("updateOpencodeConfig rewrites provider config when the stored top-level mo
   const initialRequest = makeRequest(workspaceRoot);
   updateOpencodeConfig(initialRequest);
   const existing = JSON.parse(fs.readFileSync(path.join(workspaceRoot, "opencode.json"), "utf8"));
-  existing.model = "holaboss_proxy/gpt-5.0";
+  existing.model = "hb_openai/gpt-5.0";
   fs.writeFileSync(path.join(workspaceRoot, "opencode.json"), JSON.stringify(existing, null, 2), "utf8");
 
   const result = updateOpencodeConfig(initialRequest);
@@ -86,7 +86,7 @@ test("updateOpencodeConfig rewrites provider config when the stored top-level mo
   assert.equal(result.provider_config_changed, true);
   assert.equal(result.model_selection_changed, false);
   const payload = JSON.parse(fs.readFileSync(path.join(workspaceRoot, "opencode.json"), "utf8"));
-  assert.equal(payload.model, "holaboss_proxy/gpt-5.1");
+  assert.equal(payload.model, "hb_openai/gpt-5.1");
 });
 
 test("runOpencodeConfigCli writes JSON response for a valid request", async () => {

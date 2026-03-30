@@ -545,3 +545,53 @@ test("claimed input persists replacement harness session id from terminal runner
 
   store.close();
 });
+
+test("claimed input resets harness session binding to the local session after run_failed", async () => {
+  const store = makeStore("hb-claimed-input-harness-session-reset-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    harness: "opencode",
+    harnessSessionId: "stale-opencode-session"
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" }
+  });
+  setNodeRunnerCommand([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { status: 'started' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'run_failed', payload: { type: 'OpenCodeSessionError', message: 'boom', harness_session_id: 'failed-session' } }) + '\\n');`
+  ]);
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker"
+  });
+
+  const binding = store.getBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-main"
+  });
+
+  assert.ok(binding);
+  assert.equal(binding.harnessSessionId, "session-main");
+
+  store.close();
+});

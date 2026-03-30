@@ -19,7 +19,7 @@ function baseBuildParams() {
       persistedHarnessSessionId: "persisted-session-1",
     },
     runtimeConfig: {
-      provider_id: "openai",
+      provider_id: "hb_openai",
       model_id: "gpt-5.1",
       mode: "code",
       system_prompt: "You are concise.",

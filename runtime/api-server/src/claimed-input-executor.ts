@@ -168,6 +168,15 @@ function maybePersistHarnessSessionId(params: {
   if (!["run_completed", "run_failed"].includes(params.eventType)) {
     return;
   }
+  if (params.eventType === "run_failed") {
+    params.store.upsertBinding({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      harness: params.harness,
+      harnessSessionId: params.sessionId
+    });
+    return;
+  }
   const harnessSessionId = params.payload.harness_session_id;
   if (typeof harnessSessionId !== "string" || !harnessSessionId.trim()) {
     return;

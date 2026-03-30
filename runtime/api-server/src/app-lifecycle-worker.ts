@@ -394,7 +394,7 @@ function healthProbeUrls(params: {
   ];
 }
 
-async function isAppHealthy(
+export async function isAppHealthy(
   params: {
     resolvedApp: ResolvedApplicationRuntime;
     httpPort: number;

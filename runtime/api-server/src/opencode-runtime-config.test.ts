@@ -42,7 +42,7 @@ test("projectOpencodeRuntimeConfig maps builtin tools, workspace tools, and skil
       members: []
     });
 
-    assert.equal(result.provider_id, "openai");
+    assert.equal(result.provider_id, "hb_openai");
     assert.equal(result.model_id, "gpt-5.2");
     assert.match(result.system_prompt, /^You are concise\./);
     assert.match(result.system_prompt, /MCP tool naming:/);
@@ -99,7 +99,7 @@ test("projectOpencodeRuntimeConfig composes team prompt and resolves anthropic p
       ]
     });
 
-    assert.equal(result.provider_id, "anthropic");
+    assert.equal(result.provider_id, "hb_anthropic");
     assert.equal(result.model_id, "claude-sonnet-4-5");
     assert.equal(result.model_client.model_proxy_provider, "anthropic_native");
     assert.equal(result.model_client.base_url, "https://runtime.example/api/v1/model-proxy/anthropic/v1");
@@ -181,6 +181,7 @@ test("projectOpencodeRuntimeConfig uses direct OpenAI fallback when enabled", ()
       members: []
     });
 
+    assert.equal(result.provider_id, "hb_openai");
     assert.equal(result.model_client.model_proxy_provider, "openai_compatible");
     assert.equal(result.model_client.api_key, "sk-openai");
     assert.equal(result.model_client.base_url ?? null, null);

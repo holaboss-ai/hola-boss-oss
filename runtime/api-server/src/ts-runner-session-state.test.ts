@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, test } from "node:test";
 
 import {
+  clearWorkspaceMainSessionId,
   persistWorkspaceMainSessionId,
   readWorkspaceMainSessionId,
   readWorkspaceSessionState,
@@ -93,4 +94,35 @@ test("persistWorkspaceMainSessionId stores multiple harness session ids side by 
   });
   assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "other" }), "session-123");
   assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "opencode" }), "session-456");
+});
+
+test("clearWorkspaceMainSessionId removes only the targeted harness entry", () => {
+  const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-state-clear-"));
+
+  persistWorkspaceMainSessionId({
+    workspaceDir,
+    harness: "other",
+    sessionId: "session-123"
+  });
+  persistWorkspaceMainSessionId({
+    workspaceDir,
+    harness: "opencode",
+    sessionId: "session-456"
+  });
+
+  clearWorkspaceMainSessionId({
+    workspaceDir,
+    harness: "opencode"
+  });
+
+  assert.deepEqual(readWorkspaceSessionState(workspaceDir), {
+    version: 2,
+    harness_sessions: {
+      other: {
+        main_session_id: "session-123"
+      }
+    }
+  });
+  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "opencode" }), null);
+  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "other" }), "session-123");
 });

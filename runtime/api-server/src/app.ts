@@ -40,6 +40,7 @@ import {
 import {
   AppLifecycleExecutorError,
   appBuildHasCompletedSetup,
+  isAppHealthy,
   type AppLifecycleExecutorLike,
   RuntimeAppLifecycleExecutor
 } from "./app-lifecycle-worker.js";
@@ -1101,7 +1102,192 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const cronWorker = resolveCronWorker(options, app, store, queueWorker);
   const bridgeWorker = resolveBridgeWorker(options, app, store, memoryService);
 
+  // ---------------------------------------------------------------------------
+  // App liveness: ensure enabled apps are running + health monitoring
+  // ---------------------------------------------------------------------------
+
+  const HEALTH_MONITOR_INTERVAL_MS = 30_000;
+  const MAX_AUTO_RESTART_ATTEMPTS = 5;
+  const autoRestartAttempts = new Map<string, number>();
+  let healthMonitorTimer: ReturnType<typeof setInterval> | null = null;
+
+  async function ensureAppRunning(workspaceId: string, appId: string): Promise<void> {
+    const workspaceDir = store.workspaceDir(workspaceId);
+    const resolved = resolveWorkspaceAppRuntime(workspaceDir, appId, {
+      store,
+      workspaceId,
+      allocatePorts: true
+    });
+
+    // Already healthy — sync DB and return.
+    if (
+      await isAppHealthy({
+        resolvedApp: resolved.resolvedApp,
+        httpPort: resolved.ports.http,
+        mcpPort: resolved.ports.mcp
+      })
+    ) {
+      store.upsertAppBuild({ workspaceId, appId, status: "running" });
+      return;
+    }
+
+    // Setup needed?
+    const build = store.getAppBuild({ workspaceId, appId });
+    if (
+      !appBuildHasCompletedSetup(build?.status) &&
+      resolved.resolvedApp.lifecycle.setup.trim().length > 0
+    ) {
+      await runAppSetup({
+        store,
+        workspaceDir,
+        workspaceId,
+        appId,
+        setupCommand: resolved.resolvedApp.lifecycle.setup
+      });
+      const afterSetup = store.getAppBuild({ workspaceId, appId });
+      if (afterSetup?.status === "failed") {
+        throw new Error(afterSetup.error ?? "setup failed");
+      }
+    }
+
+    // Start app process.
+    const result = await appLifecycleExecutor.startApp({
+      appId,
+      appDir: resolved.appDir,
+      httpPort: resolved.ports.http,
+      mcpPort: resolved.ports.mcp,
+      resolvedApp: resolved.resolvedApp,
+      skipSetup: true
+    });
+    store.upsertAppBuild({
+      workspaceId,
+      appId,
+      status: result.status === "started" ? "running" : result.status
+    });
+  }
+
+  async function ensureAllAppsRunning(
+    workspaceId: string
+  ): Promise<{ apps: Array<{ app_id: string; ready: boolean; error: string | null }> }> {
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return { apps: [] };
+    }
+    const workspaceDir = store.workspaceDir(workspaceId);
+    const entries = listWorkspaceApplications(workspaceDir);
+    const validEntries = entries.filter(
+      (e) => typeof e.app_id === "string" && e.app_id.length > 0
+    );
+
+    const results = await Promise.allSettled(
+      validEntries.map((entry) => ensureAppRunning(workspaceId, entry.app_id as string))
+    );
+
+    return {
+      apps: results.map((r, i) => ({
+        app_id: validEntries[i].app_id as string,
+        ready: r.status === "fulfilled",
+        error:
+          r.status === "rejected"
+            ? (r.reason instanceof Error ? r.reason.message : String(r.reason)).slice(0, 2000)
+            : null
+      }))
+    };
+  }
+
+  function startHealthMonitor(): void {
+    if (healthMonitorTimer) {
+      return;
+    }
+    healthMonitorTimer = setInterval(() => {
+      void runHealthMonitorCycle();
+    }, HEALTH_MONITOR_INTERVAL_MS);
+  }
+
+  async function runHealthMonitorCycle(): Promise<void> {
+    let workspaces: WorkspaceRecord[];
+    try {
+      workspaces = store.listWorkspaces({ includeDeleted: false });
+    } catch {
+      return;
+    }
+    for (const ws of workspaces) {
+      if (ws.status !== "active") {
+        continue;
+      }
+      let entries: Array<Record<string, unknown>>;
+      try {
+        entries = listWorkspaceApplications(store.workspaceDir(ws.id));
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        const appId = typeof entry.app_id === "string" ? entry.app_id : "";
+        if (!appId) {
+          continue;
+        }
+        const build = store.getAppBuild({ workspaceId: ws.id, appId });
+        if (!appBuildHasCompletedSetup(build?.status)) {
+          continue;
+        }
+
+        let resolved;
+        try {
+          resolved = resolveWorkspaceAppRuntime(store.workspaceDir(ws.id), appId, {
+            store,
+            workspaceId: ws.id
+          });
+        } catch {
+          continue;
+        }
+
+        let healthy = false;
+        try {
+          healthy = await isAppHealthy({
+            resolvedApp: resolved.resolvedApp,
+            httpPort: resolved.ports.http,
+            mcpPort: resolved.ports.mcp
+          });
+        } catch {
+          // treat as unhealthy
+        }
+
+        const key = `${ws.id}:${appId}`;
+        if (healthy) {
+          autoRestartAttempts.delete(key);
+          if (build?.status !== "running") {
+            store.upsertAppBuild({ workspaceId: ws.id, appId, status: "running" });
+          }
+          continue;
+        }
+
+        const attempts = (autoRestartAttempts.get(key) ?? 0) + 1;
+        autoRestartAttempts.set(key, attempts);
+        if (attempts <= MAX_AUTO_RESTART_ATTEMPTS) {
+          app.log.info({ workspaceId: ws.id, appId, attempt: attempts }, "health monitor: restarting unhealthy app");
+          void ensureAppRunning(ws.id, appId).catch((err) => {
+            app.log.error({ workspaceId: ws.id, appId, err: err instanceof Error ? err.message : String(err) }, "health monitor: restart failed");
+          });
+        } else if (attempts === MAX_AUTO_RESTART_ATTEMPTS + 1) {
+          app.log.error({ workspaceId: ws.id, appId, attempts: attempts - 1 }, "health monitor: max restart attempts exceeded");
+          store.upsertAppBuild({
+            workspaceId: ws.id,
+            appId,
+            status: "failed",
+            error: `App crashed and failed to recover after ${MAX_AUTO_RESTART_ATTEMPTS} attempts`
+          });
+        }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+
   app.addHook("onClose", async () => {
+    if (healthMonitorTimer) {
+      clearInterval(healthMonitorTimer);
+      healthMonitorTimer = null;
+    }
     await bridgeWorker?.close();
     await cronWorker?.close();
     await queueWorker?.close();
@@ -1114,6 +1300,17 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     await queueWorker?.start();
     await cronWorker?.start();
     await bridgeWorker?.start();
+    startHealthMonitor();
+
+    // Auto-start all enabled apps for active workspaces.
+    const workspaces = store.listWorkspaces({ includeDeleted: false });
+    for (const ws of workspaces) {
+      if (ws.status === "active") {
+        void ensureAllAppsRunning(ws.id).catch((err) => {
+          app.log.error({ workspaceId: ws.id, err: err instanceof Error ? err.message : String(err) }, "auto-start apps on ready failed");
+        });
+      }
+    }
   });
 
   app.get("/healthz", async () => ({ ok: true }));
@@ -1948,19 +2145,40 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!workspace) {
       return sendError(reply, 404, "workspace not found");
     }
-    const apps = listWorkspaceApplications(store.workspaceDir(workspaceId)).map((entry) => {
+    const workspaceDir = store.workspaceDir(workspaceId);
+    const apps = listWorkspaceApplications(workspaceDir).map((entry) => {
       const appId = typeof entry.app_id === "string" ? entry.app_id : "";
+      const build = appId ? store.getAppBuild({ workspaceId, appId }) : null;
+      const status = appId ? resolvedAppBuildStatus({ store, workspaceId, appId, entry }) : "unknown";
       return {
         app_id: appId,
         config_path: typeof entry.config_path === "string" ? entry.config_path : "",
         lifecycle: isRecord(entry.lifecycle) ? entry.lifecycle : null,
-        build_status: appId ? resolvedAppBuildStatus({ store, workspaceId, appId, entry }) : "unknown"
+        build_status: status,
+        ready: status === "running",
+        error: build?.status === "failed" ? (build.error ?? "unknown error") : null
       };
     });
     return {
       apps: apps.filter((entry) => entry.app_id.length > 0),
       count: apps.filter((entry) => entry.app_id.length > 0).length
     };
+  });
+
+  app.post("/api/v1/apps/ensure-running", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const workspaceId = requiredString(request.body.workspace_id, "workspace_id");
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+    try {
+      return await ensureAllAppsRunning(workspaceId);
+    } catch (error) {
+      return sendError(reply, 500, error instanceof Error ? error.message : "failed to ensure apps running");
+    }
   });
 
   app.post("/api/v1/apps/install", async (request, reply) => {
@@ -2030,31 +2248,26 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       lifecycle: Object.keys(lifecycle).length > 0 ? lifecycle : null
     });
 
-    if (parsed.lifecycle.setup) {
-      const queued = queueAppSetup({
-        workspaceDir,
-        workspaceId,
-        appId,
-        setupCommand: parsed.lifecycle.setup
-      });
+    // Atomic enable: setup + start in one flow.
+    try {
+      await ensureAppRunning(workspaceId, appId);
       return {
         app_id: appId,
-        status: queued.status,
-        detail: `Files written, ${queued.detail.toLowerCase()}`
+        status: "enabled",
+        detail: "App installed and running",
+        ready: true,
+        error: null
+      };
+    } catch (error) {
+      const message = (error instanceof Error ? error.message : String(error)).slice(0, 2000);
+      return {
+        app_id: appId,
+        status: "enabled",
+        detail: message,
+        ready: false,
+        error: message
       };
     }
-
-    store.upsertAppBuild({
-      workspaceId,
-      appId,
-      status: "stopped"
-    });
-
-    return {
-      app_id: appId,
-      status: "installed",
-      detail: "Files written, no setup command defined"
-    };
   });
 
   app.post("/api/v1/apps/:appId/setup", async (request, reply) => {

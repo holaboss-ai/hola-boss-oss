@@ -54,7 +54,7 @@ mkdir -p "${BIN_DIR}"
 
 NODE_PACKAGES=()
 if [ "${INSTALL_OPENCODE}" = "1" ]; then
-  NODE_PACKAGES+=("opencode-ai@latest")
+  NODE_PACKAGES+=("opencode-ai@1.3.0")
 fi
 if [ "${INSTALL_QMD}" = "1" ]; then
   NODE_PACKAGES+=("@tobilu/qmd@latest")

@@ -421,7 +421,16 @@ export async function restartOpencodeSidecar(
   try {
     child = (deps.spawnProcess ?? defaultSpawnProcess)(
       "opencode",
-      ["serve", "--hostname", request.host, "--port", String(targetPort)],
+      [
+        "serve",
+        "--print-logs",
+        "--log-level",
+        "DEBUG",
+        "--hostname",
+        request.host,
+        "--port",
+        String(targetPort)
+      ],
       {
         cwd: workspaceRoot,
         stdio: ["ignore", logFd, logFd],

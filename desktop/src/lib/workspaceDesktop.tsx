@@ -90,6 +90,7 @@ interface WorkspaceDesktopContextValue {
   chooseTemplateFolder: () => Promise<void>;
   createWorkspace: () => Promise<void>;
   deleteWorkspace: (workspaceId: string) => Promise<void>;
+  removeInstalledApp: (appId: string) => Promise<void>;
 }
 
 const WorkspaceDesktopContext = createContext<WorkspaceDesktopContextValue | null>(null);
@@ -432,6 +433,18 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     }
   }
 
+  async function removeInstalledApp(appId: string) {
+    if (!selectedWorkspaceId) {
+      return;
+    }
+    try {
+      await window.electronAPI.workspace.removeInstalledApp(selectedWorkspaceId, appId);
+      await refreshInstalledApps();
+    } catch (error) {
+      setWorkspaceErrorMessage(normalizeErrorMessage(error));
+    }
+  }
+
   async function chooseTemplateFolder() {
     setWorkspaceErrorMessage("");
     try {
@@ -771,6 +784,18 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     return null;
   }, [clientConfig, recentAuthCompletedAt, runtimeConfig, runtimeStatus, session]);
 
+  // Auto-poll installed apps when any app is not yet ready.
+  useEffect(() => {
+    const hasInitializing = installedApps.some((app) => !app.ready);
+    if (!hasInitializing || !selectedWorkspaceId) {
+      return;
+    }
+    const timer = setInterval(() => {
+      void refreshInstalledApps();
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [installedApps, selectedWorkspaceId]);
+
   const value = useMemo(
     () => ({
       runtimeConfig,
@@ -814,7 +839,8 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       refreshWorkspaceData,
       chooseTemplateFolder,
       createWorkspace,
-      deleteWorkspace
+      deleteWorkspace,
+      removeInstalledApp
     }),
     [
       runtimeConfig,

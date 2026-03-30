@@ -44,6 +44,7 @@ import {
   emitTsRunnerEventWithPush
 } from "./ts-runner-events.js";
 import {
+  clearWorkspaceMainSessionId,
   persistWorkspaceMainSessionId,
   readWorkspaceMainSessionId,
   workspaceDirForId
@@ -369,7 +370,7 @@ function buildAgentRuntimeConfigRequest(params: {
 }
 
 function terminalHarnessSessionId(event: TsRunnerEvent): string | null {
-  if (!TERMINAL_EVENT_TYPES.has(event.event_type)) {
+  if (event.event_type !== "run_completed") {
     return null;
   }
   return firstNonEmptyString(event.payload.harness_session_id);
@@ -643,6 +644,14 @@ export async function relayTsRunnerEvent(params: {
 }): Promise<void> {
   await params.emitEvent(params.event);
   const sessionId = terminalHarnessSessionId(params.event);
+  if (params.event.event_type === "run_failed") {
+    clearWorkspaceMainSessionId({
+      workspaceDir: params.workspaceDir,
+      harness: params.harness,
+      logger: params.logger
+    });
+    return;
+  }
   if (!sessionId) {
     return;
   }

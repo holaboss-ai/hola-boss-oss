@@ -1,10 +1,29 @@
-import { FormEvent, KeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Download, Globe, Loader2, MoreHorizontal, Plus, RefreshCcw, Star, X } from "lucide-react";
+import {
+  FormEvent,
+  KeyboardEvent,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  Globe,
+  Loader2,
+  MoreHorizontal,
+  Plus,
+  RefreshCcw,
+  Star,
+  X,
+} from "lucide-react";
 import { IconButton } from "@/components/ui/IconButton";
 import { PaneCard } from "@/components/ui/PaneCard";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
-const HOME_URL = "https://www.google.com/";
+const HOME_URL = "https://app.holaboss.ai/";
 
 const EMPTY_BROWSER_STATE: BrowserStatePayload = {
   id: "",
@@ -14,12 +33,12 @@ const EMPTY_BROWSER_STATE: BrowserStatePayload = {
   canGoForward: false,
   loading: false,
   initialized: false,
-  error: ""
+  error: "",
 };
 
 const INITIAL_STATE: BrowserTabListPayload = {
   activeTabId: "",
-  tabs: []
+  tabs: [],
 };
 
 function normalizeUrl(rawInput: string) {
@@ -41,20 +60,24 @@ function normalizeUrl(rawInput: string) {
 
 export function BrowserPane({
   suspendNativeView = false,
-  layoutSyncKey = ""
+  layoutSyncKey = "",
 }: {
   suspendNativeView?: boolean;
   layoutSyncKey?: string;
 }) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const [paneWidth, setPaneWidth] = useState(0);
-  const [browserState, setBrowserState] = useState<BrowserTabListPayload>(INITIAL_STATE);
+  const [browserState, setBrowserState] =
+    useState<BrowserTabListPayload>(INITIAL_STATE);
   const [inputValue, setInputValue] = useState("");
   const [bookmarks, setBookmarks] = useState<BrowserBookmarkPayload[]>([]);
   const [downloads, setDownloads] = useState<BrowserDownloadPayload[]>([]);
-  const [historyEntries, setHistoryEntries] = useState<BrowserHistoryEntryPayload[]>([]);
+  const [historyEntries, setHistoryEntries] = useState<
+    BrowserHistoryEntryPayload[]
+  >([]);
   const [addressFocused, setAddressFocused] = useState(false);
-  const [highlightedSuggestionIndex, setHighlightedSuggestionIndex] = useState(-1);
+  const [highlightedSuggestionIndex, setHighlightedSuggestionIndex] =
+    useState(-1);
   const paneRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const downloadsButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -64,8 +87,11 @@ export function BrowserPane({
   const shouldFocusAddressRef = useRef(false);
 
   const activeTab = useMemo(
-    () => browserState.tabs.find((tab) => tab.id === browserState.activeTabId) ?? browserState.tabs[0] ?? EMPTY_BROWSER_STATE,
-    [browserState]
+    () =>
+      browserState.tabs.find((tab) => tab.id === browserState.activeTabId) ??
+      browserState.tabs[0] ??
+      EMPTY_BROWSER_STATE,
+    [browserState],
   );
   const isCompactPane = paneWidth > 0 && paneWidth <= 320;
   const isNarrowPane = paneWidth > 0 && paneWidth <= 240;
@@ -107,7 +133,9 @@ export function BrowserPane({
       };
     }
 
-    void window.electronAPI.browser.setActiveWorkspace(selectedWorkspaceId).then(applyState);
+    void window.electronAPI.browser
+      .setActiveWorkspace(selectedWorkspaceId)
+      .then(applyState);
     const unsubscribe = window.electronAPI.browser.onStateChange(applyState);
 
     return () => {
@@ -156,9 +184,12 @@ export function BrowserPane({
     void window.electronAPI.browser.getBookmarks().then(applyBookmarks);
     void window.electronAPI.browser.getDownloads().then(applyDownloads);
     void window.electronAPI.browser.getHistory().then(applyHistory);
-    const unsubscribeBookmarks = window.electronAPI.browser.onBookmarksChange(applyBookmarks);
-    const unsubscribeDownloads = window.electronAPI.browser.onDownloadsChange(applyDownloads);
-    const unsubscribeHistory = window.electronAPI.browser.onHistoryChange(applyHistory);
+    const unsubscribeBookmarks =
+      window.electronAPI.browser.onBookmarksChange(applyBookmarks);
+    const unsubscribeDownloads =
+      window.electronAPI.browser.onDownloadsChange(applyDownloads);
+    const unsubscribeHistory =
+      window.electronAPI.browser.onHistoryChange(applyHistory);
 
     return () => {
       mounted = false;
@@ -173,7 +204,9 @@ export function BrowserPane({
   }, [activeTab.id, activeTab.url]);
 
   useEffect(() => {
-    setHighlightedSuggestionIndex(addressFocused && historyEntries.length > 0 ? 0 : -1);
+    setHighlightedSuggestionIndex(
+      addressFocused && historyEntries.length > 0 ? 0 : -1,
+    );
   }, [activeTab.id]);
 
   useEffect(() => {
@@ -195,7 +228,12 @@ export function BrowserPane({
     }
 
     if (suspendNativeView) {
-      void window.electronAPI.browser.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      void window.electronAPI.browser.setBounds({
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+      });
       return;
     }
 
@@ -207,7 +245,7 @@ export function BrowserPane({
         x: rect.left,
         y: rect.top,
         width: rect.width,
-        height: rect.height
+        height: rect.height,
       });
     };
 
@@ -228,7 +266,12 @@ export function BrowserPane({
       observer.disconnect();
       window.removeEventListener("resize", queueSync);
       window.cancelAnimationFrame(rafId);
-      void window.electronAPI.browser.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      void window.electronAPI.browser.setBounds({
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+      });
     };
   }, [layoutSyncKey, suspendNativeView]);
 
@@ -255,15 +298,19 @@ export function BrowserPane({
 
   const isBookmarked = useMemo(
     () => bookmarks.some((bookmark) => bookmark.url === activeTab.url),
-    [activeTab.url, bookmarks]
+    [activeTab.url, bookmarks],
   );
 
   const activeBookmark = useMemo(
     () => bookmarks.find((bookmark) => bookmark.url === activeTab.url) ?? null,
-    [activeTab.url, bookmarks]
+    [activeTab.url, bookmarks],
   );
 
-  const activeDownloadCount = useMemo(() => downloads.filter((download) => download.status === "progressing").length, [downloads]);
+  const activeDownloadCount = useMemo(
+    () =>
+      downloads.filter((download) => download.status === "progressing").length,
+    [downloads],
+  );
   const hasVisibleDownloads = downloads.length > 0;
   const historySuggestions = useMemo(() => {
     if (!addressFocused) {
@@ -276,12 +323,13 @@ export function BrowserPane({
         return true;
       }
 
-      return entry.url.toLowerCase().includes(query) || entry.title.toLowerCase().includes(query);
+      return (
+        entry.url.toLowerCase().includes(query) ||
+        entry.title.toLowerCase().includes(query)
+      );
     });
 
-    return filtered
-      .filter((entry) => entry.url !== activeTab.url)
-      .slice(0, 6);
+    return filtered.filter((entry) => entry.url !== activeTab.url).slice(0, 6);
   }, [activeTab.url, addressFocused, historyEntries, inputValue]);
 
   useEffect(() => {
@@ -310,7 +358,7 @@ export function BrowserPane({
 
     void window.electronAPI.browser.addBookmark({
       url: activeTab.url,
-      title: activeTab.title || activeTab.url
+      title: activeTab.title || activeTab.url,
     });
   };
 
@@ -324,7 +372,7 @@ export function BrowserPane({
       x: rect.left,
       y: rect.top,
       width: rect.width,
-      height: rect.height
+      height: rect.height,
     };
   };
 
@@ -338,7 +386,7 @@ export function BrowserPane({
       x: rect.left,
       y: rect.top,
       width: rect.width,
-      height: rect.height
+      height: rect.height,
     };
   };
 
@@ -353,14 +401,20 @@ export function BrowserPane({
       return;
     }
 
-    const suggestions: AddressSuggestionPayload[] = historySuggestions.map((entry) => ({
-      id: entry.id,
-      url: entry.url,
-      title: entry.title,
-      faviconUrl: entry.faviconUrl
-    }));
+    const suggestions: AddressSuggestionPayload[] = historySuggestions.map(
+      (entry) => ({
+        id: entry.id,
+        url: entry.url,
+        title: entry.title,
+        faviconUrl: entry.faviconUrl,
+      }),
+    );
 
-    void window.electronAPI.browser.showAddressSuggestions(bounds, suggestions, highlightedSuggestionIndex);
+    void window.electronAPI.browser.showAddressSuggestions(
+      bounds,
+      suggestions,
+      highlightedSuggestionIndex,
+    );
   }, [addressFocused, highlightedSuggestionIndex, historySuggestions]);
 
   useEffect(() => {
@@ -396,13 +450,17 @@ export function BrowserPane({
 
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setHighlightedSuggestionIndex((current) => (current + 1) % historySuggestions.length);
+      setHighlightedSuggestionIndex(
+        (current) => (current + 1) % historySuggestions.length,
+      );
       return;
     }
 
     if (event.key === "ArrowUp") {
       event.preventDefault();
-      setHighlightedSuggestionIndex((current) => (current <= 0 ? historySuggestions.length - 1 : current - 1));
+      setHighlightedSuggestionIndex((current) =>
+        current <= 0 ? historySuggestions.length - 1 : current - 1,
+      );
       return;
     }
 
@@ -441,18 +499,26 @@ export function BrowserPane({
                     "group flex min-w-0 max-w-[200px] items-center gap-1.5 rounded-[var(--theme-radius-pill)] border px-2.5 py-1 transition",
                     isActive
                       ? "border-neon-green/65 bg-neon-green/16 text-neon-green shadow-glow"
-                      : "theme-control-surface border-panel-border text-text-muted/78 hover:border-neon-green/35 hover:text-text-main"
+                      : "theme-control-surface border-panel-border text-text-muted/78 hover:border-neon-green/35 hover:text-text-main",
                   ].join(" ")}
                 >
                   <button
                     type="button"
-                    onClick={() => void window.electronAPI.browser.setActiveTab(tab.id)}
+                    onClick={() =>
+                      void window.electronAPI.browser.setActiveTab(tab.id)
+                    }
                     className="flex min-w-0 flex-1 items-center gap-2 text-left"
                     title={tab.title}
                   >
                     <Globe size={12} className="shrink-0" />
-                    {!isNarrowPane ? <span className="truncate text-[10px] font-semibold tracking-wide">{tab.title || "New Tab"}</span> : null}
-                    {tab.loading ? <Loader2 size={11} className="shrink-0 animate-spin" /> : null}
+                    {!isNarrowPane ? (
+                      <span className="truncate text-[10px] font-semibold tracking-wide">
+                        {tab.title || "New Tab"}
+                      </span>
+                    ) : null}
+                    {tab.loading ? (
+                      <Loader2 size={11} className="shrink-0 animate-spin" />
+                    ) : null}
                   </button>
                   <button
                     type="button"
@@ -476,8 +542,12 @@ export function BrowserPane({
             </button>
           </div>
 
-          <div className={`mb-1 flex min-w-0 ${isCompactPane ? "flex-col gap-1.5" : "items-center gap-1"}`}>
-            <div className={`flex min-w-0 ${isCompactPane ? "w-full items-center justify-between gap-1" : "items-center gap-1"}`}>
+          <div
+            className={`mb-1 flex min-w-0 ${isCompactPane ? "flex-col gap-1.5" : "items-center gap-1"}`}
+          >
+            <div
+              className={`flex min-w-0 ${isCompactPane ? "w-full items-center justify-between gap-1" : "items-center gap-1"}`}
+            >
               <div className="flex min-w-0 items-center gap-1">
                 <IconButton
                   icon={<ChevronLeft size={13} />}
@@ -502,14 +572,16 @@ export function BrowserPane({
                 />
               </div>
 
-              <div className={`relative flex shrink-0 items-center gap-1 ${isCompactPane ? "" : "ml-auto"}`}>
+              <div
+                className={`relative flex shrink-0 items-center gap-1 ${isCompactPane ? "" : "ml-auto"}`}
+              >
                 {hasVisibleDownloads ? (
                   <button
                     ref={downloadsButtonRef}
                     type="button"
                     className={[
                       "theme-subtle-surface relative grid h-7 w-7 place-items-center rounded-[var(--theme-radius-control)] border transition-all duration-200",
-                      "border-panel-border/60 text-text-muted/85 hover:border-neon-green/45 hover:text-neon-green"
+                      "border-panel-border/60 text-text-muted/85 hover:border-neon-green/45 hover:text-neon-green",
                     ].join(" ")}
                     aria-label="Downloads"
                     title="Downloads"
@@ -529,7 +601,7 @@ export function BrowserPane({
                   type="button"
                   className={[
                     "theme-subtle-surface relative grid h-7 w-7 place-items-center rounded-[var(--theme-radius-control)] border transition-all duration-200",
-                    "border-panel-border/60 text-text-muted/85 hover:border-neon-green/45 hover:text-neon-green"
+                    "border-panel-border/60 text-text-muted/85 hover:border-neon-green/45 hover:text-neon-green",
                   ].join(" ")}
                   aria-label="More browser options"
                   title="More"
@@ -547,8 +619,14 @@ export function BrowserPane({
               </div>
             </div>
 
-            <form className={`flex min-w-0 ${isCompactPane ? "w-full" : "ml-1.5 flex-1 items-center gap-1.5"}`} onSubmit={onSubmit}>
-              <div ref={addressFieldRef} className="relative flex min-w-0 flex-1">
+            <form
+              className={`flex min-w-0 ${isCompactPane ? "w-full" : "ml-1.5 flex-1 items-center gap-1.5"}`}
+              onSubmit={onSubmit}
+            >
+              <div
+                ref={addressFieldRef}
+                className="relative flex min-w-0 flex-1"
+              >
                 <div className="glass-field flex min-w-0 flex-1 items-center gap-1.5 rounded-[var(--theme-radius-control)] px-2.5 py-1.5">
                   <Globe size={12} className="shrink-0 text-neon-green/85" />
                   <input
@@ -559,10 +637,14 @@ export function BrowserPane({
                       event.currentTarget.select();
                       setAddressFocused(true);
                     }}
-                    onBlur={() => window.setTimeout(() => setAddressFocused(false), 120)}
+                    onBlur={() =>
+                      window.setTimeout(() => setAddressFocused(false), 120)
+                    }
                     onKeyDown={onAddressKeyDown}
                     className="embedded-input w-full min-w-0 bg-transparent text-[11px] text-text-main/90 outline-none placeholder:text-text-muted/40"
-                    placeholder={isNarrowPane ? "Search" : "Enter URL or search"}
+                    placeholder={
+                      isNarrowPane ? "Search" : "Enter URL or search"
+                    }
                   />
                   {!isNarrowPane ? (
                     <button
@@ -572,13 +654,20 @@ export function BrowserPane({
                         "grid h-6 w-6 shrink-0 place-items-center rounded-[var(--theme-radius-pill)] border transition",
                         isBookmarked
                           ? "border-neon-green/60 bg-neon-green/18 text-neon-green"
-                          : "border-transparent bg-transparent text-text-muted/65 hover:border-neon-green/35 hover:bg-black/20 hover:text-neon-green"
+                          : "border-transparent bg-transparent text-text-muted/65 hover:border-neon-green/35 hover:bg-black/20 hover:text-neon-green",
                       ].join(" ")}
-                      aria-label={isBookmarked ? "Remove bookmark" : "Add bookmark"}
-                      title={isBookmarked ? "Remove bookmark" : "Bookmark this tab"}
+                      aria-label={
+                        isBookmarked ? "Remove bookmark" : "Add bookmark"
+                      }
+                      title={
+                        isBookmarked ? "Remove bookmark" : "Bookmark this tab"
+                      }
                       disabled={!activeTab.url}
                     >
-                      <Star size={13} fill={isBookmarked ? "currentColor" : "none"} />
+                      <Star
+                        size={13}
+                        fill={isBookmarked ? "currentColor" : "none"}
+                      />
                     </button>
                   ) : null}
                 </div>
@@ -597,7 +686,11 @@ export function BrowserPane({
                 >
                   <span className="flex items-center gap-1.5">
                     {bookmark.faviconUrl ? (
-                      <img src={bookmark.faviconUrl} alt="" className="h-3 w-3 shrink-0 rounded-sm" />
+                      <img
+                        src={bookmark.faviconUrl}
+                        alt=""
+                        className="h-3 w-3 shrink-0 rounded-sm"
+                      />
                     ) : (
                       <span className="grid h-3 w-3 shrink-0 place-items-center rounded-sm bg-white/6 text-[8px] text-text-muted/60">
                         •
@@ -640,7 +733,10 @@ export function BrowserPane({
             {activeTab.initialized && activeTab.loading ? (
               <div className="pointer-events-none absolute inset-x-3 top-3 z-10">
                 <div className="inline-flex items-center gap-2 rounded-full border border-panel-border/50 bg-panel-bg/86 px-3 py-1.5 text-[11px] text-text-muted/82 shadow-[0_10px_24px_rgba(25,33,53,0.08)] backdrop-blur">
-                  <Loader2 size={12} className="animate-spin text-[rgba(206,92,84,0.92)]" />
+                  <Loader2
+                    size={12}
+                    className="animate-spin text-[rgba(206,92,84,0.92)]"
+                  />
                   <span>Loading page</span>
                 </div>
               </div>

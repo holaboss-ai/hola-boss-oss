@@ -166,3 +166,55 @@ export function persistWorkspaceMainSessionId(params: {
     );
   }
 }
+
+export function clearWorkspaceMainSessionId(params: {
+  workspaceDir: string;
+  harness: string;
+  logger?: LoggerLike;
+}): void {
+  const logger = params.logger ?? defaultLogger();
+  const resolvedHarness = normalizeHarness(params.harness);
+  if (!resolvedHarness) {
+    return;
+  }
+
+  const existingState = readWorkspaceSessionState(params.workspaceDir, { logger });
+  const sessions = readHarnessSessionStateMap(existingState, { logger });
+  if (!sessions.delete(resolvedHarness)) {
+    return;
+  }
+
+  const statePath = workspaceSessionStatePath(params.workspaceDir);
+  if (sessions.size === 0) {
+    try {
+      fs.unlinkSync(statePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        logger.warn(
+          `Failed to clear workspace session state path=${statePath} error=${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+    return;
+  }
+
+  const payload = {
+    version: SESSION_STATE_VERSION,
+    [SESSION_STATE_HARNESS_SESSIONS_KEY]: Object.fromEntries(
+      [...sessions.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([harness, sessionId]) => [harness, { [SESSION_STATE_MAIN_SESSION_KEY]: sessionId }])
+    )
+  };
+
+  try {
+    fs.mkdirSync(path.dirname(statePath), { recursive: true });
+    const tempPath = `${statePath}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(payload), "utf8");
+    fs.renameSync(tempPath, statePath);
+  } catch (error) {
+    logger.warn(
+      `Failed to clear workspace session state path=${statePath} error=${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}

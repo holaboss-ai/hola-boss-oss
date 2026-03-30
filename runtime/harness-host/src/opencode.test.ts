@@ -1,14 +1,33 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test, { afterEach } from "node:test";
 
 import {
+  appendOpencodeDiagnosticLog,
   createOpencodeEventMapperState,
   mapOpencodeEvent,
   promptPartsForRequest,
   resolveOpencodeSessionId,
+  sanitizeDiagnosticHeaders,
   shouldEmitOpencodeEvent,
 } from "./opencode.js";
 import type { OpencodeHarnessHostRequest } from "./contracts.js";
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function makeTempWorkspaceDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
 
 function baseRequest(): OpencodeHarnessHostRequest {
   return {
@@ -337,6 +356,82 @@ test("promptPartsForRequest adds staged attachments as file parts", () => {
       url: "file:///tmp/workspace-1/.holaboss/input-attachments/batch-1/diagram.png",
       mime: "image/png",
       filename: "diagram.png",
+    },
+  ]);
+});
+
+test("sanitizeDiagnosticHeaders redacts sensitive header values", () => {
+  assert.deepEqual(
+    sanitizeDiagnosticHeaders({
+      "X-API-Key": "secret-token",
+      Authorization: "Bearer secret-token",
+      "X-Holaboss-Sandbox-Id": "sandbox-1",
+    }),
+    {
+      "X-API-Key": "[redacted]",
+      Authorization: "[redacted]",
+      "X-Holaboss-Sandbox-Id": "sandbox-1",
+    },
+  );
+});
+
+test("appendOpencodeDiagnosticLog writes jsonl entries under .holaboss", () => {
+  const workspaceDir = makeTempWorkspaceDir("hb-opencode-harness-log-");
+
+  appendOpencodeDiagnosticLog(workspaceDir, "prompt_prepare", {
+    provider_id: "openai",
+    headers: sanitizeDiagnosticHeaders({
+      "X-API-Key": "secret-token",
+      "X-Holaboss-Sandbox-Id": "sandbox-1",
+    }),
+  });
+
+  const logPath = path.join(workspaceDir, ".holaboss", "opencode-harness.log");
+  const lines = fs.readFileSync(logPath, "utf8").trim().split("\n");
+  assert.equal(lines.length, 1);
+  const entry = JSON.parse(lines[0]) as Record<string, unknown>;
+  assert.equal(entry.event, "prompt_prepare");
+  assert.equal(typeof entry.at, "string");
+  assert.deepEqual(entry.details, {
+    provider_id: "openai",
+    headers: {
+      "X-API-Key": "[redacted]",
+      "X-Holaboss-Sandbox-Id": "sandbox-1",
+    },
+  });
+});
+
+test("mapOpencodeEvent maps session.error into run_failed with provider details", () => {
+  const state = createOpencodeEventMapperState();
+
+  const events = mapOpencodeEvent(
+    {
+      type: "session.error",
+      properties: {
+        sessionID: "opencode-session-1",
+        error: {
+          name: "UnknownError",
+          data: {
+            message: "sdk.responses is not a function",
+            providerID: "openai",
+          },
+        },
+      },
+    },
+    "opencode-session-1",
+    state,
+  );
+
+  assert.deepEqual(events, [
+    {
+      event_type: "run_failed",
+      payload: {
+        type: "OpenCodeSessionError",
+        message: "UnknownError: sdk.responses is not a function (provider=openai)",
+        event: "session.error",
+        error_name: "UnknownError",
+        provider_id: "openai",
+      },
     },
   ]);
 });

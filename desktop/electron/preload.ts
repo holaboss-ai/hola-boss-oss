@@ -431,32 +431,18 @@ interface HolabossSessionStreamHandlePayload {
   streamId: string;
 }
 
-type WorkspaceAppBuildStatus =
-  | "unknown"
-  | "pending"
-  | "building"
-  | "completed"
-  | "failed"
-  | "running"
-  | "stopped";
-
 interface InstalledWorkspaceAppPayload {
   app_id: string;
   config_path: string;
   lifecycle: Record<string, string> | null;
-  build_status: WorkspaceAppBuildStatus;
+  build_status?: string;
+  ready: boolean;
+  error: string | null;
 }
 
 interface InstalledWorkspaceAppListResponsePayload {
   apps: InstalledWorkspaceAppPayload[];
   count: number;
-}
-
-interface WorkspaceAppLifecycleActionPayload {
-  app_id: string;
-  status: string;
-  detail: string;
-  ports: Record<string, number>;
 }
 
 interface WorkspaceLifecycleBlockingAppPayload {
@@ -573,6 +559,18 @@ contextBridge.exposeInMainWorld("electronAPI", {
       return () => ipcRenderer.removeListener("workbench:openBrowser", wrapped);
     }
   },
+  appSurface: {
+    navigate: (workspaceId: string, appId: string, path?: string) =>
+      ipcRenderer.invoke("appSurface:navigate", workspaceId, appId, path) as Promise<void>,
+    setBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
+      ipcRenderer.invoke("appSurface:setBounds", bounds) as Promise<void>,
+    reload: (appId: string) =>
+      ipcRenderer.invoke("appSurface:reload", appId) as Promise<void>,
+    destroy: (appId: string) =>
+      ipcRenderer.invoke("appSurface:destroy", appId) as Promise<void>,
+    hide: () =>
+      ipcRenderer.invoke("appSurface:hide") as Promise<void>,
+  },
   workspace: {
     getClientConfig: () => ipcRenderer.invoke("workspace:getClientConfig") as Promise<HolabossClientConfigPayload>,
     listMarketplaceTemplates: () =>
@@ -586,10 +584,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:activateWorkspace", workspaceId) as Promise<WorkspaceLifecyclePayload>,
     listInstalledApps: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listInstalledApps", workspaceId) as Promise<InstalledWorkspaceAppListResponsePayload>,
-    startInstalledApp: (workspaceId: string, appId: string) =>
-      ipcRenderer.invoke("workspace:startInstalledApp", workspaceId, appId) as Promise<WorkspaceAppLifecycleActionPayload>,
-    stopInstalledApp: (workspaceId: string, appId: string) =>
-      ipcRenderer.invoke("workspace:stopInstalledApp", workspaceId, appId) as Promise<WorkspaceAppLifecycleActionPayload>,
+    removeInstalledApp: (workspaceId: string, appId: string) =>
+      ipcRenderer.invoke("workspace:removeInstalledApp", workspaceId, appId) as Promise<void>,
     listOutputs: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listOutputs", workspaceId) as Promise<WorkspaceOutputListResponsePayload>,
     listSkills: (workspaceId: string) =>
