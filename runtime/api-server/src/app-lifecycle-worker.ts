@@ -31,6 +31,8 @@ export interface AppLifecycleStartParams {
   holabossUserId?: string;
   resolvedApp?: ResolvedApplicationRuntime;
   skipSetup?: boolean;
+  spawnImpl?: SpawnLike;
+  fetchImpl?: typeof fetch;
 }
 
 export interface RuntimeAppLifecycleExecutorOptions {
@@ -795,6 +797,8 @@ export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
           })
         : null;
     const integrationEnv = integrationRuntime?.env ?? {};
+    const spawnImpl = params.spawnImpl;
+    const fetchImpl = params.fetchImpl;
     if (
       hasNativeComposeLifecycle(params) &&
       params.httpPort !== undefined &&
@@ -807,7 +811,9 @@ export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
         httpPort: params.httpPort,
         mcpPort: params.mcpPort,
         holabossUserId: params.holabossUserId,
-        integrationEnv
+        integrationEnv,
+        spawnImpl,
+        fetchImpl
       });
     }
     if (hasNativeShellLifecycle(params) && params.resolvedApp.lifecycle.start) {
@@ -822,7 +828,9 @@ export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
         mcpPort: params.mcpPort,
         holabossUserId: params.holabossUserId,
         skipSetup: params.skipSetup,
-        integrationEnv
+        integrationEnv,
+        spawnImpl,
+        fetchImpl
       });
     }
     if (hasNativeStartCommandLifecycle(params)) {
@@ -837,7 +845,9 @@ export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
         mcpPort: params.mcpPort,
         holabossUserId: params.holabossUserId,
         skipSetup: params.skipSetup,
-        integrationEnv
+        integrationEnv,
+        spawnImpl,
+        fetchImpl
       });
     }
     throw unsupportedStartError(params);

@@ -25,6 +25,14 @@ function toProviderEnvKey(provider: string): string {
   return provider.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
 }
 
+function deriveWorkspaceApiUrl(brokerUrl: string): string {
+  return brokerUrl.replace(/\/integrations\/?$/, "");
+}
+
+function isActiveIntegrationConnection(connection: IntegrationConnectionRecord): boolean {
+  return connection.status.trim().toLowerCase() === "active";
+}
+
 function resolveWorkspaceIdFromAppDir(store: RuntimeStateStore, appDir?: string): string | null {
   if (!appDir) {
     return null;
@@ -73,6 +81,7 @@ export function resolveIntegrationRuntime(params: {
   const resolvedApp = params.resolvedApp;
   const requirements = resolvedApp?.integrations ?? [];
   const brokerUrl = params.integrationBrokerUrl ?? DEFAULT_INTEGRATION_BROKER_URL;
+  const workspaceApiUrl = deriveWorkspaceApiUrl(brokerUrl);
   const workspaceId = params.workspaceId ?? resolveWorkspaceIdFromAppDir(params.store, params.appDir);
   const env: NodeJS.ProcessEnv = {};
   const bindings: IntegrationBindingRecord[] = [];
@@ -91,9 +100,10 @@ export function resolveIntegrationRuntime(params: {
   }
 
   env.HOLABOSS_INTEGRATION_BROKER_URL = brokerUrl;
+  env.WORKSPACE_API_URL = workspaceApiUrl;
   env.HOLABOSS_APP_GRANT = `grant:${workspaceId}:${params.appId}:${randomUUID()}`;
 
-  let platformIntegrationToken = "";
+  const platformIntegrationTokens: string[] = [];
   for (const requirement of requirements) {
     const binding = resolveBindingForRequirement({
       store: params.store,
@@ -105,20 +115,20 @@ export function resolveIntegrationRuntime(params: {
       continue;
     }
     const connection = params.store.getIntegrationConnection(binding.connectionId);
-    if (!connection) {
+    if (!connection || !isActiveIntegrationConnection(connection)) {
       continue;
     }
     bindings.push(binding);
     connections.push(connection);
 
     env[`WORKSPACE_${toProviderEnvKey(requirement.provider)}_INTEGRATION_ID`] = connection.connectionId;
-    if (!platformIntegrationToken && requirement.credentialSource === "platform" && connection.secretRef) {
-      platformIntegrationToken = connection.secretRef;
+    if (requirement.credentialSource === "platform" && connection.secretRef) {
+      platformIntegrationTokens.push(connection.secretRef);
     }
   }
 
-  if (platformIntegrationToken) {
-    env.PLATFORM_INTEGRATION_TOKEN = platformIntegrationToken;
+  if (platformIntegrationTokens.length === 1) {
+    env.PLATFORM_INTEGRATION_TOKEN = platformIntegrationTokens[0]!;
   }
 
   return {

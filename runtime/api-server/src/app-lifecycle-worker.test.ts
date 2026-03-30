@@ -332,7 +332,7 @@ test("startShellLifecycleAppTarget runs lifecycle.start and waits healthy", asyn
   assert.equal(seenEnv?.HOLABOSS_USER_ID, "user-1");
 });
 
-test("runtime executor injects integration env for bound shell apps", async () => {
+test("runtime executor resolves store-backed integration env for bound shell apps", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "hb-shell-app-integration-"));
   const workspaceRoot = path.join(root, "workspace");
   const store = new RuntimeStateStore({
@@ -394,14 +394,16 @@ test("runtime executor injects integration env for bound shell apps", async () =
     }
     return new Response("", { status: 200 });
   }) as typeof fetch;
-  await startShellLifecycleAppTarget({
+
+  const executor = new RuntimeAppLifecycleExecutor({ store });
+  await executor.startApp({
     appId: "app-a",
     appDir,
     resolvedApp: {
       appId: "app-a",
       mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
       healthCheck: { path: "/health", timeoutS: 1, intervalS: 0.01 },
-      envContract: ["HOLABOSS_USER_ID", "PLATFORM_INTEGRATION_TOKEN", "WORKSPACE_GOOGLE_INTEGRATION_ID"],
+      envContract: ["HOLABOSS_USER_ID", "PLATFORM_INTEGRATION_TOKEN", "WORKSPACE_GOOGLE_INTEGRATION_ID", "WORKSPACE_API_URL"],
       integrations: [
         {
           key: "google",
@@ -421,21 +423,16 @@ test("runtime executor injects integration env for bound shell apps", async () =
     mcpPort: 13101,
     holabossUserId: "user-1",
     spawnImpl: spawnStub,
-    fetchImpl: fetchStub,
-    integrationEnv: {
-      HOLABOSS_INTEGRATION_BROKER_URL: "http://127.0.0.1:8080/api/v1/integrations",
-      HOLABOSS_APP_GRANT: "grant:workspace-1:app-a:test",
-      PLATFORM_INTEGRATION_TOKEN: "token-google-1",
-      WORKSPACE_GOOGLE_INTEGRATION_ID: "conn-google-1"
-    }
+    fetchImpl: fetchStub
   });
 
   const env = calls.find((entry) => entry.key === "npm run start")?.env;
   assert.equal(env?.HOLABOSS_USER_ID, "user-1");
   assert.equal(env?.PLATFORM_INTEGRATION_TOKEN, "token-google-1");
   assert.equal(env?.WORKSPACE_GOOGLE_INTEGRATION_ID, "conn-google-1");
+  assert.equal(env?.WORKSPACE_API_URL, "http://127.0.0.1:8080/api/v1");
   assert.equal(env?.HOLABOSS_INTEGRATION_BROKER_URL, "http://127.0.0.1:8080/api/v1/integrations");
-  assert.equal(env?.HOLABOSS_APP_GRANT, "grant:workspace-1:app-a:test");
+  assert.match(env?.HOLABOSS_APP_GRANT ?? "", /^grant:workspace-1:app-a:/);
 
   store.close();
 });
