@@ -294,6 +294,83 @@ export class RuntimeIntegrationService {
     return { deleted: true };
   }
 
+  createConnection(params: {
+    providerId: string;
+    ownerUserId: string;
+    accountLabel: string;
+    authMode: string;
+    grantedScopes: string[];
+    secretRef?: string;
+    accountExternalId?: string;
+  }): IntegrationConnectionPayload {
+    const providerId = requiredString(params.providerId, "provider_id");
+    const ownerUserId = requiredString(params.ownerUserId, "owner_user_id");
+    const accountLabel = requiredString(params.accountLabel, "account_label");
+    const authMode = requiredString(params.authMode, "auth_mode");
+
+    const record = this.store.upsertIntegrationConnection({
+      connectionId: randomUUID(),
+      providerId,
+      ownerUserId,
+      accountLabel,
+      authMode,
+      grantedScopes: params.grantedScopes ?? [],
+      status: "active",
+      secretRef: params.secretRef,
+      accountExternalId: params.accountExternalId
+    });
+
+    return toIntegrationConnectionPayload(record);
+  }
+
+  updateConnection(connectionId: string, params: {
+    status?: string;
+    secretRef?: string;
+    accountLabel?: string;
+    grantedScopes?: string[];
+  }): IntegrationConnectionPayload {
+    const normalizedId = requiredString(connectionId, "connection_id");
+    const existing = this.store.getIntegrationConnection(normalizedId);
+    if (!existing) {
+      throw new IntegrationServiceError(404, "connection not found");
+    }
+
+    const record = this.store.upsertIntegrationConnection({
+      connectionId: existing.connectionId,
+      providerId: existing.providerId,
+      ownerUserId: existing.ownerUserId,
+      accountLabel: params.accountLabel ?? existing.accountLabel,
+      authMode: existing.authMode,
+      grantedScopes: params.grantedScopes ?? existing.grantedScopes,
+      status: params.status ?? existing.status,
+      secretRef: params.secretRef !== undefined ? params.secretRef : existing.secretRef,
+      accountExternalId: existing.accountExternalId
+    });
+
+    return toIntegrationConnectionPayload(record);
+  }
+
+  deleteConnection(connectionId: string): { deleted: true } {
+    const normalizedId = requiredString(connectionId, "connection_id");
+    const existing = this.store.getIntegrationConnection(normalizedId);
+    if (!existing) {
+      throw new IntegrationServiceError(404, "connection not found");
+    }
+
+    const bindings = this.store.listIntegrationBindings({}).filter(
+      (b) => b.connectionId === normalizedId
+    );
+    if (bindings.length > 0) {
+      throw new IntegrationServiceError(
+        409,
+        `connection is bound to ${bindings.length} workspace(s) — remove bindings first`
+      );
+    }
+
+    this.store.deleteIntegrationConnection(normalizedId);
+    return { deleted: true };
+  }
+
   checkReadiness(params: {
     workspaceId: string;
     appId: string;

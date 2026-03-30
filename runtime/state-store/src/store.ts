@@ -715,6 +715,13 @@ export class RuntimeStateStore {
     return rows.map((row) => this.rowToIntegrationBinding(row));
   }
 
+  deleteIntegrationConnection(connectionId: string): boolean {
+    const result = this.db()
+      .prepare("DELETE FROM integration_connections WHERE connection_id = ?")
+      .run(connectionId);
+    return result.changes > 0;
+  }
+
   deleteIntegrationBinding(bindingId: string): boolean {
     const result = this.db().prepare("DELETE FROM integration_bindings WHERE binding_id = ?").run(bindingId);
     return result.changes > 0;

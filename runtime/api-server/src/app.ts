@@ -1411,6 +1411,60 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  app.post("/api/v1/integrations/connections", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return integrationService.createConnection({
+        providerId: typeof request.body.provider_id === "string" ? request.body.provider_id : "",
+        ownerUserId: typeof request.body.owner_user_id === "string" ? request.body.owner_user_id : "",
+        accountLabel: typeof request.body.account_label === "string" ? request.body.account_label : "",
+        authMode: typeof request.body.auth_mode === "string" ? request.body.auth_mode : "manual_token",
+        grantedScopes: Array.isArray(request.body.granted_scopes) ? request.body.granted_scopes : [],
+        secretRef: typeof request.body.secret_ref === "string" ? request.body.secret_ref : undefined,
+        accountExternalId: typeof request.body.account_external_id === "string" ? request.body.account_external_id : undefined
+      });
+    } catch (error) {
+      if (error instanceof IntegrationServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "connection creation failed");
+    }
+  });
+
+  app.patch("/api/v1/integrations/connections/:connectionId", async (request, reply) => {
+    const params = request.params as { connectionId: string };
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return integrationService.updateConnection(params.connectionId, {
+        status: typeof request.body.status === "string" ? request.body.status : undefined,
+        secretRef: typeof request.body.secret_ref === "string" ? request.body.secret_ref : undefined,
+        accountLabel: typeof request.body.account_label === "string" ? request.body.account_label : undefined,
+        grantedScopes: Array.isArray(request.body.granted_scopes) ? request.body.granted_scopes : undefined
+      });
+    } catch (error) {
+      if (error instanceof IntegrationServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "connection update failed");
+    }
+  });
+
+  app.delete("/api/v1/integrations/connections/:connectionId", async (request, reply) => {
+    const params = request.params as { connectionId: string };
+    try {
+      return integrationService.deleteConnection(params.connectionId);
+    } catch (error) {
+      if (error instanceof IntegrationServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "connection deletion failed");
+    }
+  });
+
   app.get("/api/v1/integrations/bindings", async (request, reply) => {
     const query = isRecord(request.query) ? request.query : {};
     const workspaceId = optionalString(query.workspace_id);

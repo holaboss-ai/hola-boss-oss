@@ -218,3 +218,114 @@ test("rejects delete binding requests without workspace scoping or with the wron
 
   store.close();
 });
+
+test("creates a connection via manual token import and lists it", () => {
+  const root = makeTempDir("hb-integrations-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const service = new RuntimeIntegrationService(store);
+
+  const connection = service.createConnection({
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "joshua@holaboss.ai",
+    authMode: "manual_token",
+    grantedScopes: ["gmail.send", "gmail.readonly"],
+    secretRef: "gya_manual-token-value"
+  });
+
+  assert.equal(connection.provider_id, "google");
+  assert.equal(connection.account_label, "joshua@holaboss.ai");
+  assert.equal(connection.auth_mode, "manual_token");
+  assert.equal(connection.status, "active");
+  assert.ok(connection.connection_id);
+
+  const listed = service.listConnections({ providerId: "google" });
+  assert.equal(listed.connections.length, 1);
+  assert.equal(listed.connections[0]?.connection_id, connection.connection_id);
+
+  store.close();
+});
+
+test("updates connection status and secret_ref", () => {
+  const root = makeTempDir("hb-integrations-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const service = new RuntimeIntegrationService(store);
+  const connection = service.createConnection({
+    providerId: "github",
+    ownerUserId: "user-1",
+    accountLabel: "holaboss-bot",
+    authMode: "manual_token",
+    grantedScopes: ["repo"],
+    secretRef: "ghp_old-token"
+  });
+
+  const updated = service.updateConnection(connection.connection_id, {
+    status: "expired"
+  });
+  assert.equal(updated.status, "expired");
+
+  const rotated = service.updateConnection(connection.connection_id, {
+    secretRef: "ghp_new-token",
+    status: "active"
+  });
+  assert.equal(rotated.status, "active");
+
+  store.close();
+});
+
+test("deletes a connection and rejects deletion when bindings exist", () => {
+  const root = makeTempDir("hb-integrations-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const service = new RuntimeIntegrationService(store);
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active"
+  });
+  const connection = service.createConnection({
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "joshua@holaboss.ai",
+    authMode: "manual_token",
+    grantedScopes: ["gmail.send"],
+    secretRef: "gya_token"
+  });
+
+  service.upsertBinding({
+    workspaceId: "workspace-1",
+    targetType: "workspace",
+    targetId: "default",
+    integrationKey: "google",
+    connectionId: connection.connection_id,
+    isDefault: true
+  });
+
+  assert.throws(
+    () => service.deleteConnection(connection.connection_id),
+    (error: unknown) =>
+      error instanceof IntegrationServiceError &&
+      error.statusCode === 409 &&
+      error.message.includes("bound")
+  );
+
+  service.deleteBinding(
+    service.listBindings({ workspaceId: "workspace-1" }).bindings[0]!.binding_id,
+    "workspace-1"
+  );
+
+  const result = service.deleteConnection(connection.connection_id);
+  assert.equal(result.deleted, true);
+  assert.equal(service.listConnections({ providerId: "google" }).connections.length, 0);
+
+  store.close();
+});
