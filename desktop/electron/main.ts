@@ -1482,6 +1482,21 @@ interface IntegrationUpsertBindingPayload {
   is_default?: boolean;
 }
 
+interface IntegrationCreateConnectionPayload {
+  provider_id: string;
+  owner_user_id: string;
+  account_label: string;
+  auth_mode: string;
+  granted_scopes: string[];
+  secret_ref?: string;
+}
+
+interface IntegrationUpdateConnectionPayload {
+  status?: string;
+  secret_ref?: string;
+  account_label?: string;
+}
+
 interface SessionRuntimeRecordPayload {
   workspace_id: string;
   session_id: string;
@@ -3928,6 +3943,36 @@ async function deleteIntegrationBinding(
     method: "DELETE",
     path: `/api/v1/integrations/bindings/${encodeURIComponent(bindingId)}`,
     params: { workspace_id: workspaceId },
+  });
+}
+
+async function createIntegrationConnection(
+  payload: IntegrationCreateConnectionPayload,
+): Promise<IntegrationConnectionPayload> {
+  return requestRuntimeJson<IntegrationConnectionPayload>({
+    method: "POST",
+    path: "/api/v1/integrations/connections",
+    payload,
+  });
+}
+
+async function updateIntegrationConnection(
+  connectionId: string,
+  payload: IntegrationUpdateConnectionPayload,
+): Promise<IntegrationConnectionPayload> {
+  return requestRuntimeJson<IntegrationConnectionPayload>({
+    method: "PATCH",
+    path: `/api/v1/integrations/connections/${encodeURIComponent(connectionId)}`,
+    payload,
+  });
+}
+
+async function deleteIntegrationConnection(
+  connectionId: string,
+): Promise<{ deleted: boolean }> {
+  return requestRuntimeJson<{ deleted: boolean }>({
+    method: "DELETE",
+    path: `/api/v1/integrations/connections/${encodeURIComponent(connectionId)}`,
   });
 }
 
@@ -10400,6 +10445,24 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, bindingId: string, workspaceId: string) =>
       deleteIntegrationBinding(bindingId, workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:createIntegrationConnection",
+    ["main"],
+    async (_event, payload: IntegrationCreateConnectionPayload) =>
+      createIntegrationConnection(payload),
+  );
+  handleTrustedIpc(
+    "workspace:updateIntegrationConnection",
+    ["main"],
+    async (_event, connectionId: string, payload: IntegrationUpdateConnectionPayload) =>
+      updateIntegrationConnection(connectionId, payload),
+  );
+  handleTrustedIpc(
+    "workspace:deleteIntegrationConnection",
+    ["main"],
+    async (_event, connectionId: string) =>
+      deleteIntegrationConnection(connectionId),
   );
   ipcMain.handle(
     "browser:setActiveWorkspace",

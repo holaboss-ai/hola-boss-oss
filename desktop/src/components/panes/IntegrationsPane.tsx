@@ -40,6 +40,9 @@ export function IntegrationsPane() {
   const [errorMessage, setErrorMessage] = useState("");
   const [query, setQuery] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [importLabel, setImportLabel] = useState("");
+  const [importToken, setImportToken] = useState("");
 
   useEffect(() => {
     setCatalog(null);
@@ -140,6 +143,43 @@ export function IntegrationsPane() {
     try {
       await window.electronAPI.workspace.deleteIntegrationBinding(bindingId, selectedWorkspaceId);
       setBindings((prev) => prev.filter((b) => b.binding_id !== bindingId));
+    } catch (error) {
+      setErrorMessage(normalizeErrorMessage(error));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCreateConnection = async () => {
+    if (!selectedProvider || !importLabel.trim() || !importToken.trim()) return;
+    setIsSaving(true);
+    try {
+      const runtimeConfig = await window.electronAPI.runtime.getConfig();
+      const connection = await window.electronAPI.workspace.createIntegrationConnection({
+        provider_id: selectedProvider.provider_id,
+        owner_user_id: runtimeConfig.userId ?? "local",
+        account_label: importLabel.trim(),
+        auth_mode: "manual_token",
+        granted_scopes: selectedProvider.default_scopes,
+        secret_ref: importToken.trim(),
+      });
+      setConnections((prev) => [...prev, connection]);
+      setShowImportDialog(false);
+      setImportLabel("");
+      setImportToken("");
+    } catch (error) {
+      setErrorMessage(normalizeErrorMessage(error));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDisconnect = async (connectionId: string) => {
+    setIsSaving(true);
+    try {
+      await window.electronAPI.workspace.deleteIntegrationConnection(connectionId);
+      setConnections((prev) => prev.filter((c) => c.connection_id !== connectionId));
+      setBindings((prev) => prev.filter((b) => b.connection_id !== connectionId));
     } catch (error) {
       setErrorMessage(normalizeErrorMessage(error));
     } finally {
@@ -260,7 +300,16 @@ export function IntegrationsPane() {
                             {selectedProvider.description}
                           </div>
                         </div>
-                        <ProviderStateBadge state={selectedProvider.state} large />
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => { setShowImportDialog(true); setImportLabel(""); setImportToken(""); }}
+                            className="rounded-[12px] border border-neon-green/35 bg-neon-green/8 px-3 py-1.5 text-[11px] font-medium text-neon-green transition-colors duration-200 hover:bg-neon-green/14"
+                          >
+                            Import Token
+                          </button>
+                          <ProviderStateBadge state={selectedProvider.state} large />
+                        </div>
                       </div>
 
                       <div className="mt-5 grid gap-3 md:grid-cols-3">
@@ -273,6 +322,51 @@ export function IntegrationsPane() {
                       </div>
                     </div>
                   </div>
+
+                  {/* Token import dialog */}
+                  {showImportDialog ? (
+                    <div className="mx-4 mt-4 rounded-[20px] border border-neon-green/25 bg-neon-green/4 p-4">
+                      <div className="text-[12px] font-medium text-text-main">Import {selectedProvider.display_name} Token</div>
+                      <div className="mt-3 grid gap-3">
+                        <label className="grid gap-1">
+                          <span className="text-[11px] text-text-dim/72">Account Label</span>
+                          <input
+                            value={importLabel}
+                            onChange={(e) => setImportLabel(e.target.value)}
+                            placeholder="e.g. joshua@holaboss.ai"
+                            className="rounded-[12px] border border-panel-border/45 bg-panel-bg/40 px-3 py-2 text-[12px] text-text-main outline-none placeholder:text-text-dim/48"
+                          />
+                        </label>
+                        <label className="grid gap-1">
+                          <span className="text-[11px] text-text-dim/72">Token</span>
+                          <input
+                            type="password"
+                            value={importToken}
+                            onChange={(e) => setImportToken(e.target.value)}
+                            placeholder="Paste your provider token"
+                            className="rounded-[12px] border border-panel-border/45 bg-panel-bg/40 px-3 py-2 text-[12px] text-text-main outline-none placeholder:text-text-dim/48"
+                          />
+                        </label>
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowImportDialog(false)}
+                            className="rounded-[12px] border border-panel-border/35 px-3 py-1.5 text-[11px] text-text-muted transition-colors duration-200 hover:bg-[var(--theme-hover-bg)]"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isSaving || !importLabel.trim() || !importToken.trim()}
+                            onClick={handleCreateConnection}
+                            className="rounded-[12px] border border-neon-green/35 bg-neon-green/8 px-3 py-1.5 text-[11px] font-medium text-neon-green transition-colors duration-200 hover:bg-neon-green/14 disabled:opacity-50"
+                          >
+                            {isSaving ? "Saving..." : "Save Connection"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
 
                   {/* Connections and bindings */}
                   <div className="min-h-0 flex-1 overflow-auto p-4">
@@ -327,6 +421,15 @@ export function IntegrationsPane() {
                                         Bound
                                       </span>
                                     ) : null}
+                                    <button
+                                      type="button"
+                                      disabled={isSaving}
+                                      onClick={() => handleDisconnect(conn.connection_id)}
+                                      className="rounded-[12px] border border-rose-400/25 bg-rose-400/6 p-2 text-rose-400/82 transition-colors duration-200 hover:bg-rose-400/14 disabled:opacity-50"
+                                      title="Delete connection"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
                                   </div>
                                 </div>
                               );

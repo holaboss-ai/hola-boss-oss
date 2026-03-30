@@ -638,6 +638,21 @@ declare global {
     is_default?: boolean;
   }
 
+  interface IntegrationCreateConnectionPayload {
+    provider_id: string;
+    owner_user_id: string;
+    account_label: string;
+    auth_mode: string;
+    granted_scopes: string[];
+    secret_ref?: string;
+  }
+
+  interface IntegrationUpdateConnectionPayload {
+    status?: string;
+    secret_ref?: string;
+    account_label?: string;
+  }
+
   interface ElectronAPI {
     platform: string;
     versions: {
@@ -728,6 +743,9 @@ declare global {
       listIntegrationConnections: (params?: { providerId?: string; ownerUserId?: string }) => Promise<IntegrationConnectionListResponsePayload>;
       listIntegrationBindings: (workspaceId: string) => Promise<IntegrationBindingListResponsePayload>;
       upsertIntegrationBinding: (workspaceId: string, targetType: string, targetId: string, integrationKey: string, payload: IntegrationUpsertBindingPayload) => Promise<IntegrationBindingPayload>;
+      createIntegrationConnection: (payload: IntegrationCreateConnectionPayload) => Promise<IntegrationConnectionPayload>;
+      updateIntegrationConnection: (connectionId: string, payload: IntegrationUpdateConnectionPayload) => Promise<IntegrationConnectionPayload>;
+      deleteIntegrationConnection: (connectionId: string) => Promise<{ deleted: boolean }>;
       deleteIntegrationBinding: (bindingId: string, workspaceId: string) => Promise<{ deleted: boolean }>;
       onSessionStreamEvent: (listener: (payload: HolabossSessionStreamEventPayload) => void) => () => void;
     };

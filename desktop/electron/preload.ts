@@ -493,20 +493,22 @@ interface IntegrationCatalogResponsePayload {
   }[];
 }
 
+interface IntegrationConnectionPayload {
+  connection_id: string;
+  provider_id: string;
+  owner_user_id: string;
+  account_label: string;
+  account_external_id: string | null;
+  auth_mode: string;
+  granted_scopes: string[];
+  status: string;
+  secret_ref: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 interface IntegrationConnectionListResponsePayload {
-  connections: {
-    connection_id: string;
-    provider_id: string;
-    owner_user_id: string;
-    account_label: string;
-    account_external_id: string | null;
-    auth_mode: string;
-    granted_scopes: string[];
-    status: string;
-    secret_ref: string | null;
-    created_at: string;
-    updated_at: string;
-  }[];
+  connections: IntegrationConnectionPayload[];
 }
 
 interface IntegrationBindingListResponsePayload {
@@ -538,6 +540,21 @@ interface IntegrationBindingPayload {
 interface IntegrationUpsertBindingPayload {
   connection_id: string;
   is_default?: boolean;
+}
+
+interface IntegrationCreateConnectionPayload {
+  provider_id: string;
+  owner_user_id: string;
+  account_label: string;
+  auth_mode: string;
+  granted_scopes: string[];
+  secret_ref?: string;
+}
+
+interface IntegrationUpdateConnectionPayload {
+  status?: string;
+  secret_ref?: string;
+  account_label?: string;
 }
 
 contextBridge.exposeInMainWorld("electronAPI", {
@@ -696,6 +713,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:listIntegrationBindings", workspaceId) as Promise<IntegrationBindingListResponsePayload>,
     upsertIntegrationBinding: (workspaceId: string, targetType: string, targetId: string, integrationKey: string, payload: IntegrationUpsertBindingPayload) =>
       ipcRenderer.invoke("workspace:upsertIntegrationBinding", workspaceId, targetType, targetId, integrationKey, payload) as Promise<IntegrationBindingPayload>,
+    createIntegrationConnection: (payload: IntegrationCreateConnectionPayload) =>
+      ipcRenderer.invoke("workspace:createIntegrationConnection", payload) as Promise<IntegrationConnectionPayload>,
+    updateIntegrationConnection: (connectionId: string, payload: IntegrationUpdateConnectionPayload) =>
+      ipcRenderer.invoke("workspace:updateIntegrationConnection", connectionId, payload) as Promise<IntegrationConnectionPayload>,
+    deleteIntegrationConnection: (connectionId: string) =>
+      ipcRenderer.invoke("workspace:deleteIntegrationConnection", connectionId) as Promise<{ deleted: boolean }>,
     deleteIntegrationBinding: (bindingId: string, workspaceId: string) =>
       ipcRenderer.invoke("workspace:deleteIntegrationBinding", bindingId, workspaceId) as Promise<{ deleted: boolean }>,
     onSessionStreamEvent: (listener: (payload: HolabossSessionStreamEventPayload) => void) => {
