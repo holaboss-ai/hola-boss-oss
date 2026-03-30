@@ -234,6 +234,63 @@ test("browser capability routes proxy to the browser tool service", async () => 
   store.close();
 });
 
+test("integration routes expose catalog, connections, and bindings", async () => {
+  const root = makeTempDir("hb-runtime-api-integrations-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  const connection = store.upsertIntegrationConnection({
+    connectionId: "conn-google-1",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "joshua@holaboss.ai",
+    authMode: "oauth_app",
+    grantedScopes: ["gmail.send"],
+    status: "active"
+  });
+
+  const catalogResponse = await app.inject({
+    method: "GET",
+    url: "/api/v1/integrations/catalog"
+  });
+  const connectionsResponse = await app.inject({
+    method: "GET",
+    url: "/api/v1/integrations/connections"
+  });
+  const bindingResponse = await app.inject({
+    method: "PUT",
+    url: "/api/v1/integrations/bindings/workspace-1/workspace/default/google",
+    payload: {
+      connection_id: connection.connectionId,
+      is_default: true
+    }
+  });
+  const bindingsResponse = await app.inject({
+    method: "GET",
+    url: "/api/v1/integrations/bindings?workspace_id=workspace-1"
+  });
+  const deleteResponse = await app.inject({
+    method: "DELETE",
+    url: `/api/v1/integrations/bindings/${bindingResponse.json().binding_id}`
+  });
+
+  assert.equal(catalogResponse.statusCode, 200);
+  assert.equal(catalogResponse.json().providers[0].provider_id, "google");
+  assert.equal(connectionsResponse.statusCode, 200);
+  assert.equal(connectionsResponse.json().connections[0].connection_id, connection.connectionId);
+  assert.equal(bindingResponse.statusCode, 200);
+  assert.equal(bindingResponse.json().workspace_id, "workspace-1");
+  assert.equal(bindingsResponse.statusCode, 200);
+  assert.equal(bindingsResponse.json().bindings[0].workspace_id, "workspace-1");
+  assert.equal(deleteResponse.statusCode, 200);
+  assert.deepEqual(deleteResponse.json(), { deleted: true });
+
+  await app.close();
+  store.close();
+});
+
 test("buildAppSetupEnv uses an app-local npm cache", () => {
   const appDir = makeTempDir("hb-app-env-");
   const env = buildAppSetupEnv(appDir, { PATH: process.env.PATH });

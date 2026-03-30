@@ -60,6 +60,10 @@ import {
   type DesktopBrowserToolServiceLike
 } from "./desktop-browser-tools.js";
 import {
+  IntegrationServiceError,
+  RuntimeIntegrationService
+} from "./integrations.js";
+import {
   appendWorkspaceApplication,
   listWorkspaceComposeShutdownTargets,
   listWorkspaceApplicationPorts,
@@ -1097,6 +1101,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const memoryService = options.memoryService ?? new FilesystemMemoryService({ workspaceRoot: store.workspaceRoot });
   const runtimeConfigService = options.runtimeConfigService ?? new FileRuntimeConfigService();
   const browserToolService = options.browserToolService ?? new DesktopBrowserToolService();
+  const integrationService = new RuntimeIntegrationService(store);
   const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
   const queueWorker = resolveQueueWorker(options, app, store);
   const cronWorker = resolveCronWorker(options, app, store, queueWorker);
@@ -1382,6 +1387,78 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "browser tool execution failed");
+    }
+  });
+
+  app.get("/api/v1/integrations/catalog", async () => {
+    return integrationService.getCatalog();
+  });
+
+  app.get("/api/v1/integrations/connections", async (request, reply) => {
+    const query = isRecord(request.query) ? request.query : {};
+    try {
+      return integrationService.listConnections({
+        providerId: optionalString(query.provider_id),
+        ownerUserId: optionalString(query.owner_user_id)
+      });
+    } catch (error) {
+      if (error instanceof IntegrationServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "integration connections failed");
+    }
+  });
+
+  app.get("/api/v1/integrations/bindings", async (request, reply) => {
+    const query = isRecord(request.query) ? request.query : {};
+    try {
+      return integrationService.listBindings({
+        workspaceId: requiredString(query.workspace_id, "workspace_id")
+      });
+    } catch (error) {
+      if (error instanceof IntegrationServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "integration bindings failed");
+    }
+  });
+
+  app.put("/api/v1/integrations/bindings/:workspaceId/:targetType/:targetId/:integrationKey", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as {
+      workspaceId: string;
+      targetType: string;
+      targetId: string;
+      integrationKey: string;
+    };
+    try {
+      return integrationService.upsertBinding({
+        workspaceId: requiredString(params.workspaceId, "workspaceId"),
+        targetType: requiredString(params.targetType, "targetType"),
+        targetId: requiredString(params.targetId, "targetId"),
+        integrationKey: requiredString(params.integrationKey, "integrationKey"),
+        connectionId: requiredString((request.body as Record<string, unknown>).connection_id, "connection_id"),
+        isDefault: optionalBoolean((request.body as Record<string, unknown>).is_default, false)
+      });
+    } catch (error) {
+      if (error instanceof IntegrationServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "integration binding save failed");
+    }
+  });
+
+  app.delete("/api/v1/integrations/bindings/:bindingId", async (request, reply) => {
+    const params = request.params as { bindingId: string };
+    try {
+      return integrationService.deleteBinding(requiredString(params.bindingId, "bindingId"));
+    } catch (error) {
+      if (error instanceof IntegrationServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "integration binding delete failed");
     }
   });
 
