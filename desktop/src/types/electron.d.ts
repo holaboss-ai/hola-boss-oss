@@ -39,13 +39,6 @@ declare global {
     createdAt: string;
   }
 
-  interface WorkspaceOnboardingGuidePayload {
-    absolute_path: string;
-    body_markdown: string;
-    is_structured: boolean;
-    opening_sentence: string | null;
-  }
-
   interface BrowserBoundsPayload {
     x: number;
     y: number;
@@ -662,7 +655,6 @@ declare global {
       listOutputs: (workspaceId: string) => Promise<WorkspaceOutputListResponsePayload>;
       listSkills: (workspaceId: string) => Promise<WorkspaceSkillListResponsePayload>;
       getWorkspaceRoot: (workspaceId: string) => Promise<string>;
-      getOnboardingGuide: (workspaceId: string) => Promise<WorkspaceOnboardingGuidePayload>;
       createWorkspace: (payload: HolabossCreateWorkspacePayload) => Promise<WorkspaceResponsePayload>;
       deleteWorkspace: (workspaceId: string) => Promise<WorkspaceResponsePayload>;
       listCronjobs: (workspaceId: string, enabledOnly?: boolean) => Promise<CronjobListResponsePayload>;
