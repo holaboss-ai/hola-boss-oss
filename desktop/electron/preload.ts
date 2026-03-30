@@ -480,6 +480,66 @@ interface HolabossSessionStreamDebugEntry {
   detail: string;
 }
 
+interface IntegrationCatalogResponsePayload {
+  providers: {
+    provider_id: string;
+    display_name: string;
+    description: string;
+    auth_modes: string[];
+    supports_oss: boolean;
+    supports_managed: boolean;
+    default_scopes: string[];
+    docs_url: string | null;
+  }[];
+}
+
+interface IntegrationConnectionListResponsePayload {
+  connections: {
+    connection_id: string;
+    provider_id: string;
+    owner_user_id: string;
+    account_label: string;
+    account_external_id: string | null;
+    auth_mode: string;
+    granted_scopes: string[];
+    status: string;
+    secret_ref: string | null;
+    created_at: string;
+    updated_at: string;
+  }[];
+}
+
+interface IntegrationBindingListResponsePayload {
+  bindings: {
+    binding_id: string;
+    workspace_id: string;
+    target_type: string;
+    target_id: string;
+    integration_key: string;
+    connection_id: string;
+    is_default: boolean;
+    created_at: string;
+    updated_at: string;
+  }[];
+}
+
+interface IntegrationBindingPayload {
+  binding_id: string;
+  workspace_id: string;
+  target_type: string;
+  target_id: string;
+  integration_key: string;
+  connection_id: string;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+interface IntegrationUpsertBindingPayload {
+  connection_id: string;
+  is_default?: boolean;
+}
+
 contextBridge.exposeInMainWorld("electronAPI", {
   platform: process.platform,
   versions: {
@@ -628,6 +688,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getSessionStreamDebug: () =>
       ipcRenderer.invoke("workspace:getSessionStreamDebug") as Promise<HolabossSessionStreamDebugEntry[]>,
     isVerboseTelemetryEnabled: () => ipcRenderer.invoke("workspace:isVerboseTelemetryEnabled") as Promise<boolean>,
+    listIntegrationCatalog: () =>
+      ipcRenderer.invoke("workspace:listIntegrationCatalog") as Promise<IntegrationCatalogResponsePayload>,
+    listIntegrationConnections: (params?: { providerId?: string; ownerUserId?: string }) =>
+      ipcRenderer.invoke("workspace:listIntegrationConnections", params) as Promise<IntegrationConnectionListResponsePayload>,
+    listIntegrationBindings: (workspaceId: string) =>
+      ipcRenderer.invoke("workspace:listIntegrationBindings", workspaceId) as Promise<IntegrationBindingListResponsePayload>,
+    upsertIntegrationBinding: (workspaceId: string, targetType: string, targetId: string, integrationKey: string, payload: IntegrationUpsertBindingPayload) =>
+      ipcRenderer.invoke("workspace:upsertIntegrationBinding", workspaceId, targetType, targetId, integrationKey, payload) as Promise<IntegrationBindingPayload>,
+    deleteIntegrationBinding: (bindingId: string, workspaceId: string) =>
+      ipcRenderer.invoke("workspace:deleteIntegrationBinding", bindingId, workspaceId) as Promise<{ deleted: boolean }>,
     onSessionStreamEvent: (listener: (payload: HolabossSessionStreamEventPayload) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, payload: HolabossSessionStreamEventPayload) => listener(payload);
       ipcRenderer.on("workspace:sessionStream", wrapped);

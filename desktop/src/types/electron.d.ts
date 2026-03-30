@@ -584,6 +584,60 @@ declare global {
     detail: string;
   }
 
+  interface IntegrationCatalogProviderPayload {
+    provider_id: string;
+    display_name: string;
+    description: string;
+    auth_modes: string[];
+    supports_oss: boolean;
+    supports_managed: boolean;
+    default_scopes: string[];
+    docs_url: string | null;
+  }
+
+  interface IntegrationCatalogResponsePayload {
+    providers: IntegrationCatalogProviderPayload[];
+  }
+
+  interface IntegrationConnectionPayload {
+    connection_id: string;
+    provider_id: string;
+    owner_user_id: string;
+    account_label: string;
+    account_external_id: string | null;
+    auth_mode: string;
+    granted_scopes: string[];
+    status: string;
+    secret_ref: string | null;
+    created_at: string;
+    updated_at: string;
+  }
+
+  interface IntegrationConnectionListResponsePayload {
+    connections: IntegrationConnectionPayload[];
+  }
+
+  interface IntegrationBindingPayload {
+    binding_id: string;
+    workspace_id: string;
+    target_type: "workspace" | "app" | "agent";
+    target_id: string;
+    integration_key: string;
+    connection_id: string;
+    is_default: boolean;
+    created_at: string;
+    updated_at: string;
+  }
+
+  interface IntegrationBindingListResponsePayload {
+    bindings: IntegrationBindingPayload[];
+  }
+
+  interface IntegrationUpsertBindingPayload {
+    connection_id: string;
+    is_default?: boolean;
+  }
+
   interface ElectronAPI {
     platform: string;
     versions: {
@@ -670,6 +724,11 @@ declare global {
       closeSessionOutputStream: (streamId: string, reason?: string) => Promise<void>;
       getSessionStreamDebug: () => Promise<HolabossSessionStreamDebugEntry[]>;
       isVerboseTelemetryEnabled: () => Promise<boolean>;
+      listIntegrationCatalog: () => Promise<IntegrationCatalogResponsePayload>;
+      listIntegrationConnections: (params?: { providerId?: string; ownerUserId?: string }) => Promise<IntegrationConnectionListResponsePayload>;
+      listIntegrationBindings: (workspaceId: string) => Promise<IntegrationBindingListResponsePayload>;
+      upsertIntegrationBinding: (workspaceId: string, targetType: string, targetId: string, integrationKey: string, payload: IntegrationUpsertBindingPayload) => Promise<IntegrationBindingPayload>;
+      deleteIntegrationBinding: (bindingId: string, workspaceId: string) => Promise<{ deleted: boolean }>;
       onSessionStreamEvent: (listener: (payload: HolabossSessionStreamEventPayload) => void) => () => void;
     };
     auth: {

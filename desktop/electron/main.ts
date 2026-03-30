@@ -1428,6 +1428,60 @@ interface CronjobUpdatePayload {
   metadata?: Record<string, unknown>;
 }
 
+interface IntegrationCatalogProviderPayload {
+  provider_id: string;
+  display_name: string;
+  description: string;
+  auth_modes: string[];
+  supports_oss: boolean;
+  supports_managed: boolean;
+  default_scopes: string[];
+  docs_url: string | null;
+}
+
+interface IntegrationCatalogResponsePayload {
+  providers: IntegrationCatalogProviderPayload[];
+}
+
+interface IntegrationConnectionPayload {
+  connection_id: string;
+  provider_id: string;
+  owner_user_id: string;
+  account_label: string;
+  account_external_id: string | null;
+  auth_mode: string;
+  granted_scopes: string[];
+  status: string;
+  secret_ref: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface IntegrationConnectionListResponsePayload {
+  connections: IntegrationConnectionPayload[];
+}
+
+interface IntegrationBindingPayload {
+  binding_id: string;
+  workspace_id: string;
+  target_type: string;
+  target_id: string;
+  integration_key: string;
+  connection_id: string;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+interface IntegrationBindingListResponsePayload {
+  bindings: IntegrationBindingPayload[];
+}
+
+interface IntegrationUpsertBindingPayload {
+  connection_id: string;
+  is_default?: boolean;
+}
+
 interface SessionRuntimeRecordPayload {
   workspace_id: string;
   session_id: string;
@@ -3822,6 +3876,61 @@ async function deleteCronjob(jobId: string): Promise<{ success: boolean }> {
   });
 }
 
+async function listIntegrationCatalog(): Promise<IntegrationCatalogResponsePayload> {
+  return requestRuntimeJson<IntegrationCatalogResponsePayload>({
+    method: "GET",
+    path: "/api/v1/integrations/catalog",
+  });
+}
+
+async function listIntegrationConnections(
+  params?: { providerId?: string; ownerUserId?: string },
+): Promise<IntegrationConnectionListResponsePayload> {
+  return requestRuntimeJson<IntegrationConnectionListResponsePayload>({
+    method: "GET",
+    path: "/api/v1/integrations/connections",
+    params: {
+      provider_id: params?.providerId,
+      owner_user_id: params?.ownerUserId,
+    },
+  });
+}
+
+async function listIntegrationBindings(
+  workspaceId: string,
+): Promise<IntegrationBindingListResponsePayload> {
+  return requestRuntimeJson<IntegrationBindingListResponsePayload>({
+    method: "GET",
+    path: "/api/v1/integrations/bindings",
+    params: { workspace_id: workspaceId },
+  });
+}
+
+async function upsertIntegrationBinding(
+  workspaceId: string,
+  targetType: string,
+  targetId: string,
+  integrationKey: string,
+  payload: IntegrationUpsertBindingPayload,
+): Promise<IntegrationBindingPayload> {
+  return requestRuntimeJson<IntegrationBindingPayload>({
+    method: "PUT",
+    path: `/api/v1/integrations/bindings/${encodeURIComponent(workspaceId)}/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/${encodeURIComponent(integrationKey)}`,
+    payload,
+  });
+}
+
+async function deleteIntegrationBinding(
+  bindingId: string,
+  workspaceId: string,
+): Promise<{ deleted: boolean }> {
+  return requestRuntimeJson<{ deleted: boolean }>({
+    method: "DELETE",
+    path: `/api/v1/integrations/bindings/${encodeURIComponent(bindingId)}`,
+    params: { workspace_id: workspaceId },
+  });
+}
+
 async function enqueueRemoteDemoTaskProposal(
   payload: DemoTaskProposalRequestPayload,
 ): Promise<DemoTaskProposalEnqueueResponsePayload> {
@@ -4553,7 +4662,7 @@ function runtimeErrorFromBody(
 
 async function requestRuntimeJsonViaHttp<T>(
   targetUrl: URL,
-  method: "GET" | "POST" | "PATCH" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   payload?: unknown,
   timeoutMs = 15000,
 ): Promise<T> {
@@ -4623,7 +4732,7 @@ async function requestRuntimeJson<T>({
   params,
   timeoutMs,
 }: {
-  method: "GET" | "POST" | "PATCH" | "DELETE";
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   payload?: unknown;
   params?: Record<string, string | number | boolean | null | undefined>;
@@ -10249,6 +10358,48 @@ app.whenReady().then(async () => {
     "workspace:isVerboseTelemetryEnabled",
     ["main"],
     async () => verboseTelemetryEnabled,
+  );
+  handleTrustedIpc(
+    "workspace:listIntegrationCatalog",
+    ["main"],
+    async () => listIntegrationCatalog(),
+  );
+  handleTrustedIpc(
+    "workspace:listIntegrationConnections",
+    ["main"],
+    async (_event, params?: { providerId?: string; ownerUserId?: string }) =>
+      listIntegrationConnections(params),
+  );
+  handleTrustedIpc(
+    "workspace:listIntegrationBindings",
+    ["main"],
+    async (_event, workspaceId: string) =>
+      listIntegrationBindings(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:upsertIntegrationBinding",
+    ["main"],
+    async (
+      _event,
+      workspaceId: string,
+      targetType: string,
+      targetId: string,
+      integrationKey: string,
+      payload: IntegrationUpsertBindingPayload,
+    ) =>
+      upsertIntegrationBinding(
+        workspaceId,
+        targetType,
+        targetId,
+        integrationKey,
+        payload,
+      ),
+  );
+  handleTrustedIpc(
+    "workspace:deleteIntegrationBinding",
+    ["main"],
+    async (_event, bindingId: string, workspaceId: string) =>
+      deleteIntegrationBinding(bindingId, workspaceId),
   );
   ipcMain.handle(
     "browser:setActiveWorkspace",

@@ -40,6 +40,7 @@ import { BrowserPane } from "@/components/panes/BrowserPane";
 import { ChatPane } from "@/components/panes/ChatPane";
 import { FileExplorerPane } from "@/components/panes/FileExplorerPane";
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
+import { IntegrationsPane } from "@/components/panes/IntegrationsPane";
 import { SkillsPane } from "@/components/panes/SkillsPane";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
 import { preferredSessionId } from "@/lib/sessionRouting";
@@ -2245,6 +2246,10 @@ function AppShellContent() {
                 ) : activeLeftRailItem === "automations" ? (
                   <div className="h-full min-h-0 overflow-hidden">
                     <AutomationsPane />
+                  </div>
+                ) : activeLeftRailItem === "integrations" ? (
+                  <div className="h-full min-h-0 overflow-hidden">
+                    <IntegrationsPane />
                   </div>
                 ) : (
                   <div className="h-full min-h-0 overflow-hidden">
