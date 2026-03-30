@@ -56,6 +56,7 @@ import {
   requireRuntimeHarnessPlugin,
   type RuntimeHarnessPlugin
 } from "./harness-registry.js";
+import { buildRunnerEnv } from "./runner-worker.js";
 import { startWorkspaceMcpSidecar, type WorkspaceMcpSidecarCliRequest } from "./workspace-mcp-sidecar.js";
 import type { CompiledWorkspaceRuntimePlan } from "./workspace-runtime-plan.js";
 
@@ -305,12 +306,12 @@ function currentBrowserConfig(): {
 function buildAgentRuntimeConfigRequest(params: {
   request: TsRunnerRequest;
   compiledPlan: CompiledWorkspaceRuntimePlan;
-  browserToolIds: string[];
+  extraToolIds: string[];
   workspaceSkillIds: string[];
   toolServerIdMap: Readonly<Record<string, string>>;
   resolvedMcpToolRefs: CompiledWorkspaceRuntimePlan["resolved_mcp_tool_refs"];
 }): AgentRuntimeConfigCliRequest {
-  const extraTools = Array.from(new Set([...opencodeExtraTools(), ...params.browserToolIds]));
+  const extraTools = Array.from(new Set([...opencodeExtraTools(), ...params.extraToolIds]));
   const common = {
     session_id: params.request.session_id,
     workspace_id: params.request.workspace_id,
@@ -498,7 +499,7 @@ async function defaultRunHarnessHost(params: {
       [...argsPrefix, entryPath, harnessCommand, "--request-base64", requestBase64],
       {
         cwd: runtimeRootDir(),
-        env: { ...process.env },
+        env: buildRunnerEnv(),
         stdio: ["ignore", "pipe", "pipe"]
       }
     );
@@ -693,6 +694,9 @@ export async function executeTsRunnerRequest(
       workspaceDir: bootstrap.workspaceDir,
       browserConfig: currentBrowserConfig()
     });
+    const stagedRuntimeTools = harnessPlugin.stageRuntimeTools({
+      workspaceDir: bootstrap.workspaceDir
+    });
     const workspaceSkills = resolveWorkspaceSkills(bootstrap.workspaceDir);
     const stagedSkills = runnerPrepPlan.stageWorkspaceSkills
       ? harnessPlugin.stageSkills({
@@ -762,7 +766,7 @@ export async function executeTsRunnerRequest(
       buildAgentRuntimeConfigRequest({
         request,
         compiledPlan,
-        browserToolIds: stagedBrowserTools.toolIds,
+        extraToolIds: [...stagedBrowserTools.toolIds, ...stagedRuntimeTools.toolIds],
         workspaceSkillIds: workspaceSkills.map((skill) => skill.skill_id),
         toolServerIdMap: serverIdMap,
         resolvedMcpToolRefs
@@ -773,7 +777,7 @@ export async function executeTsRunnerRequest(
         request,
         bootstrap,
         runtimeConfig,
-        stagedSkillsChanged: stagedSkills.changed || stagedBrowserTools.changed
+        stagedSkillsChanged: stagedSkills.changed || stagedBrowserTools.changed || stagedRuntimeTools.changed
       });
 
     const backendBaseUrl = harnessPlugin.backendBaseUrl({

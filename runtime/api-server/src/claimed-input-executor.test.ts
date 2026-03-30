@@ -496,6 +496,65 @@ test("claimed input hydrates runtime exec context from runtime config", async ()
   store.close();
 });
 
+test("claimed onboarding input instructs native onboarding tools directly", async () => {
+  const store = makeStore("hb-claimed-input-onboarding-native-tools-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main",
+    onboardingStatus: "pending",
+    onboardingSessionId: "session-onboarding"
+  });
+  fs.writeFileSync(
+    path.join(store.workspaceDir(workspace.id), "ONBOARD.md"),
+    "# Workspace Onboarding\n\nAsk concise setup questions.\n",
+    "utf8"
+  );
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-onboarding",
+    payload: { text: "yes" }
+  });
+
+  let capturedInstruction = "";
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      capturedInstruction = String(payload.instruction ?? "");
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: { instruction_preview: capturedInstruction.slice(0, 120) }
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "run_completed",
+        payload: { status: "ok" }
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true
+      };
+    }
+  });
+
+  assert.match(capturedInstruction, /holaboss_onboarding_status/);
+  assert.match(capturedInstruction, /holaboss_onboarding_complete/);
+  assert.doesNotMatch(capturedInstruction, /`hb`/);
+
+  store.close();
+});
+
 test("claimed input persists replacement harness session id from terminal runner event", async () => {
   const store = makeStore("hb-claimed-input-harness-session-");
   const workspace = store.createWorkspace({

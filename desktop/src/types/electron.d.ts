@@ -39,6 +39,13 @@ declare global {
     createdAt: string;
   }
 
+  interface WorkspaceOnboardingGuidePayload {
+    absolute_path: string;
+    body_markdown: string;
+    is_structured: boolean;
+    opening_sentence: string | null;
+  }
+
   interface BrowserBoundsPayload {
     x: number;
     y: number;
@@ -543,7 +550,7 @@ declare global {
     holaboss_user_id: string;
     harness?: string | null;
     name: string;
-    template_mode?: "template" | "empty" | null;
+    template_mode?: "template" | "empty" | "empty_onboarding" | null;
     template_root_path?: string | null;
     template_name?: string | null;
     template_ref?: string | null;
@@ -655,6 +662,7 @@ declare global {
       listOutputs: (workspaceId: string) => Promise<WorkspaceOutputListResponsePayload>;
       listSkills: (workspaceId: string) => Promise<WorkspaceSkillListResponsePayload>;
       getWorkspaceRoot: (workspaceId: string) => Promise<string>;
+      getOnboardingGuide: (workspaceId: string) => Promise<WorkspaceOnboardingGuidePayload>;
       createWorkspace: (payload: HolabossCreateWorkspacePayload) => Promise<WorkspaceResponsePayload>;
       deleteWorkspace: (workspaceId: string) => Promise<WorkspaceResponsePayload>;
       listCronjobs: (workspaceId: string, enabledOnly?: boolean) => Promise<CronjobListResponsePayload>;

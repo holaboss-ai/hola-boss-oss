@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { Buffer } from "node:buffer";
+import path from "node:path";
 import { Readable } from "node:stream";
 
 const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
@@ -73,6 +74,25 @@ function runtimeNode(): string {
   return configured || "node";
 }
 
+function pathDelimiter(): string {
+  return process.platform === "win32" ? ";" : ":";
+}
+
+function prependPathEntries(currentPath: string | undefined, entries: string[]): string {
+  const normalizedEntries = entries.map((entry) => entry.trim()).filter(Boolean);
+  if (normalizedEntries.length === 0) {
+    return currentPath ?? "";
+  }
+
+  const delimiter = pathDelimiter();
+  const currentEntries = (currentPath ?? "").split(delimiter).map((entry) => entry.trim()).filter(Boolean);
+  const deduped = [
+    ...normalizedEntries,
+    ...currentEntries.filter((entry) => !normalizedEntries.includes(entry))
+  ];
+  return deduped.join(delimiter);
+}
+
 function runnerTimeoutSeconds(): number {
   const raw = (process.env.SANDBOX_AGENT_RUN_TIMEOUT_S ?? "1800").trim();
   const parsed = Number.parseInt(raw, 10);
@@ -126,6 +146,7 @@ export function buildRunnerEnv(): NodeJS.ProcessEnv {
   if (currentApiUrl && !(env.SANDBOX_RUNTIME_API_URL ?? "").trim()) {
     env.SANDBOX_RUNTIME_API_URL = currentApiUrl;
   }
+  env.PATH = prependPathEntries(env.PATH, [path.join(runtimeAppRoot(), "api-server", "node_modules", ".bin")]);
   return env;
 }
 

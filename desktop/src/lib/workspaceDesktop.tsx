@@ -13,7 +13,7 @@ import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 const ONBOARDING_ACTIVE_STATUSES = new Set(["pending", "awaiting_confirmation", "in_progress"]);
 const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
 const DEFAULT_WORKSPACE_HARNESS: WorkspaceHarnessId = "opencode";
-type TemplateSourceMode = "local" | "marketplace" | "empty";
+type TemplateSourceMode = "local" | "marketplace" | "empty" | "empty_onboarding";
 type LifecycleStepState = "pending" | "current" | "done" | "error";
 
 export interface WorkspaceHarnessOption {
@@ -385,12 +385,12 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
           template_mode: "template",
           template_name: selectedMarketplaceTemplate.name
         });
-      } else if (templateSourceMode === "empty") {
+      } else if (templateSourceMode === "empty" || templateSourceMode === "empty_onboarding") {
         response = await window.electronAPI.workspace.createWorkspace({
           holaboss_user_id: resolvedUserId || LOCAL_OSS_TEMPLATE_USER_ID,
           harness: selectedCreateHarness,
           name: trimmedWorkspaceName,
-          template_mode: "empty"
+          template_mode: templateSourceMode === "empty_onboarding" ? "empty_onboarding" : "empty"
         });
       } else {
         if (!selectedTemplateFolder?.rootPath) {

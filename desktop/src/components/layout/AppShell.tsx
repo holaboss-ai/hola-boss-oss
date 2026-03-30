@@ -26,6 +26,7 @@ import { BrowserPane } from "@/components/panes/BrowserPane";
 import { ChatPane } from "@/components/panes/ChatPane";
 import { FileExplorerPane } from "@/components/panes/FileExplorerPane";
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
+import { OnboardingPane } from "@/components/panes/OnboardingPane";
 import { SkillsPane } from "@/components/panes/SkillsPane";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
 import { preferredSessionId } from "@/lib/sessionRouting";
@@ -298,6 +299,8 @@ function FirstWorkspacePane() {
   const sourceLabel =
     templateSourceMode === "marketplace"
       ? "Marketplace template"
+      : templateSourceMode === "empty_onboarding"
+        ? "Empty onboarding workspace"
       : templateSourceMode === "empty"
         ? "Empty workspace"
         : "Local template";
@@ -308,6 +311,8 @@ function FirstWorkspacePane() {
         (canUseMarketplaceTemplates
           ? "Choose a curated starter."
           : "Sign in to use curated starters.")
+      : templateSourceMode === "empty_onboarding"
+        ? "Create a minimal workspace shell plus a starter ONBOARD.md for onboarding flow testing."
       : templateSourceMode === "empty"
         ? "Create the smallest valid workspace shell."
         : selectedTemplateFolder?.description ||
@@ -317,6 +322,8 @@ function FirstWorkspacePane() {
       ? canUseMarketplaceTemplates
         ? selectedMarketplaceTemplate?.name || `${marketplaceTemplates.length} templates available`
         : "Sign in required"
+      : templateSourceMode === "empty_onboarding"
+        ? "Blank scaffold + onboarding guide"
       : templateSourceMode === "empty"
         ? "Blank scaffold"
         : selectedTemplateFolder?.templateName || selectedTemplateFolder?.rootPath || "Choose local folder";
@@ -448,6 +455,16 @@ function FirstWorkspacePane() {
                       setTemplateSourceMode("empty");
                     }}
                   />
+                  <FirstWorkspaceChoiceCard
+                    title="Empty + Onboarding"
+                    description="Create a blank workspace with ONBOARD.md included."
+                    detail="workspace.yaml + AGENTS.md + skills/ + ONBOARD.md"
+                    icon={<Sparkles size={18} />}
+                    active={templateSourceMode === "empty_onboarding"}
+                    onClick={() => {
+                      setTemplateSourceMode("empty_onboarding");
+                    }}
+                  />
                 </div>
               </div>
 
@@ -500,6 +517,8 @@ function FirstWorkspacePane() {
                   <div className="text-[11px] uppercase tracking-[0.22em] text-text-dim/76">Source details</div>
                   <div className="mt-2 flex items-center gap-2 text-[18px] font-medium tracking-[-0.03em] text-text-main">
                     {templateSourceMode === "marketplace" ? (
+                      <Sparkles size={16} className="text-[rgba(206,92,84,0.9)]" />
+                    ) : templateSourceMode === "empty_onboarding" ? (
                       <Sparkles size={16} className="text-[rgba(206,92,84,0.9)]" />
                     ) : templateSourceMode === "empty" ? (
                       <span className="text-[18px] leading-none text-[rgba(206,92,84,0.9)]">+</span>
@@ -572,11 +591,16 @@ function FirstWorkspacePane() {
                       </div>
                     </div>
                   )
-                ) : templateSourceMode === "empty" ? (
+                ) : templateSourceMode === "empty" || templateSourceMode === "empty_onboarding" ? (
                   <div className="rounded-[18px] border border-panel-border/35 bg-panel-bg/18 px-4 py-3">
                     <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">Scaffold</div>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      {["workspace.yaml", "AGENTS.md", "skills/"].map((item) => (
+                      {[
+                        "workspace.yaml",
+                        "AGENTS.md",
+                        "skills/",
+                        ...(templateSourceMode === "empty_onboarding" ? ["ONBOARD.md"] : [])
+                      ].map((item) => (
                         <span
                           key={item}
                           className="rounded-full border border-panel-border/35 bg-black/10 px-3 py-1.5 text-[11px] uppercase tracking-[0.14em] text-text-dim/74"
@@ -585,6 +609,11 @@ function FirstWorkspacePane() {
                         </span>
                       ))}
                     </div>
+                    {templateSourceMode === "empty_onboarding" ? (
+                      <div className="mt-3 text-[12px] leading-6 text-text-muted/78">
+                        Includes a starter onboarding guide so the workspace enters onboarding immediately after creation.
+                      </div>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.9fr)]">
@@ -798,6 +827,23 @@ function WorkspaceStartupErrorPane({ message }: { message: string }) {
   );
 }
 
+function WorkspaceOnboardingTakeover({
+  onOutputsChanged,
+  focusRequestKey
+}: {
+  onOutputsChanged: () => void;
+  focusRequestKey: number;
+}) {
+  return (
+    <section className="relative flex h-full min-h-0 min-w-0 overflow-hidden">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_16%,rgba(247,90,84,0.1),transparent_28%),radial-gradient(circle_at_88%_10%,rgba(247,170,126,0.08),transparent_24%),radial-gradient(circle_at_50%_100%,rgba(247,90,84,0.06),transparent_34%)]" />
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+        <OnboardingPane onOutputsChanged={onOutputsChanged} focusRequestKey={focusRequestKey} />
+      </div>
+    </section>
+  );
+}
+
 function AppShellContent() {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const {
@@ -806,7 +852,8 @@ function AppShellContent() {
     hasHydratedWorkspaceList,
     selectedWorkspace,
     installedApps,
-    workspaceErrorMessage
+    workspaceErrorMessage,
+    onboardingModeActive
   } =
     useWorkspaceDesktop();
   const [theme, setTheme] = useState<AppTheme>(loadTheme);
@@ -1431,6 +1478,8 @@ function AppShellContent() {
       ? runtimeStatus.lastError.trim() || workspaceErrorMessage || "Embedded runtime failed to start."
       : "";
   const isMacDesktop = window.electronAPI?.platform === "darwin";
+  const showOnboardingTakeover =
+    hasHydratedWorkspaceList && hasWorkspaces && hasSelectedWorkspace && onboardingModeActive;
   const combinedOutputEntries = useMemo(() => {
     const merged = [...runtimeOutputEntries, ...outputEntries];
     const seen = new Set<string>();
@@ -1449,7 +1498,9 @@ function AppShellContent() {
     }
 
     if (agentView.type === "chat") {
-      return <ChatPane onOutputsChanged={() => void refreshRuntimeOutputs()} focusRequestKey={chatFocusRequestKey} />;
+      return onboardingModeActive
+        ? <OnboardingPane onOutputsChanged={() => void refreshRuntimeOutputs()} focusRequestKey={chatFocusRequestKey} />
+        : <ChatPane onOutputsChanged={() => void refreshRuntimeOutputs()} focusRequestKey={chatFocusRequestKey} />;
     }
 
     if (agentView.type === "app") {
@@ -1470,7 +1521,7 @@ function AppShellContent() {
         htmlContent={agentView.htmlContent}
       />
     );
-  }, [activeApp, activeAppId, agentView, chatFocusRequestKey, hasSelectedWorkspace, installedApps, refreshRuntimeOutputs]);
+  }, [activeApp, activeAppId, agentView, chatFocusRequestKey, hasSelectedWorkspace, installedApps, onboardingModeActive, refreshRuntimeOutputs]);
 
   const spacePanes = useMemo(
     () =>
@@ -1651,6 +1702,11 @@ function AppShellContent() {
           bootstrapErrorMessage ? <WorkspaceStartupErrorPane message={bootstrapErrorMessage} /> : <WorkspaceBootstrapPane />
         ) : !hasWorkspaces ? (
           <FirstWorkspacePane />
+        ) : showOnboardingTakeover ? (
+          <WorkspaceOnboardingTakeover
+            onOutputsChanged={() => void refreshRuntimeOutputs()}
+            focusRequestKey={chatFocusRequestKey}
+          />
         ) : (
           <div
             className={`relative grid h-full min-h-0 gap-y-3 overflow-hidden transition-[grid-template-columns,column-gap] duration-300 ease-in-out ${

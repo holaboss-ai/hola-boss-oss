@@ -300,6 +300,7 @@ let historyPopupWindow: BrowserWindow | null = null;
 let overflowPopupWindow: BrowserWindow | null = null;
 let browserPopupWindow: BrowserWindow | null = null;
 let addressSuggestionsPopupWindow: BrowserWindow | null = null;
+const browserPopupCleanupBound = new WeakSet<BrowserWindow>();
 let currentTheme = "holaboss";
 let browserBounds: BrowserBoundsPayload = { x: 0, y: 0, width: 0, height: 0 };
 let overflowAnchorBounds: BrowserAnchorBoundsPayload | null = null;
@@ -1539,11 +1540,18 @@ interface HolabossCreateWorkspacePayload {
   holaboss_user_id: string;
   harness?: string | null;
   name: string;
-  template_mode?: "template" | "empty" | null;
+  template_mode?: "template" | "empty" | "empty_onboarding" | null;
   template_root_path?: string | null;
   template_name?: string | null;
   template_ref?: string | null;
   template_commit?: string | null;
+}
+
+interface WorkspaceOnboardingGuidePayload {
+  absolute_path: string;
+  body_markdown: string;
+  is_structured: boolean;
+  opening_sentence: string | null;
 }
 
 interface TemplateFolderSelectionPayload {
@@ -1677,6 +1685,80 @@ function runtimeDatabasePath() {
 
 function runtimeWorkspaceRoot() {
   return path.join(runtimeSandboxRoot(), "workspace");
+}
+
+function opencodeSidecarStatePath(workspaceDir: string) {
+  return path.join(workspaceDir, ".holaboss", "opencode-sidecar-state.json");
+}
+
+function processIsAlive(pid: number) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function terminatePid(pid: number, signal: NodeJS.Signals) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return;
+  }
+  try {
+    process.kill(pid, signal);
+  } catch {
+    // ignore
+  }
+}
+
+async function stopEmbeddedRuntimeOpencodeSidecars() {
+  let workspaceEntries: import("node:fs").Dirent[] = [];
+  try {
+    workspaceEntries = await fs.readdir(runtimeWorkspaceRoot(), { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  const sidecarPids = new Set<number>();
+  const statePaths: string[] = [];
+
+  for (const entry of workspaceEntries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const statePath = opencodeSidecarStatePath(path.join(runtimeWorkspaceRoot(), entry.name));
+    statePaths.push(statePath);
+    try {
+      const payload = JSON.parse(await fs.readFile(statePath, "utf-8")) as {
+        sidecar?: { pid?: unknown };
+      };
+      const pid = Number(payload?.sidecar?.pid ?? 0);
+      if (Number.isInteger(pid) && pid > 0) {
+        sidecarPids.add(pid);
+      }
+    } catch {
+      // ignore malformed or missing state
+    }
+  }
+
+  for (const pid of Array.from(sidecarPids).sort((left, right) => left - right)) {
+    terminatePid(pid, "SIGTERM");
+  }
+
+  if (sidecarPids.size > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+
+  for (const pid of Array.from(sidecarPids).sort((left, right) => left - right)) {
+    if (processIsAlive(pid)) {
+      terminatePid(pid, "SIGKILL");
+    }
+  }
+
+  await Promise.all(statePaths.map((statePath) => fs.rm(statePath, { force: true }).catch(() => undefined)));
 }
 
 function utcNowIso() {
@@ -4314,7 +4396,7 @@ function normalizeRequestedWorkspaceHarness(value: string | null | undefined): s
 }
 
 function requestedWorkspaceTemplateMode(payload: HolabossCreateWorkspacePayload): "template" | "empty" {
-  return payload.template_mode === "empty" ? "empty" : "template";
+  return payload.template_mode === "empty" || payload.template_mode === "empty_onboarding" ? "empty" : "template";
 }
 
 function workspaceDirectoryPath(workspaceId: string) {
@@ -5283,6 +5365,88 @@ function renderEmptyWorkspaceYaml() {
   ].join("\n");
 }
 
+function renderEmptyOnboardingGuide() {
+  return [
+    "opening_sentence: What is the primary goal for this workspace?",
+    "",
+    "# Workspace Onboarding",
+    "",
+    "Use this conversation to set up the workspace before regular execution starts.",
+    "",
+    "## Objectives",
+    "",
+    "- Ask concise questions to understand what this workspace is for.",
+    "- Capture durable facts, preferences, and constraints.",
+    "- Do not start execution work until onboarding is complete.",
+    "",
+    "## Gather",
+    "",
+    "- Primary goal for this workspace",
+    "- Preferred outputs or deliverables",
+    "- Style or tone preferences",
+    "- Tools, accounts, or apps that matter",
+    "- Constraints, deadlines, or things to avoid",
+    "",
+    "## Completion",
+    "",
+    "- Summarize the durable facts you collected.",
+    "- Ask the user to confirm the summary is correct.",
+    "- When the user confirms, request onboarding completion."
+  ].join("\n");
+}
+
+function parseOnboardingGuideContent(content: string): {
+  openingSentence: string;
+  bodyMarkdown: string;
+  isStructured: boolean;
+} {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  let index = 0;
+  while (index < lines.length && !lines[index]?.trim()) {
+    index += 1;
+  }
+
+  let openingSentence = "";
+  let isStructured = false;
+  const openingLine = lines[index] ?? "";
+  const openingMatch = openingLine.match(/^opening_sentence\s*:\s*(.+)$/i);
+  if (openingMatch) {
+    isStructured = true;
+    openingSentence = openingMatch[1].trim().replace(/^['"]|['"]$/g, "").trim();
+    index += 1;
+    while (index < lines.length && !lines[index]?.trim()) {
+      index += 1;
+    }
+  }
+
+  return {
+    openingSentence,
+    bodyMarkdown: lines.slice(index).join("\n").trim(),
+    isStructured
+  };
+}
+
+async function readWorkspaceOnboardingGuide(workspaceId: string): Promise<WorkspaceOnboardingGuidePayload> {
+  const absolutePath = path.join(workspaceDirectoryPath(workspaceId), "ONBOARD.md");
+  try {
+    const content = await fs.readFile(absolutePath, "utf-8");
+    const parsed = parseOnboardingGuideContent(content);
+    return {
+      absolute_path: absolutePath,
+      body_markdown: parsed.bodyMarkdown,
+      is_structured: parsed.isStructured,
+      opening_sentence: parsed.openingSentence || null
+    };
+  } catch {
+    return {
+      absolute_path: absolutePath,
+      body_markdown: "",
+      is_structured: false,
+      opening_sentence: null
+    };
+  }
+}
+
 async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise<WorkspaceResponsePayload> {
   await ensureRuntimeBindingReadyForWorkspaceFlow("workspace_create");
   const mainSessionId = crypto.randomUUID();
@@ -5357,10 +5521,15 @@ async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise
     const workspaceDir = workspaceDirectoryPath(workspaceId);
     const workspaceAgentsPath = path.join(workspaceDir, "AGENTS.md");
     const workspaceYamlPath = path.join(workspaceDir, "workspace.yaml");
+    const workspaceOnboardPath = path.join(workspaceDir, "ONBOARD.md");
+    const wantsEmptyOnboardingScaffold = payload.template_mode === "empty_onboarding";
     if (templateMode === "empty") {
       await fs.mkdir(path.join(workspaceDir, "skills"), { recursive: true });
       await fs.writeFile(workspaceAgentsPath, "", "utf-8");
       await fs.writeFile(workspaceYamlPath, `${renderEmptyWorkspaceYaml()}\n`, "utf-8");
+      if (wantsEmptyOnboardingScaffold) {
+        await fs.writeFile(workspaceOnboardPath, `${renderEmptyOnboardingGuide()}\n`, "utf-8");
+      }
     } else if (materializedTemplate && resolvedTemplate) {
       await applyMaterializedTemplateToWorkspace(workspaceId, materializedTemplate.files);
       if (templateRootPath) {
@@ -5383,15 +5552,19 @@ async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise
 
     let onboardingStatus = "NOT_REQUIRED";
     let onboardingSessionId: string | null = null;
+    let shouldQueueOnboardingBootstrap = false;
     try {
       const onboardContent = await fs.readFile(path.join(workspaceDir, "ONBOARD.md"), "utf-8");
       if (onboardContent.trim()) {
+        const parsedOnboardingGuide = parseOnboardingGuideContent(onboardContent);
         onboardingStatus = "PENDING";
         onboardingSessionId = crypto.randomUUID();
+        shouldQueueOnboardingBootstrap = !parsedOnboardingGuide.openingSentence;
       }
     } catch {
       onboardingStatus = "NOT_REQUIRED";
       onboardingSessionId = null;
+      shouldQueueOnboardingBootstrap = false;
     }
 
     let updated = await requestRuntimeJson<WorkspaceResponsePayload>({
@@ -5404,7 +5577,7 @@ async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise
         error_message: null
       }
     });
-    if (onboardingSessionId) {
+    if (onboardingSessionId && shouldQueueOnboardingBootstrap) {
       try {
         await requestRuntimeJson<EnqueueSessionInputResponsePayload>({
           method: "POST",
@@ -6046,6 +6219,7 @@ async function stopEmbeddedRuntime() {
   const running = runtimeProcess;
   runtimeProcess = null;
   if (!running) {
+    await stopEmbeddedRuntimeOpencodeSidecars();
     if (runtimeStatus.status === "running" || runtimeStatus.status === "starting") {
       runtimeStatus = withDesktopBrowserStatus({
         ...runtimeStatus,
@@ -6103,6 +6277,8 @@ async function stopEmbeddedRuntime() {
       settle();
     }
   });
+
+  await stopEmbeddedRuntimeOpencodeSidecars();
 }
 
 async function startEmbeddedRuntime() {
@@ -7517,11 +7693,15 @@ function createBrowserTab(
     window.once("ready-to-show", () => {
       window.show();
     });
-    window.on("closed", () => {
-      if (browserPopupWindow === window) {
-        browserPopupWindow = null;
-      }
-    });
+    if (!browserPopupCleanupBound.has(window)) {
+      browserPopupCleanupBound.add(window);
+      window.once("closed", () => {
+        browserPopupCleanupBound.delete(window);
+        if (browserPopupWindow === window) {
+          browserPopupWindow = null;
+        }
+      });
+    }
   });
   view.webContents.setZoomFactor(1);
   view.webContents.setVisualZoomLevelLimits(1, 1).catch(() => undefined);
@@ -8046,7 +8226,7 @@ function ensureAuthPopupWindow() {
     clearScheduledAuthPopupHide();
   });
 
-  authPopupWindow.on("closed", () => {
+  authPopupWindow.once("closed", () => {
     clearScheduledAuthPopupHide();
     authPopupWindow = null;
   });
@@ -8171,7 +8351,7 @@ function ensureDownloadsPopupWindow() {
     downloadsPopupWindow?.hide();
   });
 
-  downloadsPopupWindow.on("closed", () => {
+  downloadsPopupWindow.once("closed", () => {
     downloadsPopupWindow = null;
   });
 
@@ -8436,7 +8616,7 @@ function ensureHistoryPopupWindow() {
     historyPopupWindow?.hide();
   });
 
-  historyPopupWindow.on("closed", () => {
+  historyPopupWindow.once("closed", () => {
     historyPopupWindow = null;
   });
 
@@ -8700,7 +8880,7 @@ function ensureOverflowPopupWindow() {
     overflowPopupWindow?.hide();
   });
 
-  overflowPopupWindow.on("closed", () => {
+  overflowPopupWindow.once("closed", () => {
     overflowPopupWindow = null;
   });
 
@@ -8742,7 +8922,7 @@ function ensureAddressSuggestionsPopupWindow() {
     }
   });
 
-  addressSuggestionsPopupWindow.on("closed", () => {
+  addressSuggestionsPopupWindow.once("closed", () => {
     addressSuggestionsPopupWindow = null;
   });
 
@@ -8893,7 +9073,7 @@ function createMainWindow() {
     win.show();
   });
 
-  win.on("closed", () => {
+  win.once("closed", () => {
     authPopupWindow?.close();
     authPopupWindow = null;
     addressSuggestionsPopupWindow?.close();
@@ -9134,6 +9314,9 @@ app.whenReady().then(async () => {
   handleTrustedIpc("workspace:listOutputs", ["main"], async (_event, workspaceId: string) => listOutputs(workspaceId));
   handleTrustedIpc("workspace:listSkills", ["main"], async (_event, workspaceId: string) => listWorkspaceSkills(workspaceId));
   handleTrustedIpc("workspace:getWorkspaceRoot", ["main"], async (_event, workspaceId: string) => workspaceDirectoryPath(workspaceId));
+  handleTrustedIpc("workspace:getOnboardingGuide", ["main"], async (_event, workspaceId: string) =>
+    readWorkspaceOnboardingGuide(workspaceId)
+  );
   handleTrustedIpc("workspace:createWorkspace", ["main"], async (_event, payload: HolabossCreateWorkspacePayload) => createWorkspace(payload));
   handleTrustedIpc("workspace:deleteWorkspace", ["main"], async (_event, workspaceId: string) => deleteWorkspace(workspaceId));
   handleTrustedIpc("workspace:listCronjobs", ["main"], async (_event, workspaceId: string, enabledOnly?: boolean) =>

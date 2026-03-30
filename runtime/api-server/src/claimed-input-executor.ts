@@ -115,10 +115,12 @@ function buildOnboardingInstruction(params: {
   if (!fs.existsSync(onboardPath)) {
     return trimmed;
   }
-  const onboardPrompt = fs.readFileSync(onboardPath, "utf8").trim();
-  if (!onboardPrompt || trimmed.startsWith(ONBOARD_PROMPT_HEADER)) {
+  const rawOnboardPrompt = fs.readFileSync(onboardPath, "utf8").trim();
+  if (!rawOnboardPrompt || trimmed.startsWith(ONBOARD_PROMPT_HEADER)) {
     return trimmed;
   }
+  const parsedOnboardingGuide = parseOnboardingGuideContent(rawOnboardPrompt);
+  const onboardPrompt = (parsedOnboardingGuide.bodyMarkdown || rawOnboardPrompt).trim();
 
   return [
     ONBOARD_PROMPT_HEADER,
@@ -127,11 +129,16 @@ function buildOnboardingInstruction(params: {
     `- The onboarding guide file is ./${params.workspaceId}/ONBOARD.md (absolute path: ${onboardPath}).`,
     "- Use that workspace-scoped ONBOARD.md to drive the conversation and gather required details.",
     "- ONBOARD.md content is already included below; do not re-read it unless needed.",
+    parsedOnboardingGuide.openingSentence
+      ? "- The guide's opening_sentence may already be visible to the user. Treat the next user response as a reply to that opener unless the conversation indicates otherwise."
+      : "",
     `- If file reads are needed, use ./${params.workspaceId}/... paths rather than files directly under ${params.workspaceRoot}.`,
     "- Ask concise questions and collect durable facts/preferences.",
     "- Do not start regular execution work until onboarding is complete.",
-    "- When all onboarding requirements are satisfied and the user confirms, invoke the `hb` CLI tool with `onboarding request-complete`.",
-    "- Do not merely output or quote the command as text; actually execute the tool.",
+    "- Relevant native onboarding tools:",
+    "- `holaboss_onboarding_status` reads the local onboarding status for this workspace.",
+    "- `holaboss_onboarding_complete` marks onboarding complete. Required argument: `summary`. Optional argument: `requested_by`.",
+    "- When all onboarding requirements are satisfied and the user confirms, call `holaboss_onboarding_complete` with a concise durable summary.",
     "",
     "[ONBOARD.md]",
     onboardPrompt,
@@ -139,6 +146,33 @@ function buildOnboardingInstruction(params: {
     "",
     trimmed
   ].join("\n").trim();
+}
+
+function parseOnboardingGuideContent(content: string): {
+  openingSentence: string;
+  bodyMarkdown: string;
+} {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  let index = 0;
+  while (index < lines.length && !lines[index]?.trim()) {
+    index += 1;
+  }
+
+  let openingSentence = "";
+  const openingLine = lines[index] ?? "";
+  const openingMatch = openingLine.match(/^opening_sentence\s*:\s*(.+)$/i);
+  if (openingMatch) {
+    openingSentence = openingMatch[1].trim().replace(/^['"]|['"]$/g, "").trim();
+    index += 1;
+    while (index < lines.length && !lines[index]?.trim()) {
+      index += 1;
+    }
+  }
+
+  return {
+    openingSentence,
+    bodyMarkdown: lines.slice(index).join("\n").trim()
+  };
 }
 
 function createdAtForEvent(event: RunnerEvent): string | undefined {

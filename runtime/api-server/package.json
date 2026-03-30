@@ -4,7 +4,6 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "holaboss-runtime-hb": "dist/hb.mjs",
     "holaboss-runtime-api": "dist/index.mjs",
     "holaboss-runtime-opencode-app-bootstrap": "dist/opencode-app-bootstrap.mjs",
     "holaboss-runtime-opencode-commands": "dist/opencode-commands.mjs",

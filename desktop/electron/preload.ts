@@ -395,7 +395,9 @@ interface HolabossClientConfigPayload {
 
 interface HolabossCreateWorkspacePayload {
   holaboss_user_id: string;
+  harness?: string | null;
   name: string;
+  template_mode?: "template" | "empty" | "empty_onboarding" | null;
   template_root_path?: string | null;
   template_name?: string | null;
   template_ref?: string | null;
@@ -595,6 +597,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     listSkills: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listSkills", workspaceId) as Promise<WorkspaceSkillListResponsePayload>,
     getWorkspaceRoot: (workspaceId: string) => ipcRenderer.invoke("workspace:getWorkspaceRoot", workspaceId) as Promise<string>,
+    getOnboardingGuide: (workspaceId: string) =>
+      ipcRenderer.invoke("workspace:getOnboardingGuide", workspaceId) as Promise<WorkspaceOnboardingGuidePayload>,
     createWorkspace: (payload: HolabossCreateWorkspacePayload) =>
       ipcRenderer.invoke("workspace:createWorkspace", payload) as Promise<WorkspaceResponsePayload>,
     deleteWorkspace: (workspaceId: string) =>

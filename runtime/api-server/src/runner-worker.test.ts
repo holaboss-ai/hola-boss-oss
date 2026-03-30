@@ -252,3 +252,13 @@ test("build runner env injects runtime api url when missing", () => {
 
   assert.equal(env.SANDBOX_RUNTIME_API_URL, "http://127.0.0.1:5060");
 });
+
+test("build runner env prepends api-server local bin helpers", () => {
+  process.env.HOLABOSS_RUNTIME_ROOT = "/runtime-root";
+  process.env.HOLABOSS_RUNTIME_APP_ROOT = "/runtime-app";
+  process.env.PATH = "/usr/local/bin:/usr/bin";
+
+  const env = buildRunnerEnv();
+
+  assert.equal(env.PATH, `/runtime-app/api-server/node_modules/.bin:/usr/local/bin:/usr/bin`);
+});

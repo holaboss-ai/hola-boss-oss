@@ -380,6 +380,17 @@ export function TopTabsBar({
                       >
                         Empty
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => setTemplateSourceMode("empty_onboarding")}
+                        className={`inline-flex h-[38px] items-center justify-center rounded-[14px] border px-3 text-[11px] transition ${
+                          templateSourceMode === "empty_onboarding"
+                            ? "border-neon-green/45 bg-neon-green/10 text-neon-green"
+                            : "border-panel-border/45 text-text-muted hover:border-neon-green/35 hover:text-text-main"
+                        }`}
+                      >
+                        Empty + Onboarding
+                      </button>
                     </div>
 
                     <div className="grid gap-2">
@@ -419,6 +430,11 @@ export function TopTabsBar({
                         <div className="theme-control-surface min-w-0 rounded-[16px] border border-panel-border/45 px-3 py-2 text-[12px] text-text-muted/82">
                           <div className="text-[10px] uppercase tracking-[0.14em] text-text-dim/72">Scaffold</div>
                           <div className="mt-1 text-text-main">workspace.yaml + AGENTS.md + empty skills folder</div>
+                        </div>
+                      ) : templateSourceMode === "empty_onboarding" ? (
+                        <div className="theme-control-surface min-w-0 rounded-[16px] border border-panel-border/45 px-3 py-2 text-[12px] text-text-muted/82">
+                          <div className="text-[10px] uppercase tracking-[0.14em] text-text-dim/72">Scaffold</div>
+                          <div className="mt-1 text-text-main">workspace.yaml + AGENTS.md + empty skills folder + ONBOARD.md</div>
                         </div>
                       ) : (
                         <button
@@ -477,13 +493,17 @@ export function TopTabsBar({
                               ? "Choose a marketplace template to bootstrap this workspace."
                               : "Sign in and finish runtime setup to use marketplace templates."}
                       </div>
-                    ) : selectedTemplateFolder ? (
-                      <div className="text-[11px] text-text-dim/78">
-                        {selectedTemplateFolder.description || selectedTemplateFolder.rootPath || "Template folder selected."}
-                      </div>
                     ) : templateSourceMode === "empty" ? (
                       <div className="text-[11px] text-text-dim/78">
                         Creates a minimal workspace with `workspace.yaml`, an empty `AGENTS.md`, and an empty `skills/` folder.
+                      </div>
+                    ) : templateSourceMode === "empty_onboarding" ? (
+                      <div className="text-[11px] text-text-dim/78">
+                        Creates the same minimal workspace shell, plus a starter `ONBOARD.md` so you can test the onboarding flow immediately.
+                      </div>
+                    ) : selectedTemplateFolder ? (
+                      <div className="text-[11px] text-text-dim/78">
+                        {selectedTemplateFolder.description || selectedTemplateFolder.rootPath || "Template folder selected."}
                       </div>
                     ) : null}
                   </form>

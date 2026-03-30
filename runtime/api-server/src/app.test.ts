@@ -234,6 +234,94 @@ test("browser capability routes proxy to the browser tool service", async () => 
   store.close();
 });
 
+test("runtime tools capability routes expose local onboarding and cronjob actions", async () => {
+  const root = makeTempDir("hb-runtime-api-runtime-tools-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    onboardingStatus: "pending",
+    onboardingSessionId: "session-1"
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const capabilityStatus = await app.inject({
+    method: "GET",
+    url: "/api/v1/capabilities/runtime-tools",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1"
+    }
+  });
+  assert.equal(capabilityStatus.statusCode, 200);
+  assert.equal(capabilityStatus.json().available, true);
+  assert.equal(capabilityStatus.json().workspace_id, "workspace-1");
+  assert.ok(
+    capabilityStatus
+      .json()
+      .tools.some((tool: { id: string }) => tool.id === "holaboss_onboarding_complete")
+  );
+
+  const onboardingStatus = await app.inject({
+    method: "GET",
+    url: "/api/v1/capabilities/runtime-tools/onboarding/status",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1"
+    }
+  });
+  assert.equal(onboardingStatus.statusCode, 200);
+  assert.equal(onboardingStatus.json().onboarding_status, "pending");
+
+  const onboardingComplete = await app.inject({
+    method: "POST",
+    url: "/api/v1/capabilities/runtime-tools/onboarding/complete",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1"
+    },
+    payload: {
+      summary: "ready to work"
+    }
+  });
+  assert.equal(onboardingComplete.statusCode, 200);
+  assert.equal(onboardingComplete.json().onboarding_status, "completed");
+  assert.equal(onboardingComplete.json().onboarding_completion_summary, "ready to work");
+
+  const createdJob = await app.inject({
+    method: "POST",
+    url: "/api/v1/capabilities/runtime-tools/cronjobs",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1"
+    },
+    payload: {
+      cron: "0 9 * * *",
+      description: "Daily check"
+    }
+  });
+  assert.equal(createdJob.statusCode, 200);
+  assert.equal(createdJob.json().initiated_by, "workspace_agent");
+  assert.deepEqual(createdJob.json().delivery, {
+    mode: "announce",
+    channel: "session_run",
+    to: null
+  });
+
+  const listedJobs = await app.inject({
+    method: "GET",
+    url: "/api/v1/capabilities/runtime-tools/cronjobs",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1"
+    }
+  });
+  assert.equal(listedJobs.statusCode, 200);
+  assert.equal(listedJobs.json().count, 1);
+
+  await app.close();
+  store.close();
+});
+
 test("buildAppSetupEnv uses an app-local npm cache", () => {
   const appDir = makeTempDir("hb-app-env-");
   const env = buildAppSetupEnv(appDir, { PATH: process.env.PATH });

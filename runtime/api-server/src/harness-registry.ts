@@ -8,6 +8,7 @@ import {
   DEFAULT_HARNESS_ID,
   DESKTOP_BROWSER_TOOL_IDS,
   HARNESS_DEFINITIONS,
+  RUNTIME_AGENT_TOOL_IDS,
   type HarnessBackendRestartRequest,
   type HarnessBootstrapPayload,
   type HarnessEnsureReadyContext,
@@ -26,8 +27,10 @@ import {
 import { stageOpencodeDesktopBrowserPlugin } from "./opencode-browser-tools.js";
 import { stageWorkspaceCommands } from "./opencode-commands.js";
 import { opencodeProxyConfigPath, updateOpencodeConfig } from "./opencode-config.js";
+import { stageOpencodeRuntimeToolsPlugin } from "./opencode-runtime-tools.js";
 import { readOpencodeSidecarBaseUrl, restartOpencodeSidecar } from "./opencode-sidecar.js";
 import { stageOpencodeSkills } from "./opencode-skills.js";
+import { buildRunnerEnv } from "./runner-worker.js";
 
 const HB_SANDBOX_ROOT_ENV = "HB_SANDBOX_ROOT";
 const OPENCODE_BASE_URL_ENV = "OPENCODE_BASE_URL";
@@ -92,6 +95,7 @@ export interface RuntimeHarnessPlugin {
     workspaceDir: string;
     browserConfig: RuntimeHarnessBrowserConfig;
   }) => { changed: boolean; toolIds: string[] };
+  stageRuntimeTools: (params: { workspaceDir: string }) => { changed: boolean; toolIds: string[] };
   stageCommands: (params: { workspaceDir: string }) => { changed: boolean };
   stageSkills: (params: { workspaceDir: string; runtimeRoot: string }) => {
     changed: boolean;
@@ -273,7 +277,7 @@ async function ensureOpencodeBackendReady(fetchImpl: typeof fetch): Promise<void
     let settled = false;
     const child = spawn("opencode", ["serve", "--hostname", opencodeServerHost(), "--port", String(opencodeServerPort())], {
       cwd: workspaceRootPath(),
-      env: process.env,
+      env: buildRunnerEnv(),
       stdio: "ignore",
       detached: true
     });
@@ -328,6 +332,15 @@ const opencodeRuntimeHarnessPlugin: RuntimeHarnessPlugin = {
         resolveConfig: () => params.browserConfig
       }
     );
+    return {
+      changed: result.changed,
+      toolIds: result.tool_ids
+    };
+  },
+  stageRuntimeTools(params) {
+    const result = stageOpencodeRuntimeToolsPlugin({
+      workspace_dir: params.workspaceDir
+    });
     return {
       changed: result.changed,
       toolIds: result.tool_ids
@@ -420,6 +433,9 @@ const piRuntimeHarnessPlugin: RuntimeHarnessPlugin = {
         params.browserConfig.desktopBrowserAuthToken.trim()
     );
     return { changed: false, toolIds: browserEnabled ? [...DESKTOP_BROWSER_TOOL_IDS] : [] };
+  },
+  stageRuntimeTools() {
+    return { changed: false, toolIds: [...RUNTIME_AGENT_TOOL_IDS] };
   },
   stageCommands() {
     return { changed: false };

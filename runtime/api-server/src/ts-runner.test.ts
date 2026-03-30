@@ -95,6 +95,7 @@ function testDeps(params: {
     id: harness,
     adapter: requireRuntimeHarnessAdapter(harness),
     stageBrowserTools: () => ({ changed: false, toolIds: [] }),
+    stageRuntimeTools: () => ({ changed: false, toolIds: [] }),
     stageSkills: () => ({ changed: false, skillIds: [] }),
     stageCommands: () => ({ changed: false }),
     prepareRun: async () => {},
@@ -587,6 +588,56 @@ test("runTsRunnerCli only advertises structured output when the selected harness
     structured_output_enabled: false,
     workspace_config_checksum: "checksum-1"
   });
+});
+
+test("runTsRunnerCli includes staged runtime tool ids in the projected extra tool set", async () => {
+  let capturedProjectRequest: Record<string, unknown> | null = null;
+
+  const exitCode = await runTsRunnerCli(
+    ["--request-base64", encodeRequest(baseRequest())],
+    {
+      deps: {
+        ...testDeps({
+          pluginOverrides: {
+            stageBrowserTools: () => ({ changed: false, toolIds: ["browser_get_state"] }),
+            stageRuntimeTools: () => ({ changed: false, toolIds: ["holaboss_onboarding_complete"] })
+          }
+        }),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.1",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" }
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1"
+          };
+        }
+      },
+      io: {
+        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
+        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
+      }
+    }
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  assert.deepEqual(
+    (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
+    ["browser_get_state", "holaboss_onboarding_complete"]
+  );
 });
 
 test("runTsRunnerCli resolves workspace skill ids and source directories for the pi harness", async () => {
