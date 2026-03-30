@@ -1460,12 +1460,17 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
   app.delete("/api/v1/integrations/bindings/:bindingId", async (request, reply) => {
     const params = request.params as { bindingId: string };
+    const query = isRecord(request.query) ? request.query : {};
+    const workspaceId = optionalString(query.workspace_id);
+    if (!workspaceId) {
+      return sendError(reply, 400, "workspace_id is required");
+    }
     const bindingId = optionalString(params.bindingId);
     if (!bindingId) {
       return sendError(reply, 400, "bindingId is required");
     }
     try {
-      return integrationService.deleteBinding(bindingId);
+      return integrationService.deleteBinding(bindingId, workspaceId);
     } catch (error) {
       if (error instanceof IntegrationServiceError) {
         return sendError(reply, error.statusCode, error.message);

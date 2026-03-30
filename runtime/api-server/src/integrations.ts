@@ -271,9 +271,17 @@ export class RuntimeIntegrationService {
     return toIntegrationBindingPayload(binding);
   }
 
-  deleteBinding(bindingId: string): { deleted: true } {
-    const normalized = requiredString(bindingId, "binding_id");
-    const deleted = this.store.deleteIntegrationBinding(normalized);
+  deleteBinding(bindingId: string, workspaceId?: string): { deleted: true } {
+    const normalizedBindingId = requiredString(bindingId, "binding_id");
+    const normalizedWorkspaceId = requiredString(workspaceId, "workspace_id");
+    requireWorkspace(this.store, normalizedWorkspaceId);
+
+    const binding = this.store.getIntegrationBinding(normalizedBindingId);
+    if (!binding || binding.workspaceId !== normalizedWorkspaceId) {
+      throw new IntegrationServiceError(404, "binding not found");
+    }
+
+    const deleted = this.store.deleteIntegrationBinding(normalizedBindingId);
     if (!deleted) {
       throw new IntegrationServiceError(404, "binding not found");
     }

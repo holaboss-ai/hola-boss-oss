@@ -76,7 +76,7 @@ test("upserts workspace-scoped bindings and rejects invalid target types", () =>
   assert.equal(binding.workspace_id, "workspace-1");
   assert.equal(binding.connection_id, connection.connectionId);
   assert.equal(service.listBindings({ workspaceId: "workspace-1" }).bindings[0]?.workspace_id, "workspace-1");
-  assert.equal(service.deleteBinding(binding.binding_id).deleted, true);
+  assert.equal(service.deleteBinding(binding.binding_id, "workspace-1").deleted, true);
 
   assert.throws(
     () =>
@@ -158,6 +158,62 @@ test("rejects missing connections, cross-provider bindings, and missing workspac
       error instanceof IntegrationServiceError &&
       error.statusCode === 404 &&
       error.message === "workspace not found"
+  );
+
+  store.close();
+});
+
+test("rejects delete binding requests without workspace scoping or with the wrong workspace", () => {
+  const root = makeTempDir("hb-integrations-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const service = new RuntimeIntegrationService(store);
+  const connection = store.upsertIntegrationConnection({
+    connectionId: "conn-google-1",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "joshua@holaboss.ai",
+    authMode: "oauth_app",
+    grantedScopes: ["gmail.send"],
+    status: "active"
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active"
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-2",
+    name: "Workspace 2",
+    harness: "opencode",
+    status: "active"
+  });
+  const binding = service.upsertBinding({
+    workspaceId: "workspace-1",
+    targetType: "workspace",
+    targetId: "default",
+    integrationKey: "google",
+    connectionId: connection.connectionId,
+    isDefault: true
+  });
+
+  assert.throws(
+    () => service.deleteBinding(binding.binding_id),
+    (error: unknown) =>
+      error instanceof IntegrationServiceError &&
+      error.statusCode === 400 &&
+      error.message.includes("workspace_id")
+  );
+
+  assert.throws(
+    () => service.deleteBinding(binding.binding_id, "workspace-2" as never),
+    (error: unknown) =>
+      error instanceof IntegrationServiceError &&
+      error.statusCode === 404 &&
+      error.message === "binding not found"
   );
 
   store.close();

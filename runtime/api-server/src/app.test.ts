@@ -279,7 +279,7 @@ test("integration routes expose catalog, connections, and bindings", async () =>
   });
   const deleteResponse = await app.inject({
     method: "DELETE",
-    url: `/api/v1/integrations/bindings/${bindingResponse.json().binding_id}`
+    url: `/api/v1/integrations/bindings/${bindingResponse.json().binding_id}?workspace_id=workspace-1`
   });
 
   assert.equal(catalogResponse.statusCode, 200);
@@ -376,6 +376,67 @@ test("integration routes reject missing workspaces and missing connections", asy
   assert.deepEqual(missingWorkspacePutResponse.json(), { detail: "workspace not found" });
   assert.equal(missingConnectionResponse.statusCode, 404);
   assert.deepEqual(missingConnectionResponse.json(), { detail: "integration connection missing-connection not found" });
+
+  await app.close();
+  store.close();
+});
+
+test("integration delete binding route requires workspace scoping", async () => {
+  const root = makeTempDir("hb-runtime-api-integrations-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  const connection = store.upsertIntegrationConnection({
+    connectionId: "conn-google-1",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "joshua@holaboss.ai",
+    authMode: "oauth_app",
+    grantedScopes: ["gmail.send"],
+    status: "active"
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active"
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-2",
+    name: "Workspace 2",
+    harness: "opencode",
+    status: "active"
+  });
+  const bindingResponse = await app.inject({
+    method: "PUT",
+    url: "/api/v1/integrations/bindings/workspace-1/workspace/default/google",
+    payload: {
+      connection_id: connection.connectionId,
+      is_default: true
+    }
+  });
+
+  const missingWorkspaceIdResponse = await app.inject({
+    method: "DELETE",
+    url: `/api/v1/integrations/bindings/${bindingResponse.json().binding_id}`
+  });
+  const wrongWorkspaceResponse = await app.inject({
+    method: "DELETE",
+    url: `/api/v1/integrations/bindings/${bindingResponse.json().binding_id}?workspace_id=workspace-2`
+  });
+  const scopedDeleteResponse = await app.inject({
+    method: "DELETE",
+    url: `/api/v1/integrations/bindings/${bindingResponse.json().binding_id}?workspace_id=workspace-1`
+  });
+
+  assert.equal(missingWorkspaceIdResponse.statusCode, 400);
+  assert.deepEqual(missingWorkspaceIdResponse.json(), { detail: "workspace_id is required" });
+  assert.equal(wrongWorkspaceResponse.statusCode, 404);
+  assert.deepEqual(wrongWorkspaceResponse.json(), { detail: "binding not found" });
+  assert.equal(scopedDeleteResponse.statusCode, 200);
+  assert.deepEqual(scopedDeleteResponse.json(), { deleted: true });
 
   await app.close();
   store.close();
