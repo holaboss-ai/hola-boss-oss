@@ -291,6 +291,35 @@ test("integration routes expose catalog, connections, and bindings", async () =>
   store.close();
 });
 
+test("integration routes return 400 for missing required binding inputs", async () => {
+  const root = makeTempDir("hb-runtime-api-integrations-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const missingWorkspaceIdResponse = await app.inject({
+    method: "GET",
+    url: "/api/v1/integrations/bindings"
+  });
+  const missingConnectionIdResponse = await app.inject({
+    method: "PUT",
+    url: "/api/v1/integrations/bindings/workspace-1/workspace/default/google",
+    payload: {
+      is_default: true
+    }
+  });
+
+  assert.equal(missingWorkspaceIdResponse.statusCode, 400);
+  assert.deepEqual(missingWorkspaceIdResponse.json(), { detail: "workspace_id is required" });
+  assert.equal(missingConnectionIdResponse.statusCode, 400);
+  assert.deepEqual(missingConnectionIdResponse.json(), { detail: "connection_id is required" });
+
+  await app.close();
+  store.close();
+});
+
 test("buildAppSetupEnv uses an app-local npm cache", () => {
   const appDir = makeTempDir("hb-app-env-");
   const env = buildAppSetupEnv(appDir, { PATH: process.env.PATH });
