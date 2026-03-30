@@ -1,0 +1,295 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, test } from "node:test";
+
+import { RuntimeStateStore } from "@holaboss/runtime-state-store";
+
+import {
+  BrokerError,
+  IntegrationBrokerService,
+  parseAppGrant
+} from "./integration-broker.js";
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function makeTempDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+test("parseAppGrant extracts workspace and app from a valid grant string", () => {
+  const result = parseAppGrant("grant:workspace-1:gmail:abc-123-uuid");
+  assert.deepEqual(result, {
+    workspaceId: "workspace-1",
+    appId: "gmail",
+    nonce: "abc-123-uuid"
+  });
+});
+
+test("parseAppGrant returns null for malformed grant strings", () => {
+  assert.equal(parseAppGrant(""), null);
+  assert.equal(parseAppGrant("not-a-grant"), null);
+  assert.equal(parseAppGrant("grant:only-two"), null);
+  assert.equal(parseAppGrant("grant:workspace:app:"), null);
+  assert.equal(parseAppGrant("xgrant:workspace:app:nonce"), null);
+});
+
+test("exchangeToken returns provider token for a valid grant and active binding", () => {
+  const root = makeTempDir("hb-broker-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active"
+  });
+  store.upsertIntegrationConnection({
+    connectionId: "conn-google-1",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "joshua@holaboss.ai",
+    authMode: "oauth_app",
+    grantedScopes: ["gmail.send"],
+    status: "active",
+    secretRef: "gya_actual-google-token-value"
+  });
+  store.upsertIntegrationBinding({
+    bindingId: "bind-google-1",
+    workspaceId: "workspace-1",
+    targetType: "workspace",
+    targetId: "default",
+    integrationKey: "google",
+    connectionId: "conn-google-1",
+    isDefault: true
+  });
+
+  const broker = new IntegrationBrokerService(store);
+  const result = broker.exchangeToken({
+    grant: "grant:workspace-1:gmail:some-uuid",
+    provider: "google"
+  });
+
+  assert.equal(result.token, "gya_actual-google-token-value");
+  assert.equal(result.provider, "google");
+  assert.equal(result.connection_id, "conn-google-1");
+
+  store.close();
+});
+
+test("exchangeToken throws grant_invalid for a malformed grant", () => {
+  const root = makeTempDir("hb-broker-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const broker = new IntegrationBrokerService(store);
+
+  assert.throws(
+    () => broker.exchangeToken({ grant: "bad-grant", provider: "google" }),
+    (error: unknown) =>
+      error instanceof BrokerError &&
+      error.code === "grant_invalid" &&
+      error.statusCode === 401
+  );
+
+  store.close();
+});
+
+test("exchangeToken throws integration_not_bound when no binding exists", () => {
+  const root = makeTempDir("hb-broker-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active"
+  });
+  const broker = new IntegrationBrokerService(store);
+
+  assert.throws(
+    () =>
+      broker.exchangeToken({
+        grant: "grant:workspace-1:gmail:some-uuid",
+        provider: "google"
+      }),
+    (error: unknown) =>
+      error instanceof BrokerError &&
+      error.code === "integration_not_bound" &&
+      error.statusCode === 404
+  );
+
+  store.close();
+});
+
+test("exchangeToken throws connection_inactive when connection is expired", () => {
+  const root = makeTempDir("hb-broker-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active"
+  });
+  store.upsertIntegrationConnection({
+    connectionId: "conn-google-expired",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "expired@holaboss.ai",
+    authMode: "oauth_app",
+    grantedScopes: ["gmail.send"],
+    status: "expired",
+    secretRef: "expired-token"
+  });
+  store.upsertIntegrationBinding({
+    bindingId: "bind-google-1",
+    workspaceId: "workspace-1",
+    targetType: "workspace",
+    targetId: "default",
+    integrationKey: "google",
+    connectionId: "conn-google-expired",
+    isDefault: true
+  });
+  const broker = new IntegrationBrokerService(store);
+
+  assert.throws(
+    () =>
+      broker.exchangeToken({
+        grant: "grant:workspace-1:gmail:some-uuid",
+        provider: "google"
+      }),
+    (error: unknown) =>
+      error instanceof BrokerError &&
+      error.code === "connection_inactive" &&
+      error.statusCode === 403
+  );
+
+  store.close();
+});
+
+test("exchangeToken throws token_unavailable when connection has no secret_ref", () => {
+  const root = makeTempDir("hb-broker-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active"
+  });
+  store.upsertIntegrationConnection({
+    connectionId: "conn-google-no-secret",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "nosecret@holaboss.ai",
+    authMode: "manual_token",
+    grantedScopes: ["gmail.send"],
+    status: "active"
+  });
+  store.upsertIntegrationBinding({
+    bindingId: "bind-google-1",
+    workspaceId: "workspace-1",
+    targetType: "workspace",
+    targetId: "default",
+    integrationKey: "google",
+    connectionId: "conn-google-no-secret",
+    isDefault: true
+  });
+  const broker = new IntegrationBrokerService(store);
+
+  assert.throws(
+    () =>
+      broker.exchangeToken({
+        grant: "grant:workspace-1:gmail:some-uuid",
+        provider: "google"
+      }),
+    (error: unknown) =>
+      error instanceof BrokerError &&
+      error.code === "token_unavailable" &&
+      error.statusCode === 503
+  );
+
+  store.close();
+});
+
+test("exchangeToken prefers app-specific binding over workspace default", () => {
+  const root = makeTempDir("hb-broker-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active"
+  });
+  store.upsertIntegrationConnection({
+    connectionId: "conn-google-default",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "default@holaboss.ai",
+    authMode: "oauth_app",
+    grantedScopes: ["gmail.send"],
+    status: "active",
+    secretRef: "token-default"
+  });
+  store.upsertIntegrationConnection({
+    connectionId: "conn-google-app",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "app@holaboss.ai",
+    authMode: "oauth_app",
+    grantedScopes: ["gmail.send"],
+    status: "active",
+    secretRef: "token-app-specific"
+  });
+  store.upsertIntegrationBinding({
+    bindingId: "bind-google-default",
+    workspaceId: "workspace-1",
+    targetType: "workspace",
+    targetId: "default",
+    integrationKey: "google",
+    connectionId: "conn-google-default",
+    isDefault: true
+  });
+  store.upsertIntegrationBinding({
+    bindingId: "bind-google-app",
+    workspaceId: "workspace-1",
+    targetType: "app",
+    targetId: "gmail",
+    integrationKey: "google",
+    connectionId: "conn-google-app",
+    isDefault: false
+  });
+  const broker = new IntegrationBrokerService(store);
+
+  const result = broker.exchangeToken({
+    grant: "grant:workspace-1:gmail:some-uuid",
+    provider: "google"
+  });
+
+  assert.equal(result.token, "token-app-specific");
+  assert.equal(result.connection_id, "conn-google-app");
+
+  store.close();
+});
