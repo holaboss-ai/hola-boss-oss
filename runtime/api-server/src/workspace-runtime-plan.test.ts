@@ -6,6 +6,7 @@ import {
   compileWorkspaceRuntimePlan,
   runWorkspaceRuntimePlanCli
 } from "./workspace-runtime-plan.js";
+import { parseResolvedAppRuntime } from "./workspace-apps.js";
 
 test("collectWorkspaceRuntimePlanReferences returns AGENTS and app configs", () => {
   const references = collectWorkspaceRuntimePlanReferences({
@@ -128,6 +129,174 @@ env_contract:
   assert.equal(plan.resolved_applications[0]?.mcp.port, 3099);
   assert.deepEqual(plan.mcp_tool_allowlist, ["holaposter.create_post"]);
   assert.deepEqual(plan.schema_aliases, {});
+});
+
+test("compileWorkspaceRuntimePlan parses application integrations", () => {
+  const plan = compileWorkspaceRuntimePlan({
+    workspace_id: "ws-integrations",
+    workspace_yaml: `
+template_id: gmail_workspace
+agents:
+  id: workspace.general
+  model: openai/gpt-5
+mcp_registry:
+  allowlist:
+    tool_ids: []
+  servers: {}
+applications:
+  - app_id: gmail
+    config_path: apps/gmail/app.runtime.yaml
+`,
+    references: {
+      "apps/gmail/app.runtime.yaml": `
+app_id: gmail
+mcp:
+  port: 3099
+integrations:
+  - key: primary_google
+    provider: google
+    capability: gmail
+    scopes:
+      - gmail.send
+      - gmail.readonly
+    required: true
+    credential_source: broker
+    holaboss_user_id_required: true
+`
+    }
+  });
+
+  assert.deepEqual(plan.resolved_applications[0]?.integrations, [
+    {
+      key: "primary_google",
+      provider: "google",
+      capability: "gmail",
+      scopes: ["gmail.send", "gmail.readonly"],
+      required: true,
+      credentialSource: "broker",
+      holabossUserIdRequired: true
+    }
+  ]);
+});
+
+test("parseResolvedAppRuntime parses a legacy single integration block", () => {
+  const resolved = parseResolvedAppRuntime(
+    `
+app_id: gmail
+mcp:
+  port: 3099
+integration:
+  destination: google
+  credential_source: platform
+  holaboss_user_id_required: true
+env_contract:
+  - HOLABOSS_USER_ID
+`,
+    "gmail",
+    "apps/gmail/app.runtime.yaml"
+  );
+
+  assert.deepEqual(resolved.integrations, [
+    {
+      key: "google",
+      provider: "google",
+      capability: null,
+      scopes: [],
+      required: true,
+      credentialSource: "platform",
+      holabossUserIdRequired: true
+    }
+  ]);
+});
+
+test("parseResolvedAppRuntime parses list-based integrations", () => {
+  const resolved = parseResolvedAppRuntime(
+    `
+app_id: gmail
+mcp:
+  port: 3099
+integrations:
+  - key: primary_google
+    provider: google
+    capability: gmail
+    scopes:
+      - gmail.send
+      - gmail.readonly
+    required: true
+    credential_source: broker
+    holaboss_user_id_required: true
+`,
+    "gmail",
+    "apps/gmail/app.runtime.yaml"
+  );
+
+  assert.deepEqual(resolved.integrations, [
+    {
+      key: "primary_google",
+      provider: "google",
+      capability: "gmail",
+      scopes: ["gmail.send", "gmail.readonly"],
+      required: true,
+      credentialSource: "broker",
+      holabossUserIdRequired: true
+    }
+  ]);
+});
+
+test("parseResolvedAppRuntime rejects unknown credential_source values", () => {
+  assert.throws(
+    () =>
+      parseResolvedAppRuntime(
+        `
+app_id: gmail
+mcp:
+  port: 3099
+integration:
+  destination: google
+  credential_source: not-a-real-mode
+`,
+        "gmail",
+        "apps/gmail/app.runtime.yaml"
+      ),
+    /credential_source/i
+  );
+});
+
+test("compileWorkspaceRuntimePlan rejects mixed legacy and list-based integration forms", () => {
+  assert.throws(
+    () =>
+      compileWorkspaceRuntimePlan({
+        workspace_id: "ws-integrations",
+        workspace_yaml: `
+template_id: gmail_workspace
+agents:
+  id: workspace.general
+  model: openai/gpt-5
+mcp_registry:
+  allowlist:
+    tool_ids: []
+  servers: {}
+applications:
+  - app_id: gmail
+    config_path: apps/gmail/app.runtime.yaml
+`,
+        references: {
+          "apps/gmail/app.runtime.yaml": `
+app_id: gmail
+mcp:
+  port: 3099
+integration:
+  destination: google
+  credential_source: platform
+integrations:
+  - key: primary_google
+    provider: google
+    capability: gmail
+`
+        }
+      }),
+    /both integration and integrations/i
+  );
 });
 
 test("runWorkspaceRuntimePlanCli collects structured references", async () => {

@@ -3,6 +3,11 @@ import { pathToFileURL } from "node:url";
 
 import yaml from "js-yaml";
 
+import {
+  parseResolvedIntegrationRequirements,
+  type ResolvedIntegrationRequirement
+} from "./integration-types.js";
+
 type JsonRecord = Record<string, unknown>;
 
 export type WorkspaceRuntimePlanCompileRequest = {
@@ -91,6 +96,7 @@ export type ResolvedApplication = {
     interval_s: number;
   };
   env_contract: string[];
+  integrations?: ResolvedIntegrationRequirement[];
   start_command: string;
   base_dir: string;
   lifecycle: {
@@ -909,6 +915,16 @@ function parseAppRuntimeYaml(rawYaml: string, declaredAppId: string, configPath:
   const envContract = Array.isArray(loaded.env_contract)
     ? loaded.env_contract.filter((value): value is string => typeof value === "string")
     : [];
+  let integrations: ReturnType<typeof parseResolvedIntegrationRequirements> = [];
+  try {
+    integrations = parseResolvedIntegrationRequirements(loaded);
+  } catch (error) {
+    err({
+      code: "app_config_invalid_yaml",
+      path: configPath,
+      message: error instanceof Error ? error.message : String(error)
+    });
+  }
   const configDir = configPath.includes("/") ? configPath.slice(0, configPath.lastIndexOf("/")) : ".";
 
   return {
@@ -934,6 +950,7 @@ function parseAppRuntimeYaml(rawYaml: string, declaredAppId: string, configPath:
           : 5
     },
     env_contract: envContract,
+    integrations: integrations.length > 0 ? integrations : undefined,
     start_command: typeof loaded.start === "string" ? loaded.start : "",
     base_dir: configDir === "." ? "." : configDir,
     lifecycle: {

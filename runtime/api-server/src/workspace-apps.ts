@@ -4,6 +4,11 @@ import path from "node:path";
 import type { RuntimeStateStore } from "@holaboss/runtime-state-store";
 import yaml from "js-yaml";
 
+import {
+  parseResolvedIntegrationRequirements,
+  type ResolvedIntegrationRequirement
+} from "./integration-types.js";
+
 const APP_HTTP_PORT_BASE = 18080;
 const APP_MCP_PORT_BASE = 13100;
 const EMBEDDED_RUNTIME_FLAG = "HOLABOSS_EMBEDDED_RUNTIME";
@@ -33,6 +38,7 @@ export type ResolvedApplicationRuntime = {
     intervalS: number;
   };
   envContract: string[];
+  integrations?: ResolvedIntegrationRequirement[];
   startCommand: string;
   baseDir: string;
   lifecycle: {
@@ -218,6 +224,7 @@ export function parseResolvedAppRuntime(
       : undefined);
   const lifecycle = isRecord(loaded.lifecycle) ? loaded.lifecycle : {};
   const envContract = Array.isArray(loaded.env_contract) ? loaded.env_contract.filter((value) => typeof value === "string") : [];
+  const integrations = parseResolvedIntegrationRequirements(loaded);
   const configDir = path.posix.dirname(configPath);
   return {
     appId: declaredAppId,
@@ -238,6 +245,7 @@ export function parseResolvedAppRuntime(
           : 5
     },
     envContract,
+    integrations: integrations.length > 0 ? integrations : undefined,
     startCommand: typeof loaded.start === "string" ? loaded.start : "",
     baseDir: configDir === "." ? "." : configDir,
     lifecycle: {
