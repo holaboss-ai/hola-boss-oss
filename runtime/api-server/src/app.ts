@@ -63,6 +63,7 @@ import {
   IntegrationServiceError,
   RuntimeIntegrationService
 } from "./integrations.js";
+import { BrokerError, IntegrationBrokerService } from "./integration-broker.js";
 import {
   appendWorkspaceApplication,
   listWorkspaceComposeShutdownTargets,
@@ -1102,6 +1103,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const runtimeConfigService = options.runtimeConfigService ?? new FileRuntimeConfigService();
   const browserToolService = options.browserToolService ?? new DesktopBrowserToolService();
   const integrationService = new RuntimeIntegrationService(store);
+  const brokerService = new IntegrationBrokerService(store);
   const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
   const queueWorker = resolveQueueWorker(options, app, store);
   const cronWorker = resolveCronWorker(options, app, store, queueWorker);
@@ -1496,6 +1498,25 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "integration readiness check failed");
+    }
+  });
+
+  app.post("/api/v1/integrations/broker/token", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const grant = typeof request.body.grant === "string" ? request.body.grant : "";
+    const provider = typeof request.body.provider === "string" ? request.body.provider : "";
+    if (!grant || !provider) {
+      return sendError(reply, 400, "grant and provider are required");
+    }
+    try {
+      return brokerService.exchangeToken({ grant, provider });
+    } catch (error) {
+      if (error instanceof BrokerError) {
+        return reply.status(error.statusCode).send({ error: error.code, message: error.message });
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "broker token exchange failed");
     }
   });
 

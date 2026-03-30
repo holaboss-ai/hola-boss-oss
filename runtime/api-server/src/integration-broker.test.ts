@@ -11,6 +11,7 @@ import {
   IntegrationBrokerService,
   parseAppGrant
 } from "./integration-broker.js";
+import { buildRuntimeApiServer } from "./app.js";
 
 const tempDirs: string[] = [];
 
@@ -291,5 +292,86 @@ test("exchangeToken prefers app-specific binding over workspace default", () => 
   assert.equal(result.token, "token-app-specific");
   assert.equal(result.connection_id, "conn-google-app");
 
+  store.close();
+});
+
+test("POST /api/v1/integrations/broker/token returns provider token via HTTP", async () => {
+  const root = makeTempDir("hb-broker-route-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active"
+  });
+  store.upsertIntegrationConnection({
+    connectionId: "conn-google-1",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "joshua@holaboss.ai",
+    authMode: "oauth_app",
+    grantedScopes: ["gmail.send"],
+    status: "active",
+    secretRef: "gya_test-token-value"
+  });
+  store.upsertIntegrationBinding({
+    bindingId: "bind-google-1",
+    workspaceId: "workspace-1",
+    targetType: "workspace",
+    targetId: "default",
+    integrationKey: "google",
+    connectionId: "conn-google-1",
+    isDefault: true
+  });
+
+  const app = buildRuntimeApiServer({
+    store,
+    workspaceRoot: path.join(root, "workspace"),
+    queueWorker: null,
+    cronWorker: null,
+    bridgeWorker: null
+  });
+
+  const successResponse = await app.inject({
+    method: "POST",
+    url: "/api/v1/integrations/broker/token",
+    payload: {
+      grant: "grant:workspace-1:gmail:test-uuid",
+      provider: "google"
+    }
+  });
+  assert.equal(successResponse.statusCode, 200);
+  const successBody = successResponse.json();
+  assert.equal(successBody.token, "gya_test-token-value");
+  assert.equal(successBody.provider, "google");
+  assert.equal(successBody.connection_id, "conn-google-1");
+
+  const errorResponse = await app.inject({
+    method: "POST",
+    url: "/api/v1/integrations/broker/token",
+    payload: {
+      grant: "bad-grant",
+      provider: "google"
+    }
+  });
+  assert.equal(errorResponse.statusCode, 401);
+  const errorBody = errorResponse.json();
+  assert.equal(errorBody.error, "grant_invalid");
+
+  const unboundResponse = await app.inject({
+    method: "POST",
+    url: "/api/v1/integrations/broker/token",
+    payload: {
+      grant: "grant:workspace-1:gmail:test-uuid",
+      provider: "reddit"
+    }
+  });
+  assert.equal(unboundResponse.statusCode, 404);
+  assert.equal(unboundResponse.json().error, "integration_not_bound");
+
+  await app.close();
   store.close();
 });
