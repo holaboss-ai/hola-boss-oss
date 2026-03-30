@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 
+import { type RuntimeStateStore } from "@holaboss/runtime-state-store";
+
+import { resolveIntegrationRuntime } from "./integration-runtime.js";
 import type { ResolvedApplicationRuntime, WorkspaceComposeShutdownTarget } from "./workspace-apps.js";
 import { buildAppSetupEnv } from "./app-setup-env.js";
 
@@ -28,6 +31,10 @@ export interface AppLifecycleStartParams {
   holabossUserId?: string;
   resolvedApp?: ResolvedApplicationRuntime;
   skipSetup?: boolean;
+}
+
+export interface RuntimeAppLifecycleExecutorOptions {
+  store?: RuntimeStateStore | null;
 }
 
 export interface AppLifecycleExecutorLike {
@@ -238,9 +245,13 @@ function buildShellLifecycleEnv(
     mcpPort?: number;
     holabossUserId?: string;
     resolvedApp?: ResolvedApplicationRuntime;
+    integrationEnv?: NodeJS.ProcessEnv;
   }
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = params.appDir ? buildAppSetupEnv(params.appDir) : { ...process.env };
+  if (params.integrationEnv) {
+    Object.assign(env, params.integrationEnv);
+  }
   if (params.httpPort !== undefined) {
     env.PORT = String(params.httpPort);
   }
@@ -264,6 +275,7 @@ async function runLifecycleSetup(params: {
   httpPort: number;
   mcpPort: number;
   holabossUserId?: string;
+  integrationEnv?: NodeJS.ProcessEnv;
   spawnImpl?: SpawnLike;
 }): Promise<void> {
   const setupCommand = params.resolvedApp.lifecycle.setup.trim();
@@ -462,6 +474,7 @@ export async function startComposeAppTarget(params: {
   httpPort: number;
   mcpPort: number;
   holabossUserId?: string;
+  integrationEnv?: NodeJS.ProcessEnv;
   spawnImpl?: SpawnLike;
   fetchImpl?: typeof fetch;
 }): Promise<AppLifecycleActionResult> {
@@ -535,6 +548,7 @@ export async function startShellLifecycleAppTarget(params: {
   httpPort: number;
   mcpPort: number;
   holabossUserId?: string;
+  integrationEnv?: NodeJS.ProcessEnv;
   skipSetup?: boolean;
   spawnImpl?: SpawnLike;
   fetchImpl?: typeof fetch;
@@ -585,6 +599,7 @@ export async function startSubprocessAppTarget(params: {
   httpPort: number;
   mcpPort: number;
   holabossUserId?: string;
+  integrationEnv?: NodeJS.ProcessEnv;
   skipSetup?: boolean;
   spawnImpl?: SpawnLike;
   fetchImpl?: typeof fetch;
@@ -763,7 +778,23 @@ function unsupportedStartError(params: {
 }
 
 export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
+  readonly store: RuntimeStateStore | null;
+
+  constructor(options: RuntimeAppLifecycleExecutorOptions = {}) {
+    this.store = options.store ?? null;
+  }
+
   async startApp(params: AppLifecycleStartParams): Promise<AppLifecycleActionResult> {
+    const integrationRuntime =
+      this.store && params.appDir && params.resolvedApp
+        ? resolveIntegrationRuntime({
+            store: this.store,
+            appId: params.appId,
+            appDir: params.appDir,
+            resolvedApp: params.resolvedApp
+          })
+        : null;
+    const integrationEnv = integrationRuntime?.env ?? {};
     if (
       hasNativeComposeLifecycle(params) &&
       params.httpPort !== undefined &&
@@ -775,7 +806,8 @@ export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
         resolvedApp: params.resolvedApp,
         httpPort: params.httpPort,
         mcpPort: params.mcpPort,
-        holabossUserId: params.holabossUserId
+        holabossUserId: params.holabossUserId,
+        integrationEnv
       });
     }
     if (hasNativeShellLifecycle(params) && params.resolvedApp.lifecycle.start) {
@@ -789,7 +821,8 @@ export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
         httpPort: params.httpPort,
         mcpPort: params.mcpPort,
         holabossUserId: params.holabossUserId,
-        skipSetup: params.skipSetup
+        skipSetup: params.skipSetup,
+        integrationEnv
       });
     }
     if (hasNativeStartCommandLifecycle(params)) {
@@ -803,7 +836,8 @@ export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
         httpPort: params.httpPort,
         mcpPort: params.mcpPort,
         holabossUserId: params.holabossUserId,
-        skipSetup: params.skipSetup
+        skipSetup: params.skipSetup,
+        integrationEnv
       });
     }
     throw unsupportedStartError(params);

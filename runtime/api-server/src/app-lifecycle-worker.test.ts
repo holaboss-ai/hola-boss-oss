@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
+import { RuntimeStateStore } from "@holaboss/runtime-state-store";
+
 import {
   AppLifecycleExecutorError,
   findComposeCommand,
@@ -328,6 +330,114 @@ test("startShellLifecycleAppTarget runs lifecycle.start and waits healthy", asyn
   });
   assert.deepEqual(calls, [{ key: "npm run start", cwd: appDir }]);
   assert.equal(seenEnv?.HOLABOSS_USER_ID, "user-1");
+});
+
+test("runtime executor injects integration env for bound shell apps", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hb-shell-app-integration-"));
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active"
+  });
+  const appDir = path.join(workspaceRoot, workspace.id, "apps", "app-a");
+  fs.mkdirSync(appDir, { recursive: true });
+  store.upsertIntegrationConnection({
+    connectionId: "conn-google-1",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "joshua@holaboss.ai",
+    authMode: "oauth_app",
+    grantedScopes: ["gmail.send"],
+    status: "active",
+    secretRef: "token-google-1"
+  });
+  store.upsertIntegrationBinding({
+    bindingId: "bind-google-default",
+    workspaceId: workspace.id,
+    targetType: "workspace",
+    targetId: "default",
+    integrationKey: "google",
+    connectionId: "conn-google-1",
+    isDefault: true
+  });
+
+  const calls: Array<{ key: string; cwd?: string; env?: NodeJS.ProcessEnv }> = [];
+  let started = false;
+  const spawnStub = ((command: string, args?: readonly string[], options?: { cwd?: string; shell?: boolean; env?: NodeJS.ProcessEnv }) => {
+    const key = `${command} ${(args ?? []).join(" ")}`.trim();
+    calls.push({ key, cwd: options?.cwd, env: options?.env });
+    const child = new EventEmitter() as EventEmitter & {
+      stderr: EventEmitter & { setEncoding: (encoding: string) => void };
+      stdout: EventEmitter & { setEncoding: (encoding: string) => void };
+      kill: () => void;
+      exitCode?: number | null;
+    };
+    child.stderr = Object.assign(new EventEmitter(), { setEncoding: (_encoding: string) => {} });
+    child.stdout = Object.assign(new EventEmitter(), { setEncoding: (_encoding: string) => {} });
+    child.kill = () => {};
+    started = key === "npm run start";
+    queueMicrotask(() => {
+      child.exitCode = 0;
+      child.emit("close", 0);
+    });
+    return child;
+  }) as typeof import("node:child_process").spawn;
+  const fetchStub = (async () => {
+    if (!started) {
+      throw new Error("app not started yet");
+    }
+    return new Response("", { status: 200 });
+  }) as typeof fetch;
+  await startShellLifecycleAppTarget({
+    appId: "app-a",
+    appDir,
+    resolvedApp: {
+      appId: "app-a",
+      mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+      healthCheck: { path: "/health", timeoutS: 1, intervalS: 0.01 },
+      envContract: ["HOLABOSS_USER_ID", "PLATFORM_INTEGRATION_TOKEN", "WORKSPACE_GOOGLE_INTEGRATION_ID"],
+      integrations: [
+        {
+          key: "google",
+          provider: "google",
+          capability: "gmail",
+          scopes: ["gmail.send"],
+          required: true,
+          credentialSource: "platform",
+          holabossUserIdRequired: true
+        }
+      ],
+      startCommand: "",
+      baseDir: "apps/app-a",
+      lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
+    },
+    httpPort: 18081,
+    mcpPort: 13101,
+    holabossUserId: "user-1",
+    spawnImpl: spawnStub,
+    fetchImpl: fetchStub,
+    integrationEnv: {
+      HOLABOSS_INTEGRATION_BROKER_URL: "http://127.0.0.1:8080/api/v1/integrations",
+      HOLABOSS_APP_GRANT: "grant:workspace-1:app-a:test",
+      PLATFORM_INTEGRATION_TOKEN: "token-google-1",
+      WORKSPACE_GOOGLE_INTEGRATION_ID: "conn-google-1"
+    }
+  });
+
+  const env = calls.find((entry) => entry.key === "npm run start")?.env;
+  assert.equal(env?.HOLABOSS_USER_ID, "user-1");
+  assert.equal(env?.PLATFORM_INTEGRATION_TOKEN, "token-google-1");
+  assert.equal(env?.WORKSPACE_GOOGLE_INTEGRATION_ID, "conn-google-1");
+  assert.equal(env?.HOLABOSS_INTEGRATION_BROKER_URL, "http://127.0.0.1:8080/api/v1/integrations");
+  assert.equal(env?.HOLABOSS_APP_GRANT, "grant:workspace-1:app-a:test");
+
+  store.close();
 });
 
 test("startShellLifecycleAppTarget runs lifecycle.setup before lifecycle.start", async () => {
