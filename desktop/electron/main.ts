@@ -43,6 +43,7 @@ const OVERFLOW_POPUP_WIDTH = 220;
 const OVERFLOW_POPUP_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MIN_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MAX_HEIGHT = 320;
+const MAIN_WINDOW_CLOSED_LISTENER_BUFFER = 16;
 const APP_THEMES = new Set(["holaboss", "emerald", "cobalt", "ember", "glacier", "mono", "claude", "slate", "paper", "graphite"]);
 const GITHUB_RELEASES_OWNER = "holaboss-ai";
 const GITHUB_RELEASES_REPO = "hola-boss-oss";
@@ -7253,6 +7254,24 @@ function getActiveBrowserTab(workspaceId?: string | null): BrowserTabRecord | nu
   return workspace.tabs.get(workspace.activeTabId) ?? null;
 }
 
+function syncMainWindowClosedListenerBudget() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  let tabCount = 0;
+  for (const workspace of browserWorkspaces.values()) {
+    tabCount += workspace.tabs.size;
+  }
+
+  // The desktop browser keeps many tab views alive at once, so the window needs
+  // a higher close-listener budget than Node's default warning threshold.
+  const desiredBudget = Math.max(10, tabCount + MAIN_WINDOW_CLOSED_LISTENER_BUFFER);
+  if (mainWindow.getMaxListeners() < desiredBudget) {
+    mainWindow.setMaxListeners(desiredBudget);
+  }
+}
+
 function applyBoundsToTab(workspaceId: string, tabId: string) {
   const workspace = browserWorkspaceFromMap(workspaceId);
   const tab = workspace?.tabs.get(tabId);
@@ -7444,6 +7463,7 @@ function createBrowserTab(
     initialized: !hasInitialUrl
   });
   workspace.tabs.set(tabId, { view, state });
+  syncMainWindowClosedListenerBudget();
 
   view.setBounds(browserBounds);
   view.setAutoResize({ width: false, height: false, horizontal: false, vertical: false });
@@ -8852,6 +8872,7 @@ function createMainWindow() {
   });
 
   mainWindow = win;
+  syncMainWindowClosedListenerBudget();
   browserBounds = { x: 0, y: 0, width: 0, height: 0 };
   activeBrowserWorkspaceId = "";
   for (const workspaceId of Array.from(browserWorkspaces.keys())) {
