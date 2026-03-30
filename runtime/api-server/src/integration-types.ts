@@ -116,7 +116,8 @@ export function parseResolvedIntegrationRequirements(document: JsonRecord): Reso
   }
 
   if (hasIntegrationList) {
-    for (const [index, value] of document.integrations.entries()) {
+    const integrationsList = document.integrations as unknown[];
+    for (const [index, value] of integrationsList.entries()) {
       const parsed = parseIntegrationRequirement(value, `integration_${index}`);
       if (parsed) {
         resolved.push(parsed);
