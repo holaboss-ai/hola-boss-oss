@@ -6,7 +6,7 @@ import { afterEach, test } from "node:test";
 
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
-import { resolveIntegrationRuntime } from "./integration-runtime.js";
+import { checkIntegrationReadiness, resolveIntegrationRuntime } from "./integration-runtime.js";
 
 const tempDirs: string[] = [];
 
@@ -310,6 +310,172 @@ test("prefers an app-specific binding override over a workspace default binding"
   assert.equal(result.env.PLATFORM_INTEGRATION_TOKEN, "token-google-app");
   assert.equal(result.env.WORKSPACE_GOOGLE_INTEGRATION_ID, appConnection.connectionId);
   assert.equal(result.bindings[0]?.bindingId, "bind-google-app");
+
+  store.close();
+});
+
+test("checkIntegrationReadiness returns integration_not_bound when no binding exists", () => {
+  const root = makeTempDir("hb-integration-readiness-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active"
+  });
+
+  const readiness = checkIntegrationReadiness({
+    store,
+    workspaceId: workspace.id,
+    appId: "gmail",
+    resolvedApp: createSingleIntegrationResolvedApp()
+  });
+
+  assert.equal(readiness.ready, false);
+  assert.equal(readiness.issues.length, 1);
+  assert.equal(readiness.issues[0]?.code, "integration_not_bound");
+  assert.equal(readiness.issues[0]?.provider, "google");
+  assert.equal(readiness.issues[0]?.message, "Google is not connected for this workspace");
+
+  store.close();
+});
+
+test("checkIntegrationReadiness returns integration_needs_reauth for inactive connection", () => {
+  const root = makeTempDir("hb-integration-readiness-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active"
+  });
+  const inactiveConnection = store.upsertIntegrationConnection({
+    connectionId: "conn-google-inactive",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "inactive@holaboss.ai",
+    authMode: "oauth_app",
+    grantedScopes: ["gmail.send"],
+    status: "expired",
+    secretRef: "token-google-expired"
+  });
+  store.upsertIntegrationBinding({
+    bindingId: "bind-google-default",
+    workspaceId: workspace.id,
+    targetType: "workspace",
+    targetId: "default",
+    integrationKey: "google",
+    connectionId: inactiveConnection.connectionId,
+    isDefault: true
+  });
+
+  const readiness = checkIntegrationReadiness({
+    store,
+    workspaceId: workspace.id,
+    appId: "gmail",
+    resolvedApp: createSingleIntegrationResolvedApp()
+  });
+
+  assert.equal(readiness.ready, false);
+  assert.equal(readiness.issues.length, 1);
+  assert.equal(readiness.issues[0]?.code, "integration_needs_reauth");
+  assert.equal(readiness.issues[0]?.message, "Google account needs re-authentication");
+
+  store.close();
+});
+
+test("checkIntegrationReadiness returns ready when all required integrations are bound and active", () => {
+  const root = makeTempDir("hb-integration-readiness-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active"
+  });
+  const googleConnection = store.upsertIntegrationConnection({
+    connectionId: "conn-google-1",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "joshua@holaboss.ai",
+    authMode: "oauth_app",
+    grantedScopes: ["gmail.send", "gmail.readonly"],
+    status: "active",
+    secretRef: "token-google-1"
+  });
+  store.upsertIntegrationBinding({
+    bindingId: "bind-google-default",
+    workspaceId: workspace.id,
+    targetType: "workspace",
+    targetId: "default",
+    integrationKey: "google",
+    connectionId: googleConnection.connectionId,
+    isDefault: true
+  });
+
+  const readiness = checkIntegrationReadiness({
+    store,
+    workspaceId: workspace.id,
+    appId: "gmail",
+    resolvedApp: createSingleIntegrationResolvedApp()
+  });
+
+  assert.equal(readiness.ready, true);
+  assert.equal(readiness.issues.length, 0);
+
+  store.close();
+});
+
+test("checkIntegrationReadiness skips optional integrations", () => {
+  const root = makeTempDir("hb-integration-readiness-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active"
+  });
+  const googleConnection = store.upsertIntegrationConnection({
+    connectionId: "conn-google-1",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "joshua@holaboss.ai",
+    authMode: "oauth_app",
+    grantedScopes: ["gmail.send", "gmail.readonly"],
+    status: "active",
+    secretRef: "token-google-1"
+  });
+  store.upsertIntegrationBinding({
+    bindingId: "bind-google-default",
+    workspaceId: workspace.id,
+    targetType: "workspace",
+    targetId: "default",
+    integrationKey: "google",
+    connectionId: googleConnection.connectionId,
+    isDefault: true
+  });
+
+  const readiness = checkIntegrationReadiness({
+    store,
+    workspaceId: workspace.id,
+    appId: "gmail",
+    resolvedApp: createResolvedApp()
+  });
+
+  assert.equal(readiness.ready, true);
+  assert.equal(readiness.issues.length, 0);
 
   store.close();
 });

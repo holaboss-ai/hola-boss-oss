@@ -2,6 +2,12 @@ import { randomUUID } from "node:crypto";
 
 import { type RuntimeStateStore } from "@holaboss/runtime-state-store";
 
+import {
+  type IntegrationReadinessResult,
+  checkIntegrationReadiness
+} from "./integration-runtime.js";
+import { resolveWorkspaceAppRuntime } from "./workspace-apps.js";
+
 export interface IntegrationCatalogProviderRecord {
   provider_id: string;
   display_name: string;
@@ -286,5 +292,30 @@ export class RuntimeIntegrationService {
       throw new IntegrationServiceError(404, "binding not found");
     }
     return { deleted: true };
+  }
+
+  checkReadiness(params: {
+    workspaceId: string;
+    appId: string;
+  }): IntegrationReadinessResult {
+    const workspaceId = requiredString(params.workspaceId, "workspace_id");
+    const appId = requiredString(params.appId, "app_id");
+    requireWorkspace(this.store, workspaceId);
+
+    const workspaceDir = this.store.workspaceDir(workspaceId);
+    try {
+      const appRuntime = resolveWorkspaceAppRuntime(workspaceDir, appId, {
+        store: this.store,
+        workspaceId
+      });
+      return checkIntegrationReadiness({
+        store: this.store,
+        workspaceId,
+        appId,
+        resolvedApp: appRuntime.resolvedApp
+      });
+    } catch {
+      return { ready: true, issues: [] };
+    }
   }
 }

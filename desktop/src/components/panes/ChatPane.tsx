@@ -316,6 +316,22 @@ function inputIdFromMessageId(messageId: string, role: "user" | "assistant") {
   return messageId.startsWith(prefix) ? messageId.slice(prefix.length) : "";
 }
 
+function extractMcpErrorText(result: unknown): string {
+  if (!isRecord(result) || result.isError !== true) {
+    return "";
+  }
+  const content = Array.isArray(result.content) ? result.content : [];
+  for (const part of content) {
+    if (isRecord(part) && part.type === "text" && typeof part.text === "string") {
+      const text = part.text.trim();
+      if (text) {
+        return text.length > 200 ? `${text.slice(0, 197).trimEnd()}...` : text;
+      }
+    }
+  }
+  return "";
+}
+
 function toolTraceStepFromPayload(payload: Record<string, unknown>, order: number): ChatTraceStep | null {
   const stepId = toolTraceStepId(payload);
   const toolName = typeof payload.tool_name === "string" ? payload.tool_name.trim() : "";
@@ -326,10 +342,12 @@ function toolTraceStepFromPayload(payload: Record<string, unknown>, order: numbe
     return null;
   }
 
+  const isError = payload.error === true || phase === "error";
   const details: string[] = [];
   const argsSummary = summarizeUnknown(payload.tool_args);
   const resultSummary = summarizeUnknown(payload.result);
   const errorSummary = summarizeUnknown(payload.error);
+  const mcpErrorText = extractMcpErrorText(payload.result);
 
   if (phase === "started") {
     details.push("Tool call started.");
@@ -337,11 +355,18 @@ function toolTraceStepFromPayload(payload: Record<string, unknown>, order: numbe
       details.push(`Inputs: ${argsSummary}`);
     }
   } else if (TOOL_TRACE_TERMINAL_PHASES.has(phase)) {
-    details.push(payload.error ? "Tool call returned an error." : "Tool call completed.");
-    if (resultSummary) {
+    if (isError && mcpErrorText) {
+      details.push(mcpErrorText);
+    } else if (isError) {
+      details.push("Tool call returned an error.");
+      if (errorSummary && errorSummary !== "true" && errorSummary !== "false") {
+        details.push(`Error: ${errorSummary}`);
+      }
+    } else {
+      details.push("Tool call completed.");
+    }
+    if (!isError && resultSummary) {
       details.push(`Result: ${resultSummary}`);
-    } else if (errorSummary && errorSummary !== "false") {
-      details.push(`Error: ${errorSummary}`);
     }
   } else if (argsSummary) {
     details.push(`Inputs: ${argsSummary}`);
@@ -351,7 +376,7 @@ function toolTraceStepFromPayload(payload: Record<string, unknown>, order: numbe
     id: stepId,
     kind: "tool",
     title: label,
-    status: payload.error ? "error" : TOOL_TRACE_TERMINAL_PHASES.has(phase) ? "completed" : "running",
+    status: isError ? "error" : TOOL_TRACE_TERMINAL_PHASES.has(phase) ? "completed" : "running",
     details,
     order
   };

@@ -231,6 +231,69 @@ test("mapOpencodeEvent maps question tool calls to waiting_user terminal events"
   ]);
 });
 
+test("mapOpencodeEvent marks completed MCP tool results with isError as tool errors", () => {
+  const state = createOpencodeEventMapperState();
+
+  const events = mapOpencodeEvent(
+    {
+      type: "message.part.updated",
+      properties: {
+        session_id: "opencode-session-1",
+        part: {
+          type: "tool",
+          id: "tool-part-1",
+          tool: "gmail_send_draft",
+          call_id: "call-1",
+          state: {
+            status: "completed",
+            input: {
+              draft_id: "draft-1",
+            },
+            output: {
+              content: [
+                {
+                  type: "text",
+                  text: "No Google token. Connect via Settings or set PLATFORM_INTEGRATION_TOKEN.",
+                },
+              ],
+              isError: true,
+            },
+            error: null,
+          },
+        },
+      },
+    },
+    "opencode-session-1",
+    state
+  );
+
+  assert.deepEqual(events, [
+    {
+      event_type: "tool_call",
+      payload: {
+        phase: "error",
+        tool_name: "gmail_send_draft",
+        error: true,
+        tool_args: {
+          draft_id: "draft-1",
+        },
+        result: {
+          content: [
+            {
+              type: "text",
+              text: "No Google token. Connect via Settings or set PLATFORM_INTEGRATION_TOKEN.",
+            },
+          ],
+          isError: true,
+        },
+        event: "message.part.updated",
+        source: "opencode",
+        call_id: "call-1",
+      },
+    },
+  ]);
+});
+
 test("mapOpencodeEvent maps idle session status to completion and flushes unresolved deltas", () => {
   const state = createOpencodeEventMapperState();
   state.pendingPartDeltas.set("text-part-1", [["message.part.delta", "Hello"]]);

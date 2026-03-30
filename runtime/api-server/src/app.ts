@@ -1479,6 +1479,26 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  app.get("/api/v1/integrations/readiness", async (request, reply) => {
+    const query = isRecord(request.query) ? request.query : {};
+    const workspaceId = optionalString(query.workspace_id);
+    const appId = optionalString(query.app_id);
+    if (!workspaceId) {
+      return sendError(reply, 400, "workspace_id is required");
+    }
+    if (!appId) {
+      return sendError(reply, 400, "app_id is required");
+    }
+    try {
+      return integrationService.checkReadiness({ workspaceId, appId });
+    } catch (error) {
+      if (error instanceof IntegrationServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "integration readiness check failed");
+    }
+  });
+
   app.post("/api/v1/lifecycle/shutdown", async (request, reply) => {
     void request;
     try {

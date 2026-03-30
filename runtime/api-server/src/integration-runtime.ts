@@ -21,6 +21,24 @@ export interface IntegrationRuntimeResolution {
   connections: IntegrationConnectionRecord[];
 }
 
+export type IntegrationReadinessCode =
+  | "ready"
+  | "integration_not_bound"
+  | "integration_not_connected"
+  | "integration_needs_reauth";
+
+export interface IntegrationReadinessIssue {
+  integrationKey: string;
+  provider: string;
+  code: IntegrationReadinessCode;
+  message: string;
+}
+
+export interface IntegrationReadinessResult {
+  ready: boolean;
+  issues: IntegrationReadinessIssue[];
+}
+
 function toProviderEnvKey(provider: string): string {
   return provider.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
 }
@@ -140,4 +158,75 @@ export function resolveIntegrationRuntime(params: {
     bindings,
     connections
   };
+}
+
+const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  google: "Google",
+  github: "GitHub",
+  reddit: "Reddit",
+  twitter: "Twitter / X",
+  linkedin: "LinkedIn"
+};
+
+function providerDisplayName(provider: string): string {
+  return PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+}
+
+export function checkIntegrationReadiness(params: {
+  store: RuntimeStateStore;
+  appId: string;
+  resolvedApp?: ResolvedApplicationRuntime;
+  workspaceId?: string;
+  appDir?: string;
+}): IntegrationReadinessResult {
+  const resolvedApp = params.resolvedApp;
+  const requirements = resolvedApp?.integrations ?? [];
+  const workspaceId = params.workspaceId ?? resolveWorkspaceIdFromAppDir(params.store, params.appDir);
+  const issues: IntegrationReadinessIssue[] = [];
+
+  if (requirements.length === 0 || !workspaceId) {
+    return { ready: true, issues };
+  }
+
+  for (const requirement of requirements) {
+    if (!requirement.required) {
+      continue;
+    }
+    const displayName = providerDisplayName(requirement.provider);
+    const binding = resolveBindingForRequirement({
+      store: params.store,
+      workspaceId,
+      appId: params.appId,
+      integrationKey: requirement.key
+    });
+    if (!binding) {
+      issues.push({
+        integrationKey: requirement.key,
+        provider: requirement.provider,
+        code: "integration_not_bound",
+        message: `${displayName} is not connected for this workspace`
+      });
+      continue;
+    }
+    const connection = params.store.getIntegrationConnection(binding.connectionId);
+    if (!connection) {
+      issues.push({
+        integrationKey: requirement.key,
+        provider: requirement.provider,
+        code: "integration_not_connected",
+        message: `${displayName} connection is missing`
+      });
+      continue;
+    }
+    if (!isActiveIntegrationConnection(connection)) {
+      issues.push({
+        integrationKey: requirement.key,
+        provider: requirement.provider,
+        code: "integration_needs_reauth",
+        message: `${displayName} account needs re-authentication`
+      });
+    }
+  }
+
+  return { ready: issues.length === 0, issues };
 }

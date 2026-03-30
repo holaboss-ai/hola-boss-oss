@@ -471,8 +471,14 @@ function opencodeToolPayload(
     return null;
   }
 
+  const output = asRecord(state?.output);
+  const outputMarkedError = output?.isError === true;
   const phase =
-    status === "pending" || status === "running" ? "started" : status;
+    status === "pending" || status === "running"
+      ? "started"
+      : status === "completed" && outputMarkedError
+        ? "error"
+        : status;
   const partID = firstNonEmptyString(record?.id) ?? "";
   const snapshot = snapshotValue(
     status === "completed" ? state?.output : state?.error,
@@ -1008,11 +1014,53 @@ function isMcpConfig(
   return false;
 }
 
+function summarizeMcpConfig(
+  config: McpLocalConfig | McpRemoteConfig,
+): Record<string, unknown> {
+  if (config.type === "local") {
+    return {
+      type: "local",
+      command: config.command,
+      timeout: config.timeout ?? null,
+      environment_keys: Object.keys(config.environment ?? {}).sort(),
+    };
+  }
+  return {
+    type: "remote",
+    url: config.url,
+    timeout: config.timeout ?? null,
+    header_keys: Object.keys(config.headers ?? {}).sort(),
+  };
+}
+
 async function ensureMcpServers(
   client: ReturnType<typeof createOpencodeClient>,
   request: OpencodeHarnessHostRequest,
 ): Promise<void> {
+  appendOpencodeDiagnosticLog(request.workspace_dir, "mcp_ensure_start", {
+    server_count: request.mcp_servers.length,
+    servers: request.mcp_servers.map((rawServer) => {
+      const server = asRecord(rawServer);
+      const name = firstNonEmptyString(server?.name) ?? null;
+      const config = server?.config;
+      return {
+        name,
+        force_refresh: Boolean(server?._holaboss_force_refresh),
+        valid_config: isMcpConfig(config),
+        config: isMcpConfig(config) ? summarizeMcpConfig(config) : null,
+      };
+    }),
+  });
+
+  appendOpencodeDiagnosticLog(request.workspace_dir, "mcp_status_start");
+  const statusStartedAt = Date.now();
   const statusResponse = await client.mcp.status();
+  appendOpencodeDiagnosticLog(request.workspace_dir, "mcp_status_result", {
+    elapsed_ms: Date.now() - statusStartedAt,
+    has_data: statusResponse.data !== undefined,
+    has_error: statusResponse.error !== undefined,
+    status_map: statusResponse.data,
+  });
   const statusMap = asRecord(statusResponse.data) ?? {};
   const seenServerNames = new Set<string>();
 
@@ -1029,6 +1077,12 @@ async function ensureMcpServers(
     seenServerNames.add(name);
     const forceRefresh = Boolean(server?._holaboss_force_refresh);
     const currentStatus = normalizePartType(asRecord(statusMap[name])?.status);
+    appendOpencodeDiagnosticLog(request.workspace_dir, "mcp_server_check", {
+      name,
+      force_refresh: forceRefresh,
+      current_status: currentStatus || null,
+      config: summarizeMcpConfig(config),
+    });
 
     if (
       forceRefresh ||
@@ -1040,21 +1094,54 @@ async function ensureMcpServers(
         "needs_client_registration",
       ].includes(currentStatus)
     ) {
+      appendOpencodeDiagnosticLog(request.workspace_dir, "mcp_add_start", {
+        name,
+        force_refresh: forceRefresh,
+        current_status: currentStatus || null,
+        config: summarizeMcpConfig(config),
+      });
+      const addStartedAt = Date.now();
+      const addResponse = await client.mcp.add({ name, config });
+      appendOpencodeDiagnosticLog(request.workspace_dir, "mcp_add_result", {
+        name,
+        elapsed_ms: Date.now() - addStartedAt,
+        has_data: addResponse.data !== undefined,
+        has_error: addResponse.error !== undefined,
+        error: addResponse.error ?? null,
+      });
       requireData(
-        await client.mcp.add({ name, config }),
+        addResponse,
         `OpenCode MCP registration failed for '${name}'`,
       );
       statusMap[name] = { status: "connected" };
     }
 
     if (forceRefresh || currentStatus !== "connected") {
+      appendOpencodeDiagnosticLog(request.workspace_dir, "mcp_connect_start", {
+        name,
+        force_refresh: forceRefresh,
+        current_status: currentStatus || null,
+      });
+      const connectStartedAt = Date.now();
+      const connectResponse = await client.mcp.connect({ name });
+      appendOpencodeDiagnosticLog(request.workspace_dir, "mcp_connect_result", {
+        name,
+        elapsed_ms: Date.now() - connectStartedAt,
+        has_data: connectResponse.data !== undefined,
+        has_error: connectResponse.error !== undefined,
+        error: connectResponse.error ?? null,
+      });
       requireData(
-        await client.mcp.connect({ name }),
+        connectResponse,
         `OpenCode MCP connect failed for '${name}'`,
       );
       statusMap[name] = { status: "connected" };
     }
   }
+
+  appendOpencodeDiagnosticLog(request.workspace_dir, "mcp_ensure_complete", {
+    connected_server_names: [...seenServerNames].sort(),
+  });
 }
 
 async function sessionExists(
@@ -1190,7 +1277,7 @@ export async function runOpencode(
 
     await probeModelClient(request);
 
-    // await ensureMcpServers(client, request);
+    await ensureMcpServers(client, request);
     appendOpencodeDiagnosticLog(request.workspace_dir, "ensure_session_start", {
       requested_harness_session_id: request.harness_session_id ?? null,
       persisted_harness_session_id:
