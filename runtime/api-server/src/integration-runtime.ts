@@ -147,6 +147,13 @@ export function resolveIntegrationRuntime(params: {
 
   if (platformIntegrationTokens.length === 1) {
     env.PLATFORM_INTEGRATION_TOKEN = platformIntegrationTokens[0]!;
+    if (typeof process !== "undefined" && process.stderr) {
+      process.stderr.write(
+        `[holaboss] DEPRECATION: PLATFORM_INTEGRATION_TOKEN is set for app "${params.appId}". ` +
+        `Migrate to HOLABOSS_INTEGRATION_BROKER_URL + HOLABOSS_APP_GRANT. ` +
+        `This env var will be removed in a future release.\n`
+      );
+    }
   }
 
   return {
