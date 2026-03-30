@@ -134,6 +134,12 @@ function validateTargetType(targetType: string): "workspace" | "app" | "agent" {
   return normalized as "workspace" | "app" | "agent";
 }
 
+function requireWorkspace(store: RuntimeStateStore, workspaceId: string): void {
+  if (!store.getWorkspace(workspaceId)) {
+    throw new IntegrationServiceError(404, "workspace not found");
+  }
+}
+
 function toIntegrationConnectionPayload(record: {
   connectionId: string;
   providerId: string;
@@ -213,6 +219,7 @@ export class RuntimeIntegrationService {
 
   listBindings(params: { workspaceId: string }): { bindings: IntegrationBindingPayload[] } {
     const workspaceId = requiredString(params.workspaceId, "workspace_id");
+    requireWorkspace(this.store, workspaceId);
     return {
       bindings: this.store.listIntegrationBindings({ workspaceId }).map(toIntegrationBindingPayload)
     };
@@ -232,6 +239,18 @@ export class RuntimeIntegrationService {
     const integrationKey = requiredString(params.integrationKey, "integration_key");
     const connectionId = requiredString(params.connectionId, "connection_id");
     const isDefault = optionalBoolean(params.isDefault, false);
+    requireWorkspace(this.store, workspaceId);
+
+    const connection = this.store.getIntegrationConnection(connectionId);
+    if (!connection) {
+      throw new IntegrationServiceError(404, `integration connection ${connectionId} not found`);
+    }
+    if (connection.providerId !== integrationKey) {
+      throw new IntegrationServiceError(
+        400,
+        `connection provider ${connection.providerId} does not match integration ${integrationKey}`
+      );
+    }
 
     const existing = this.store.getIntegrationBindingByTarget({
       workspaceId,
@@ -239,7 +258,6 @@ export class RuntimeIntegrationService {
       targetId,
       integrationKey
     });
-
     const binding = this.store.upsertIntegrationBinding({
       bindingId: existing?.bindingId ?? randomUUID(),
       workspaceId,

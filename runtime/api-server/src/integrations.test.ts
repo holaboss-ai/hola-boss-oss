@@ -57,6 +57,12 @@ test("upserts workspace-scoped bindings and rejects invalid target types", () =>
     grantedScopes: ["gmail.send"],
     status: "active"
   });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active"
+  });
 
   const binding = service.upsertBinding({
     workspaceId: "workspace-1",
@@ -86,6 +92,72 @@ test("upserts workspace-scoped bindings and rejects invalid target types", () =>
       error instanceof IntegrationServiceError &&
       error.statusCode === 400 &&
       error.message.includes("target_type")
+  );
+
+  store.close();
+});
+
+test("rejects missing connections, cross-provider bindings, and missing workspaces", () => {
+  const root = makeTempDir("hb-integrations-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const service = new RuntimeIntegrationService(store);
+  const githubConnection = store.upsertIntegrationConnection({
+    connectionId: "conn-github-1",
+    providerId: "github",
+    ownerUserId: "user-1",
+    accountLabel: "joshua@holaboss.ai",
+    authMode: "oauth_app",
+    grantedScopes: ["repo"],
+    status: "active"
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active"
+  });
+
+  assert.throws(
+    () =>
+      service.upsertBinding({
+        workspaceId: "workspace-1",
+        targetType: "workspace",
+        targetId: "default",
+        integrationKey: "github",
+        connectionId: "missing-connection",
+        isDefault: true
+      }),
+    (error: unknown) =>
+      error instanceof IntegrationServiceError &&
+      error.statusCode === 404 &&
+      error.message.includes("integration connection")
+  );
+
+  assert.throws(
+    () =>
+      service.upsertBinding({
+        workspaceId: "workspace-1",
+        targetType: "workspace",
+        targetId: "default",
+        integrationKey: "google",
+        connectionId: githubConnection.connectionId,
+        isDefault: true
+      }),
+    (error: unknown) =>
+      error instanceof IntegrationServiceError &&
+      error.statusCode === 400 &&
+      error.message.includes("does not match")
+  );
+
+  assert.throws(
+    () => service.listBindings({ workspaceId: "missing-workspace" }),
+    (error: unknown) =>
+      error instanceof IntegrationServiceError &&
+      error.statusCode === 404 &&
+      error.message === "workspace not found"
   );
 
   store.close();

@@ -250,6 +250,12 @@ test("integration routes expose catalog, connections, and bindings", async () =>
     grantedScopes: ["gmail.send"],
     status: "active"
   });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active"
+  });
 
   const catalogResponse = await app.inject({
     method: "GET",
@@ -315,6 +321,61 @@ test("integration routes return 400 for missing required binding inputs", async 
   assert.deepEqual(missingWorkspaceIdResponse.json(), { detail: "workspace_id is required" });
   assert.equal(missingConnectionIdResponse.statusCode, 400);
   assert.deepEqual(missingConnectionIdResponse.json(), { detail: "connection_id is required" });
+
+  await app.close();
+  store.close();
+});
+
+test("integration routes reject missing workspaces and missing connections", async () => {
+  const root = makeTempDir("hb-runtime-api-integrations-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+  const connection = store.upsertIntegrationConnection({
+    connectionId: "conn-github-1",
+    providerId: "github",
+    ownerUserId: "user-1",
+    accountLabel: "joshua@holaboss.ai",
+    authMode: "oauth_app",
+    grantedScopes: ["repo"],
+    status: "active"
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active"
+  });
+
+  const missingWorkspaceListResponse = await app.inject({
+    method: "GET",
+    url: "/api/v1/integrations/bindings?workspace_id=missing-workspace"
+  });
+  const missingWorkspacePutResponse = await app.inject({
+    method: "PUT",
+    url: "/api/v1/integrations/bindings/missing-workspace/workspace/default/github",
+    payload: {
+      connection_id: connection.connectionId,
+      is_default: true
+    }
+  });
+  const missingConnectionResponse = await app.inject({
+    method: "PUT",
+    url: "/api/v1/integrations/bindings/workspace-1/workspace/default/github",
+    payload: {
+      connection_id: "missing-connection",
+      is_default: true
+    }
+  });
+
+  assert.equal(missingWorkspaceListResponse.statusCode, 404);
+  assert.deepEqual(missingWorkspaceListResponse.json(), { detail: "workspace not found" });
+  assert.equal(missingWorkspacePutResponse.statusCode, 404);
+  assert.deepEqual(missingWorkspacePutResponse.json(), { detail: "workspace not found" });
+  assert.equal(missingConnectionResponse.statusCode, 404);
+  assert.deepEqual(missingConnectionResponse.json(), { detail: "integration connection missing-connection not found" });
 
   await app.close();
   store.close();
