@@ -234,6 +234,319 @@ test("binding round trip upserts and reloads persisted session binding", () => {
   store.close();
 });
 
+test("integration connections round trip create list and reload persisted records", () => {
+  const root = makeTempDir("hb-state-store-integrations-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const created = store.upsertIntegrationConnection({
+    connectionId: "conn-google-1",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "joshua@holaboss.ai",
+    accountExternalId: "google-account-1",
+    authMode: "oauth_app",
+    grantedScopes: ["gmail.send", "gmail.readonly"],
+    status: "active",
+    secretRef: "secret/google/1"
+  });
+  const updated = store.upsertIntegrationConnection({
+    connectionId: "conn-google-1",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "joshua@holaboss.ai",
+    accountExternalId: "google-account-1",
+    authMode: "oauth_app",
+    grantedScopes: ["gmail.send"],
+    status: "needs_reauth",
+    secretRef: "secret/google/1"
+  });
+
+  assert.equal(created.connectionId, "conn-google-1");
+  assert.equal(updated.status, "needs_reauth");
+  assert.deepEqual(store.getIntegrationConnection("conn-google-1"), updated);
+  assert.deepEqual(store.listIntegrationConnections().map((record) => record.connectionId), ["conn-google-1"]);
+
+  store.close();
+
+  const reopened = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  assert.deepEqual(reopened.getIntegrationConnection("conn-google-1"), updated);
+  assert.deepEqual(reopened.listIntegrationConnections().map((record) => record.connectionId), ["conn-google-1"]);
+  reopened.close();
+});
+
+test("integration bindings round trip upsert list filter and delete by workspace", () => {
+  const root = makeTempDir("hb-state-store-integrations-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  store.upsertIntegrationConnection({
+    connectionId: "conn-google-1",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "joshua@holaboss.ai",
+    accountExternalId: "google-account-1",
+    authMode: "platform",
+    grantedScopes: ["gmail.send"],
+    status: "active"
+  });
+  store.upsertIntegrationConnection({
+    connectionId: "conn-github-1",
+    providerId: "github",
+    ownerUserId: "user-1",
+    accountLabel: "holaboss-bot",
+    accountExternalId: "github-account-1",
+    authMode: "managed",
+    grantedScopes: ["repo:read"],
+    status: "active"
+  });
+
+  const first = store.upsertIntegrationBinding({
+    bindingId: "bind-google-default",
+    workspaceId: "ws-1",
+    targetType: "workspace",
+    targetId: "default",
+    integrationKey: "google",
+    connectionId: "conn-google-1",
+    isDefault: true
+  });
+  const second = store.upsertIntegrationBinding({
+    bindingId: "bind-google-app",
+    workspaceId: "ws-1",
+    targetType: "app",
+    targetId: "gmail",
+    integrationKey: "google",
+    connectionId: "conn-google-1",
+    isDefault: false
+  });
+  const otherWorkspace = store.upsertIntegrationBinding({
+    bindingId: "bind-github-default",
+    workspaceId: "ws-2",
+    targetType: "workspace",
+    targetId: "default",
+    integrationKey: "github",
+    connectionId: "conn-github-1",
+    isDefault: true
+  });
+
+  assert.equal(first.bindingId, "bind-google-default");
+  assert.equal(second.targetType, "app");
+  assert.equal(otherWorkspace.workspaceId, "ws-2");
+  assert.deepEqual(
+    store.listIntegrationBindings({ workspaceId: "ws-1" }).map((record) => record.bindingId),
+    ["bind-google-default", "bind-google-app"]
+  );
+  assert.deepEqual(store.getIntegrationBinding("bind-google-app"), second);
+
+  assert.equal(store.deleteIntegrationBinding("bind-google-default"), true);
+  assert.equal(store.getIntegrationBinding("bind-google-default"), null);
+  assert.deepEqual(
+    store.listIntegrationBindings({ workspaceId: "ws-1" }).map((record) => record.bindingId),
+    ["bind-google-app"]
+  );
+  assert.deepEqual(
+    store.listIntegrationBindings({ workspaceId: "ws-2" }).map((record) => record.bindingId),
+    ["bind-github-default"]
+  );
+
+  store.close();
+
+  const reopened = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  assert.deepEqual(
+    reopened.listIntegrationBindings({ workspaceId: "ws-1" }).map((record) => record.bindingId),
+    ["bind-google-app"]
+  );
+  assert.deepEqual(reopened.getIntegrationBinding("bind-google-app"), second);
+  reopened.close();
+});
+
+test("integration binding upsert replaces the same logical target even with a different binding id", () => {
+  const root = makeTempDir("hb-state-store-integrations-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  store.upsertIntegrationConnection({
+    connectionId: "conn-google-1",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "joshua@holaboss.ai",
+    authMode: "oauth_app",
+    grantedScopes: ["gmail.send"],
+    status: "active"
+  });
+
+  const original = store.upsertIntegrationBinding({
+    bindingId: "bind-google-original",
+    workspaceId: "ws-1",
+    targetType: "app",
+    targetId: "gmail",
+    integrationKey: "google",
+    connectionId: "conn-google-1",
+    isDefault: false
+  });
+  const rebound = store.upsertIntegrationBinding({
+    bindingId: "bind-google-rebound",
+    workspaceId: "ws-1",
+    targetType: "app",
+    targetId: "gmail",
+    integrationKey: "google",
+    connectionId: "conn-google-1",
+    isDefault: true
+  });
+
+  assert.equal(original.bindingId, "bind-google-original");
+  assert.equal(rebound.bindingId, "bind-google-rebound");
+  assert.equal(store.getIntegrationBinding("bind-google-original"), null);
+  assert.deepEqual(
+    store.getIntegrationBindingByTarget({
+      workspaceId: "ws-1",
+      targetType: "app",
+      targetId: "gmail",
+      integrationKey: "google"
+    }),
+    rebound
+  );
+  assert.deepEqual(
+    store.listIntegrationBindings({ workspaceId: "ws-1" }).map((record) => record.bindingId),
+    ["bind-google-rebound"]
+  );
+  store.close();
+});
+
+test("integration binding write rejects dangling connection ids", () => {
+  const root = makeTempDir("hb-state-store-integrations-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  assert.throws(
+    () =>
+      store.upsertIntegrationBinding({
+        bindingId: "bind-missing-connection",
+        workspaceId: "ws-1",
+        targetType: "workspace",
+        targetId: "default",
+        integrationKey: "google",
+        connectionId: "conn-missing",
+        isDefault: true
+      }),
+    /integration connection/i
+  );
+  store.close();
+});
+
+test("integration lookup methods support target lookup and provider owner filters", () => {
+  const root = makeTempDir("hb-state-store-integrations-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const googleOne = store.upsertIntegrationConnection({
+    connectionId: "conn-google-1",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "joshua@holaboss.ai",
+    authMode: "oauth_app",
+    grantedScopes: ["gmail.send"],
+    status: "active"
+  });
+  const googleTwo = store.upsertIntegrationConnection({
+    connectionId: "conn-google-2",
+    providerId: "google",
+    ownerUserId: "user-2",
+    accountLabel: "joshua+alt@holaboss.ai",
+    authMode: "oauth_app",
+    grantedScopes: ["gmail.send"],
+    status: "active"
+  });
+  const github = store.upsertIntegrationConnection({
+    connectionId: "conn-github-1",
+    providerId: "github",
+    ownerUserId: "user-1",
+    accountLabel: "holaboss-bot",
+    authMode: "managed",
+    grantedScopes: ["repo:read"],
+    status: "active"
+  });
+
+  const binding = store.upsertIntegrationBinding({
+    bindingId: "bind-google-default",
+    workspaceId: "ws-1",
+    targetType: "workspace",
+    targetId: "default",
+    integrationKey: "google",
+    connectionId: "conn-google-1",
+    isDefault: true
+  });
+  const appBinding = store.upsertIntegrationBinding({
+    bindingId: "bind-google-app",
+    workspaceId: "ws-1",
+    targetType: "app",
+    targetId: "gmail",
+    integrationKey: "google",
+    connectionId: "conn-google-2",
+    isDefault: false
+  });
+  store.upsertIntegrationBinding({
+    bindingId: "bind-github-default",
+    workspaceId: "ws-2",
+    targetType: "workspace",
+    targetId: "default",
+    integrationKey: "github",
+    connectionId: "conn-github-1",
+    isDefault: true
+  });
+
+  assert.deepEqual(
+    store.getIntegrationBindingByTarget({
+      workspaceId: "ws-1",
+      targetType: "workspace",
+      targetId: "default",
+      integrationKey: "google"
+    }),
+    binding
+  );
+  assert.deepEqual(
+    store.getIntegrationBindingByTarget({
+      workspaceId: "ws-1",
+      targetType: "app",
+      targetId: "gmail",
+      integrationKey: "google"
+    }),
+    appBinding
+  );
+  assert.deepEqual(
+    store.listIntegrationConnections({ providerId: "google", ownerUserId: "user-1" }).map((record) => record.connectionId),
+    ["conn-google-1"]
+  );
+  assert.deepEqual(
+    store.listIntegrationConnections({ providerId: "google" }).map((record) => record.connectionId),
+    ["conn-google-1", "conn-google-2"]
+  );
+  assert.deepEqual(
+    store.listIntegrationConnections({ ownerUserId: "user-1" }).map((record) => record.connectionId),
+    ["conn-github-1", "conn-google-1"]
+  );
+  assert.deepEqual(googleOne, store.getIntegrationConnection("conn-google-1"));
+  assert.deepEqual(googleTwo, store.getIntegrationConnection("conn-google-2"));
+  assert.deepEqual(github, store.getIntegrationConnection("conn-github-1"));
+  store.close();
+});
+
 test("input queue supports idempotent enqueue, update, and claiming by priority", () => {
   const root = makeTempDir("hb-state-store-");
   const store = new RuntimeStateStore({
