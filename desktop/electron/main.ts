@@ -1535,6 +1535,21 @@ interface OAuthAuthorizeResponsePayload {
   state: string;
 }
 
+interface ComposioConnectResult {
+  redirect_url: string;
+  connected_account_id: string;
+  auth_config_id: string;
+  expires_at: string | null;
+}
+
+interface ComposioAccountStatus {
+  id: string;
+  status: string;
+  authConfigId: string | null;
+  toolkitSlug: string | null;
+  userId: string | null;
+}
+
 interface SessionRuntimeRecordPayload {
   workspace_id: string;
   session_id: string;
@@ -4145,6 +4160,35 @@ async function startOAuthFlow(
     shell.openExternal(result.authorize_url);
   }
   return result;
+}
+
+async function composioConnect(
+  payload: { provider: string; owner_user_id: string; callback_url?: string },
+): Promise<ComposioConnectResult> {
+  return requestRuntimeJson<ComposioConnectResult>({
+    method: "POST",
+    path: "/api/v1/integrations/composio/connect",
+    payload,
+  });
+}
+
+async function composioAccountStatus(
+  connectedAccountId: string,
+): Promise<ComposioAccountStatus> {
+  return requestRuntimeJson<ComposioAccountStatus>({
+    method: "GET",
+    path: `/api/v1/integrations/composio/account/${encodeURIComponent(connectedAccountId)}`,
+  });
+}
+
+async function composioFinalize(
+  payload: { connected_account_id: string; provider: string; owner_user_id: string; account_label?: string },
+): Promise<IntegrationConnectionPayload> {
+  return requestRuntimeJson<IntegrationConnectionPayload>({
+    method: "POST",
+    path: "/api/v1/integrations/composio/finalize",
+    payload,
+  });
 }
 
 async function enqueueRemoteDemoTaskProposal(
@@ -10762,6 +10806,24 @@ app.whenReady().then(async () => {
     "workspace:startOAuthFlow",
     ["main"],
     async (_event, provider: string) => startOAuthFlow(provider),
+  );
+  handleTrustedIpc(
+    "workspace:composioConnect",
+    ["main"],
+    async (_event, payload: { provider: string; owner_user_id: string; callback_url?: string }) =>
+      composioConnect(payload),
+  );
+  handleTrustedIpc(
+    "workspace:composioAccountStatus",
+    ["main"],
+    async (_event, connectedAccountId: string) =>
+      composioAccountStatus(connectedAccountId),
+  );
+  handleTrustedIpc(
+    "workspace:composioFinalize",
+    ["main"],
+    async (_event, payload: { connected_account_id: string; provider: string; owner_user_id: string; account_label?: string }) =>
+      composioFinalize(payload),
   );
   ipcMain.handle(
     "browser:setActiveWorkspace",

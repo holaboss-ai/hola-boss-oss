@@ -683,6 +683,21 @@ declare global {
     state: string;
   }
 
+  interface ComposioConnectResult {
+    redirect_url: string;
+    connected_account_id: string;
+    auth_config_id: string;
+    expires_at: string | null;
+  }
+
+  interface ComposioAccountStatus {
+    id: string;
+    status: string;
+    authConfigId: string | null;
+    toolkitSlug: string | null;
+    userId: string | null;
+  }
+
   interface ElectronAPI {
     platform: string;
     versions: {
@@ -781,6 +796,9 @@ declare global {
       upsertOAuthConfig: (providerId: string, payload: OAuthAppConfigUpsertPayload) => Promise<OAuthAppConfigPayload>;
       deleteOAuthConfig: (providerId: string) => Promise<{ deleted: boolean }>;
       startOAuthFlow: (provider: string) => Promise<OAuthAuthorizeResponsePayload>;
+      composioConnect: (payload: { provider: string; owner_user_id: string; callback_url?: string }) => Promise<ComposioConnectResult>;
+      composioAccountStatus: (connectedAccountId: string) => Promise<ComposioAccountStatus>;
+      composioFinalize: (payload: { connected_account_id: string; provider: string; owner_user_id: string; account_label?: string }) => Promise<IntegrationConnectionPayload>;
       onSessionStreamEvent: (listener: (payload: HolabossSessionStreamEventPayload) => void) => () => void;
     };
     auth: {
