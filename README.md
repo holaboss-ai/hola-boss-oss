@@ -183,12 +183,28 @@ If a model id is unprefixed and does not start with `claude`, the runtime treats
   },
   "models": {
     "holaboss/gpt-5.2": { "provider": "holaboss", "model": "gpt-5.2" },
+    "holaboss/gpt-5-mini": { "provider": "holaboss", "model": "gpt-5-mini" },
+    "holaboss/gpt-4.1-mini": { "provider": "holaboss", "model": "gpt-4.1-mini" },
     "holaboss/claude-sonnet-4-5": { "provider": "holaboss", "model": "claude-sonnet-4-5" },
+    "holaboss/claude-opus-4-1": { "provider": "holaboss", "model": "claude-opus-4-1" },
     "openai_direct/gpt-5.2": { "provider": "openai_direct", "model": "gpt-5.2" },
+    "openai_direct/gpt-5-mini": { "provider": "openai_direct", "model": "gpt-5-mini" },
+    "openai_direct/gpt-5-nano": { "provider": "openai_direct", "model": "gpt-5-nano" },
+    "openai_direct/gpt-4.1": { "provider": "openai_direct", "model": "gpt-4.1" },
+    "openai_direct/gpt-4.1-mini": { "provider": "openai_direct", "model": "gpt-4.1-mini" },
     "anthropic_direct/claude-sonnet-4-5": { "provider": "anthropic_direct", "model": "claude-sonnet-4-5" },
+    "anthropic_direct/claude-opus-4-1": { "provider": "anthropic_direct", "model": "claude-opus-4-1" },
     "openrouter_direct/deepseek/deepseek-chat-v3-0324": {
       "provider": "openrouter_direct",
       "model": "deepseek/deepseek-chat-v3-0324"
+    },
+    "openrouter_direct/openai/gpt-5.2": {
+      "provider": "openrouter_direct",
+      "model": "openai/gpt-5.2"
+    },
+    "openrouter_direct/anthropic/claude-sonnet-4-5": {
+      "provider": "openrouter_direct",
+      "model": "anthropic/claude-sonnet-4-5"
     }
   }
 }

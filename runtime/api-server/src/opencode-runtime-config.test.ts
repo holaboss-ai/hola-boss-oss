@@ -111,6 +111,44 @@ test("projectOpencodeRuntimeConfig resolves anthropic provider for a single agen
   }
 });
 
+test("projectOpencodeRuntimeConfig resolves holaboss-prefixed claude models through the anthropic proxy route", () => {
+  process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
+  process.env.HOLABOSS_SANDBOX_AUTH_TOKEN = "proxy-token";
+  try {
+    const result = projectOpencodeRuntimeConfig({
+      session_id: "session-1",
+      workspace_id: "workspace-1",
+      input_id: "input-1",
+      runtime_exec_model_proxy_api_key: null,
+      runtime_exec_sandbox_id: null,
+      runtime_exec_run_id: null,
+      selected_model: "holaboss/claude-sonnet-4-5",
+      default_provider_id: "openai",
+      session_mode: "code",
+      workspace_config_checksum: "checksum-hb-anthropic",
+      workspace_skill_ids: [],
+      default_tools: ["read"],
+      extra_tools: [],
+      resolved_mcp_tool_refs: [],
+      resolved_output_schemas: {},
+      agent: {
+        id: "workspace.general",
+        model: "gpt-5.2",
+        prompt: "You are concise."
+      }
+    });
+
+    assert.equal(result.provider_id, "hb_anthropic");
+    assert.equal(result.model_id, "claude-sonnet-4-5");
+    assert.equal(result.model_client.model_proxy_provider, "anthropic_native");
+    assert.equal(result.model_client.api_key, "proxy-token");
+    assert.equal(result.model_client.base_url, "https://runtime.example/api/v1/model-proxy/anthropic/v1");
+  } finally {
+    delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
+    delete process.env.HOLABOSS_SANDBOX_AUTH_TOKEN;
+  }
+});
+
 test("projectOpencodeRuntimeConfig emits the mandatory base prompt even without AGENTS.md content", () => {
   process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
   try {

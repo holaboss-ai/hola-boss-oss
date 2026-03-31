@@ -145,10 +145,15 @@ const CHAT_MODEL_STORAGE_KEY = "holaboss-chat-model-v1";
 const CHAT_MODEL_USE_RUNTIME_DEFAULT = "__runtime_default__";
 const LEGACY_UNAVAILABLE_CHAT_MODELS = new Set(["openai/gpt-5.2-mini"]);
 const CHAT_MODEL_PRESETS = [
+  "openai/gpt-5.2",
   "openai/gpt-5.1",
   "openai/gpt-5",
-  "openai/gpt-5.2",
-  "claude-sonnet-4-5"
+  "openai/gpt-5-mini",
+  "openai/gpt-5-nano",
+  "openai/gpt-4.1",
+  "openai/gpt-4.1-mini",
+  "anthropic/claude-sonnet-4-5",
+  "anthropic/claude-opus-4-1"
 ] as const;
 
 function sessionUserId(session: { user?: { id?: string | null } | null } | null | undefined): string {
@@ -161,6 +166,7 @@ function isHolabossProxyModel(model: string) {
     return false;
   }
   return (
+    normalized.startsWith("holaboss/") ||
     normalized.startsWith("openai/") ||
     normalized.startsWith("anthropic/") ||
     normalized.startsWith("gpt-") ||
@@ -207,16 +213,29 @@ function displayModelLabel(model: string) {
     return "Unknown model";
   }
 
-  const withoutProvider = trimmed.replace(/^(openai|anthropic)\//i, "");
-  const claudeSonnetMatch = withoutProvider.match(/^claude-sonnet-(\d+)-(\d+)$/i);
-  if (claudeSonnetMatch) {
-    return `Claude Sonnet ${claudeSonnetMatch[1]}.${claudeSonnetMatch[2]}`;
+  const [prefix, ...rest] = trimmed.split("/");
+  const normalizedPrefix = prefix.trim().toLowerCase();
+  const withoutProvider =
+    rest.length > 0 &&
+    (
+      normalizedPrefix.includes("openai") ||
+      normalizedPrefix.includes("anthropic") ||
+      normalizedPrefix.includes("holaboss") ||
+      normalizedPrefix.includes("openrouter")
+    )
+      ? rest.join("/")
+      : trimmed;
+  const claudeFamilyMatch = withoutProvider.match(/^claude-(sonnet|opus|haiku)-(\d+)-(\d+)$/i);
+  if (claudeFamilyMatch) {
+    const family = `${claudeFamilyMatch[1][0]?.toUpperCase() ?? ""}${claudeFamilyMatch[1].slice(1).toLowerCase()}`;
+    return `Claude ${family} ${claudeFamilyMatch[2]}.${claudeFamilyMatch[3]}`;
   }
 
   if (/^gpt-/i.test(withoutProvider)) {
     return withoutProvider
       .replace(/^gpt-/i, "GPT-")
       .replace(/-mini\b/gi, " Mini")
+      .replace(/-nano\b/gi, " Nano")
       .replace(/-codex\b/gi, " Codex")
       .replace(/-max\b/gi, " Max")
       .replace(/-spark\b/gi, " Spark");

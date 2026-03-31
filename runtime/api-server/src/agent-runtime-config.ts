@@ -179,7 +179,13 @@ function inferModelProxyProviderFromToken(token: string): string {
   if (!trimmed) {
     return MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE;
   }
-  if (trimmed.startsWith("anthropic/") || trimmed.startsWith("claude")) {
+  const scopedToken = trimmed.includes("/") ? trimmed.split("/").slice(1).join("/") : trimmed;
+  if (
+    trimmed.startsWith("anthropic/") ||
+    trimmed.startsWith("claude") ||
+    scopedToken.startsWith("anthropic/") ||
+    scopedToken.startsWith("claude")
+  ) {
     return MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE;
   }
   return MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE;
@@ -440,6 +446,31 @@ function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: stri
         modelToken: token,
         modelProxyProvider,
         configuredProvider
+      };
+    }
+
+    if (
+      normalizedProviderToken === HOLABOSS_PROXY_PROVIDER_ID ||
+      normalizedProviderToken === "holaboss" ||
+      normalizedProviderToken.includes("holaboss")
+    ) {
+      const modelProxyProvider = inferModelProxyProviderFromToken(modelId);
+      const holabossProvider = firstConfiguredProviderByKind(catalog, PROVIDER_KIND_HOLABOSS_PROXY);
+      if (holabossProvider) {
+        return {
+          providerId: runtimeProviderIdForConfiguredProvider(holabossProvider, modelProxyProvider),
+          modelId,
+          modelToken: token,
+          modelProxyProvider,
+          configuredProvider: holabossProvider
+        };
+      }
+      return {
+        providerId: legacyRuntimeProviderId(modelProxyProvider),
+        modelId,
+        modelToken: token,
+        modelProxyProvider,
+        configuredProvider: null
       };
     }
 
