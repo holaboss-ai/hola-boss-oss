@@ -60,8 +60,18 @@ export function buildOpencodeProviderConfigPayload(
     headers["X-API-Key"] = modelClient.api_key;
   }
 
+  const normalizedProviderId = providerId.trim().toLowerCase();
   const providerNpmPackage =
-    modelClient.model_proxy_provider === "anthropic_native" ? "@ai-sdk/anthropic" : "@ai-sdk/openai-compatible";
+    modelClient.model_proxy_provider === "anthropic_native"
+      ? "@ai-sdk/anthropic"
+      : normalizedProviderId === "hb_openai" ||
+          normalizedProviderId === "openai" ||
+          normalizedProviderId === "openai_direct" ||
+          baseUrl === "https://api.openai.com/v1" ||
+          baseUrl.startsWith("https://api.openai.com/v1/") ||
+          baseUrl.includes("/model-proxy/openai/v1")
+        ? "@ai-sdk/openai"
+        : "@ai-sdk/openai-compatible";
 
   return {
     $schema: "https://opencode.ai/config.json",

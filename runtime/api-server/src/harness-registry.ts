@@ -229,7 +229,7 @@ function opencodeBootstrapPayload(config: RuntimeHarnessProductConfig): Record<s
     $schema: "https://opencode.ai/config.json",
     provider: {
       openai: {
-        npm: "@ai-sdk/openai-compatible",
+        npm: "@ai-sdk/openai",
         name: "Holaboss Model Proxy (OpenAI)",
         options: {
           apiKey: config.authToken,

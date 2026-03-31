@@ -92,6 +92,7 @@ test("file runtime config service updates runtime config and writes opencode boo
 
   const opencodeDocument = JSON.parse(fs.readFileSync(path.join(root, "workspace", "opencode.json"), "utf8"));
   assert.equal(opencodeDocument.model, "openai/gpt-5.4");
+  assert.equal(opencodeDocument.provider.openai.npm, "@ai-sdk/openai");
   assert.equal(
     opencodeDocument.provider.openai.options.baseURL,
     "https://runtime.example/api/v1/model-proxy/openai/v1"

@@ -55,6 +55,7 @@ test("buildOpencodeProviderConfigPayload preserves only allowlisted headers", ()
   });
 
   const provider = (payload.provider as Record<string, unknown>).hb_openai as Record<string, unknown>;
+  assert.equal(provider.npm, "@ai-sdk/openai");
   const options = provider.options as Record<string, unknown>;
   const headers = options.headers as Record<string, string>;
   assert.equal(headers["X-API-Key"], "hbrt.v1.proxy-user-key");
@@ -70,6 +71,7 @@ test("updateOpencodeConfig writes provider config and model selection", () => {
   assert.equal(result.model_selection_changed, false);
   const payload = JSON.parse(fs.readFileSync(path.join(workspaceRoot, "opencode.json"), "utf8"));
   assert.equal(payload.model, "hb_openai/gpt-5.4");
+  assert.equal(payload.provider.hb_openai.npm, "@ai-sdk/openai");
   assert.equal(payload.provider.hb_openai.options.baseURL, "http://sandbox-runtime:3060/api/v1/model-proxy/openai/v1");
 });
 
@@ -87,6 +89,20 @@ test("updateOpencodeConfig rewrites provider config when the stored top-level mo
   assert.equal(result.model_selection_changed, false);
   const payload = JSON.parse(fs.readFileSync(path.join(workspaceRoot, "opencode.json"), "utf8"));
   assert.equal(payload.model, "hb_openai/gpt-5.4");
+});
+
+test("buildOpencodeProviderConfigPayload keeps non-OpenAI-compatible providers on openai-compatible sdk", () => {
+  const payload = buildOpencodeProviderConfigPayload("openrouter_direct", "openai/gpt-5.4", {
+    model_proxy_provider: "openai_compatible",
+    api_key: "sk-or-test",
+    base_url: "https://openrouter.ai/api/v1",
+    default_headers: {
+      "X-API-Key": "sk-or-test"
+    }
+  });
+
+  const provider = (payload.provider as Record<string, unknown>).openrouter_direct as Record<string, unknown>;
+  assert.equal(provider.npm, "@ai-sdk/openai-compatible");
 });
 
 test("runOpencodeConfigCli writes JSON response for a valid request", async () => {
