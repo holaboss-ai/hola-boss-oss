@@ -315,6 +315,9 @@ let addressSuggestionsState: { suggestions: AddressSuggestionPayload[]; selected
 let activeBrowserWorkspaceId = "";
 const browserWorkspaces = new Map<string, BrowserWorkspaceState>();
 const browserDownloadTrackingPartitions = new Set<string>();
+const appSurfaceViews = new Map<string, BrowserView>();
+let appSurfaceBounds: BrowserBoundsPayload = { x: 0, y: 0, width: 0, height: 0 };
+let activeAppSurfaceId: string | null = null;
 let fileBookmarks: FileBookmarkPayload[] = [];
 let runtimeProcess: ChildProcessWithoutNullStreams | null = null;
 let pendingAuthUser: AuthUserPayload | null = null;
@@ -1422,6 +1425,105 @@ interface CronjobUpdatePayload {
   enabled?: boolean;
   delivery?: CronjobDeliveryPayload;
   metadata?: Record<string, unknown>;
+}
+
+interface IntegrationCatalogProviderPayload {
+  provider_id: string;
+  display_name: string;
+  description: string;
+  auth_modes: string[];
+  supports_oss: boolean;
+  supports_managed: boolean;
+  default_scopes: string[];
+  docs_url: string | null;
+}
+
+interface IntegrationCatalogResponsePayload {
+  providers: IntegrationCatalogProviderPayload[];
+}
+
+interface IntegrationConnectionPayload {
+  connection_id: string;
+  provider_id: string;
+  owner_user_id: string;
+  account_label: string;
+  account_external_id: string | null;
+  auth_mode: string;
+  granted_scopes: string[];
+  status: string;
+  secret_ref: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface IntegrationConnectionListResponsePayload {
+  connections: IntegrationConnectionPayload[];
+}
+
+interface IntegrationBindingPayload {
+  binding_id: string;
+  workspace_id: string;
+  target_type: string;
+  target_id: string;
+  integration_key: string;
+  connection_id: string;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+interface IntegrationBindingListResponsePayload {
+  bindings: IntegrationBindingPayload[];
+}
+
+interface IntegrationUpsertBindingPayload {
+  connection_id: string;
+  is_default?: boolean;
+}
+
+interface IntegrationCreateConnectionPayload {
+  provider_id: string;
+  owner_user_id: string;
+  account_label: string;
+  auth_mode: string;
+  granted_scopes: string[];
+  secret_ref?: string;
+}
+
+interface IntegrationUpdateConnectionPayload {
+  status?: string;
+  secret_ref?: string;
+  account_label?: string;
+}
+
+interface OAuthAppConfigPayload {
+  provider_id: string;
+  client_id: string;
+  client_secret: string;
+  authorize_url: string;
+  token_url: string;
+  scopes: string[];
+  redirect_port: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface OAuthAppConfigListResponsePayload {
+  configs: OAuthAppConfigPayload[];
+}
+
+interface OAuthAppConfigUpsertPayload {
+  client_id: string;
+  client_secret: string;
+  authorize_url: string;
+  token_url: string;
+  scopes: string[];
+  redirect_port?: number;
+}
+
+interface OAuthAuthorizeResponsePayload {
+  authorize_url: string;
+  state: string;
 }
 
 interface SessionRuntimeRecordPayload {
@@ -3911,6 +4013,125 @@ async function listMarketplaceTemplates(): Promise<TemplateListResponsePayload> 
   });
 }
 
+async function listIntegrationCatalog(): Promise<IntegrationCatalogResponsePayload> {
+  return requestRuntimeJson<IntegrationCatalogResponsePayload>({
+    method: "GET",
+    path: "/api/v1/integrations/catalog"
+  });
+}
+
+async function listIntegrationConnections(
+  params?: { providerId?: string; ownerUserId?: string }
+): Promise<IntegrationConnectionListResponsePayload> {
+  return requestRuntimeJson<IntegrationConnectionListResponsePayload>({
+    method: "GET",
+    path: "/api/v1/integrations/connections",
+    params: {
+      provider_id: params?.providerId,
+      owner_user_id: params?.ownerUserId
+    }
+  });
+}
+
+async function listIntegrationBindings(workspaceId: string): Promise<IntegrationBindingListResponsePayload> {
+  return requestRuntimeJson<IntegrationBindingListResponsePayload>({
+    method: "GET",
+    path: "/api/v1/integrations/bindings",
+    params: { workspace_id: workspaceId }
+  });
+}
+
+async function upsertIntegrationBinding(
+  workspaceId: string,
+  targetType: string,
+  targetId: string,
+  integrationKey: string,
+  payload: IntegrationUpsertBindingPayload
+): Promise<IntegrationBindingPayload> {
+  return requestRuntimeJson<IntegrationBindingPayload>({
+    method: "PUT",
+    path:
+      `/api/v1/integrations/bindings/${encodeURIComponent(workspaceId)}` +
+      `/${encodeURIComponent(targetType)}/${encodeURIComponent(targetId)}/${encodeURIComponent(integrationKey)}`,
+    payload
+  });
+}
+
+async function deleteIntegrationBinding(bindingId: string, workspaceId: string): Promise<{ deleted: boolean }> {
+  return requestRuntimeJson<{ deleted: boolean }>({
+    method: "DELETE",
+    path: `/api/v1/integrations/bindings/${encodeURIComponent(bindingId)}`,
+    params: { workspace_id: workspaceId }
+  });
+}
+
+async function createIntegrationConnection(
+  payload: IntegrationCreateConnectionPayload
+): Promise<IntegrationConnectionPayload> {
+  return requestRuntimeJson<IntegrationConnectionPayload>({
+    method: "POST",
+    path: "/api/v1/integrations/connections",
+    payload
+  });
+}
+
+async function updateIntegrationConnection(
+  connectionId: string,
+  payload: IntegrationUpdateConnectionPayload
+): Promise<IntegrationConnectionPayload> {
+  return requestRuntimeJson<IntegrationConnectionPayload>({
+    method: "PATCH",
+    path: `/api/v1/integrations/connections/${encodeURIComponent(connectionId)}`,
+    payload
+  });
+}
+
+async function deleteIntegrationConnection(connectionId: string): Promise<{ deleted: boolean }> {
+  return requestRuntimeJson<{ deleted: boolean }>({
+    method: "DELETE",
+    path: `/api/v1/integrations/connections/${encodeURIComponent(connectionId)}`
+  });
+}
+
+async function listOAuthConfigs(): Promise<OAuthAppConfigListResponsePayload> {
+  return requestRuntimeJson<OAuthAppConfigListResponsePayload>({
+    method: "GET",
+    path: "/api/v1/integrations/oauth/configs"
+  });
+}
+
+async function upsertOAuthConfig(
+  providerId: string,
+  payload: OAuthAppConfigUpsertPayload
+): Promise<OAuthAppConfigPayload> {
+  return requestRuntimeJson<OAuthAppConfigPayload>({
+    method: "PUT",
+    path: `/api/v1/integrations/oauth/configs/${encodeURIComponent(providerId)}`,
+    payload
+  });
+}
+
+async function deleteOAuthConfig(providerId: string): Promise<{ deleted: boolean }> {
+  return requestRuntimeJson<{ deleted: boolean }>({
+    method: "DELETE",
+    path: `/api/v1/integrations/oauth/configs/${encodeURIComponent(providerId)}`
+  });
+}
+
+async function startOAuthFlow(provider: string): Promise<OAuthAuthorizeResponsePayload> {
+  const runtimeConfig = await readRuntimeConfigFile();
+  const userId = (runtimeConfig.user_id || "").trim() || "local";
+  const result = await requestRuntimeJson<OAuthAuthorizeResponsePayload>({
+    method: "POST",
+    path: "/api/v1/integrations/oauth/authorize",
+    payload: { provider, owner_user_id: userId }
+  });
+  if (result.authorize_url) {
+    shell.openExternal(result.authorize_url);
+  }
+  return result;
+}
+
 async function listTaskProposals(workspaceId: string): Promise<TaskProposalListResponsePayload> {
   if (!workspaceId.trim()) {
     return { proposals: [], count: 0 };
@@ -4846,7 +5067,7 @@ function runtimeErrorFromBody(statusCode: number, statusMessage: string | undefi
 
 async function requestRuntimeJsonViaHttp<T>(
   targetUrl: URL,
-  method: "GET" | "POST" | "PATCH" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   payload?: unknown,
   timeoutMs = 15000
 ): Promise<T> {
@@ -4913,7 +5134,7 @@ async function requestRuntimeJson<T>({
   params,
   timeoutMs
 }: {
-  method: "GET" | "POST" | "PATCH" | "DELETE";
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   payload?: unknown;
   params?: Record<string, string | number | boolean | null | undefined>;
@@ -5449,6 +5670,17 @@ async function stopInstalledAppViaRuntime(workspaceId: string, appId: string): P
   return requestRuntimeJson<WorkspaceAppLifecycleActionPayload>({
     method: "POST",
     path: `/api/v1/apps/${encodeURIComponent(appId)}/stop`,
+    payload: {
+      workspace_id: workspaceId
+    },
+    timeoutMs: 30000
+  });
+}
+
+async function removeInstalledApp(workspaceId: string, appId: string): Promise<void> {
+  await requestRuntimeJson<Record<string, unknown>>({
+    method: "DELETE",
+    path: `/api/v1/apps/${encodeURIComponent(appId)}`,
     payload: {
       workspace_id: workspaceId
     },
@@ -8047,6 +8279,114 @@ function destroyBrowserWorkspace(workspaceId: string) {
   browserWorkspaces.delete(workspaceId);
 }
 
+function getOrCreateAppSurfaceView(appId: string): BrowserView {
+  const existing = appSurfaceViews.get(appId);
+  if (existing) {
+    return existing;
+  }
+  const view = new BrowserView({
+    webPreferences: {
+      sandbox: false,
+      nodeIntegration: false,
+      contextIsolation: true
+    }
+  });
+  view.setAutoResize({ width: false, height: false, horizontal: false, vertical: false });
+  view.webContents.setWindowOpenHandler(({ url }) => {
+    void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  appSurfaceViews.set(appId, view);
+  return view;
+}
+
+async function getAppHttpUrl(workspaceId: string, appId: string): Promise<string | null> {
+  try {
+    const ports = await requestRuntimeJson<Record<string, { http: number; mcp: number }>>({
+      method: "GET",
+      path: "/api/v1/apps/ports",
+      params: { workspace_id: workspaceId }
+    });
+    const appPorts = ports[appId];
+    if (!appPorts?.http) {
+      return null;
+    }
+    return `http://localhost:${appPorts.http}`;
+  } catch {
+    return null;
+  }
+}
+
+function updateAttachedAppSurfaceView(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  if (!activeAppSurfaceId || appSurfaceBounds.width <= 0 || appSurfaceBounds.height <= 0) {
+    for (const view of appSurfaceViews.values()) {
+      mainWindow.removeBrowserView(view);
+    }
+    return;
+  }
+  const view = appSurfaceViews.get(activeAppSurfaceId);
+  if (!view) {
+    return;
+  }
+  for (const [id, candidateView] of appSurfaceViews) {
+    if (id !== activeAppSurfaceId) {
+      mainWindow.removeBrowserView(candidateView);
+    }
+  }
+  mainWindow.addBrowserView(view);
+  view.setBounds(appSurfaceBounds);
+}
+
+function setAppSurfaceBounds(bounds: BrowserBoundsPayload): void {
+  appSurfaceBounds = {
+    x: Math.max(0, Math.round(bounds.x)),
+    y: Math.max(0, Math.round(bounds.y)),
+    width: Math.max(0, Math.round(bounds.width)),
+    height: Math.max(0, Math.round(bounds.height))
+  };
+  updateAttachedAppSurfaceView();
+}
+
+async function navigateAppSurface(workspaceId: string, appId: string, urlPath?: string): Promise<void> {
+  const baseUrl = await getAppHttpUrl(workspaceId, appId);
+  if (!baseUrl) {
+    throw new Error(`Could not resolve HTTP URL for app ${appId}`);
+  }
+  const view = getOrCreateAppSurfaceView(appId);
+  const targetUrl = urlPath ? `${baseUrl}${urlPath}` : baseUrl;
+  activeAppSurfaceId = appId;
+  await view.webContents.loadURL(targetUrl);
+  updateAttachedAppSurfaceView();
+}
+
+function destroyAppSurfaceView(appId: string): void {
+  const view = appSurfaceViews.get(appId);
+  if (!view) {
+    return;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.removeBrowserView(view);
+  }
+  view.webContents.removeAllListeners();
+  try {
+    (view.webContents as unknown as { destroy?: () => void }).destroy?.();
+  } catch {
+    // best effort cleanup
+  }
+  appSurfaceViews.delete(appId);
+  if (activeAppSurfaceId === appId) {
+    activeAppSurfaceId = null;
+  }
+}
+
+function hideAppSurface(): void {
+  activeAppSurfaceId = null;
+  updateAttachedAppSurfaceView();
+}
+
 function updateAttachedBrowserView() {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
@@ -9623,6 +9963,10 @@ function createMainWindow() {
     for (const workspaceId of Array.from(browserWorkspaces.keys())) {
       destroyBrowserWorkspace(workspaceId);
     }
+    for (const appId of Array.from(appSurfaceViews.keys())) {
+      destroyAppSurfaceView(appId);
+    }
+    activeAppSurfaceId = null;
     activeBrowserWorkspaceId = "";
     mainWindow = null;
   });
@@ -9870,6 +10214,24 @@ app.whenReady().then(async () => {
   handleTrustedIpc("workspace:stopInstalledApp", ["main"], async (_event, workspaceId: string, appId: string) =>
     stopInstalledApp(workspaceId, appId)
   );
+  handleTrustedIpc("workspace:removeInstalledApp", ["main"], async (_event, workspaceId: string, appId: string) =>
+    removeInstalledApp(workspaceId, appId)
+  );
+  handleTrustedIpc("appSurface:navigate", ["main"], async (_event, workspaceId: string, appId: string, urlPath?: string) =>
+    navigateAppSurface(workspaceId, appId, urlPath)
+  );
+  handleTrustedIpc("appSurface:setBounds", ["main"], (_event, bounds: BrowserBoundsPayload) => {
+    setAppSurfaceBounds(bounds);
+  });
+  handleTrustedIpc("appSurface:reload", ["main"], (_event, appId: string) => {
+    appSurfaceViews.get(appId)?.webContents.reload();
+  });
+  handleTrustedIpc("appSurface:destroy", ["main"], (_event, appId: string) => {
+    destroyAppSurfaceView(appId);
+  });
+  handleTrustedIpc("appSurface:hide", ["main"], () => {
+    hideAppSurface();
+  });
   handleTrustedIpc("workspace:listOutputs", ["main"], async (_event, workspaceId: string) => listOutputs(workspaceId));
   handleTrustedIpc("workspace:listSkills", ["main"], async (_event, workspaceId: string) => listWorkspaceSkills(workspaceId));
   handleTrustedIpc("workspace:getWorkspaceRoot", ["main"], async (_event, workspaceId: string) => workspaceDirectoryPath(workspaceId));
@@ -9893,6 +10255,47 @@ app.whenReady().then(async () => {
   );
   handleTrustedIpc("workspace:enqueueRemoteDemoTaskProposal", ["main"], async (_event, payload: DemoTaskProposalRequestPayload) =>
     enqueueRemoteDemoTaskProposal(payload)
+  );
+  handleTrustedIpc("workspace:listIntegrationCatalog", ["main"], async () => listIntegrationCatalog());
+  handleTrustedIpc("workspace:listIntegrationConnections", ["main"], async (_event, params?: { providerId?: string; ownerUserId?: string }) =>
+    listIntegrationConnections(params)
+  );
+  handleTrustedIpc("workspace:listIntegrationBindings", ["main"], async (_event, workspaceId: string) =>
+    listIntegrationBindings(workspaceId)
+  );
+  handleTrustedIpc(
+    "workspace:upsertIntegrationBinding",
+    ["main"],
+    async (
+      _event,
+      workspaceId: string,
+      targetType: string,
+      targetId: string,
+      integrationKey: string,
+      payload: IntegrationUpsertBindingPayload
+    ) => upsertIntegrationBinding(workspaceId, targetType, targetId, integrationKey, payload)
+  );
+  handleTrustedIpc("workspace:deleteIntegrationBinding", ["main"], async (_event, bindingId: string, workspaceId: string) =>
+    deleteIntegrationBinding(bindingId, workspaceId)
+  );
+  handleTrustedIpc("workspace:createIntegrationConnection", ["main"], async (_event, payload: IntegrationCreateConnectionPayload) =>
+    createIntegrationConnection(payload)
+  );
+  handleTrustedIpc("workspace:updateIntegrationConnection", ["main"], async (_event, connectionId: string, payload: IntegrationUpdateConnectionPayload) =>
+    updateIntegrationConnection(connectionId, payload)
+  );
+  handleTrustedIpc("workspace:deleteIntegrationConnection", ["main"], async (_event, connectionId: string) =>
+    deleteIntegrationConnection(connectionId)
+  );
+  handleTrustedIpc("workspace:listOAuthConfigs", ["main"], async () => listOAuthConfigs());
+  handleTrustedIpc("workspace:upsertOAuthConfig", ["main"], async (_event, providerId: string, payload: OAuthAppConfigUpsertPayload) =>
+    upsertOAuthConfig(providerId, payload)
+  );
+  handleTrustedIpc("workspace:deleteOAuthConfig", ["main"], async (_event, providerId: string) =>
+    deleteOAuthConfig(providerId)
+  );
+  handleTrustedIpc("workspace:startOAuthFlow", ["main"], async (_event, provider: string) =>
+    startOAuthFlow(provider)
   );
   handleTrustedIpc("workspace:listAgentSessions", ["main"], async (_event, workspaceId: string) => listAgentSessions(workspaceId));
   handleTrustedIpc("workspace:listRuntimeStates", ["main"], async (_event, workspaceId: string) => listRuntimeStates(workspaceId));
