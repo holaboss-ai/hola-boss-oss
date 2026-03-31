@@ -1567,13 +1567,6 @@ interface HolabossCreateWorkspacePayload {
   template_commit?: string | null;
 }
 
-interface WorkspaceOnboardingGuidePayload {
-  absolute_path: string;
-  body_markdown: string;
-  is_structured: boolean;
-  opening_sentence: string | null;
-}
-
 interface TemplateFolderSelectionPayload {
   canceled: boolean;
   rootPath: string | null;
@@ -5666,8 +5659,6 @@ function renderEmptyWorkspaceYaml() {
 
 function renderEmptyOnboardingGuide() {
   return [
-    "opening_sentence: What is the primary goal for this workspace?",
-    "",
     "# Workspace Onboarding",
     "",
     "Use this conversation to set up the workspace before regular execution starts.",
@@ -5692,58 +5683,6 @@ function renderEmptyOnboardingGuide() {
     "- Ask the user to confirm the summary is correct.",
     "- When the user confirms, request onboarding completion."
   ].join("\n");
-}
-
-function parseOnboardingGuideContent(content: string): {
-  openingSentence: string;
-  bodyMarkdown: string;
-  isStructured: boolean;
-} {
-  const lines = content.replace(/\r\n/g, "\n").split("\n");
-  let index = 0;
-  while (index < lines.length && !lines[index]?.trim()) {
-    index += 1;
-  }
-
-  let openingSentence = "";
-  let isStructured = false;
-  const openingLine = lines[index] ?? "";
-  const openingMatch = openingLine.match(/^opening_sentence\s*:\s*(.+)$/i);
-  if (openingMatch) {
-    isStructured = true;
-    openingSentence = openingMatch[1].trim().replace(/^['"]|['"]$/g, "").trim();
-    index += 1;
-    while (index < lines.length && !lines[index]?.trim()) {
-      index += 1;
-    }
-  }
-
-  return {
-    openingSentence,
-    bodyMarkdown: lines.slice(index).join("\n").trim(),
-    isStructured
-  };
-}
-
-async function readWorkspaceOnboardingGuide(workspaceId: string): Promise<WorkspaceOnboardingGuidePayload> {
-  const absolutePath = path.join(workspaceDirectoryPath(workspaceId), "ONBOARD.md");
-  try {
-    const content = await fs.readFile(absolutePath, "utf-8");
-    const parsed = parseOnboardingGuideContent(content);
-    return {
-      absolute_path: absolutePath,
-      body_markdown: parsed.bodyMarkdown,
-      is_structured: parsed.isStructured,
-      opening_sentence: parsed.openingSentence || null
-    };
-  } catch {
-    return {
-      absolute_path: absolutePath,
-      body_markdown: "",
-      is_structured: false,
-      opening_sentence: null
-    };
-  }
 }
 
 async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise<WorkspaceResponsePayload> {
@@ -5851,19 +5790,15 @@ async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise
 
     let onboardingStatus = "NOT_REQUIRED";
     let onboardingSessionId: string | null = null;
-    let shouldQueueOnboardingBootstrap = false;
     try {
       const onboardContent = await fs.readFile(path.join(workspaceDir, "ONBOARD.md"), "utf-8");
       if (onboardContent.trim()) {
-        const parsedOnboardingGuide = parseOnboardingGuideContent(onboardContent);
         onboardingStatus = "PENDING";
         onboardingSessionId = crypto.randomUUID();
-        shouldQueueOnboardingBootstrap = !parsedOnboardingGuide.openingSentence;
       }
     } catch {
       onboardingStatus = "NOT_REQUIRED";
       onboardingSessionId = null;
-      shouldQueueOnboardingBootstrap = false;
     }
 
     let updated = await requestRuntimeJson<WorkspaceResponsePayload>({
@@ -5876,7 +5811,7 @@ async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise
         error_message: null
       }
     });
-    if (onboardingSessionId && shouldQueueOnboardingBootstrap) {
+    if (onboardingSessionId) {
       try {
         await requestRuntimeJson<EnqueueSessionInputResponsePayload>({
           method: "POST",
@@ -9650,9 +9585,6 @@ app.whenReady().then(async () => {
   handleTrustedIpc("workspace:listOutputs", ["main"], async (_event, workspaceId: string) => listOutputs(workspaceId));
   handleTrustedIpc("workspace:listSkills", ["main"], async (_event, workspaceId: string) => listWorkspaceSkills(workspaceId));
   handleTrustedIpc("workspace:getWorkspaceRoot", ["main"], async (_event, workspaceId: string) => workspaceDirectoryPath(workspaceId));
-  handleTrustedIpc("workspace:getOnboardingGuide", ["main"], async (_event, workspaceId: string) =>
-    readWorkspaceOnboardingGuide(workspaceId)
-  );
   handleTrustedIpc("workspace:createWorkspace", ["main"], async (_event, payload: HolabossCreateWorkspacePayload) => createWorkspace(payload));
   handleTrustedIpc("workspace:deleteWorkspace", ["main"], async (_event, workspaceId: string) => deleteWorkspace(workspaceId));
   handleTrustedIpc("workspace:listCronjobs", ["main"], async (_event, workspaceId: string, enabledOnly?: boolean) =>
