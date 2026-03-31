@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { Bell, Check, ChevronRight, Clock3, Loader2, Sparkles, X } from "lucide-react";
+import { ProactiveLifecyclePanel } from "@/components/layout/ProactiveStatusCard";
 import { getWorkspaceAppDefinition, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 
 export type OperationsDrawerTab = "inbox" | "running" | "outputs";
@@ -43,6 +44,11 @@ interface OperationsDrawerProps {
   onTabChange: (tab: OperationsDrawerTab) => void;
   proposals: TaskProposalRecordPayload[];
   isLoadingProposals: boolean;
+  proactiveStatus: ProactiveAgentStatusPayload | null;
+  isLoadingProactiveStatus: boolean;
+  workspaceSetupStatus: ProactiveStatusSnapshotPayload | null;
+  workspaceName?: string | null;
+  workspaceId?: string | null;
   isTriggeringProposal: boolean;
   proposalStatusMessage: string;
   proposalAction: {
@@ -68,6 +74,11 @@ export function OperationsDrawer({
   onTabChange,
   proposals,
   isLoadingProposals,
+  proactiveStatus,
+  isLoadingProactiveStatus,
+  workspaceSetupStatus,
+  workspaceName,
+  workspaceId,
   isTriggeringProposal,
   proposalStatusMessage,
   proposalAction,
@@ -116,6 +127,11 @@ export function OperationsDrawer({
           <InboxPanel
             proposals={proposals}
             isLoadingProposals={isLoadingProposals}
+            proactiveStatus={proactiveStatus}
+            isLoadingProactiveStatus={isLoadingProactiveStatus}
+            workspaceSetupStatus={workspaceSetupStatus}
+            workspaceName={workspaceName}
+            workspaceId={workspaceId}
             isTriggeringProposal={isTriggeringProposal}
             proposalStatusMessage={proposalStatusMessage}
             proposalAction={proposalAction}
@@ -179,6 +195,11 @@ function DrawerTabButton({
 function InboxPanel({
   proposals,
   isLoadingProposals,
+  proactiveStatus,
+  isLoadingProactiveStatus,
+  workspaceSetupStatus,
+  workspaceName,
+  workspaceId,
   isTriggeringProposal,
   proposalStatusMessage,
   proposalAction,
@@ -189,6 +210,11 @@ function InboxPanel({
 }: {
   proposals: TaskProposalRecordPayload[];
   isLoadingProposals: boolean;
+  proactiveStatus: ProactiveAgentStatusPayload | null;
+  isLoadingProactiveStatus: boolean;
+  workspaceSetupStatus: ProactiveStatusSnapshotPayload | null;
+  workspaceName?: string | null;
+  workspaceId?: string | null;
   isTriggeringProposal: boolean;
   proposalStatusMessage: string;
   proposalAction: {
@@ -228,50 +254,100 @@ function InboxPanel({
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         {!hasWorkspace ? (
           <EmptyNotice message="Select a workspace to review incoming task proposals." />
-        ) : proposals.length === 0 ? (
-          <EmptyNotice message={isLoadingProposals ? "Loading task proposals..." : "No unreviewed proposals for this workspace yet."} />
         ) : (
           <div className="grid gap-3">
-            {proposals.map((proposal) => {
-              const isActing = proposalAction?.proposalId === proposal.proposal_id;
-              const previewPrompt = truncateWordPreview(proposal.task_prompt, 24);
-              return (
-                <article key={proposal.proposal_id} className="theme-subtle-surface rounded-[18px] border border-panel-border/35 px-4 py-4">
-                  <div className="min-w-0">
-                    <div className="text-[12px] font-medium text-text-main">{proposal.task_name}</div>
-                    <div className="mt-2 text-[11px] leading-6 text-text-muted">{previewPrompt}</div>
-                  </div>
+            <ProactiveLifecyclePanel
+              compact
+              hasWorkspace={hasWorkspace}
+              workspaceName={workspaceName}
+              workspaceId={workspaceId}
+              proactiveStatus={proactiveStatus}
+              isLoading={isLoadingProposals || isLoadingProactiveStatus}
+              workspaceSetup={workspaceSetupStatus}
+            />
 
-                  <div className="mt-3 text-[10px] text-text-dim/78">{formatTimestamp(proposal.created_at)}</div>
+            {proposals.length === 0 ? (
+              <EmptyNotice
+                message={emptyProposalMessage({
+                  isLoadingProposals,
+                  isLoadingProactiveStatus,
+                  proactiveStatus,
+                  workspaceSetupStatus
+                })}
+              />
+            ) : (
+              proposals.map((proposal) => {
+                const isActing = proposalAction?.proposalId === proposal.proposal_id;
+                const previewPrompt = truncateWordPreview(proposal.task_prompt, 24);
+                return (
+                  <article key={proposal.proposal_id} className="theme-subtle-surface rounded-[18px] border border-panel-border/35 px-4 py-4">
+                    <div className="min-w-0">
+                      <div className="text-[12px] font-medium text-text-main">{proposal.task_name}</div>
+                      <div className="mt-2 text-[11px] leading-6 text-text-muted">{previewPrompt}</div>
+                    </div>
 
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => onAcceptProposal(proposal)}
-                      disabled={isActing}
-                      className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-neon-green/40 bg-neon-green/10 px-3 text-[11px] text-neon-green transition hover:bg-neon-green/14 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {isActing && proposalAction?.action === "accept" ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-                      <span>Accept</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onDismissProposal(proposal)}
-                      disabled={isActing}
-                      className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-panel-border/45 px-3 text-[11px] text-text-muted transition hover:border-[rgba(255,153,102,0.3)] hover:text-[rgba(255,212,189,0.92)] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {isActing && proposalAction?.action === "dismiss" ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
-                      <span>Dismiss</span>
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
+                    <div className="mt-3 text-[10px] text-text-dim/78">{formatTimestamp(proposal.created_at)}</div>
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onAcceptProposal(proposal)}
+                        disabled={isActing}
+                        className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-neon-green/40 bg-neon-green/10 px-3 text-[11px] text-neon-green transition hover:bg-neon-green/14 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isActing && proposalAction?.action === "accept" ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                        <span>Accept</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDismissProposal(proposal)}
+                        disabled={isActing}
+                        className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-panel-border/45 px-3 text-[11px] text-text-muted transition hover:border-[rgba(255,153,102,0.3)] hover:text-[rgba(255,212,189,0.92)] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isActing && proposalAction?.action === "dismiss" ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
+                        <span>Dismiss</span>
+                      </button>
+                    </div>
+                  </article>
+                );
+              })
+            )}
           </div>
         )}
       </div>
     </div>
   );
+}
+
+function emptyProposalMessage(params: {
+  isLoadingProposals: boolean;
+  isLoadingProactiveStatus: boolean;
+  proactiveStatus: ProactiveAgentStatusPayload | null;
+  workspaceSetupStatus: ProactiveStatusSnapshotPayload | null;
+}) {
+  const { isLoadingProposals, isLoadingProactiveStatus, proactiveStatus, workspaceSetupStatus } = params;
+  if (isLoadingProposals || isLoadingProactiveStatus) {
+    return "Checking the proactive inbox for fresh task proposals...";
+  }
+  if (workspaceSetupStatus?.state === "setting_up") {
+    return "Workspace setup is still in progress. Proposals can land once the proactive agent has enough context.";
+  }
+  if (workspaceSetupStatus?.state === "error") {
+    return workspaceSetupStatus.detail || "Workspace setup failed before proactive delivery completed.";
+  }
+  if (proactiveStatus?.delivery_state === "analyzing") {
+    return "Remote proactive analysis is still running for this workspace.";
+  }
+  if (proactiveStatus?.delivery_state === "blocked") {
+    return "Proactive delivery is currently blocked. Check the lifecycle panel above.";
+  }
+  if (proactiveStatus?.delivery_state === "no_proposal") {
+    return "The latest proactive heartbeat did not produce a task proposal.";
+  }
+  if (proactiveStatus?.delivery_state === "inactive") {
+    return "Proactive delivery is inactive for this workspace right now.";
+  }
+  return "No unreviewed proposals for this workspace yet.";
 }
 
 function RunningPanel({

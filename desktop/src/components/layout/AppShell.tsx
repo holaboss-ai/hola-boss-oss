@@ -963,6 +963,10 @@ function AppShellContent() {
     hasHydratedWorkspaceList,
     selectedWorkspace,
     installedApps,
+    isLoadingInstalledApps,
+    isActivatingWorkspace,
+    workspaceAppsReady,
+    workspaceBlockingReason,
     workspaceErrorMessage,
     onboardingModeActive
   } =
@@ -2082,6 +2086,49 @@ function AppShellContent() {
   const activeApp = getWorkspaceAppDefinition(activeAppId, installedApps);
   const hasWorkspaces = workspaces.length > 0;
   const hasSelectedWorkspace = Boolean(selectedWorkspace);
+  const proactiveWorkspaceSetupStatus = useMemo<ProactiveStatusSnapshotPayload | null>(() => {
+    if (!selectedWorkspace) {
+      return null;
+    }
+    const workspaceStatus = (selectedWorkspace.status || "").trim().toLowerCase();
+    const recordedAt = selectedWorkspace.updated_at || selectedWorkspace.created_at || null;
+    if (workspaceStatus === "error") {
+      return {
+        state: "error",
+        detail: selectedWorkspace.error_message?.trim() || "Workspace provisioning failed.",
+        recorded_at: recordedAt
+      };
+    }
+    if (workspaceAppsReady) {
+      return {
+        state: "ready",
+        detail: `${selectedWorkspace.name.trim() || "Workspace"} apps and tools are ready.`,
+        recorded_at: recordedAt
+      };
+    }
+    if (workspaceStatus === "deleted") {
+      return {
+        state: "inactive",
+        detail: "This workspace is no longer active in the local runtime.",
+        recorded_at: recordedAt
+      };
+    }
+    return {
+      state: "setting_up",
+      detail:
+        workspaceBlockingReason ||
+        (isActivatingWorkspace || isLoadingInstalledApps
+          ? "Holaboss is still preparing workspace apps and capabilities."
+          : `Current workspace status: ${selectedWorkspace.status}.`),
+      recorded_at: recordedAt
+    };
+  }, [
+    isActivatingWorkspace,
+    isLoadingInstalledApps,
+    selectedWorkspace,
+    workspaceAppsReady,
+    workspaceBlockingReason
+  ]);
   const visibleSpacePaneIds = hasWorkspaces && spaceMode ? FIXED_SPACE_ORDER.filter((paneId) => spaceVisibility[paneId]) : [];
   const flexSpacePaneId = visibleSpacePaneIds.includes("agent")
     ? "agent"
@@ -2599,6 +2646,11 @@ function AppShellContent() {
                   onAcceptProposal={(proposal) => void acceptTaskProposal(proposal)}
                   onDismissProposal={(proposal) => void dismissTaskProposal(proposal)}
                   hasWorkspace={hasSelectedWorkspace}
+                  proactiveStatus={proactiveStatus}
+                  isLoadingProactiveStatus={isLoadingTaskProposals}
+                  workspaceSetupStatus={proactiveWorkspaceSetupStatus}
+                  workspaceName={selectedWorkspace?.name ?? null}
+                  workspaceId={selectedWorkspace?.id ?? null}
                 />
               </div>
             ) : null}
@@ -2620,6 +2672,7 @@ function AppShellContent() {
         selectedWorkspaceId={selectedWorkspace?.id ?? null}
         proactiveStatus={proactiveStatus}
         isLoadingProactiveStatus={isLoadingTaskProposals}
+        workspaceSetupStatus={proactiveWorkspaceSetupStatus}
       />
     </main>
   );
