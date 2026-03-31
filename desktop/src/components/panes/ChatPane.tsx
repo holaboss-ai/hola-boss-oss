@@ -107,6 +107,9 @@ interface PendingExplorerAttachmentFile {
 type PendingAttachment = PendingLocalAttachmentFile | PendingExplorerAttachmentFile;
 type StartupPhaseTone = "loading" | "ready" | "error" | "waiting";
 
+const STARTUP_OVERLAY_INITIAL_DELAY_MS = 320;
+const STARTUP_OVERLAY_REPEAT_DELAY_MS = 1400;
+
 interface StreamTelemetryEntry {
   id: string;
   at: string;
@@ -390,16 +393,6 @@ function summarizeUnknown(value: unknown, maxLength = 140): string {
     return "";
   }
   return String(value);
-}
-
-function assistantMetaLabel(harness: string | null | undefined, model: string | null | undefined) {
-  const harnessLabel = harness ? startCase(harness) : "";
-  if (harnessLabel) {
-    return harnessLabel;
-  }
-
-  const modelLabel = (model || "").trim();
-  return modelLabel || "Local runtime";
 }
 
 function toolTraceStepId(payload: Record<string, unknown>) {
@@ -762,6 +755,7 @@ export function ChatPane({
   const pendingInputIdRef = useRef<string | null>(null);
   const seenMainDebugKeysRef = useRef<Set<string>>(new Set());
   const selectedWorkspaceRef = useRef<WorkspaceRecordPayload | null>(null);
+  const startupUnlockedWorkspaceIdsRef = useRef<Set<string>>(new Set());
   const isOnboardingVariant = variant === "onboarding";
   const managedMode = !isOnboardingVariant && Boolean(onManagedSessionObserved && onManagedQueueSessionInput);
   const pendingFocusRequestKeyRef = useRef<number | null>(focusRequestKey);
@@ -2383,9 +2377,6 @@ export function ChatPane({
   };
 
   const assistantLabel = "Holaboss";
-  const assistantMode = isOnboardingVariant
-    ? "workspace setup"
-    : assistantMetaLabel(selectedWorkspace?.harness, runtimeConfig?.defaultModel);
   const hasMessages =
     messages.length > 0 ||
     Boolean(effectiveLiveAssistantText) ||
@@ -2455,11 +2446,12 @@ export function ChatPane({
     runtimeLifecycleStatus === "stopping" ||
     runtimeLifecycleStatus === "stopped";
   const workspaceAppsStartupBlocked = !isOnboardingVariant && runtimeLifecycleStatus === "running" && !workspaceAppsReady;
-  const showStartupOverlay =
+  const rawShowStartupOverlay =
     !isOnboardingVariant &&
     Boolean(selectedWorkspace) &&
     Boolean(resolvedUserId) &&
     (runtimeStartupBlocked || workspaceAppsStartupBlocked);
+  const [showStartupOverlay, setShowStartupOverlay] = useState(false);
   const startupOverlayTone: StartupPhaseTone =
     runtimeLifecycleStatus === "error" ? "error" : showStartupOverlay ? "loading" : "ready";
   const startupOverlayTitle =
@@ -2542,6 +2534,38 @@ export function ChatPane({
       ? (chatScrollMetrics.scrollTop / chatScrollRange) * chatScrollbarThumbTravel
       : 0
     : 0;
+
+  useEffect(() => {
+    if (!selectedWorkspace?.id || isOnboardingVariant) {
+      return;
+    }
+    if (!runtimeStartupBlocked && !workspaceAppsStartupBlocked) {
+      startupUnlockedWorkspaceIdsRef.current.add(selectedWorkspace.id);
+    }
+  }, [isOnboardingVariant, runtimeStartupBlocked, selectedWorkspace?.id, workspaceAppsStartupBlocked]);
+
+  useEffect(() => {
+    if (!rawShowStartupOverlay) {
+      setShowStartupOverlay(false);
+      return;
+    }
+
+    if (runtimeLifecycleStatus === "error") {
+      setShowStartupOverlay(true);
+      return;
+    }
+
+    const workspaceId = selectedWorkspace?.id || "";
+    const hasUnlockedWorkspace = workspaceId ? startupUnlockedWorkspaceIdsRef.current.has(workspaceId) : false;
+    const delayMs = hasUnlockedWorkspace ? STARTUP_OVERLAY_REPEAT_DELAY_MS : STARTUP_OVERLAY_INITIAL_DELAY_MS;
+    const timer = window.setTimeout(() => {
+      setShowStartupOverlay(true);
+    }, delayMs);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [rawShowStartupOverlay, runtimeLifecycleStatus, selectedWorkspace?.id]);
 
   useEffect(() => {
     if (!hasMessages) {
@@ -2786,7 +2810,6 @@ export function ChatPane({
                       <AssistantTurn
                         key={message.id}
                         label={assistantLabel}
-                        mode={assistantMode}
                         text={message.text}
                         contentBlocks={message.contentBlocks ?? []}
                         traceSteps={message.traceSteps ?? []}
@@ -2800,7 +2823,6 @@ export function ChatPane({
                     <div ref={liveAssistantTurnRef} className="scroll-mb-6">
                       <AssistantTurn
                         label={assistantLabel}
-                        mode={assistantMode}
                         text={effectiveLiveAssistantText}
                         contentBlocks={effectiveLiveContentBlocks}
                         traceSteps={effectiveLiveTraceSteps}
@@ -3003,7 +3025,6 @@ function UserTurn({
 
 function AssistantTurn({
   label,
-  mode,
   text,
   contentBlocks,
   traceSteps,
@@ -3013,7 +3034,6 @@ function AssistantTurn({
   live = false
 }: {
   label: string;
-  mode: string;
   text: string;
   contentBlocks: ChatTurnBlock[];
   traceSteps: ChatTraceStep[];
@@ -3048,9 +3068,6 @@ function AssistantTurn({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <div className="text-[12px] font-medium text-text-main/94">{label}</div>
-              <div className="rounded-full border border-panel-border/35 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-text-dim/76">
-                {mode}
-              </div>
               {live ? (
                 <div className="rounded-full border border-[rgba(247,90,84,0.18)] bg-[rgba(247,90,84,0.08)] px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-[rgba(206,92,84,0.92)]">
                   Live

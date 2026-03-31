@@ -1023,6 +1023,9 @@ function popupThemeCss(theme = currentTheme) {
   const isLightTheme = theme === "holaboss" || theme === "claude" || theme === "paper";
   const surfaceSoft = `color-mix(in srgb, ${palette.controlBg} 72%, ${palette.panelBgAlt} 28%)`;
   const surfaceSubtle = `color-mix(in srgb, ${palette.controlBg} 52%, ${palette.panelBgAlt} 48%)`;
+  const scrollTrack = `color-mix(in srgb, ${palette.borderSoft} 58%, transparent)`;
+  const scrollThumbTop = `color-mix(in srgb, ${palette.accent} 30%, ${palette.borderSoft})`;
+  const scrollThumbBottom = `color-mix(in srgb, ${palette.accentStrong} 22%, ${palette.borderSoft})`;
   return `
       :root {
         color-scheme: ${isLightTheme ? "light" : "dark"};
@@ -1055,6 +1058,22 @@ function popupThemeCss(theme = currentTheme) {
       }
       .content {
         background: color-mix(in srgb, ${palette.panelBg} 90%, transparent);
+        scrollbar-width: thin;
+        scrollbar-color: ${scrollThumbTop} ${scrollTrack};
+      }
+      .content::-webkit-scrollbar {
+        width: 7px;
+        height: 7px;
+      }
+      .content::-webkit-scrollbar-track {
+        background: ${scrollTrack};
+        border-radius: 999px;
+      }
+      .content::-webkit-scrollbar-thumb {
+        background: linear-gradient(180deg, ${scrollThumbTop}, ${scrollThumbBottom});
+        border-radius: 999px;
+        border: 1px solid transparent;
+        background-clip: padding-box;
       }
       .avatar {
         border-color: color-mix(in srgb, ${palette.accent} 30%, ${palette.borderSoft});
@@ -7367,25 +7386,6 @@ function createAuthPopupHtml() {
         letter-spacing: 0.14em;
         text-transform: uppercase;
       }
-      .runtimeLine {
-        margin-top: 14px;
-        border-radius: 16px;
-        border: 1px solid var(--popup-border-soft);
-        background: color-mix(in srgb, var(--popup-control-bg) 68%, transparent);
-        padding: 12px 14px;
-      }
-      .runtimeLabel {
-        font-size: 10px;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-        color: var(--popup-text-subtle);
-      }
-      .runtimeValue {
-        margin-top: 6px;
-        font-size: 12px;
-        line-height: 1.5;
-        color: var(--popup-text);
-      }
       .content {
         flex: 1 1 auto;
         min-height: 0;
@@ -7447,6 +7447,13 @@ function createAuthPopupHtml() {
         transform: translateY(-1px);
         border-color: var(--popup-border-soft);
         background: color-mix(in srgb, var(--popup-control-bg) 72%, transparent);
+      }
+      .menuItem:focus,
+      .menuItem:focus-visible,
+      .button:focus,
+      .button:focus-visible {
+        outline: none;
+        box-shadow: none;
       }
       .menuLead {
         min-width: 0;
@@ -7534,11 +7541,6 @@ function createAuthPopupHtml() {
             <div id="identity" class="identity">Loading session...</div>
           </div>
           <div id="badge" class="badge idle">Checking</div>
-        </div>
-
-        <div class="runtimeLine">
-          <div class="runtimeLabel">Desktop status</div>
-          <div id="runtimeValue" class="runtimeValue">Checking local runtime connection...</div>
         </div>
       </div>
 
@@ -7644,7 +7646,6 @@ function createAuthPopupHtml() {
         identityName: document.getElementById("identityName"),
         identity: document.getElementById("identity"),
         badge: document.getElementById("badge"),
-        runtimeValue: document.getElementById("runtimeValue"),
         notice: document.getElementById("notice"),
         signIn: document.getElementById("signIn"),
         signOut: document.getElementById("signOut"),
@@ -7680,23 +7681,14 @@ function createAuthPopupHtml() {
         && Boolean((state.runtimeConfig?.sandboxId || "").trim())
         && Boolean((state.runtimeConfig?.modelProxyBaseUrl || "").trim());
 
-      const runtimeStatusLabel = (isSignedIn) => {
-        if (state.runtimeStatus?.status === "running") {
-          return "Runtime connected and running.";
-        }
-        if (state.runtimeStatus?.status === "starting") {
-          return "Runtime is starting.";
-        }
-        if (state.runtimeStatus?.status === "error") {
-          return state.runtimeStatus?.lastError || "Runtime needs attention.";
-        }
-        if (runtimeBindingReady()) {
-          return "Runtime connected and ready.";
-        }
-        return isSignedIn ? "Finishing runtime setup." : "Sign in to connect desktop features.";
-      };
+      let lastOpenAnimationAt = 0;
 
       const restartOpenAnimation = () => {
+        const now = performance.now();
+        if (now - lastOpenAnimationAt < 220) {
+          return;
+        }
+        lastOpenAnimationAt = now;
         document.body.classList.remove("popup-opening");
         void document.body.offsetWidth;
         document.body.classList.add("popup-opening");
@@ -7704,6 +7696,7 @@ function createAuthPopupHtml() {
 
       const render = () => {
         const isSignedIn = Boolean(sessionUserId(state.user));
+        const isCheckingSession = state.isPending;
         const hasError = Boolean(state.authError);
         const ready = runtimeBindingReady();
         const badgeTone = hasError ? "error" : ready ? "ready" : isSignedIn ? "syncing" : "idle";
@@ -7715,14 +7708,13 @@ function createAuthPopupHtml() {
         els.identity.textContent = isSignedIn ? (sessionEmail(state.user) || sessionUserId(state.user) || "Signed in") : "Not connected";
         els.badge.className = "badge " + badgeTone;
         els.badge.textContent = badgeLabel;
-        els.runtimeValue.textContent = runtimeStatusLabel(isSignedIn);
-        els.accountMeta.textContent = isSignedIn ? (ready ? "Connected" : "Syncing setup") : "Sign in required";
+        els.accountMeta.textContent = isCheckingSession ? "Checking session" : isSignedIn ? (ready ? "Connected" : "Syncing setup") : "Sign in required";
 
-        els.signIn.hidden = isSignedIn;
+        els.signIn.hidden = isSignedIn || isCheckingSession;
         els.signIn.disabled = state.isStartingSignIn;
         els.signIn.textContent = state.isStartingSignIn ? "Opening sign-in..." : "Connect account";
 
-        els.signOut.hidden = !isSignedIn;
+        els.signOut.hidden = !isSignedIn || isCheckingSession;
         els.signOut.disabled = state.isSigningOut;
         els.notice.hidden = !noticeText;
         els.notice.className = "message " + (state.authError ? "error" : "success");
@@ -7863,6 +7855,7 @@ function createAuthPopupHtml() {
         restartOpenAnimation();
       });
 
+      render();
       Promise.all([refreshSession(), refreshConfig(), refreshRuntimeStatus()]).then(() => render());
     </script>
   </body>

@@ -100,6 +100,7 @@ export function LeftNavigationRail({
                     key={app.id}
                     className="group relative"
                     onMouseEnter={(event) => showAppTooltip(event.currentTarget, app.label)}
+                    onMouseLeave={() => setAppTooltip(null)}
                     onFocus={(event) => showAppTooltip(event.currentTarget, app.label)}
                     onBlur={() => setAppTooltip(null)}
                   >

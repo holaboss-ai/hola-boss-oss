@@ -2,15 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, FileWarning, FolderTree, Loader2, ScrollText, Search, Sparkles } from "lucide-react";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
-function formatModifiedAt(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  }).format(new Date(value));
-}
-
 function normalizeErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed.";
 }
@@ -126,7 +117,6 @@ export function SkillsPane() {
 
   const hasWorkspace = Boolean(selectedWorkspaceId);
   const hasSkills = Boolean(catalog?.skills.length);
-  const selectedSkillStatusLabel = selectedSkill?.enabled ? "Enabled in workspace.yaml" : "Available in skills path";
 
   return (
     <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
@@ -156,9 +146,6 @@ export function SkillsPane() {
                   <div>
                     <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">Registry</div>
                     <div className="mt-1 text-[14px] font-medium text-text-main">Workspace skill catalog</div>
-                  </div>
-                  <div className="rounded-full border border-panel-border/35 bg-black/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-text-dim/72">
-                    {filteredSkills.length} shown
                   </div>
                 </div>
 
@@ -206,15 +193,6 @@ export function SkillsPane() {
                             {skill.skill_id}
                           </div>
                         </div>
-                        <span
-                          className={`shrink-0 rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${
-                            skill.enabled
-                              ? "border-[rgba(247,90,84,0.24)] bg-[rgba(247,90,84,0.08)] text-[rgba(206,92,84,0.92)]"
-                              : "border-panel-border/35 bg-black/10 text-text-dim/74"
-                          }`}
-                        >
-                          {skill.enabled ? "Enabled" : "Detected"}
-                        </span>
                       </div>
                       <div
                         className="mt-2 text-[12px] leading-6 text-text-muted/82"
@@ -226,10 +204,6 @@ export function SkillsPane() {
                         }}
                       >
                         {skill.summary}
-                      </div>
-                      <div className="mt-3 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.14em] text-text-dim/68">
-                        <span>{formatModifiedAt(skill.modified_at)}</span>
-                        <span>{skill.enabled ? "Configured" : "Detected"}</span>
                       </div>
                     </button>
                   );
@@ -254,13 +228,11 @@ export function SkillsPane() {
                           <div className="mt-3 text-[28px] font-semibold tracking-[-0.04em] text-text-main">{selectedSkill.title}</div>
                           <div className="mt-2 max-w-[760px] text-[13px] leading-7 text-text-muted/84">{selectedSkill.summary}</div>
                         </div>
-                        <StatusPill active={selectedSkill.enabled} label={selectedSkillStatusLabel} />
                       </div>
 
                       <div className="mt-5 grid gap-3 md:grid-cols-3">
-                        <MetadataRow label="Modified" value={formatModifiedAt(selectedSkill.modified_at)} />
                         <MetadataRow label="Source directory" value={selectedSkill.source_dir} />
-                        <MetadataRow label="SKILL.md" value={selectedSkill.skill_file_path} />
+                        <MetadataRow label="SKILL.md" value={selectedSkill.skill_file_path} className="md:col-span-2" />
                       </div>
                     </div>
                   </div>
@@ -296,20 +268,6 @@ export function SkillsPane() {
         )}
       </div>
     </section>
-  );
-}
-
-function StatusPill({ active, label }: { active: boolean; label: string }) {
-  return (
-    <div
-      className={`rounded-full border px-3 py-1.5 text-[11px] uppercase tracking-[0.14em] ${
-        active
-          ? "border-[rgba(247,90,84,0.24)] bg-[rgba(247,90,84,0.08)] text-[rgba(206,92,84,0.92)]"
-          : "border-panel-border/35 bg-black/10 text-text-dim/74"
-      }`}
-    >
-      {label}
-    </div>
   );
 }
 

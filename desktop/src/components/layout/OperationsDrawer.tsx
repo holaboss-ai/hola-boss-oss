@@ -42,7 +42,6 @@ interface OperationsDrawerProps {
   activeTab: OperationsDrawerTab;
   onTabChange: (tab: OperationsDrawerTab) => void;
   proposals: TaskProposalRecordPayload[];
-  proactiveStatus: ProactiveAgentStatusPayload | null;
   isLoadingProposals: boolean;
   isTriggeringProposal: boolean;
   proposalStatusMessage: string;
@@ -68,7 +67,6 @@ export function OperationsDrawer({
   activeTab,
   onTabChange,
   proposals,
-  proactiveStatus,
   isLoadingProposals,
   isTriggeringProposal,
   proposalStatusMessage,
@@ -94,9 +92,9 @@ export function OperationsDrawer({
   }, [outputs, selectedOutputId]);
 
   return (
-    <aside className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-[280px] max-w-[312px] flex-col overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
-      <header className="theme-header-surface flex shrink-0 items-center justify-between gap-3 border-b border-neon-green/15 px-4 py-3">
-        <div className="flex items-center gap-2">
+    <aside className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
+      <header className="theme-header-surface flex shrink-0 items-center gap-2 border-b border-neon-green/15 px-3 py-3 pr-14">
+        <div className="grid min-w-0 flex-1 grid-cols-3 gap-1.5">
           <DrawerTabButton active={activeTab === "inbox"} icon={<Bell size={14} />} label="Inbox" onClick={() => onTabChange("inbox")} />
           <DrawerTabButton
             active={activeTab === "running"}
@@ -117,7 +115,6 @@ export function OperationsDrawer({
         {activeTab === "inbox" ? (
           <InboxPanel
             proposals={proposals}
-            proactiveStatus={proactiveStatus}
             isLoadingProposals={isLoadingProposals}
             isTriggeringProposal={isTriggeringProposal}
             proposalStatusMessage={proposalStatusMessage}
@@ -167,84 +164,20 @@ function DrawerTabButton({
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex h-10 items-center gap-2 rounded-[16px] border px-3 text-[12px] transition ${
+      className={`inline-flex h-9 w-full min-w-0 items-center justify-center gap-1.5 rounded-[14px] border px-2.5 text-[11px] transition ${
         active
           ? "border-neon-green/45 bg-neon-green/10 text-neon-green"
           : "border-panel-border/45 text-text-muted hover:border-neon-green/35 hover:text-text-main"
       }`}
     >
       {icon}
-      <span>{label}</span>
+      <span className="truncate">{label}</span>
     </button>
-  );
-}
-
-function proactiveStateLabel(state: string): string {
-  switch (state) {
-    case "healthy":
-      return "Healthy";
-    case "published":
-      return "Published";
-    case "failed":
-      return "Failed";
-    case "skipped":
-      return "Skipped";
-    case "pending":
-      return "Pending";
-    case "delivered":
-      return "Delivered";
-    case "analyzing":
-      return "Analyzing";
-    case "no_proposal":
-      return "No proposal";
-    case "blocked":
-      return "Blocked";
-    case "inactive":
-      return "Inactive";
-    case "error":
-      return "Error";
-    default:
-      return "Checking";
-  }
-}
-
-function proactiveStateClasses(state: string): string {
-  if (["healthy", "published", "delivered"].includes(state)) {
-    return "border-neon-green/40 bg-neon-green/10 text-neon-green";
-  }
-  if (["failed", "blocked", "error"].includes(state)) {
-    return "border-[rgba(206,92,84,0.32)] bg-[rgba(206,92,84,0.12)] text-[rgba(255,172,164,0.96)]";
-  }
-  if (["inactive", "skipped"].includes(state)) {
-    return "border-panel-border/45 bg-panel-border/10 text-text-muted";
-  }
-  return "border-panel-border/45 bg-panel-border/10 text-text-main/78";
-}
-
-function ProactiveStatusRow({
-  label,
-  snapshot
-}: {
-  label: string;
-  snapshot: ProactiveStatusSnapshotPayload;
-}) {
-  return (
-    <div className="rounded-[14px] border border-panel-border/35 px-3 py-2">
-      <div className="flex items-center justify-between gap-3">
-        <div className="text-[10px] uppercase tracking-[0.12em] text-text-dim">{label}</div>
-        <div className={`rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${proactiveStateClasses(snapshot.state)}`}>
-          {proactiveStateLabel(snapshot.state)}
-        </div>
-      </div>
-      {snapshot.detail ? <div className="mt-2 text-[11px] leading-5 text-text-muted">{snapshot.detail}</div> : null}
-      {snapshot.recorded_at ? <div className="mt-2 text-[10px] text-text-dim/78">{formatTimestamp(snapshot.recorded_at)}</div> : null}
-    </div>
   );
 }
 
 function InboxPanel({
   proposals,
-  proactiveStatus,
   isLoadingProposals,
   isTriggeringProposal,
   proposalStatusMessage,
@@ -255,7 +188,6 @@ function InboxPanel({
   onDismissProposal
 }: {
   proposals: TaskProposalRecordPayload[];
-  proactiveStatus: ProactiveAgentStatusPayload | null;
   isLoadingProposals: boolean;
   isTriggeringProposal: boolean;
   proposalStatusMessage: string;
@@ -274,9 +206,6 @@ function InboxPanel({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-[10px] uppercase tracking-[0.16em] text-neon-green/76">Remote proposals</div>
-            <div className="mt-1 text-[12px] leading-6 text-text-main/88">
-              Review backend-delivered task ideas and either queue them immediately or dismiss them at the source.
-            </div>
           </div>
           <button
             type="button"
@@ -288,52 +217,6 @@ function InboxPanel({
             <span>Trigger</span>
           </button>
         </div>
-
-        {hasWorkspace ? (
-          <div className="theme-subtle-surface mt-3 rounded-[16px] border border-panel-border/35 px-3 py-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-[10px] uppercase tracking-[0.14em] text-neon-green/76">Proactive agent</div>
-                <div className="mt-1 text-[12px] leading-6 text-text-main/90">
-                  {proactiveStatus?.delivery_summary || (isLoadingProposals ? "Checking proactive delivery status..." : "No proactive status available yet.")}
-                </div>
-                {proactiveStatus?.delivery_detail ? (
-                  <div className="mt-2 text-[11px] leading-5 text-text-muted">{proactiveStatus.delivery_detail}</div>
-                ) : null}
-              </div>
-              <div
-                className={`shrink-0 rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${
-                  proactiveStateClasses(proactiveStatus?.delivery_state || "unknown")
-                }`}
-              >
-                {proactiveStateLabel(proactiveStatus?.delivery_state || "unknown")}
-              </div>
-            </div>
-
-            <div className="mt-3 grid gap-2">
-              <ProactiveStatusRow
-                label="Heartbeat"
-                snapshot={
-                  proactiveStatus?.heartbeat || {
-                    state: isLoadingProposals ? "pending" : "unknown",
-                    detail: null,
-                    recorded_at: null
-                  }
-                }
-              />
-              <ProactiveStatusRow
-                label="Bridge"
-                snapshot={
-                  proactiveStatus?.bridge || {
-                    state: isLoadingProposals ? "pending" : "unknown",
-                    detail: null,
-                    recorded_at: null
-                  }
-                }
-              />
-            </div>
-          </div>
-        ) : null}
 
         {proposalStatusMessage ? (
           <div className="theme-subtle-surface mt-3 rounded-[14px] border border-panel-border/35 px-3 py-2 text-[11px] text-text-muted">
@@ -351,16 +234,12 @@ function InboxPanel({
           <div className="grid gap-3">
             {proposals.map((proposal) => {
               const isActing = proposalAction?.proposalId === proposal.proposal_id;
+              const previewPrompt = truncateWordPreview(proposal.task_prompt, 24);
               return (
                 <article key={proposal.proposal_id} className="theme-subtle-surface rounded-[18px] border border-panel-border/35 px-4 py-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[12px] font-medium text-text-main">{proposal.task_name}</div>
-                      <div className="mt-2 whitespace-pre-wrap text-[11px] leading-6 text-text-muted">{proposal.task_prompt}</div>
-                    </div>
-                    <div className="shrink-0 rounded-full border border-panel-border/45 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-text-dim">
-                      {proposal.state}
-                    </div>
+                  <div className="min-w-0">
+                    <div className="text-[12px] font-medium text-text-main">{proposal.task_name}</div>
+                    <div className="mt-2 text-[11px] leading-6 text-text-muted">{previewPrompt}</div>
                   </div>
 
                   <div className="mt-3 text-[10px] text-text-dim/78">{formatTimestamp(proposal.created_at)}</div>
@@ -573,6 +452,18 @@ function EmptyNotice({ message }: { message: string }) {
       {message}
     </div>
   );
+}
+
+function truncateWordPreview(value: string, wordLimit: number): string {
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (!normalized) {
+    return "";
+  }
+  const words = normalized.split(" ");
+  if (words.length <= wordLimit) {
+    return normalized;
+  }
+  return `${words.slice(0, wordLimit).join(" ")}...`;
 }
 
 function formatTimestamp(value: string): string {
