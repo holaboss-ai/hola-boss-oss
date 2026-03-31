@@ -71,6 +71,7 @@ export function MarketplacePane() {
             onSelect={handleUseKit}
             selectDisabled={!canUseMarketplaceTemplates}
             selectDisabledReason="Sign in required"
+            onSignIn={() => void window.electronAPI.auth.requestAuth()}
           />
         ) : view === "creating" ? (
           <div className="flex h-full min-h-0 flex-col">

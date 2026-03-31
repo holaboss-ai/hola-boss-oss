@@ -442,10 +442,10 @@ function FirstWorkspacePane() {
     (templateSourceMode === "marketplace" && (!canUseMarketplaceTemplates || !selectedMarketplaceTemplate));
 
   return (
-    <section className="relative flex h-full min-h-0 min-w-0 items-start justify-center overflow-y-auto px-3 py-3 sm:px-4 sm:py-4">
+    <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden px-3 py-3 sm:px-4 sm:py-4">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_12%,rgba(247,90,84,0.08),transparent_28%),radial-gradient(circle_at_86%_14%,rgba(233,117,109,0.08),transparent_30%)]" />
-      <div className="relative flex w-full max-w-[1080px] items-start justify-center py-4">
-        <div className="theme-shell mx-auto w-full rounded-[var(--theme-radius-card)] border border-panel-border/45 px-6 py-6 shadow-card sm:px-8 sm:py-7 lg:px-10 lg:py-8">
+      <div className="relative mx-auto flex min-h-0 w-full max-w-[1080px] flex-1 flex-col">
+        <div className="theme-shell flex min-h-0 w-full flex-1 flex-col overflow-auto rounded-[var(--theme-radius-card)] border border-panel-border/45 px-6 py-6 shadow-card sm:px-8 sm:py-7 lg:px-10 lg:py-8">
 
           {onboardingStep === "gallery" ? (
             <MarketplaceGallery
@@ -467,6 +467,7 @@ function FirstWorkspacePane() {
               onSelect={handleUseKit}
               selectDisabled={!canUseMarketplaceTemplates}
               selectDisabledReason="Sign in required"
+              onSignIn={openAuthPopup}
             />
           ) : onboardingStep === "configure" ? (
             <div>

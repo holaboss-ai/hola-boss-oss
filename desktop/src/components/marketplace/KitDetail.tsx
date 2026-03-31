@@ -7,6 +7,7 @@ interface KitDetailProps {
   selectLabel?: string;
   selectDisabled?: boolean;
   selectDisabledReason?: string;
+  onSignIn?: () => void;
 }
 
 export function KitDetail({
@@ -15,7 +16,8 @@ export function KitDetail({
   onSelect,
   selectLabel = "Use this kit",
   selectDisabled = false,
-  selectDisabledReason
+  selectDisabledReason,
+  onSignIn
 }: KitDetailProps) {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-auto">
@@ -134,18 +136,38 @@ export function KitDetail({
       ) : null}
 
       <div className="mt-6">
-        <button
-          type="button"
-          disabled={selectDisabled}
-          onClick={() => onSelect(template)}
-          className={`rounded-[18px] px-6 py-3 text-[14px] font-medium transition-colors ${
-            selectDisabled
-              ? "cursor-not-allowed border border-panel-border/35 bg-panel-bg/30 text-text-dim/50"
-              : "border border-[rgba(247,90,84,0.38)] bg-[rgba(247,90,84,0.9)] text-white hover:bg-[rgba(247,90,84,1)]"
-          }`}
-        >
-          {selectDisabled && selectDisabledReason ? selectDisabledReason : selectLabel}
-        </button>
+        {selectDisabled && onSignIn ? (
+          <div className="flex items-center gap-4 rounded-[18px] border border-[rgba(247,90,84,0.22)] bg-[rgba(247,90,84,0.04)] px-5 py-4">
+            <div className="min-w-0 flex-1">
+              <div className="text-[13px] font-medium text-text-main">
+                {selectDisabledReason || "Sign in required"}
+              </div>
+              <div className="mt-0.5 text-[12px] text-text-muted/72">
+                Sign in to create a workspace with this kit.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onSignIn}
+              className="shrink-0 rounded-[14px] border border-[rgba(247,90,84,0.34)] bg-[rgba(247,90,84,0.9)] px-4 py-2.5 text-[12px] font-medium text-white transition-colors hover:bg-[rgba(226,79,74,0.94)]"
+            >
+              Sign in
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            disabled={selectDisabled}
+            onClick={() => onSelect(template)}
+            className={`rounded-[18px] px-6 py-3 text-[14px] font-medium transition-colors ${
+              selectDisabled
+                ? "cursor-not-allowed border border-panel-border/35 bg-panel-bg/30 text-text-dim/50"
+                : "border border-[rgba(247,90,84,0.38)] bg-[rgba(247,90,84,0.9)] text-white hover:bg-[rgba(247,90,84,1)]"
+            }`}
+          >
+            {selectDisabled && selectDisabledReason ? selectDisabledReason : selectLabel}
+          </button>
+        )}
       </div>
     </div>
   );

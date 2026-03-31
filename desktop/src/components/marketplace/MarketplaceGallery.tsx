@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
-import { Loader2, Search, Sparkles } from "lucide-react";
+import { Search } from "lucide-react";
 import { KitCard } from "./KitCard";
+import { FALLBACK_TEMPLATES } from "./fallbackTemplates";
 
 interface MarketplaceGalleryProps {
   mode: "browse" | "pick";
@@ -23,14 +24,18 @@ export function MarketplaceGallery({
   error,
   onSelectKit,
   onRetry,
-  onSignIn,
   onStartFromScratch,
   onUseLocalTemplate
 }: MarketplaceGalleryProps) {
   const [query, setQuery] = useState("");
 
+  // Use fetched templates when authenticated, fallback catalog otherwise
+  const effectiveTemplates = authenticated && templates.length > 0
+    ? templates
+    : FALLBACK_TEMPLATES;
+
   const visibleTemplates = useMemo(() => {
-    const available = templates.filter((t) => !t.is_hidden);
+    const available = effectiveTemplates.filter((t) => !t.is_hidden);
     const trimmed = query.trim().toLowerCase();
     if (!trimmed) return available;
     return available.filter((t) =>
@@ -38,7 +43,12 @@ export function MarketplaceGallery({
         v.toLowerCase().includes(trimmed)
       )
     );
-  }, [templates, query]);
+  }, [effectiveTemplates, query]);
+
+  // Only show loading when authenticated (unauthenticated uses static fallback)
+  const showLoading = authenticated && isLoading;
+  // Only show error when authenticated (unauthenticated has fallback)
+  const showError = authenticated && error;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -56,31 +66,6 @@ export function MarketplaceGallery({
         ) : null}
       </div>
 
-      {!authenticated ? (
-        <div className="mt-6 flex min-h-[240px] items-center justify-center">
-          <div className="w-full max-w-[420px] rounded-[24px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-8 py-8 text-center">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-[rgba(247,90,84,0.22)] bg-[rgba(247,90,84,0.08)]">
-              <Sparkles size={20} className="text-[rgba(206,92,84,0.88)]" />
-            </div>
-            <div className="mt-4 text-[16px] font-medium text-text-main">
-              Sign in to explore kits
-            </div>
-            <div className="mt-2 text-[12px] leading-6 text-text-muted/78">
-              Browse curated workspace templates and launch them directly from the desktop.
-            </div>
-            {onSignIn ? (
-              <button
-                type="button"
-                onClick={onSignIn}
-                className="mt-5 inline-flex h-10 items-center justify-center rounded-[14px] border border-[rgba(247,90,84,0.34)] bg-[rgba(247,90,84,0.9)] px-5 text-[12px] font-medium text-white transition-colors hover:bg-[rgba(226,79,74,0.94)]"
-              >
-                Sign in to Holaboss
-              </button>
-            ) : null}
-          </div>
-        </div>
-      ) : (
-        <>
       <label className="theme-control-surface mt-4 flex items-center gap-2 rounded-[16px] border border-panel-border/45 px-3 py-2.5 text-[12px] text-text-muted">
         <Search size={13} className="text-text-dim/72" />
         <input
@@ -92,7 +77,7 @@ export function MarketplaceGallery({
       </label>
 
       <div className="mt-4 min-h-0 flex-1 overflow-auto">
-        {isLoading ? (
+        {showLoading ? (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {Array.from({ length: 4 }).map((_, i) => (
               <div
@@ -110,7 +95,7 @@ export function MarketplaceGallery({
               </div>
             ))}
           </div>
-        ) : error ? (
+        ) : showError ? (
           <div className="flex min-h-[200px] items-center justify-center">
             <div className="w-full max-w-[360px] rounded-[18px] border border-[rgba(255,153,102,0.24)] bg-[rgba(255,153,102,0.06)] px-6 py-5 text-center">
               <div className="text-[14px] font-medium text-text-main">
@@ -140,8 +125,6 @@ export function MarketplaceGallery({
           </div>
         )}
       </div>
-        </>
-      )}
 
       {mode === "pick" && (onStartFromScratch || onUseLocalTemplate) ? (
         <div className="mt-4 flex items-center justify-center gap-3 border-t border-panel-border/25 pt-4 text-[12px]">
