@@ -663,8 +663,8 @@ test("claimed input persists replacement harness session id from terminal runner
   store.close();
 });
 
-test("claimed input resets harness session binding to the local session after run_failed", async () => {
-  const store = makeStore("hb-claimed-input-harness-session-reset-");
+test("claimed input passes persisted child session kind into the runner payload", async () => {
+  const store = makeStore("hb-claimed-input-session-kind-");
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
@@ -672,43 +672,48 @@ test("claimed input resets harness session binding to the local session after ru
     status: "active",
     mainSessionId: "session-main"
   });
-  store.upsertBinding({
+  store.ensureSession({
     workspaceId: workspace.id,
-    sessionId: "session-main",
-    harness: "opencode",
-    harnessSessionId: "stale-opencode-session"
+    sessionId: "proposal-session-1",
+    kind: "task_proposal",
+    parentSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
-    sessionId: "session-main",
+    sessionId: "proposal-session-1",
     payload: { text: "hello" }
   });
-  setNodeRunnerCommand([
-    "const request = process.argv.at(-1) ?? '';",
-    "void request;",
-    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { status: 'started' } }) + '\\n');`,
-    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'run_failed', payload: { type: 'OpenCodeSessionError', message: 'boom', harness_session_id: 'failed-session' } }) + '\\n');`
-  ]);
 
-  const claimed = store.claimInputs({
-    limit: 1,
-    claimedBy: "sandbox-agent-ts-worker",
-    leaseSeconds: 300
-  });
-
+  let capturedSessionKind = "";
   await processClaimedInput({
     store,
-    record: claimed[0],
-    claimedBy: "sandbox-agent-ts-worker"
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      capturedSessionKind = String(payload.session_kind ?? "");
+      await options.onEvent?.({
+        session_id: String(payload.session_id),
+        input_id: String(payload.input_id),
+        sequence: 1,
+        event_type: "run_started",
+        payload: {}
+      });
+      await options.onEvent?.({
+        session_id: String(payload.session_id),
+        input_id: String(payload.input_id),
+        sequence: 2,
+        event_type: "run_completed",
+        payload: { status: "ok" }
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true
+      };
+    }
   });
 
-  const binding = store.getBinding({
-    workspaceId: workspace.id,
-    sessionId: "session-main"
-  });
-
-  assert.ok(binding);
-  assert.equal(binding.harnessSessionId, "session-main");
-
+  assert.equal(capturedSessionKind, "task_proposal");
   store.close();
 });

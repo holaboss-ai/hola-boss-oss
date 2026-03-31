@@ -1,33 +1,14 @@
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import test, { afterEach } from "node:test";
+import test from "node:test";
 
 import {
-  appendOpencodeDiagnosticLog,
   createOpencodeEventMapperState,
   mapOpencodeEvent,
   promptPartsForRequest,
   resolveOpencodeSessionId,
-  sanitizeDiagnosticHeaders,
   shouldEmitOpencodeEvent,
 } from "./opencode.js";
 import type { OpencodeHarnessHostRequest } from "./contracts.js";
-
-const tempDirs: string[] = [];
-
-afterEach(() => {
-  for (const dir of tempDirs.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-function makeTempWorkspaceDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
 
 function baseRequest(): OpencodeHarnessHostRequest {
   return {
@@ -231,35 +212,18 @@ test("mapOpencodeEvent maps question tool calls to waiting_user terminal events"
   ]);
 });
 
-test("mapOpencodeEvent marks completed MCP tool results with isError as tool errors", () => {
+test("mapOpencodeEvent ignores raw text updates that would duplicate later output deltas", () => {
   const state = createOpencodeEventMapperState();
 
-  const events = mapOpencodeEvent(
+  const updatedEvents = mapOpencodeEvent(
     {
       type: "message.part.updated",
       properties: {
-        session_id: "opencode-session-1",
+        sessionID: "opencode-session-1",
+        delta: "hi",
         part: {
-          type: "tool",
-          id: "tool-part-1",
-          tool: "gmail_send_draft",
-          call_id: "call-1",
-          state: {
-            status: "completed",
-            input: {
-              draft_id: "draft-1",
-            },
-            output: {
-              content: [
-                {
-                  type: "text",
-                  text: "No Google token. Connect via Settings or set PLATFORM_INTEGRATION_TOKEN.",
-                },
-              ],
-              isError: true,
-            },
-            error: null,
-          },
+          type: "text",
+          id: "text-part-1",
         },
       },
     },
@@ -267,28 +231,200 @@ test("mapOpencodeEvent marks completed MCP tool results with isError as tool err
     state
   );
 
-  assert.deepEqual(events, [
+  assert.deepEqual(updatedEvents, []);
+
+  const deltaEvents = mapOpencodeEvent(
     {
-      event_type: "tool_call",
-      payload: {
-        phase: "error",
-        tool_name: "gmail_send_draft",
-        error: true,
-        tool_args: {
-          draft_id: "draft-1",
+      type: "message.part.delta",
+      properties: {
+        sessionID: "opencode-session-1",
+        delta: "Hi",
+        part: {
+          type: "text",
+          id: "text-part-1",
         },
-        result: {
-          content: [
+      },
+    },
+    "opencode-session-1",
+    state
+  );
+
+  assert.deepEqual(deltaEvents, [
+    {
+      event_type: "output_delta",
+      payload: {
+        delta: "Hi",
+        event: "message.part.delta",
+        source: "opencode",
+        part_id: "text-part-1",
+        part_type: "text",
+        delta_kind: "output",
+      },
+    },
+  ]);
+});
+
+test("mapOpencodeEvent drops buffered user text updates once the parent message role resolves", () => {
+  const state = createOpencodeEventMapperState();
+
+  const earlyUserUpdate = mapOpencodeEvent(
+    {
+      type: "message.part.updated",
+      properties: {
+        sessionID: "opencode-session-1",
+        part: {
+          id: "user-text-1",
+          sessionID: "opencode-session-1",
+          messageID: "user-message-1",
+          type: "text",
+          text: "Good morning",
+        },
+      },
+    },
+    "opencode-session-1",
+    state
+  );
+
+  assert.deepEqual(earlyUserUpdate, []);
+
+  const userMessageUpdated = mapOpencodeEvent(
+    {
+      type: "message.updated",
+      properties: {
+        sessionID: "opencode-session-1",
+        info: {
+          id: "user-message-1",
+          sessionID: "opencode-session-1",
+          role: "user",
+          time: { created: 0 },
+          agent: "build",
+          model: {
+            providerID: "openai",
+            modelID: "gpt-5.1",
+          },
+          parts: [
             {
+              id: "user-text-1",
+              sessionID: "opencode-session-1",
+              messageID: "user-message-1",
               type: "text",
-              text: "No Google token. Connect via Settings or set PLATFORM_INTEGRATION_TOKEN.",
+              text: "Good morning",
             },
           ],
-          isError: true,
         },
+      },
+    },
+    "opencode-session-1",
+    state
+  );
+
+  assert.deepEqual(userMessageUpdated, []);
+
+  const assistantDelta = mapOpencodeEvent(
+    {
+      type: "message.part.delta",
+      properties: {
+        sessionID: "opencode-session-1",
+        messageID: "assistant-message-1",
+        delta: "Hello",
+        part: {
+          id: "assistant-text-1",
+          sessionID: "opencode-session-1",
+          messageID: "assistant-message-1",
+          type: "text",
+        },
+      },
+    },
+    "opencode-session-1",
+    state
+  );
+
+  assert.deepEqual(assistantDelta, [
+    {
+      event_type: "output_delta",
+      payload: {
+        delta: "Hello",
+        event: "message.part.delta",
+        source: "opencode",
+        part_id: "assistant-text-1",
+        part_type: "text",
+        delta_kind: "output",
+      },
+    },
+  ]);
+});
+
+test("mapOpencodeEvent releases buffered assistant text updates after the parent message role resolves", () => {
+  const state = createOpencodeEventMapperState();
+
+  const earlyAssistantUpdate = mapOpencodeEvent(
+    {
+      type: "message.part.updated",
+      properties: {
+        sessionID: "opencode-session-1",
+        part: {
+          id: "assistant-text-1",
+          sessionID: "opencode-session-1",
+          messageID: "assistant-message-1",
+          type: "text",
+          text: "Hello",
+        },
+      },
+    },
+    "opencode-session-1",
+    state
+  );
+
+  assert.deepEqual(earlyAssistantUpdate, []);
+
+  const assistantMessageUpdated = mapOpencodeEvent(
+    {
+      type: "message.updated",
+      properties: {
+        sessionID: "opencode-session-1",
+        info: {
+          id: "assistant-message-1",
+          sessionID: "opencode-session-1",
+          role: "assistant",
+          time: { created: 0 },
+          parentID: "user-message-1",
+          modelID: "gpt-5.1",
+          providerID: "openai",
+          mode: "build",
+          path: { cwd: "/tmp", root: "/tmp" },
+          cost: 0,
+          tokens: {
+            input: 0,
+            output: 0,
+            reasoning: 0,
+            cache: { read: 0, write: 0 },
+          },
+          parts: [
+            {
+              id: "assistant-text-1",
+              sessionID: "opencode-session-1",
+              messageID: "assistant-message-1",
+              type: "text",
+              text: "Hello",
+            },
+          ],
+        },
+      },
+    },
+    "opencode-session-1",
+    state
+  );
+
+  assert.deepEqual(assistantMessageUpdated, [
+    {
+      event_type: "output_delta",
+      payload: {
+        delta: "Hello",
         event: "message.part.updated",
         source: "opencode",
-        call_id: "call-1",
+        part_id: "assistant-text-1",
+        part_type: "text",
+        delta_kind: "output",
       },
     },
   ]);
@@ -378,7 +514,7 @@ test("resolveOpencodeSessionId reuses the persisted session only when no request
   assert.equal(created, 0);
 });
 
-test("shouldEmitOpencodeEvent filters step markers and prompt echo", () => {
+test("shouldEmitOpencodeEvent filters step markers only", () => {
   assert.equal(
     shouldEmitOpencodeEvent("thinking_delta", { delta: "step-start", source: "opencode" }, "hello"),
     false
@@ -387,14 +523,8 @@ test("shouldEmitOpencodeEvent filters step markers and prompt echo", () => {
     shouldEmitOpencodeEvent("thinking_delta", { delta: "step-finish", source: "opencode" }, "hello"),
     false
   );
-  assert.equal(
-    shouldEmitOpencodeEvent("output_delta", { delta: "hello", source: "opencode" }, "hello"),
-    false
-  );
-  assert.equal(
-    shouldEmitOpencodeEvent("output_delta", { delta: "hello world", source: "opencode" }, "hello"),
-    true
-  );
+  assert.equal(shouldEmitOpencodeEvent("output_delta", { delta: "hello", source: "opencode" }, "hello"), true);
+  assert.equal(shouldEmitOpencodeEvent("output_delta", { delta: "hello world", source: "opencode" }, "hello"), true);
 });
 
 test("promptPartsForRequest adds staged attachments as file parts", () => {
@@ -419,82 +549,6 @@ test("promptPartsForRequest adds staged attachments as file parts", () => {
       url: "file:///tmp/workspace-1/.holaboss/input-attachments/batch-1/diagram.png",
       mime: "image/png",
       filename: "diagram.png",
-    },
-  ]);
-});
-
-test("sanitizeDiagnosticHeaders redacts sensitive header values", () => {
-  assert.deepEqual(
-    sanitizeDiagnosticHeaders({
-      "X-API-Key": "secret-token",
-      Authorization: "Bearer secret-token",
-      "X-Holaboss-Sandbox-Id": "sandbox-1",
-    }),
-    {
-      "X-API-Key": "[redacted]",
-      Authorization: "[redacted]",
-      "X-Holaboss-Sandbox-Id": "sandbox-1",
-    },
-  );
-});
-
-test("appendOpencodeDiagnosticLog writes jsonl entries under .holaboss", () => {
-  const workspaceDir = makeTempWorkspaceDir("hb-opencode-harness-log-");
-
-  appendOpencodeDiagnosticLog(workspaceDir, "prompt_prepare", {
-    provider_id: "openai",
-    headers: sanitizeDiagnosticHeaders({
-      "X-API-Key": "secret-token",
-      "X-Holaboss-Sandbox-Id": "sandbox-1",
-    }),
-  });
-
-  const logPath = path.join(workspaceDir, ".holaboss", "opencode-harness.log");
-  const lines = fs.readFileSync(logPath, "utf8").trim().split("\n");
-  assert.equal(lines.length, 1);
-  const entry = JSON.parse(lines[0]) as Record<string, unknown>;
-  assert.equal(entry.event, "prompt_prepare");
-  assert.equal(typeof entry.at, "string");
-  assert.deepEqual(entry.details, {
-    provider_id: "openai",
-    headers: {
-      "X-API-Key": "[redacted]",
-      "X-Holaboss-Sandbox-Id": "sandbox-1",
-    },
-  });
-});
-
-test("mapOpencodeEvent maps session.error into run_failed with provider details", () => {
-  const state = createOpencodeEventMapperState();
-
-  const events = mapOpencodeEvent(
-    {
-      type: "session.error",
-      properties: {
-        sessionID: "opencode-session-1",
-        error: {
-          name: "UnknownError",
-          data: {
-            message: "sdk.responses is not a function",
-            providerID: "openai",
-          },
-        },
-      },
-    },
-    "opencode-session-1",
-    state,
-  );
-
-  assert.deepEqual(events, [
-    {
-      event_type: "run_failed",
-      payload: {
-        type: "OpenCodeSessionError",
-        message: "UnknownError: sdk.responses is not a function (provider=openai)",
-        event: "session.error",
-        error_name: "UnknownError",
-        provider_id: "openai",
-      },
     },
   ]);
 });

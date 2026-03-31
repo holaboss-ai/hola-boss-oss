@@ -23,6 +23,7 @@ export interface HarnessInputAttachmentPayload {
 export interface HarnessRunnerRequestLike {
   workspace_id: string;
   session_id: string;
+  session_kind?: string | null;
   input_id: string;
   instruction: string;
   attachments?: HarnessInputAttachmentPayload[];

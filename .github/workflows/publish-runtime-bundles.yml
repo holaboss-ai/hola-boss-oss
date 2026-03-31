@@ -217,7 +217,7 @@ jobs:
           npm run prepare:runtime
           npm run prepare:packaged-config
           npm run build
-          node scripts/run-electron-builder.mjs --projectDir "$PWD" --publish never --mac dmg --arm64 -c.mac.identity=null
+          node scripts/run-electron-builder.mjs --projectDir "$PWD" --publish never --mac dmg --arm64 -c.mac.identity=-
 
       - name: Build signed and notarized macOS desktop DMG
         if: ${{ env.MAC_CERTIFICATE != '' && env.MAC_CERTIFICATE_PASSWORD != '' && env.APPLE_ID != '' && env.APPLE_APP_SPECIFIC_PASSWORD != '' && env.APPLE_TEAM_ID != '' }}

@@ -5,6 +5,7 @@ import {
   type HarnessRuntimeStatus,
   type HarnessRuntimeStatusContext,
 } from "./types.js";
+import { appendOpencodeMcpToolAliasGuidance } from "./opencode-prompt.js";
 
 async function prepareOpencodeHarnessRun(params: HarnessPrepareRunParams): Promise<void> {
   const configUpdate = params.syncModelConfig({
@@ -80,7 +81,7 @@ export const opencodeHarnessDefinition: HarnessDefinition = {
         mode: params.runtimeConfig.mode,
         opencode_base_url: params.backendBaseUrl,
         timeout_seconds: params.timeoutSeconds,
-        system_prompt: params.runtimeConfig.system_prompt,
+        system_prompt: appendOpencodeMcpToolAliasGuidance(params.runtimeConfig.system_prompt, params.mcpToolRefs),
         tools: { ...params.runtimeConfig.tools },
         workspace_tool_ids: [...params.runtimeConfig.workspace_tool_ids],
         workspace_skill_ids: [...params.runtimeConfig.workspace_skill_ids],

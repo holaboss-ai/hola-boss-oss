@@ -32,25 +32,25 @@ test("projectOpencodeRuntimeConfig maps builtin tools, workspace tools, and skil
           }
         }
       },
-      general_type: "single",
-      single_agent: {
+      agent: {
         id: "workspace.general",
         model: "gpt-5.2",
         prompt: "You are concise."
-      },
-      coordinator: null,
-      members: []
+      }
     });
 
     assert.equal(result.provider_id, "hb_openai");
     assert.equal(result.model_id, "gpt-5.2");
-    assert.match(result.system_prompt, /^You are concise\./);
-    assert.match(result.system_prompt, /Tool execution guidance:/);
-    assert.match(result.system_prompt, /use them instead of answering only with raw text/i);
-    assert.match(result.system_prompt, /invoke it directly instead of describing what it would do or return/i);
-    assert.match(result.system_prompt, /MCP tool naming:/);
-    assert.match(result.system_prompt, /workspace\.read_file -> workspace_read_file/);
-    assert.match(result.system_prompt, /remote\.lookup -> remote_lookup/);
+    assert.match(result.system_prompt, /^Base runtime instructions:/);
+    assert.match(result.system_prompt, /MUST ALWAYS BE FOLLOWED NO MATTER WHAT/);
+    assert.match(result.system_prompt, /Tool and verification guidance:/);
+    assert.match(result.system_prompt, /workspace skills, and connected MCP tools/i);
+    assert.match(result.system_prompt, /consult them instead of improvising from scratch/i);
+    assert.match(result.system_prompt, /call it directly instead of only describing what it would do/i);
+    assert.match(result.system_prompt, /Workspace instructions from AGENTS\.md:/);
+    assert.match(result.system_prompt, /Treat these workspace instructions as additional requirements/i);
+    assert.match(result.system_prompt, /You are concise\./);
+    assert.doesNotMatch(result.system_prompt, /OpenCode MCP tool naming:/);
     assert.equal(result.model_client.model_proxy_provider, "openai_compatible");
     assert.equal(result.model_client.api_key, "hbrt.v1.token");
     assert.equal(result.model_client.base_url, "https://runtime.example/api/v1/model-proxy/openai/v1");
@@ -70,7 +70,7 @@ test("projectOpencodeRuntimeConfig maps builtin tools, workspace tools, and skil
   }
 });
 
-test("projectOpencodeRuntimeConfig composes team prompt and resolves anthropic provider", () => {
+test("projectOpencodeRuntimeConfig resolves anthropic provider for a single agent", () => {
   process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
   try {
     const result = projectOpencodeRuntimeConfig({
@@ -89,67 +89,54 @@ test("projectOpencodeRuntimeConfig composes team prompt and resolves anthropic p
       extra_tools: [],
       resolved_mcp_tool_refs: [],
       resolved_output_schemas: {},
-      general_type: "team",
-      single_agent: null,
-      coordinator: {
-        id: "workspace.coordinator",
+      agent: {
+        id: "workspace.general",
         model: "gpt-5.2",
-        prompt: "Coordinate the workspace."
-      },
-      members: [
-        { id: "writer", model: "gpt-5.2-mini", prompt: "Write copy.", role: "writer" },
-        { id: "reviewer", model: "gpt-5.2-mini", prompt: "Review output.", role: "reviewer" }
-      ]
+        prompt: "You are concise."
+      }
     });
 
     assert.equal(result.provider_id, "hb_anthropic");
     assert.equal(result.model_id, "claude-sonnet-4-5");
     assert.equal(result.model_client.model_proxy_provider, "anthropic_native");
     assert.equal(result.model_client.base_url, "https://runtime.example/api/v1/model-proxy/anthropic/v1");
-    assert.match(result.system_prompt, /Tool execution guidance:/);
-    assert.match(result.system_prompt, /Coordinator instructions:/);
-    assert.match(result.system_prompt, /Member guidance:/);
-    assert.match(result.system_prompt, /writer \(writer\):/);
-    assert.match(result.system_prompt, /reviewer \(reviewer\):/);
+    assert.match(result.system_prompt, /^Base runtime instructions:/);
+    assert.match(result.system_prompt, /Tool and verification guidance:/);
+    assert.match(result.system_prompt, /Respond without tool calls only when the request is purely conversational or explanatory/i);
   } finally {
     delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
   }
 });
 
-test("projectOpencodeRuntimeConfig rejects unsupported team output schemas", () => {
+test("projectOpencodeRuntimeConfig emits the mandatory base prompt even without AGENTS.md content", () => {
   process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
   try {
-    assert.throws(
-      () =>
-        projectOpencodeRuntimeConfig({
-          session_id: "session-1",
-          workspace_id: "workspace-1",
-          input_id: "input-1",
-          runtime_exec_model_proxy_api_key: "hbrt.v1.token",
-          runtime_exec_sandbox_id: "sandbox-1",
-          runtime_exec_run_id: null,
-          selected_model: null,
-          default_provider_id: "openai",
-          session_mode: "code",
-          workspace_config_checksum: "checksum-3",
-          workspace_skill_ids: [],
-          default_tools: ["read"],
-          extra_tools: [],
-          resolved_mcp_tool_refs: [],
-          resolved_output_schemas: {
-            writer: { type: "object" }
-          },
-          general_type: "team",
-          single_agent: null,
-          coordinator: {
-            id: "workspace.coordinator",
-            model: "gpt-5.2",
-            prompt: "Coordinate the workspace."
-          },
-          members: [{ id: "writer", model: "gpt-5.2-mini", prompt: "Write copy.", role: "writer" }]
-        }),
-      /unsupported schema members: writer/
-    );
+    const result = projectOpencodeRuntimeConfig({
+      session_id: "session-1",
+      workspace_id: "workspace-1",
+      input_id: "input-1",
+      runtime_exec_model_proxy_api_key: "hbrt.v1.token",
+      runtime_exec_sandbox_id: "sandbox-1",
+      runtime_exec_run_id: null,
+      selected_model: null,
+      default_provider_id: "openai",
+      session_mode: "code",
+      workspace_config_checksum: "checksum-3",
+      workspace_skill_ids: [],
+      default_tools: [],
+      extra_tools: [],
+      resolved_mcp_tool_refs: [],
+      resolved_output_schemas: {},
+      agent: {
+        id: "workspace.general",
+        model: "gpt-5.2",
+        prompt: "   "
+      }
+    });
+
+    assert.match(result.system_prompt, /^Base runtime instructions:/);
+    assert.match(result.system_prompt, /MUST ALWAYS BE FOLLOWED NO MATTER WHAT/);
+    assert.doesNotMatch(result.system_prompt, /Workspace instructions from AGENTS\.md:/);
   } finally {
     delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
   }
@@ -175,14 +162,11 @@ test("projectOpencodeRuntimeConfig uses direct OpenAI fallback when enabled", ()
       extra_tools: [],
       resolved_mcp_tool_refs: [],
       resolved_output_schemas: {},
-      general_type: "single",
-      single_agent: {
+      agent: {
         id: "workspace.general",
         model: "gpt-5.2",
         prompt: "You are concise."
-      },
-      coordinator: null,
-      members: []
+      }
     });
 
     assert.equal(result.provider_id, "hb_openai");
@@ -213,14 +197,11 @@ test("runOpencodeRuntimeConfigCli writes JSON response for a valid request", asy
     extra_tools: [],
     resolved_mcp_tool_refs: [],
     resolved_output_schemas: {},
-    general_type: "single",
-    single_agent: {
+    agent: {
       id: "workspace.general",
       model: "gpt-5.2",
       prompt: "You are concise."
-    },
-    coordinator: null,
-    members: []
+    }
   };
   let stdout = "";
   let stderr = "";

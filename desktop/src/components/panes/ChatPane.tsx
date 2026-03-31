@@ -1,4 +1,4 @@
-import { type ChangeEvent, type DragEvent, FormEvent, KeyboardEvent, type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type DragEvent, FormEvent, KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { AlertTriangle, ArrowUp, Bot, Cable, Check, ChevronDown, Clock3, FileText, Image as ImageIcon, Loader2, Paperclip, X } from "lucide-react";
 import { PaneCard } from "@/components/ui/PaneCard";
@@ -15,19 +15,38 @@ import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 type ChatAttachment = SessionInputAttachmentPayload;
 type ChatPaneVariant = "default" | "onboarding";
+type ChatPaneSessionRequest = {
+  workspaceId: string;
+  sessionId: string;
+  key: number;
+};
 
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
   attachments?: ChatAttachment[];
-  thinkingText?: string;
   traceSteps?: ChatTraceStep[];
+  contentBlocks?: ChatTurnBlock[];
 }
 
 type ChatTraceStepStatus = "running" | "completed" | "error" | "waiting";
 
-interface ChatTraceStep {
+type ChatTurnBlock =
+  | {
+      id: string;
+      kind: "text";
+      text: string;
+      order: number;
+    }
+  | {
+      id: string;
+      kind: "trace";
+      stepId: string;
+      order: number;
+    };
+
+export interface ChatTraceStep {
   id: string;
   kind: "phase" | "tool";
   title: string;
@@ -35,6 +54,39 @@ interface ChatTraceStep {
   details: string[];
   order: number;
 }
+
+export interface ManagedChatSessionRuntime {
+  workspaceId: string;
+  sessionId: string;
+  runtimeStatus: string;
+  currentInputId: string | null;
+  errorMessage: string;
+  events: SessionOutputEventPayload[];
+  historyVersion: number;
+  awaitingHistoryHydration: boolean;
+}
+
+export interface ManagedChatSessionObservedPayload {
+  workspaceId: string;
+  sessionId: string;
+  runtimeStatus: string;
+  currentInputId: string | null;
+  currentInputEvents: SessionOutputEventPayload[];
+}
+
+export interface ManagedQueueSessionInputPayload {
+  text: string;
+  workspaceId: string;
+  sessionId: string;
+  attachments: SessionInputAttachmentPayload[];
+  model: string | null;
+}
+
+type ManagedOptimisticLiveTurn = {
+  workspaceId: string;
+  sessionId: string;
+  status: string;
+};
 
 interface PendingLocalAttachmentFile {
   id: string;
@@ -53,6 +105,10 @@ interface PendingExplorerAttachmentFile {
 }
 
 type PendingAttachment = PendingLocalAttachmentFile | PendingExplorerAttachmentFile;
+type StartupPhaseTone = "loading" | "ready" | "error" | "waiting";
+
+const STARTUP_OVERLAY_INITIAL_DELAY_MS = 320;
+const STARTUP_OVERLAY_REPEAT_DELAY_MS = 1400;
 
 interface StreamTelemetryEntry {
   id: string;
@@ -70,8 +126,10 @@ interface StreamTelemetryEntry {
 const STREAM_ATTACH_PENDING = "__stream_attach_pending__";
 const STREAM_TELEMETRY_LIMIT = 240;
 const TOOL_TRACE_TERMINAL_PHASES = new Set(["completed", "failed", "error"]);
+const THINKING_TRACE_STEP_ID = "phase:thinking";
 const CHAT_AUTO_SCROLL_THRESHOLD_PX = 72;
 const CHAT_SCROLLBAR_MIN_THUMB_HEIGHT_PX = 40;
+const CHAT_INITIAL_ASSISTANT_SCROLL_TOP_OFFSET_PX = 20;
 const CHAT_MODEL_STORAGE_KEY = "holaboss-chat-model-v1";
 const CHAT_MODEL_USE_RUNTIME_DEFAULT = "__runtime_default__";
 const LEGACY_UNAVAILABLE_CHAT_MODELS = new Set(["openai/gpt-5.2-mini"]);
@@ -104,7 +162,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function normalizeErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Request failed.";
+  const message =
+    error instanceof Error ? error.message : typeof error === "string" && error.trim() ? error : "Request failed.";
+  const normalized = message.trim().toLowerCase();
+  if (normalized === "aborted" || normalized.includes("stream aborted") || normalized.includes("aborterror")) {
+    return "App is still starting up. Try again in a moment.";
+  }
+  return message;
 }
 
 function normalizeStoredChatModelPreference(value: string | null | undefined) {
@@ -190,6 +254,14 @@ function attachmentsFromMetadata(metadata: Record<string, unknown> | null | unde
 
 function hasRenderableMessageContent(text: string, attachments: ChatAttachment[]) {
   return Boolean(text.trim()) || attachments.length > 0;
+}
+
+function hasRenderableAssistantContent(message: ChatMessage) {
+  return (
+    hasRenderableMessageContent(message.text, message.attachments ?? []) ||
+    (message.contentBlocks?.length ?? 0) > 0 ||
+    (message.traceSteps?.length ?? 0) > 0
+  );
 }
 
 function formatAttachmentSize(sizeBytes: number) {
@@ -321,16 +393,6 @@ function summarizeUnknown(value: unknown, maxLength = 140): string {
     return "";
   }
   return String(value);
-}
-
-function assistantMetaLabel(harness: string | null | undefined, model: string | null | undefined) {
-  const harnessLabel = harness ? startCase(harness) : "";
-  if (harnessLabel) {
-    return harnessLabel;
-  }
-
-  const modelLabel = (model || "").trim();
-  return modelLabel || "Local runtime";
 }
 
 function toolTraceStepId(payload: Record<string, unknown>) {
@@ -517,6 +579,23 @@ function upsertTraceStep(previous: ChatTraceStep[], step: ChatTraceStep) {
     .sort((left, right) => left.order - right.order);
 }
 
+function appendThinkingTraceStep(previous: ChatTraceStep[], delta: string, order: number) {
+  if (!delta) {
+    return previous;
+  }
+
+  const existing = previous.find((entry) => entry.id === THINKING_TRACE_STEP_ID);
+  const nextText = `${existing?.details[0] || ""}${delta}`;
+  return upsertTraceStep(previous, {
+    id: THINKING_TRACE_STEP_ID,
+    kind: "phase",
+    title: "Thinking",
+    status: "running",
+    details: nextText ? [nextText] : [],
+    order: existing ? Math.min(existing.order, order) : order
+  });
+}
+
 function finalizeTraceSteps(
   previous: ChatTraceStep[],
   status: Extract<ChatTraceStepStatus, "completed" | "error">
@@ -531,41 +610,119 @@ function finalizeTraceSteps(
   );
 }
 
+function appendTextBlock(previous: ChatTurnBlock[], delta: string, order: number) {
+  if (!delta) {
+    return previous;
+  }
+
+  const lastBlock = previous[previous.length - 1];
+  if (lastBlock?.kind === "text") {
+    return [
+      ...previous.slice(0, -1),
+      {
+        ...lastBlock,
+        text: `${lastBlock.text}${delta}`
+      }
+    ] as ChatTurnBlock[];
+  }
+
+  return [
+    ...previous,
+    {
+      id: `text:${order}`,
+      kind: "text",
+      text: delta,
+      order
+    }
+  ] as ChatTurnBlock[];
+}
+
+function upsertTraceBlock(previous: ChatTurnBlock[], step: ChatTraceStep) {
+  const existingIndex = previous.findIndex((block) => block.kind === "trace" && block.stepId === step.id);
+  if (existingIndex >= 0) {
+    return previous.map((block, index) =>
+      index === existingIndex
+        ? {
+            ...block,
+            order: Math.min(block.order, step.order)
+          }
+        : block
+    );
+  }
+
+  return [...previous, { id: `trace:${step.id}`, kind: "trace", stepId: step.id, order: step.order }].sort(
+    (left, right) => left.order - right.order
+  ) as ChatTurnBlock[];
+}
+
 function assistantHistoryStateFromOutputEvents(outputEvents: SessionOutputEventPayload[]) {
   const orderedEvents = [...outputEvents].sort((left, right) => left.sequence - right.sequence || left.id - right.id);
-  let thinkingText = "";
+  let outputText = "";
   let traceSteps: ChatTraceStep[] = [];
+  let contentBlocks: ChatTurnBlock[] = [];
+  let liveStatus = "";
+  let lastEventId = 0;
 
   for (const event of orderedEvents) {
+    lastEventId = Math.max(lastEventId, event.id);
     const eventPayload = isRecord(event.payload) ? event.payload : {};
+
+    if (event.event_type === "run_claimed") {
+      liveStatus = "Thinking...";
+    } else if (event.event_type === "run_started") {
+      liveStatus = "Checking workspace context...";
+    } else if (event.event_type === "run_waiting_user" || event.event_type === "awaiting_user_input") {
+      liveStatus = "Waiting for your input...";
+    }
+
+    if (event.event_type === "output_delta") {
+      const delta = typeof eventPayload.delta === "string" ? eventPayload.delta : "";
+      if (delta) {
+        outputText = `${outputText}${delta}`;
+        contentBlocks = appendTextBlock(contentBlocks, delta, event.sequence);
+        liveStatus = "Writing response...";
+      }
+    }
 
     if (event.event_type === "thinking_delta") {
       const delta = typeof eventPayload.delta === "string" ? eventPayload.delta : "";
       if (delta) {
-        thinkingText = `${thinkingText}${delta}`;
+        traceSteps = appendThinkingTraceStep(traceSteps, delta, event.sequence);
+        const thinkingStep = traceSteps.find((step) => step.id === THINKING_TRACE_STEP_ID);
+        if (thinkingStep) {
+          contentBlocks = upsertTraceBlock(contentBlocks, thinkingStep);
+        }
+        liveStatus = "Thinking...";
       }
     }
 
     const phaseStep = phaseTraceStepFromEvent(event.event_type, eventPayload, event.sequence);
     if (phaseStep) {
       traceSteps = upsertTraceStep(traceSteps, phaseStep);
+      contentBlocks = upsertTraceBlock(contentBlocks, phaseStep);
     }
 
     const toolStep = toolTraceStepFromEvent(event.event_type, eventPayload, event.sequence);
     if (toolStep) {
       traceSteps = upsertTraceStep(traceSteps, toolStep);
+      contentBlocks = upsertTraceBlock(contentBlocks, toolStep);
+      liveStatus = toolStep.status === "completed" ? "Writing response..." : "Using tools...";
     }
 
     if (event.event_type === "run_completed") {
       traceSteps = finalizeTraceSteps(traceSteps, "completed");
+      liveStatus = "";
     } else if (event.event_type === "run_failed") {
       traceSteps = finalizeTraceSteps(traceSteps, "error");
     }
   }
 
   return {
-    thinkingText: thinkingText || undefined,
-    traceSteps: traceSteps.length > 0 ? traceSteps : undefined
+    outputText: outputText || undefined,
+    traceSteps: traceSteps.length > 0 ? traceSteps : undefined,
+    contentBlocks: contentBlocks.length > 0 ? contentBlocks : undefined,
+    liveStatus: liveStatus || undefined,
+    lastEventId
   };
 }
 
@@ -577,16 +734,29 @@ function isNearChatBottom(container: HTMLDivElement) {
 export function ChatPane({
   onOutputsChanged,
   focusRequestKey = 0,
+  sessionRequest = null,
+  onActiveSessionChange,
+  managedSessionRuntime = null,
+  onManagedSessionObserved,
+  onManagedHistoryHydrated,
+  onManagedQueueSessionInput,
   variant = "default"
 }: {
   onOutputsChanged?: () => void;
   focusRequestKey?: number;
+  sessionRequest?: ChatPaneSessionRequest | null;
+  onActiveSessionChange?: (sessionId: string | null) => void;
+  managedSessionRuntime?: ManagedChatSessionRuntime | null;
+  onManagedSessionObserved?: (payload: ManagedChatSessionObservedPayload) => void;
+  onManagedHistoryHydrated?: (payload: { workspaceId: string; sessionId: string; historyVersion: number }) => void;
+  onManagedQueueSessionInput?: (payload: ManagedQueueSessionInputPayload) => Promise<EnqueueSessionInputResponsePayload>;
   variant?: ChatPaneVariant;
 }) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const authSessionState = useDesktopAuthSession();
   const {
     runtimeConfig,
+    runtimeStatus,
     selectedWorkspace,
     resolvedUserId,
     isLoadingBootstrap,
@@ -597,17 +767,17 @@ export function ChatPane({
   } = useWorkspaceDesktop();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [liveAssistantText, setLiveAssistantText] = useState("");
-  const [liveThinkingText, setLiveThinkingText] = useState("");
-  const [liveThinkingExpanded, setLiveThinkingExpanded] = useState(false);
   const [liveAgentStatus, setLiveAgentStatus] = useState("");
   const [liveTraceSteps, setLiveTraceSteps] = useState<ChatTraceStep[]>([]);
-  const [collapsedThinkingByMessageId, setCollapsedThinkingByMessageId] = useState<Record<string, boolean>>({});
+  const [liveContentBlocks, setLiveContentBlocks] = useState<ChatTurnBlock[]>([]);
+  const [managedOptimisticLiveTurn, setManagedOptimisticLiveTurn] = useState<ManagedOptimisticLiveTurn | null>(null);
   const [collapsedTraceByStepId, setCollapsedTraceByStepId] = useState<Record<string, boolean>>({});
   const [input, setInput] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
   const [chatErrorMessage, setChatErrorMessage] = useState("");
+  const [isPaneDragActive, setIsPaneDragActive] = useState(false);
   const [verboseTelemetryEnabled, setVerboseTelemetryEnabled] = useState(false);
   const [composerBlockHeight, setComposerBlockHeight] = useState(0);
   const [chatModelPreference, setChatModelPreference] = useState(loadStoredChatModelPreference);
@@ -619,23 +789,78 @@ export function ChatPane({
   const [streamTelemetry, setStreamTelemetry] = useState<StreamTelemetryEntry[]>([]);
   const messagesRef = useRef<HTMLDivElement>(null);
   const messagesContentRef = useRef<HTMLDivElement>(null);
+  const liveAssistantTurnRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerBlockRef = useRef<HTMLDivElement>(null);
   const shouldAutoScrollRef = useRef(true);
+  const pendingInitialAssistantJumpRef = useRef(false);
   const activeSessionIdRef = useRef<string | null>(null);
   const activeStreamIdRef = useRef<string | null>(null);
   const activeAssistantMessageIdRef = useRef<string | null>(null);
   const pendingInputIdRef = useRef<string | null>(null);
   const seenMainDebugKeysRef = useRef<Set<string>>(new Set());
   const selectedWorkspaceRef = useRef<WorkspaceRecordPayload | null>(null);
+  const startupUnlockedWorkspaceIdsRef = useRef<Set<string>>(new Set());
   const isOnboardingVariant = variant === "onboarding";
+  const managedMode = !isOnboardingVariant && Boolean(onManagedSessionObserved && onManagedQueueSessionInput);
   const pendingFocusRequestKeyRef = useRef<number | null>(focusRequestKey);
   const liveAssistantTextRef = useRef("");
-  const liveThinkingTextRef = useRef("");
-  const liveThinkingExpandedRef = useRef(false);
   const liveTraceStepsRef = useRef<ChatTraceStep[]>([]);
+  const liveContentBlocksRef = useRef<ChatTurnBlock[]>([]);
+  const hydratedStreamReplayRef = useRef<{
+    sessionId: string;
+    inputId: string;
+    maxEventId: number;
+  } | null>(null);
   const [activeSessionId, setActiveSessionId] = useState("");
+  const managedSessionMatchesActive =
+    managedMode &&
+    Boolean(selectedWorkspaceId) &&
+    managedSessionRuntime?.workspaceId === selectedWorkspaceId &&
+    managedSessionRuntime?.sessionId === activeSessionId;
+  const managedOptimisticMatchesActive =
+    managedMode &&
+    Boolean(selectedWorkspaceId) &&
+    managedOptimisticLiveTurn?.workspaceId === selectedWorkspaceId &&
+    managedOptimisticLiveTurn?.sessionId === activeSessionId;
+  const managedLiveState = useMemo(
+    () => (managedSessionMatchesActive && managedSessionRuntime ? assistantHistoryStateFromOutputEvents(managedSessionRuntime.events) : null),
+    [managedSessionMatchesActive, managedSessionRuntime]
+  );
+  const managedRuntimeStatus = managedSessionMatchesActive ? runtimeStateStatus(managedSessionRuntime?.runtimeStatus) : "";
+  const optimisticManagedStatus = managedOptimisticMatchesActive ? managedOptimisticLiveTurn?.status || "" : "";
+  const effectiveLiveAssistantText = managedLiveState?.outputText || (!managedMode ? liveAssistantText : "");
+  const effectiveLiveTraceSteps = managedLiveState?.traceSteps ?? (!managedMode ? liveTraceSteps : []);
+  const effectiveLiveContentBlocks = managedLiveState?.contentBlocks ?? (!managedMode ? liveContentBlocks : []);
+  const effectiveLiveAgentStatus =
+    managedMode && (managedSessionMatchesActive || managedOptimisticMatchesActive)
+      ? managedLiveState?.liveStatus ||
+        (managedRuntimeStatus === "WAITING_USER"
+          ? "Waiting for your input..."
+          : managedRuntimeStatus === "QUEUED"
+            ? "Thinking..."
+            : managedRuntimeStatus === "BUSY"
+              ? "Thinking..."
+              : optimisticManagedStatus)
+      : liveAgentStatus;
+  const effectiveIsResponding =
+    managedMode && (managedSessionMatchesActive || managedOptimisticMatchesActive)
+      ? managedRuntimeStatus === "BUSY" || managedRuntimeStatus === "QUEUED" || managedOptimisticMatchesActive
+      : isResponding;
+  const effectiveChatErrorMessage =
+    chatErrorMessage || (managedMode && managedSessionMatchesActive ? managedSessionRuntime?.errorMessage || "" : "");
+  const shouldShowManagedLiveTurn =
+    managedMode &&
+    (managedSessionMatchesActive || managedOptimisticMatchesActive) &&
+    Boolean(
+      effectiveLiveAssistantText ||
+        effectiveLiveTraceSteps.length > 0 ||
+        effectiveChatErrorMessage ||
+        effectiveIsResponding ||
+        managedSessionRuntime?.awaitingHistoryHydration ||
+        managedRuntimeStatus === "WAITING_USER"
+    );
 
   function appendStreamTelemetry(entry: Omit<StreamTelemetryEntry, "id" | "at">) {
     if (!verboseTelemetryEnabled) {
@@ -673,49 +898,162 @@ export function ChatPane({
   function setActiveSession(sessionId: string | null) {
     activeSessionIdRef.current = sessionId;
     setActiveSessionId(sessionId ?? "");
+    onActiveSessionChange?.(sessionId);
   }
 
   function resetLiveTurn() {
     liveAssistantTextRef.current = "";
-    liveThinkingTextRef.current = "";
-    liveThinkingExpandedRef.current = false;
     liveTraceStepsRef.current = [];
+    liveContentBlocksRef.current = [];
     activeAssistantMessageIdRef.current = null;
     setLiveAssistantText("");
-    setLiveThinkingText("");
-    setLiveThinkingExpanded(false);
     setLiveAgentStatus("");
     setLiveTraceSteps([]);
+    setLiveContentBlocks([]);
   }
 
-  function appendLiveAssistantDelta(delta: string) {
+  function scrollLiveAssistantTurnIntoView() {
+    const container = messagesRef.current;
+    const liveTurn = liveAssistantTurnRef.current;
+    if (!container) {
+      return;
+    }
+    if (!liveTurn) {
+      return;
+    }
+    const containerRect = container.getBoundingClientRect();
+    const liveTurnRect = liveTurn.getBoundingClientRect();
+    const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    const targetScrollTop = Math.min(
+      maxScrollTop,
+      Math.max(
+        0,
+        container.scrollTop + (liveTurnRect.top - containerRect.top) - CHAT_INITIAL_ASSISTANT_SCROLL_TOP_OFFSET_PX
+      )
+    );
+    if (Math.abs(container.scrollTop - targetScrollTop) < 2) {
+      return;
+    }
+    container.scrollTo({
+      top: targetScrollTop,
+      behavior: "smooth"
+    });
+    syncChatScrollMetrics(container);
+  }
+
+  function restoreLiveTurnFromOutputEvents(outputEvents: SessionOutputEventPayload[], options?: {
+    status?: string;
+    currentInputId?: string;
+  }) {
+    const restored = assistantHistoryStateFromOutputEvents(outputEvents);
+    const normalizedStatus = runtimeStateStatus(options?.status);
+
+    liveAssistantTextRef.current = restored.outputText || "";
+    liveTraceStepsRef.current = restored.traceSteps ?? [];
+    liveContentBlocksRef.current = restored.contentBlocks ?? [];
+    activeAssistantMessageIdRef.current = options?.currentInputId ? `assistant-${options.currentInputId}` : null;
+
+    setLiveAssistantText(restored.outputText || "");
+    setLiveTraceSteps(restored.traceSteps ?? []);
+    setLiveContentBlocks(restored.contentBlocks ?? []);
+
+    if (normalizedStatus === "WAITING_USER") {
+      setLiveAgentStatus("Waiting for your input...");
+      return restored;
+    }
+    if (normalizedStatus === "ERROR") {
+      setLiveAgentStatus("");
+      return restored;
+    }
+    if (normalizedStatus === "QUEUED" && !restored.liveStatus) {
+      setLiveAgentStatus("Thinking...");
+      return restored;
+    }
+    if (normalizedStatus === "BUSY" && !restored.liveStatus) {
+      setLiveAgentStatus("Thinking...");
+      return restored;
+    }
+    setLiveAgentStatus(restored.liveStatus || "");
+    return restored;
+  }
+
+  async function attachExistingSessionStream(options: {
+    workspaceId: string;
+    sessionId: string;
+    inputId: string;
+    hydratedUpToEventId: number;
+  }) {
+    const currentStreamId = activeStreamIdRef.current;
+    if (currentStreamId) {
+      await closeStreamWithReason(currentStreamId, "reattach_existing_session_stream").catch(() => undefined);
+      activeStreamIdRef.current = null;
+    }
+    hydratedStreamReplayRef.current = {
+      sessionId: options.sessionId,
+      inputId: options.inputId,
+      maxEventId: options.hydratedUpToEventId
+    };
+    const stream = await window.electronAPI.workspace.openSessionOutputStream({
+      sessionId: options.sessionId,
+      workspaceId: options.workspaceId,
+      inputId: options.inputId,
+      includeHistory: true,
+      stopOnTerminal: true
+    });
+    activeStreamIdRef.current = stream.streamId;
+    appendStreamTelemetry({
+      streamId: stream.streamId,
+      transportType: "client",
+      eventName: "openSessionOutputStream",
+      eventType: "stream_open_existing_session",
+      inputId: options.inputId,
+      sessionId: options.sessionId,
+      action: "stream_requested_existing_session",
+      detail: `hydrated_up_to=${options.hydratedUpToEventId}`
+    });
+  }
+
+  function appendLiveAssistantDelta(delta: string, order: number) {
     flushSync(() => {
       setLiveAssistantText((prev) => {
         const next = `${prev}${delta}`;
         liveAssistantTextRef.current = next;
         return next;
       });
+      setLiveContentBlocks((prev) => {
+        const next = appendTextBlock(prev, delta, order);
+        liveContentBlocksRef.current = next;
+        return next;
+      });
     });
   }
 
-  function appendLiveThinkingDelta(delta: string) {
+  function appendLiveThinkingTraceDelta(delta: string, order: number) {
     flushSync(() => {
-      setLiveThinkingText((prev) => {
-        const next = `${prev}${delta}`;
-        liveThinkingTextRef.current = next;
-        return next;
-      });
-      liveThinkingExpandedRef.current = true;
-      setLiveThinkingExpanded(true);
+      const next = appendThinkingTraceStep(liveTraceStepsRef.current, delta, order);
+      liveTraceStepsRef.current = next;
+      setLiveTraceSteps(next);
+      const thinkingStep = next.find((step) => step.id === THINKING_TRACE_STEP_ID);
+      if (thinkingStep) {
+        setLiveContentBlocks((prev) => {
+          const nextBlocks = upsertTraceBlock(prev, thinkingStep);
+          liveContentBlocksRef.current = nextBlocks;
+          return nextBlocks;
+        });
+      }
     });
+    setCollapsedTraceByStepId((prev) => ({
+      ...prev,
+      [THINKING_TRACE_STEP_ID]: false
+    }));
   }
 
   function commitLiveAssistantMessage() {
     const messageId = activeAssistantMessageIdRef.current ?? `assistant-${Date.now()}`;
     const assistantText = liveAssistantTextRef.current;
-    const thinkingText = liveThinkingTextRef.current;
     const traceSteps = liveTraceStepsRef.current;
-    if (!assistantText && !thinkingText && traceSteps.length === 0) {
+    const contentBlocks = liveContentBlocksRef.current;
+    if (!assistantText && traceSteps.length === 0 && contentBlocks.length === 0) {
       resetLiveTurn();
       return;
     }
@@ -726,22 +1064,11 @@ export function ChatPane({
         id: messageId,
         role: "assistant",
         text: assistantText,
-        thinkingText: thinkingText || undefined,
-        traceSteps: traceSteps.length > 0 ? traceSteps : undefined
+        traceSteps: traceSteps.length > 0 ? traceSteps : undefined,
+        contentBlocks: contentBlocks.length > 0 ? contentBlocks : undefined
       }
     ]);
-    setCollapsedThinkingByMessageId((prev) => ({
-      ...prev,
-      [messageId]: true
-    }));
     resetLiveTurn();
-  }
-
-  function toggleThinkingPanel(messageId: string) {
-    setCollapsedThinkingByMessageId((prev) => ({
-      ...prev,
-      [messageId]: !prev[messageId]
-    }));
   }
 
   function toggleTraceStep(stepId: string) {
@@ -754,6 +1081,11 @@ export function ChatPane({
   function setLiveTraceStepsState(nextSteps: ChatTraceStep[]) {
     liveTraceStepsRef.current = nextSteps;
     setLiveTraceSteps(nextSteps);
+  }
+
+  function setLiveContentBlocksState(nextBlocks: ChatTurnBlock[]) {
+    liveContentBlocksRef.current = nextBlocks;
+    setLiveContentBlocks(nextBlocks);
   }
 
   function syncChatScrollMetrics(container?: HTMLDivElement | null) {
@@ -784,6 +1116,7 @@ export function ChatPane({
   function upsertLiveTraceStep(step: ChatTraceStep, options?: { expand?: boolean }) {
     const next = upsertTraceStep(liveTraceStepsRef.current, step);
     setLiveTraceStepsState(next);
+    setLiveContentBlocksState(upsertTraceBlock(liveContentBlocksRef.current, step));
     if (options?.expand) {
       setCollapsedTraceByStepId((prev) => (step.id in prev ? prev : { ...prev, [step.id]: false }));
     }
@@ -802,9 +1135,9 @@ export function ChatPane({
 
     container.scrollTo({
       top: container.scrollHeight,
-      behavior: isResponding ? "auto" : "smooth"
+      behavior: "smooth"
     });
-  }, [isResponding, liveAssistantText, liveThinkingText, liveTraceSteps, messages]);
+  }, [messages]);
 
   useEffect(() => {
     selectedWorkspaceRef.current = selectedWorkspace;
@@ -877,14 +1210,16 @@ export function ChatPane({
 
   useEffect(() => {
     if (!selectedWorkspaceId) {
+      pendingInitialAssistantJumpRef.current = false;
       setMessages([]);
       resetLiveTurn();
-      setCollapsedThinkingByMessageId({});
+      setManagedOptimisticLiveTurn(null);
       setCollapsedTraceByStepId({});
       setPendingAttachments([]);
       setActiveSession(null);
       shouldAutoScrollRef.current = true;
       pendingInputIdRef.current = null;
+      hydratedStreamReplayRef.current = null;
       return;
     }
 
@@ -900,13 +1235,34 @@ export function ChatPane({
           return;
         }
 
-        const nextSessionId = preferredSessionId(selectedWorkspaceRef.current, runtimeStates.items);
+        const requestedSessionId =
+          sessionRequest?.workspaceId === selectedWorkspaceId ? sessionRequest.sessionId.trim() : "";
+        const currentSessionId = (activeSessionIdRef.current || "").trim();
+        const mainSessionId = (selectedWorkspaceRef.current?.main_session_id || "").trim();
+        const onboardingSessionId = (selectedWorkspaceRef.current?.onboarding_session_id || "").trim();
+        const currentSessionStillAvailable =
+          Boolean(currentSessionId) &&
+          (runtimeStates.items.some((item) => item.session_id === currentSessionId) ||
+            currentSessionId === mainSessionId ||
+            currentSessionId === onboardingSessionId);
+        const nextSessionId =
+          requestedSessionId ||
+          (currentSessionStillAvailable ? currentSessionId : preferredSessionId(selectedWorkspaceRef.current, runtimeStates.items));
         if (activeSessionIdRef.current !== nextSessionId) {
+          const activeStreamId = activeStreamIdRef.current;
+          if (activeStreamId) {
+            await closeStreamWithReason(activeStreamId, "session_switch_reload").catch(() => undefined);
+            activeStreamIdRef.current = null;
+          }
+          pendingInputIdRef.current = null;
+          setIsResponding(false);
           setMessages([]);
           resetLiveTurn();
-          setCollapsedThinkingByMessageId({});
+          setManagedOptimisticLiveTurn(null);
           setCollapsedTraceByStepId({});
+          pendingInitialAssistantJumpRef.current = false;
           shouldAutoScrollRef.current = true;
+          hydratedStreamReplayRef.current = null;
         }
         setActiveSession(nextSessionId);
         if (!nextSessionId) {
@@ -954,64 +1310,117 @@ export function ChatPane({
               const inputId = inputIdFromMessageId(nextMessage.id, "assistant");
               if (inputId) {
                 const restoredAssistantState = assistantHistoryStateFromOutputEvents(outputEventsByInputId.get(inputId) ?? []);
-                if (restoredAssistantState.thinkingText) {
-                  nextMessage.thinkingText = restoredAssistantState.thinkingText;
-                }
                 if (restoredAssistantState.traceSteps) {
                   nextMessage.traceSteps = restoredAssistantState.traceSteps;
+                }
+                if (restoredAssistantState.contentBlocks) {
+                  nextMessage.contentBlocks = restoredAssistantState.contentBlocks;
                 }
               }
             }
 
             return nextMessage;
           })
-          .filter(
-            (message) =>
-              (message.role === "user" || message.role === "assistant") &&
-              hasRenderableMessageContent(message.text, message.attachments ?? [])
+          .filter((message) =>
+            message.role === "user"
+              ? hasRenderableMessageContent(message.text, message.attachments ?? [])
+              : message.role === "assistant"
+                ? hasRenderableAssistantContent(message)
+                : false
           );
 
         setMessages(nextMessages);
         resetLiveTurn();
 
-        const onboardingSessionId = (selectedWorkspaceRef.current?.onboarding_session_id || "").trim();
-        const currentRuntimeState = runtimeStates.items.find((item) => item.session_id === nextSessionId);
+        const runtimeState = runtimeStates.items.find((item) => item.session_id === nextSessionId) ?? null;
+        const currentRuntimeStatus = runtimeStateStatus(runtimeState?.status);
+        const currentInputId = (runtimeState?.current_input_id || "").trim();
+        const currentInputEvents = currentInputId ? outputEventsByInputId.get(currentInputId) ?? [] : [];
         const hasAssistantMessage = nextMessages.some((message) => message.role === "assistant");
-        const shouldAttachOnboardingBootstrapStream =
-          isOnboardingVariant &&
-          nextSessionId === onboardingSessionId &&
-          !hasAssistantMessage &&
-          !activeStreamIdRef.current &&
-          !pendingInputIdRef.current &&
-          ["BUSY", "QUEUED"].includes(runtimeStateStatus(currentRuntimeState?.status));
 
-        if (shouldAttachOnboardingBootstrapStream) {
-          setIsResponding(true);
-          setLiveAgentStatus("Preparing first question...");
-          setChatErrorMessage("");
-          const stream = await window.electronAPI.workspace.openSessionOutputStream({
-            sessionId: nextSessionId,
+        if (managedMode && onManagedSessionObserved) {
+          onManagedSessionObserved({
             workspaceId: selectedWorkspaceId,
-            includeHistory: true,
-            stopOnTerminal: true
-          });
-          if (cancelled) {
-            await closeStreamWithReason(stream.streamId, "load_history_cancelled").catch(() => undefined);
-            return;
-          }
-          activeStreamIdRef.current = stream.streamId;
-          appendStreamTelemetry({
-            streamId: stream.streamId,
-            transportType: "client",
-            eventName: "openSessionOutputStream",
-            eventType: "stream_open_onboarding_bootstrap",
-            inputId: "",
             sessionId: nextSessionId,
-            action: "stream_requested_onboarding_bootstrap",
-            detail: "attached to in-flight onboarding opener"
+            runtimeStatus: currentRuntimeStatus,
+            currentInputId: currentInputId || null,
+            currentInputEvents
           });
-        } else if (!activeStreamIdRef.current && !pendingInputIdRef.current) {
-          setIsResponding(false);
+          if (
+            managedSessionRuntime &&
+            managedSessionRuntime.workspaceId === selectedWorkspaceId &&
+            managedSessionRuntime.sessionId === nextSessionId &&
+            managedSessionRuntime.awaitingHistoryHydration &&
+            managedSessionRuntime.historyVersion > 0 &&
+            onManagedHistoryHydrated
+          ) {
+            onManagedHistoryHydrated({
+              workspaceId: selectedWorkspaceId,
+              sessionId: nextSessionId,
+              historyVersion: managedSessionRuntime.historyVersion
+            });
+          }
+        } else {
+          const shouldRestoreLiveTurn =
+            Boolean(currentInputId) && ["BUSY", "QUEUED", "WAITING_USER", "ERROR"].includes(currentRuntimeStatus);
+          const shouldAttachOnboardingBootstrapStream =
+            isOnboardingVariant &&
+            nextSessionId === onboardingSessionId &&
+            !hasAssistantMessage &&
+            !activeStreamIdRef.current &&
+            !pendingInputIdRef.current &&
+            ["BUSY", "QUEUED"].includes(currentRuntimeStatus);
+
+          if (shouldRestoreLiveTurn) {
+            const restored = restoreLiveTurnFromOutputEvents(currentInputEvents, {
+              status: currentRuntimeStatus,
+              currentInputId
+            });
+            pendingInputIdRef.current = currentInputId;
+            setIsResponding(currentRuntimeStatus === "BUSY" || currentRuntimeStatus === "QUEUED");
+            if (currentRuntimeStatus === "ERROR") {
+              setChatErrorMessage(runtimeStateErrorDetail(runtimeState?.last_error));
+            }
+            if (!cancelled && (currentRuntimeStatus === "BUSY" || currentRuntimeStatus === "QUEUED")) {
+              await attachExistingSessionStream({
+                workspaceId: selectedWorkspaceId,
+                sessionId: nextSessionId,
+                inputId: currentInputId,
+                hydratedUpToEventId: restored.lastEventId
+              });
+            }
+          } else if (shouldAttachOnboardingBootstrapStream) {
+            setIsResponding(true);
+            setLiveAgentStatus("Preparing first question...");
+            setChatErrorMessage("");
+            const stream = await window.electronAPI.workspace.openSessionOutputStream({
+              sessionId: nextSessionId,
+              workspaceId: selectedWorkspaceId,
+              includeHistory: true,
+              stopOnTerminal: true
+            });
+            if (cancelled) {
+              await closeStreamWithReason(stream.streamId, "load_history_cancelled").catch(() => undefined);
+              return;
+            }
+            activeStreamIdRef.current = stream.streamId;
+            appendStreamTelemetry({
+              streamId: stream.streamId,
+              transportType: "client",
+              eventName: "openSessionOutputStream",
+              eventType: "stream_open_onboarding_bootstrap",
+              inputId: "",
+              sessionId: nextSessionId,
+              action: "stream_requested_onboarding_bootstrap",
+              detail: "attached to in-flight onboarding opener"
+            });
+          } else {
+            pendingInputIdRef.current = null;
+            setIsResponding(false);
+            if (currentRuntimeStatus === "ERROR") {
+              setChatErrorMessage(runtimeStateErrorDetail(runtimeState?.last_error));
+            }
+          }
         }
       } catch (error) {
         if (!cancelled) {
@@ -1033,7 +1442,55 @@ export function ChatPane({
     selectedWorkspaceId,
     selectedWorkspace?.main_session_id,
     selectedWorkspace?.onboarding_session_id,
-    selectedWorkspace?.onboarding_status
+    selectedWorkspace?.onboarding_status,
+    managedMode,
+    managedSessionRuntime?.awaitingHistoryHydration,
+    managedSessionRuntime?.historyVersion,
+    managedSessionRuntime?.sessionId,
+    managedSessionRuntime?.workspaceId,
+    onManagedHistoryHydrated,
+    onManagedSessionObserved,
+    sessionRequest?.key
+  ]);
+
+  useEffect(() => {
+    if (!managedMode) {
+      if (managedOptimisticLiveTurn) {
+        setManagedOptimisticLiveTurn(null);
+      }
+      return;
+    }
+    if (!managedOptimisticLiveTurn) {
+      return;
+    }
+    if (
+      managedOptimisticLiveTurn.workspaceId !== selectedWorkspaceId ||
+      managedOptimisticLiveTurn.sessionId !== activeSessionId
+    ) {
+      setManagedOptimisticLiveTurn(null);
+      return;
+    }
+    if (
+      managedSessionMatchesActive &&
+      (
+        Boolean(managedRuntimeStatus) ||
+        Boolean(managedSessionRuntime?.currentInputId) ||
+        (managedSessionRuntime?.events.length ?? 0) > 0 ||
+        Boolean(managedSessionRuntime?.errorMessage)
+      )
+    ) {
+      setManagedOptimisticLiveTurn(null);
+    }
+  }, [
+    activeSessionId,
+    managedMode,
+    managedOptimisticLiveTurn,
+    managedRuntimeStatus,
+    managedSessionMatchesActive,
+    managedSessionRuntime?.currentInputId,
+    managedSessionRuntime?.errorMessage,
+    managedSessionRuntime?.events.length,
+    selectedWorkspaceId
   ]);
 
   useEffect(() => {
@@ -1105,6 +1562,9 @@ export function ChatPane({
   }, [verboseTelemetryEnabled]);
 
   useEffect(() => {
+    if (managedMode) {
+      return;
+    }
     const activeStreamId = activeStreamIdRef.current;
     if (!activeStreamId) {
       return;
@@ -1114,9 +1574,12 @@ export function ChatPane({
     activeAssistantMessageIdRef.current = null;
     setIsResponding(false);
     void closeStreamWithReason(activeStreamId, "selected_workspace_changed");
-  }, [selectedWorkspaceId]);
+  }, [managedMode, selectedWorkspaceId]);
 
   useEffect(() => {
+    if (managedMode) {
+      return;
+    }
     const unsubscribe = window.electronAPI.workspace.onSessionStreamEvent((payload) => {
       const currentStreamId = activeStreamIdRef.current;
       const pendingInputId = pendingInputIdRef.current || "";
@@ -1138,6 +1601,10 @@ export function ChatPane({
       const eventInputId = typeof typedEvent?.input_id === "string" ? typedEvent.input_id : "";
       const eventSessionId = typeof typedEvent?.session_id === "string" ? typedEvent.session_id : "";
       const eventSequence = typeof typedEvent?.sequence === "number" && Number.isFinite(typedEvent.sequence) ? typedEvent.sequence : Number.MAX_SAFE_INTEGER;
+      const streamEventId =
+        payload.type === "event" && typeof payload.event?.id === "string"
+          ? Number.parseInt(payload.event.id, 10)
+          : Number.NaN;
 
       appendStreamTelemetry({
         streamId: payload.streamId,
@@ -1149,6 +1616,29 @@ export function ChatPane({
         action: "received",
         detail: `active=${currentStreamId || "-"} pending=${pendingInputId || "-"}`
       });
+
+      const replayHydration = hydratedStreamReplayRef.current;
+      if (
+        payload.type === "event" &&
+        replayHydration &&
+        eventSessionId === replayHydration.sessionId &&
+        eventInputId === replayHydration.inputId
+      ) {
+        if (Number.isFinite(streamEventId) && streamEventId > 0 && streamEventId <= replayHydration.maxEventId) {
+          appendStreamTelemetry({
+            streamId: payload.streamId,
+            transportType: payload.type,
+            eventName,
+            eventType,
+            inputId: eventInputId,
+            sessionId: eventSessionId,
+            action: "drop_replayed_hydration_event",
+            detail: `event_id=${streamEventId} hydrated_up_to=${replayHydration.maxEventId}`
+          });
+          return;
+        }
+        hydratedStreamReplayRef.current = null;
+      }
 
       if (payload.type === "error") {
         if (!currentStreamId || payload.streamId !== currentStreamId) {
@@ -1191,11 +1681,12 @@ export function ChatPane({
           });
           return;
         }
-        setChatErrorMessage(payload.error || "The agent stream failed.");
+        setChatErrorMessage(normalizeErrorMessage(payload.error || "The agent stream failed."));
         setIsResponding(false);
         activeAssistantMessageIdRef.current = null;
         activeStreamIdRef.current = null;
         pendingInputIdRef.current = null;
+        hydratedStreamReplayRef.current = null;
         appendStreamTelemetry({
           streamId: payload.streamId,
           transportType: payload.type,
@@ -1254,6 +1745,7 @@ export function ChatPane({
         activeAssistantMessageIdRef.current = null;
         activeStreamIdRef.current = null;
         pendingInputIdRef.current = null;
+        hydratedStreamReplayRef.current = null;
         appendStreamTelemetry({
           streamId: payload.streamId,
           transportType: payload.type,
@@ -1316,7 +1808,7 @@ export function ChatPane({
       }
 
       if (eventType === "run_claimed") {
-        setLiveAgentStatus("Preparing workspace context...");
+        setLiveAgentStatus("Thinking...");
       } else if (eventType === "run_started") {
         setLiveAgentStatus("Checking workspace context...");
       } else if (eventType === "run_waiting_user" || eventType === "awaiting_user_input") {
@@ -1353,7 +1845,7 @@ export function ChatPane({
 
         const assistantMessageId = activeAssistantMessageIdRef.current ?? `assistant-${Date.now()}`;
         activeAssistantMessageIdRef.current = assistantMessageId;
-        appendLiveAssistantDelta(delta);
+        appendLiveAssistantDelta(delta, eventSequence);
         appendStreamTelemetry({
           streamId: payload.streamId,
           transportType: payload.type,
@@ -1383,7 +1875,7 @@ export function ChatPane({
           });
           return;
         }
-        appendLiveThinkingDelta(delta);
+        appendLiveThinkingTraceDelta(delta, eventSequence);
         appendStreamTelemetry({
           streamId: payload.streamId,
           transportType: payload.type,
@@ -1406,12 +1898,13 @@ export function ChatPane({
               : "The run failed.";
         setChatErrorMessage(detail);
         finalizeLiveTraceSteps("error");
-        if (liveAssistantTextRef.current || liveThinkingTextRef.current || liveTraceStepsRef.current.length > 0) {
+        if (liveAssistantTextRef.current || liveTraceStepsRef.current.length > 0) {
           commitLiveAssistantMessage();
         }
         setIsResponding(false);
         activeStreamIdRef.current = null;
         pendingInputIdRef.current = null;
+        hydratedStreamReplayRef.current = null;
         appendStreamTelemetry({
           streamId: payload.streamId,
           transportType: payload.type,
@@ -1431,6 +1924,7 @@ export function ChatPane({
         setIsResponding(false);
         activeStreamIdRef.current = null;
         pendingInputIdRef.current = null;
+        hydratedStreamReplayRef.current = null;
         appendStreamTelemetry({
           streamId: payload.streamId,
           transportType: payload.type,
@@ -1449,10 +1943,10 @@ export function ChatPane({
     return () => {
       unsubscribe();
     };
-  }, [onOutputsChanged, refreshWorkspaceData]);
+  }, [managedMode, onOutputsChanged, refreshWorkspaceData]);
 
   useEffect(() => {
-    if (!isResponding || !selectedWorkspaceId || !activeSessionId) {
+    if (managedMode || !isResponding || !selectedWorkspaceId || !activeSessionId) {
       return;
     }
 
@@ -1513,20 +2007,23 @@ export function ChatPane({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [isResponding, selectedWorkspaceId, activeSessionId]);
+  }, [managedMode, isResponding, selectedWorkspaceId, activeSessionId]);
 
   useEffect(() => {
+    if (managedMode) {
+      return;
+    }
     return () => {
       const activeStreamId = activeStreamIdRef.current;
       if (activeStreamId) {
         void closeStreamWithReason(activeStreamId, "chatpane_unmount");
       }
     };
-  }, []);
+  }, [managedMode]);
 
   async function sendMessage(text: string) {
     const trimmed = text.trim();
-    if ((!trimmed && pendingAttachments.length === 0) || isResponding) {
+    if ((!trimmed && pendingAttachments.length === 0) || effectiveIsResponding) {
       return;
     }
     if (!selectedWorkspace) {
@@ -1537,11 +2034,15 @@ export function ChatPane({
       setChatErrorMessage("Sign in or set a runtime user id first.");
       return;
     }
+    if ((runtimeStatus?.status || "").trim().toLowerCase() !== "running") {
+      setChatErrorMessage("App is still starting up. Try again in a moment.");
+      return;
+    }
     if (!isOnboardingVariant && !workspaceAppsReady) {
       setChatErrorMessage(workspaceBlockingReason || "Workspace apps are still starting.");
       return;
     }
-    const targetSessionId = preferredSessionId(selectedWorkspace, []) || activeSessionIdRef.current;
+    const targetSessionId = activeSessionIdRef.current || preferredSessionId(selectedWorkspace, []);
     if (!targetSessionId) {
       setChatErrorMessage("No active session found for this workspace.");
       return;
@@ -1557,24 +2058,63 @@ export function ChatPane({
       action: "queue_begin",
       detail: `workspace=${selectedWorkspace.id}`
     });
-    const currentStreamId = activeStreamIdRef.current;
-    if (currentStreamId) {
-      await closeStreamWithReason(currentStreamId, "send_new_message_close_previous_stream");
-      activeStreamIdRef.current = null;
-      appendStreamTelemetry({
-        streamId: currentStreamId,
-        transportType: "client",
-        eventName: "sendMessage",
-        eventType: "close_prev_stream",
-        inputId: "",
-        sessionId: targetSessionId || "",
-        action: "closed_previous_stream",
-        detail: "before new send"
-      });
-    }
-
     try {
       const attachmentEntries = [...pendingAttachments];
+      const optimisticAttachments = attachmentEntries.map((entry) => optimisticChatAttachment(entry));
+      const optimisticUserMessageId = `user-${Date.now()}`;
+      const queueViaManagedSession = managedMode && onManagedQueueSessionInput;
+
+      flushSync(() => {
+        if (activeSessionIdRef.current !== targetSessionId) {
+          setActiveSession(targetSessionId);
+        }
+        shouldAutoScrollRef.current = false;
+        pendingInitialAssistantJumpRef.current = true;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: optimisticUserMessageId,
+            role: "user",
+            text: trimmed,
+            attachments: optimisticAttachments
+          }
+        ]);
+        resetLiveTurn();
+        setInput("");
+        setPendingAttachments([]);
+        setChatErrorMessage("");
+        activeAssistantMessageIdRef.current = null;
+      });
+
+      flushSync(() => {
+        if (queueViaManagedSession) {
+          setManagedOptimisticLiveTurn({
+            workspaceId: selectedWorkspace.id,
+            sessionId: targetSessionId,
+            status: "Thinking..."
+          });
+          return;
+        }
+        setIsResponding(true);
+        setLiveAgentStatus("Thinking...");
+      });
+
+      const currentStreamId = activeStreamIdRef.current;
+      if (currentStreamId) {
+        await closeStreamWithReason(currentStreamId, "send_new_message_close_previous_stream");
+        activeStreamIdRef.current = null;
+        appendStreamTelemetry({
+          streamId: currentStreamId,
+          transportType: "client",
+          eventName: "sendMessage",
+          eventType: "close_prev_stream",
+          inputId: "",
+          sessionId: targetSessionId || "",
+          action: "closed_previous_stream",
+          detail: "before new send"
+        });
+      }
+
       const localFiles = attachmentEntries.filter(
         (entry): entry is PendingLocalAttachmentFile => entry.source === "local-file"
       );
@@ -1621,53 +2161,55 @@ export function ChatPane({
         return attachment;
       });
 
-      const userMessage: ChatMessage = {
-        id: `user-${Date.now()}`,
-        role: "user",
-        text: trimmed,
-        attachments: stagedAttachments
-      };
+      if (stagedAttachments.length > 0 || optimisticAttachments.length > 0) {
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.id === optimisticUserMessageId ? { ...message, attachments: stagedAttachments } : message
+          )
+        );
+      }
 
-      shouldAutoScrollRef.current = true;
-      setMessages((prev) => [...prev, userMessage]);
-      resetLiveTurn();
-      setInput("");
-      setPendingAttachments([]);
-      setIsResponding(true);
-      setLiveAgentStatus("Thinking...");
-      setChatErrorMessage("");
-      activeAssistantMessageIdRef.current = null;
-      pendingInputIdRef.current = STREAM_ATTACH_PENDING;
+      let queued: EnqueueSessionInputResponsePayload;
+      if (queueViaManagedSession) {
+        queued = await onManagedQueueSessionInput({
+          text: trimmed,
+          workspaceId: selectedWorkspace.id,
+          sessionId: targetSessionId,
+          attachments: stagedAttachments,
+          model: resolvedChatModel || null
+        });
+      } else {
+        pendingInputIdRef.current = STREAM_ATTACH_PENDING;
 
-      const preOpenedStream = await window.electronAPI.workspace.openSessionOutputStream({
-        sessionId: targetSessionId,
-        workspaceId: selectedWorkspace.id,
-        includeHistory: false,
-        stopOnTerminal: true
-      });
-      activeStreamIdRef.current = preOpenedStream.streamId;
-      appendStreamTelemetry({
-        streamId: preOpenedStream.streamId,
-        transportType: "client",
-        eventName: "openSessionOutputStream",
-        eventType: "stream_open_prequeue",
-        inputId: "",
-        sessionId: targetSessionId,
-        action: "stream_requested_prequeue",
-        detail: "session tail stream opened before queue"
-      });
+        const preOpenedStream = await window.electronAPI.workspace.openSessionOutputStream({
+          sessionId: targetSessionId,
+          workspaceId: selectedWorkspace.id,
+          includeHistory: false,
+          stopOnTerminal: true
+        });
+        activeStreamIdRef.current = preOpenedStream.streamId;
+        appendStreamTelemetry({
+          streamId: preOpenedStream.streamId,
+          transportType: "client",
+          eventName: "openSessionOutputStream",
+          eventType: "stream_open_prequeue",
+          inputId: "",
+          sessionId: targetSessionId,
+          action: "stream_requested_prequeue",
+          detail: "session tail stream opened before queue"
+        });
 
-      const queued = await window.electronAPI.workspace.queueSessionInput({
-        text: trimmed,
-        workspace_id: selectedWorkspace.id,
-        image_urls: null,
-        attachments: stagedAttachments,
-        session_id: targetSessionId,
-        priority: 0,
-        model: resolvedChatModel || null
-      });
+        queued = await window.electronAPI.workspace.queueSessionInput({
+          text: trimmed,
+          workspace_id: selectedWorkspace.id,
+          image_urls: null,
+          attachments: stagedAttachments,
+          session_id: targetSessionId,
+          priority: 0,
+          model: resolvedChatModel || null
+        });
+      }
       setActiveSession(queued.session_id);
-      pendingInputIdRef.current = queued.input_id;
       appendStreamTelemetry({
         streamId: "-",
         transportType: "client",
@@ -1678,7 +2220,7 @@ export function ChatPane({
         action: "queued_input",
         detail: "queue response received"
       });
-      if (queued.session_id !== targetSessionId) {
+      if (!managedMode && queued.session_id !== targetSessionId) {
         const staleStreamId = activeStreamIdRef.current;
         if (staleStreamId) {
           await closeStreamWithReason(staleStreamId, "queue_session_retarget");
@@ -1709,19 +2251,26 @@ export function ChatPane({
           inputId: queued.input_id,
           sessionId: queued.session_id,
           action: "stream_requested_retarget",
-          detail: "session changed after queue"
-        });
+            detail: "session changed after queue"
+          });
       }
     } catch (error) {
-      const activeStreamId = activeStreamIdRef.current;
-      if (activeStreamId) {
-        await closeStreamWithReason(activeStreamId, "send_message_error").catch(() => undefined);
+      if (!managedMode) {
+        const activeStreamId = activeStreamIdRef.current;
+        if (activeStreamId) {
+          await closeStreamWithReason(activeStreamId, "send_message_error").catch(() => undefined);
+        }
+      } else {
+        setManagedOptimisticLiveTurn(null);
       }
+      pendingInitialAssistantJumpRef.current = false;
       setChatErrorMessage(normalizeErrorMessage(error));
-      setIsResponding(false);
-      activeAssistantMessageIdRef.current = null;
-      activeStreamIdRef.current = null;
-      pendingInputIdRef.current = null;
+      if (!managedMode) {
+        setIsResponding(false);
+        activeAssistantMessageIdRef.current = null;
+        activeStreamIdRef.current = null;
+        pendingInputIdRef.current = null;
+      }
       appendStreamTelemetry({
         streamId: "-",
         transportType: "client",
@@ -1769,6 +2318,88 @@ export function ChatPane({
     ]);
   }
 
+  function optimisticChatAttachment(entry: PendingAttachment): ChatAttachment {
+    if (entry.source === "local-file") {
+      return {
+        id: entry.id,
+        kind: entry.file.type.startsWith("image/") ? "image" : "file",
+        name: entry.file.name,
+        mime_type: entry.file.type || "application/octet-stream",
+        size_bytes: entry.file.size,
+        workspace_path: entry.file.name
+      };
+    }
+
+    return {
+      id: entry.id,
+      kind: entry.kind,
+      name: entry.name,
+      mime_type: entry.mime_type || (entry.kind === "image" ? "image/*" : "application/octet-stream"),
+      size_bytes: entry.size_bytes,
+      workspace_path: entry.absolutePath
+    };
+  }
+
+  function allowPaneAttachmentDrop(dataTransfer: DataTransfer | null) {
+    if (!dataTransfer || composerDisabled || effectiveIsResponding) {
+      return false;
+    }
+
+    const types = Array.from(dataTransfer.types ?? []);
+    if (types.includes(EXPLORER_ATTACHMENT_DRAG_TYPE)) {
+      return true;
+    }
+
+    if ((dataTransfer.files?.length ?? 0) > 0) {
+      return true;
+    }
+
+    return Array.from(dataTransfer.items ?? []).some((item) => item.kind === "file");
+  }
+
+  function onPaneDragOver(event: DragEvent<HTMLDivElement>) {
+    if (!allowPaneAttachmentDrop(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    if (!isPaneDragActive) {
+      setIsPaneDragActive(true);
+    }
+  }
+
+  function onPaneDragLeave(event: DragEvent<HTMLDivElement>) {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      return;
+    }
+    setIsPaneDragActive(false);
+  }
+
+  function onPaneDrop(event: DragEvent<HTMLDivElement>) {
+    if (!allowPaneAttachmentDrop(event.dataTransfer)) {
+      return;
+    }
+
+    event.preventDefault();
+    setIsPaneDragActive(false);
+
+    const explorerFiles: ExplorerAttachmentDragPayload[] = [];
+    const rawExplorerPayload = event.dataTransfer.getData(EXPLORER_ATTACHMENT_DRAG_TYPE);
+    const parsedExplorerPayload = parseExplorerAttachmentDragPayload(rawExplorerPayload);
+    if (parsedExplorerPayload) {
+      explorerFiles.push(parsedExplorerPayload);
+    }
+
+    const droppedFiles = Array.from(event.dataTransfer.files ?? []);
+    if (explorerFiles.length > 0) {
+      appendPendingExplorerAttachments(explorerFiles);
+    }
+    if (droppedFiles.length > 0) {
+      appendPendingLocalFiles(droppedFiles);
+    }
+  }
+
   function onAttachmentInputChange(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     appendPendingLocalFiles(files);
@@ -1792,13 +2423,22 @@ export function ChatPane({
   };
 
   const assistantLabel = "Holaboss";
-  const assistantMode = isOnboardingVariant
-    ? "workspace setup"
-    : assistantMetaLabel(selectedWorkspace?.harness, runtimeConfig?.defaultModel);
-  const showLiveAssistantTurn = isResponding || Boolean(liveAssistantText) || Boolean(liveThinkingText) || liveTraceSteps.length > 0;
   const hasMessages =
     messages.length > 0 ||
-    showLiveAssistantTurn;
+    Boolean(effectiveLiveAssistantText) ||
+    effectiveLiveTraceSteps.length > 0;
+  const showLiveAssistantTurn = managedMode
+    ? shouldShowManagedLiveTurn
+    : effectiveIsResponding ||
+        Boolean(effectiveLiveAssistantText) ||
+        effectiveLiveTraceSteps.length > 0;
+  useLayoutEffect(() => {
+    if (!showLiveAssistantTurn || !pendingInitialAssistantJumpRef.current) {
+      return;
+    }
+    pendingInitialAssistantJumpRef.current = false;
+    scrollLiveAssistantTurnIntoView();
+  }, [showLiveAssistantTurn]);
   const streamTelemetryTail = useMemo(() => streamTelemetry.slice(-80).reverse(), [streamTelemetry]);
   const pendingAttachmentItems = useMemo(
     () =>
@@ -1815,20 +2455,73 @@ export function ChatPane({
       })),
     [pendingAttachments]
   );
+  const runtimeLifecycleStatus = (runtimeStatus?.status || "").trim().toLowerCase();
+  const runtimeNotReadyReason =
+    isLoadingBootstrap || isLoadingHistory
+      ? "Loading workspace context..."
+      : !runtimeLifecycleStatus || runtimeLifecycleStatus === "starting"
+        ? "App is still starting up. Try again in a moment."
+        : runtimeLifecycleStatus === "error"
+          ? normalizeErrorMessage(runtimeStatus?.lastError || "Runtime failed to start.")
+          : runtimeLifecycleStatus !== "running"
+            ? "App is still starting up. Try again in a moment."
+            : "";
   const readinessMessage =
-    !selectedWorkspace || isOnboardingVariant || workspaceAppsReady
+    !selectedWorkspace
       ? ""
-      : workspaceBlockingReason || (isActivatingWorkspace ? "Preparing workspace apps..." : "Workspace apps are still starting.");
+      : runtimeNotReadyReason
+        ? runtimeNotReadyReason
+        : isOnboardingVariant || workspaceAppsReady
+          ? ""
+          : workspaceBlockingReason || (isActivatingWorkspace ? "Preparing workspace apps..." : "Workspace apps are still starting.");
   const composerDisabledReason = !selectedWorkspace
     ? "Select a workspace to start chatting."
     : !resolvedUserId
       ? "Sign in or set a runtime user id first."
-    : isLoadingBootstrap || isLoadingHistory
-      ? "Loading workspace context..."
+    : runtimeNotReadyReason
+      ? runtimeNotReadyReason
       : !isOnboardingVariant && !workspaceAppsReady
         ? readinessMessage || "Workspace apps are still starting."
         : "";
   const composerDisabled = Boolean(composerDisabledReason);
+  const runtimeStartupBlocked =
+    isLoadingBootstrap ||
+    !runtimeLifecycleStatus ||
+    runtimeLifecycleStatus === "starting" ||
+    runtimeLifecycleStatus === "error" ||
+    runtimeLifecycleStatus === "stopping" ||
+    runtimeLifecycleStatus === "stopped";
+  const workspaceAppsStartupBlocked = !isOnboardingVariant && runtimeLifecycleStatus === "running" && !workspaceAppsReady;
+  const rawShowStartupOverlay =
+    !isOnboardingVariant &&
+    Boolean(selectedWorkspace) &&
+    Boolean(resolvedUserId) &&
+    (runtimeStartupBlocked || workspaceAppsStartupBlocked);
+  const [showStartupOverlay, setShowStartupOverlay] = useState(false);
+  const startupOverlayTone: StartupPhaseTone =
+    runtimeLifecycleStatus === "error" ? "error" : showStartupOverlay ? "loading" : "ready";
+  const startupOverlayTitle =
+    runtimeLifecycleStatus === "error"
+      ? "Runtime failed to start"
+      : runtimeStartupBlocked
+        ? "Starting local app"
+        : isActivatingWorkspace
+          ? "Preparing workspace apps"
+          : "Starting workspace apps";
+  const startupOverlayDescription =
+    runtimeLifecycleStatus === "error"
+      ? normalizeErrorMessage(runtimeStatus?.lastError || "Runtime failed to start.")
+      : runtimeStartupBlocked
+        ? "Holaboss is booting the local runtime and reconnecting the workspace tools."
+        : workspaceBlockingReason || "This workspace is loading its apps and tools. Chat unlocks automatically when startup completes.";
+  const runtimeStartupTone: StartupPhaseTone =
+    runtimeLifecycleStatus === "error" ? "error" : runtimeLifecycleStatus === "running" ? "ready" : "loading";
+  const workspaceAppsStartupTone: StartupPhaseTone =
+    runtimeLifecycleStatus !== "running"
+      ? "waiting"
+      : workspaceAppsReady
+        ? "ready"
+        : "loading";
   const isSignedIn = Boolean(sessionUserId(authSessionState.data));
   const holabossProxyModelsAvailable =
     isSignedIn &&
@@ -1889,6 +2582,38 @@ export function ChatPane({
     : 0;
 
   useEffect(() => {
+    if (!selectedWorkspace?.id || isOnboardingVariant) {
+      return;
+    }
+    if (!runtimeStartupBlocked && !workspaceAppsStartupBlocked) {
+      startupUnlockedWorkspaceIdsRef.current.add(selectedWorkspace.id);
+    }
+  }, [isOnboardingVariant, runtimeStartupBlocked, selectedWorkspace?.id, workspaceAppsStartupBlocked]);
+
+  useEffect(() => {
+    if (!rawShowStartupOverlay) {
+      setShowStartupOverlay(false);
+      return;
+    }
+
+    if (runtimeLifecycleStatus === "error") {
+      setShowStartupOverlay(true);
+      return;
+    }
+
+    const workspaceId = selectedWorkspace?.id || "";
+    const hasUnlockedWorkspace = workspaceId ? startupUnlockedWorkspaceIdsRef.current.has(workspaceId) : false;
+    const delayMs = hasUnlockedWorkspace ? STARTUP_OVERLAY_REPEAT_DELAY_MS : STARTUP_OVERLAY_INITIAL_DELAY_MS;
+    const timer = window.setTimeout(() => {
+      setShowStartupOverlay(true);
+    }, delayMs);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [rawShowStartupOverlay, runtimeLifecycleStatus, selectedWorkspace?.id]);
+
+  useEffect(() => {
     if (!hasMessages) {
       setChatScrollMetrics({
         scrollTop: 0,
@@ -1917,7 +2642,7 @@ export function ChatPane({
     return () => {
       resizeObserver.disconnect();
     };
-  }, [composerBlockHeight, hasMessages, liveAssistantText, liveThinkingText, liveTraceSteps, messages]);
+  }, [composerBlockHeight, effectiveLiveAssistantText, effectiveLiveTraceSteps, hasMessages, messages]);
 
   useEffect(() => {
     if (!hasMessages) {
@@ -1946,8 +2671,103 @@ export function ChatPane({
 
   return (
     <PaneCard className={isOnboardingVariant ? "w-full shadow-glow border-[rgba(247,90,84,0.2)]" : "w-full shadow-glow"}>
-      <div className="relative flex h-full min-h-0 min-w-0 flex-col">
+      <div
+        onDragOver={onPaneDragOver}
+        onDragLeave={onPaneDragLeave}
+        onDrop={onPaneDrop}
+        className={`relative flex h-full min-h-0 min-w-0 flex-col transition ${
+          isPaneDragActive ? "ring-2 ring-neon-green/40 ring-offset-0" : ""
+        }`}
+      >
         <div className="theme-chat-composer-glow pointer-events-none absolute inset-x-8 bottom-0 h-44 rounded-[var(--theme-radius-pill)] blur-2xl" />
+        {isPaneDragActive ? (
+          <div className="pointer-events-none absolute inset-0 z-30 bg-[rgba(245,255,245,0.34)] backdrop-blur-[2px]">
+            <div className="flex h-full items-center justify-center p-6">
+              <div className="theme-subtle-surface flex w-full max-w-[420px] flex-col items-center justify-center rounded-[28px] border-2 border-dashed border-neon-green/60 bg-[rgba(250,255,250,0.92)] px-8 py-10 text-center shadow-[0_28px_90px_rgba(120,190,120,0.18)]">
+                <div className="mb-4 grid h-14 w-14 place-items-center rounded-full border border-neon-green/35 bg-neon-green/[0.14] text-neon-green">
+                  <Paperclip size={20} />
+                </div>
+                <div className="text-[16px] font-semibold tracking-[-0.02em] text-text-main/95">
+                  Drop files to attach
+                </div>
+                <div className="mt-2 max-w-[280px] text-[12px] leading-6 text-text-muted/82">
+                  Release anywhere in this chat pane to add the files to your next message.
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {showStartupOverlay ? (
+          <div className="absolute inset-0 z-40 bg-[rgba(252,248,244,0.82)] backdrop-blur-[8px]">
+            <div className="flex h-full items-center justify-center p-5 sm:p-7">
+              <div className="theme-subtle-surface w-full max-w-[620px] rounded-[30px] border border-[rgba(247,90,84,0.2)] bg-[radial-gradient(circle_at_top_left,rgba(247,90,84,0.14),transparent_42%),radial-gradient(circle_at_85%_14%,rgba(247,170,126,0.12),transparent_34%),rgba(255,251,247,0.96)] p-7 shadow-[0_36px_120px_rgba(120,92,76,0.16)] sm:p-8">
+                <div className="flex items-start gap-4">
+                  <div
+                    className={`mt-0.5 grid h-12 w-12 shrink-0 place-items-center rounded-full border ${
+                      startupOverlayTone === "error"
+                        ? "border-[rgba(247,90,84,0.24)] bg-[rgba(247,90,84,0.08)] text-[rgba(206,92,84,0.94)]"
+                        : "border-[rgba(247,170,126,0.22)] bg-[rgba(247,170,126,0.1)] text-[rgba(206,120,84,0.92)]"
+                    }`}
+                  >
+                    {startupOverlayTone === "error" ? (
+                      <AlertTriangle size={18} />
+                    ) : (
+                      <Loader2 size={18} className="animate-spin" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-[rgba(206,92,84,0.88)]">
+                        Workspace startup
+                      </div>
+                      {selectedWorkspace ? (
+                        <div className="rounded-full border border-[rgba(247,90,84,0.14)] bg-[rgba(247,90,84,0.05)] px-2.5 py-1 text-[10px] uppercase tracking-[0.12em] text-text-dim/82">
+                          {selectedWorkspace.name.trim() || "Workspace"}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="mt-3 text-[28px] font-semibold tracking-[-0.04em] text-text-main">
+                      {startupOverlayTitle}
+                    </div>
+                    <div className="mt-3 max-w-[480px] text-[14px] leading-7 text-text-muted/82">
+                      {startupOverlayDescription}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-6 grid gap-3">
+                  <StartupStatusRow
+                    label="Local runtime"
+                    tone={runtimeStartupTone}
+                    detail={
+                      runtimeLifecycleStatus === "running"
+                        ? "Connected and ready"
+                        : runtimeLifecycleStatus === "error"
+                          ? "Startup failed"
+                          : "Booting and reconnecting tools"
+                    }
+                  />
+                  <StartupStatusRow
+                    label="Workspace apps"
+                    tone={workspaceAppsStartupTone}
+                    detail={
+                      workspaceAppsStartupTone === "ready"
+                        ? "Apps and tools are ready"
+                        : workspaceAppsStartupTone === "waiting"
+                          ? "Waiting for the runtime to come online"
+                          : workspaceBlockingReason || "Preparing workspace apps and capabilities"
+                    }
+                  />
+                </div>
+
+                <div className="mt-6 rounded-[20px] border border-panel-border/28 bg-[rgba(255,255,255,0.64)] px-4 py-3 text-[12px] leading-6 text-text-muted/78">
+                  Chat unlocks automatically as soon as startup completes.
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {isOnboardingVariant && selectedWorkspace ? (
           <div className="shrink-0 px-4 pt-4 sm:px-5">
@@ -1976,11 +2796,11 @@ export function ChatPane({
           </div>
         ) : null}
 
-        {chatErrorMessage || verboseTelemetryEnabled ? (
+        {effectiveChatErrorMessage || verboseTelemetryEnabled ? (
           <div className="shrink-0 px-4 pt-3 sm:px-5">
-            {chatErrorMessage ? (
+            {effectiveChatErrorMessage ? (
               <div className="theme-chat-system-bubble rounded-[14px] border px-3 py-2 text-[11px]">
-                {chatErrorMessage}
+                {effectiveChatErrorMessage}
               </div>
             ) : null}
 
@@ -2036,11 +2856,8 @@ export function ChatPane({
                       <AssistantTurn
                         key={message.id}
                         label={assistantLabel}
-                        mode={assistantMode}
                         text={message.text}
-                        thinkingText={message.thinkingText}
-                        thinkingCollapsed={collapsedThinkingByMessageId[message.id] ?? true}
-                        onToggleThinking={() => toggleThinkingPanel(message.id)}
+                        contentBlocks={message.contentBlocks ?? []}
                         traceSteps={message.traceSteps ?? []}
                         collapsedTraceByStepId={collapsedTraceByStepId}
                         onToggleTraceStep={toggleTraceStep}
@@ -2049,23 +2866,18 @@ export function ChatPane({
                   )}
 
                   {showLiveAssistantTurn ? (
-                    <AssistantTurn
-                      label={assistantLabel}
-                      mode={assistantMode}
-                      text={liveAssistantText}
-                      thinkingText={liveThinkingText}
-                      thinkingCollapsed={!liveThinkingExpanded}
-                      onToggleThinking={() => {
-                        const next = !liveThinkingExpandedRef.current;
-                        liveThinkingExpandedRef.current = next;
-                        setLiveThinkingExpanded(next);
-                      }}
-                      traceSteps={liveTraceSteps}
-                      collapsedTraceByStepId={collapsedTraceByStepId}
-                      onToggleTraceStep={toggleTraceStep}
-                      live
-                      status={liveAgentStatus || (isResponding ? "Working..." : "")}
-                    />
+                    <div ref={liveAssistantTurnRef} className="scroll-mb-6">
+                      <AssistantTurn
+                        label={assistantLabel}
+                        text={effectiveLiveAssistantText}
+                        contentBlocks={effectiveLiveContentBlocks}
+                        traceSteps={effectiveLiveTraceSteps}
+                        collapsedTraceByStepId={collapsedTraceByStepId}
+                        onToggleTraceStep={toggleTraceStep}
+                        live
+                        status={effectiveLiveAgentStatus || (effectiveIsResponding ? "Working..." : "")}
+                      />
+                    </div>
                   ) : null}
                 </div>
               ) : (
@@ -2088,11 +2900,13 @@ export function ChatPane({
                     </div>
                   </div>
                   <form onSubmit={onSubmit} className="mx-auto max-w-[760px]">
-                    {readinessMessage ? <div className="mb-3 text-[12px] text-text-muted/82">{readinessMessage}</div> : null}
+                    {!showStartupOverlay && readinessMessage ? (
+                      <div className="mb-3 text-[12px] text-text-muted/82">{readinessMessage}</div>
+                    ) : null}
                     <Composer
                       input={input}
                       attachments={pendingAttachmentItems}
-                      isResponding={isResponding}
+                      isResponding={effectiveIsResponding}
                       disabled={composerDisabled}
                       disabledReason={composerDisabledReason}
                       selectedModel={effectiveChatModelPreference}
@@ -2109,8 +2923,6 @@ export function ChatPane({
                       onChange={setInput}
                       onKeyDown={onComposerKeyDown}
                       onAttachmentInputChange={onAttachmentInputChange}
-                      onAddDroppedFiles={appendPendingLocalFiles}
-                      onAddExplorerAttachments={appendPendingExplorerAttachments}
                       onRemoveAttachment={removePendingAttachment}
                     />
                   </form>
@@ -2135,11 +2947,13 @@ export function ChatPane({
           {hasMessages ? (
             <div ref={composerBlockRef} className="shrink-0 px-4 pb-4 pt-3 sm:px-5 sm:pb-5">
               <form onSubmit={onSubmit} className="mx-auto max-w-[760px]">
-                {readinessMessage ? <div className="mb-3 text-[12px] text-text-muted/82">{readinessMessage}</div> : null}
+                {!showStartupOverlay && readinessMessage ? (
+                  <div className="mb-3 text-[12px] text-text-muted/82">{readinessMessage}</div>
+                ) : null}
                 <Composer
                   input={input}
                   attachments={pendingAttachmentItems}
-                  isResponding={isResponding}
+                  isResponding={effectiveIsResponding}
                   disabled={composerDisabled}
                   disabledReason={composerDisabledReason}
                   selectedModel={effectiveChatModelPreference}
@@ -2156,8 +2970,6 @@ export function ChatPane({
                   onChange={setInput}
                   onKeyDown={onComposerKeyDown}
                   onAttachmentInputChange={onAttachmentInputChange}
-                  onAddDroppedFiles={appendPendingLocalFiles}
-                  onAddExplorerAttachments={appendPendingExplorerAttachments}
                   onRemoveAttachment={removePendingAttachment}
                 />
               </form>
@@ -2194,16 +3006,46 @@ interface ComposerProps {
   onChange: (value: string) => void;
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onAttachmentInputChange: (event: ChangeEvent<HTMLInputElement>) => void;
-  onAddDroppedFiles: (files: File[]) => void;
-  onAddExplorerAttachments: (files: ExplorerAttachmentDragPayload[]) => void;
   onRemoveAttachment: (attachmentId: string) => void;
 }
 
-interface ThinkingPanelProps {
-  text: string;
-  collapsed: boolean;
-  onToggle: () => void;
-  live?: boolean;
+function StartupStatusRow({
+  label,
+  tone,
+  detail
+}: {
+  label: string;
+  tone: StartupPhaseTone;
+  detail: string;
+}) {
+  const toneClassName =
+    tone === "ready"
+      ? "border-[rgba(92,180,120,0.2)] bg-[rgba(92,180,120,0.08)] text-[rgba(118,196,144,0.92)]"
+      : tone === "error"
+        ? "border-[rgba(247,90,84,0.24)] bg-[rgba(247,90,84,0.08)] text-[rgba(206,92,84,0.94)]"
+        : tone === "waiting"
+          ? "border-panel-border/35 bg-panel-bg/24 text-text-dim/78"
+          : "border-[rgba(247,170,126,0.2)] bg-[rgba(247,170,126,0.08)] text-[rgba(224,146,103,0.92)]";
+
+  return (
+    <div className="flex items-start gap-3 rounded-[20px] border border-panel-border/26 bg-[rgba(255,255,255,0.68)] px-4 py-3">
+      <div className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full border ${toneClassName}`}>
+        {tone === "ready" ? (
+          <Check size={14} />
+        ) : tone === "error" ? (
+          <AlertTriangle size={14} />
+        ) : tone === "loading" ? (
+          <Loader2 size={14} className="animate-spin" />
+        ) : (
+          <Clock3 size={14} />
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-[13px] font-medium text-text-main/92">{label}</div>
+        <div className="mt-1 text-[12px] leading-6 text-text-muted/78">{detail}</div>
+      </div>
+    </div>
+  );
 }
 
 function UserTurn({
@@ -2229,11 +3071,8 @@ function UserTurn({
 
 function AssistantTurn({
   label,
-  mode,
   text,
-  thinkingText,
-  thinkingCollapsed,
-  onToggleThinking,
+  contentBlocks,
   traceSteps,
   collapsedTraceByStepId,
   onToggleTraceStep,
@@ -2241,17 +3080,30 @@ function AssistantTurn({
   live = false
 }: {
   label: string;
-  mode: string;
   text: string;
-  thinkingText?: string;
-  thinkingCollapsed: boolean;
-  onToggleThinking: () => void;
+  contentBlocks: ChatTurnBlock[];
   traceSteps: ChatTraceStep[];
   collapsedTraceByStepId: Record<string, boolean>;
   onToggleTraceStep: (stepId: string) => void;
   status?: string;
   live?: boolean;
 }) {
+  const traceStepsById = useMemo(() => new Map(traceSteps.map((step) => [step.id, step])), [traceSteps]);
+  const normalizedContentBlocks =
+    contentBlocks.length > 0
+      ? contentBlocks
+      : traceSteps.length > 0
+        ? traceSteps.map((step) => ({
+            id: `fallback:trace:${step.id}`,
+            kind: "trace" as const,
+            stepId: step.id,
+            order: step.order
+          })) as ChatTurnBlock[]
+        : text
+          ? [{ id: "fallback:text", kind: "text" as const, text, order: 0 }]
+          : [];
+  const hasRenderableBlocks = normalizedContentBlocks.length > 0;
+
   return (
     <div className="flex justify-start">
       <article className="max-w-[760px]">
@@ -2262,9 +3114,6 @@ function AssistantTurn({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <div className="text-[12px] font-medium text-text-main/94">{label}</div>
-              <div className="rounded-full border border-panel-border/35 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-text-dim/76">
-                {mode}
-              </div>
               {live ? (
                 <div className="rounded-full border border-[rgba(247,90,84,0.18)] bg-[rgba(247,90,84,0.08)] px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-[rgba(206,92,84,0.92)]">
                   Live
@@ -2272,28 +3121,38 @@ function AssistantTurn({
               ) : null}
             </div>
 
-            {status && !text ? (
+            {status && !hasRenderableBlocks && traceSteps.length === 0 ? (
               <div className="mt-2 text-[13px] leading-7 text-text-muted/78">{status}</div>
             ) : null}
 
-            {traceSteps.length > 0 ? (
-              <div className="mt-4 grid gap-2.5 border-l border-panel-border/25 pl-4">
-                {traceSteps.map((step) => (
-                  <TraceStepCard
-                    key={step.id}
-                    step={step}
-                    collapsed={isTraceStepCollapsed(step, collapsedTraceByStepId)}
-                    onToggle={() => onToggleTraceStep(step.id)}
-                  />
-                ))}
+            {hasRenderableBlocks ? (
+              <div className="mt-4 grid gap-4">
+                {normalizedContentBlocks.map((block) => {
+                  if (block.kind === "text") {
+                    return (
+                      <div key={block.id} className="whitespace-pre-wrap text-[15px] leading-8 text-text-main/92">
+                        {block.text}
+                      </div>
+                    );
+                  }
+
+                  const step = traceStepsById.get(block.stepId);
+                  if (!step) {
+                    return null;
+                  }
+
+                  return (
+                    <div key={block.id} className="border-l border-panel-border/25 pl-4">
+                      <TraceStepCard
+                        step={step}
+                        collapsed={isTraceStepCollapsed(step, collapsedTraceByStepId)}
+                        onToggle={() => onToggleTraceStep(step.id)}
+                      />
+                    </div>
+                  );
+                })}
               </div>
             ) : null}
-
-            {thinkingText ? (
-              <ThinkingPanel text={thinkingText} collapsed={thinkingCollapsed} onToggle={onToggleThinking} live={live} />
-            ) : null}
-
-            {text ? <div className="mt-4 whitespace-pre-wrap text-[15px] leading-8 text-text-main/92">{text}</div> : null}
           </div>
         </div>
       </article>
@@ -2405,49 +3264,6 @@ function TraceStepCard({
   );
 }
 
-function summarizeThinking(text: string) {
-  const firstContentLine =
-    text
-      .split("\n")
-      .map((line) => line.replace(/[*_`#>-]/g, "").trim())
-      .find(Boolean) || "Reasoning available";
-
-  return firstContentLine.length > 88 ? `${firstContentLine.slice(0, 85).trimEnd()}...` : firstContentLine;
-}
-
-function ThinkingPanel({ text, collapsed, onToggle, live = false }: ThinkingPanelProps) {
-  const summary = summarizeThinking(text);
-
-  return (
-    <div className="mt-4">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={!collapsed}
-        className="theme-subtle-surface flex w-full items-center justify-between gap-3 rounded-[18px] border border-panel-border/35 px-3.5 py-3 text-left transition hover:border-panel-border/55"
-      >
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-text-dim/72">{live ? "Thinking" : "Reasoning"}</span>
-            {live ? (
-              <span className="rounded-full border border-[rgba(247,90,84,0.18)] bg-[rgba(247,90,84,0.08)] px-2 py-0.5 text-[9px] uppercase tracking-[0.14em] text-[rgba(206,92,84,0.92)]">
-                LIVE
-              </span>
-            ) : null}
-          </div>
-          <div className="mt-1 truncate text-[12px] text-text-muted/76">{collapsed ? summary : "Expanded reasoning trace"}</div>
-        </div>
-        <ChevronDown size={14} className={`shrink-0 text-text-muted/72 transition ${collapsed ? "" : "rotate-180"}`} />
-      </button>
-      {!collapsed ? (
-        <div className="theme-chat-thinking-inner mt-2 whitespace-pre-wrap rounded-[18px] border border-panel-border/30 px-4 py-3 text-[12px] leading-6 text-text-muted/86">
-          {text}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function AttachmentList({
   attachments,
   onRemove,
@@ -2511,82 +3327,12 @@ function Composer({
   onChange,
   onKeyDown,
   onAttachmentInputChange,
-  onAddDroppedFiles,
-  onAddExplorerAttachments,
   onRemoveAttachment
 }: ComposerProps) {
-  const [isDragActive, setIsDragActive] = useState(false);
   const noAvailableModels = !runtimeDefaultModelAvailable && modelOptions.length === 0;
 
-  const allowAttachmentDrop = (dataTransfer: DataTransfer | null) => {
-    if (!dataTransfer || disabled || isResponding) {
-      return false;
-    }
-
-    const types = Array.from(dataTransfer.types ?? []);
-    if (types.includes(EXPLORER_ATTACHMENT_DRAG_TYPE)) {
-      return true;
-    }
-
-    if ((dataTransfer.files?.length ?? 0) > 0) {
-      return true;
-    }
-
-    return Array.from(dataTransfer.items ?? []).some((item) => item.kind === "file");
-  };
-
-  const onDragOver = (event: DragEvent<HTMLDivElement>) => {
-    if (!allowAttachmentDrop(event.dataTransfer)) {
-      return;
-    }
-
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-    if (!isDragActive) {
-      setIsDragActive(true);
-    }
-  };
-
-  const onDragLeave = (event: DragEvent<HTMLDivElement>) => {
-    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
-      return;
-    }
-    setIsDragActive(false);
-  };
-
-  const onDrop = (event: DragEvent<HTMLDivElement>) => {
-    if (!allowAttachmentDrop(event.dataTransfer)) {
-      return;
-    }
-
-    event.preventDefault();
-    setIsDragActive(false);
-
-    const explorerFiles: ExplorerAttachmentDragPayload[] = [];
-    const rawExplorerPayload = event.dataTransfer.getData(EXPLORER_ATTACHMENT_DRAG_TYPE);
-    const parsedExplorerPayload = parseExplorerAttachmentDragPayload(rawExplorerPayload);
-    if (parsedExplorerPayload) {
-      explorerFiles.push(parsedExplorerPayload);
-    }
-
-    const droppedFiles = Array.from(event.dataTransfer.files ?? []);
-    if (explorerFiles.length > 0) {
-      onAddExplorerAttachments(explorerFiles);
-    }
-    if (droppedFiles.length > 0) {
-      onAddDroppedFiles(droppedFiles);
-    }
-  };
-
   return (
-    <div
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-      className={`glass-field overflow-hidden rounded-[calc(var(--theme-radius-card)+0.15rem)] border transition ${
-        isDragActive ? "border-neon-green/45 bg-neon-green/[0.04]" : "border-panel-border/35"
-      }`}
-    >
+    <div className="glass-field overflow-hidden rounded-[calc(var(--theme-radius-card)+0.15rem)] border border-panel-border/35 transition">
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={onAttachmentInputChange} />
       {attachments.length > 0 ? (
         <div className="border-b border-panel-border/20 px-4 py-3">

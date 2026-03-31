@@ -922,10 +922,12 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     defaultThinkingLevel: "medium",
   });
   const skillDirs = resolvePiSkillDirs(request);
-  const browserExtensionFactory = await resolvePiDesktopBrowserExtensionFactory({
-    runtimeApiBaseUrl: request.runtime_api_base_url,
-    workspaceId: request.workspace_id,
-  });
+  const browserExtensionFactory = request.browser_tools_enabled
+    ? await resolvePiDesktopBrowserExtensionFactory({
+        runtimeApiBaseUrl: request.runtime_api_base_url,
+        workspaceId: request.workspace_id,
+      })
+    : null;
   const resourceLoader = new DefaultResourceLoader({
     cwd: request.workspace_dir,
     agentDir: stateDir,

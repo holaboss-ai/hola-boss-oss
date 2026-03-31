@@ -211,9 +211,17 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   }
 
   function applyWorkspaceLifecycle(lifecycle: WorkspaceLifecyclePayload) {
-    setInstalledApps(hydrateInstalledWorkspaceApps(lifecycle.applications));
-    setWorkspaceAppsReady(lifecycle.ready);
-    setWorkspaceBlockingReason((lifecycle.phase_detail || lifecycle.reason || "").trim());
+    const hydratedApps = hydrateInstalledWorkspaceApps(lifecycle.applications);
+    const workspaceStatus = (lifecycle.workspace.status || "").trim().toLowerCase();
+    const noAppsRequireStartup =
+      hydratedApps.length === 0 &&
+      workspaceStatus !== "provisioning" &&
+      workspaceStatus !== "error" &&
+      workspaceStatus !== "deleted";
+
+    setInstalledApps(hydratedApps);
+    setWorkspaceAppsReady(noAppsRequireStartup || lifecycle.ready);
+    setWorkspaceBlockingReason(noAppsRequireStartup ? "" : (lifecycle.phase_detail || lifecycle.reason || "").trim());
     setWorkspaces((current) => {
       const nextWorkspace = lifecycle.workspace;
       const existingIndex = current.findIndex((workspace) => workspace.id === nextWorkspace.id);
@@ -622,7 +630,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     return () => {
       cancelled = true;
     };
-  }, [runtimeReadyForWorkspaceData, selectedWorkspace?.status, selectedWorkspace?.updated_at, selectedWorkspaceId]);
+  }, [runtimeReadyForWorkspaceData, selectedWorkspaceId]);
 
   useEffect(() => {
     if (!selectedWorkspaceId || !runtimeReadyForWorkspaceData) {

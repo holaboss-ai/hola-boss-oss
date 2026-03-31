@@ -30,6 +30,7 @@ export interface RunnerRequest {
   holaboss_user_id?: string | null;
   workspace_id: string;
   session_id: string;
+  session_kind?: string | null;
   input_id: string;
   instruction: string;
   attachments?: HarnessHostInputAttachmentPayload[];
@@ -88,6 +89,7 @@ export interface HarnessHostPiRequest {
   workspace_id: string;
   workspace_dir: string;
   session_id: string;
+  browser_tools_enabled?: boolean;
   input_id: string;
   instruction: string;
   attachments?: HarnessHostInputAttachmentPayload[];
@@ -184,10 +186,7 @@ export interface AgentRuntimeConfigCliRequest {
   tool_server_id_map?: Record<string, string> | null;
   resolved_mcp_tool_refs: Array<Record<string, string>>;
   resolved_output_schemas: Record<string, JsonObject>;
-  general_type: string;
-  single_agent?: AgentRuntimeConfigGeneralMemberPayload | null;
-  coordinator?: AgentRuntimeConfigGeneralMemberPayload | null;
-  members: AgentRuntimeConfigGeneralMemberPayload[];
+  agent: AgentRuntimeConfigGeneralMemberPayload;
 }
 
 export interface AgentRuntimeConfigCliResponse {
@@ -409,6 +408,7 @@ export function decodeRunnerRequestBase64(encoded: string): RunnerRequest {
     holaboss_user_id: optionalString(parsed.holaboss_user_id),
     workspace_id: requiredString(parsed.workspace_id, "workspace_id"),
     session_id: requiredString(parsed.session_id, "session_id"),
+    session_kind: optionalString(parsed.session_kind),
     input_id: requiredString(parsed.input_id, "input_id"),
     instruction: requiredString(parsed.instruction, "instruction"),
     attachments: inputAttachments(parsed.attachments, "attachments"),
@@ -461,6 +461,7 @@ export function decodeHarnessHostPiRequestBase64(encoded: string): HarnessHostPi
     workspace_id: requiredString(parsed.workspace_id, "workspace_id"),
     workspace_dir: requiredString(parsed.workspace_dir, "workspace_dir"),
     session_id: requiredString(parsed.session_id, "session_id"),
+    browser_tools_enabled: optionalBoolean(parsed.browser_tools_enabled, false),
     input_id: requiredString(parsed.input_id, "input_id"),
     instruction: requiredString(parsed.instruction, "instruction"),
     attachments: inputAttachments(parsed.attachments, "attachments"),
@@ -521,14 +522,11 @@ export function decodeAgentRuntimeConfigCliRequestBase64(encoded: string): Agent
             .map(([key, value]) => [key, jsonObject(value)])
         )
       : {},
-    general_type: requiredString(parsed.general_type, "general_type"),
-    single_agent: generalMemberPayload(parsed.single_agent, "single_agent"),
-    coordinator: generalMemberPayload(parsed.coordinator, "coordinator"),
-    members: Array.isArray(parsed.members)
-      ? parsed.members
-          .map((member, index) => generalMemberPayload(member, `members[${index}]`))
-          .filter((member): member is OpencodeRuntimeConfigGeneralMemberPayload => Boolean(member))
-      : [],
+    agent:
+      generalMemberPayload(parsed.agent, "agent") ??
+      (() => {
+        throw new Error("agent is required");
+      })(),
   };
 }
 

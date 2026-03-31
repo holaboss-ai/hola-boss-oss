@@ -305,7 +305,7 @@ export function AuthPanel() {
   }
 
   return (
-    <section className="theme-shell soft-vignette w-full max-w-[560px] overflow-hidden rounded-[24px] border border-panel-border/40 text-[11px] text-text-main/88 shadow-card">
+    <section className="theme-shell w-full max-w-none overflow-hidden rounded-[24px] border border-panel-border/40 text-[11px] text-text-main/88 shadow-card">
       <div className="border-b border-panel-border/40 px-4 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
@@ -376,7 +376,7 @@ export function AuthPanel() {
           </button>
 
           <button
-            className="theme-control-surface inline-flex h-[42px] items-center justify-center rounded-[16px] border border-panel-border/45 px-4 text-[12px] text-text-main transition hover:border-neon-green/35 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex h-[42px] items-center justify-center rounded-[16px] border border-[rgba(247,90,84,0.28)] bg-[rgba(247,90,84,0.08)] px-4 text-[12px] text-[rgba(206,92,84,0.96)] transition hover:border-[rgba(247,90,84,0.4)] hover:bg-[rgba(247,90,84,0.12)] disabled:cursor-not-allowed disabled:opacity-50"
             type="button"
             onClick={() => void handleSignOut()}
             disabled={!isSignedIn}
@@ -388,12 +388,6 @@ export function AuthPanel() {
         {isFinishingSetup && !isExchangingRuntimeBinding && (
           <div className="mt-3 rounded-[16px] border border-amber-300/25 bg-amber-400/10 px-4 py-3 text-[11px] text-amber-300">
             Sign-in completed. Holaboss is finishing local runtime setup.
-          </div>
-        )}
-
-        {runtimeBindingReady && !authMessage && !authError && (
-          <div className="mt-3 rounded-[16px] border border-neon-green/18 bg-neon-green/8 px-4 py-3 text-[11px] text-neon-green">
-            Connected. Remote proactive and marketplace features are available on this desktop runtime.
           </div>
         )}
 
