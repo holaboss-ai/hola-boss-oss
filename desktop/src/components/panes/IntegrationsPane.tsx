@@ -40,6 +40,7 @@ export function IntegrationsPane() {
   const [errorMessage, setErrorMessage] = useState("");
   const [query, setQuery] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [composioConnecting, setComposioConnecting] = useState(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [importLabel, setImportLabel] = useState("");
   const [importToken, setImportToken] = useState("");
@@ -208,6 +209,53 @@ export function IntegrationsPane() {
     }
   };
 
+  const handleManagedConnect = async () => {
+    if (!selectedProvider) return;
+    setComposioConnecting(true);
+    setErrorMessage("");
+    try {
+      const runtimeConfig = await window.electronAPI.runtime.getConfig();
+      const userId = runtimeConfig.userId ?? "local";
+
+      const link = await window.electronAPI.workspace.composioConnect({
+        provider: selectedProvider.provider_id,
+        owner_user_id: userId,
+      });
+
+      window.open(link.redirect_url, "composio-oauth", "width=600,height=700");
+
+      let account: ComposioAccountStatus | null = null;
+      for (let i = 0; i < 100; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const status = await window.electronAPI.workspace.composioAccountStatus(
+          link.connected_account_id,
+        );
+        if (status.status === "ACTIVE") {
+          account = status;
+          break;
+        }
+      }
+
+      if (!account) {
+        setErrorMessage("OAuth timed out. Please try again.");
+        return;
+      }
+
+      const connection = await window.electronAPI.workspace.composioFinalize({
+        connected_account_id: link.connected_account_id,
+        provider: selectedProvider.provider_id,
+        owner_user_id: userId,
+        account_label: `${selectedProvider.display_name} (Managed)`,
+      });
+
+      setConnections((prev) => [...prev, connection]);
+    } catch (error) {
+      setErrorMessage(normalizeErrorMessage(error));
+    } finally {
+      setComposioConnecting(false);
+    }
+  };
+
   const handleReconnect = async (connectionId: string) => {
     setIsSaving(true);
     try {
@@ -336,13 +384,24 @@ export function IntegrationsPane() {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={handleOAuthConnect}
-                            className="rounded-[12px] border border-neon-green/35 bg-neon-green/8 px-3 py-1.5 text-[11px] font-medium text-neon-green transition-colors duration-200 hover:bg-neon-green/14"
-                          >
-                            Connect
-                          </button>
+                          {selectedProvider.auth_modes.includes("managed") ? (
+                            <button
+                              type="button"
+                              disabled={composioConnecting}
+                              onClick={handleManagedConnect}
+                              className="rounded-[12px] border border-neon-green/35 bg-neon-green/8 px-3 py-1.5 text-[11px] font-medium text-neon-green transition-colors duration-200 hover:bg-neon-green/14 disabled:opacity-50"
+                            >
+                              {composioConnecting ? "Connecting\u2026" : "Connect"}
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={handleOAuthConnect}
+                              className="rounded-[12px] border border-neon-green/35 bg-neon-green/8 px-3 py-1.5 text-[11px] font-medium text-neon-green transition-colors duration-200 hover:bg-neon-green/14"
+                            >
+                              Connect
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => {
