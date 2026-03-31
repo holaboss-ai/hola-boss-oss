@@ -110,6 +110,8 @@ export interface BuildRuntimeApiServerOptions {
   runtimeConfigService?: RuntimeConfigServiceLike;
   browserToolService?: DesktopBrowserToolServiceLike;
   runnerExecutor?: RunnerExecutorLike;
+  enableAppHealthMonitor?: boolean;
+  startAppsOnReady?: boolean;
 }
 
 function resolveQueueWorker(
@@ -1482,15 +1484,19 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     await queueWorker?.start();
     await cronWorker?.start();
     await bridgeWorker?.start();
-    startHealthMonitor();
+    if (options.enableAppHealthMonitor !== false) {
+      startHealthMonitor();
+    }
 
-    // Auto-start all enabled apps for active workspaces.
-    const workspaces = store.listWorkspaces({ includeDeleted: false });
-    for (const ws of workspaces) {
-      if (ws.status === "active") {
-        void ensureAllAppsRunning(ws.id).catch((err) => {
-          app.log.error({ workspaceId: ws.id, err: err instanceof Error ? err.message : String(err) }, "auto-start apps on ready failed");
-        });
+    if (options.startAppsOnReady !== false) {
+      // Auto-start all enabled apps for active workspaces.
+      const workspaces = store.listWorkspaces({ includeDeleted: false });
+      for (const ws of workspaces) {
+        if (ws.status === "active") {
+          void ensureAllAppsRunning(ws.id).catch((err) => {
+            app.log.error({ workspaceId: ws.id, err: err instanceof Error ? err.message : String(err) }, "auto-start apps on ready failed");
+          });
+        }
       }
     }
   });

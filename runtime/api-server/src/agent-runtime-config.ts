@@ -201,6 +201,17 @@ function resolveRuntimeProviderAndModel(model: string, defaultProviderId: string
   return ["openai", modelId];
 }
 
+function opencodeProviderAlias(providerId: string): string {
+  const normalized = providerId.trim().toLowerCase();
+  if (normalized === "anthropic" || normalized === "hb_anthropic") {
+    return "hb_anthropic";
+  }
+  if (normalized === "openai" || normalized === "hb_openai") {
+    return "hb_openai";
+  }
+  return providerId;
+}
+
 function runtimeStructuredRetryCount(): number {
   const raw = (process.env.OPENCODE_STRUCTURED_OUTPUT_RETRY_COUNT ?? String(DEFAULT_RUNTIME_STRUCTURED_RETRY_COUNT)).trim();
   const value = Number.parseInt(raw, 10);
@@ -284,7 +295,15 @@ export function projectAgentRuntimeConfig(
   };
 }
 
-export const projectOpencodeRuntimeConfig = projectAgentRuntimeConfig;
+export function projectOpencodeRuntimeConfig(
+  request: AgentRuntimeConfigCliRequest
+): AgentRuntimeConfigCliResponse {
+  const result = projectAgentRuntimeConfig(request);
+  return {
+    ...result,
+    provider_id: opencodeProviderAlias(result.provider_id)
+  };
+}
 
 export async function runOpencodeRuntimeConfigCli(
   argv: string[],
@@ -301,7 +320,7 @@ export async function runOpencodeRuntimeConfigCli(
   }
   try {
     const request = decodeCliRequest(requestBase64);
-    const result = (options.projectConfig ?? projectAgentRuntimeConfig)(request);
+    const result = (options.projectConfig ?? projectOpencodeRuntimeConfig)(request);
     io.stdout.write(JSON.stringify(result));
     return 0;
   } catch (error) {

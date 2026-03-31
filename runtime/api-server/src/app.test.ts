@@ -38,7 +38,9 @@ function buildTestRuntimeApiServer(options: BuildRuntimeApiServerOptions) {
     ...options,
     queueWorker: null,
     cronWorker: null,
-    bridgeWorker: null
+    bridgeWorker: null,
+    enableAppHealthMonitor: false,
+    startAppsOnReady: false
   });
 }
 
@@ -1551,6 +1553,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
         healthCheck: { path: "/health", timeoutS: 60, intervalS: 5 },
         envContract: [],
+        integrations: undefined,
         startCommand: "",
         baseDir: "apps/app-b",
         lifecycle: { setup: "", start: "", stop: "" }
@@ -1565,6 +1568,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
         healthCheck: { path: "/health", timeoutS: 60, intervalS: 5 },
         envContract: [],
+        integrations: undefined,
         startCommand: "",
         baseDir: "apps/app-b",
         lifecycle: { setup: "", start: "", stop: "" }
@@ -1579,6 +1583,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
         healthCheck: { path: "/health", timeoutS: 60, intervalS: 5 },
         envContract: [],
+        integrations: undefined,
         startCommand: "",
         baseDir: "apps/app-b",
         lifecycle: { setup: "", start: "", stop: "" }
@@ -2443,7 +2448,27 @@ test("app install, list, build-status, and setup routes preserve local payload s
     dbPath: path.join(root, "runtime.db"),
     workspaceRoot
   });
-  const app = buildTestRuntimeApiServer({ store });
+  const lifecycleCalls: Array<Record<string, unknown>> = [];
+  const app = buildTestRuntimeApiServer({
+    store,
+    appLifecycleExecutor: {
+      async startApp(params) {
+        lifecycleCalls.push({ action: "start", ...params });
+        return {
+          app_id: params.appId,
+          status: "started",
+          detail: "app started with lifecycle manager",
+          ports: { http: params.httpPort ?? 18081, mcp: params.mcpPort ?? 13101 }
+        };
+      },
+      async stopApp() {
+        throw new Error("not used");
+      },
+      async shutdownAll() {
+        throw new Error("not used");
+      }
+    }
+  });
 
   const created = await app.inject({
     method: "POST",
@@ -2482,9 +2507,12 @@ test("app install, list, build-status, and setup routes preserve local payload s
   assert.equal(install.statusCode, 200);
   assert.deepEqual(install.json(), {
     app_id: "demo-app",
-    status: "installed",
-    detail: "Files written, no setup command defined"
+    status: "enabled",
+    detail: "App installed and running",
+    ready: true,
+    error: null
   });
+  assert.equal(lifecycleCalls.length, 1);
 
   const listed = await app.inject({
     method: "GET",
@@ -2497,7 +2525,9 @@ test("app install, list, build-status, and setup routes preserve local payload s
         app_id: "demo-app",
         config_path: "apps/demo-app/app.runtime.yaml",
         lifecycle: { start: "npm run dev" },
-        build_status: "stopped"
+        build_status: "running",
+        ready: true,
+        error: null
       }
     ],
     count: 1
@@ -2508,7 +2538,7 @@ test("app install, list, build-status, and setup routes preserve local payload s
     url: `/api/v1/apps/demo-app/build-status?workspace_id=${workspace.id}`
   });
   assert.equal(buildStatus.statusCode, 200);
-  assert.equal(buildStatus.json().status, "stopped");
+  assert.equal(buildStatus.json().status, "running");
 
   const setup = await app.inject({
     method: "POST",
@@ -2577,7 +2607,9 @@ test("app list and build-status infer pending when installed app has setup but n
         app_id: "demo-app",
         config_path: "apps/demo-app/app.runtime.yaml",
         lifecycle: { setup: "npm install" },
-        build_status: "pending"
+        build_status: "pending",
+        ready: false,
+        error: null
       }
     ],
     count: 1
