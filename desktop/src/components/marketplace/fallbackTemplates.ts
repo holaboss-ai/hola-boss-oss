@@ -3,6 +3,14 @@
  * Keeps the marketplace browsable before sign-in.
  * Mirrors the official templates from the backend marketplace registry.
  */
+
+const FLUENT_CDN = "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji/assets";
+
+function emojiUrl(name: string): string {
+  const slug = name.toLowerCase().replaceAll(" ", "_").replaceAll("%20", "_");
+  return `${FLUENT_CDN}/${name}/3D/${slug}_3d.png`;
+}
+
 export const FALLBACK_TEMPLATES: TemplateMetadataPayload[] = [
   {
     name: "social_media",
@@ -15,7 +23,7 @@ export const FALLBACK_TEMPLATES: TemplateMetadataPayload[] = [
     is_coming_soon: false,
     allowed_user_ids: [],
     icon: "Megaphone01Icon",
-    emoji: "\uD83D\uDCE3",
+    emoji: emojiUrl("Megaphone"),
     apps: ["twitter", "linkedin", "reddit"],
     tags: ["social media", "automation", "content"],
     category: "marketing",
@@ -43,7 +51,7 @@ export const FALLBACK_TEMPLATES: TemplateMetadataPayload[] = [
     is_coming_soon: false,
     allowed_user_ids: [],
     icon: "Mail01Icon",
-    emoji: "\uD83D\uDCE7",
+    emoji: emojiUrl("E-mail"),
     apps: ["gmail"],
     tags: ["gmail", "email", "mcp"],
     category: "productivity",
@@ -68,7 +76,7 @@ export const FALLBACK_TEMPLATES: TemplateMetadataPayload[] = [
     is_coming_soon: false,
     allowed_user_ids: [],
     icon: "StartUp02Icon",
-    emoji: "\uD83D\uDE80",
+    emoji: emojiUrl("Rocket"),
     apps: ["github", "twitter"],
     tags: ["developer", "github", "content"],
     category: "marketing",
@@ -93,7 +101,7 @@ export const FALLBACK_TEMPLATES: TemplateMetadataPayload[] = [
     is_coming_soon: false,
     allowed_user_ids: [],
     icon: "StartUp02Icon",
-    emoji: "\uD83C\uDF1F",
+    emoji: emojiUrl("Glowing%20star"),
     apps: [],
     tags: ["starter", "developer"],
     category: "featured",

@@ -1,4 +1,5 @@
 import { ArrowLeft } from "lucide-react";
+import { KitEmoji } from "./KitEmoji";
 
 interface KitDetailProps {
   template: TemplateMetadataPayload;
@@ -31,9 +32,7 @@ export function KitDetail({
       </button>
 
       <div className="flex items-start gap-4">
-        <span className="shrink-0 text-[40px] leading-none">
-          {template.emoji || "📦"}
-        </span>
+        <KitEmoji emoji={template.emoji} size={48} />
         <div className="min-w-0">
           <div className="text-[24px] font-semibold tracking-[-0.03em] text-text-main">
             {template.name}

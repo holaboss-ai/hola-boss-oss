@@ -41,6 +41,7 @@ import { FileExplorerPane } from "@/components/panes/FileExplorerPane";
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { IntegrationsPane } from "@/components/panes/IntegrationsPane";
 import { KitDetail } from "@/components/marketplace/KitDetail";
+import { KitEmoji } from "@/components/marketplace/KitEmoji";
 import { MarketplaceGallery } from "@/components/marketplace/MarketplaceGallery";
 import { MarketplacePane } from "@/components/panes/MarketplacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
@@ -445,7 +446,7 @@ function FirstWorkspacePane() {
     <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden px-3 py-3 sm:px-4 sm:py-4">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_12%,rgba(247,90,84,0.08),transparent_28%),radial-gradient(circle_at_86%_14%,rgba(233,117,109,0.08),transparent_30%)]" />
       <div className="relative mx-auto flex min-h-0 w-full max-w-[1080px] flex-1 flex-col">
-        <div className="theme-shell flex min-h-0 w-full flex-1 flex-col overflow-auto rounded-[var(--theme-radius-card)] border border-panel-border/45 px-6 py-6 shadow-card sm:px-8 sm:py-7 lg:px-10 lg:py-8">
+        <div className={`theme-shell flex min-h-0 w-full flex-1 flex-col overflow-auto rounded-[var(--theme-radius-card)] border border-panel-border/45 px-6 py-6 shadow-card sm:px-8 sm:py-7 lg:px-10 lg:py-8 ${onboardingStep !== "configure" ? "justify-center" : ""}`}>
 
           {onboardingStep === "gallery" ? (
             <MarketplaceGallery
@@ -482,7 +483,7 @@ function FirstWorkspacePane() {
 
               {templateSourceMode === "marketplace" && selectedMarketplaceTemplate ? (
                 <div className="mt-5 flex items-center gap-3 rounded-[18px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-3">
-                  <span className="text-[28px] leading-none">{selectedMarketplaceTemplate.emoji || "📦"}</span>
+                  <KitEmoji emoji={selectedMarketplaceTemplate.emoji} size={32} />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[14px] font-medium text-text-main">{selectedMarketplaceTemplate.name}</div>
                     <div className="truncate text-[12px] text-text-muted/72">{selectedMarketplaceTemplate.description || selectedMarketplaceTemplate.apps.join(", ")}</div>

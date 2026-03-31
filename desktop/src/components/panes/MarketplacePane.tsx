@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { MarketplaceGallery } from "@/components/marketplace/MarketplaceGallery";
 import { KitDetail } from "@/components/marketplace/KitDetail";
+import { KitEmoji } from "@/components/marketplace/KitEmoji";
 
 type View = "gallery" | "detail" | "creating";
 
@@ -103,7 +104,7 @@ export function MarketplacePane() {
 
                 {detailTemplate ? (
                   <div className="mt-4 flex items-center gap-3 rounded-[14px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-3 py-2.5">
-                    <span className="text-[24px] leading-none">{detailTemplate.emoji || "📦"}</span>
+                    <KitEmoji emoji={detailTemplate.emoji} size={28} />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[13px] font-medium text-text-main">{detailTemplate.name}</div>
                       <div className="truncate text-[11px] text-text-muted/72">{detailTemplate.apps.join(", ")}</div>

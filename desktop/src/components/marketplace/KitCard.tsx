@@ -1,3 +1,5 @@
+import { KitEmoji } from "./KitEmoji";
+
 interface KitCardProps {
   template: TemplateMetadataPayload;
   onClick: (template: TemplateMetadataPayload) => void;
@@ -21,9 +23,7 @@ export function KitCard({ template, onClick, selected = false }: KitCardProps) {
       }`}
     >
       <div className="flex items-start gap-3">
-        <span className="shrink-0 text-[32px] leading-none">
-          {template.emoji || "📦"}
-        </span>
+        <KitEmoji emoji={template.emoji} size={36} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate text-[14px] font-semibold text-text-main">
