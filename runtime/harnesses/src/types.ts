@@ -23,6 +23,7 @@ export interface HarnessInputAttachmentPayload {
 export interface HarnessRunnerRequestLike {
   workspace_id: string;
   session_id: string;
+  session_kind?: string | null;
   input_id: string;
   instruction: string;
   attachments?: HarnessInputAttachmentPayload[];
@@ -100,7 +101,6 @@ export interface HarnessBackendRestartRequest {
   allow_reuse_existing: boolean;
   host: string;
   port: number;
-  readiness_url: string;
   ready_timeout_s: number;
 }
 

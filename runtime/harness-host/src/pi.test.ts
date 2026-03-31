@@ -24,6 +24,7 @@ function baseRequest(): HarnessHostPiRequest {
     workspace_id: "workspace-1",
     workspace_dir: "/tmp/workspace-1",
     session_id: "session-1",
+    browser_tools_enabled: false,
     input_id: "input-1",
     instruction: "List the files",
     debug: false,
@@ -437,6 +438,66 @@ test("createPiMcpCustomTools filters discovery to allowlisted tools and forwards
   ]);
   assert.equal(result.content[0]?.type, "text");
   assert.match(String((result.content[0] as { text: string }).text), /"ok": true/);
+});
+
+test("createPiMcpCustomTools retries discovery until allowlisted MCP tools appear", async () => {
+  const request: HarnessHostPiRequest = {
+    ...baseRequest(),
+    mcp_servers: [
+      {
+        name: "twitter",
+        config: {
+          type: "remote",
+          enabled: true,
+          url: "http://127.0.0.1:7001/mcp",
+          timeout: 5000,
+        },
+      },
+    ],
+    mcp_tool_refs: [
+      {
+        tool_id: "twitter.twitter_create_post",
+        server_id: "twitter",
+        tool_name: "twitter_create_post",
+      },
+    ],
+  };
+
+  let listCalls = 0;
+  const runtime = {
+    listTools: async () => {
+      listCalls += 1;
+      if (listCalls === 1) {
+        return [];
+      }
+      return [
+        {
+          name: "twitter_create_post",
+          description: "Create a post",
+          inputSchema: {
+            type: "object",
+            properties: {
+              content: { type: "string" },
+            },
+          },
+        },
+      ];
+    },
+    callTool: async () => ({ content: [{ type: "text", text: "{\"ok\":true}" }] }),
+  };
+
+  const toolset = await createPiMcpCustomTools(request, runtime as never, buildPiMcpServerBindings(request));
+
+  assert.equal(toolset.customTools.length, 1);
+  assert.equal(listCalls, 2);
+  assert.deepEqual(Array.from(toolset.mcpToolMetadata.values()), [
+    {
+      piToolName: buildPiMcpToolName("twitter", "twitter_create_post"),
+      serverId: "twitter",
+      toolId: "twitter.twitter_create_post",
+      toolName: "twitter_create_post",
+    },
+  ]);
 });
 
 test("runPi emits run_started and terminal success when the session completes", async () => {

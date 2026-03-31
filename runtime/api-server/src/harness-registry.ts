@@ -8,6 +8,7 @@ import {
   DEFAULT_HARNESS_ID,
   DESKTOP_BROWSER_TOOL_IDS,
   HARNESS_DEFINITIONS,
+  RUNTIME_AGENT_TOOL_IDS,
   type HarnessBackendRestartRequest,
   type HarnessBootstrapPayload,
   type HarnessEnsureReadyContext,
@@ -26,8 +27,10 @@ import {
 import { stageOpencodeDesktopBrowserPlugin } from "./opencode-browser-tools.js";
 import { stageWorkspaceCommands } from "./opencode-commands.js";
 import { opencodeProxyConfigPath, updateOpencodeConfig } from "./opencode-config.js";
-import { restartOpencodeSidecar } from "./opencode-sidecar.js";
+import { stageOpencodeRuntimeToolsPlugin } from "./opencode-runtime-tools.js";
+import { readOpencodeSidecarBaseUrl, restartOpencodeSidecar } from "./opencode-sidecar.js";
 import { stageOpencodeSkills } from "./opencode-skills.js";
+import { buildRunnerEnv } from "./runner-worker.js";
 
 const HB_SANDBOX_ROOT_ENV = "HB_SANDBOX_ROOT";
 const OPENCODE_BASE_URL_ENV = "OPENCODE_BASE_URL";
@@ -90,8 +93,10 @@ export interface RuntimeHarnessPlugin {
   adapter: RuntimeHarnessAdapter;
   stageBrowserTools: (params: {
     workspaceDir: string;
+    sessionKind?: string | null;
     browserConfig: RuntimeHarnessBrowserConfig;
   }) => { changed: boolean; toolIds: string[] };
+  stageRuntimeTools: (params: { workspaceDir: string }) => { changed: boolean; toolIds: string[] };
   stageCommands: (params: { workspaceDir: string }) => { changed: boolean };
   stageSkills: (params: { workspaceDir: string; runtimeRoot: string }) => {
     changed: boolean;
@@ -107,7 +112,7 @@ export interface RuntimeHarnessPlugin {
     ensureSelectedHarnessReady: () => Promise<void>;
   }) => Promise<void>;
   ensureReady: (fetchImpl: typeof fetch) => Promise<void>;
-  backendBaseUrl: () => string;
+  backendBaseUrl: (params: { workspaceId: string; workspaceDir: string }) => string;
   timeoutSeconds: () => number;
 }
 
@@ -134,6 +139,10 @@ function workspaceRootPath(): string {
   return path.join(sandboxRootPath(), "workspace");
 }
 
+function opencodeWorkspaceRoot(workspaceDir: string): string {
+  return path.resolve(workspaceDir);
+}
+
 function opencodeServerHost(): string {
   return firstEnvValue(OPENCODE_SERVER_HOST_ENV) || DEFAULT_OPENCODE_HOST;
 }
@@ -155,6 +164,22 @@ function opencodeBaseUrl(): string {
   return `http://${opencodeServerHost()}:${opencodeServerPort()}`;
 }
 
+function opencodeBaseUrlForWorkspace(workspaceDir: string): string {
+  const configured = firstEnvValue(OPENCODE_BASE_URL_ENV).replace(/\/+$/, "");
+  if (configured) {
+    return configured;
+  }
+  const persisted = readOpencodeSidecarBaseUrl(opencodeWorkspaceRoot(workspaceDir));
+  if (persisted) {
+    return persisted;
+  }
+  const explicitPort = firstEnvValue(OPENCODE_SERVER_PORT_ENV);
+  if (explicitPort) {
+    return `http://${opencodeServerHost()}:${opencodeServerPort()}`;
+  }
+  return "";
+}
+
 function opencodeReadyTimeoutSeconds(): number {
   const raw = firstEnvValue(OPENCODE_READY_TIMEOUT_S_ENV) || String(DEFAULT_OPENCODE_READY_TIMEOUT_S);
   const parsed = Number.parseFloat(raw);
@@ -171,6 +196,10 @@ function defaultHarnessTimeoutSeconds(): number {
     return DEFAULT_RUN_TIMEOUT_S;
   }
   return Math.max(1, Math.min(parsed, 7200));
+}
+
+function browserToolsAllowedForSession(sessionKind: string | null | undefined): boolean {
+  return typeof sessionKind === "string" && sessionKind.trim().toLowerCase() === "main";
 }
 
 function opencodeSidecarFingerprint(runtimeConfig: HarnessRuntimeConfigPayload, workspaceId: string): string {
@@ -253,7 +282,7 @@ async function ensureOpencodeBackendReady(fetchImpl: typeof fetch): Promise<void
     let settled = false;
     const child = spawn("opencode", ["serve", "--hostname", opencodeServerHost(), "--port", String(opencodeServerPort())], {
       cwd: workspaceRootPath(),
-      env: process.env,
+      env: buildRunnerEnv(),
       stdio: "ignore",
       detached: true
     });
@@ -310,6 +339,15 @@ const opencodeRuntimeHarnessPlugin: RuntimeHarnessPlugin = {
     );
     return {
       changed: result.changed,
+      toolIds: browserToolsAllowedForSession(params.sessionKind) ? result.tool_ids : []
+    };
+  },
+  stageRuntimeTools(params) {
+    const result = stageOpencodeRuntimeToolsPlugin({
+      workspace_dir: params.workspaceDir
+    });
+    return {
+      changed: result.changed,
       toolIds: result.tool_ids
     };
   },
@@ -329,6 +367,7 @@ const opencodeRuntimeHarnessPlugin: RuntimeHarnessPlugin = {
     };
   },
   async prepareRun(params) {
+    const backendBaseUrl = opencodeBaseUrlForWorkspace(params.bootstrap.workspaceDir);
     await opencodeAdapter.prepareRun?.({
       ...params,
       syncModelConfig: (request) => {
@@ -347,13 +386,12 @@ const opencodeRuntimeHarnessPlugin: RuntimeHarnessPlugin = {
           allow_reuse_existing: request.allow_reuse_existing,
           host: request.host,
           port: request.port,
-          readiness_url: request.readiness_url,
           ready_timeout_s: request.ready_timeout_s
         });
       },
-      backendBaseUrl: opencodeBaseUrl(),
+      backendBaseUrl,
       backendHost: opencodeServerHost(),
-      backendPort: opencodeServerPort(),
+      backendPort: firstEnvValue(OPENCODE_SERVER_PORT_ENV) ? opencodeServerPort() : 0,
       backendReadyTimeoutSeconds: opencodeReadyTimeoutSeconds(),
       buildBackendFingerprint: opencodeSidecarFingerprint
     });
@@ -382,8 +420,8 @@ const opencodeRuntimeHarnessPlugin: RuntimeHarnessPlugin = {
       ensureHarnessBackendReady: () => ensureOpencodeBackendReady(fetchImpl)
     });
   },
-  backendBaseUrl() {
-    return opencodeBaseUrl();
+  backendBaseUrl(params) {
+    return opencodeBaseUrlForWorkspace(params.workspaceDir);
   },
   timeoutSeconds() {
     return defaultHarnessTimeoutSeconds();
@@ -395,11 +433,15 @@ const piRuntimeHarnessPlugin: RuntimeHarnessPlugin = {
   adapter: piAdapter,
   stageBrowserTools(params) {
     const browserEnabled = Boolean(
+      browserToolsAllowedForSession(params.sessionKind) &&
       params.browserConfig.desktopBrowserEnabled &&
         params.browserConfig.desktopBrowserUrl.trim() &&
         params.browserConfig.desktopBrowserAuthToken.trim()
     );
     return { changed: false, toolIds: browserEnabled ? [...DESKTOP_BROWSER_TOOL_IDS] : [] };
+  },
+  stageRuntimeTools() {
+    return { changed: false, toolIds: [...RUNTIME_AGENT_TOOL_IDS] };
   },
   stageCommands() {
     return { changed: false };
@@ -450,7 +492,7 @@ const piRuntimeHarnessPlugin: RuntimeHarnessPlugin = {
       }
     });
   },
-  backendBaseUrl() {
+  backendBaseUrl(_params) {
     return "";
   },
   timeoutSeconds() {

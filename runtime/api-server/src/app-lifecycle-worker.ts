@@ -403,24 +403,34 @@ async function isAppHealthy(
   }
 ): Promise<boolean> {
   const fetchImpl = params.fetchImpl ?? fetch;
-  for (const probe of healthProbeUrls(params)) {
+  const probes = healthProbeUrls(params);
+  if (probes.length === 0) {
+    return false;
+  }
+  for (const probe of probes) {
     try {
       const response = await fetchImpl(probe.url, {
         method: "GET",
         redirect: "manual",
         signal: AbortSignal.timeout(3000)
       });
-      if (probe.kind === "http" && response.status >= 200 && response.status < 400) {
-        return true;
+      if (probe.kind === "http") {
+        if (response.status >= 200 && response.status < 400) {
+          continue;
+        }
+        return false;
       }
-      if (probe.kind === "mcp" && response.status === 200) {
-        return true;
+      if (probe.kind === "mcp") {
+        if (response.status === 200) {
+          continue;
+        }
+        return false;
       }
     } catch {
-      continue;
+      return false;
     }
   }
-  return false;
+  return true;
 }
 
 async function waitHealthy(

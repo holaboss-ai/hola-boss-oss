@@ -8,6 +8,7 @@ import {
   compileWorkspaceRuntimePlanFromWorkspace,
   encodeWorkspaceMcpCatalog,
   effectiveMcpServerPayloads,
+  mergePreparedMcpServerPayloads,
   mcpServerMappingMetadata,
   mcpServerIdMap,
   readWorkspaceRuntimePlanReferences,
@@ -162,5 +163,68 @@ test("effectiveMcpServerPayloads replaces logical workspace server with sidecar 
       },
       _holaboss_force_refresh: true,
     },
+  ]);
+});
+
+test("mergePreparedMcpServerPayloads prefers later bootstrapped servers with the same name", () => {
+  const merged = mergePreparedMcpServerPayloads(
+    [
+      {
+        name: "twitter",
+        config: {
+          type: "remote",
+          enabled: true,
+          url: "http://localhost:13100/mcp/sse",
+          headers: {},
+          timeout: 30000
+        }
+      },
+      {
+        name: "linkedin",
+        config: {
+          type: "remote",
+          enabled: true,
+          url: "http://localhost:13101/mcp/sse",
+          headers: {},
+          timeout: 30000
+        }
+      }
+    ],
+    [
+      {
+        name: "twitter",
+        config: {
+          type: "remote",
+          enabled: true,
+          url: "http://127.0.0.1:38081/mcp/sse",
+          headers: { "X-Workspace-Id": "workspace-1" },
+          timeout: 60000
+        }
+      }
+    ]
+  );
+
+  assert.deepEqual(merged, [
+    {
+      name: "twitter",
+      config: {
+        type: "remote",
+        enabled: true,
+        url: "http://127.0.0.1:38081/mcp/sse",
+        headers: { "X-Workspace-Id": "workspace-1" },
+        timeout: 60000
+      },
+      _holaboss_force_refresh: true
+    },
+    {
+      name: "linkedin",
+      config: {
+        type: "remote",
+        enabled: true,
+        url: "http://localhost:13101/mcp/sse",
+        headers: {},
+        timeout: 30000
+      }
+    }
   ]);
 });

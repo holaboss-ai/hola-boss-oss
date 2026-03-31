@@ -227,6 +227,14 @@ test("binding round trip upserts and reloads persisted session binding", () => {
 
   assert.equal(created.workspaceId, "workspace-1");
   assert.equal(updated.harnessSessionId, "harness-2");
+  const session = store.getSession({ workspaceId: "workspace-1", sessionId: "session-main" });
+  assert.ok(session);
+  assert.equal(session.kind, "workspace_session");
+  assert.equal(session.title, null);
+  assert.equal(session.parentSessionId, null);
+  assert.equal(session.sourceProposalId, null);
+  assert.equal(session.createdBy, null);
+  assert.equal(session.archivedAt, null);
   assert.deepEqual(
     store.getBinding({ workspaceId: "workspace-1", sessionId: "session-main" }),
     updated
@@ -283,6 +291,51 @@ test("input queue supports idempotent enqueue, update, and claiming by priority"
   store.close();
 });
 
+test("claimInputs can select at most one queued input per session", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const sessionOneFirst = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-one",
+    payload: { text: "session-one-first" },
+    priority: 5
+  });
+  store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-one",
+    payload: { text: "session-one-second" },
+    priority: 4
+  });
+  const sessionTwo = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-two",
+    payload: { text: "session-two" },
+    priority: 3
+  });
+
+  const claimed = store.claimInputs({
+    limit: 2,
+    claimedBy: "worker-1",
+    leaseSeconds: 60,
+    distinctSessions: true
+  });
+
+  assert.equal(claimed.length, 2);
+  assert.deepEqual(
+    claimed.map((record) => record.inputId),
+    [sessionOneFirst.inputId, sessionTwo.inputId]
+  );
+  assert.deepEqual(
+    claimed.map((record) => record.sessionId),
+    ["session-one", "session-two"]
+  );
+  store.close();
+});
+
 test("runtime state round trip supports ensure, update, list, and lookup", () => {
   const root = makeTempDir("hb-state-store-");
   const store = new RuntimeStateStore({
@@ -312,6 +365,46 @@ test("runtime state round trip supports ensure, update, list, and lookup", () =>
   assert.deepEqual(updated.lastError, { message: "blocked" });
   assert.deepEqual(store.getRuntimeState({ sessionId: "session-main", workspaceId: "workspace-1" }), updated);
   assert.deepEqual(store.listRuntimeStates("workspace-1"), [updated]);
+  store.close();
+});
+
+test("state store lists expired claimed inputs", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    payload: { text: "queued" }
+  });
+  const stale = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    payload: { text: "stale" }
+  });
+  const active = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    payload: { text: "active" }
+  });
+
+  store.updateInput(stale.inputId, {
+    status: "CLAIMED",
+    claimedBy: "worker-old",
+    claimedUntil: "2000-01-01T00:00:00.000Z"
+  });
+  store.updateInput(active.inputId, {
+    status: "CLAIMED",
+    claimedBy: "worker-new",
+    claimedUntil: "2999-01-01T00:00:00.000Z"
+  });
+
+  const expired = store.listExpiredClaimedInputs("2026-01-01T00:00:00.000Z");
+
+  assert.deepEqual(expired.map((record) => record.inputId), [stale.inputId]);
   store.close();
 });
 
@@ -514,6 +607,54 @@ test("task proposals round trip supports create, list, unreviewed, get, and stat
   store.close();
 });
 
+test("task proposal acceptance fields and child session metadata round trip", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const session = store.ensureSession({
+    workspaceId: "workspace-1",
+    sessionId: "proposal-session-1",
+    kind: "task_proposal",
+    title: "Follow up",
+    parentSessionId: "session-main",
+    sourceProposalId: "proposal-1",
+    createdBy: "workspace_user"
+  });
+  store.createTaskProposal({
+    proposalId: "proposal-1",
+    workspaceId: "workspace-1",
+    taskName: "Follow up",
+    taskPrompt: "Write a follow-up message",
+    taskGenerationRationale: "User has not replied",
+    sourceEventIds: ["evt-1"],
+    createdAt: "2026-01-01T00:00:00+00:00"
+  });
+
+  const sessions = store.listSessions({ workspaceId: "workspace-1" });
+  const updated = store.updateTaskProposal({
+    proposalId: "proposal-1",
+    fields: {
+      state: "accepted",
+      acceptedSessionId: session.sessionId,
+      acceptedInputId: "input-1",
+      acceptedAt: "2026-01-01T01:00:00+00:00"
+    }
+  });
+
+  assert.equal(sessions.length, 1);
+  assert.equal(sessions[0]?.kind, "task_proposal");
+  assert.equal(sessions[0]?.parentSessionId, "session-main");
+  assert.equal(sessions[0]?.sourceProposalId, "proposal-1");
+  assert.ok(updated);
+  assert.equal(updated.acceptedSessionId, "proposal-session-1");
+  assert.equal(updated.acceptedInputId, "input-1");
+  assert.equal(updated.acceptedAt, "2026-01-01T01:00:00+00:00");
+  store.close();
+});
+
 test("allocateAppPort assigns sequential ports starting from 3001", () => {
   const root = makeTempDir("hb-store-ports-");
   const store = new RuntimeStateStore({
@@ -524,8 +665,8 @@ test("allocateAppPort assigns sequential ports starting from 3001", () => {
   const p1 = store.allocateAppPort({ workspaceId: "ws-1", appId: "gmail" });
   const p2 = store.allocateAppPort({ workspaceId: "ws-1", appId: "sheets" });
 
-  assert.equal(p1.port, 3001);
-  assert.equal(p2.port, 3002);
+  assert.equal(p1.port, 38080);
+  assert.equal(p2.port, 38081);
   assert.equal(p1.appId, "gmail");
   assert.equal(p2.appId, "sheets");
 

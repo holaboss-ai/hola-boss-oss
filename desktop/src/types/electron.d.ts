@@ -252,11 +252,30 @@ declare global {
     created_at: string;
     state: string;
     source_event_ids: string[];
+    accepted_session_id: string | null;
+    accepted_input_id: string | null;
+    accepted_at: string | null;
   }
 
   interface TaskProposalListResponsePayload {
     proposals: TaskProposalRecordPayload[];
     count: number;
+  }
+
+  interface ProactiveStatusSnapshotPayload {
+    state: string;
+    detail: string | null;
+    recorded_at: string | null;
+  }
+
+  interface ProactiveAgentStatusPayload {
+    workspace_id: string;
+    proposal_count: number;
+    heartbeat: ProactiveStatusSnapshotPayload;
+    bridge: ProactiveStatusSnapshotPayload;
+    delivery_state: string;
+    delivery_summary: string;
+    delivery_detail: string | null;
   }
 
   interface DemoTaskProposalRequestPayload {
@@ -273,6 +292,41 @@ declare global {
 
   interface TaskProposalStateUpdatePayload {
     proposal: TaskProposalRecordPayload;
+  }
+
+  interface AgentSessionRecordPayload {
+    workspace_id: string;
+    session_id: string;
+    kind: string;
+    title: string | null;
+    parent_session_id: string | null;
+    source_proposal_id: string | null;
+    created_by: string | null;
+    created_at: string;
+    updated_at: string;
+    archived_at: string | null;
+  }
+
+  interface AgentSessionListResponsePayload {
+    items: AgentSessionRecordPayload[];
+    count: number;
+  }
+
+  interface TaskProposalAcceptPayload {
+    proposal_id: string;
+    task_name?: string | null;
+    task_prompt?: string | null;
+    session_id?: string | null;
+    parent_session_id?: string | null;
+    created_by?: string | null;
+    priority?: number;
+    model?: string | null;
+  }
+
+  interface TaskProposalAcceptResponsePayload {
+    proposal: TaskProposalRecordPayload;
+    session: AgentSessionRecordPayload;
+    input: EnqueueSessionInputResponsePayload;
   }
 
   interface CronjobDeliveryPayload {
@@ -459,6 +513,23 @@ declare global {
     ports: Record<string, number>;
   }
 
+  interface WorkspaceLifecycleBlockingAppPayload {
+    app_id: string;
+    status: string;
+    error: string | null;
+  }
+
+  interface WorkspaceLifecyclePayload {
+    workspace: WorkspaceRecordPayload;
+    applications: InstalledWorkspaceAppPayload[];
+    ready: boolean;
+    reason: string | null;
+    phase: string;
+    phase_label: string;
+    phase_detail: string | null;
+    blocking_apps: WorkspaceLifecycleBlockingAppPayload[];
+  }
+
   interface WorkspaceOutputRecordPayload {
     id: string;
     workspace_id: string;
@@ -526,7 +597,7 @@ declare global {
     holaboss_user_id: string;
     harness?: string | null;
     name: string;
-    template_mode?: "template" | "empty" | null;
+    template_mode?: "template" | "empty" | "empty_onboarding" | null;
     template_root_path?: string | null;
     template_name?: string | null;
     template_ref?: string | null;
@@ -589,11 +660,11 @@ declare global {
       node: string;
     };
     fs: {
-      listDirectory: (targetPath?: string | null) => Promise<LocalDirectoryResponse>;
-      readFilePreview: (targetPath: string) => Promise<FilePreviewPayload>;
-      writeTextFile: (targetPath: string, content: string) => Promise<FilePreviewPayload>;
-      getBookmarks: () => Promise<FileBookmarkPayload[]>;
-      addBookmark: (targetPath: string, label?: string) => Promise<FileBookmarkPayload[]>;
+      listDirectory: (targetPath?: string | null, workspaceId?: string | null) => Promise<LocalDirectoryResponse>;
+      readFilePreview: (targetPath: string, workspaceId?: string | null) => Promise<FilePreviewPayload>;
+      writeTextFile: (targetPath: string, content: string, workspaceId?: string | null) => Promise<FilePreviewPayload>;
+      getBookmarks: (workspaceId?: string | null) => Promise<FileBookmarkPayload[]>;
+      addBookmark: (targetPath: string, label?: string, workspaceId?: string | null) => Promise<FileBookmarkPayload[]>;
       removeBookmark: (bookmarkId: string) => Promise<FileBookmarkPayload[]>;
       onBookmarksChange: (listener: (bookmarks: FileBookmarkPayload[]) => void) => () => void;
     };
@@ -630,6 +701,8 @@ declare global {
       listMarketplaceTemplates: () => Promise<TemplateListResponsePayload>;
       pickTemplateFolder: () => Promise<TemplateFolderSelectionPayload>;
       listWorkspaces: () => Promise<WorkspaceListResponsePayload>;
+      getWorkspaceLifecycle: (workspaceId: string) => Promise<WorkspaceLifecyclePayload>;
+      activateWorkspace: (workspaceId: string) => Promise<WorkspaceLifecyclePayload>;
       listInstalledApps: (workspaceId: string) => Promise<InstalledWorkspaceAppListResponsePayload>;
       startInstalledApp: (workspaceId: string, appId: string) => Promise<WorkspaceAppLifecycleActionPayload>;
       stopInstalledApp: (workspaceId: string, appId: string) => Promise<WorkspaceAppLifecycleActionPayload>;
@@ -643,10 +716,13 @@ declare global {
       updateCronjob: (jobId: string, payload: CronjobUpdatePayload) => Promise<CronjobRecordPayload>;
       deleteCronjob: (jobId: string) => Promise<{ success: boolean }>;
       listTaskProposals: (workspaceId: string) => Promise<TaskProposalListResponsePayload>;
+      acceptTaskProposal: (payload: TaskProposalAcceptPayload) => Promise<TaskProposalAcceptResponsePayload>;
+      getProactiveStatus: (workspaceId: string) => Promise<ProactiveAgentStatusPayload>;
       updateTaskProposalState: (proposalId: string, state: string) => Promise<TaskProposalStateUpdatePayload>;
       enqueueRemoteDemoTaskProposal: (
         payload: DemoTaskProposalRequestPayload
       ) => Promise<DemoTaskProposalEnqueueResponsePayload>;
+      listAgentSessions: (workspaceId: string) => Promise<AgentSessionListResponsePayload>;
       listRuntimeStates: (workspaceId: string) => Promise<SessionRuntimeStateListResponsePayload>;
       getSessionHistory: (payload: { sessionId: string; workspaceId: string }) => Promise<SessionHistoryResponsePayload>;
       getSessionOutputEvents: (payload: { sessionId: string }) => Promise<SessionOutputEventListResponsePayload>;

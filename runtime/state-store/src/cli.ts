@@ -128,7 +128,10 @@ function toTaskProposalRecord(record: ReturnType<RuntimeStateStore["listTaskProp
     task_generation_rationale: record.taskGenerationRationale,
     source_event_ids: record.sourceEventIds,
     created_at: record.createdAt,
-    state: record.state
+    state: record.state,
+    accepted_session_id: record.acceptedSessionId,
+    accepted_input_id: record.acceptedInputId,
+    accepted_at: record.acceptedAt
   };
 }
 
@@ -341,7 +344,8 @@ export function handleRequest(operation: string, envelope: RequestEnvelope): Jso
           .claimInputs({
             limit: typeof envelope.limit === "number" ? envelope.limit : 1,
             claimedBy: String(envelope.claimed_by),
-            leaseSeconds: typeof envelope.lease_seconds === "number" ? envelope.lease_seconds : 0
+            leaseSeconds: typeof envelope.lease_seconds === "number" ? envelope.lease_seconds : 0,
+            distinctSessions: envelope.distinct_sessions === true
           })
           .map((record) => toInputRecord(record));
       case "has-available-inputs-for-session":

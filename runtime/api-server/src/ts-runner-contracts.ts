@@ -24,6 +24,7 @@ export interface TsRunnerRequest {
   holaboss_user_id?: string;
   workspace_id: string;
   session_id: string;
+  session_kind?: string | null;
   input_id: string;
   instruction: string;
   attachments?: TsRunnerInputAttachment[];
@@ -169,6 +170,7 @@ export function validateTsRunnerRequest(payload: unknown): TsRunnerRequest {
     holaboss_user_id: optionalNonEmptyString(payload.holaboss_user_id, "holaboss_user_id"),
     workspace_id: requiredString(payload.workspace_id, "workspace_id"),
     session_id: requiredString(payload.session_id, "session_id"),
+    session_kind: optionalNonEmptyString(payload.session_kind, "session_kind") ?? null,
     input_id: requiredString(payload.input_id, "input_id"),
     instruction: requiredString(payload.instruction, "instruction"),
     attachments: attachments(payload.attachments),

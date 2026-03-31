@@ -212,6 +212,224 @@ test("mapOpencodeEvent maps question tool calls to waiting_user terminal events"
   ]);
 });
 
+test("mapOpencodeEvent ignores raw text updates that would duplicate later output deltas", () => {
+  const state = createOpencodeEventMapperState();
+
+  const updatedEvents = mapOpencodeEvent(
+    {
+      type: "message.part.updated",
+      properties: {
+        sessionID: "opencode-session-1",
+        delta: "hi",
+        part: {
+          type: "text",
+          id: "text-part-1",
+        },
+      },
+    },
+    "opencode-session-1",
+    state
+  );
+
+  assert.deepEqual(updatedEvents, []);
+
+  const deltaEvents = mapOpencodeEvent(
+    {
+      type: "message.part.delta",
+      properties: {
+        sessionID: "opencode-session-1",
+        delta: "Hi",
+        part: {
+          type: "text",
+          id: "text-part-1",
+        },
+      },
+    },
+    "opencode-session-1",
+    state
+  );
+
+  assert.deepEqual(deltaEvents, [
+    {
+      event_type: "output_delta",
+      payload: {
+        delta: "Hi",
+        event: "message.part.delta",
+        source: "opencode",
+        part_id: "text-part-1",
+        part_type: "text",
+        delta_kind: "output",
+      },
+    },
+  ]);
+});
+
+test("mapOpencodeEvent drops buffered user text updates once the parent message role resolves", () => {
+  const state = createOpencodeEventMapperState();
+
+  const earlyUserUpdate = mapOpencodeEvent(
+    {
+      type: "message.part.updated",
+      properties: {
+        sessionID: "opencode-session-1",
+        part: {
+          id: "user-text-1",
+          sessionID: "opencode-session-1",
+          messageID: "user-message-1",
+          type: "text",
+          text: "Good morning",
+        },
+      },
+    },
+    "opencode-session-1",
+    state
+  );
+
+  assert.deepEqual(earlyUserUpdate, []);
+
+  const userMessageUpdated = mapOpencodeEvent(
+    {
+      type: "message.updated",
+      properties: {
+        sessionID: "opencode-session-1",
+        info: {
+          id: "user-message-1",
+          sessionID: "opencode-session-1",
+          role: "user",
+          time: { created: 0 },
+          agent: "build",
+          model: {
+            providerID: "openai",
+            modelID: "gpt-5.1",
+          },
+          parts: [
+            {
+              id: "user-text-1",
+              sessionID: "opencode-session-1",
+              messageID: "user-message-1",
+              type: "text",
+              text: "Good morning",
+            },
+          ],
+        },
+      },
+    },
+    "opencode-session-1",
+    state
+  );
+
+  assert.deepEqual(userMessageUpdated, []);
+
+  const assistantDelta = mapOpencodeEvent(
+    {
+      type: "message.part.delta",
+      properties: {
+        sessionID: "opencode-session-1",
+        messageID: "assistant-message-1",
+        delta: "Hello",
+        part: {
+          id: "assistant-text-1",
+          sessionID: "opencode-session-1",
+          messageID: "assistant-message-1",
+          type: "text",
+        },
+      },
+    },
+    "opencode-session-1",
+    state
+  );
+
+  assert.deepEqual(assistantDelta, [
+    {
+      event_type: "output_delta",
+      payload: {
+        delta: "Hello",
+        event: "message.part.delta",
+        source: "opencode",
+        part_id: "assistant-text-1",
+        part_type: "text",
+        delta_kind: "output",
+      },
+    },
+  ]);
+});
+
+test("mapOpencodeEvent releases buffered assistant text updates after the parent message role resolves", () => {
+  const state = createOpencodeEventMapperState();
+
+  const earlyAssistantUpdate = mapOpencodeEvent(
+    {
+      type: "message.part.updated",
+      properties: {
+        sessionID: "opencode-session-1",
+        part: {
+          id: "assistant-text-1",
+          sessionID: "opencode-session-1",
+          messageID: "assistant-message-1",
+          type: "text",
+          text: "Hello",
+        },
+      },
+    },
+    "opencode-session-1",
+    state
+  );
+
+  assert.deepEqual(earlyAssistantUpdate, []);
+
+  const assistantMessageUpdated = mapOpencodeEvent(
+    {
+      type: "message.updated",
+      properties: {
+        sessionID: "opencode-session-1",
+        info: {
+          id: "assistant-message-1",
+          sessionID: "opencode-session-1",
+          role: "assistant",
+          time: { created: 0 },
+          parentID: "user-message-1",
+          modelID: "gpt-5.1",
+          providerID: "openai",
+          mode: "build",
+          path: { cwd: "/tmp", root: "/tmp" },
+          cost: 0,
+          tokens: {
+            input: 0,
+            output: 0,
+            reasoning: 0,
+            cache: { read: 0, write: 0 },
+          },
+          parts: [
+            {
+              id: "assistant-text-1",
+              sessionID: "opencode-session-1",
+              messageID: "assistant-message-1",
+              type: "text",
+              text: "Hello",
+            },
+          ],
+        },
+      },
+    },
+    "opencode-session-1",
+    state
+  );
+
+  assert.deepEqual(assistantMessageUpdated, [
+    {
+      event_type: "output_delta",
+      payload: {
+        delta: "Hello",
+        event: "message.part.updated",
+        source: "opencode",
+        part_id: "assistant-text-1",
+        part_type: "text",
+        delta_kind: "output",
+      },
+    },
+  ]);
+});
+
 test("mapOpencodeEvent maps idle session status to completion and flushes unresolved deltas", () => {
   const state = createOpencodeEventMapperState();
   state.pendingPartDeltas.set("text-part-1", [["message.part.delta", "Hello"]]);
@@ -296,7 +514,7 @@ test("resolveOpencodeSessionId reuses the persisted session only when no request
   assert.equal(created, 0);
 });
 
-test("shouldEmitOpencodeEvent filters step markers and prompt echo", () => {
+test("shouldEmitOpencodeEvent filters step markers only", () => {
   assert.equal(
     shouldEmitOpencodeEvent("thinking_delta", { delta: "step-start", source: "opencode" }, "hello"),
     false
@@ -305,14 +523,8 @@ test("shouldEmitOpencodeEvent filters step markers and prompt echo", () => {
     shouldEmitOpencodeEvent("thinking_delta", { delta: "step-finish", source: "opencode" }, "hello"),
     false
   );
-  assert.equal(
-    shouldEmitOpencodeEvent("output_delta", { delta: "hello", source: "opencode" }, "hello"),
-    false
-  );
-  assert.equal(
-    shouldEmitOpencodeEvent("output_delta", { delta: "hello world", source: "opencode" }, "hello"),
-    true
-  );
+  assert.equal(shouldEmitOpencodeEvent("output_delta", { delta: "hello", source: "opencode" }, "hello"), true);
+  assert.equal(shouldEmitOpencodeEvent("output_delta", { delta: "hello world", source: "opencode" }, "hello"), true);
 });
 
 test("promptPartsForRequest adds staged attachments as file parts", () => {

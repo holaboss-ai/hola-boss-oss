@@ -66,20 +66,6 @@ if [ "${SKIP_NODE_DEPS}" != "1" ] && [ "${#NODE_PACKAGES[@]}" -gt 0 ]; then
   npm install --global --prefix "${NODE_RUNTIME_DIR}" "${NODE_PACKAGES[@]}"
 fi
 
-cat > "${BIN_DIR}/hb" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUNDLE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-
-export HOLABOSS_RUNTIME_APP_ROOT="${BUNDLE_ROOT}/runtime"
-export HOLABOSS_RUNTIME_ROOT="${BUNDLE_ROOT}/runtime"
-export PATH="${BUNDLE_ROOT}/node-runtime/bin:${PATH}"
-
-exec "${BUNDLE_ROOT}/runtime/bin/hb" "$@"
-EOF
-
 cat > "${BIN_DIR}/sandbox-runtime" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -94,7 +80,7 @@ export PATH="${BUNDLE_ROOT}/node-runtime/bin:${PATH}"
 exec "${BUNDLE_ROOT}/runtime/bootstrap/macos.sh" "$@"
 EOF
 
-chmod +x "${BIN_DIR}/hb" "${BIN_DIR}/sandbox-runtime"
+chmod +x "${BIN_DIR}/sandbox-runtime"
 
 cat > "${PACKAGE_METADATA_PATH}" <<EOF
 {

@@ -229,3 +229,24 @@ export function effectiveMcpServerPayloads(params: {
   payloads.push(sidecarPayload);
   return payloads;
 }
+
+export function mergePreparedMcpServerPayloads(
+  basePayloads: PreparedMcpServerPayload[],
+  overridePayloads: PreparedMcpServerPayload[]
+): PreparedMcpServerPayload[] {
+  const merged = new Map<string, PreparedMcpServerPayload>();
+  for (const payload of basePayloads) {
+    merged.set(payload.name, payload);
+  }
+  for (const payload of overridePayloads) {
+    const existing = merged.get(payload.name);
+    const configChanged = existing ? JSON.stringify(existing.config) !== JSON.stringify(payload.config) : false;
+    merged.set(payload.name, {
+      ...payload,
+      _holaboss_force_refresh: Boolean(
+        payload._holaboss_force_refresh || existing?._holaboss_force_refresh || configChanged
+      )
+    });
+  }
+  return [...merged.values()];
+}

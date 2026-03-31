@@ -11,6 +11,8 @@ import { processClaimedInput } from "./claimed-input-executor.js";
 const tempDirs: string[] = [];
 const ORIGINAL_ENV = {
   SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE: process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE,
+  SANDBOX_AGENT_RUN_TIMEOUT_S: process.env.SANDBOX_AGENT_RUN_TIMEOUT_S,
+  SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S: process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S,
   HB_SANDBOX_ROOT: process.env.HB_SANDBOX_ROOT
 };
 
@@ -22,6 +24,16 @@ afterEach(() => {
     delete process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE;
   } else {
     process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE = ORIGINAL_ENV.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE;
+  }
+  if (ORIGINAL_ENV.SANDBOX_AGENT_RUN_TIMEOUT_S === undefined) {
+    delete process.env.SANDBOX_AGENT_RUN_TIMEOUT_S;
+  } else {
+    process.env.SANDBOX_AGENT_RUN_TIMEOUT_S = ORIGINAL_ENV.SANDBOX_AGENT_RUN_TIMEOUT_S;
+  }
+  if (ORIGINAL_ENV.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S === undefined) {
+    delete process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S;
+  } else {
+    process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S = ORIGINAL_ENV.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S;
   }
   if (ORIGINAL_ENV.HB_SANDBOX_ROOT === undefined) {
     delete process.env.HB_SANDBOX_ROOT;
@@ -313,6 +325,120 @@ test("claimed input synthesizes run_failed when runner exits without terminal ev
   store.close();
 });
 
+test("claimed input succeeds when runner emits terminal event but keeps the process alive", async () => {
+  const store = makeStore("hb-claimed-input-terminal-kill-");
+  process.env.SANDBOX_AGENT_RUN_TIMEOUT_S = "1";
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" }
+  });
+  setNodeRunnerCommand([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'run_completed', payload: { status: 'ok' } }) + '\\n');`,
+    "setInterval(() => {}, 1000);"
+  ]);
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker"
+  });
+
+  const updated = store.getInput(queued.inputId);
+  const runtimeState = store.getRuntimeState({
+    workspaceId: workspace.id,
+    sessionId: "session-main"
+  });
+  const events = store.listOutputEvents({
+    sessionId: "session-main",
+    inputId: queued.inputId
+  });
+
+  assert.ok(updated);
+  assert.equal(updated.status, "DONE");
+  assert.ok(runtimeState);
+  assert.equal(runtimeState.status, "IDLE");
+  assert.deepEqual(
+    events.map((event) => event.eventType),
+    ["run_started", "run_completed"]
+  );
+
+  store.close();
+});
+
+test("claimed input fails when runner becomes idle after run_started", async () => {
+  const store = makeStore("hb-claimed-input-idle-timeout-");
+  process.env.SANDBOX_AGENT_RUN_TIMEOUT_S = "10";
+  process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S = "1";
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" }
+  });
+  setNodeRunnerCommand([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');`,
+    "setInterval(() => {}, 1000);"
+  ]);
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker"
+  });
+
+  const updated = store.getInput(queued.inputId);
+  const runtimeState = store.getRuntimeState({
+    workspaceId: workspace.id,
+    sessionId: "session-main"
+  });
+  const events = store.listOutputEvents({
+    sessionId: "session-main",
+    inputId: queued.inputId
+  });
+
+  assert.ok(updated);
+  assert.equal(updated.status, "FAILED");
+  assert.ok(runtimeState);
+  assert.equal(runtimeState.status, "ERROR");
+  assert.equal(events.length, 2);
+  assert.equal(events[0].eventType, "run_started");
+  assert.equal(events[1].eventType, "run_failed");
+  assert.match(String(events[1].payload.message), /idle/i);
+
+  store.close();
+});
+
 test("claimed input hydrates runtime exec context from runtime config", async () => {
   const store = makeStore("hb-claimed-input-runtime-context-");
   const sandboxRoot = makeTempDir("hb-runtime-config-root-");
@@ -370,6 +496,123 @@ test("claimed input hydrates runtime exec context from runtime config", async ()
   store.close();
 });
 
+test("claimed onboarding input instructs native onboarding tools directly", async () => {
+  const store = makeStore("hb-claimed-input-onboarding-native-tools-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main",
+    onboardingStatus: "pending",
+    onboardingSessionId: "session-onboarding"
+  });
+  fs.writeFileSync(
+    path.join(store.workspaceDir(workspace.id), "ONBOARD.md"),
+    "# Workspace Onboarding\n\nAsk concise setup questions.\n",
+    "utf8"
+  );
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-onboarding",
+    payload: { text: "yes" }
+  });
+
+  let capturedInstruction = "";
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      capturedInstruction = String(payload.instruction ?? "");
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: { instruction_preview: capturedInstruction.slice(0, 120) }
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "run_completed",
+        payload: { status: "ok" }
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true
+      };
+    }
+  });
+
+  assert.match(capturedInstruction, /holaboss_onboarding_status/);
+  assert.match(capturedInstruction, /holaboss_onboarding_complete/);
+  assert.doesNotMatch(capturedInstruction, /`hb`/);
+
+  store.close();
+});
+
+test("claimed onboarding input includes ONBOARD.md verbatim", async () => {
+  const store = makeStore("hb-claimed-input-onboarding-verbatim-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main",
+    onboardingStatus: "pending",
+    onboardingSessionId: "session-onboarding"
+  });
+  fs.writeFileSync(
+    path.join(store.workspaceDir(workspace.id), "ONBOARD.md"),
+    "opening_sentence: What is the primary goal for this workspace?\n\n# Workspace Onboarding\n\nAsk concise setup questions.\n",
+    "utf8"
+  );
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-onboarding",
+    payload: { text: "yes" }
+  });
+
+  let capturedInstruction = "";
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      capturedInstruction = String(payload.instruction ?? "");
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: { instruction_preview: capturedInstruction.slice(0, 120) }
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "run_completed",
+        payload: { status: "ok" }
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true
+      };
+    }
+  });
+
+  assert.match(capturedInstruction, /opening_sentence: What is the primary goal for this workspace\?/);
+  assert.doesNotMatch(capturedInstruction, /opening_sentence may already be visible/);
+
+  store.close();
+});
+
 test("claimed input persists replacement harness session id from terminal runner event", async () => {
   const store = makeStore("hb-claimed-input-harness-session-");
   const workspace = store.createWorkspace({
@@ -417,5 +660,60 @@ test("claimed input persists replacement harness session id from terminal runner
   assert.ok(binding);
   assert.equal(binding.harnessSessionId, "replacement-session");
 
+  store.close();
+});
+
+test("claimed input passes persisted child session kind into the runner payload", async () => {
+  const store = makeStore("hb-claimed-input-session-kind-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "proposal-session-1",
+    kind: "task_proposal",
+    parentSessionId: "session-main"
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "proposal-session-1",
+    payload: { text: "hello" }
+  });
+
+  let capturedSessionKind = "";
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      capturedSessionKind = String(payload.session_kind ?? "");
+      await options.onEvent?.({
+        session_id: String(payload.session_id),
+        input_id: String(payload.input_id),
+        sequence: 1,
+        event_type: "run_started",
+        payload: {}
+      });
+      await options.onEvent?.({
+        session_id: String(payload.session_id),
+        input_id: String(payload.input_id),
+        sequence: 2,
+        event_type: "run_completed",
+        payload: { status: "ok" }
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true
+      };
+    }
+  });
+
+  assert.equal(capturedSessionKind, "task_proposal");
   store.close();
 });

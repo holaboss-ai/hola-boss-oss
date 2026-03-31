@@ -619,9 +619,29 @@ export function BrowserPane({
             className="relative min-h-0 flex-1 overflow-hidden rounded-b-[calc(var(--theme-radius-card)-2px)] bg-[var(--theme-shell-bg)]"
           >
             {!activeTab.initialized ? (
-              <div className="absolute inset-0 grid place-items-center bg-obsidian-soft/95 p-4 text-center">
-                <div className="max-w-sm rounded-xl border border-neon-green/35 bg-black/60 p-4 text-xs text-text-main/80">
-                  Initializing embedded browser...
+              <div className="absolute inset-0 grid place-items-center bg-[radial-gradient(circle_at_top,rgba(247,90,84,0.08),transparent_30%),linear-gradient(180deg,rgba(255,255,255,0.82),rgba(255,255,255,0.72))] p-6 text-center">
+                <div className="pointer-events-none w-full max-w-[320px] rounded-[24px] border border-panel-border/55 bg-panel-bg/88 px-5 py-5 shadow-[0_18px_48px_rgba(25,33,53,0.12)] backdrop-blur">
+                  <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[18px] border border-[rgba(247,90,84,0.24)] bg-[rgba(247,90,84,0.08)] text-[rgba(206,92,84,0.92)]">
+                    <Loader2 size={18} className="animate-spin" />
+                  </div>
+                  <div className="mt-4 text-[15px] font-medium tracking-[-0.02em] text-text-main">
+                    Starting browser
+                  </div>
+                  <div className="mt-1.5 text-[12px] leading-6 text-text-muted/76">
+                    Opening the embedded browser for this workspace.
+                  </div>
+                  <div className="theme-control-surface mt-4 overflow-hidden rounded-full border border-panel-border/40 p-1">
+                    <div className="h-1.5 rounded-full bg-[linear-gradient(90deg,rgba(247,90,84,0.52),rgba(233,117,109,0.78),rgba(247,170,126,0.72))] animate-pulse" />
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {activeTab.initialized && activeTab.loading ? (
+              <div className="pointer-events-none absolute inset-x-3 top-3 z-10">
+                <div className="inline-flex items-center gap-2 rounded-full border border-panel-border/50 bg-panel-bg/86 px-3 py-1.5 text-[11px] text-text-muted/82 shadow-[0_10px_24px_rgba(25,33,53,0.08)] backdrop-blur">
+                  <Loader2 size={12} className="animate-spin text-[rgba(206,92,84,0.92)]" />
+                  <span>Loading page</span>
                 </div>
               </div>
             ) : null}

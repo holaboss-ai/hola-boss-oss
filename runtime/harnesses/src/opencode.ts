@@ -8,7 +8,7 @@ import {
 
 async function prepareOpencodeHarnessRun(params: HarnessPrepareRunParams): Promise<void> {
   const configUpdate = params.syncModelConfig({
-    workspace_root: params.bootstrap.workspaceRoot,
+    workspace_root: params.bootstrap.workspaceDir,
     provider_id: params.runtimeConfig.provider_id,
     model_id: params.runtimeConfig.model_id,
     model_client: params.runtimeConfig.model_client,
@@ -16,13 +16,12 @@ async function prepareOpencodeHarnessRun(params: HarnessPrepareRunParams): Promi
 
   if (configUpdate.backend_config_changed || params.stagedSkillsChanged) {
     await params.restartBackend({
-      workspace_root: params.bootstrap.workspaceRoot,
+      workspace_root: params.bootstrap.workspaceDir,
       workspace_id: params.request.workspace_id,
       backend_fingerprint: params.buildBackendFingerprint(params.runtimeConfig, params.request.workspace_id),
       allow_reuse_existing: false,
       host: params.backendHost,
       port: params.backendPort,
-      readiness_url: `${params.backendBaseUrl}/mcp`,
       ready_timeout_s: params.backendReadyTimeoutSeconds,
     });
   }
@@ -105,7 +104,6 @@ export const opencodeHarnessDefinition: HarnessDefinition = {
     describeRuntimeStatus: describeOpencodeRuntimeStatus,
     async handleRuntimeConfigUpdated(params) {
       params.writeBootstrapConfigIfAvailable();
-      await params.ensureSelectedHarnessReady();
     },
     async ensureReady(params) {
       await params.ensureHarnessBackendReady();

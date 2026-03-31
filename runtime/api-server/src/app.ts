@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -10,6 +11,7 @@ import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import yauzl from "yauzl";
 
 import {
+  type AgentSessionRecord,
   type AppBuildRecord,
   type CronjobRecord,
   type OutputFolderRecord,
@@ -20,6 +22,7 @@ import {
   type TaskProposalRecord,
   type OutputEventRecord,
   RuntimeStateStore,
+  utcNowIso,
   type WorkspaceRecord
 } from "@holaboss/runtime-state-store";
 
@@ -59,12 +62,17 @@ import {
   type DesktopBrowserToolServiceLike
 } from "./desktop-browser-tools.js";
 import {
+  RuntimeAgentToolsService,
+  RuntimeAgentToolsServiceError,
+} from "./runtime-agent-tools.js";
+import {
   appendWorkspaceApplication,
   listWorkspaceComposeShutdownTargets,
   listWorkspaceApplicationPorts,
   listWorkspaceApplications,
   parseInstalledAppRuntime,
   portsForAppIndex,
+  releaseWorkspaceAppPorts,
   removeWorkspaceApplication,
   resolveWorkspaceApp,
   resolveWorkspaceAppRuntime,
@@ -80,6 +88,7 @@ import { buildAppSetupEnv } from "./app-setup-env.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 50;
 const DEFAULT_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
+const DEFAULT_APP_SETUP_TIMEOUT_MS = 900_000;
 const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
 export interface BuildRuntimeApiServerOptions {
   logger?: boolean;
@@ -228,6 +237,17 @@ function optionalInteger(value: unknown, defaultValue: number): number {
   return defaultValue;
 }
 
+function appSetupTimeoutMs(): number {
+  const rawValue = process.env.HB_APP_SETUP_TIMEOUT_MS ?? process.env.APP_SETUP_TIMEOUT_MS;
+  if (typeof rawValue === "string" && rawValue.trim().length > 0) {
+    const parsed = Number.parseInt(rawValue.trim(), 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return DEFAULT_APP_SETUP_TIMEOUT_MS;
+}
+
 function optionalDict(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
 }
@@ -237,6 +257,55 @@ function requiredDict(value: unknown, fieldName: string): Record<string, unknown
     throw new Error(`${fieldName} must be an object`);
   }
   return value;
+}
+
+function capabilityWorkspaceId(params: {
+  headers: Record<string, unknown>;
+  query?: Record<string, unknown> | null;
+  body?: Record<string, unknown> | null;
+}): string {
+  return (
+    headerString(params.headers, "x-holaboss-workspace-id") ||
+    optionalString(params.query?.workspace_id) ||
+    optionalString(params.body?.workspace_id) ||
+    ""
+  );
+}
+
+function requiredCapabilityWorkspaceId(params: {
+  headers: Record<string, unknown>;
+  query?: Record<string, unknown> | null;
+  body?: Record<string, unknown> | null;
+}): string {
+  const workspaceId = capabilityWorkspaceId(params);
+  if (!workspaceId) {
+    throw new Error("workspace_id is required");
+  }
+  return workspaceId;
+}
+
+function requiredCronjobDeliveryInput(value: unknown): {
+  channel: string;
+  mode?: string;
+  to?: unknown;
+} {
+  const delivery = requiredDict(value, "delivery");
+  return {
+    channel: requiredString(delivery.channel, "delivery.channel"),
+    mode: optionalString(delivery.mode),
+    to: delivery.to
+  };
+}
+
+function optionalCronjobDeliveryInput(value: unknown): {
+  channel: string;
+  mode?: string;
+  to?: unknown;
+} | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return requiredCronjobDeliveryInput(value);
 }
 
 function optionalStringList(value: unknown): string[] {
@@ -327,6 +396,21 @@ function workspaceRecordPayload(workspace: WorkspaceRecord): Record<string, unkn
     created_at: workspace.createdAt,
     updated_at: workspace.updatedAt,
     deleted_at_utc: workspace.deletedAtUtc
+  };
+}
+
+function agentSessionPayload(record: AgentSessionRecord): Record<string, unknown> {
+  return {
+    workspace_id: record.workspaceId,
+    session_id: record.sessionId,
+    kind: record.kind,
+    title: record.title,
+    parent_session_id: record.parentSessionId,
+    source_proposal_id: record.sourceProposalId,
+    created_by: record.createdBy,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt,
+    archived_at: record.archivedAt
   };
 }
 
@@ -444,8 +528,30 @@ function taskProposalPayload(record: TaskProposalRecord): Record<string, unknown
     task_generation_rationale: record.taskGenerationRationale,
     source_event_ids: record.sourceEventIds,
     created_at: record.createdAt,
-    state: record.state
+    state: record.state,
+    accepted_session_id: record.acceptedSessionId,
+    accepted_input_id: record.acceptedInputId,
+    accepted_at: record.acceptedAt
   };
+}
+
+function resolvedWorkspaceHarness(workspace: WorkspaceRecord): string {
+  const harness = (workspace.harness ?? process.env.SANDBOX_AGENT_HARNESS ?? "opencode").trim();
+  return harness || "opencode";
+}
+
+function inferredSessionKind(workspace: WorkspaceRecord, sessionId: string): string {
+  const trimmedSessionId = sessionId.trim();
+  const onboardingSessionId = (workspace.onboardingSessionId ?? "").trim();
+  const onboardingStatus = (workspace.onboardingStatus ?? "").trim().toLowerCase();
+  if (onboardingSessionId && onboardingSessionId === trimmedSessionId && ["pending", "awaiting_confirmation", "in_progress"].includes(onboardingStatus)) {
+    return "onboarding";
+  }
+  const mainSessionId = (workspace.mainSessionId ?? "").trim();
+  if (mainSessionId && mainSessionId === trimmedSessionId) {
+    return "main";
+  }
+  return "workspace_session";
 }
 
 function outputTypeForArtifact(artifactType: string): string {
@@ -511,10 +617,13 @@ function effectiveSessionState(
 
 function runnerOutputEventPayload(record: OutputEventRecord): Record<string, unknown> {
   return {
+    id: record.id,
+    workspace_id: record.workspaceId,
     session_id: record.sessionId,
     input_id: record.inputId,
     sequence: record.sequence,
     event_type: record.eventType,
+    created_at: record.createdAt,
     timestamp: record.createdAt,
     payload: record.payload
   };
@@ -901,6 +1010,31 @@ function resolvedAppBuildStatus(params: {
   return params.entry ? fallbackAppBuildStatus(params.entry) : "unknown";
 }
 
+function blockingWorkspaceApps(params: {
+  store: RuntimeStateStore;
+  workspaceId: string;
+}): Array<{ appId: string; status: string }> {
+  return listWorkspaceApplications(params.store.workspaceDir(params.workspaceId))
+    .map((entry) => {
+      const appId = typeof entry.app_id === "string" ? entry.app_id : "";
+      return {
+        appId,
+        status: appId ? resolvedAppBuildStatus({ ...params, appId, entry }) : "unknown"
+      };
+    })
+    .filter((entry) => entry.appId.length > 0 && entry.status !== "running");
+}
+
+function blockingWorkspaceAppsMessage(entries: Array<{ appId: string; status: string }>): string {
+  if (entries.some((entry) => entry.status === "failed")) {
+    return `workspace apps failed to start: ${entries.map((entry) => `${entry.appId} (${entry.status})`).join(", ")}`;
+  }
+  if (entries.some((entry) => entry.status === "building")) {
+    return `workspace apps are still building: ${entries.map((entry) => `${entry.appId} (${entry.status})`).join(", ")}`;
+  }
+  return `workspace apps are still starting: ${entries.map((entry) => `${entry.appId} (${entry.status})`).join(", ")}`;
+}
+
 async function runAppSetup(params: {
   store: RuntimeStateStore;
   workspaceDir: string;
@@ -914,6 +1048,7 @@ async function runAppSetup(params: {
     appId: params.appId,
     status: "building"
   });
+  const setupTimeoutMs = appSetupTimeoutMs();
 
   try {
     const result = await new Promise<{ code: number | null; timedOut: boolean; stderr: string }>((resolve, reject) => {
@@ -932,7 +1067,7 @@ async function runAppSetup(params: {
         settled = true;
         child.kill("SIGKILL");
         resolve({ code: null, timedOut: true, stderr });
-      }, 300_000);
+      }, setupTimeoutMs);
 
       child.stderr?.on("data", (chunk: Buffer | string) => {
         if (stderr.length >= 2000) {
@@ -960,11 +1095,12 @@ async function runAppSetup(params: {
     });
 
     if (result.timedOut) {
+      const timeoutSeconds = Math.max(1, Math.round(setupTimeoutMs / 1000));
       params.store.upsertAppBuild({
         workspaceId: params.workspaceId,
         appId: params.appId,
         status: "failed",
-        error: "setup timed out after 300s"
+        error: `setup timed out after ${timeoutSeconds}s`
       });
       return;
     }
@@ -1056,6 +1192,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const memoryService = options.memoryService ?? new FilesystemMemoryService({ workspaceRoot: store.workspaceRoot });
   const runtimeConfigService = options.runtimeConfigService ?? new FileRuntimeConfigService();
   const browserToolService = options.browserToolService ?? new DesktopBrowserToolService();
+  const runtimeAgentToolsService = new RuntimeAgentToolsService(store);
   const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
   const queueWorker = resolveQueueWorker(options, app, store);
   const cronWorker = resolveCronWorker(options, app, store, queueWorker);
@@ -1145,6 +1282,162 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "browser tool execution failed");
+    }
+  });
+
+  app.get("/api/v1/capabilities/runtime-tools", async (request) => {
+    const workspaceId = capabilityWorkspaceId({
+      headers: request.headers as Record<string, unknown>,
+      query: isRecord(request.query) ? request.query : null
+    });
+    return runtimeAgentToolsService.capabilityStatus({ workspaceId });
+  });
+
+  app.get("/api/v1/capabilities/runtime-tools/onboarding/status", async (request, reply) => {
+    try {
+      return runtimeAgentToolsService.onboardingStatus(
+        requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null
+        })
+      );
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime onboarding status failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/onboarding/complete", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return runtimeAgentToolsService.completeOnboarding({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body
+        }),
+        summary: requiredString(request.body.summary, "summary"),
+        requestedBy: optionalString(request.body.requested_by)
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime onboarding completion failed");
+    }
+  });
+
+  app.get("/api/v1/capabilities/runtime-tools/cronjobs", async (request, reply) => {
+    try {
+      return runtimeAgentToolsService.listCronjobs({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null
+        }),
+        enabledOnly: optionalBoolean(isRecord(request.query) ? request.query.enabled_only : undefined, false)
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime cronjob list failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/cronjobs", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return runtimeAgentToolsService.createCronjob({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body
+        }),
+        initiatedBy: optionalString(request.body.initiated_by),
+        name: optionalString(request.body.name),
+        cron: requiredString(request.body.cron, "cron"),
+        description: requiredString(request.body.description, "description"),
+        enabled: optionalBoolean(request.body.enabled, true),
+        delivery: optionalCronjobDeliveryInput(request.body.delivery),
+        metadata: optionalDict(request.body.metadata) ?? undefined
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime cronjob create failed");
+    }
+  });
+
+  app.get("/api/v1/capabilities/runtime-tools/cronjobs/:jobId", async (request, reply) => {
+    const params = request.params as { jobId: string };
+    try {
+      const payload = runtimeAgentToolsService.getCronjob({
+        jobId: requiredString(params.jobId, "jobId"),
+        workspaceId: capabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null
+        })
+      });
+      if (!payload) {
+        return sendError(reply, 404, "cronjob not found");
+      }
+      return payload;
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime cronjob fetch failed");
+    }
+  });
+
+  app.patch("/api/v1/capabilities/runtime-tools/cronjobs/:jobId", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { jobId: string };
+    try {
+      return runtimeAgentToolsService.updateCronjob({
+        jobId: requiredString(params.jobId, "jobId"),
+        workspaceId: capabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null,
+          body: request.body
+        }),
+        name: hasOwn(request.body, "name") ? nullableString(request.body.name) : undefined,
+        cron: hasOwn(request.body, "cron") ? nullableString(request.body.cron) : undefined,
+        description: hasOwn(request.body, "description") ? nullableString(request.body.description) : undefined,
+        enabled: hasOwn(request.body, "enabled") ? optionalBoolean(request.body.enabled, false) : undefined,
+        delivery: hasOwn(request.body, "delivery") ? optionalCronjobDeliveryInput(request.body.delivery) ?? null : undefined,
+        metadata: hasOwn(request.body, "metadata") ? (optionalDict(request.body.metadata) ?? {}) : undefined
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime cronjob update failed");
+    }
+  });
+
+  app.delete("/api/v1/capabilities/runtime-tools/cronjobs/:jobId", async (request, reply) => {
+    const params = request.params as { jobId: string };
+    try {
+      return runtimeAgentToolsService.deleteCronjob({
+        jobId: requiredString(params.jobId, "jobId"),
+        workspaceId: capabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null
+        })
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime cronjob delete failed");
     }
   });
 
@@ -1717,7 +2010,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!workspaceDir || !fs.existsSync(path.join(workspaceDir, "workspace.yaml"))) {
       return {};
     }
-    return listWorkspaceApplicationPorts(workspaceDir);
+    return listWorkspaceApplicationPorts(workspaceDir, {
+      store,
+      workspaceId: workspaceId ?? null,
+      allocatePorts: true
+    });
   });
 
   app.post("/api/v1/apps/:appId/start", async (request, reply) => {
@@ -1739,7 +2036,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const workspaceDir = store.workspaceDir(workspaceId);
     let resolvedApp;
     try {
-      resolvedApp = resolveWorkspaceAppRuntime(workspaceDir, appId);
+      resolvedApp = resolveWorkspaceAppRuntime(workspaceDir, appId, {
+        store,
+        workspaceId,
+        allocatePorts: true
+      });
     } catch (error) {
       const statusCode =
         typeof error === "object" && error !== null && "statusCode" in error && typeof (error as { statusCode: unknown }).statusCode === "number"
@@ -1750,6 +2051,57 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     try {
       const holabossUserId = optionalString(request.body.holaboss_user_id);
       const build = store.getAppBuild({ workspaceId, appId });
+      const needsSetup =
+        !appBuildHasCompletedSetup(build?.status) &&
+        resolvedApp.resolvedApp.lifecycle.setup.trim().length > 0;
+
+      if (needsSetup) {
+        store.upsertAppBuild({
+          workspaceId,
+          appId,
+          status: "building"
+        });
+        void appLifecycleExecutor
+          .startApp({
+            appId,
+            appDir: resolvedApp.appDir,
+            httpPort: resolvedApp.ports.http,
+            mcpPort: resolvedApp.ports.mcp,
+            holabossUserId,
+            resolvedApp: resolvedApp.resolvedApp,
+            skipSetup: false
+          })
+          .then((result) => {
+            store.upsertAppBuild({
+              workspaceId,
+              appId,
+              status: result.status === "started" ? "running" : result.status
+            });
+          })
+          .catch((error) => {
+            store.upsertAppBuild({
+              workspaceId,
+              appId,
+              status: "failed",
+              error: error instanceof Error ? error.message : String(error)
+            });
+            app.log.error(
+              {
+                workspaceId,
+                appId,
+                error: error instanceof Error ? error.message : String(error)
+              },
+              "background app start failed"
+            );
+          });
+        return {
+          app_id: appId,
+          status: "building",
+          detail: "App start queued in background",
+          ports: { http: resolvedApp.ports.http, mcp: resolvedApp.ports.mcp }
+        };
+      }
+
       const result = await appLifecycleExecutor.startApp({
         appId,
         appDir: resolvedApp.appDir,
@@ -1792,7 +2144,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const workspaceDir = store.workspaceDir(workspaceId);
     let resolvedApp;
     try {
-      resolvedApp = resolveWorkspaceAppRuntime(workspaceDir, appId);
+      resolvedApp = resolveWorkspaceAppRuntime(workspaceDir, appId, {
+        store,
+        workspaceId
+      });
     } catch (error) {
       const statusCode =
         typeof error === "object" && error !== null && "statusCode" in error && typeof (error as { statusCode: unknown }).statusCode === "number"
@@ -2030,7 +2385,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const workspaceDir = store.workspaceDir(workspaceId);
 
     try {
-      const resolvedApp = resolveWorkspaceAppRuntime(workspaceDir, appId);
+      const resolvedApp = resolveWorkspaceAppRuntime(workspaceDir, appId, {
+        store,
+        workspaceId
+      });
       await appLifecycleExecutor.stopApp({
         appId,
         appDir: resolvedApp.appDir,
@@ -2042,6 +2400,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
     fs.rmSync(path.join(workspaceDir, "apps", appId), { recursive: true, force: true });
     removeWorkspaceApplication(workspaceDir, appId);
+    releaseWorkspaceAppPorts({ store, workspaceId, appId });
     store.deleteAppBuild({ workspaceId, appId });
     return {
       app_id: appId,
@@ -2059,6 +2418,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const workspace = store.getWorkspace(workspaceId);
     if (!workspace) {
       return sendError(reply, 404, "workspace not found");
+    }
+    const blockingApps = blockingWorkspaceApps({ store, workspaceId });
+    if (blockingApps.length > 0) {
+      return sendError(reply, 409, blockingWorkspaceAppsMessage(blockingApps));
     }
 
     let resolvedSessionId: string;
@@ -2080,6 +2443,25 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 422, "text or attachments are required");
     }
 
+    store.ensureSession({
+      workspaceId,
+      sessionId: resolvedSessionId,
+      kind: inferredSessionKind(workspace, resolvedSessionId),
+      title:
+        inferredSessionKind(workspace, resolvedSessionId) === "onboarding"
+          ? "Onboarding"
+          : inferredSessionKind(workspace, resolvedSessionId) === "main"
+          ? "Main"
+          : null
+    });
+    if (!store.getBinding({ workspaceId, sessionId: resolvedSessionId })) {
+      store.upsertBinding({
+        workspaceId,
+        sessionId: resolvedSessionId,
+        harness: resolvedWorkspaceHarness(workspace),
+        harnessSessionId: resolvedSessionId
+      });
+    }
     store.ensureRuntimeState({
       workspaceId,
       sessionId: resolvedSessionId,
@@ -2121,6 +2503,29 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       session_id: record.sessionId,
       status: record.status
     };
+  });
+
+  app.get("/api/v1/agent-sessions", async (request, reply) => {
+    const query = isRecord(request.query) ? request.query : {};
+    const workspaceId = optionalString(query.workspace_id);
+    if (!workspaceId) {
+      return sendError(reply, 400, "workspace_id is required");
+    }
+
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    const items = store
+      .listSessions({
+        workspaceId,
+        includeArchived: optionalBoolean(query.include_archived, false),
+        limit: Math.max(1, Math.min(200, optionalInteger(query.limit, 100))),
+        offset: Math.max(0, optionalInteger(query.offset, 0))
+      })
+      .map((item: AgentSessionRecord) => agentSessionPayload(item));
+    return { items, count: items.length };
   });
 
   app.get("/api/v1/agent-sessions/:sessionId/state", async (request, reply) => {
@@ -2555,6 +2960,127 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       state: optionalString(request.body.state) ?? "not_reviewed"
     });
     return { proposal: taskProposalPayload(proposal) };
+  });
+
+  app.post("/api/v1/task-proposals/:proposalId/accept", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+
+    const params = request.params as { proposalId: string };
+    const proposal = store.getTaskProposal(params.proposalId);
+    if (!proposal) {
+      return sendError(reply, 404, "Task proposal not found");
+    }
+
+    const workspace = store.getWorkspace(proposal.workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    if (proposal.state === "dismissed") {
+      return sendError(reply, 409, "Task proposal has already been dismissed");
+    }
+    if (proposal.state === "accepted" && proposal.acceptedSessionId && proposal.acceptedInputId) {
+      return sendError(reply, 409, "Task proposal has already been accepted");
+    }
+
+    const blockingApps = blockingWorkspaceApps({ store, workspaceId: proposal.workspaceId });
+    if (blockingApps.length > 0) {
+      return sendError(reply, 409, blockingWorkspaceAppsMessage(blockingApps));
+    }
+
+    const taskName = requiredString(request.body.task_name ?? proposal.taskName, "task_name");
+    const taskPrompt = requiredString(request.body.task_prompt ?? proposal.taskPrompt, "task_prompt");
+    const sessionId = optionalString(request.body.session_id) ?? `proposal-${randomUUID()}`;
+    const parentSessionId = nullableString(request.body.parent_session_id) ?? null;
+    const priority = optionalInteger(request.body.priority, 0);
+    const model = nullableString(request.body.model) ?? null;
+    const createdBy = nullableString(request.body.created_by) ?? "workspace_user";
+
+    if (store.getSession({ workspaceId: proposal.workspaceId, sessionId })) {
+      return sendError(reply, 409, "session_id is already in use");
+    }
+
+    const session = store.ensureSession({
+      workspaceId: proposal.workspaceId,
+      sessionId,
+      kind: "task_proposal",
+      title: taskName,
+      parentSessionId,
+      sourceProposalId: proposal.proposalId,
+      createdBy
+    });
+    if (!store.getBinding({ workspaceId: proposal.workspaceId, sessionId })) {
+      store.upsertBinding({
+        workspaceId: proposal.workspaceId,
+        sessionId,
+        harness: resolvedWorkspaceHarness(workspace),
+        harnessSessionId: sessionId
+      });
+    }
+    store.ensureRuntimeState({
+      workspaceId: proposal.workspaceId,
+      sessionId,
+      status: "QUEUED"
+    });
+
+    const record = store.enqueueInput({
+      workspaceId: proposal.workspaceId,
+      sessionId,
+      priority,
+      payload: {
+        text: taskPrompt,
+        attachments: [],
+        image_urls: [],
+        model,
+        context: {
+          source: "task_proposal",
+          proposal_id: proposal.proposalId,
+          parent_session_id: parentSessionId
+        }
+      }
+    });
+    store.insertSessionMessage({
+      workspaceId: proposal.workspaceId,
+      sessionId,
+      role: "user",
+      text: taskPrompt,
+      messageId: `user-${record.inputId}`
+    });
+    store.updateRuntimeState({
+      workspaceId: proposal.workspaceId,
+      sessionId,
+      status: "QUEUED",
+      currentInputId: record.inputId,
+      currentWorkerId: null,
+      leaseUntil: null,
+      heartbeatAt: null,
+      lastError: null
+    });
+
+    const updatedProposal = store.updateTaskProposal({
+      proposalId: proposal.proposalId,
+      fields: {
+        taskName,
+        taskPrompt,
+        state: "accepted",
+        acceptedSessionId: sessionId,
+        acceptedInputId: record.inputId,
+        acceptedAt: utcNowIso()
+      }
+    });
+    queueWorker?.wake();
+
+    return reply.send({
+      proposal: taskProposalPayload(updatedProposal ?? proposal),
+      session: agentSessionPayload(session),
+      input: {
+        input_id: record.inputId,
+        session_id: record.sessionId,
+        status: record.status
+      }
+    });
   });
 
   app.get("/api/v1/task-proposals/:proposalId", async (request, reply) => {

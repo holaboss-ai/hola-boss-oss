@@ -69,6 +69,61 @@ test("runtime queue worker claims queued inputs and executes them in claim order
   store.close();
 });
 
+test("runtime queue worker executes different sessions concurrently while preserving one active input per session", async () => {
+  const root = makeTempDir("hb-runtime-queue-worker-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-a",
+    priority: 5,
+    payload: { text: "a-1" }
+  });
+  store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-a",
+    priority: 4,
+    payload: { text: "a-2" }
+  });
+  store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-b",
+    priority: 3,
+    payload: { text: "b-1" }
+  });
+
+  let active = 0;
+  let maxActive = 0;
+  const seenSessions: string[] = [];
+  const worker = new RuntimeQueueWorker({
+    store,
+    maxConcurrency: 2,
+    executeClaimedInput: async (record) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      seenSessions.push(record.sessionId);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      active -= 1;
+    }
+  });
+
+  const processed = await worker.processAvailableInputsOnce();
+
+  assert.equal(processed, 2);
+  assert.equal(maxActive, 2);
+  assert.deepEqual(seenSessions.sort(), ["session-a", "session-b"]);
+  store.close();
+});
+
 test("runtime queue worker marks claimed input failed when delegated execution raises", async () => {
   const root = makeTempDir("hb-runtime-queue-worker-");
   const store = new RuntimeStateStore({
@@ -117,6 +172,96 @@ test("runtime queue worker marks claimed input failed when delegated execution r
   assert.ok(runtimeState);
   assert.equal(runtimeState.status, "ERROR");
   assert.deepEqual(runtimeState.lastError, { message: "delegated execution failed" });
+
+  store.close();
+});
+
+test("runtime queue worker recovers expired claimed input before processing fresh queue work", async () => {
+  const root = makeTempDir("hb-runtime-queue-worker-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  const stale = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    payload: { text: "stale" }
+  });
+  const fresh = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    payload: { text: "fresh" }
+  });
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "worker-old",
+    leaseSeconds: 60
+  });
+  assert.equal(claimed[0]?.inputId, stale.inputId);
+  store.updateInput(stale.inputId, {
+    claimedUntil: "2000-01-01T00:00:00.000Z"
+  });
+  store.updateRuntimeState({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    status: "BUSY",
+    currentInputId: stale.inputId,
+    currentWorkerId: "worker-old",
+    leaseUntil: "2000-01-01T00:00:00.000Z",
+    heartbeatAt: "2000-01-01T00:00:00.000Z",
+    lastError: null
+  });
+  const seen: string[] = [];
+  const worker = new RuntimeQueueWorker({
+    store,
+    executeClaimedInput: async (record) => {
+      seen.push(record.inputId);
+      store.updateInput(record.inputId, {
+        status: "DONE",
+        claimedBy: null,
+        claimedUntil: null
+      });
+      store.updateRuntimeState({
+        workspaceId: record.workspaceId,
+        sessionId: record.sessionId,
+        status: "IDLE",
+        currentInputId: null,
+        currentWorkerId: null,
+        leaseUntil: null,
+        heartbeatAt: null,
+        lastError: null
+      });
+    }
+  });
+
+  const processed = await worker.processAvailableInputsOnce();
+  const staleUpdated = store.getInput(stale.inputId);
+  const freshUpdated = store.getInput(fresh.inputId);
+  const runtimeState = store.getRuntimeState({
+    workspaceId: "workspace-1",
+    sessionId: "session-main"
+  });
+  const staleEvents = store.listOutputEvents({
+    sessionId: "session-main",
+    inputId: stale.inputId
+  });
+
+  assert.equal(processed, 2);
+  assert.ok(staleUpdated);
+  assert.equal(staleUpdated.status, "FAILED");
+  assert.ok(freshUpdated);
+  assert.equal(freshUpdated.status, "DONE");
+  assert.deepEqual(seen, [fresh.inputId]);
+  assert.equal(staleEvents.at(-1)?.eventType, "run_failed");
+  assert.ok(runtimeState);
+  assert.equal(runtimeState.status, "IDLE");
 
   store.close();
 });

@@ -125,7 +125,7 @@ test("startComposeAppTarget patches ports, runs compose up, and waits healthy", 
     if (!started) {
       throw new Error("not healthy yet");
     }
-    return new Response("", { status: String(input).includes("/health") ? 200 : 503 });
+    return new Response("", { status: 200 });
   }) as typeof fetch;
 
   const result = await startComposeAppTarget({
@@ -202,7 +202,7 @@ test("startComposeAppTarget passes HOLABOSS_USER_ID to docker compose when reque
     if (!started) {
       throw new Error("not healthy yet");
     }
-    return new Response("", { status: String(input).includes("/health") ? 200 : 503 });
+    return new Response("", { status: 200 });
   }) as typeof fetch;
 
   await startComposeAppTarget({
@@ -298,7 +298,7 @@ test("startShellLifecycleAppTarget runs lifecycle.start and waits healthy", asyn
     if (!started) {
       throw new Error("app not started yet");
     }
-    return new Response("", { status: String(input).includes("/health") ? 200 : 503 });
+    return new Response("", { status: 200 });
   }) as typeof fetch;
 
   const result = await startShellLifecycleAppTarget({
@@ -387,6 +387,61 @@ test("startShellLifecycleAppTarget runs lifecycle.setup before lifecycle.start",
     { key: "npm run build", cwd: appDir, shell: true, cacheDir: path.join(appDir, ".npm-cache") },
     { key: "npm run start", cwd: appDir, shell: true, cacheDir: path.join(appDir, ".npm-cache") }
   ]);
+});
+
+test("startShellLifecycleAppTarget requires both app HTTP and MCP health checks", async () => {
+  const appDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-shell-app-both-health-"));
+  let started = false;
+  const spawnStub = ((command: string, args?: readonly string[]) => {
+    const key = `${command} ${(args ?? []).join(" ")}`.trim();
+    const child = new EventEmitter() as EventEmitter & {
+      stderr: EventEmitter & { setEncoding: (encoding: string) => void };
+      stdout: EventEmitter & { setEncoding: (encoding: string) => void };
+      kill: () => void;
+      exitCode?: number | null;
+    };
+    child.stderr = Object.assign(new EventEmitter(), { setEncoding: (_encoding: string) => {} });
+    child.stdout = Object.assign(new EventEmitter(), { setEncoding: (_encoding: string) => {} });
+    child.kill = () => {};
+    if (key === "npm run start") {
+      started = true;
+    }
+    queueMicrotask(() => {
+      child.exitCode = 0;
+      child.emit("close", 0);
+    });
+    return child;
+  }) as typeof import("node:child_process").spawn;
+
+  await assert.rejects(
+    () =>
+      startShellLifecycleAppTarget({
+        appId: "app-a",
+        appDir,
+        resolvedApp: {
+          appId: "app-a",
+          mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+          healthCheck: { path: "/health", timeoutS: 0.1, intervalS: 0.01 },
+          envContract: [],
+          startCommand: "",
+          baseDir: "apps/app-a",
+          lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
+        },
+        httpPort: 18081,
+        mcpPort: 13101,
+        spawnImpl: spawnStub,
+        fetchImpl: (async (input: string | URL | RequestInfo) => {
+          if (!started) {
+            throw new Error("app not started yet");
+          }
+          if (String(input).includes("/health")) {
+            return new Response("", { status: 200 });
+          }
+          return new Response("", { status: 503 });
+        }) as typeof fetch
+      }),
+    /did not become healthy/
+  );
 });
 
 test("startShellLifecycleAppTarget coalesces concurrent starts for the same app", async () => {
@@ -611,7 +666,7 @@ test("startSubprocessAppTarget runs startCommand and waits healthy", async () =>
       if (!started) {
         throw new Error("app not started yet");
       }
-      return new Response("", { status: String(input).includes("/health") ? 200 : 503 });
+      return new Response("", { status: 200 });
     }) as typeof fetch
   });
 

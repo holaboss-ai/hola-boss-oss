@@ -31,6 +31,20 @@ function createStore(root: string): RuntimeStateStore {
   });
 }
 
+async function withEnv(name: string, value: string, fn: () => Promise<void>): Promise<void> {
+  const previous = process.env[name];
+  process.env[name] = value;
+  try {
+    await fn();
+  } finally {
+    if (previous === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = previous;
+    }
+  }
+}
+
 test("startResolvedApplications validates the workspace and starts resolved apps", async () => {
   const root = makeTempDir("hb-opencode-bootstrap-");
   const store = createStore(root);
@@ -379,4 +393,86 @@ test("runOpencodeAppBootstrapCli writes JSON response for a valid request", asyn
     ]
   });
   store.close();
+});
+
+test("bootstrapResolvedApplications allocates unique ports per workspace in embedded runtime", async () => {
+  await withEnv("HOLABOSS_EMBEDDED_RUNTIME", "1", async () => {
+    const root = makeTempDir("hb-opencode-bootstrap-embedded-");
+    const store = createStore(root);
+    const appLifecycleExecutor: AppLifecycleExecutorLike = {
+      async startApp(params) {
+        return {
+          app_id: params.appId,
+          status: "running",
+          detail: "ok",
+          ports: { http: params.httpPort ?? 0, mcp: params.mcpPort ?? 0 }
+        };
+      },
+      async stopApp() {
+        throw new Error("not implemented");
+      },
+      async shutdownAll() {
+        throw new Error("not implemented");
+      }
+    };
+
+    for (const workspaceId of ["workspace-1", "workspace-2"]) {
+      store.createWorkspace({
+        workspaceId,
+        name: workspaceId,
+        harness: "opencode"
+      });
+      store.upsertAppBuild({
+        workspaceId,
+        appId: "app-a",
+        status: "completed"
+      });
+      fs.mkdirSync(path.join(root, "workspace", workspaceId, "apps", "app-a"), { recursive: true });
+    }
+
+    const resultA = await bootstrapResolvedApplications({
+      workspaceDir: path.join(root, "workspace", "workspace-1"),
+      holabossUserId: "user-1",
+      store,
+      workspaceId: "workspace-1",
+      resolvedApplications: [
+        {
+          app_id: "app-a",
+          mcp: { transport: "http-sse", port: 3099, path: "/mcp" },
+          health_check: { path: "/health", timeout_s: 60, interval_s: 5 },
+          env_contract: [],
+          start_command: "npm run start",
+          base_dir: "apps/app-a",
+          lifecycle: { setup: "", start: "", stop: "" }
+        }
+      ],
+      appLifecycleExecutor
+    });
+    const resultB = await bootstrapResolvedApplications({
+      workspaceDir: path.join(root, "workspace", "workspace-2"),
+      holabossUserId: "user-1",
+      store,
+      workspaceId: "workspace-2",
+      resolvedApplications: [
+        {
+          app_id: "app-a",
+          mcp: { transport: "http-sse", port: 3099, path: "/mcp" },
+          health_check: { path: "/health", timeout_s: 60, interval_s: 5 },
+          env_contract: [],
+          start_command: "npm run start",
+          base_dir: "apps/app-a",
+          lifecycle: { setup: "", start: "", stop: "" }
+        }
+      ],
+      appLifecycleExecutor
+    });
+
+    assert.equal(resultA.applications[0]?.ports.http, 38080);
+    assert.equal(resultA.applications[0]?.ports.mcp, 38081);
+    assert.equal(resultB.applications[0]?.ports.http, 38082);
+    assert.equal(resultB.applications[0]?.ports.mcp, 38083);
+    assert.notEqual(resultA.applications[0]?.ports.mcp, resultB.applications[0]?.ports.mcp);
+
+    store.close();
+  });
 });

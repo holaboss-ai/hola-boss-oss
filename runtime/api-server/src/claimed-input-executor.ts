@@ -115,8 +115,8 @@ function buildOnboardingInstruction(params: {
   if (!fs.existsSync(onboardPath)) {
     return trimmed;
   }
-  const onboardPrompt = fs.readFileSync(onboardPath, "utf8").trim();
-  if (!onboardPrompt || trimmed.startsWith(ONBOARD_PROMPT_HEADER)) {
+  const rawOnboardPrompt = fs.readFileSync(onboardPath, "utf8").trim();
+  if (!rawOnboardPrompt || trimmed.startsWith(ONBOARD_PROMPT_HEADER)) {
     return trimmed;
   }
 
@@ -130,11 +130,13 @@ function buildOnboardingInstruction(params: {
     `- If file reads are needed, use ./${params.workspaceId}/... paths rather than files directly under ${params.workspaceRoot}.`,
     "- Ask concise questions and collect durable facts/preferences.",
     "- Do not start regular execution work until onboarding is complete.",
-    "- When all onboarding requirements are satisfied and the user confirms, invoke the `hb` CLI tool with `onboarding request-complete`.",
-    "- Do not merely output or quote the command as text; actually execute the tool.",
+    "- Relevant native onboarding tools:",
+    "- `holaboss_onboarding_status` reads the local onboarding status for this workspace.",
+    "- `holaboss_onboarding_complete` marks onboarding complete. Required argument: `summary`. Optional argument: `requested_by`.",
+    "- When all onboarding requirements are satisfied and the user confirms, call `holaboss_onboarding_complete` with a concise durable summary.",
     "",
     "[ONBOARD.md]",
-    onboardPrompt,
+    rawOnboardPrompt,
     "[/ONBOARD.md]",
     "",
     trimmed
@@ -143,6 +145,27 @@ function buildOnboardingInstruction(params: {
 
 function createdAtForEvent(event: RunnerEvent): string | undefined {
   return typeof event.timestamp === "string" && event.timestamp.trim() ? event.timestamp : undefined;
+}
+
+function inferSessionKind(params: {
+  workspace: WorkspaceRecord;
+  sessionId: string;
+  persistedKind?: string | null;
+}): string {
+  const persistedKind = typeof params.persistedKind === "string" ? params.persistedKind.trim() : "";
+  if (persistedKind) {
+    return persistedKind;
+  }
+  const sessionId = params.sessionId.trim();
+  if (sessionId && sessionId === (params.workspace.mainSessionId ?? "").trim()) {
+    return "main";
+  }
+  const onboardingSessionId = (params.workspace.onboardingSessionId ?? "").trim();
+  const onboardingStatus = (params.workspace.onboardingStatus ?? "").trim().toLowerCase();
+  if (sessionId && sessionId === onboardingSessionId && ["pending", "awaiting_confirmation", "in_progress"].includes(onboardingStatus)) {
+    return "onboarding";
+  }
+  return "workspace_session";
 }
 
 function payloadForEvent(event: RunnerEvent): Record<string, unknown> {
@@ -205,6 +228,15 @@ export async function processClaimedInput(params: {
   }
 
   const harness = normalizeHarnessId(workspace.harness ?? selectedHarness());
+  const session = store.getSession({
+    workspaceId: record.workspaceId,
+    sessionId: record.sessionId
+  });
+  const sessionKind = inferSessionKind({
+    workspace,
+    sessionId: record.sessionId,
+    persistedKind: session?.kind
+  });
   const harnessSupportsWaitingUser = resolveRuntimeHarnessAdapter(harness)?.capabilities.supportsWaitingUser ?? false;
   const harnessSessionId = ensureLocalBinding({
     store,
@@ -229,8 +261,8 @@ export async function processClaimedInput(params: {
     status: "BUSY",
     currentInputId: record.inputId,
     currentWorkerId: params.claimedBy ?? "sandbox-agent-ts-worker",
-    leaseUntil: null,
-    heartbeatAt: null,
+    leaseUntil: record.claimedUntil,
+    heartbeatAt: undefined,
     lastError: null
   });
 
@@ -260,6 +292,7 @@ export async function processClaimedInput(params: {
   const payload: Record<string, unknown> = {
     workspace_id: record.workspaceId,
     session_id: record.sessionId,
+    session_kind: sessionKind,
     input_id: record.inputId,
     instruction,
     attachments,
@@ -276,6 +309,17 @@ export async function processClaimedInput(params: {
   try {
     const executeRunner = params.executeRunnerRequestFn ?? executeRunnerRequest;
     const execution = await executeRunner(payload, {
+      onHeartbeat: () => {
+        store.updateRuntimeState({
+          workspaceId: record.workspaceId,
+          sessionId: record.sessionId,
+          status: "BUSY",
+          currentInputId: record.inputId,
+          currentWorkerId: params.claimedBy ?? "sandbox-agent-ts-worker",
+          leaseUntil: record.claimedUntil,
+          lastError: null
+        });
+      },
       onEvent: async (event) => {
         const sequence = typeof event.sequence === "number" ? event.sequence : 0;
         lastSequence = Math.max(lastSequence, sequence);

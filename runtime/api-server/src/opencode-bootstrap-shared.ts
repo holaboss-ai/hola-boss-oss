@@ -9,10 +9,7 @@ import {
   appBuildHasCompletedSetup,
   type AppLifecycleExecutorLike
 } from "./app-lifecycle-worker.js";
-import type { ResolvedApplicationRuntime } from "./workspace-apps.js";
-
-const APP_HTTP_PORT_BASE = 18080;
-const APP_MCP_PORT_BASE = 13100;
+import { portsForWorkspaceApp, type ResolvedApplicationRuntime } from "./workspace-apps.js";
 
 type StringMap = Record<string, unknown>;
 
@@ -223,10 +220,13 @@ export async function bootstrapResolvedApplications(params: {
   const preparedStarts = parsedResolvedApps.map((resolvedApp, index) => ({
     resolvedApp,
     appDir: appDirForResolvedApplication(resolvedWorkspaceDir, resolvedApp),
-    ports: {
-      http: APP_HTTP_PORT_BASE + index,
-      mcp: APP_MCP_PORT_BASE + index
-    }
+    ports: portsForWorkspaceApp({
+      appId: resolvedApp.appId,
+      fallbackIndex: index,
+      store: params.store,
+      workspaceId: params.workspaceId,
+      allocate: true
+    })
   }));
   const applications: OpencodeBootstrapApplication[] = [];
   for (const preparedStart of preparedStarts) {

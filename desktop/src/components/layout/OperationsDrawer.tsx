@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from "react";
-import { Bell, Check, ChevronRight, Clock3, Loader2, RefreshCcw, Sparkles, X } from "lucide-react";
+import { Bell, Check, ChevronRight, Clock3, Loader2, Sparkles, X } from "lucide-react";
 import { getWorkspaceAppDefinition, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 
 export type OperationsDrawerTab = "inbox" | "running" | "outputs";
@@ -28,6 +28,16 @@ export interface OperationsOutputEntry {
   renderer: OperationsOutputRenderer;
 }
 
+export interface OperationsRunningEntry {
+  sessionId: string;
+  title: string;
+  detail: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  isActive: boolean;
+}
+
 interface OperationsDrawerProps {
   activeTab: OperationsDrawerTab;
   onTabChange: (tab: OperationsDrawerTab) => void;
@@ -39,12 +49,14 @@ interface OperationsDrawerProps {
     proposalId: string;
     action: "accept" | "dismiss";
   } | null;
+  runningEntries: OperationsRunningEntry[];
+  isLoadingRunningEntries: boolean;
   outputs: OperationsOutputEntry[];
   installedApps: WorkspaceInstalledAppDefinition[];
   selectedOutputId: string | null;
   onSelectOutput: (outputId: string) => void;
+  onOpenRunningSession: (sessionId: string) => void;
   onOpenOutput: (entry: OperationsOutputEntry) => void;
-  onRefreshProposals: () => void;
   onTriggerProposal: () => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
@@ -59,12 +71,14 @@ export function OperationsDrawer({
   isTriggeringProposal,
   proposalStatusMessage,
   proposalAction,
+  runningEntries,
+  isLoadingRunningEntries,
   outputs,
   installedApps,
   selectedOutputId,
   onSelectOutput,
+  onOpenRunningSession,
   onOpenOutput,
-  onRefreshProposals,
   onTriggerProposal,
   onAcceptProposal,
   onDismissProposal,
@@ -78,9 +92,9 @@ export function OperationsDrawer({
   }, [outputs, selectedOutputId]);
 
   return (
-    <aside className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-[360px] max-w-[420px] flex-col overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
-      <header className="theme-header-surface flex shrink-0 items-center justify-between gap-3 border-b border-neon-green/15 px-4 py-3">
-        <div className="flex items-center gap-2">
+    <aside className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
+      <header className="theme-header-surface flex shrink-0 items-center gap-2 border-b border-neon-green/15 px-3 py-3 pr-14">
+        <div className="grid min-w-0 flex-1 grid-cols-3 gap-1.5">
           <DrawerTabButton active={activeTab === "inbox"} icon={<Bell size={14} />} label="Inbox" onClick={() => onTabChange("inbox")} />
           <DrawerTabButton
             active={activeTab === "running"}
@@ -106,14 +120,20 @@ export function OperationsDrawer({
             proposalStatusMessage={proposalStatusMessage}
             proposalAction={proposalAction}
             hasWorkspace={hasWorkspace}
-            onRefreshProposals={onRefreshProposals}
             onTriggerProposal={onTriggerProposal}
             onAcceptProposal={onAcceptProposal}
             onDismissProposal={onDismissProposal}
           />
         ) : null}
 
-        {activeTab === "running" ? <RunningPanel /> : null}
+        {activeTab === "running" ? (
+          <RunningPanel
+            hasWorkspace={hasWorkspace}
+            entries={runningEntries}
+            isLoading={isLoadingRunningEntries}
+            onOpenSession={onOpenRunningSession}
+          />
+        ) : null}
 
         {activeTab === "outputs" ? (
           <OutputsPanel
@@ -144,14 +164,14 @@ function DrawerTabButton({
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex h-10 items-center gap-2 rounded-[16px] border px-3 text-[12px] transition ${
+      className={`inline-flex h-9 w-full min-w-0 items-center justify-center gap-1.5 rounded-[14px] border px-2.5 text-[11px] transition ${
         active
           ? "border-neon-green/45 bg-neon-green/10 text-neon-green"
           : "border-panel-border/45 text-text-muted hover:border-neon-green/35 hover:text-text-main"
       }`}
     >
       {icon}
-      <span>{label}</span>
+      <span className="truncate">{label}</span>
     </button>
   );
 }
@@ -163,7 +183,6 @@ function InboxPanel({
   proposalStatusMessage,
   proposalAction,
   hasWorkspace,
-  onRefreshProposals,
   onTriggerProposal,
   onAcceptProposal,
   onDismissProposal
@@ -177,7 +196,6 @@ function InboxPanel({
     action: "accept" | "dismiss";
   } | null;
   hasWorkspace: boolean;
-  onRefreshProposals: () => void;
   onTriggerProposal: () => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
@@ -188,30 +206,16 @@ function InboxPanel({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-[10px] uppercase tracking-[0.16em] text-neon-green/76">Remote proposals</div>
-            <div className="mt-1 text-[12px] leading-6 text-text-main/88">
-              Review backend-delivered task ideas and either queue them immediately or dismiss them at the source.
-            </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={onRefreshProposals}
-              disabled={!hasWorkspace || isLoadingProposals}
-              className="inline-flex h-8 items-center justify-center gap-2 rounded-[14px] border border-panel-border/45 px-3 text-[11px] text-text-muted transition hover:border-neon-green/35 hover:text-text-main disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isLoadingProposals ? <Loader2 size={12} className="animate-spin" /> : <RefreshCcw size={12} />}
-              <span>Refresh</span>
-            </button>
-            <button
-              type="button"
-              onClick={onTriggerProposal}
-              disabled={!hasWorkspace || isTriggeringProposal}
-              className="inline-flex h-8 items-center justify-center gap-2 rounded-[14px] border border-neon-green/40 bg-neon-green/10 px-3 text-[11px] text-neon-green transition hover:bg-neon-green/14 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isTriggeringProposal ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-              <span>Trigger</span>
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={onTriggerProposal}
+            disabled={!hasWorkspace || isTriggeringProposal}
+            className="inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-[14px] border border-neon-green/40 bg-neon-green/10 px-3 text-[11px] text-neon-green transition hover:bg-neon-green/14 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isTriggeringProposal ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+            <span>Trigger</span>
+          </button>
         </div>
 
         {proposalStatusMessage ? (
@@ -230,16 +234,12 @@ function InboxPanel({
           <div className="grid gap-3">
             {proposals.map((proposal) => {
               const isActing = proposalAction?.proposalId === proposal.proposal_id;
+              const previewPrompt = truncateWordPreview(proposal.task_prompt, 24);
               return (
                 <article key={proposal.proposal_id} className="theme-subtle-surface rounded-[18px] border border-panel-border/35 px-4 py-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[12px] font-medium text-text-main">{proposal.task_name}</div>
-                      <div className="mt-2 whitespace-pre-wrap text-[11px] leading-6 text-text-muted">{proposal.task_prompt}</div>
-                    </div>
-                    <div className="shrink-0 rounded-full border border-panel-border/45 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-text-dim">
-                      {proposal.state}
-                    </div>
+                  <div className="min-w-0">
+                    <div className="text-[12px] font-medium text-text-main">{proposal.task_name}</div>
+                    <div className="mt-2 text-[11px] leading-6 text-text-muted">{previewPrompt}</div>
                   </div>
 
                   <div className="mt-3 text-[10px] text-text-dim/78">{formatTimestamp(proposal.created_at)}</div>
@@ -274,14 +274,78 @@ function InboxPanel({
   );
 }
 
-function RunningPanel() {
+function RunningPanel({
+  hasWorkspace,
+  entries,
+  isLoading,
+  onOpenSession
+}: {
+  hasWorkspace: boolean;
+  entries: OperationsRunningEntry[];
+  isLoading: boolean;
+  onOpenSession: (sessionId: string) => void;
+}) {
+  if (!hasWorkspace) {
+    return (
+      <div className="flex items-center justify-center p-6">
+        <EmptyNotice message="Select a workspace to inspect running child sessions." />
+      </div>
+    );
+  }
+
+  if (entries.length === 0) {
+    return (
+      <div className="flex items-center justify-center p-6">
+        <EmptyNotice message={isLoading ? "Loading running sessions..." : "No proposal child sessions yet. Accept a proposal to create one here."} />
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-full items-center justify-center p-6">
-      <div className="theme-subtle-surface max-w-[260px] rounded-[20px] border border-panel-border/35 px-5 py-5 text-center">
-        <div className="text-[11px] uppercase tracking-[0.16em] text-neon-green/76">Running</div>
-        <div className="mt-2 text-[15px] font-medium text-text-main">Execution stream coming next</div>
-        <div className="mt-2 text-[12px] leading-6 text-text-muted/82">
-          This panel is reserved for active runs. For now it stays as a placeholder while Inbox and Outputs take over the right rail.
+    <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]">
+      <div className="shrink-0 border-b border-panel-border/35 px-4 py-4">
+        <div className="text-[10px] uppercase tracking-[0.16em] text-neon-green/76">Running sessions</div>
+        <div className="mt-1 text-[12px] leading-6 text-text-main/88">
+          Proposal-created child sessions live here. Open one to replace the current chat pane, then jump back to main when you are done.
+        </div>
+      </div>
+
+      <div className="min-h-0 overflow-y-auto px-4 py-4">
+        <div className="grid gap-3">
+          {entries.map((entry) => (
+            <article
+              key={entry.sessionId}
+              className={`rounded-[18px] border px-4 py-4 ${
+                entry.isActive
+                  ? "border-neon-green/38 bg-neon-green/10"
+                  : "theme-subtle-surface border-panel-border/35"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[12px] font-medium text-text-main">{entry.title}</div>
+                  <div className="mt-2 text-[11px] leading-6 text-text-muted">{entry.detail}</div>
+                </div>
+                <div className={`shrink-0 rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${runningStatusClasses(entry.status)}`}>
+                  {runningStatusLabel(entry.status)}
+                </div>
+              </div>
+
+              <div className="mt-3 text-[10px] text-text-dim/78">Updated {formatTimestamp(entry.updatedAt)}</div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => onOpenSession(entry.sessionId)}
+                  disabled={entry.isActive}
+                  className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-neon-green/40 bg-neon-green/10 px-3 text-[11px] text-neon-green transition hover:bg-neon-green/14 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <ChevronRight size={12} />
+                  <span>{entry.isActive ? "Currently open" : "Open session"}</span>
+                </button>
+              </div>
+            </article>
+          ))}
         </div>
       </div>
     </div>
@@ -390,6 +454,18 @@ function EmptyNotice({ message }: { message: string }) {
   );
 }
 
+function truncateWordPreview(value: string, wordLimit: number): string {
+  const normalized = value.trim().replace(/\s+/g, " ");
+  if (!normalized) {
+    return "";
+  }
+  const words = normalized.split(" ");
+  if (words.length <= wordLimit) {
+    return normalized;
+  }
+  return `${words.slice(0, wordLimit).join(" ")}...`;
+}
+
 function formatTimestamp(value: string): string {
   const timestamp = Date.parse(value);
   if (Number.isNaN(timestamp)) {
@@ -412,4 +488,38 @@ function outputToneClasses(tone: OperationsOutputEntry["tone"], compact: boolean
   return compact
     ? "border-panel-border/45 bg-[var(--theme-subtle-bg)] text-text-main/88"
     : "border-panel-border/35 bg-[var(--theme-subtle-bg)]";
+}
+
+function runningStatusLabel(status: string): string {
+  const normalized = status.trim().toUpperCase();
+  if (normalized === "BUSY") {
+    return "Running";
+  }
+  if (normalized === "QUEUED") {
+    return "Queued";
+  }
+  if (normalized === "WAITING_USER") {
+    return "Waiting";
+  }
+  if (normalized === "ERROR") {
+    return "Error";
+  }
+  return "Idle";
+}
+
+function runningStatusClasses(status: string): string {
+  const normalized = status.trim().toUpperCase();
+  if (normalized === "BUSY") {
+    return "border-neon-green/35 bg-neon-green/10 text-neon-green";
+  }
+  if (normalized === "QUEUED") {
+    return "border-[rgba(120,210,255,0.28)] bg-[rgba(120,210,255,0.08)] text-[rgba(181,235,255,0.96)]";
+  }
+  if (normalized === "WAITING_USER") {
+    return "border-[rgba(255,210,120,0.28)] bg-[rgba(255,210,120,0.08)] text-[rgba(255,232,181,0.96)]";
+  }
+  if (normalized === "ERROR") {
+    return "border-[rgba(255,153,102,0.28)] bg-[rgba(255,153,102,0.08)] text-[rgba(255,212,189,0.96)]";
+  }
+  return "border-panel-border/45 bg-[var(--theme-subtle-bg)] text-text-main/88";
 }

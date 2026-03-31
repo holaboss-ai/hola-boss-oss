@@ -15,6 +15,7 @@ import { bootstrapResolvedApplications } from "./resolved-app-bootstrap.js";
 import {
   effectiveMcpServerPayloads,
   encodeWorkspaceMcpCatalog,
+  mergePreparedMcpServerPayloads,
   mcpServerIdMap,
   mcpServerMappingMetadata,
   workspaceMcpCatalogFingerprint,
@@ -55,6 +56,7 @@ import {
   requireRuntimeHarnessPlugin,
   type RuntimeHarnessPlugin
 } from "./harness-registry.js";
+import { buildRunnerEnv } from "./runner-worker.js";
 import { startWorkspaceMcpSidecar, type WorkspaceMcpSidecarCliRequest } from "./workspace-mcp-sidecar.js";
 import type { CompiledWorkspaceRuntimePlan } from "./workspace-runtime-plan.js";
 
@@ -78,6 +80,8 @@ const OPENCODE_DEFAULT_TOOLS = [
   "todoread",
   "skill"
 ];
+
+type BootstrapStageTimingMap = Record<string, number>;
 
 type RuntimeExecContext = Record<string, unknown>;
 
@@ -149,6 +153,32 @@ function firstNonEmptyString(...values: unknown[]): string | null {
 
 function jsonObject(value: Record<string, unknown>): JsonObject {
   return JSON.parse(JSON.stringify(value)) as JsonObject;
+}
+
+function elapsedMs(startedAtMs: number): number {
+  return Math.max(0, Date.now() - startedAtMs);
+}
+
+function measureBootstrapStage<T>(timings: BootstrapStageTimingMap, stage: string, operation: () => T): T {
+  const startedAtMs = Date.now();
+  try {
+    return operation();
+  } finally {
+    timings[stage] = elapsedMs(startedAtMs);
+  }
+}
+
+async function measureBootstrapStageAsync<T>(
+  timings: BootstrapStageTimingMap,
+  stage: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const startedAtMs = Date.now();
+  try {
+    return await operation();
+  } finally {
+    timings[stage] = elapsedMs(startedAtMs);
+  }
 }
 
 function runtimeExecContextString(request: TsRunnerRequest, key: string): string | null {
@@ -261,6 +291,10 @@ function bootstrapStartedPayload(params: {
   mcpServerIdMap: Readonly<Record<string, string>>;
   mcpServers: PreparedMcpServerPayload[];
   sidecar: RunningWorkspaceMcpSidecar | null;
+  bootstrapStartedAt: string;
+  bootstrapReadyAt: string;
+  bootstrapTotalMs: number;
+  bootstrapStageTimingsMs: BootstrapStageTimingMap;
 }): Record<string, unknown> {
   return {
     instruction_preview: params.request.instruction.slice(0, 120),
@@ -272,7 +306,11 @@ function bootstrapStartedPayload(params: {
     mcp_server_mappings: mcpServerMappingMetadata(params.mcpServerIdMap),
     workspace_mcp_sidecar_reused: Boolean(params.sidecar?.reused),
     structured_output_enabled: params.harnessSupportsStructuredOutput && Boolean(params.runtimeConfig.output_format),
-    workspace_config_checksum: params.runtimeConfig.workspace_config_checksum
+    workspace_config_checksum: params.runtimeConfig.workspace_config_checksum,
+    bootstrap_started_at: params.bootstrapStartedAt,
+    bootstrap_ready_at: params.bootstrapReadyAt,
+    bootstrap_total_ms: params.bootstrapTotalMs,
+    bootstrap_stage_timings_ms: { ...params.bootstrapStageTimingsMs }
   };
 }
 
@@ -304,12 +342,12 @@ function currentBrowserConfig(): {
 function buildAgentRuntimeConfigRequest(params: {
   request: TsRunnerRequest;
   compiledPlan: CompiledWorkspaceRuntimePlan;
-  browserToolIds: string[];
+  extraToolIds: string[];
   workspaceSkillIds: string[];
   toolServerIdMap: Readonly<Record<string, string>>;
   resolvedMcpToolRefs: CompiledWorkspaceRuntimePlan["resolved_mcp_tool_refs"];
 }): AgentRuntimeConfigCliRequest {
-  const extraTools = Array.from(new Set([...opencodeExtraTools(), ...params.browserToolIds]));
+  const extraTools = Array.from(new Set([...opencodeExtraTools(), ...params.extraToolIds]));
   const common = {
     session_id: params.request.session_id,
     workspace_id: params.request.workspace_id,
@@ -497,7 +535,7 @@ async function defaultRunHarnessHost(params: {
       [...argsPrefix, entryPath, harnessCommand, "--request-base64", requestBase64],
       {
         cwd: runtimeRootDir(),
-        env: { ...process.env },
+        env: buildRunnerEnv(),
         stdio: ["ignore", "pipe", "pipe"]
       }
     );
@@ -666,6 +704,9 @@ export async function executeTsRunnerRequest(
   const bootstrap = resolveTsRunnerBootstrapState(request, { logger });
   const harnessPlugin = deps.resolveHarnessPlugin(bootstrap.harness);
   const harnessAdapter = harnessPlugin.adapter;
+  const bootstrapStartedAtMs = Date.now();
+  const bootstrapStartedAt = new Date(bootstrapStartedAtMs).toISOString();
+  const bootstrapStageTimingsMs: BootstrapStageTimingMap = {};
 
   await relayTsRunnerEvent({
     emitEvent: options.emitEvent,
@@ -688,27 +729,43 @@ export async function executeTsRunnerRequest(
       request,
       bootstrap
     });
-    const stagedBrowserTools = harnessPlugin.stageBrowserTools({
-      workspaceDir: bootstrap.workspaceDir,
-      browserConfig: currentBrowserConfig()
-    });
-    const workspaceSkills = resolveWorkspaceSkills(bootstrap.workspaceDir);
+    const stagedBrowserTools = measureBootstrapStage(bootstrapStageTimingsMs, "stage_browser_tools", () =>
+      harnessPlugin.stageBrowserTools({
+        workspaceDir: bootstrap.workspaceDir,
+        sessionKind: request.session_kind,
+        browserConfig: currentBrowserConfig()
+      })
+    );
+    const stagedRuntimeTools = measureBootstrapStage(bootstrapStageTimingsMs, "stage_runtime_tools", () =>
+      harnessPlugin.stageRuntimeTools({
+        workspaceDir: bootstrap.workspaceDir
+      })
+    );
+    const workspaceSkills = measureBootstrapStage(bootstrapStageTimingsMs, "resolve_workspace_skills", () =>
+      resolveWorkspaceSkills(bootstrap.workspaceDir)
+    );
     const stagedSkills = runnerPrepPlan.stageWorkspaceSkills
-      ? harnessPlugin.stageSkills({
-          workspaceDir: bootstrap.workspaceDir,
-          runtimeRoot: runtimeRootDir()
-        })
+      ? measureBootstrapStage(bootstrapStageTimingsMs, "stage_workspace_skills", () =>
+          harnessPlugin.stageSkills({
+            workspaceDir: bootstrap.workspaceDir,
+            runtimeRoot: runtimeRootDir()
+          })
+        )
       : { changed: false, skillIds: [] };
     if (runnerPrepPlan.stageWorkspaceCommands) {
-      harnessPlugin.stageCommands({
-        workspaceDir: bootstrap.workspaceDir
-      });
+      measureBootstrapStage(bootstrapStageTimingsMs, "stage_workspace_commands", () =>
+        harnessPlugin.stageCommands({
+          workspaceDir: bootstrap.workspaceDir
+        })
+      );
     }
 
-    const compiledPlan = deps.compilePlan({
-      workspaceId: request.workspace_id,
-      workspaceDir: bootstrap.workspaceDir
-    });
+    const compiledPlan = measureBootstrapStage(bootstrapStageTimingsMs, "compile_runtime_plan", () =>
+      deps.compilePlan({
+        workspaceId: request.workspace_id,
+        workspaceDir: bootstrap.workspaceDir
+      })
+    );
     const serverIdMap = runnerPrepPlan.prepareMcpTooling
       ? mcpServerIdMap({
           workspaceId: request.workspace_id,
@@ -728,14 +785,16 @@ export async function executeTsRunnerRequest(
           break;
         }
       }
-      sidecar = await deps.startWorkspaceMcpSidecar({
-        workspace_dir: bootstrap.workspaceDir,
-        physical_server_id: physicalWorkspaceServerId,
-        expected_fingerprint: workspaceMcpCatalogFingerprint(compiledPlan),
-        timeout_ms: timeoutMs,
-        readiness_timeout_s: WORKSPACE_MCP_READY_TIMEOUT_S,
-        catalog_json_base64: encodeWorkspaceMcpCatalog(compiledPlan)
-      });
+      sidecar = await measureBootstrapStageAsync(bootstrapStageTimingsMs, "start_workspace_mcp_sidecar", async () =>
+        await deps.startWorkspaceMcpSidecar({
+          workspace_dir: bootstrap.workspaceDir,
+          physical_server_id: physicalWorkspaceServerId,
+          expected_fingerprint: workspaceMcpCatalogFingerprint(compiledPlan),
+          timeout_ms: timeoutMs,
+          readiness_timeout_s: WORKSPACE_MCP_READY_TIMEOUT_S,
+          catalog_json_base64: encodeWorkspaceMcpCatalog(compiledPlan)
+        })
+      );
     }
 
     let effectiveMcpServers = runnerPrepPlan.prepareMcpTooling
@@ -747,70 +806,98 @@ export async function executeTsRunnerRequest(
       : [];
 
     if (runnerPrepPlan.bootstrapResolvedApplications && compiledPlan.resolved_applications.length > 0) {
-      effectiveMcpServers = effectiveMcpServers.concat(
-        await deps.bootstrapApplications({
-          request,
-          workspaceDir: bootstrap.workspaceDir,
-          resolvedApplications: compiledPlan.resolved_applications
-        })
+      effectiveMcpServers = mergePreparedMcpServerPayloads(
+        effectiveMcpServers,
+        await measureBootstrapStageAsync(bootstrapStageTimingsMs, "bootstrap_resolved_applications", async () =>
+          await deps.bootstrapApplications({
+            request,
+            workspaceDir: bootstrap.workspaceDir,
+            resolvedApplications: compiledPlan.resolved_applications
+          })
+        )
       );
     }
 
-    const runtimeConfig = deps.projectAgentRuntimeConfig(
-      buildAgentRuntimeConfigRequest({
+    const runtimeConfig = measureBootstrapStage(bootstrapStageTimingsMs, "project_runtime_config", () =>
+      deps.projectAgentRuntimeConfig(
+        buildAgentRuntimeConfigRequest({
+          request,
+          compiledPlan,
+          extraToolIds: [...stagedBrowserTools.toolIds, ...stagedRuntimeTools.toolIds],
+          workspaceSkillIds: workspaceSkills.map((skill) => skill.skill_id),
+          toolServerIdMap: serverIdMap,
+          resolvedMcpToolRefs
+        })
+      )
+    );
+
+    await measureBootstrapStageAsync(bootstrapStageTimingsMs, "prepare_harness_run", async () =>
+      await harnessPlugin.prepareRun({
         request,
-        compiledPlan,
-        browserToolIds: stagedBrowserTools.toolIds,
-        workspaceSkillIds: workspaceSkills.map((skill) => skill.skill_id),
-        toolServerIdMap: serverIdMap,
-        resolvedMcpToolRefs
+        bootstrap,
+        runtimeConfig,
+        stagedSkillsChanged: stagedSkills.changed || stagedBrowserTools.changed || stagedRuntimeTools.changed
       })
     );
 
-    await harnessPlugin.prepareRun({
-        request,
-        bootstrap,
-        runtimeConfig,
-        stagedSkillsChanged: stagedSkills.changed || stagedBrowserTools.changed
-      });
-
-    const harnessResult = await deps.runHarnessHost({
-      harness: bootstrap.harness,
-      requestPayload: harnessAdapter.buildHarnessHostRequest({
-        request,
-        bootstrap,
-        runtimeConfig,
-        runtimeApiBaseUrl: currentRuntimeApiUrl(),
-        workspaceSkills,
-        mcpServers: effectiveMcpServers,
-        mcpToolRefs: resolvedMcpToolRefs.map((toolRef) => ({
-          tool_id: toolRef.tool_id,
-          server_id: serverIdMap[toolRef.server_id] ?? toolRef.server_id,
-          tool_name: toolRef.tool_name
-        })),
-        runStartedPayload: bootstrapStartedPayload({
-          request,
-          runtimeConfig,
-          harnessSupportsStructuredOutput: harnessAdapter.capabilities.supportsStructuredOutput,
-          mcpServerIdMap: serverIdMap,
-          mcpServers: effectiveMcpServers,
-          sidecar
-        }),
-        backendBaseUrl: harnessPlugin.backendBaseUrl(),
-        timeoutSeconds: harnessPlugin.timeoutSeconds()
-      }),
-      workspaceDir: bootstrap.workspaceDir,
-      logger,
-      emitEvent: async (event) => {
-        await relayTsRunnerEvent({
-          emitEvent: options.emitEvent,
-          event,
-          harness: bootstrap.harness,
-          workspaceDir: bootstrap.workspaceDir,
-          logger
-        });
-      }
+    const backendBaseUrl = harnessPlugin.backendBaseUrl({
+      workspaceId: request.workspace_id,
+      workspaceDir: bootstrap.workspaceDir
     });
+    if (harnessAdapter.capabilities.requiresBackend && !backendBaseUrl.trim()) {
+      throw new Error(`backend base URL was not resolved for harness '${bootstrap.harness}'`);
+    }
+
+    const runStartedPayload = bootstrapStartedPayload({
+      request,
+      runtimeConfig,
+      harnessSupportsStructuredOutput: harnessAdapter.capabilities.supportsStructuredOutput,
+      mcpServerIdMap: serverIdMap,
+      mcpServers: effectiveMcpServers,
+      sidecar,
+      bootstrapStartedAt,
+      bootstrapReadyAt: bootstrapStartedAt,
+      bootstrapTotalMs: 0,
+      bootstrapStageTimingsMs
+    });
+    const buildHarnessHostRequestStartedAtMs = Date.now();
+    const harnessRequestPayload = harnessAdapter.buildHarnessHostRequest({
+      request,
+      bootstrap,
+      runtimeConfig,
+      runtimeApiBaseUrl: currentRuntimeApiUrl(),
+      workspaceSkills,
+      mcpServers: effectiveMcpServers,
+      mcpToolRefs: resolvedMcpToolRefs.map((toolRef) => ({
+        tool_id: toolRef.tool_id,
+        server_id: serverIdMap[toolRef.server_id] ?? toolRef.server_id,
+        tool_name: toolRef.tool_name
+      })),
+      runStartedPayload,
+      backendBaseUrl,
+      timeoutSeconds: harnessPlugin.timeoutSeconds()
+    });
+    bootstrapStageTimingsMs.build_harness_host_request = elapsedMs(buildHarnessHostRequestStartedAtMs);
+    runStartedPayload.bootstrap_ready_at = new Date().toISOString();
+    runStartedPayload.bootstrap_total_ms = elapsedMs(bootstrapStartedAtMs);
+    runStartedPayload.bootstrap_stage_timings_ms = { ...bootstrapStageTimingsMs };
+    const harnessResult = await measureBootstrapStageAsync(bootstrapStageTimingsMs, "launch_harness_host", async () =>
+      await deps.runHarnessHost({
+        harness: bootstrap.harness,
+        requestPayload: harnessRequestPayload,
+        workspaceDir: bootstrap.workspaceDir,
+        logger,
+        emitEvent: async (event) => {
+          await relayTsRunnerEvent({
+            emitEvent: options.emitEvent,
+            event,
+            harness: bootstrap.harness,
+            workspaceDir: bootstrap.workspaceDir,
+            logger
+          });
+        }
+      })
+    );
 
     if (harnessResult.terminalEmitted) {
       return;

@@ -1,11 +1,13 @@
 import { spawn } from "node:child_process";
 import { Buffer } from "node:buffer";
+import path from "node:path";
 import { Readable } from "node:stream";
 
 const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
 const DEFAULT_TS_RUNNER_COMMAND_TEMPLATE =
   "cd {runtime_root}/api-server && {runtime_node} dist/ts-runner.mjs --request-base64 {request_base64}";
 const HEARTBEAT_INTERVAL_MS = 5000;
+const DEFAULT_IDLE_TIMEOUT_SECONDS = 180;
 
 export interface RunnerExecutorLike {
   run(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
@@ -31,6 +33,25 @@ export interface RunnerExecutionResult {
 
 export type RunnerEvent = Record<string, unknown>;
 
+function killRunnerProcess(child: ReturnType<typeof spawn>, signal: NodeJS.Signals): void {
+  if (child.killed) {
+    return;
+  }
+  if (process.platform !== "win32" && typeof child.pid === "number" && child.pid > 0) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // Fall back to the direct child signal below.
+    }
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    // ignore
+  }
+}
+
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -53,6 +74,25 @@ function runtimeNode(): string {
   return configured || "node";
 }
 
+function pathDelimiter(): string {
+  return process.platform === "win32" ? ";" : ":";
+}
+
+function prependPathEntries(currentPath: string | undefined, entries: string[]): string {
+  const normalizedEntries = entries.map((entry) => entry.trim()).filter(Boolean);
+  if (normalizedEntries.length === 0) {
+    return currentPath ?? "";
+  }
+
+  const delimiter = pathDelimiter();
+  const currentEntries = (currentPath ?? "").split(delimiter).map((entry) => entry.trim()).filter(Boolean);
+  const deduped = [
+    ...normalizedEntries,
+    ...currentEntries.filter((entry) => !normalizedEntries.includes(entry))
+  ];
+  return deduped.join(delimiter);
+}
+
 function runnerTimeoutSeconds(): number {
   const raw = (process.env.SANDBOX_AGENT_RUN_TIMEOUT_S ?? "1800").trim();
   const parsed = Number.parseInt(raw, 10);
@@ -60,6 +100,15 @@ function runnerTimeoutSeconds(): number {
     return 1800;
   }
   return Math.max(1, Math.min(parsed, 7200));
+}
+
+function runnerIdleTimeoutSeconds(): number {
+  const raw = (process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S ?? `${DEFAULT_IDLE_TIMEOUT_SECONDS}`).trim();
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_IDLE_TIMEOUT_SECONDS;
+  }
+  return Math.max(1, Math.min(parsed, 3600));
 }
 
 function normalizeRuntimeApiHost(value: string): string {
@@ -97,6 +146,7 @@ export function buildRunnerEnv(): NodeJS.ProcessEnv {
   if (currentApiUrl && !(env.SANDBOX_RUNTIME_API_URL ?? "").trim()) {
     env.SANDBOX_RUNTIME_API_URL = currentApiUrl;
   }
+  env.PATH = prependPathEntries(env.PATH, [path.join(runtimeAppRoot(), "api-server", "node_modules", ".bin")]);
   return env;
 }
 
@@ -232,6 +282,7 @@ export async function executeRunnerRequest(
   payload: Record<string, unknown>,
   options: {
     onEvent?: (event: RunnerEvent) => void | Promise<void>;
+    onHeartbeat?: () => void | Promise<void>;
   } = {}
 ): Promise<RunnerExecutionResult> {
   validateRunnerPayload(payload);
@@ -243,7 +294,8 @@ export async function executeRunnerRequest(
   }
   const child = spawn("/bin/bash", ["-lc", command], {
     stdio: ["ignore", "pipe", "pipe"],
-    env
+    env,
+    detached: process.platform !== "win32"
   });
   const closePromise = new Promise<number>((resolve, reject) => {
     child.once("error", reject);
@@ -257,15 +309,36 @@ export async function executeRunnerRequest(
   }
 
   const timeoutMs = runnerTimeoutSeconds() * 1000;
+  const idleTimeoutMs = runnerIdleTimeoutSeconds() * 1000;
   let timedOut = false;
+  let idleTimedOut = false;
+  let sawTerminal = false;
   const timeout = setTimeout(() => {
     timedOut = true;
-    child.kill("SIGKILL");
+    killRunnerProcess(child, "SIGKILL");
   }, timeoutMs);
+  let idleTimeout: NodeJS.Timeout | null = null;
+  const resetIdleTimeout = () => {
+    if (idleTimeout) {
+      clearTimeout(idleTimeout);
+    }
+    idleTimeout = setTimeout(() => {
+      if (sawTerminal) {
+        return;
+      }
+      idleTimedOut = true;
+      killRunnerProcess(child, "SIGKILL");
+    }, idleTimeoutMs);
+  };
+  resetIdleTimeout();
+  const heartbeat = setInterval(() => {
+    void options.onHeartbeat?.();
+  }, HEARTBEAT_INTERVAL_MS);
 
   const stderrPromise = (async () => {
     const chunks: Buffer[] = [];
     for await (const chunk of stderr) {
+      resetIdleTimeout();
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     }
     return Buffer.concat(chunks).toString("utf-8").trim();
@@ -273,7 +346,6 @@ export async function executeRunnerRequest(
 
   const events: RunnerEvent[] = [];
   const skippedLines: string[] = [];
-  let sawTerminal = false;
   let stdoutBuffer = "";
 
   try {
@@ -297,12 +369,14 @@ export async function executeRunnerRequest(
             }
             continue;
           }
+          resetIdleTimeout();
           events.push(parsed);
           if (options.onEvent) {
             await options.onEvent(parsed);
           }
           if (TERMINAL_EVENT_TYPES.has(parsed.event_type as string)) {
             sawTerminal = true;
+            killRunnerProcess(child, "SIGTERM");
           }
         } catch {
           if (skippedLines.length < 20) {
@@ -316,16 +390,24 @@ export async function executeRunnerRequest(
     }
   } finally {
     clearTimeout(timeout);
+    if (idleTimeout) {
+      clearTimeout(idleTimeout);
+    }
+    clearInterval(heartbeat);
   }
 
   const returnCode = await closePromise;
-  const stderrText = timedOut ? "runner command timed out" : await stderrPromise;
+  const stderrText = timedOut
+    ? "runner command timed out"
+    : idleTimedOut
+      ? `runner command became idle for ${Math.round(idleTimeoutMs / 1000)}s without a terminal event`
+      : await stderrPromise;
 
   return {
     events,
     skippedLines,
     stderr: stderrText,
-    returnCode: timedOut ? 124 : returnCode,
+    returnCode: timedOut || idleTimedOut ? 124 : returnCode,
     sawTerminal
   };
 }
@@ -354,7 +436,8 @@ export class NativeRunnerExecutor implements RunnerExecutorLike {
     const command = runnerCommand(payload);
     const child = spawn("/bin/bash", ["-lc", command], {
       stdio: ["ignore", "pipe", "pipe"],
-      env: buildRunnerEnv()
+      env: buildRunnerEnv(),
+      detached: process.platform !== "win32"
     });
     const stdout = child.stdout;
     const stderr = child.stderr;
@@ -419,7 +502,7 @@ export class NativeRunnerExecutor implements RunnerExecutorLike {
             if (heartbeat) {
               clearTimeout(heartbeat);
             }
-            child.kill("SIGTERM");
+            killRunnerProcess(child, "SIGTERM");
           }
         } catch {
           if (skippedLines.length < 20) {
@@ -469,7 +552,7 @@ export class NativeRunnerExecutor implements RunnerExecutorLike {
         clearTimeout(heartbeat);
       }
       if (!child.killed) {
-        child.kill("SIGTERM");
+        killRunnerProcess(child, "SIGTERM");
       }
     });
 

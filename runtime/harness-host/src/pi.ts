@@ -36,6 +36,7 @@ import type {
   RunnerOutputEventPayload,
 } from "./contracts.js";
 import { resolvePiDesktopBrowserExtensionFactory } from "./pi-browser-tools.js";
+import { resolvePiRuntimeToolDefinitions } from "./pi-runtime-tools.js";
 
 export type PiMappedEvent = {
   event_type: RunnerEventType;
@@ -65,6 +66,8 @@ const PI_HARNESS_CLIENT_VERSION = "0.1.0";
 const PI_MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024;
 const PI_MAX_INLINE_TEXT_BYTES = 128 * 1024;
 const PI_MAX_EXTRACTED_TEXT_CHARS = 120_000;
+const PI_MCP_DISCOVERY_RETRY_INTERVAL_MS = 250;
+const PI_MCP_DISCOVERY_MAX_WAIT_MS = 10000;
 const require = createRequire(import.meta.url);
 
 const PI_TEXT_ATTACHMENT_MIME_TYPES = new Set([
@@ -619,6 +622,10 @@ function fallbackMcpToolParametersSchema(): Record<string, unknown> {
   };
 }
 
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function normalizeMcpToolParametersSchema(schema: unknown): Record<string, unknown> {
   if (!isRecord(schema)) {
     return fallbackMcpToolParametersSchema();
@@ -790,7 +797,37 @@ export async function createPiMcpCustomTools(
     if (!allowedTools && hasGlobalAllowlist) {
       continue;
     }
-    const discoveredTools = await runtime.listTools(binding.serverId, { includeSchema: true });
+    const discoveryDeadline = Date.now() + Math.max(
+      PI_MCP_DISCOVERY_RETRY_INTERVAL_MS,
+      Math.min(binding.timeoutMs, PI_MCP_DISCOVERY_MAX_WAIT_MS)
+    );
+    let discoveredTools: ServerToolInfo[] = [];
+    let lastDiscoveryError: unknown = null;
+    while (true) {
+      try {
+        discoveredTools = await runtime.listTools(binding.serverId, { includeSchema: true });
+        lastDiscoveryError = null;
+      } catch (error) {
+        lastDiscoveryError = error;
+        discoveredTools = [];
+      }
+
+      const missingAllowedTools = allowedTools
+        ? [...allowedTools.keys()].filter((toolName) => !discoveredTools.some((tool) => tool.name === toolName))
+        : [];
+      if (missingAllowedTools.length === 0) {
+        break;
+      }
+      if (Date.now() >= discoveryDeadline) {
+        if (lastDiscoveryError) {
+          throw lastDiscoveryError;
+        }
+        throw new Error(
+          `Pi MCP tool ${binding.serverId}.${missingAllowedTools[0]} for tool_id=${allowedTools?.get(missingAllowedTools[0])?.tool_id ?? `${binding.serverId}.${missingAllowedTools[0]}`} was not discovered`
+        );
+      }
+      await sleep(PI_MCP_DISCOVERY_RETRY_INTERVAL_MS);
+    }
     const filteredTools = allowedTools
       ? discoveredTools.filter((tool) => allowedTools.has(tool.name))
       : discoveredTools;
@@ -885,10 +922,12 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     defaultThinkingLevel: "medium",
   });
   const skillDirs = resolvePiSkillDirs(request);
-  const browserExtensionFactory = await resolvePiDesktopBrowserExtensionFactory({
-    runtimeApiBaseUrl: request.runtime_api_base_url,
-    workspaceId: request.workspace_id,
-  });
+  const browserExtensionFactory = request.browser_tools_enabled
+    ? await resolvePiDesktopBrowserExtensionFactory({
+        runtimeApiBaseUrl: request.runtime_api_base_url,
+        workspaceId: request.workspace_id,
+      })
+    : null;
   const resourceLoader = new DefaultResourceLoader({
     cwd: request.workspace_dir,
     agentDir: stateDir,
@@ -908,6 +947,10 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     ? SessionManager.open(persistedSessionFile)
     : SessionManager.create(request.workspace_dir, sessionDir);
   const mcpToolset = await createPiMcpToolset(request);
+  const runtimeTools = await resolvePiRuntimeToolDefinitions({
+    runtimeApiBaseUrl: request.runtime_api_base_url,
+    workspaceId: request.workspace_id,
+  });
 
   let session: AgentSession;
   try {
@@ -926,7 +969,7 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
         createFindTool(request.workspace_dir),
         createLsTool(request.workspace_dir),
       ],
-      customTools: mcpToolset.customTools,
+      customTools: [...runtimeTools, ...mcpToolset.customTools],
     }));
   } catch (error) {
     await mcpToolset.runtime?.close();

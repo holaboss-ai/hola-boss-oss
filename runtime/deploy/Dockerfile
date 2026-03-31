@@ -31,8 +31,6 @@ RUN mkdir -p /app \
     && cp -R /opt/holaboss-runtime/harness-host /app/harness-host \
     && cp -R /opt/holaboss-runtime/state-store /app/state-store \
     && cp /opt/holaboss-runtime/metadata.json /app/metadata.json \
-    && cp /opt/holaboss-runtime/bin/hb /usr/local/bin/hb \
-    && chmod +x /usr/local/bin/hb \
     && chmod +x /opt/holaboss-runtime/bootstrap/*.sh
 
 WORKDIR /app

@@ -25,6 +25,7 @@ import { createServer, request as httpRequest, type IncomingMessage, type Server
 import { request as httpsRequest } from "node:https";
 import path from "node:path";
 import { URL } from "node:url";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 const verboseTelemetryEnabled = process.env.HOLABOSS_VERBOSE_TELEMETRY?.trim() === "1";
@@ -42,12 +43,16 @@ const OVERFLOW_POPUP_WIDTH = 220;
 const OVERFLOW_POPUP_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MIN_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MAX_HEIGHT = 320;
+const MAIN_WINDOW_CLOSED_LISTENER_BUFFER = 32;
+const AUTH_NETWORK_RETRY_ATTEMPTS = 3;
+const AUTH_NETWORK_RETRY_BASE_DELAY_MS = 250;
 const APP_THEMES = new Set(["holaboss", "emerald", "cobalt", "ember", "glacier", "mono", "claude", "slate", "paper", "graphite"]);
 const GITHUB_RELEASES_OWNER = "holaboss-ai";
 const GITHUB_RELEASES_REPO = "hola-boss-oss";
 const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const APP_UPDATE_REQUEST_TIMEOUT_MS = 15000;
 const APP_UPDATE_MACOS_ASSET_NAME = "Holaboss-macos-arm64.dmg";
+const APP_QUIT_CLEANUP_TIMEOUT_MS = 12000;
 const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
 const HOLABOSS_HOME_URL = "https://holaboss.ai";
 const HOLABOSS_DOCS_URL = `https://github.com/${GITHUB_RELEASES_OWNER}/${GITHUB_RELEASES_REPO}`;
@@ -299,6 +304,7 @@ let historyPopupWindow: BrowserWindow | null = null;
 let overflowPopupWindow: BrowserWindow | null = null;
 let browserPopupWindow: BrowserWindow | null = null;
 let addressSuggestionsPopupWindow: BrowserWindow | null = null;
+const browserPopupCleanupBound = new WeakSet<BrowserWindow>();
 let currentTheme = "holaboss";
 let browserBounds: BrowserBoundsPayload = { x: 0, y: 0, width: 0, height: 0 };
 let overflowAnchorBounds: BrowserAnchorBoundsPayload | null = null;
@@ -331,6 +337,8 @@ let desktopBrowserServiceUrl = "";
 let desktopBrowserServiceAuthToken = "";
 let appUpdateCheckTimer: NodeJS.Timeout | null = null;
 let appUpdateCheckPromise: Promise<AppUpdateStatusPayload> | null = null;
+let appQuitCleanupPromise: Promise<void> | null = null;
+let appQuitCleanupCompleted = false;
 let appUpdatePreferences: AppUpdatePreferencesPayload = {};
 let appUpdateStatus: AppUpdateStatusPayload = {
   supported: false,
@@ -348,7 +356,6 @@ let appUpdateStatus: AppUpdateStatusPayload = {
 };
 
 const RUNTIME_API_PORT = 5060;
-const RUNTIME_OPENCODE_PORT = 5096;
 const DEV_RUNTIME_ROOT = "/tmp/holaboss-runtime-macos-full";
 const STAGED_RUNTIME_ROOT = path.join("out", "runtime-macos");
 const DESKTOP_USER_DATA_DIR = (process.env.HOLABOSS_DESKTOP_USER_DATA_DIR?.trim() || "holaboss-local").replace(
@@ -1016,6 +1023,9 @@ function popupThemeCss(theme = currentTheme) {
   const isLightTheme = theme === "holaboss" || theme === "claude" || theme === "paper";
   const surfaceSoft = `color-mix(in srgb, ${palette.controlBg} 72%, ${palette.panelBgAlt} 28%)`;
   const surfaceSubtle = `color-mix(in srgb, ${palette.controlBg} 52%, ${palette.panelBgAlt} 48%)`;
+  const scrollTrack = `color-mix(in srgb, ${palette.borderSoft} 58%, transparent)`;
+  const scrollThumbTop = `color-mix(in srgb, ${palette.accent} 30%, ${palette.borderSoft})`;
+  const scrollThumbBottom = `color-mix(in srgb, ${palette.accentStrong} 22%, ${palette.borderSoft})`;
   return `
       :root {
         color-scheme: ${isLightTheme ? "light" : "dark"};
@@ -1048,6 +1058,22 @@ function popupThemeCss(theme = currentTheme) {
       }
       .content {
         background: color-mix(in srgb, ${palette.panelBg} 90%, transparent);
+        scrollbar-width: thin;
+        scrollbar-color: ${scrollThumbTop} ${scrollTrack};
+      }
+      .content::-webkit-scrollbar {
+        width: 7px;
+        height: 7px;
+      }
+      .content::-webkit-scrollbar-track {
+        background: ${scrollTrack};
+        border-radius: 999px;
+      }
+      .content::-webkit-scrollbar-thumb {
+        background: linear-gradient(180deg, ${scrollThumbTop}, ${scrollThumbBottom});
+        border-radius: 999px;
+        border: 1px solid transparent;
+        background-clip: padding-box;
       }
       .avatar {
         border-color: color-mix(in srgb, ${palette.accent} 30%, ${palette.borderSoft});
@@ -1202,6 +1228,7 @@ interface MaterializedTemplateFilePayload {
   path: string;
   content_base64: string;
   executable: boolean;
+  symlink_target?: string | null;
 }
 
 interface MaterializeTemplateResponsePayload {
@@ -1227,6 +1254,9 @@ interface ProactiveIngestItemResultPayload {
   status?: string;
   event_id?: string;
   detail?: string | null;
+  publish_status?: string;
+  stream_id?: string | null;
+  error?: { message?: string | null } | null;
 }
 
 interface WorkspaceRecordPayload {
@@ -1267,11 +1297,30 @@ interface TaskProposalRecordPayload {
   created_at: string;
   state: string;
   source_event_ids: string[];
+  accepted_session_id: string | null;
+  accepted_input_id: string | null;
+  accepted_at: string | null;
 }
 
 interface TaskProposalListResponsePayload {
   proposals: TaskProposalRecordPayload[];
   count: number;
+}
+
+interface ProactiveStatusSnapshotPayload {
+  state: string;
+  detail: string | null;
+  recorded_at: string | null;
+}
+
+interface ProactiveAgentStatusPayload {
+  workspace_id: string;
+  proposal_count: number;
+  heartbeat: ProactiveStatusSnapshotPayload;
+  bridge: ProactiveStatusSnapshotPayload;
+  delivery_state: string;
+  delivery_summary: string;
+  delivery_detail: string | null;
 }
 
 interface DemoTaskProposalRequestPayload {
@@ -1288,6 +1337,41 @@ interface DemoTaskProposalEnqueueResponsePayload {
 
 interface TaskProposalStateUpdatePayload {
   proposal: TaskProposalRecordPayload;
+}
+
+interface AgentSessionRecordPayload {
+  workspace_id: string;
+  session_id: string;
+  kind: string;
+  title: string | null;
+  parent_session_id: string | null;
+  source_proposal_id: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  archived_at: string | null;
+}
+
+interface AgentSessionListResponsePayload {
+  items: AgentSessionRecordPayload[];
+  count: number;
+}
+
+interface TaskProposalAcceptPayload {
+  proposal_id: string;
+  task_name?: string | null;
+  task_prompt?: string | null;
+  session_id?: string | null;
+  parent_session_id?: string | null;
+  created_by?: string | null;
+  priority?: number;
+  model?: string | null;
+}
+
+interface TaskProposalAcceptResponsePayload {
+  proposal: TaskProposalRecordPayload;
+  session: AgentSessionRecordPayload;
+  input: EnqueueSessionInputResponsePayload;
 }
 
 interface CronjobDeliveryPayload {
@@ -1467,6 +1551,23 @@ interface InstalledWorkspaceAppListResponsePayload {
   count: number;
 }
 
+interface WorkspaceLifecycleBlockingAppPayload {
+  app_id: string;
+  status: string;
+  error: string | null;
+}
+
+interface WorkspaceLifecyclePayload {
+  workspace: WorkspaceRecordPayload;
+  applications: InstalledWorkspaceAppPayload[];
+  ready: boolean;
+  reason: string | null;
+  phase: string;
+  phase_label: string;
+  phase_detail: string | null;
+  blocking_apps: WorkspaceLifecycleBlockingAppPayload[];
+}
+
 interface WorkspaceAppLifecycleActionPayload {
   app_id: string;
   status: string;
@@ -1521,7 +1622,7 @@ interface HolabossCreateWorkspacePayload {
   holaboss_user_id: string;
   harness?: string | null;
   name: string;
-  template_mode?: "template" | "empty" | null;
+  template_mode?: "template" | "empty" | "empty_onboarding" | null;
   template_root_path?: string | null;
   template_name?: string | null;
   template_ref?: string | null;
@@ -1659,6 +1760,80 @@ function runtimeDatabasePath() {
 
 function runtimeWorkspaceRoot() {
   return path.join(runtimeSandboxRoot(), "workspace");
+}
+
+function opencodeSidecarStatePath(workspaceDir: string) {
+  return path.join(workspaceDir, ".holaboss", "opencode-sidecar-state.json");
+}
+
+function processIsAlive(pid: number) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function terminatePid(pid: number, signal: NodeJS.Signals) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return;
+  }
+  try {
+    process.kill(pid, signal);
+  } catch {
+    // ignore
+  }
+}
+
+async function stopEmbeddedRuntimeOpencodeSidecars() {
+  let workspaceEntries: import("node:fs").Dirent[] = [];
+  try {
+    workspaceEntries = await fs.readdir(runtimeWorkspaceRoot(), { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  const sidecarPids = new Set<number>();
+  const statePaths: string[] = [];
+
+  for (const entry of workspaceEntries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const statePath = opencodeSidecarStatePath(path.join(runtimeWorkspaceRoot(), entry.name));
+    statePaths.push(statePath);
+    try {
+      const payload = JSON.parse(await fs.readFile(statePath, "utf-8")) as {
+        sidecar?: { pid?: unknown };
+      };
+      const pid = Number(payload?.sidecar?.pid ?? 0);
+      if (Number.isInteger(pid) && pid > 0) {
+        sidecarPids.add(pid);
+      }
+    } catch {
+      // ignore malformed or missing state
+    }
+  }
+
+  for (const pid of Array.from(sidecarPids).sort((left, right) => left - right)) {
+    terminatePid(pid, "SIGTERM");
+  }
+
+  if (sidecarPids.size > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+
+  for (const pid of Array.from(sidecarPids).sort((left, right) => left - right)) {
+    if (processIsAlive(pid)) {
+      terminatePid(pid, "SIGKILL");
+    }
+  }
+
+  await Promise.all(statePaths.map((statePath) => fs.rm(statePath, { force: true }).catch(() => undefined)));
 }
 
 function utcNowIso() {
@@ -2128,6 +2303,25 @@ async function appendRuntimeLog(line: string) {
   await fs.appendFile(runtimeLogsPath(), line, "utf-8");
 }
 
+async function readRuntimeLogTail(maxBytes = 65536): Promise<string> {
+  let handle: fs.FileHandle | null = null;
+  try {
+    handle = await fs.open(runtimeLogsPath(), "r");
+    const stat = await handle.stat();
+    const length = Math.min(Math.max(stat.size, 0), maxBytes);
+    if (length === 0) {
+      return "";
+    }
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, stat.size - length);
+    return buffer.toString("utf-8");
+  } catch {
+    return "";
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
 async function readRuntimeConfigFile(): Promise<Record<string, string>> {
   const configPath = runtimeConfigPath();
   try {
@@ -2491,6 +2685,83 @@ async function stopDesktopBrowserService(): Promise<void> {
   await updateDesktopBrowserCapabilityConfig({ enabled: false });
 }
 
+async function withCleanupTimeout<T>(label: string, promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return await new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+    timeout.unref();
+
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      }
+    );
+  });
+}
+
+async function performAppQuitCleanup(): Promise<void> {
+  if (appQuitCleanupPromise) {
+    return appQuitCleanupPromise;
+  }
+
+  appQuitCleanupPromise = (async () => {
+    appendRuntimeEventLog({
+      category: "app",
+      event: "quit.cleanup",
+      outcome: "start",
+      detail: "Stopping desktop browser service and embedded runtime before exit."
+    });
+
+    const failures: string[] = [];
+    const cleanupSteps: Array<{ label: string; run: () => Promise<unknown> }> = [
+      {
+        label: "desktop_browser_service",
+        run: () => stopDesktopBrowserService()
+      },
+      {
+        label: "embedded_runtime",
+        run: () => stopEmbeddedRuntime()
+      }
+    ];
+
+    for (const step of cleanupSteps) {
+      try {
+        await withCleanupTimeout(step.label, Promise.resolve(step.run()), APP_QUIT_CLEANUP_TIMEOUT_MS);
+        appendRuntimeEventLog({
+          category: "app",
+          event: `quit.${step.label}`,
+          outcome: "success"
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        failures.push(`${step.label}: ${detail}`);
+        appendRuntimeEventLog({
+          category: "app",
+          event: `quit.${step.label}`,
+          outcome: "error",
+          detail
+        });
+        await appendRuntimeLog(`[app-quit] ${step.label} cleanup failed: ${detail}\n`).catch(() => undefined);
+      }
+    }
+
+    appendRuntimeEventLog({
+      category: "app",
+      event: "quit.cleanup",
+      outcome: failures.length === 0 ? "success" : "partial",
+      detail: failures.length > 0 ? failures.join(" | ") : "Cleanup finished successfully."
+    });
+  })();
+
+  return appQuitCleanupPromise;
+}
+
 function desktopBrowserStatusFields() {
   return {
     desktopBrowserReady: Boolean(desktopBrowserServiceUrl),
@@ -2513,6 +2784,22 @@ function runtimeModelProxyApiKeyFromConfig(config: Record<string, string>): stri
 
 function runtimeBindingModelProxyApiKey(binding: RuntimeBindingExchangePayload): string {
   return (binding.model_proxy_api_key || binding.auth_token || "").trim();
+}
+
+function runtimeConfigHasBindingMaterial(config: Record<string, string>): boolean {
+  return (
+    Boolean(runtimeModelProxyApiKeyFromConfig(config)) &&
+    Boolean((config.user_id || "").trim()) &&
+    Boolean((config.sandbox_id || "").trim()) &&
+    Boolean((config.model_proxy_base_url || "").trim())
+  );
+}
+
+function canUsePersistedRuntimeBindingWithoutAuth(config: Record<string, string>): boolean {
+  if (process.env.HOLABOSS_INTERNAL_DEV?.trim() !== "1") {
+    return false;
+  }
+  return runtimeConfigHasBindingMaterial(config);
 }
 
 async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
@@ -2598,30 +2885,76 @@ async function withRuntimeBindingRefreshLock<T>(work: () => Promise<T>): Promise
 
   const lockState: {
     resolve: (() => void) | null;
-    reject: ((error: unknown) => void) | null;
   } = {
-    resolve: null,
-    reject: null
+    resolve: null
   };
-  runtimeBindingRefreshPromise = new Promise<void>((resolve, reject) => {
+  runtimeBindingRefreshPromise = new Promise<void>((resolve) => {
     lockState.resolve = resolve;
-    lockState.reject = reject;
   });
 
   try {
-    const result = await work();
+    return await work();
+  } finally {
     if (lockState.resolve) {
       lockState.resolve();
     }
-    return result;
-  } catch (error) {
-    if (lockState.reject) {
-      lockState.reject(error);
-    }
-    throw error;
-  } finally {
     runtimeBindingRefreshPromise = null;
   }
+}
+
+function errorCauseCode(error: unknown): string {
+  if (!error || typeof error !== "object") {
+    return "";
+  }
+  const payload = error as { code?: unknown; cause?: unknown };
+  if (typeof payload.code === "string" && payload.code.trim()) {
+    return payload.code.trim();
+  }
+  return errorCauseCode(payload.cause);
+}
+
+function errorMessageDetail(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  if (typeof error === "string" && error.trim()) {
+    return error.trim();
+  }
+  return "Unknown error";
+}
+
+function isFetchTransportFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  if (error.message.includes("fetch failed")) {
+    return true;
+  }
+  const code = errorCauseCode(error);
+  return ["ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "ETIMEDOUT", "EHOSTUNREACH"].includes(code);
+}
+
+async function fetchWithRetry(input: string, init: RequestInit, options?: {
+  attempts?: number;
+  baseDelayMs?: number;
+  shouldRetry?: (error: unknown) => boolean;
+}): Promise<Response> {
+  const attempts = Math.max(1, options?.attempts ?? 1);
+  const baseDelayMs = Math.max(0, options?.baseDelayMs ?? 0);
+  const shouldRetry = options?.shouldRetry ?? (() => false);
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetch(input, init);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts || !shouldRetry(error)) {
+        throw error;
+      }
+      await sleep(baseDelayMs * attempt);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Fetch failed.");
 }
 
 async function getRuntimeConfig(): Promise<RuntimeConfigPayload> {
@@ -2646,17 +2979,32 @@ async function exchangeDesktopRuntimeBinding(sandboxId: string): Promise<Runtime
     throw new Error("Better Auth session cookies are missing.");
   }
 
-  const response = await fetch(`${controlPlaneBaseUrl}${DESKTOP_RUNTIME_BINDING_EXCHANGE_PATH}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Cookie: cookieHeader
-    },
-    body: JSON.stringify({
-      sandbox_id: sandboxId,
-      target_kind: "desktop"
-    })
-  });
+  const endpoint = `${controlPlaneBaseUrl}${DESKTOP_RUNTIME_BINDING_EXCHANGE_PATH}`;
+  let response: Response;
+  try {
+    response = await fetchWithRetry(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: cookieHeader
+      },
+      body: JSON.stringify({
+        sandbox_id: sandboxId,
+        target_kind: "desktop"
+      })
+    }, {
+      attempts: AUTH_NETWORK_RETRY_ATTEMPTS,
+      baseDelayMs: AUTH_NETWORK_RETRY_BASE_DELAY_MS,
+      shouldRetry: isFetchTransportFailure
+    });
+  } catch (error) {
+    const detail = errorMessageDetail(error);
+    const causeCode = errorCauseCode(error);
+    const suffix = causeCode ? ` (${causeCode})` : "";
+    const wrapped = new Error(`Runtime binding exchange request failed for ${endpoint}: ${detail}${suffix}`);
+    (wrapped as Error & { cause?: unknown }).cause = error;
+    throw wrapped;
+  }
 
   if (!response.ok) {
     const detail = await response.text();
@@ -2834,12 +3182,27 @@ async function getAuthenticatedUser(): Promise<AuthUserPayload | null> {
     return null;
   }
 
-  const response = await fetch(`${AUTH_BASE_URL}/api/auth/get-session`, {
-    method: "GET",
-    headers: {
-      Cookie: cookieHeader
-    }
-  });
+  const endpoint = `${AUTH_BASE_URL}/api/auth/get-session`;
+  let response: Response;
+  try {
+    response = await fetchWithRetry(endpoint, {
+      method: "GET",
+      headers: {
+        Cookie: cookieHeader
+      }
+    }, {
+      attempts: AUTH_NETWORK_RETRY_ATTEMPTS,
+      baseDelayMs: AUTH_NETWORK_RETRY_BASE_DELAY_MS,
+      shouldRetry: isFetchTransportFailure
+    });
+  } catch (error) {
+    const detail = errorMessageDetail(error);
+    const causeCode = errorCauseCode(error);
+    const suffix = causeCode ? ` (${causeCode})` : "";
+    const wrapped = new Error(`Auth session request failed for ${endpoint}: ${detail}${suffix}`);
+    (wrapped as Error & { cause?: unknown }).cause = error;
+    throw wrapped;
+  }
 
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {
@@ -3001,8 +3364,26 @@ async function ensureRuntimeBindingReadyForWorkspaceFlow(
     return;
   }
 
-  const user = await getAuthenticatedUser();
+  let user: AuthUserPayload | null;
+  try {
+    user = await getAuthenticatedUser();
+  } catch (error) {
+    const detail = errorMessageDetail(error);
+    if (runtimeConfigHasBindingMaterial(currentConfig) && isFetchTransportFailure(error)) {
+      appendRuntimeEventLog({
+        category: "auth",
+        event: "runtime_binding.auth_session",
+        outcome: "warning",
+        detail: `${reason}:using_existing_binding_after_transport_failure:${detail}`
+      });
+      return;
+    }
+    throw error;
+  }
   if (!user) {
+    if (canUsePersistedRuntimeBindingWithoutAuth(currentConfig)) {
+      return;
+    }
     if (runtimeModelProxyApiKeyFromConfig(currentConfig)) {
       await clearRuntimeBindingSecrets(`${reason}:missing_auth_session`);
     }
@@ -3022,17 +3403,23 @@ async function ensureRuntimeBindingReadyForWorkspaceFlow(
         reason
       });
     } catch (error) {
+      const detail = errorMessageDetail(error);
+      if (runtimeConfigHasBindingMaterial(currentConfig) && isFetchTransportFailure(error)) {
+        appendRuntimeEventLog({
+          category: "auth",
+          event: "runtime_binding.provision",
+          outcome: "warning",
+          detail: `${reason}:using_existing_binding_after_transport_failure:${detail}`
+        });
+        return;
+      }
       await clearRuntimeBindingSecrets(`${reason}:provision_failed`);
-      const detail = error instanceof Error ? error.message : "Binding exchange failed.";
       throw new Error(`Runtime binding provisioning failed: ${detail}`);
     }
   }
 
   const refreshedConfig = await readRuntimeConfigFile();
-  const hasBindingMaterial =
-    Boolean(runtimeModelProxyApiKeyFromConfig(refreshedConfig)) &&
-    Boolean((refreshedConfig.sandbox_id || "").trim()) &&
-    Boolean((refreshedConfig.model_proxy_base_url || "").trim());
+  const hasBindingMaterial = runtimeConfigHasBindingMaterial(refreshedConfig);
   if (!hasBindingMaterial) {
     await clearRuntimeBindingSecrets(`${reason}:binding_incomplete`);
     throw new Error("Runtime binding is incomplete. Sign in again.");
@@ -3340,58 +3727,109 @@ async function emitWorkspaceReadyHeartbeat(params: {
 }): Promise<void> {
   const workspaceId = params.workspaceId.trim();
   const holabossUserId = params.holabossUserId.trim();
-  if (!workspaceId || !holabossUserId || holabossUserId === LOCAL_OSS_TEMPLATE_USER_ID) {
+  if (!workspaceId) {
+    throw new Error("workspaceId is required");
+  }
+  if (!holabossUserId || holabossUserId === LOCAL_OSS_TEMPLATE_USER_ID) {
+    appendRuntimeEventLog({
+      category: "workspace",
+      event: "workspace.heartbeat.emit",
+      outcome: "skipped",
+      detail: !holabossUserId ? "missing_holaboss_user_id" : "local_oss_user"
+    });
     return;
   }
 
   const correlationId = `workspace-ready-${workspaceId}`;
+  const eventId = `evt-heartbeat-${crypto.randomUUID().replace(/-/g, "")}`;
+  const payload = {
+    events: [
+      {
+        event_id: eventId,
+        event_type: "heartbeat",
+        workspace_id: workspaceId,
+        actor: {
+          type: "system",
+          id: "desktop_workspace_create"
+        },
+        correlation_id: correlationId,
+        origin: "system",
+        timestamp: utcNowIso(),
+        source_refs: ["workspace-created:ready"],
+        window: "24h",
+        proposal_scope: "window"
+      }
+    ]
+  };
   appendRuntimeEventLog({
     category: "workspace",
     event: "workspace.heartbeat.emit",
     outcome: "start",
-    detail: correlationId
+    detail: `${correlationId} event_id=${eventId}`
   });
 
-  try {
-    const results = await requestControlPlaneJson<ProactiveIngestItemResultPayload[]>({
-      service: "proactive",
-      method: "POST",
-      path: "/api/v1/proactive/ingest",
-      payload: {
-        events: [
-          {
-            event_id: `evt-heartbeat-${crypto.randomUUID().replace(/-/g, "")}`,
-            event_type: "heartbeat",
-            workspace_id: workspaceId,
-            actor: {
-              type: "system",
-              id: "desktop_workspace_create"
-            },
-            correlation_id: correlationId,
-            origin: "system",
-            timestamp: utcNowIso(),
-            source_refs: ["workspace-created:ready"],
-            window: "24h",
-            proposal_scope: "window"
-          }
-        ]
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const results = await requestControlPlaneJson<ProactiveIngestItemResultPayload[]>({
+        service: "proactive",
+        method: "POST",
+        path: "/api/v1/proactive/ingest",
+        payload
+      });
+      const result = results.find((item) => (item?.event_id || "").trim() === eventId) ?? results[0];
+      const status = (result?.status || "").trim().toLowerCase();
+      const publishStatus = (result?.publish_status || "").trim().toLowerCase();
+      const detail = result?.detail?.trim() || result?.error?.message?.trim() || "";
+      const published = publishStatus === "published";
+      const accepted = status === "accepted" || status === "duplicate";
+      if (!accepted || !published) {
+        throw new Error(
+          `Heartbeat ingest was not published (status=${status || "unknown"} publish_status=${publishStatus || "unknown"}${detail ? ` detail=${detail}` : ""})`
+        );
       }
-    });
-    const acceptedCount = results.filter((item) => (item?.status || "").trim().toLowerCase() === "accepted").length;
-    appendRuntimeEventLog({
-      category: "workspace",
-      event: "workspace.heartbeat.emit",
-      outcome: "success",
-      detail: `workspace_id=${workspaceId} accepted=${acceptedCount}/${results.length}`
-    });
-  } catch (error) {
-    appendRuntimeEventLog({
-      category: "workspace",
-      event: "workspace.heartbeat.emit",
-      outcome: "error",
-      detail: error instanceof Error ? error.message : String(error)
-    });
+      appendRuntimeEventLog({
+        category: "workspace",
+        event: "workspace.heartbeat.emit",
+        outcome: "success",
+        detail:
+          `workspace_id=${workspaceId} event_id=${eventId} attempt=${attempt} ` +
+          `status=${status} publish_status=${publishStatus}${result?.stream_id ? ` stream_id=${result.stream_id}` : ""}`
+      });
+      return;
+    } catch (error) {
+      const retryable =
+        attempt < maxAttempts &&
+        (error instanceof TypeError ||
+          (error instanceof Error &&
+            [
+              "fetch failed",
+              "econnrefused",
+              "econnreset",
+              "socket hang up",
+              "timeout",
+              "status=429",
+              "status=502",
+              "status=503",
+              "status=504"
+            ].some((needle) => error.message.toLowerCase().includes(needle))));
+      appendRuntimeEventLog({
+        category: "workspace",
+        event: "workspace.heartbeat.emit",
+        outcome: retryable ? "retry" : "error",
+        detail:
+          `workspace_id=${workspaceId} event_id=${eventId} attempt=${attempt} ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      });
+      if (retryable) {
+        await sleep(250 * attempt);
+        continue;
+      }
+      throw error;
+    }
   }
+
+  throw new Error(`Workspace-ready heartbeat could not be confirmed for workspace ${workspaceId}.`);
 }
 
 function getHolabossClientConfig(): HolabossClientConfigPayload {
@@ -3484,6 +3922,215 @@ async function listTaskProposals(workspaceId: string): Promise<TaskProposalListR
   });
 }
 
+function lastRegexCapture(content: string, pattern: RegExp): string | null {
+  let match: RegExpExecArray | null = null;
+  let lastValue: string | null = null;
+  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+  const globalPattern = new RegExp(pattern.source, flags);
+  while ((match = globalPattern.exec(content)) !== null) {
+    lastValue = match[1]?.trim() || null;
+  }
+  return lastValue;
+}
+
+function normalizeProactiveBridgeErrorDetail(raw: string | null): string | null {
+  const trimmed = raw?.trim() || "";
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (parsed && typeof parsed === "object" && "detail" in parsed) {
+      const detail = (parsed as Record<string, unknown>).detail;
+      if (typeof detail === "string" && detail.trim()) {
+        return detail.trim();
+      }
+    }
+  } catch {
+    // Keep raw text when the runtime did not log JSON.
+  }
+  return trimmed;
+}
+
+function secondsSinceIso(value: string | null): number | null {
+  const trimmed = value?.trim() || "";
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Date.parse(trimmed);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return Math.max(0, Math.round((Date.now() - parsed) / 1000));
+}
+
+async function getProactiveStatus(workspaceId: string): Promise<ProactiveAgentStatusPayload> {
+  const normalizedWorkspaceId = workspaceId.trim();
+  const fallbackHeartbeat: ProactiveStatusSnapshotPayload = {
+    state: "unknown",
+    detail: null,
+    recorded_at: null
+  };
+  const fallbackBridge: ProactiveStatusSnapshotPayload = {
+    state: "unknown",
+    detail: null,
+    recorded_at: null
+  };
+  if (!normalizedWorkspaceId) {
+    return {
+      workspace_id: "",
+      proposal_count: 0,
+      heartbeat: fallbackHeartbeat,
+      bridge: fallbackBridge,
+      delivery_state: "idle",
+      delivery_summary: "Select a workspace to inspect proactive status.",
+      delivery_detail: null
+    };
+  }
+
+  let proposalCount = 0;
+  let heartbeat = fallbackHeartbeat;
+  const database = openRuntimeDatabase();
+  try {
+    const proposalRow = database
+      .prepare(
+        `
+          SELECT COUNT(*) AS proposal_count
+          FROM task_proposals
+          WHERE workspace_id = ?
+        `
+      )
+      .get(normalizedWorkspaceId) as { proposal_count?: number } | undefined;
+    proposalCount = Number(proposalRow?.proposal_count ?? 0);
+
+    const heartbeatRow = database
+      .prepare(
+        `
+          SELECT outcome, detail, created_at
+          FROM event_log
+          WHERE category = 'workspace'
+            AND event = 'workspace.heartbeat.emit'
+            AND detail LIKE ?
+          ORDER BY created_at DESC
+          LIMIT 1
+        `
+      )
+      .get(`%${normalizedWorkspaceId}%`) as
+      | {
+          outcome?: string | null;
+          detail?: string | null;
+          created_at?: string | null;
+        }
+      | undefined;
+    if (heartbeatRow) {
+      const outcome = (heartbeatRow.outcome || "").trim().toLowerCase();
+      heartbeat = {
+        state:
+          outcome === "success"
+            ? "published"
+            : outcome === "error"
+              ? "failed"
+              : outcome === "skipped"
+                ? "skipped"
+                : outcome === "start" || outcome === "retry"
+                  ? "pending"
+                  : "unknown",
+        detail: heartbeatRow.detail?.trim() || null,
+        recorded_at: heartbeatRow.created_at?.trim() || null
+      };
+    }
+  } finally {
+    database.close();
+  }
+
+  const runtimeConfig = await readRuntimeConfigFile();
+  const runtimeToken = runtimeModelProxyApiKeyFromConfig(runtimeConfig);
+  let bridge: ProactiveStatusSnapshotPayload;
+  if (!runtimeToken) {
+    bridge = {
+      state: "error",
+      detail: "Runtime bridge auth token is not configured.",
+      recorded_at: null
+    };
+  } else if (runtimeStatus.status !== "running") {
+    bridge = {
+      state: "inactive",
+      detail: runtimeStatus.lastError?.trim() || "Embedded runtime is not running.",
+      recorded_at: null
+    };
+  } else {
+    const logTail = await readRuntimeLogTail();
+    const runtimeErrorDetail =
+      normalizeProactiveBridgeErrorDetail(
+        lastRegexCapture(logTail, /RuntimeError: Proactive bridge request failed: (.+)/)
+      ) ||
+      normalizeProactiveBridgeErrorDetail(lastRegexCapture(logTail, /Proactive bridge request failed: (.+)/));
+    if (runtimeErrorDetail) {
+      bridge = {
+        state: "error",
+        detail: runtimeErrorDetail,
+        recorded_at: null
+      };
+    } else if (logTail.includes("Remote proactive bridge poll failed")) {
+      bridge = {
+        state: "error",
+        detail: "Remote proactive bridge poll failed.",
+        recorded_at: null
+      };
+    } else {
+      bridge = {
+        state: "healthy",
+        detail: "No recent proactive bridge error detected. Delivery is not yet confirmed.",
+        recorded_at: null
+      };
+    }
+  }
+
+  let deliveryState = "idle";
+  let deliverySummary = "No proactive activity recorded yet.";
+  let deliveryDetail: string | null = null;
+  const heartbeatAgeSeconds = secondsSinceIso(heartbeat.recorded_at);
+  const heartbeatSettled = heartbeatAgeSeconds !== null && heartbeatAgeSeconds >= 120;
+  if (proposalCount > 0) {
+    deliveryState = "delivered";
+    deliverySummary = `${proposalCount} proactive proposal${proposalCount === 1 ? "" : "s"} available in this runtime.`;
+  } else if (heartbeat.state === "published" && bridge.state === "error") {
+    deliveryState = "blocked";
+    deliverySummary = "Heartbeat was sent, but proposal delivery into this runtime is blocked.";
+    deliveryDetail = bridge.detail;
+  } else if (heartbeat.state === "published" && !heartbeatSettled) {
+    deliveryState = "analyzing";
+    deliverySummary = "Heartbeat was sent. Remote proactive analysis is still in progress.";
+  } else if (heartbeat.state === "published") {
+    deliveryState = "no_proposal";
+    deliverySummary = "No proposal has been delivered since the last heartbeat.";
+    deliveryDetail =
+      "A heartbeat only asks the remote proactive agent to analyze the workspace. It may decide not to create a proposal.";
+  } else if (heartbeat.state === "failed") {
+    deliveryState = "error";
+    deliverySummary = "Workspace creation finished, but the proactive heartbeat failed.";
+    deliveryDetail = heartbeat.detail;
+  } else if (heartbeat.state === "skipped") {
+    deliveryState = "inactive";
+    deliverySummary = "Proactive delivery is disabled for this workspace.";
+    deliveryDetail = heartbeat.detail;
+  } else if (bridge.state === "error") {
+    deliveryState = "blocked";
+    deliverySummary = "The runtime cannot currently receive proactive jobs.";
+    deliveryDetail = bridge.detail;
+  }
+
+  return {
+    workspace_id: normalizedWorkspaceId,
+    proposal_count: proposalCount,
+    heartbeat,
+    bridge,
+    delivery_state: deliveryState,
+    delivery_summary: deliverySummary,
+    delivery_detail: deliveryDetail
+  };
+}
+
 async function listCronjobs(workspaceId: string, enabledOnly = false): Promise<CronjobListResponsePayload> {
   return requestRuntimeJson<CronjobListResponsePayload>({
     method: "GET",
@@ -3540,31 +4187,500 @@ async function updateTaskProposalState(
   });
 }
 
-async function collectLocalTemplateFiles(templateRoot: string): Promise<MaterializedTemplateFilePayload[]> {
+async function acceptTaskProposal(
+  payload: TaskProposalAcceptPayload
+): Promise<TaskProposalAcceptResponsePayload> {
+  return requestRuntimeJson<TaskProposalAcceptResponsePayload>({
+    method: "POST",
+    path: `/api/v1/task-proposals/${encodeURIComponent(payload.proposal_id)}/accept`,
+    payload: {
+      task_name: payload.task_name,
+      task_prompt: payload.task_prompt,
+      session_id: payload.session_id,
+      parent_session_id: payload.parent_session_id,
+      created_by: payload.created_by,
+      priority: payload.priority ?? 0,
+      model: payload.model ?? null
+    }
+  });
+}
+
+async function listAgentSessions(workspaceId: string): Promise<AgentSessionListResponsePayload> {
+  return requestRuntimeJson<AgentSessionListResponsePayload>({
+    method: "GET",
+    path: "/api/v1/agent-sessions",
+    params: {
+      workspace_id: workspaceId,
+      include_archived: false,
+      limit: 100,
+      offset: 0
+    }
+  });
+}
+
+const LOCAL_TEMPLATE_IGNORE_NAMES = new Set([
+  ".git",
+  "node_modules",
+  ".output",
+  "dist",
+  "build",
+  ".turbo",
+  "coverage",
+  ".DS_Store"
+]);
+const LOCAL_TEMPLATE_APP_BINDINGS: Record<string, string[]> = {
+  build_in_public: ["github", "twitter"],
+  crm: ["gmail", "sheets"],
+  gmail_assistant: ["gmail"],
+  social_media: ["twitter", "linkedin", "reddit"],
+  social_operator: ["twitter", "linkedin", "reddit"]
+};
+const LOCAL_APP_MCP_PORT_BASE = 13100;
+const LOCAL_DEFAULT_APP_MCP_TIMEOUT_MS = 60000;
+const LOCAL_MCP_TOOL_CALL_PATTERN = /\btool\(\s*["']([^"']+)["']/g;
+const LOCAL_MCP_SOURCE_PATH_PATTERN = /(^|\/)(mcp\.(ts|tsx|js|mjs|cjs|py))$/;
+
+interface LocalAppTemplateBinding {
+  lifecycle: Record<string, string> | null;
+  path: string | null;
+  timeoutMs: number;
+  toolNames: string[];
+}
+
+function shouldSkipLocalTemplateEntry(name: string) {
+  return LOCAL_TEMPLATE_IGNORE_NAMES.has(name);
+}
+
+function decodeMaterializedTemplateFile(file: MaterializedTemplateFilePayload): string {
+  return Buffer.from(file.content_base64, "base64").toString("utf-8");
+}
+
+function extractLocalAppToolNames(
+  appFiles: MaterializedTemplateFilePayload[],
+  declaredToolNames: string[]
+): string[] {
+  const toolNames = [...declaredToolNames];
+  const seenToolNames = new Set(toolNames);
+  for (const file of appFiles) {
+    if (!LOCAL_MCP_SOURCE_PATH_PATTERN.test(file.path)) {
+      continue;
+    }
+    const source = decodeMaterializedTemplateFile(file);
+    for (const match of source.matchAll(LOCAL_MCP_TOOL_CALL_PATTERN)) {
+      const toolName = match[1]?.trim();
+      if (!toolName || seenToolNames.has(toolName)) {
+        continue;
+      }
+      seenToolNames.add(toolName);
+      toolNames.push(toolName);
+    }
+  }
+  return toolNames;
+}
+
+function replaceOrAppendMaterializedTemplateFile(
+  files: MaterializedTemplateFilePayload[],
+  nextFile: MaterializedTemplateFilePayload
+) {
+  const index = files.findIndex((file) => file.path === nextFile.path);
+  if (index === -1) {
+    files.push(nextFile);
+    return;
+  }
+  files[index] = nextFile;
+}
+
+function localModulesRootCandidates() {
+  return [
+    internalOverride("HOLABOSS_MODULES_ROOT"),
+    path.resolve(process.cwd(), "..", "..", "holaboss-modules"),
+    path.resolve(process.cwd(), "..", "holaboss-modules"),
+    path.resolve(app.getAppPath(), "..", "..", "..", "..", "holaboss-modules")
+  ].filter(Boolean);
+}
+
+function resolveLocalModulesRoot() {
+  for (const candidate of localModulesRootCandidates()) {
+    const resolved = path.resolve(candidate);
+    if (existsSync(resolved)) {
+      return resolved;
+    }
+  }
+  return null;
+}
+
+async function collectLocalTrackedFiles(sourceRoot: string): Promise<MaterializedTemplateFilePayload[]> {
   const files: MaterializedTemplateFilePayload[] = [];
 
   async function walk(currentDir: string) {
     const entries = await fs.readdir(currentDir, { withFileTypes: true });
     for (const entry of entries) {
+      if (shouldSkipLocalTemplateEntry(entry.name)) {
+        continue;
+      }
       const absolutePath = path.join(currentDir, entry.name);
       if (entry.isDirectory()) {
         await walk(absolutePath);
         continue;
       }
-      const relativePath = path.relative(templateRoot, absolutePath).split(path.sep).join("/");
-      const content = await fs.readFile(absolutePath);
-      const stats = await fs.stat(absolutePath);
-      files.push({
-        path: relativePath,
-        content_base64: content.toString("base64"),
-        executable: Boolean(stats.mode & 0o111),
-      });
+      const relativePath = path.relative(sourceRoot, absolutePath).split(path.sep).join("/");
+      const stats = await fs.lstat(absolutePath);
+      if (stats.isSymbolicLink()) {
+        files.push({
+          path: relativePath,
+          content_base64: "",
+          executable: false,
+          symlink_target: await fs.readlink(absolutePath),
+        });
+      } else {
+        const content = await fs.readFile(absolutePath);
+        files.push({
+          path: relativePath,
+          content_base64: content.toString("base64"),
+          executable: Boolean(stats.mode & 0o111),
+        });
+      }
     }
   }
 
-  await walk(templateRoot);
+  await walk(sourceRoot);
   files.sort((left, right) => left.path.localeCompare(right.path));
   return files;
+}
+
+async function collectLocalDirectoryFiles(sourceRoot: string, relativeRoot: string): Promise<MaterializedTemplateFilePayload[]> {
+  const files: MaterializedTemplateFilePayload[] = [];
+
+  async function walk(currentDir: string) {
+    const entries = await fs.readdir(currentDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name === ".DS_Store") {
+        continue;
+      }
+      const absolutePath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(absolutePath);
+        continue;
+      }
+      const relativePath = path.join(relativeRoot, path.relative(sourceRoot, absolutePath)).split(path.sep).join("/");
+      const stats = await fs.lstat(absolutePath);
+      if (stats.isSymbolicLink()) {
+        files.push({
+          path: relativePath,
+          content_base64: "",
+          executable: false,
+          symlink_target: await fs.readlink(absolutePath)
+        });
+      } else {
+        const content = await fs.readFile(absolutePath);
+        files.push({
+          path: relativePath,
+          content_base64: content.toString("base64"),
+          executable: Boolean(stats.mode & 0o111)
+        });
+      }
+    }
+  }
+
+  if (!existsSync(sourceRoot)) {
+    return files;
+  }
+
+  await walk(sourceRoot);
+  files.sort((left, right) => left.path.localeCompare(right.path));
+  return files;
+}
+
+function extractLocalAppTemplateBinding(
+  appFiles: MaterializedTemplateFilePayload[],
+  appRuntimeFile: MaterializedTemplateFilePayload | null
+): LocalAppTemplateBinding | null {
+  if (!appRuntimeFile) {
+    return null;
+  }
+
+  const loaded = parseYaml(decodeMaterializedTemplateFile(appRuntimeFile));
+  if (!loaded || typeof loaded !== "object") {
+    return null;
+  }
+
+  const data = loaded as Record<string, unknown>;
+  const lifecycleSource = data.lifecycle && typeof data.lifecycle === "object"
+    ? (data.lifecycle as Record<string, unknown>)
+    : null;
+  const lifecycle: Record<string, string> = {};
+  for (const key of ["setup", "start", "stop"]) {
+    const value = lifecycleSource?.[key];
+    if (typeof value === "string" && value.trim()) {
+      lifecycle[key] = value.trim();
+    }
+  }
+
+  const mcpSource = data.mcp && typeof data.mcp === "object" ? (data.mcp as Record<string, unknown>) : null;
+  const healthchecksSource =
+    data.healthchecks && typeof data.healthchecks === "object"
+      ? (data.healthchecks as Record<string, unknown>)
+      : null;
+
+  let timeoutMs = LOCAL_DEFAULT_APP_MCP_TIMEOUT_MS;
+  for (const key of ["mcp", "api"]) {
+    const healthcheck = healthchecksSource?.[key];
+    if (!healthcheck || typeof healthcheck !== "object") {
+      continue;
+    }
+    const timeoutSeconds = (healthcheck as Record<string, unknown>).timeout_s;
+    if (typeof timeoutSeconds === "number" && Number.isFinite(timeoutSeconds)) {
+      timeoutMs = Math.max(1000, Math.round(timeoutSeconds * 1000));
+      break;
+    }
+    if (typeof timeoutSeconds === "string" && timeoutSeconds.trim()) {
+      const parsed = Number.parseInt(timeoutSeconds.trim(), 10);
+      if (Number.isFinite(parsed)) {
+        timeoutMs = Math.max(1000, parsed * 1000);
+        break;
+      }
+    }
+  }
+
+  const toolsSource = Array.isArray(data.tools) ? data.tools : [];
+  const declaredToolNames = toolsSource
+    .map((tool) => (tool && typeof tool === "object" && typeof (tool as Record<string, unknown>).name === "string"
+      ? String((tool as Record<string, unknown>).name).trim()
+      : ""))
+    .filter(Boolean);
+  const toolNames = extractLocalAppToolNames(appFiles, declaredToolNames);
+
+  const mcpEnabled = mcpSource?.enabled !== false;
+  const mcpPath =
+    mcpEnabled && typeof mcpSource?.path === "string" && mcpSource.path.trim()
+      ? mcpSource.path.trim()
+      : mcpEnabled
+        ? "/mcp"
+        : null;
+
+  if (Object.keys(lifecycle).length === 0 && !mcpPath) {
+    return null;
+  }
+
+  return {
+    lifecycle: Object.keys(lifecycle).length > 0 ? lifecycle : null,
+    path: mcpPath,
+    timeoutMs,
+    toolNames
+  };
+}
+
+function ensureWorkspaceMcpRegistry(
+  data: Record<string, unknown>
+): {
+  allowlist: Record<string, unknown>;
+  toolIds: string[];
+  servers: Record<string, unknown>;
+} {
+  const registry =
+    data.mcp_registry && typeof data.mcp_registry === "object"
+      ? (data.mcp_registry as Record<string, unknown>)
+      : {};
+  data.mcp_registry = registry;
+
+  const allowlist =
+    registry.allowlist && typeof registry.allowlist === "object"
+      ? (registry.allowlist as Record<string, unknown>)
+      : {};
+  registry.allowlist = allowlist;
+
+  const toolIds = Array.isArray(allowlist.tool_ids)
+    ? allowlist.tool_ids.filter((value): value is string => typeof value === "string")
+    : [];
+  allowlist.tool_ids = toolIds;
+
+  const servers =
+    registry.servers && typeof registry.servers === "object"
+      ? (registry.servers as Record<string, unknown>)
+      : {};
+  registry.servers = servers;
+
+  if (!registry.catalog || typeof registry.catalog !== "object") {
+    registry.catalog = {};
+  }
+
+  return { allowlist, toolIds, servers };
+}
+
+function appendApplicationToWorkspaceYaml(
+  workspaceYamlContent: string,
+  appId: string,
+  configPath: string,
+  appFiles: MaterializedTemplateFilePayload[],
+  appIndex: number
+) {
+  const loaded = parseYaml(workspaceYamlContent);
+  const data = loaded && typeof loaded === "object" ? (loaded as Record<string, unknown>) : {};
+  const applications = Array.isArray(data.applications) ? [...data.applications] : [];
+  let applicationEntry = applications.find(
+    (entry) => entry && typeof entry === "object" && String((entry as Record<string, unknown>).app_id || "") === appId
+  ) as Record<string, unknown> | undefined;
+
+  if (!applicationEntry) {
+    applicationEntry = { app_id: appId, config_path: configPath };
+    applications.push(applicationEntry);
+  } else {
+    applicationEntry.config_path = configPath;
+  }
+  data.applications = applications;
+
+  const binding = extractLocalAppTemplateBinding(
+    appFiles,
+    appFiles.find((file) => file.path === "app.runtime.yaml") ?? null
+  );
+  if (binding?.lifecycle) {
+    applicationEntry.lifecycle = binding.lifecycle;
+  }
+
+  if (binding?.path) {
+    const { toolIds, servers } = ensureWorkspaceMcpRegistry(data);
+    servers[appId] = {
+      type: "remote",
+      url: `http://localhost:${LOCAL_APP_MCP_PORT_BASE + appIndex}${binding.path}`,
+      enabled: true,
+      timeout_ms: binding.timeoutMs
+    };
+    const seenToolIds = new Set(toolIds);
+    for (const toolName of binding.toolNames) {
+      const toolId = `${appId}.${toolName}`;
+      if (!seenToolIds.has(toolId)) {
+        toolIds.push(toolId);
+        seenToolIds.add(toolId);
+      }
+    }
+  }
+
+  return stringifyYaml(data, { defaultStringType: "QUOTE_DOUBLE" }).trimEnd();
+}
+
+function readLocalTemplateAppIds(templateRoot: string, workspaceYamlContent: string) {
+  const loaded = parseYaml(workspaceYamlContent);
+  const data = loaded && typeof loaded === "object" ? (loaded as Record<string, unknown>) : {};
+  const applications = Array.isArray(data.applications) ? data.applications : [];
+  if (applications.length > 0) {
+    return [];
+  }
+
+  const templateId =
+    (typeof data.template_id === "string" && data.template_id.trim()) ||
+    path.basename(templateRoot).trim();
+  return LOCAL_TEMPLATE_APP_BINDINGS[templateId] ?? [];
+}
+
+async function enrichLocalTemplateWithApps(
+  templateRoot: string,
+  files: MaterializedTemplateFilePayload[]
+): Promise<MaterializedTemplateFilePayload[]> {
+  if (process.env.HOLABOSS_INTERNAL_DEV?.trim() !== "1") {
+    return files;
+  }
+
+  const workspaceYamlFile = files.find((file) => file.path === "workspace.yaml");
+  if (!workspaceYamlFile) {
+    return files;
+  }
+
+  const workspaceYamlContent = decodeMaterializedTemplateFile(workspaceYamlFile);
+  const appIds = readLocalTemplateAppIds(templateRoot, workspaceYamlContent);
+  if (appIds.length === 0) {
+    return files;
+  }
+
+  const modulesRoot = resolveLocalModulesRoot();
+  if (!modulesRoot) {
+    throw new Error("Local template enrichment needs holaboss-modules, but no local modules root was found.");
+  }
+
+  let nextWorkspaceYaml = workspaceYamlContent;
+  const nextFiles = [...files];
+  for (const [index, appId] of appIds.entries()) {
+    const appRoot = path.join(modulesRoot, appId);
+    if (!existsSync(appRoot)) {
+      throw new Error(`Local template enrichment could not find app module '${appId}' at '${appRoot}'.`);
+    }
+    const appFiles = await collectLocalTrackedFiles(appRoot);
+    const nodeModulesRoot = path.join(appRoot, "node_modules");
+    const hasLocalNodeModules = existsSync(nodeModulesRoot);
+    for (const appFile of appFiles) {
+      let nextFile = appFile;
+      if (appFile.path === "app.runtime.yaml") {
+        const loaded = parseYaml(decodeMaterializedTemplateFile(appFile));
+        const parsed = loaded && typeof loaded === "object" ? (loaded as Record<string, unknown>) : {};
+        parsed.app_id = appId;
+        if (hasLocalNodeModules && parsed.lifecycle && typeof parsed.lifecycle === "object") {
+          const lifecycle = parsed.lifecycle as Record<string, unknown>;
+          if (typeof lifecycle.setup === "string" && lifecycle.setup.trim()) {
+            lifecycle.setup = `if [ -d node_modules ]; then NODE_OPTIONS=--max-old-space-size=384 npm run build; else ${lifecycle.setup.trim()}; fi`;
+          }
+        }
+        nextFile = {
+          ...appFile,
+          content_base64: Buffer.from(stringifyYaml(parsed, { defaultStringType: "QUOTE_DOUBLE" }), "utf-8").toString("base64")
+        };
+      }
+      replaceOrAppendMaterializedTemplateFile(nextFiles, {
+        ...nextFile,
+        path: `apps/${appId}/${nextFile.path}`
+      });
+    }
+    nextWorkspaceYaml = appendApplicationToWorkspaceYaml(
+      nextWorkspaceYaml,
+      appId,
+      `apps/${appId}/app.runtime.yaml`,
+      appFiles,
+      index
+    );
+  }
+
+  replaceOrAppendMaterializedTemplateFile(nextFiles, {
+    path: "workspace.yaml",
+    content_base64: Buffer.from(`${nextWorkspaceYaml}\n`, "utf-8").toString("base64"),
+    executable: false
+  });
+  nextFiles.sort((left, right) => left.path.localeCompare(right.path));
+  return nextFiles;
+}
+
+async function copyLocalTemplateAppNodeModulesToWorkspace(templateRoot: string, workspaceId: string) {
+  if (process.env.HOLABOSS_INTERNAL_DEV?.trim() !== "1") {
+    return;
+  }
+
+  const workspaceYamlPath = path.join(templateRoot, "workspace.yaml");
+  if (!existsSync(workspaceYamlPath)) {
+    return;
+  }
+
+  const modulesRoot = resolveLocalModulesRoot();
+  if (!modulesRoot) {
+    return;
+  }
+
+  const workspaceYamlContent = await fs.readFile(workspaceYamlPath, "utf-8");
+  const appIds = readLocalTemplateAppIds(templateRoot, workspaceYamlContent);
+  if (appIds.length === 0) {
+    return;
+  }
+
+  const workspaceDir = workspaceDirectoryPath(workspaceId);
+  for (const appId of appIds) {
+    const sourceNodeModules = path.join(modulesRoot, appId, "node_modules");
+    if (!existsSync(sourceNodeModules)) {
+      continue;
+    }
+    const targetNodeModules = path.join(workspaceDir, "apps", appId, "node_modules");
+    await fs.rm(targetNodeModules, { recursive: true, force: true });
+    await fs.cp(sourceNodeModules, targetNodeModules, {
+      recursive: true,
+      dereference: false,
+      verbatimSymlinks: true
+    });
+  }
 }
 
 async function materializeLocalTemplate(payload: {
@@ -3577,7 +4693,10 @@ async function materializeLocalTemplate(payload: {
   }
 
   const metadata = await parseLocalTemplateMetadata(templateRoot);
-  const files = await collectLocalTemplateFiles(templateRoot);
+  const files = await enrichLocalTemplateWithApps(
+    templateRoot,
+    await collectLocalTrackedFiles(templateRoot)
+  );
   const totalBytes = files.reduce(
     (sum, file) => sum + Buffer.byteLength(file.content_base64, "base64"),
     0
@@ -3839,11 +4958,25 @@ function normalizeRequestedWorkspaceHarness(value: string | null | undefined): s
 }
 
 function requestedWorkspaceTemplateMode(payload: HolabossCreateWorkspacePayload): "template" | "empty" {
-  return payload.template_mode === "empty" ? "empty" : "template";
+  return payload.template_mode === "empty" || payload.template_mode === "empty_onboarding" ? "empty" : "template";
 }
 
 function workspaceDirectoryPath(workspaceId: string) {
   return path.join(runtimeWorkspaceRoot(), workspaceId);
+}
+
+function resolveWorkspaceScopedAbsolutePath(workspaceId: string, targetPath?: string | null) {
+  const workspaceRoot = path.resolve(workspaceDirectoryPath(workspaceId));
+  const requestedPath = targetPath && targetPath.trim().length > 0 ? targetPath : workspaceRoot;
+  const resolvedPath = path.resolve(requestedPath);
+  const relativeToRoot = path.relative(workspaceRoot, resolvedPath);
+  if (relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot)) {
+    throw new Error("Path is outside the active workspace.");
+  }
+  return {
+    workspaceRoot,
+    resolvedPath
+  };
 }
 
 function sanitizeAttachmentName(name: string): string {
@@ -3955,10 +5088,14 @@ async function applyMaterializedTemplateToWorkspace(
   for (const item of files) {
     const absolutePath = resolveWorkspaceMaterializedFilePath(workspaceDir, item.path);
     await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-    const content = Buffer.from(item.content_base64, "base64");
-    await fs.writeFile(absolutePath, content);
-    if (item.executable) {
-      await fs.chmod(absolutePath, 0o755);
+    if (typeof item.symlink_target === "string" && item.symlink_target.trim()) {
+      await fs.symlink(item.symlink_target, absolutePath);
+    } else {
+      const content = Buffer.from(item.content_base64, "base64");
+      await fs.writeFile(absolutePath, content);
+      if (item.executable) {
+        await fs.chmod(absolutePath, 0o755);
+      }
     }
   }
 }
@@ -4208,6 +5345,24 @@ function getWorkspaceRecord(workspaceId: string): WorkspaceRecordPayload | null 
 }
 
 async function listWorkspaces(): Promise<WorkspaceListResponsePayload> {
+  const holabossUserId = await controlPlaneWorkspaceUserId();
+  if (holabossUserId) {
+    return requestControlPlaneJson<WorkspaceListResponsePayload>({
+      service: "projects",
+      method: "GET",
+      path: "/api/v1/projects/workspaces",
+      params: {
+        holaboss_user_id: holabossUserId,
+        include_deleted: false,
+        limit: 100,
+        offset: 0
+      }
+    });
+  }
+  return listWorkspacesViaRuntime();
+}
+
+async function listWorkspacesViaRuntime(): Promise<WorkspaceListResponsePayload> {
   return requestRuntimeJson<WorkspaceListResponsePayload>({
     method: "GET",
     path: "/api/v1/workspaces",
@@ -4220,6 +5375,14 @@ async function listWorkspaces(): Promise<WorkspaceListResponsePayload> {
 }
 
 async function listInstalledApps(workspaceId: string): Promise<InstalledWorkspaceAppListResponsePayload> {
+  const lifecycle = await getWorkspaceLifecycle(workspaceId);
+  return {
+    apps: lifecycle.applications,
+    count: lifecycle.applications.length
+  };
+}
+
+async function listInstalledAppsViaRuntime(workspaceId: string): Promise<InstalledWorkspaceAppListResponsePayload> {
   return requestRuntimeJson<InstalledWorkspaceAppListResponsePayload>({
     method: "GET",
     path: "/api/v1/apps",
@@ -4230,6 +5393,27 @@ async function listInstalledApps(workspaceId: string): Promise<InstalledWorkspac
 }
 
 async function startInstalledApp(workspaceId: string, appId: string): Promise<WorkspaceAppLifecycleActionPayload> {
+  const holabossUserId = await controlPlaneWorkspaceUserId();
+  if (holabossUserId) {
+    const response = await requestControlPlaneJson<{ app_id: string; status: string }>({
+      service: "projects",
+      method: "POST",
+      path: `/api/v1/projects/workspaces/${encodeURIComponent(workspaceId)}/applications/${encodeURIComponent(appId)}/start`,
+      payload: {
+        holaboss_user_id: holabossUserId
+      }
+    });
+    return {
+      app_id: response.app_id,
+      status: response.status,
+      detail: `${response.app_id} ${response.status}.`,
+      ports: {}
+    };
+  }
+  return startInstalledAppViaRuntime(workspaceId, appId);
+}
+
+async function startInstalledAppViaRuntime(workspaceId: string, appId: string): Promise<WorkspaceAppLifecycleActionPayload> {
   return requestRuntimeJson<WorkspaceAppLifecycleActionPayload>({
     method: "POST",
     path: `/api/v1/apps/${encodeURIComponent(appId)}/start`,
@@ -4241,6 +5425,27 @@ async function startInstalledApp(workspaceId: string, appId: string): Promise<Wo
 }
 
 async function stopInstalledApp(workspaceId: string, appId: string): Promise<WorkspaceAppLifecycleActionPayload> {
+  const holabossUserId = await controlPlaneWorkspaceUserId();
+  if (holabossUserId) {
+    const response = await requestControlPlaneJson<{ app_id: string; status: string }>({
+      service: "projects",
+      method: "POST",
+      path: `/api/v1/projects/workspaces/${encodeURIComponent(workspaceId)}/applications/${encodeURIComponent(appId)}/stop`,
+      payload: {
+        holaboss_user_id: holabossUserId
+      }
+    });
+    return {
+      app_id: response.app_id,
+      status: response.status,
+      detail: `${response.app_id} ${response.status}.`,
+      ports: {}
+    };
+  }
+  return stopInstalledAppViaRuntime(workspaceId, appId);
+}
+
+async function stopInstalledAppViaRuntime(workspaceId: string, appId: string): Promise<WorkspaceAppLifecycleActionPayload> {
   return requestRuntimeJson<WorkspaceAppLifecycleActionPayload>({
     method: "POST",
     path: `/api/v1/apps/${encodeURIComponent(appId)}/stop`,
@@ -4249,6 +5454,171 @@ async function stopInstalledApp(workspaceId: string, appId: string): Promise<Wor
     },
     timeoutMs: 30000
   });
+}
+
+async function controlPlaneWorkspaceUserId(): Promise<string | null> {
+  if (!controlPlaneApiKey()) {
+    return null;
+  }
+  const runtimeConfig = await readRuntimeConfigFile();
+  const runtimeUserId = (runtimeConfig.user_id || "").trim();
+  if (runtimeUserId && runtimeUserId !== LOCAL_OSS_TEMPLATE_USER_ID) {
+    return runtimeUserId;
+  }
+
+  const authenticatedUser = await getAuthenticatedUser().catch(() => null);
+  const authId = authenticatedUser ? authUserId(authenticatedUser) : "";
+  return authId.trim() || null;
+}
+
+function workspaceReadinessFromApps(apps: InstalledWorkspaceAppPayload[]) {
+  const blockingApps = apps
+    .filter((app) => (app.build_status || "").trim().toLowerCase() !== "running")
+    .map((app) => ({
+      app_id: app.app_id,
+      status: app.build_status,
+      error: null
+    }));
+
+  if (blockingApps.length === 0) {
+    return {
+      ready: true,
+      reason: null,
+      blocking_apps: []
+    };
+  }
+
+  const prefix = blockingApps.some((app) => app.status === "failed")
+    ? "Workspace apps failed to start"
+    : blockingApps.some((app) => app.status === "building" || app.status === "pending")
+      ? "Workspace apps are still building"
+      : "Workspace apps are still starting";
+  const details = blockingApps.map((app) => `${app.app_id} (${app.status})`).join(", ");
+  return {
+    ready: false,
+    reason: `${prefix}: ${details}.`,
+    blocking_apps: blockingApps
+  };
+}
+
+function workspaceLifecyclePhaseFromState(
+  workspace: WorkspaceRecordPayload,
+  readiness: ReturnType<typeof workspaceReadinessFromApps>
+) {
+  const reason = readiness.reason?.trim() || null;
+  const blockingStatuses = new Set(readiness.blocking_apps.map((app) => (app.status || "").trim().toLowerCase()));
+
+  if ((workspace.status || "").trim().toLowerCase() === "error") {
+    return {
+      phase: "error",
+      phase_label: "Workspace error",
+      phase_detail: workspace.error_message || reason || "Workspace provisioning failed."
+    };
+  }
+  if ((workspace.status || "").trim().toLowerCase() === "provisioning") {
+    return {
+      phase: "provisioning_workspace",
+      phase_label: "Configuring workspace",
+      phase_detail: "Preparing the local workspace files and settings."
+    };
+  }
+  if (readiness.ready) {
+    return {
+      phase: "ready",
+      phase_label: "Workspace ready",
+      phase_detail: null
+    };
+  }
+  if (blockingStatuses.has("failed")) {
+    return {
+      phase: "error",
+      phase_label: "Workspace error",
+      phase_detail: reason || workspace.error_message || "Workspace apps failed to start."
+    };
+  }
+  if (blockingStatuses.has("building") || blockingStatuses.has("pending")) {
+    return {
+      phase: "building_apps",
+      phase_label: "Building apps",
+      phase_detail: reason || "Building workspace apps."
+    };
+  }
+  if (readiness.blocking_apps.length > 0) {
+    return {
+      phase: "starting_apps",
+      phase_label: "Starting apps",
+      phase_detail: reason || "Starting workspace apps."
+    };
+  }
+  return {
+    phase: "preparing_workspace",
+    phase_label: "Preparing workspace",
+    phase_detail: reason || "Finalizing workspace startup."
+  };
+}
+
+async function getWorkspaceLifecycle(workspaceId: string): Promise<WorkspaceLifecyclePayload> {
+  const holabossUserId = await controlPlaneWorkspaceUserId();
+  if (holabossUserId) {
+    return requestControlPlaneJson<WorkspaceLifecyclePayload>({
+      service: "projects",
+      method: "GET",
+      path: `/api/v1/projects/workspaces/${encodeURIComponent(workspaceId)}/lifecycle`,
+      params: {
+        holaboss_user_id: holabossUserId
+      }
+    });
+  }
+  return getWorkspaceLifecycleViaRuntime(workspaceId);
+}
+
+async function activateWorkspace(workspaceId: string): Promise<WorkspaceLifecyclePayload> {
+  const holabossUserId = await controlPlaneWorkspaceUserId();
+  if (holabossUserId) {
+    return requestControlPlaneJson<WorkspaceLifecyclePayload>({
+      service: "projects",
+      method: "POST",
+      path: `/api/v1/projects/workspaces/${encodeURIComponent(workspaceId)}/activate`,
+      payload: {
+        holaboss_user_id: holabossUserId
+      }
+    });
+  }
+
+  const installedApps = await listInstalledAppsViaRuntime(workspaceId);
+  for (const app of installedApps.apps) {
+    const status = (app.build_status || "").trim().toLowerCase();
+    if (status === "running" || status === "building") {
+      continue;
+    }
+    await startInstalledAppViaRuntime(workspaceId, app.app_id);
+  }
+  return getWorkspaceLifecycleViaRuntime(workspaceId);
+}
+
+async function getWorkspaceLifecycleViaRuntime(workspaceId: string): Promise<WorkspaceLifecyclePayload> {
+  const workspace =
+    getWorkspaceRecord(workspaceId) ??
+    (await listWorkspacesViaRuntime()).items.find((item) => item.id === workspaceId) ??
+    null;
+  if (!workspace) {
+    throw new Error(`Workspace ${workspaceId} not found.`);
+  }
+
+  const installedApps = await listInstalledAppsViaRuntime(workspaceId);
+  const readiness = workspaceReadinessFromApps(installedApps.apps);
+  const phaseState = workspaceLifecyclePhaseFromState(workspace, readiness);
+
+  return {
+    workspace,
+    applications: installedApps.apps,
+    ready: readiness.ready,
+    reason: readiness.reason,
+    phase: phaseState.phase,
+    phase_label: phaseState.phase_label,
+    phase_detail: phaseState.phase_detail,
+    blocking_apps: readiness.blocking_apps
+  };
 }
 
 async function listOutputs(workspaceId: string): Promise<WorkspaceOutputListResponsePayload> {
@@ -4571,6 +5941,34 @@ function renderEmptyWorkspaceYaml() {
   ].join("\n");
 }
 
+function renderEmptyOnboardingGuide() {
+  return [
+    "# Workspace Onboarding",
+    "",
+    "Use this conversation to set up the workspace before regular execution starts.",
+    "",
+    "## Objectives",
+    "",
+    "- Ask concise questions to understand what this workspace is for.",
+    "- Capture durable facts, preferences, and constraints.",
+    "- Do not start execution work until onboarding is complete.",
+    "",
+    "## Gather",
+    "",
+    "- Primary goal for this workspace",
+    "- Preferred outputs or deliverables",
+    "- Style or tone preferences",
+    "- Tools, accounts, or apps that matter",
+    "- Constraints, deadlines, or things to avoid",
+    "",
+    "## Completion",
+    "",
+    "- Summarize the durable facts you collected.",
+    "- Ask the user to confirm the summary is correct.",
+    "- When the user confirms, request onboarding completion."
+  ].join("\n");
+}
+
 async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise<WorkspaceResponsePayload> {
   await ensureRuntimeBindingReadyForWorkspaceFlow("workspace_create");
   const mainSessionId = crypto.randomUUID();
@@ -4578,6 +5976,23 @@ async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise
   const templateMode = requestedWorkspaceTemplateMode(payload);
   const templateRootPath = payload.template_root_path?.trim() || "";
   const templateName = payload.template_name?.trim() || "";
+  if (templateMode !== "empty" && !templateRootPath && templateName) {
+    const holabossUserId = (payload.holaboss_user_id || "").trim();
+    if (controlPlaneApiKey() && holabossUserId && holabossUserId !== LOCAL_OSS_TEMPLATE_USER_ID) {
+      return requestControlPlaneJson<WorkspaceResponsePayload>({
+        service: "projects",
+        method: "POST",
+        path: "/api/v1/projects/workspaces",
+        payload: {
+          holaboss_user_id: holabossUserId,
+          name: payload.name,
+          template_name: templateName,
+          template_ref: payload.template_ref,
+          template_commit: payload.template_commit
+        }
+      });
+    }
+  }
   let materializedTemplate: MaterializeTemplateResponsePayload | null = null;
   let resolvedTemplate: ResolvedTemplatePayload | null = null;
   if (templateMode === "empty") {
@@ -4628,12 +6043,20 @@ async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise
     const workspaceDir = workspaceDirectoryPath(workspaceId);
     const workspaceAgentsPath = path.join(workspaceDir, "AGENTS.md");
     const workspaceYamlPath = path.join(workspaceDir, "workspace.yaml");
+    const workspaceOnboardPath = path.join(workspaceDir, "ONBOARD.md");
+    const wantsEmptyOnboardingScaffold = payload.template_mode === "empty_onboarding";
     if (templateMode === "empty") {
       await fs.mkdir(path.join(workspaceDir, "skills"), { recursive: true });
       await fs.writeFile(workspaceAgentsPath, "", "utf-8");
       await fs.writeFile(workspaceYamlPath, `${renderEmptyWorkspaceYaml()}\n`, "utf-8");
+      if (wantsEmptyOnboardingScaffold) {
+        await fs.writeFile(workspaceOnboardPath, `${renderEmptyOnboardingGuide()}\n`, "utf-8");
+      }
     } else if (materializedTemplate && resolvedTemplate) {
       await applyMaterializedTemplateToWorkspace(workspaceId, materializedTemplate.files);
+      if (templateRootPath) {
+        await copyLocalTemplateAppNodeModulesToWorkspace(templateRootPath, workspaceId);
+      }
 
       let workspaceYamlExists = true;
       try {
@@ -4697,10 +6120,16 @@ async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise
         }).catch(() => updated);
       }
     }
-    await emitWorkspaceReadyHeartbeat({
-      workspaceId,
-      holabossUserId: payload.holaboss_user_id
-    });
+    try {
+      await emitWorkspaceReadyHeartbeat({
+        workspaceId,
+        holabossUserId: payload.holaboss_user_id
+      });
+    } catch (error) {
+      throw new Error(
+        contextualWorkspaceCreateError("Workspace created locally, but the workspace-ready heartbeat was not confirmed", error)
+      );
+    }
     return updated;
   } catch (error) {
     await requestRuntimeJson<WorkspaceResponsePayload>({
@@ -5001,7 +6430,10 @@ async function openSessionOutputStream(
             headers: {
               Accept: "text/event-stream"
             },
-            timeout: 30000
+            // Session output uses a long-lived SSE connection. Let runtime-side
+            // queue and runner recovery determine terminal failure instead of
+            // aborting the desktop stream after 30s of quiet.
+            timeout: 0
           },
           (response) => {
             const statusCode = response.statusCode ?? 0;
@@ -5311,6 +6743,7 @@ async function stopEmbeddedRuntime() {
   const running = runtimeProcess;
   runtimeProcess = null;
   if (!running) {
+    await stopEmbeddedRuntimeOpencodeSidecars();
     if (runtimeStatus.status === "running" || runtimeStatus.status === "starting") {
       runtimeStatus = withDesktopBrowserStatus({
         ...runtimeStatus,
@@ -5368,6 +6801,8 @@ async function stopEmbeddedRuntime() {
       settle();
     }
   });
+
+  await stopEmbeddedRuntimeOpencodeSidecars();
 }
 
 async function startEmbeddedRuntime() {
@@ -5435,6 +6870,12 @@ async function startEmbeddedRuntime() {
 
   await fs.mkdir(sandboxRoot, { recursive: true });
   await bootstrapRuntimeDatabase();
+  const runtimeConfig = await readRuntimeConfigFile();
+  const runtimeAuthToken = runtimeModelProxyApiKeyFromConfig(runtimeConfig);
+  const runtimeUserId = (runtimeConfig.user_id || "").trim();
+  const runtimeModelProxyBaseUrl = (runtimeConfig.model_proxy_base_url || "").trim();
+  const runtimeDefaultModel = (runtimeConfig.default_model || "").trim();
+  const controlPlaneBaseUrl = (runtimeConfig.control_plane_base_url || "").trim() || DESKTOP_CONTROL_PLANE_BASE_URL;
 
   if (await isRuntimeHealthy(url)) {
     return refreshRuntimeStatus();
@@ -5448,12 +6889,17 @@ async function startEmbeddedRuntime() {
       SANDBOX_AGENT_BIND_HOST: "127.0.0.1",
       SANDBOX_AGENT_BIND_PORT: String(RUNTIME_API_PORT),
       OPENCODE_SERVER_HOST: "127.0.0.1",
-      OPENCODE_SERVER_PORT: String(RUNTIME_OPENCODE_PORT),
+      HOLABOSS_EMBEDDED_RUNTIME: "1",
       SANDBOX_AGENT_HARNESS: harness,
       HOLABOSS_RUNTIME_WORKFLOW_BACKEND: workflowBackend,
       HOLABOSS_RUNTIME_DB_PATH: runtimeDatabasePath(),
       PROACTIVE_ENABLE_REMOTE_BRIDGE: "1",
       PROACTIVE_BRIDGE_BASE_URL: proactiveBaseUrl(),
+      HOLABOSS_BACKEND_BASE_URL: controlPlaneBaseUrl,
+      ...(runtimeAuthToken ? { HOLABOSS_SANDBOX_AUTH_TOKEN: runtimeAuthToken } : {}),
+      ...(runtimeUserId ? { HOLABOSS_USER_ID: runtimeUserId } : {}),
+      ...(runtimeModelProxyBaseUrl ? { HOLABOSS_MODEL_PROXY_BASE_URL: runtimeModelProxyBaseUrl } : {}),
+      ...(runtimeDefaultModel ? { HOLABOSS_DEFAULT_MODEL: runtimeDefaultModel } : {}),
       PYTHONDONTWRITEBYTECODE: "1"
     },
     stdio: "pipe"
@@ -5715,8 +7161,10 @@ function getFilePreviewKind(targetPath: string) {
   return { extension, kind: "unsupported" as const };
 }
 
-async function readFilePreview(targetPath: string): Promise<FilePreviewPayload> {
-  const absolutePath = path.resolve(targetPath);
+async function readFilePreview(targetPath: string, workspaceId?: string | null): Promise<FilePreviewPayload> {
+  const absolutePath = workspaceId?.trim()
+    ? resolveWorkspaceScopedAbsolutePath(workspaceId, targetPath).resolvedPath
+    : path.resolve(targetPath);
   const stat = await fs.stat(absolutePath);
 
   if (stat.isDirectory()) {
@@ -5782,14 +7230,17 @@ async function readFilePreview(targetPath: string): Promise<FilePreviewPayload> 
   };
 }
 
-async function writeTextFile(targetPath: string, content: string): Promise<FilePreviewPayload> {
-  const absolutePath = path.resolve(targetPath);
+async function writeTextFile(targetPath: string, content: string, workspaceId?: string | null): Promise<FilePreviewPayload> {
+  const absolutePath = workspaceId?.trim()
+    ? resolveWorkspaceScopedAbsolutePath(workspaceId, targetPath).resolvedPath
+    : path.resolve(targetPath);
   await fs.writeFile(absolutePath, content, "utf-8");
-  return readFilePreview(absolutePath);
+  return readFilePreview(absolutePath, workspaceId);
 }
 
-async function listDirectory(targetPath?: string | null): Promise<DirectoryPayload> {
-  const initialPath = targetPath && targetPath.trim().length > 0 ? targetPath : runtimeSandboxRoot();
+async function listDirectory(targetPath?: string | null, workspaceId?: string | null): Promise<DirectoryPayload> {
+  const workspaceScope = workspaceId?.trim() ? resolveWorkspaceScopedAbsolutePath(workspaceId, targetPath) : null;
+  const initialPath = workspaceScope ? workspaceScope.resolvedPath : targetPath && targetPath.trim().length > 0 ? targetPath : runtimeSandboxRoot();
   const resolvedPath = path.resolve(initialPath);
   await fs.mkdir(resolvedPath, { recursive: true });
   const stat = await fs.stat(resolvedPath);
@@ -5824,7 +7275,7 @@ async function listDirectory(targetPath?: string | null): Promise<DirectoryPaylo
     return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
   });
 
-  const parsedRoot = path.parse(resolvedPath).root;
+  const parsedRoot = workspaceScope?.workspaceRoot || path.parse(resolvedPath).root;
   const normalizedCurrent = path.normalize(resolvedPath);
   const normalizedRoot = path.normalize(parsedRoot);
   const parentPath = normalizedCurrent === normalizedRoot ? null : path.dirname(normalizedCurrent);
@@ -5935,25 +7386,6 @@ function createAuthPopupHtml() {
         letter-spacing: 0.14em;
         text-transform: uppercase;
       }
-      .runtimeLine {
-        margin-top: 14px;
-        border-radius: 16px;
-        border: 1px solid var(--popup-border-soft);
-        background: color-mix(in srgb, var(--popup-control-bg) 68%, transparent);
-        padding: 12px 14px;
-      }
-      .runtimeLabel {
-        font-size: 10px;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-        color: var(--popup-text-subtle);
-      }
-      .runtimeValue {
-        margin-top: 6px;
-        font-size: 12px;
-        line-height: 1.5;
-        color: var(--popup-text);
-      }
       .content {
         flex: 1 1 auto;
         min-height: 0;
@@ -6015,6 +7447,13 @@ function createAuthPopupHtml() {
         transform: translateY(-1px);
         border-color: var(--popup-border-soft);
         background: color-mix(in srgb, var(--popup-control-bg) 72%, transparent);
+      }
+      .menuItem:focus,
+      .menuItem:focus-visible,
+      .button:focus,
+      .button:focus-visible {
+        outline: none;
+        box-shadow: none;
       }
       .menuLead {
         min-width: 0;
@@ -6102,11 +7541,6 @@ function createAuthPopupHtml() {
             <div id="identity" class="identity">Loading session...</div>
           </div>
           <div id="badge" class="badge idle">Checking</div>
-        </div>
-
-        <div class="runtimeLine">
-          <div class="runtimeLabel">Desktop status</div>
-          <div id="runtimeValue" class="runtimeValue">Checking local runtime connection...</div>
         </div>
       </div>
 
@@ -6212,7 +7646,6 @@ function createAuthPopupHtml() {
         identityName: document.getElementById("identityName"),
         identity: document.getElementById("identity"),
         badge: document.getElementById("badge"),
-        runtimeValue: document.getElementById("runtimeValue"),
         notice: document.getElementById("notice"),
         signIn: document.getElementById("signIn"),
         signOut: document.getElementById("signOut"),
@@ -6248,23 +7681,14 @@ function createAuthPopupHtml() {
         && Boolean((state.runtimeConfig?.sandboxId || "").trim())
         && Boolean((state.runtimeConfig?.modelProxyBaseUrl || "").trim());
 
-      const runtimeStatusLabel = (isSignedIn) => {
-        if (state.runtimeStatus?.status === "running") {
-          return "Runtime connected and running.";
-        }
-        if (state.runtimeStatus?.status === "starting") {
-          return "Runtime is starting.";
-        }
-        if (state.runtimeStatus?.status === "error") {
-          return state.runtimeStatus?.lastError || "Runtime needs attention.";
-        }
-        if (runtimeBindingReady()) {
-          return "Runtime connected and ready.";
-        }
-        return isSignedIn ? "Finishing runtime setup." : "Sign in to connect desktop features.";
-      };
+      let lastOpenAnimationAt = 0;
 
       const restartOpenAnimation = () => {
+        const now = performance.now();
+        if (now - lastOpenAnimationAt < 220) {
+          return;
+        }
+        lastOpenAnimationAt = now;
         document.body.classList.remove("popup-opening");
         void document.body.offsetWidth;
         document.body.classList.add("popup-opening");
@@ -6272,6 +7696,7 @@ function createAuthPopupHtml() {
 
       const render = () => {
         const isSignedIn = Boolean(sessionUserId(state.user));
+        const isCheckingSession = state.isPending;
         const hasError = Boolean(state.authError);
         const ready = runtimeBindingReady();
         const badgeTone = hasError ? "error" : ready ? "ready" : isSignedIn ? "syncing" : "idle";
@@ -6283,14 +7708,13 @@ function createAuthPopupHtml() {
         els.identity.textContent = isSignedIn ? (sessionEmail(state.user) || sessionUserId(state.user) || "Signed in") : "Not connected";
         els.badge.className = "badge " + badgeTone;
         els.badge.textContent = badgeLabel;
-        els.runtimeValue.textContent = runtimeStatusLabel(isSignedIn);
-        els.accountMeta.textContent = isSignedIn ? (ready ? "Connected" : "Syncing setup") : "Sign in required";
+        els.accountMeta.textContent = isCheckingSession ? "Checking session" : isSignedIn ? (ready ? "Connected" : "Syncing setup") : "Sign in required";
 
-        els.signIn.hidden = isSignedIn;
+        els.signIn.hidden = isSignedIn || isCheckingSession;
         els.signIn.disabled = state.isStartingSignIn;
         els.signIn.textContent = state.isStartingSignIn ? "Opening sign-in..." : "Connect account";
 
-        els.signOut.hidden = !isSignedIn;
+        els.signOut.hidden = !isSignedIn || isCheckingSession;
         els.signOut.disabled = state.isSigningOut;
         els.notice.hidden = !noticeText;
         els.notice.className = "message " + (state.authError ? "error" : "success");
@@ -6431,6 +7855,7 @@ function createAuthPopupHtml() {
         restartOpenAnimation();
       });
 
+      render();
       Promise.all([refreshSession(), refreshConfig(), refreshRuntimeStatus()]).then(() => render());
     </script>
   </body>
@@ -6516,6 +7941,24 @@ function getActiveBrowserTab(workspaceId?: string | null): BrowserTabRecord | nu
     return null;
   }
   return workspace.tabs.get(workspace.activeTabId) ?? null;
+}
+
+function syncMainWindowClosedListenerBudget() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  let tabCount = 0;
+  for (const workspace of browserWorkspaces.values()) {
+    tabCount += workspace.tabs.size;
+  }
+
+  // The desktop browser keeps many tab views alive at once, so the window needs
+  // a higher close-listener budget than Node's default warning threshold.
+  const desiredBudget = Math.max(10, tabCount + MAIN_WINDOW_CLOSED_LISTENER_BUFFER);
+  if (mainWindow.getMaxListeners() < desiredBudget) {
+    mainWindow.setMaxListeners(desiredBudget);
+  }
 }
 
 function applyBoundsToTab(workspaceId: string, tabId: string) {
@@ -6709,6 +8152,7 @@ function createBrowserTab(
     initialized: !hasInitialUrl
   });
   workspace.tabs.set(tabId, { view, state });
+  syncMainWindowClosedListenerBudget();
 
   view.setBounds(browserBounds);
   view.setAutoResize({ width: false, height: false, horizontal: false, vertical: false });
@@ -6782,11 +8226,15 @@ function createBrowserTab(
     window.once("ready-to-show", () => {
       window.show();
     });
-    window.on("closed", () => {
-      if (browserPopupWindow === window) {
-        browserPopupWindow = null;
-      }
-    });
+    if (!browserPopupCleanupBound.has(window)) {
+      browserPopupCleanupBound.add(window);
+      window.once("closed", () => {
+        browserPopupCleanupBound.delete(window);
+        if (browserPopupWindow === window) {
+          browserPopupWindow = null;
+        }
+      });
+    }
   });
   view.webContents.setZoomFactor(1);
   view.webContents.setVisualZoomLevelLimits(1, 1).catch(() => undefined);
@@ -7311,7 +8759,7 @@ function ensureAuthPopupWindow() {
     clearScheduledAuthPopupHide();
   });
 
-  authPopupWindow.on("closed", () => {
+  authPopupWindow.once("closed", () => {
     clearScheduledAuthPopupHide();
     authPopupWindow = null;
   });
@@ -7436,7 +8884,7 @@ function ensureDownloadsPopupWindow() {
     downloadsPopupWindow?.hide();
   });
 
-  downloadsPopupWindow.on("closed", () => {
+  downloadsPopupWindow.once("closed", () => {
     downloadsPopupWindow = null;
   });
 
@@ -7701,7 +9149,7 @@ function ensureHistoryPopupWindow() {
     historyPopupWindow?.hide();
   });
 
-  historyPopupWindow.on("closed", () => {
+  historyPopupWindow.once("closed", () => {
     historyPopupWindow = null;
   });
 
@@ -7965,7 +9413,7 @@ function ensureOverflowPopupWindow() {
     overflowPopupWindow?.hide();
   });
 
-  overflowPopupWindow.on("closed", () => {
+  overflowPopupWindow.once("closed", () => {
     overflowPopupWindow = null;
   });
 
@@ -8007,7 +9455,7 @@ function ensureAddressSuggestionsPopupWindow() {
     }
   });
 
-  addressSuggestionsPopupWindow.on("closed", () => {
+  addressSuggestionsPopupWindow.once("closed", () => {
     addressSuggestionsPopupWindow = null;
   });
 
@@ -8117,6 +9565,7 @@ function createMainWindow() {
   });
 
   mainWindow = win;
+  syncMainWindowClosedListenerBudget();
   browserBounds = { x: 0, y: 0, width: 0, height: 0 };
   activeBrowserWorkspaceId = "";
   for (const workspaceId of Array.from(browserWorkspaces.keys())) {
@@ -8158,7 +9607,7 @@ function createMainWindow() {
     win.show();
   });
 
-  win.on("closed", () => {
+  win.once("closed", () => {
     authPopupWindow?.close();
     authPopupWindow = null;
     addressSuggestionsPopupWindow?.close();
@@ -8219,14 +9668,29 @@ app.whenReady().then(async () => {
   await loadBrowserPersistence();
   await bootstrapRuntimeDatabase();
 
-  handleTrustedIpc("fs:listDirectory", ["main"], async (_event, targetPath?: string | null) => listDirectory(targetPath));
-  handleTrustedIpc("fs:readFilePreview", ["main"], async (_event, targetPath: string) => readFilePreview(targetPath));
-  handleTrustedIpc("fs:writeTextFile", ["main"], async (_event, targetPath: string, content: string) =>
-    writeTextFile(targetPath, content)
+  handleTrustedIpc("fs:listDirectory", ["main"], async (_event, targetPath?: string | null, workspaceId?: string | null) =>
+    listDirectory(targetPath, workspaceId)
   );
-  handleTrustedIpc("fs:getBookmarks", ["main"], () => fileBookmarks);
-  handleTrustedIpc("fs:addBookmark", ["main"], async (_event, targetPath: string, label?: string) => {
-    const resolvedPath = path.resolve(targetPath);
+  handleTrustedIpc("fs:readFilePreview", ["main"], async (_event, targetPath: string, workspaceId?: string | null) =>
+    readFilePreview(targetPath, workspaceId)
+  );
+  handleTrustedIpc("fs:writeTextFile", ["main"], async (_event, targetPath: string, content: string, workspaceId?: string | null) =>
+    writeTextFile(targetPath, content, workspaceId)
+  );
+  handleTrustedIpc("fs:getBookmarks", ["main"], (_event, workspaceId?: string | null) => {
+    if (!workspaceId?.trim()) {
+      return fileBookmarks;
+    }
+    const workspaceRoot = path.resolve(workspaceDirectoryPath(workspaceId));
+    return fileBookmarks.filter((bookmark) => {
+      const relativeToRoot = path.relative(workspaceRoot, path.resolve(bookmark.targetPath));
+      return !(relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot));
+    });
+  });
+  handleTrustedIpc("fs:addBookmark", ["main"], async (_event, targetPath: string, label?: string, workspaceId?: string | null) => {
+    const resolvedPath = workspaceId?.trim()
+      ? resolveWorkspaceScopedAbsolutePath(workspaceId, targetPath).resolvedPath
+      : path.resolve(targetPath);
     const stat = await fs.stat(resolvedPath);
     const nextLabel = label?.trim() || path.basename(resolvedPath) || resolvedPath;
     const existing = fileBookmarks.find((bookmark) => bookmark.targetPath === resolvedPath);
@@ -8242,7 +9706,12 @@ app.whenReady().then(async () => {
         await persistFileBookmarks();
       }
 
-      return fileBookmarks;
+      return workspaceId?.trim()
+        ? fileBookmarks.filter((bookmark) => {
+            const relativeToRoot = path.relative(path.resolve(workspaceDirectoryPath(workspaceId)), path.resolve(bookmark.targetPath));
+            return !(relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot));
+          })
+        : fileBookmarks;
     }
 
     fileBookmarks = [
@@ -8257,7 +9726,12 @@ app.whenReady().then(async () => {
     ];
     emitFileBookmarksState();
     await persistFileBookmarks();
-    return fileBookmarks;
+    return workspaceId?.trim()
+      ? fileBookmarks.filter((bookmark) => {
+          const relativeToRoot = path.relative(path.resolve(workspaceDirectoryPath(workspaceId)), path.resolve(bookmark.targetPath));
+          return !(relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot));
+        })
+      : fileBookmarks;
   });
   handleTrustedIpc("fs:removeBookmark", ["main"], async (_event, bookmarkId: string) => {
     fileBookmarks = fileBookmarks.filter((bookmark) => bookmark.id !== bookmarkId);
@@ -8383,6 +9857,12 @@ app.whenReady().then(async () => {
   handleTrustedIpc("workspace:listMarketplaceTemplates", ["main"], async () => listMarketplaceTemplates());
   handleTrustedIpc("workspace:pickTemplateFolder", ["main"], async () => pickTemplateFolder());
   handleTrustedIpc("workspace:listWorkspaces", ["main", "auth-popup"], async () => listWorkspaces());
+  handleTrustedIpc("workspace:getWorkspaceLifecycle", ["main"], async (_event, workspaceId: string) =>
+    getWorkspaceLifecycle(workspaceId)
+  );
+  handleTrustedIpc("workspace:activateWorkspace", ["main"], async (_event, workspaceId: string) =>
+    activateWorkspace(workspaceId)
+  );
   handleTrustedIpc("workspace:listInstalledApps", ["main"], async (_event, workspaceId: string) => listInstalledApps(workspaceId));
   handleTrustedIpc("workspace:startInstalledApp", ["main"], async (_event, workspaceId: string, appId: string) =>
     startInstalledApp(workspaceId, appId)
@@ -8404,12 +9884,17 @@ app.whenReady().then(async () => {
   );
   handleTrustedIpc("workspace:deleteCronjob", ["main"], async (_event, jobId: string) => deleteCronjob(jobId));
   handleTrustedIpc("workspace:listTaskProposals", ["main"], async (_event, workspaceId: string) => listTaskProposals(workspaceId));
+  handleTrustedIpc("workspace:acceptTaskProposal", ["main"], async (_event, payload: TaskProposalAcceptPayload) =>
+    acceptTaskProposal(payload)
+  );
+  handleTrustedIpc("workspace:getProactiveStatus", ["main"], async (_event, workspaceId: string) => getProactiveStatus(workspaceId));
   handleTrustedIpc("workspace:updateTaskProposalState", ["main"], async (_event, proposalId: string, state: string) =>
     updateTaskProposalState(proposalId, state)
   );
   handleTrustedIpc("workspace:enqueueRemoteDemoTaskProposal", ["main"], async (_event, payload: DemoTaskProposalRequestPayload) =>
     enqueueRemoteDemoTaskProposal(payload)
   );
+  handleTrustedIpc("workspace:listAgentSessions", ["main"], async (_event, workspaceId: string) => listAgentSessions(workspaceId));
   handleTrustedIpc("workspace:listRuntimeStates", ["main"], async (_event, workspaceId: string) => listRuntimeStates(workspaceId));
   handleTrustedIpc("workspace:getSessionHistory", ["main"], async (_event, payload: { sessionId: string; workspaceId: string }) =>
     getSessionHistory(payload.sessionId, payload.workspaceId)
@@ -8686,7 +10171,19 @@ app.on("window-all-closed", () => {
   }
 });
 
-app.on("before-quit", () => {
-  void stopDesktopBrowserService();
-  void stopEmbeddedRuntime();
+app.on("before-quit", (event) => {
+  if (appQuitCleanupCompleted) {
+    return;
+  }
+
+  event.preventDefault();
+
+  if (appQuitCleanupPromise) {
+    return;
+  }
+
+  void performAppQuitCleanup().finally(() => {
+    appQuitCleanupCompleted = true;
+    app.quit();
+  });
 });

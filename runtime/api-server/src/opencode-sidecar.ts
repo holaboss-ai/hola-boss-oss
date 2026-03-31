@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { spawn } from "node:child_process";
@@ -35,7 +36,7 @@ export interface OpencodeSidecarCliRequest {
   workspace_id: string;
   host: string;
   port: number;
-  readiness_url: string;
+  readiness_url?: string;
   ready_timeout_s: number;
   config_fingerprint: string;
   allow_reuse_existing: boolean;
@@ -59,6 +60,39 @@ function opencodeStatePath(workspaceRoot: string): string {
 
 function opencodeServerLogPath(workspaceRoot: string): string {
   return path.join(stateDir(workspaceRoot), "opencode-server.log");
+}
+
+function normalizeBaseUrl(url: string | null | undefined): string | null {
+  const trimmed = (url ?? "").trim().replace(/\/+$/, "");
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed.endsWith("/mcp")) {
+    return trimmed.slice(0, -4) || null;
+  }
+  return trimmed;
+}
+
+function baseUrlFor(host: string, port: number): string {
+  return `http://${host}:${port}`;
+}
+
+function readinessUrlFor(baseUrl: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}/mcp`;
+}
+
+function portFromUrl(url: string | null | undefined): number | null {
+  const normalized = normalizeBaseUrl(url);
+  if (!normalized) {
+    return null;
+  }
+  try {
+    const parsed = new URL(normalized);
+    const port = Number.parseInt(parsed.port, 10);
+    return Number.isFinite(port) && port > 0 ? port : null;
+  } catch {
+    return null;
+  }
 }
 
 function decodeCliRequest(encoded: string): OpencodeSidecarCliRequest {
@@ -95,6 +129,11 @@ function readOpencodeSidecarState(workspaceRoot: string): Partial<OpencodeStateE
   } catch {
     return {};
   }
+}
+
+export function readOpencodeSidecarBaseUrl(workspaceRoot: string): string | null {
+  const persisted = readOpencodeSidecarState(workspaceRoot);
+  return normalizeBaseUrl(typeof persisted.url === "string" ? persisted.url : null);
 }
 
 function writeOpencodeSidecarState(workspaceRoot: string, entry: OpencodeStateEntry): void {
@@ -228,6 +267,43 @@ async function waitForOpencodeReady(
   throw new Error(`OpenCode sidecar readiness timed out for ${url}`);
 }
 
+async function canListenOnPort(host: string, port: number): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const server = net.createServer();
+    server.once("error", () => {
+      resolve(false);
+    });
+    server.listen(port, host, () => {
+      server.close(() => resolve(true));
+    });
+  });
+}
+
+async function findAvailablePort(host: string): Promise<number> {
+  return await new Promise<number>((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, host, () => {
+      const address = server.address();
+      const port =
+        address && typeof address === "object" && typeof address.port === "number" && Number.isFinite(address.port)
+          ? address.port
+          : null;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        if (!port || port <= 0) {
+          reject(new Error("failed to allocate an OpenCode sidecar port"));
+          return;
+        }
+        resolve(port);
+      });
+    });
+  });
+}
+
 function defaultSpawnProcess(command: string, args: string[], options: SpawnOptions): ChildProcessLike {
   return spawn(command, args, options);
 }
@@ -274,15 +350,20 @@ export async function restartOpencodeSidecar(
   const persistedState = readOpencodeSidecarState(workspaceRoot);
   const persistedFingerprint = String(persistedState.config_fingerprint ?? "").trim();
   const persistedPid = Number(persistedState.pid ?? 0);
+  const persistedBaseUrl = readOpencodeSidecarBaseUrl(workspaceRoot);
+  const requestedBaseUrl =
+    normalizeBaseUrl(request.readiness_url) ??
+    (request.port > 0 ? baseUrlFor(request.host, request.port) : null);
   const fingerprintMatches = Boolean(request.config_fingerprint) && persistedFingerprint === request.config_fingerprint;
   const isReady = deps.isReady ?? opencodeSidecarIsReady;
+  const reusableBaseUrl = persistedBaseUrl ?? requestedBaseUrl;
 
-  if (await isReady(request.readiness_url)) {
+  if (reusableBaseUrl && (await isReady(readinessUrlFor(reusableBaseUrl)))) {
     if (request.allow_reuse_existing || fingerprintMatches) {
       return {
         outcome: "reused",
         pid: persistedPid,
-        url: request.readiness_url
+        url: reusableBaseUrl
       };
     }
   }
@@ -293,7 +374,22 @@ export async function restartOpencodeSidecar(
   }
 
   const listRunning = deps.listRunningPids ?? listOpencodeSidecarPids;
-  const runningPids = await listRunning(request.host, request.port);
+  let targetPort = request.port > 0 ? request.port : (portFromUrl(persistedBaseUrl) ?? 0);
+  if (
+    request.port <= 0 &&
+    targetPort > 0 &&
+    !(await canListenOnPort(request.host, targetPort)) &&
+    (await listRunning(request.host, targetPort)).length === 0
+  ) {
+    targetPort = 0;
+  }
+  if (targetPort <= 0) {
+    targetPort = await findAvailablePort(request.host);
+  }
+  const targetBaseUrl = baseUrlFor(request.host, targetPort);
+  const targetReadinessUrl = readinessUrlFor(targetBaseUrl);
+
+  const runningPids = await listRunning(request.host, targetPort);
   for (const pid of Array.from(new Set(runningPids)).sort((left, right) => left - right)) {
     (deps.terminatePid ?? terminatePid)(pid);
   }
@@ -302,18 +398,18 @@ export async function restartOpencodeSidecar(
     const sleep = deps.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
     const deadline = Date.now() + OPENCODE_STOP_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      if ((await listRunning(request.host, request.port)).length === 0) {
+      if ((await listRunning(request.host, targetPort)).length === 0) {
         break;
       }
       await sleep(OPENCODE_READY_POLL_MS);
     }
-    const remaining = await listRunning(request.host, request.port);
+    const remaining = await listRunning(request.host, targetPort);
     for (const pid of Array.from(new Set(remaining)).sort((left, right) => left - right)) {
       (deps.killPid ?? killPid)(pid);
     }
     if (remaining.length > 0) {
       await sleep(OPENCODE_READY_POLL_MS);
-      if ((await listRunning(request.host, request.port)).length > 0) {
+      if ((await listRunning(request.host, targetPort)).length > 0) {
         throw new Error("failed to stop existing OpenCode sidecar before restart");
       }
     }
@@ -325,7 +421,7 @@ export async function restartOpencodeSidecar(
   try {
     child = (deps.spawnProcess ?? defaultSpawnProcess)(
       "opencode",
-      ["serve", "--hostname", request.host, "--port", String(request.port)],
+      ["serve", "--hostname", request.host, "--port", String(targetPort)],
       {
         cwd: workspaceRoot,
         stdio: ["ignore", logFd, logFd],
@@ -344,10 +440,10 @@ export async function restartOpencodeSidecar(
     throw new Error(`OpenCode sidecar exited during startup with code ${exitCode}`);
   }
 
-  await waitForOpencodeReady(request.readiness_url, request.ready_timeout_s, deps);
+  await waitForOpencodeReady(targetReadinessUrl, request.ready_timeout_s, deps);
   (deps.writeState ?? writeOpencodeSidecarState)(workspaceRoot, {
     pid: child.pid ?? 0,
-    url: request.readiness_url,
+    url: targetBaseUrl,
     workspace_id: request.workspace_id,
     config_fingerprint: request.config_fingerprint
   });
@@ -355,7 +451,7 @@ export async function restartOpencodeSidecar(
   return {
     outcome: "started",
     pid: child.pid ?? 0,
-    url: request.readiness_url
+    url: targetBaseUrl
   };
 }
 

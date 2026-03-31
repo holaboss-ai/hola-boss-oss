@@ -234,6 +234,94 @@ test("browser capability routes proxy to the browser tool service", async () => 
   store.close();
 });
 
+test("runtime tools capability routes expose local onboarding and cronjob actions", async () => {
+  const root = makeTempDir("hb-runtime-api-runtime-tools-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    onboardingStatus: "pending",
+    onboardingSessionId: "session-1"
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const capabilityStatus = await app.inject({
+    method: "GET",
+    url: "/api/v1/capabilities/runtime-tools",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1"
+    }
+  });
+  assert.equal(capabilityStatus.statusCode, 200);
+  assert.equal(capabilityStatus.json().available, true);
+  assert.equal(capabilityStatus.json().workspace_id, "workspace-1");
+  assert.ok(
+    capabilityStatus
+      .json()
+      .tools.some((tool: { id: string }) => tool.id === "holaboss_onboarding_complete")
+  );
+
+  const onboardingStatus = await app.inject({
+    method: "GET",
+    url: "/api/v1/capabilities/runtime-tools/onboarding/status",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1"
+    }
+  });
+  assert.equal(onboardingStatus.statusCode, 200);
+  assert.equal(onboardingStatus.json().onboarding_status, "pending");
+
+  const onboardingComplete = await app.inject({
+    method: "POST",
+    url: "/api/v1/capabilities/runtime-tools/onboarding/complete",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1"
+    },
+    payload: {
+      summary: "ready to work"
+    }
+  });
+  assert.equal(onboardingComplete.statusCode, 200);
+  assert.equal(onboardingComplete.json().onboarding_status, "completed");
+  assert.equal(onboardingComplete.json().onboarding_completion_summary, "ready to work");
+
+  const createdJob = await app.inject({
+    method: "POST",
+    url: "/api/v1/capabilities/runtime-tools/cronjobs",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1"
+    },
+    payload: {
+      cron: "0 9 * * *",
+      description: "Daily check"
+    }
+  });
+  assert.equal(createdJob.statusCode, 200);
+  assert.equal(createdJob.json().initiated_by, "workspace_agent");
+  assert.deepEqual(createdJob.json().delivery, {
+    mode: "announce",
+    channel: "session_run",
+    to: null
+  });
+
+  const listedJobs = await app.inject({
+    method: "GET",
+    url: "/api/v1/capabilities/runtime-tools/cronjobs",
+    headers: {
+      "x-holaboss-workspace-id": "workspace-1"
+    }
+  });
+  assert.equal(listedJobs.statusCode, 200);
+  assert.equal(listedJobs.json().count, 1);
+
+  await app.close();
+  store.close();
+});
+
 test("buildAppSetupEnv uses an app-local npm cache", () => {
   const appDir = makeTempDir("hb-app-env-");
   const env = buildAppSetupEnv(appDir, { PATH: process.env.PATH });
@@ -694,7 +782,20 @@ test("runtime states and history endpoints read TS state store", async () => {
     text: "hi",
     messageId: "m-2"
   });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "proposal-session-1",
+    kind: "task_proposal",
+    title: "Follow up",
+    parentSessionId: "session-main",
+    sourceProposalId: "proposal-1",
+    createdBy: "workspace_user"
+  });
 
+  const sessions = await app.inject({
+    method: "GET",
+    url: `/api/v1/agent-sessions?workspace_id=${workspace.id}`
+  });
   const states = await app.inject({
     method: "GET",
     url: `/api/v1/agent-sessions/by-workspace/${workspace.id}/runtime-states`
@@ -704,6 +805,14 @@ test("runtime states and history endpoints read TS state store", async () => {
     url: `/api/v1/agent-sessions/session-main/history?workspace_id=${workspace.id}`
   });
 
+  assert.equal(sessions.statusCode, 200);
+  assert.equal(sessions.json().count, 2);
+  const proposalSession = sessions
+    .json()
+    .items.find((item: { session_id: string }) => item.session_id === "proposal-session-1");
+  assert.ok(proposalSession);
+  assert.equal(proposalSession.kind, "task_proposal");
+  assert.equal(proposalSession.parent_session_id, "session-main");
   assert.equal(states.statusCode, 200);
   assert.deepEqual(states.json().items, []);
   assert.equal(history.statusCode, 200);
@@ -1485,6 +1594,93 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
   store.close();
 });
 
+test("app start queues lifecycle setup apps in background", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace Apps",
+    harness: "opencode",
+    status: "active"
+  });
+
+  const workspaceDir = path.join(workspaceRoot, workspace.id);
+  fs.mkdirSync(path.join(workspaceDir, "apps", "app-a"), { recursive: true });
+  fs.writeFileSync(
+    path.join(workspaceDir, "apps", "app-a", "app.runtime.yaml"),
+    [
+      "app_id: app-a",
+      "mcp:",
+      "  port: 4100",
+      "healthchecks:",
+      "  mcp:",
+      "    path: /health",
+      "    timeout_s: 30",
+      "lifecycle:",
+      "  setup: npm install",
+      "  start: npm run start"
+    ].join("\n"),
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(workspaceDir, "workspace.yaml"),
+    [
+      "applications:",
+      "  - app_id: app-a",
+      "    config_path: apps/app-a/app.runtime.yaml"
+    ].join("\n"),
+    "utf8"
+  );
+
+  const calls: Array<Record<string, unknown>> = [];
+  const executor: AppLifecycleExecutorLike = {
+    async startApp(params) {
+      calls.push({ action: "start", ...params });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return {
+        app_id: params.appId,
+        status: "started",
+        detail: "app started with lifecycle manager",
+        ports: { http: params.httpPort ?? 18080, mcp: params.mcpPort ?? 13100 }
+      };
+    },
+    async stopApp() {
+      throw new Error("not used");
+    },
+    async shutdownAll() {
+      throw new Error("not used");
+    }
+  };
+  const app = buildTestRuntimeApiServer({ store, appLifecycleExecutor: executor });
+
+  const started = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/app-a/start",
+    payload: { workspace_id: workspace.id, holaboss_user_id: "user-1" }
+  });
+
+  assert.equal(started.statusCode, 200);
+  assert.deepEqual(started.json(), {
+    app_id: "app-a",
+    status: "building",
+    detail: "App start queued in background",
+    ports: { http: 18080, mcp: 13100 }
+  });
+  assert.equal(store.getAppBuild({ workspaceId: workspace.id, appId: "app-a" })?.status, "building");
+
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.equal(store.getAppBuild({ workspaceId: workspace.id, appId: "app-a" })?.status, "running");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.skipSetup, false);
+
+  await app.close();
+  store.close();
+});
+
 test("app setup route does not start duplicate setup for an app already building", async () => {
   const root = makeTempDir("hb-runtime-api-");
   const workspaceRoot = path.join(root, "workspace");
@@ -1546,6 +1742,63 @@ test("app setup route does not start duplicate setup for an app already building
 
   await app.close();
   store.close();
+});
+
+test("app setup timeout honors configured timeout", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-timeout",
+    name: "Workspace Apps",
+    harness: "opencode",
+    status: "active"
+  });
+  const workspaceDir = path.join(workspaceRoot, workspace.id);
+  const appDir = path.join(workspaceDir, "apps", "app-a");
+  fs.mkdirSync(appDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(appDir, "app.runtime.yaml"),
+    [
+      "app_id: app-a",
+      "mcp:",
+      "  port: 4100",
+      "lifecycle:",
+      "  setup: 'node -e \"setTimeout(() => {}, 1000)\"'"
+    ].join("\n"),
+    "utf8"
+  );
+
+  const previousTimeout = process.env.HB_APP_SETUP_TIMEOUT_MS;
+  process.env.HB_APP_SETUP_TIMEOUT_MS = "50";
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/apps/app-a/setup",
+      payload: { workspace_id: workspace.id }
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().status, "setup_started");
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const build = store.getAppBuild({ workspaceId: workspace.id, appId: "app-a" });
+    assert.equal(build?.status, "failed");
+    assert.equal(build?.error, "setup timed out after 1s");
+  } finally {
+    if (previousTimeout === undefined) {
+      delete process.env.HB_APP_SETUP_TIMEOUT_MS;
+    } else {
+      process.env.HB_APP_SETUP_TIMEOUT_MS = previousTimeout;
+    }
+    await app.close();
+    store.close();
+  }
 });
 
 test("internal opencode app bootstrap route starts resolved apps and returns MCP urls", async () => {
@@ -2407,10 +2660,183 @@ test("queue route persists input, user message, and runtime state", async () => 
   assert.equal(runtimeStates[0].status, "QUEUED");
   assert.equal(runtimeStates[0].currentInputId, response.json().input_id);
 
+  const session = store.getSession({ workspaceId: workspace.id, sessionId: "session-main" });
+  assert.ok(session);
+  assert.equal(session.kind, "main");
+
+  const binding = store.getBinding({ workspaceId: workspace.id, sessionId: "session-main" });
+  assert.ok(binding);
+  assert.equal(binding.harnessSessionId, "session-main");
+
   const history = store.listSessionMessages({ workspaceId: workspace.id, sessionId: "session-main" });
   assert.equal(history.length, 1);
   assert.equal(history[0].role, "user");
   assert.equal(history[0].text, "hello world");
+
+  await app.close();
+  store.close();
+});
+
+test("accept task proposal creates a child session with queued work", async () => {
+  const root = makeTempDir("hb-runtime-api-task-proposal-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  let wakeCount = 0;
+  const app = buildRuntimeApiServer({
+    store,
+    queueWorker: {
+      async start() {},
+      async close() {},
+      wake() {
+        wakeCount += 1;
+      }
+    },
+    cronWorker: null,
+    bridgeWorker: null
+  });
+
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    harness: "opencode",
+    harnessSessionId: "session-main"
+  });
+  store.createTaskProposal({
+    proposalId: "proposal-1",
+    workspaceId: workspace.id,
+    taskName: "Follow up",
+    taskPrompt: "Write a follow-up message",
+    taskGenerationRationale: "User has not replied",
+    sourceEventIds: ["evt-1"],
+    createdAt: "2026-01-01T00:00:00+00:00"
+  });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/task-proposals/proposal-1/accept",
+    payload: {
+      parent_session_id: "session-main",
+      task_name: "Follow up",
+      task_prompt: "Write the follow-up and send a reminder",
+      model: "openai/gpt-5.2",
+      priority: 2,
+      created_by: "workspace_user"
+    }
+  });
+
+  assert.equal(response.statusCode, 200);
+  const body = response.json();
+  assert.equal(body.proposal.state, "accepted");
+  assert.equal(body.proposal.accepted_input_id, body.input.input_id);
+  assert.equal(body.proposal.accepted_session_id, body.session.session_id);
+  assert.equal(body.session.kind, "task_proposal");
+  assert.equal(body.session.parent_session_id, "session-main");
+  assert.equal(body.session.source_proposal_id, "proposal-1");
+  assert.equal(body.session.title, "Follow up");
+  assert.equal(body.input.session_id, body.session.session_id);
+  assert.equal(body.input.status, "QUEUED");
+  assert.equal(wakeCount, 1);
+
+  const childBinding = store.getBinding({ workspaceId: workspace.id, sessionId: body.session.session_id });
+  assert.ok(childBinding);
+  assert.equal(childBinding.harness, "opencode");
+  assert.equal(childBinding.harnessSessionId, body.session.session_id);
+
+  const childRuntimeState = store.getRuntimeState({
+    workspaceId: workspace.id,
+    sessionId: body.session.session_id
+  });
+  assert.ok(childRuntimeState);
+  assert.equal(childRuntimeState.status, "QUEUED");
+  assert.equal(childRuntimeState.currentInputId, body.input.input_id);
+
+  const childInput = store.getInput(body.input.input_id);
+  assert.ok(childInput);
+  assert.equal(childInput.sessionId, body.session.session_id);
+  assert.equal(childInput.priority, 2);
+  assert.equal(childInput.payload.text, "Write the follow-up and send a reminder");
+  assert.equal(childInput.payload.model, "openai/gpt-5.2");
+  assert.deepEqual(childInput.payload.context, {
+    source: "task_proposal",
+    proposal_id: "proposal-1",
+    parent_session_id: "session-main"
+  });
+
+  const childHistory = store.listSessionMessages({
+    workspaceId: workspace.id,
+    sessionId: body.session.session_id
+  });
+  assert.equal(childHistory.length, 1);
+  assert.equal(childHistory[0].role, "user");
+  assert.equal(childHistory[0].text, "Write the follow-up and send a reminder");
+
+  const secondAccept = await app.inject({
+    method: "POST",
+    url: "/api/v1/task-proposals/proposal-1/accept",
+    payload: {}
+  });
+  assert.equal(secondAccept.statusCode, 409);
+
+  await app.close();
+  store.close();
+});
+
+test("queue route rejects inputs while workspace apps are still building", async () => {
+  const root = makeTempDir("hb-runtime-api-queue-app-build-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+
+  const workspaceDir = store.workspaceDir(workspace.id);
+  fs.mkdirSync(path.join(workspaceDir, "apps", "gmail"), { recursive: true });
+  fs.writeFileSync(
+    path.join(workspaceDir, "workspace.yaml"),
+    [
+      "applications:",
+      "  - app_id: gmail",
+      "    config_path: apps/gmail/app.runtime.yaml",
+      "    lifecycle:",
+      "      setup: npm run build"
+    ].join("\n"),
+    "utf8"
+  );
+  store.upsertAppBuild({
+    workspaceId: workspace.id,
+    appId: "gmail",
+    status: "building"
+  });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/agent-sessions/queue",
+    payload: {
+      workspace_id: workspace.id,
+      text: "hello world"
+    }
+  });
+
+  assert.equal(response.statusCode, 409);
+  assert.equal(response.json().detail, "workspace apps are still building: gmail (building)");
+  assert.equal(store.listRuntimeStates(workspace.id).length, 0);
 
   await app.close();
   store.close();

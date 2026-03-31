@@ -81,7 +81,7 @@ test("file runtime config service updates runtime config and writes opencode boo
     desktop_browser_enabled: true,
     desktop_browser_url: "http://127.0.0.1:8787/api/v1/browser"
   });
-  assert.equal(ensureCalls, 1);
+  assert.equal(ensureCalls, 0);
 
   const configDocument = JSON.parse(fs.readFileSync(path.join(root, "state", "runtime-config.json"), "utf8"));
   assert.equal(configDocument.runtime.default_model, "openai/gpt-5.1");
