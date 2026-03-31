@@ -62,6 +62,108 @@ This starts:
 - the Electron main/preload watcher
 - the Electron app itself
 
+## Model Configuration
+
+The app ships with a default model setup. This section only covers how to override it with your own model configuration.
+
+- default model: `openai/gpt-5.1`
+- default provider id for unprefixed models: `openai`
+
+### Customization Mode
+
+#### Your Own Proxy
+
+You can point the runtime at your own proxy.
+
+- set `model_proxy_base_url` to your proxy root
+- set `auth_token` to the token your proxy expects
+- set `sandbox_id`
+- set `default_model` to the model you want to use
+
+Important behavior:
+
+- for OpenAI-compatible models, the runtime uses `<base>/openai/v1`
+- for Anthropic models, the runtime uses `<base>/anthropic/v1`
+- the runtime passes `X-API-Key` and `X-Holaboss-Sandbox-Id`
+- OpenCode provider config also persists `X-Holaboss-User-Id` when available
+
+So a custom proxy is a good fit when it accepts that header contract directly, or at least safely ignores the extra Holaboss-specific headers.
+
+One implementation detail: the internal provider key in `runtime-config.json` remains `holaboss_model_proxy` even when you point it at your own proxy.
+
+### Where The Runtime Reads Model Config
+
+The runtime resolves model settings from:
+
+1. `runtime-config.json`
+2. environment variables
+3. built-in defaults
+
+By default, `runtime-config.json` lives at:
+
+- `${HB_SANDBOX_ROOT}/state/runtime-config.json`
+
+You can override that path with:
+
+- `HOLABOSS_RUNTIME_CONFIG_PATH`
+
+### Important Settings
+
+- `model_proxy_base_url`
+  - base URL root for your proxy, for example `https://your-proxy.example/api/v1/model-proxy`
+- `auth_token`
+  - token sent as `X-API-Key`
+- `sandbox_id`
+  - sandbox identifier propagated into runtime execution context and proxy headers
+- `default_model`
+  - default model selection, for example `openai/gpt-5.1`
+- `HOLABOSS_DEFAULT_MODEL`
+  - environment override for `default_model`
+- `OPENCODE_BOOT_MODEL`
+  - fallback env if `HOLABOSS_DEFAULT_MODEL` is not set
+
+### Model String Format
+
+Use provider-prefixed model ids when you want to be explicit:
+
+- `openai/gpt-5.1`
+- `openai/gpt-4.1-mini-2025-04-14`
+- `anthropic/claude-sonnet-4-20250514`
+
+The runtime also treats unprefixed `claude...` model ids as Anthropic models:
+
+- `claude-sonnet-4-20250514`
+
+If a model id is unprefixed and does not start with `claude`, the runtime treats it as `openai/<model>`.
+
+### `runtime-config.json` Example For A Custom Proxy
+
+```json
+{
+  "runtime": {
+    "default_model": "anthropic/claude-sonnet-4-20250514",
+    "default_provider": "holaboss_model_proxy",
+    "sandbox_id": "local-sandbox"
+  },
+  "providers": {
+    "holaboss_model_proxy": {
+      "base_url": "https://your-proxy.example/api/v1/model-proxy",
+      "api_key": "your-proxy-token"
+    }
+  }
+}
+```
+
+### Environment Overrides
+
+```bash
+export HOLABOSS_MODEL_PROXY_BASE_URL="https://your-proxy.example/api/v1/model-proxy"
+export HOLABOSS_SANDBOX_AUTH_TOKEN="your-proxy-token"
+export HOLABOSS_DEFAULT_MODEL="anthropic/claude-sonnet-4-20250514"
+```
+
+These env vars override the file-based values above. `sandbox_id` still needs to come from `runtime-config.json`.
+
 ## Common Commands
 
 Run the desktop typecheck:
