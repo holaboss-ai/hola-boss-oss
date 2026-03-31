@@ -51,7 +51,7 @@ export function MarketplaceGallery({
   const showError = authenticated && error;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className={`flex min-h-0 flex-col ${mode === "browse" ? "h-full" : ""}`}>
       <div>
         <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">
           {mode === "pick" ? "Welcome" : "Marketplace"}
@@ -76,7 +76,7 @@ export function MarketplaceGallery({
         />
       </label>
 
-      <div className="mt-4 min-h-0 flex-1 overflow-auto">
+      <div className={`mt-4 min-h-0 overflow-auto ${mode === "browse" ? "flex-1" : ""}`}>
         {showLoading ? (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {Array.from({ length: 4 }).map((_, i) => (
