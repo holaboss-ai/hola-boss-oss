@@ -102,7 +102,7 @@ export function SkillsPane() {
     async function loadPreview() {
       setIsLoadingPreview(true);
       try {
-        const preview = await window.electronAPI.fs.readFilePreview(resolvedSkillFilePath);
+        const preview = await window.electronAPI.fs.readFilePreview(resolvedSkillFilePath, selectedWorkspaceId ?? null);
         if (!cancelled) {
           setSkillPreview(preview);
         }
@@ -122,7 +122,7 @@ export function SkillsPane() {
     return () => {
       cancelled = true;
     };
-  }, [selectedSkill?.skill_file_path]);
+  }, [selectedSkill?.skill_file_path, selectedWorkspaceId]);
 
   const hasWorkspace = Boolean(selectedWorkspaceId);
   const hasSkills = Boolean(catalog?.skills.length);

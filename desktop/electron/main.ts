@@ -43,13 +43,16 @@ const OVERFLOW_POPUP_WIDTH = 220;
 const OVERFLOW_POPUP_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MIN_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MAX_HEIGHT = 320;
-const MAIN_WINDOW_CLOSED_LISTENER_BUFFER = 16;
+const MAIN_WINDOW_CLOSED_LISTENER_BUFFER = 32;
+const AUTH_NETWORK_RETRY_ATTEMPTS = 3;
+const AUTH_NETWORK_RETRY_BASE_DELAY_MS = 250;
 const APP_THEMES = new Set(["holaboss", "emerald", "cobalt", "ember", "glacier", "mono", "claude", "slate", "paper", "graphite"]);
 const GITHUB_RELEASES_OWNER = "holaboss-ai";
 const GITHUB_RELEASES_REPO = "hola-boss-oss";
 const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const APP_UPDATE_REQUEST_TIMEOUT_MS = 15000;
 const APP_UPDATE_MACOS_ASSET_NAME = "Holaboss-macos-arm64.dmg";
+const APP_QUIT_CLEANUP_TIMEOUT_MS = 12000;
 const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
 const HOLABOSS_HOME_URL = "https://holaboss.ai";
 const HOLABOSS_DOCS_URL = `https://github.com/${GITHUB_RELEASES_OWNER}/${GITHUB_RELEASES_REPO}`;
@@ -334,6 +337,8 @@ let desktopBrowserServiceUrl = "";
 let desktopBrowserServiceAuthToken = "";
 let appUpdateCheckTimer: NodeJS.Timeout | null = null;
 let appUpdateCheckPromise: Promise<AppUpdateStatusPayload> | null = null;
+let appQuitCleanupPromise: Promise<void> | null = null;
+let appQuitCleanupCompleted = false;
 let appUpdatePreferences: AppUpdatePreferencesPayload = {};
 let appUpdateStatus: AppUpdateStatusPayload = {
   supported: false,
@@ -1270,6 +1275,9 @@ interface TaskProposalRecordPayload {
   created_at: string;
   state: string;
   source_event_ids: string[];
+  accepted_session_id: string | null;
+  accepted_input_id: string | null;
+  accepted_at: string | null;
 }
 
 interface TaskProposalListResponsePayload {
@@ -1291,6 +1299,41 @@ interface DemoTaskProposalEnqueueResponsePayload {
 
 interface TaskProposalStateUpdatePayload {
   proposal: TaskProposalRecordPayload;
+}
+
+interface AgentSessionRecordPayload {
+  workspace_id: string;
+  session_id: string;
+  kind: string;
+  title: string | null;
+  parent_session_id: string | null;
+  source_proposal_id: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  archived_at: string | null;
+}
+
+interface AgentSessionListResponsePayload {
+  items: AgentSessionRecordPayload[];
+  count: number;
+}
+
+interface TaskProposalAcceptPayload {
+  proposal_id: string;
+  task_name?: string | null;
+  task_prompt?: string | null;
+  session_id?: string | null;
+  parent_session_id?: string | null;
+  created_by?: string | null;
+  priority?: number;
+  model?: string | null;
+}
+
+interface TaskProposalAcceptResponsePayload {
+  proposal: TaskProposalRecordPayload;
+  session: AgentSessionRecordPayload;
+  input: EnqueueSessionInputResponsePayload;
 }
 
 interface CronjobDeliveryPayload {
@@ -2592,6 +2635,83 @@ async function stopDesktopBrowserService(): Promise<void> {
   await updateDesktopBrowserCapabilityConfig({ enabled: false });
 }
 
+async function withCleanupTimeout<T>(label: string, promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return await new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+    timeout.unref();
+
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      }
+    );
+  });
+}
+
+async function performAppQuitCleanup(): Promise<void> {
+  if (appQuitCleanupPromise) {
+    return appQuitCleanupPromise;
+  }
+
+  appQuitCleanupPromise = (async () => {
+    appendRuntimeEventLog({
+      category: "app",
+      event: "quit.cleanup",
+      outcome: "start",
+      detail: "Stopping desktop browser service and embedded runtime before exit."
+    });
+
+    const failures: string[] = [];
+    const cleanupSteps: Array<{ label: string; run: () => Promise<unknown> }> = [
+      {
+        label: "desktop_browser_service",
+        run: () => stopDesktopBrowserService()
+      },
+      {
+        label: "embedded_runtime",
+        run: () => stopEmbeddedRuntime()
+      }
+    ];
+
+    for (const step of cleanupSteps) {
+      try {
+        await withCleanupTimeout(step.label, Promise.resolve(step.run()), APP_QUIT_CLEANUP_TIMEOUT_MS);
+        appendRuntimeEventLog({
+          category: "app",
+          event: `quit.${step.label}`,
+          outcome: "success"
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        failures.push(`${step.label}: ${detail}`);
+        appendRuntimeEventLog({
+          category: "app",
+          event: `quit.${step.label}`,
+          outcome: "error",
+          detail
+        });
+        await appendRuntimeLog(`[app-quit] ${step.label} cleanup failed: ${detail}\n`).catch(() => undefined);
+      }
+    }
+
+    appendRuntimeEventLog({
+      category: "app",
+      event: "quit.cleanup",
+      outcome: failures.length === 0 ? "success" : "partial",
+      detail: failures.length > 0 ? failures.join(" | ") : "Cleanup finished successfully."
+    });
+  })();
+
+  return appQuitCleanupPromise;
+}
+
 function desktopBrowserStatusFields() {
   return {
     desktopBrowserReady: Boolean(desktopBrowserServiceUrl),
@@ -2715,30 +2835,76 @@ async function withRuntimeBindingRefreshLock<T>(work: () => Promise<T>): Promise
 
   const lockState: {
     resolve: (() => void) | null;
-    reject: ((error: unknown) => void) | null;
   } = {
-    resolve: null,
-    reject: null
+    resolve: null
   };
-  runtimeBindingRefreshPromise = new Promise<void>((resolve, reject) => {
+  runtimeBindingRefreshPromise = new Promise<void>((resolve) => {
     lockState.resolve = resolve;
-    lockState.reject = reject;
   });
 
   try {
-    const result = await work();
+    return await work();
+  } finally {
     if (lockState.resolve) {
       lockState.resolve();
     }
-    return result;
-  } catch (error) {
-    if (lockState.reject) {
-      lockState.reject(error);
-    }
-    throw error;
-  } finally {
     runtimeBindingRefreshPromise = null;
   }
+}
+
+function errorCauseCode(error: unknown): string {
+  if (!error || typeof error !== "object") {
+    return "";
+  }
+  const payload = error as { code?: unknown; cause?: unknown };
+  if (typeof payload.code === "string" && payload.code.trim()) {
+    return payload.code.trim();
+  }
+  return errorCauseCode(payload.cause);
+}
+
+function errorMessageDetail(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+  if (typeof error === "string" && error.trim()) {
+    return error.trim();
+  }
+  return "Unknown error";
+}
+
+function isFetchTransportFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  if (error.message.includes("fetch failed")) {
+    return true;
+  }
+  const code = errorCauseCode(error);
+  return ["ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "ETIMEDOUT", "EHOSTUNREACH"].includes(code);
+}
+
+async function fetchWithRetry(input: string, init: RequestInit, options?: {
+  attempts?: number;
+  baseDelayMs?: number;
+  shouldRetry?: (error: unknown) => boolean;
+}): Promise<Response> {
+  const attempts = Math.max(1, options?.attempts ?? 1);
+  const baseDelayMs = Math.max(0, options?.baseDelayMs ?? 0);
+  const shouldRetry = options?.shouldRetry ?? (() => false);
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetch(input, init);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts || !shouldRetry(error)) {
+        throw error;
+      }
+      await sleep(baseDelayMs * attempt);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Fetch failed.");
 }
 
 async function getRuntimeConfig(): Promise<RuntimeConfigPayload> {
@@ -2763,17 +2929,32 @@ async function exchangeDesktopRuntimeBinding(sandboxId: string): Promise<Runtime
     throw new Error("Better Auth session cookies are missing.");
   }
 
-  const response = await fetch(`${controlPlaneBaseUrl}${DESKTOP_RUNTIME_BINDING_EXCHANGE_PATH}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Cookie: cookieHeader
-    },
-    body: JSON.stringify({
-      sandbox_id: sandboxId,
-      target_kind: "desktop"
-    })
-  });
+  const endpoint = `${controlPlaneBaseUrl}${DESKTOP_RUNTIME_BINDING_EXCHANGE_PATH}`;
+  let response: Response;
+  try {
+    response = await fetchWithRetry(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: cookieHeader
+      },
+      body: JSON.stringify({
+        sandbox_id: sandboxId,
+        target_kind: "desktop"
+      })
+    }, {
+      attempts: AUTH_NETWORK_RETRY_ATTEMPTS,
+      baseDelayMs: AUTH_NETWORK_RETRY_BASE_DELAY_MS,
+      shouldRetry: isFetchTransportFailure
+    });
+  } catch (error) {
+    const detail = errorMessageDetail(error);
+    const causeCode = errorCauseCode(error);
+    const suffix = causeCode ? ` (${causeCode})` : "";
+    const wrapped = new Error(`Runtime binding exchange request failed for ${endpoint}: ${detail}${suffix}`);
+    (wrapped as Error & { cause?: unknown }).cause = error;
+    throw wrapped;
+  }
 
   if (!response.ok) {
     const detail = await response.text();
@@ -2951,12 +3132,27 @@ async function getAuthenticatedUser(): Promise<AuthUserPayload | null> {
     return null;
   }
 
-  const response = await fetch(`${AUTH_BASE_URL}/api/auth/get-session`, {
-    method: "GET",
-    headers: {
-      Cookie: cookieHeader
-    }
-  });
+  const endpoint = `${AUTH_BASE_URL}/api/auth/get-session`;
+  let response: Response;
+  try {
+    response = await fetchWithRetry(endpoint, {
+      method: "GET",
+      headers: {
+        Cookie: cookieHeader
+      }
+    }, {
+      attempts: AUTH_NETWORK_RETRY_ATTEMPTS,
+      baseDelayMs: AUTH_NETWORK_RETRY_BASE_DELAY_MS,
+      shouldRetry: isFetchTransportFailure
+    });
+  } catch (error) {
+    const detail = errorMessageDetail(error);
+    const causeCode = errorCauseCode(error);
+    const suffix = causeCode ? ` (${causeCode})` : "";
+    const wrapped = new Error(`Auth session request failed for ${endpoint}: ${detail}${suffix}`);
+    (wrapped as Error & { cause?: unknown }).cause = error;
+    throw wrapped;
+  }
 
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {
@@ -3118,7 +3314,22 @@ async function ensureRuntimeBindingReadyForWorkspaceFlow(
     return;
   }
 
-  const user = await getAuthenticatedUser();
+  let user: AuthUserPayload | null;
+  try {
+    user = await getAuthenticatedUser();
+  } catch (error) {
+    const detail = errorMessageDetail(error);
+    if (runtimeConfigHasBindingMaterial(currentConfig) && isFetchTransportFailure(error)) {
+      appendRuntimeEventLog({
+        category: "auth",
+        event: "runtime_binding.auth_session",
+        outcome: "warning",
+        detail: `${reason}:using_existing_binding_after_transport_failure:${detail}`
+      });
+      return;
+    }
+    throw error;
+  }
   if (!user) {
     if (canUsePersistedRuntimeBindingWithoutAuth(currentConfig)) {
       return;
@@ -3142,8 +3353,17 @@ async function ensureRuntimeBindingReadyForWorkspaceFlow(
         reason
       });
     } catch (error) {
+      const detail = errorMessageDetail(error);
+      if (runtimeConfigHasBindingMaterial(currentConfig) && isFetchTransportFailure(error)) {
+        appendRuntimeEventLog({
+          category: "auth",
+          event: "runtime_binding.provision",
+          outcome: "warning",
+          detail: `${reason}:using_existing_binding_after_transport_failure:${detail}`
+        });
+        return;
+      }
       await clearRuntimeBindingSecrets(`${reason}:provision_failed`);
-      const detail = error instanceof Error ? error.message : "Binding exchange failed.";
       throw new Error(`Runtime binding provisioning failed: ${detail}`);
     }
   }
@@ -3654,6 +3874,37 @@ async function updateTaskProposalState(
     method: "PATCH",
     path: `/api/v1/task-proposals/${encodeURIComponent(proposalId)}`,
     payload: { state }
+  });
+}
+
+async function acceptTaskProposal(
+  payload: TaskProposalAcceptPayload
+): Promise<TaskProposalAcceptResponsePayload> {
+  return requestRuntimeJson<TaskProposalAcceptResponsePayload>({
+    method: "POST",
+    path: `/api/v1/task-proposals/${encodeURIComponent(payload.proposal_id)}/accept`,
+    payload: {
+      task_name: payload.task_name,
+      task_prompt: payload.task_prompt,
+      session_id: payload.session_id,
+      parent_session_id: payload.parent_session_id,
+      created_by: payload.created_by,
+      priority: payload.priority ?? 0,
+      model: payload.model ?? null
+    }
+  });
+}
+
+async function listAgentSessions(workspaceId: string): Promise<AgentSessionListResponsePayload> {
+  return requestRuntimeJson<AgentSessionListResponsePayload>({
+    method: "GET",
+    path: "/api/v1/agent-sessions",
+    params: {
+      workspace_id: workspaceId,
+      include_archived: false,
+      limit: 100,
+      offset: 0
+    }
   });
 }
 
@@ -4402,6 +4653,20 @@ function requestedWorkspaceTemplateMode(payload: HolabossCreateWorkspacePayload)
 
 function workspaceDirectoryPath(workspaceId: string) {
   return path.join(runtimeWorkspaceRoot(), workspaceId);
+}
+
+function resolveWorkspaceScopedAbsolutePath(workspaceId: string, targetPath?: string | null) {
+  const workspaceRoot = path.resolve(workspaceDirectoryPath(workspaceId));
+  const requestedPath = targetPath && targetPath.trim().length > 0 ? targetPath : workspaceRoot;
+  const resolvedPath = path.resolve(requestedPath);
+  const relativeToRoot = path.relative(workspaceRoot, resolvedPath);
+  if (relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot)) {
+    throw new Error("Path is outside the active workspace.");
+  }
+  return {
+    workspaceRoot,
+    resolvedPath
+  };
 }
 
 function sanitizeAttachmentName(name: string): string {
@@ -6627,8 +6892,10 @@ function getFilePreviewKind(targetPath: string) {
   return { extension, kind: "unsupported" as const };
 }
 
-async function readFilePreview(targetPath: string): Promise<FilePreviewPayload> {
-  const absolutePath = path.resolve(targetPath);
+async function readFilePreview(targetPath: string, workspaceId?: string | null): Promise<FilePreviewPayload> {
+  const absolutePath = workspaceId?.trim()
+    ? resolveWorkspaceScopedAbsolutePath(workspaceId, targetPath).resolvedPath
+    : path.resolve(targetPath);
   const stat = await fs.stat(absolutePath);
 
   if (stat.isDirectory()) {
@@ -6694,14 +6961,17 @@ async function readFilePreview(targetPath: string): Promise<FilePreviewPayload> 
   };
 }
 
-async function writeTextFile(targetPath: string, content: string): Promise<FilePreviewPayload> {
-  const absolutePath = path.resolve(targetPath);
+async function writeTextFile(targetPath: string, content: string, workspaceId?: string | null): Promise<FilePreviewPayload> {
+  const absolutePath = workspaceId?.trim()
+    ? resolveWorkspaceScopedAbsolutePath(workspaceId, targetPath).resolvedPath
+    : path.resolve(targetPath);
   await fs.writeFile(absolutePath, content, "utf-8");
-  return readFilePreview(absolutePath);
+  return readFilePreview(absolutePath, workspaceId);
 }
 
-async function listDirectory(targetPath?: string | null): Promise<DirectoryPayload> {
-  const initialPath = targetPath && targetPath.trim().length > 0 ? targetPath : runtimeSandboxRoot();
+async function listDirectory(targetPath?: string | null, workspaceId?: string | null): Promise<DirectoryPayload> {
+  const workspaceScope = workspaceId?.trim() ? resolveWorkspaceScopedAbsolutePath(workspaceId, targetPath) : null;
+  const initialPath = workspaceScope ? workspaceScope.resolvedPath : targetPath && targetPath.trim().length > 0 ? targetPath : runtimeSandboxRoot();
   const resolvedPath = path.resolve(initialPath);
   await fs.mkdir(resolvedPath, { recursive: true });
   const stat = await fs.stat(resolvedPath);
@@ -6736,7 +7006,7 @@ async function listDirectory(targetPath?: string | null): Promise<DirectoryPaylo
     return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
   });
 
-  const parsedRoot = path.parse(resolvedPath).root;
+  const parsedRoot = workspaceScope?.workspaceRoot || path.parse(resolvedPath).root;
   const normalizedCurrent = path.normalize(resolvedPath);
   const normalizedRoot = path.normalize(parsedRoot);
   const parentPath = normalizedCurrent === normalizedRoot ? null : path.dirname(normalizedCurrent);
@@ -9155,14 +9425,29 @@ app.whenReady().then(async () => {
   await loadBrowserPersistence();
   await bootstrapRuntimeDatabase();
 
-  handleTrustedIpc("fs:listDirectory", ["main"], async (_event, targetPath?: string | null) => listDirectory(targetPath));
-  handleTrustedIpc("fs:readFilePreview", ["main"], async (_event, targetPath: string) => readFilePreview(targetPath));
-  handleTrustedIpc("fs:writeTextFile", ["main"], async (_event, targetPath: string, content: string) =>
-    writeTextFile(targetPath, content)
+  handleTrustedIpc("fs:listDirectory", ["main"], async (_event, targetPath?: string | null, workspaceId?: string | null) =>
+    listDirectory(targetPath, workspaceId)
   );
-  handleTrustedIpc("fs:getBookmarks", ["main"], () => fileBookmarks);
-  handleTrustedIpc("fs:addBookmark", ["main"], async (_event, targetPath: string, label?: string) => {
-    const resolvedPath = path.resolve(targetPath);
+  handleTrustedIpc("fs:readFilePreview", ["main"], async (_event, targetPath: string, workspaceId?: string | null) =>
+    readFilePreview(targetPath, workspaceId)
+  );
+  handleTrustedIpc("fs:writeTextFile", ["main"], async (_event, targetPath: string, content: string, workspaceId?: string | null) =>
+    writeTextFile(targetPath, content, workspaceId)
+  );
+  handleTrustedIpc("fs:getBookmarks", ["main"], (_event, workspaceId?: string | null) => {
+    if (!workspaceId?.trim()) {
+      return fileBookmarks;
+    }
+    const workspaceRoot = path.resolve(workspaceDirectoryPath(workspaceId));
+    return fileBookmarks.filter((bookmark) => {
+      const relativeToRoot = path.relative(workspaceRoot, path.resolve(bookmark.targetPath));
+      return !(relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot));
+    });
+  });
+  handleTrustedIpc("fs:addBookmark", ["main"], async (_event, targetPath: string, label?: string, workspaceId?: string | null) => {
+    const resolvedPath = workspaceId?.trim()
+      ? resolveWorkspaceScopedAbsolutePath(workspaceId, targetPath).resolvedPath
+      : path.resolve(targetPath);
     const stat = await fs.stat(resolvedPath);
     const nextLabel = label?.trim() || path.basename(resolvedPath) || resolvedPath;
     const existing = fileBookmarks.find((bookmark) => bookmark.targetPath === resolvedPath);
@@ -9178,7 +9463,12 @@ app.whenReady().then(async () => {
         await persistFileBookmarks();
       }
 
-      return fileBookmarks;
+      return workspaceId?.trim()
+        ? fileBookmarks.filter((bookmark) => {
+            const relativeToRoot = path.relative(path.resolve(workspaceDirectoryPath(workspaceId)), path.resolve(bookmark.targetPath));
+            return !(relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot));
+          })
+        : fileBookmarks;
     }
 
     fileBookmarks = [
@@ -9193,7 +9483,12 @@ app.whenReady().then(async () => {
     ];
     emitFileBookmarksState();
     await persistFileBookmarks();
-    return fileBookmarks;
+    return workspaceId?.trim()
+      ? fileBookmarks.filter((bookmark) => {
+          const relativeToRoot = path.relative(path.resolve(workspaceDirectoryPath(workspaceId)), path.resolve(bookmark.targetPath));
+          return !(relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot));
+        })
+      : fileBookmarks;
   });
   handleTrustedIpc("fs:removeBookmark", ["main"], async (_event, bookmarkId: string) => {
     fileBookmarks = fileBookmarks.filter((bookmark) => bookmark.id !== bookmarkId);
@@ -9349,12 +9644,16 @@ app.whenReady().then(async () => {
   );
   handleTrustedIpc("workspace:deleteCronjob", ["main"], async (_event, jobId: string) => deleteCronjob(jobId));
   handleTrustedIpc("workspace:listTaskProposals", ["main"], async (_event, workspaceId: string) => listTaskProposals(workspaceId));
+  handleTrustedIpc("workspace:acceptTaskProposal", ["main"], async (_event, payload: TaskProposalAcceptPayload) =>
+    acceptTaskProposal(payload)
+  );
   handleTrustedIpc("workspace:updateTaskProposalState", ["main"], async (_event, proposalId: string, state: string) =>
     updateTaskProposalState(proposalId, state)
   );
   handleTrustedIpc("workspace:enqueueRemoteDemoTaskProposal", ["main"], async (_event, payload: DemoTaskProposalRequestPayload) =>
     enqueueRemoteDemoTaskProposal(payload)
   );
+  handleTrustedIpc("workspace:listAgentSessions", ["main"], async (_event, workspaceId: string) => listAgentSessions(workspaceId));
   handleTrustedIpc("workspace:listRuntimeStates", ["main"], async (_event, workspaceId: string) => listRuntimeStates(workspaceId));
   handleTrustedIpc("workspace:getSessionHistory", ["main"], async (_event, payload: { sessionId: string; workspaceId: string }) =>
     getSessionHistory(payload.sessionId, payload.workspaceId)
@@ -9631,7 +9930,19 @@ app.on("window-all-closed", () => {
   }
 });
 
-app.on("before-quit", () => {
-  void stopDesktopBrowserService();
-  void stopEmbeddedRuntime();
+app.on("before-quit", (event) => {
+  if (appQuitCleanupCompleted) {
+    return;
+  }
+
+  event.preventDefault();
+
+  if (appQuitCleanupPromise) {
+    return;
+  }
+
+  void performAppQuitCleanup().finally(() => {
+    appQuitCleanupCompleted = true;
+    app.quit();
+  });
 });

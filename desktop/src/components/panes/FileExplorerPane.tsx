@@ -205,7 +205,7 @@ export function FileExplorerPane() {
     setError("");
 
     try {
-      const payload = await window.electronAPI.fs.listDirectory(targetPath ?? null);
+      const payload = await window.electronAPI.fs.listDirectory(targetPath ?? null, selectedWorkspaceId ?? null);
       setCurrentPath(payload.currentPath);
       setParentPath(payload.parentPath);
       setEntries(payload.entries);
@@ -239,7 +239,7 @@ export function FileExplorerPane() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedWorkspaceId]);
 
   useEffect(() => {
     void loadDirectory(null, true);
@@ -268,26 +268,29 @@ export function FileExplorerPane() {
     return () => {
       cancelled = true;
     };
-  }, [currentPath, loadDirectory, selectedWorkspaceId]);
+  }, [loadDirectory, selectedWorkspaceId]);
 
   useEffect(() => {
     let mounted = true;
 
-    void window.electronAPI.fs.getBookmarks().then((bookmarks) => {
+    const syncBookmarks = async () => {
+      const bookmarks = await window.electronAPI.fs.getBookmarks(selectedWorkspaceId ?? null);
       if (mounted) {
         setFileBookmarks(bookmarks);
       }
-    });
+    };
 
-    const unsubscribe = window.electronAPI.fs.onBookmarksChange((bookmarks) => {
-      setFileBookmarks(bookmarks);
+    void syncBookmarks();
+
+    const unsubscribe = window.electronAPI.fs.onBookmarksChange(() => {
+      void syncBookmarks();
     });
 
     return () => {
       mounted = false;
       unsubscribe();
     };
-  }, []);
+  }, [selectedWorkspaceId]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -385,7 +388,7 @@ export function FileExplorerPane() {
     setTextPreviewMode("preview");
 
     try {
-      const payload = await window.electronAPI.fs.readFilePreview(targetPath);
+      const payload = await window.electronAPI.fs.readFilePreview(targetPath, selectedWorkspaceId ?? null);
       setPreview(payload);
       setPreviewDraft(payload.content ?? "");
     } catch (cause) {
@@ -418,7 +421,7 @@ export function FileExplorerPane() {
     setPreviewError("");
 
     try {
-      const nextPreview = await window.electronAPI.fs.writeTextFile(preview.absolutePath, previewDraft);
+      const nextPreview = await window.electronAPI.fs.writeTextFile(preview.absolutePath, previewDraft, selectedWorkspaceId ?? null);
       setPreview(nextPreview);
       setPreviewDraft(nextPreview.content ?? "");
       await loadDirectory(currentPath, false);
@@ -476,7 +479,7 @@ export function FileExplorerPane() {
       return;
     }
 
-    await window.electronAPI.fs.addBookmark(bookmarkTargetPath, bookmarkTargetLabel);
+    await window.electronAPI.fs.addBookmark(bookmarkTargetPath, bookmarkTargetLabel, selectedWorkspaceId ?? null);
   };
 
   const openBookmarkedTarget = async (bookmark: FileBookmarkPayload) => {

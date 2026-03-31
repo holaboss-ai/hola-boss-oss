@@ -259,6 +259,9 @@ declare global {
     created_at: string;
     state: string;
     source_event_ids: string[];
+    accepted_session_id: string | null;
+    accepted_input_id: string | null;
+    accepted_at: string | null;
   }
 
   interface TaskProposalListResponsePayload {
@@ -280,6 +283,41 @@ declare global {
 
   interface TaskProposalStateUpdatePayload {
     proposal: TaskProposalRecordPayload;
+  }
+
+  interface AgentSessionRecordPayload {
+    workspace_id: string;
+    session_id: string;
+    kind: string;
+    title: string | null;
+    parent_session_id: string | null;
+    source_proposal_id: string | null;
+    created_by: string | null;
+    created_at: string;
+    updated_at: string;
+    archived_at: string | null;
+  }
+
+  interface AgentSessionListResponsePayload {
+    items: AgentSessionRecordPayload[];
+    count: number;
+  }
+
+  interface TaskProposalAcceptPayload {
+    proposal_id: string;
+    task_name?: string | null;
+    task_prompt?: string | null;
+    session_id?: string | null;
+    parent_session_id?: string | null;
+    created_by?: string | null;
+    priority?: number;
+    model?: string | null;
+  }
+
+  interface TaskProposalAcceptResponsePayload {
+    proposal: TaskProposalRecordPayload;
+    session: AgentSessionRecordPayload;
+    input: EnqueueSessionInputResponsePayload;
   }
 
   interface CronjobDeliveryPayload {
@@ -613,11 +651,11 @@ declare global {
       node: string;
     };
     fs: {
-      listDirectory: (targetPath?: string | null) => Promise<LocalDirectoryResponse>;
-      readFilePreview: (targetPath: string) => Promise<FilePreviewPayload>;
-      writeTextFile: (targetPath: string, content: string) => Promise<FilePreviewPayload>;
-      getBookmarks: () => Promise<FileBookmarkPayload[]>;
-      addBookmark: (targetPath: string, label?: string) => Promise<FileBookmarkPayload[]>;
+      listDirectory: (targetPath?: string | null, workspaceId?: string | null) => Promise<LocalDirectoryResponse>;
+      readFilePreview: (targetPath: string, workspaceId?: string | null) => Promise<FilePreviewPayload>;
+      writeTextFile: (targetPath: string, content: string, workspaceId?: string | null) => Promise<FilePreviewPayload>;
+      getBookmarks: (workspaceId?: string | null) => Promise<FileBookmarkPayload[]>;
+      addBookmark: (targetPath: string, label?: string, workspaceId?: string | null) => Promise<FileBookmarkPayload[]>;
       removeBookmark: (bookmarkId: string) => Promise<FileBookmarkPayload[]>;
       onBookmarksChange: (listener: (bookmarks: FileBookmarkPayload[]) => void) => () => void;
     };
@@ -670,10 +708,12 @@ declare global {
       updateCronjob: (jobId: string, payload: CronjobUpdatePayload) => Promise<CronjobRecordPayload>;
       deleteCronjob: (jobId: string) => Promise<{ success: boolean }>;
       listTaskProposals: (workspaceId: string) => Promise<TaskProposalListResponsePayload>;
+      acceptTaskProposal: (payload: TaskProposalAcceptPayload) => Promise<TaskProposalAcceptResponsePayload>;
       updateTaskProposalState: (proposalId: string, state: string) => Promise<TaskProposalStateUpdatePayload>;
       enqueueRemoteDemoTaskProposal: (
         payload: DemoTaskProposalRequestPayload
       ) => Promise<DemoTaskProposalEnqueueResponsePayload>;
+      listAgentSessions: (workspaceId: string) => Promise<AgentSessionListResponsePayload>;
       listRuntimeStates: (workspaceId: string) => Promise<SessionRuntimeStateListResponsePayload>;
       getSessionHistory: (payload: { sessionId: string; workspaceId: string }) => Promise<SessionHistoryResponsePayload>;
       getSessionOutputEvents: (payload: { sessionId: string }) => Promise<SessionOutputEventListResponsePayload>;

@@ -782,7 +782,20 @@ test("runtime states and history endpoints read TS state store", async () => {
     text: "hi",
     messageId: "m-2"
   });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "proposal-session-1",
+    kind: "task_proposal",
+    title: "Follow up",
+    parentSessionId: "session-main",
+    sourceProposalId: "proposal-1",
+    createdBy: "workspace_user"
+  });
 
+  const sessions = await app.inject({
+    method: "GET",
+    url: `/api/v1/agent-sessions?workspace_id=${workspace.id}`
+  });
   const states = await app.inject({
     method: "GET",
     url: `/api/v1/agent-sessions/by-workspace/${workspace.id}/runtime-states`
@@ -792,6 +805,14 @@ test("runtime states and history endpoints read TS state store", async () => {
     url: `/api/v1/agent-sessions/session-main/history?workspace_id=${workspace.id}`
   });
 
+  assert.equal(sessions.statusCode, 200);
+  assert.equal(sessions.json().count, 2);
+  const proposalSession = sessions
+    .json()
+    .items.find((item: { session_id: string }) => item.session_id === "proposal-session-1");
+  assert.ok(proposalSession);
+  assert.equal(proposalSession.kind, "task_proposal");
+  assert.equal(proposalSession.parent_session_id, "session-main");
   assert.equal(states.statusCode, 200);
   assert.deepEqual(states.json().items, []);
   assert.equal(history.statusCode, 200);
@@ -2639,10 +2660,131 @@ test("queue route persists input, user message, and runtime state", async () => 
   assert.equal(runtimeStates[0].status, "QUEUED");
   assert.equal(runtimeStates[0].currentInputId, response.json().input_id);
 
+  const session = store.getSession({ workspaceId: workspace.id, sessionId: "session-main" });
+  assert.ok(session);
+  assert.equal(session.kind, "main");
+
+  const binding = store.getBinding({ workspaceId: workspace.id, sessionId: "session-main" });
+  assert.ok(binding);
+  assert.equal(binding.harnessSessionId, "session-main");
+
   const history = store.listSessionMessages({ workspaceId: workspace.id, sessionId: "session-main" });
   assert.equal(history.length, 1);
   assert.equal(history[0].role, "user");
   assert.equal(history[0].text, "hello world");
+
+  await app.close();
+  store.close();
+});
+
+test("accept task proposal creates a child session with queued work", async () => {
+  const root = makeTempDir("hb-runtime-api-task-proposal-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  let wakeCount = 0;
+  const app = buildRuntimeApiServer({
+    store,
+    queueWorker: {
+      async start() {},
+      async close() {},
+      wake() {
+        wakeCount += 1;
+      }
+    },
+    cronWorker: null,
+    bridgeWorker: null
+  });
+
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    harness: "opencode",
+    harnessSessionId: "session-main"
+  });
+  store.createTaskProposal({
+    proposalId: "proposal-1",
+    workspaceId: workspace.id,
+    taskName: "Follow up",
+    taskPrompt: "Write a follow-up message",
+    taskGenerationRationale: "User has not replied",
+    sourceEventIds: ["evt-1"],
+    createdAt: "2026-01-01T00:00:00+00:00"
+  });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/task-proposals/proposal-1/accept",
+    payload: {
+      parent_session_id: "session-main",
+      task_name: "Follow up",
+      task_prompt: "Write the follow-up and send a reminder",
+      model: "openai/gpt-5.2",
+      priority: 2,
+      created_by: "workspace_user"
+    }
+  });
+
+  assert.equal(response.statusCode, 200);
+  const body = response.json();
+  assert.equal(body.proposal.state, "accepted");
+  assert.equal(body.proposal.accepted_input_id, body.input.input_id);
+  assert.equal(body.proposal.accepted_session_id, body.session.session_id);
+  assert.equal(body.session.kind, "task_proposal");
+  assert.equal(body.session.parent_session_id, "session-main");
+  assert.equal(body.session.source_proposal_id, "proposal-1");
+  assert.equal(body.session.title, "Follow up");
+  assert.equal(body.input.session_id, body.session.session_id);
+  assert.equal(body.input.status, "QUEUED");
+  assert.equal(wakeCount, 1);
+
+  const childBinding = store.getBinding({ workspaceId: workspace.id, sessionId: body.session.session_id });
+  assert.ok(childBinding);
+  assert.equal(childBinding.harness, "opencode");
+  assert.equal(childBinding.harnessSessionId, body.session.session_id);
+
+  const childRuntimeState = store.getRuntimeState({
+    workspaceId: workspace.id,
+    sessionId: body.session.session_id
+  });
+  assert.ok(childRuntimeState);
+  assert.equal(childRuntimeState.status, "QUEUED");
+  assert.equal(childRuntimeState.currentInputId, body.input.input_id);
+
+  const childInput = store.getInput(body.input.input_id);
+  assert.ok(childInput);
+  assert.equal(childInput.sessionId, body.session.session_id);
+  assert.equal(childInput.priority, 2);
+  assert.equal(childInput.payload.text, "Write the follow-up and send a reminder");
+  assert.equal(childInput.payload.model, "openai/gpt-5.2");
+  assert.deepEqual(childInput.payload.context, {
+    source: "task_proposal",
+    proposal_id: "proposal-1",
+    parent_session_id: "session-main"
+  });
+
+  const childHistory = store.listSessionMessages({
+    workspaceId: workspace.id,
+    sessionId: body.session.session_id
+  });
+  assert.equal(childHistory.length, 1);
+  assert.equal(childHistory[0].role, "user");
+  assert.equal(childHistory[0].text, "Write the follow-up and send a reminder");
+
+  const secondAccept = await app.inject({
+    method: "POST",
+    url: "/api/v1/task-proposals/proposal-1/accept",
+    payload: {}
+  });
+  assert.equal(secondAccept.statusCode, 409);
 
   await app.close();
   store.close();

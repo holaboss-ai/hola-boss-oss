@@ -16,6 +16,7 @@ import { LeftNavigationRail, type LeftRailItem } from "@/components/layout/LeftN
 import {
   OperationsDrawer,
   type OperationsDrawerTab,
+  type OperationsRunningEntry,
   type OperationsOutputEntry
 } from "@/components/layout/OperationsDrawer";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
@@ -23,7 +24,12 @@ import { TopTabsBar } from "@/components/layout/TopTabsBar";
 import { AutomationsPane } from "@/components/panes/AutomationsPane";
 import { AppSurfacePane } from "@/components/panes/AppSurfacePane";
 import { BrowserPane } from "@/components/panes/BrowserPane";
-import { ChatPane } from "@/components/panes/ChatPane";
+import {
+  ChatPane,
+  type ManagedChatSessionObservedPayload,
+  type ManagedChatSessionRuntime,
+  type ManagedQueueSessionInputPayload
+} from "@/components/panes/ChatPane";
 import { FileExplorerPane } from "@/components/panes/FileExplorerPane";
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
@@ -41,10 +47,12 @@ const FILES_PANE_WIDTH_STORAGE_KEY = "holaboss-files-pane-width-v1";
 const BROWSER_PANE_WIDTH_STORAGE_KEY = "holaboss-browser-pane-width-v1";
 const SPACE_VISIBILITY_STORAGE_KEY = "holaboss-space-visibility-v1";
 const THEMES = ["holaboss", "emerald", "cobalt", "ember", "glacier", "mono", "claude", "slate", "paper", "graphite"] as const;
-const MIN_UTILITY_PANE_WIDTH = 200;
+const MIN_FILES_PANE_WIDTH = 168;
+const MIN_BROWSER_PANE_WIDTH = 200;
 const MAX_UTILITY_PANE_WIDTH = 720;
 const LEGACY_DEFAULT_FILES_PANE_WIDTH = 420;
-const DEFAULT_FILES_PANE_WIDTH = MIN_UTILITY_PANE_WIDTH;
+const PREVIOUS_DEFAULT_FILES_PANE_WIDTH = 200;
+const DEFAULT_FILES_PANE_WIDTH = 176;
 const DEFAULT_BROWSER_PANE_WIDTH = 460;
 const MIN_AGENT_CONTENT_WIDTH = 120;
 const UTILITY_PANE_RESIZER_WIDTH = 16;
@@ -98,8 +106,103 @@ type AgentView =
       htmlContent?: string | null;
     };
 
+type ManagedSessionRuntimeState = ManagedChatSessionRuntime & {
+  streamId: string | null;
+};
+
+function managedSessionKey(workspaceId: string, sessionId: string) {
+  return `${workspaceId}:${sessionId}`;
+}
+
+function normalizeRuntimeStatus(value: string | null | undefined) {
+  return (value || "").trim().toUpperCase();
+}
+
+function runtimeErrorDetail(value: unknown) {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  if (value && typeof value === "object") {
+    const payload = value as Record<string, unknown>;
+    if (typeof payload.message === "string" && payload.message.trim()) {
+      return payload.message.trim();
+    }
+    if (typeof payload.error === "string" && payload.error.trim()) {
+      return payload.error.trim();
+    }
+  }
+  return "";
+}
+
+function normalizeSessionOutputEvent(
+  payload: HolabossSessionStreamEventPayload
+): SessionOutputEventPayload | null {
+  if (payload.type !== "event" || !payload.event || !payload.event.data || typeof payload.event.data !== "object") {
+    return null;
+  }
+  const data = payload.event.data as Record<string, unknown>;
+  const workspaceId = typeof data.workspace_id === "string" ? data.workspace_id.trim() : "";
+  const sessionId = typeof data.session_id === "string" ? data.session_id.trim() : "";
+  const inputId = typeof data.input_id === "string" ? data.input_id.trim() : "";
+  const eventType = typeof data.event_type === "string" ? data.event_type.trim() : "";
+  const sequence = typeof data.sequence === "number" && Number.isFinite(data.sequence) ? data.sequence : 0;
+  const eventId =
+    typeof data.id === "number" && Number.isFinite(data.id)
+      ? data.id
+      : typeof payload.event.id === "string" && /^\d+$/.test(payload.event.id.trim())
+        ? Number.parseInt(payload.event.id, 10)
+      : Number.NaN;
+  const createdAt =
+    typeof data.created_at === "string" && data.created_at.trim()
+      ? data.created_at.trim()
+      : typeof data.timestamp === "string" && data.timestamp.trim()
+        ? data.timestamp.trim()
+        : new Date().toISOString();
+  if (!sessionId || !eventType || !Number.isFinite(eventId)) {
+    return null;
+  }
+  return {
+    id: eventId,
+    workspace_id: workspaceId,
+    session_id: sessionId,
+    input_id: inputId,
+    sequence,
+    event_type: eventType,
+    payload:
+      data.payload && typeof data.payload === "object" && !Array.isArray(data.payload)
+        ? (data.payload as Record<string, unknown>)
+        : {},
+    created_at: createdAt
+  };
+}
+
+function mergeSessionOutputEvents(
+  existing: SessionOutputEventPayload[],
+  incoming: SessionOutputEventPayload[]
+): SessionOutputEventPayload[] {
+  if (incoming.length === 0) {
+    return existing;
+  }
+  const byId = new Map<number, SessionOutputEventPayload>();
+  for (const event of existing) {
+    byId.set(event.id, event);
+  }
+  for (const event of incoming) {
+    byId.set(event.id, event);
+  }
+  return Array.from(byId.values()).sort((left, right) => left.sequence - right.sequence || left.id - right.id);
+}
+
 function loadSpaceVisibility(): SpaceVisibilityState {
   return DEFAULT_SPACE_VISIBILITY;
+}
+
+function minUtilityPaneWidth(paneId: UtilityPaneId): number {
+  return paneId === "files" ? MIN_FILES_PANE_WIDTH : MIN_BROWSER_PANE_WIDTH;
+}
+
+function clampStoredUtilityPaneWidth(paneId: UtilityPaneId, width: number): number {
+  return Math.max(minUtilityPaneWidth(paneId), Math.min(width, MAX_UTILITY_PANE_WIDTH));
 }
 
 function loadFilesPaneWidth(): number {
@@ -107,10 +210,10 @@ function loadFilesPaneWidth(): number {
     const raw = localStorage.getItem(FILES_PANE_WIDTH_STORAGE_KEY);
     const parsed = Number(raw);
     if (Number.isFinite(parsed)) {
-      if (parsed === LEGACY_DEFAULT_FILES_PANE_WIDTH) {
+      if (parsed === LEGACY_DEFAULT_FILES_PANE_WIDTH || parsed === PREVIOUS_DEFAULT_FILES_PANE_WIDTH) {
         return DEFAULT_FILES_PANE_WIDTH;
       }
-      return Math.max(MIN_UTILITY_PANE_WIDTH, Math.min(parsed, MAX_UTILITY_PANE_WIDTH));
+      return clampStoredUtilityPaneWidth("files", parsed);
     }
   } catch {
     // ignore
@@ -124,7 +227,7 @@ function loadBrowserPaneWidth(): number {
     const raw = localStorage.getItem(BROWSER_PANE_WIDTH_STORAGE_KEY);
     const parsed = Number(raw);
     if (Number.isFinite(parsed)) {
-      return Math.max(MIN_UTILITY_PANE_WIDTH, Math.min(parsed, MAX_UTILITY_PANE_WIDTH));
+      return clampStoredUtilityPaneWidth("browser", parsed);
     }
   } catch {
     // ignore
@@ -208,7 +311,13 @@ function spaceResizeHandleSpec(
 }
 
 function normalizeErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Request failed.";
+  const message =
+    error instanceof Error ? error.message : typeof error === "string" && error.trim() ? error : "Request failed.";
+  const normalized = message.trim().toLowerCase();
+  if (normalized === "aborted" || normalized.includes("stream aborted") || normalized.includes("aborterror")) {
+    return "App is still starting up. Try again in a moment.";
+  }
+  return message;
 }
 
 function inferInternalSurfaceFromOutputType(outputType: string): "document" | "preview" | "file" | "event" {
@@ -864,6 +973,11 @@ function AppShellContent() {
   const [activeLeftRailItem, setActiveLeftRailItem] = useState<LeftRailItem>("space");
   const [agentView, setAgentView] = useState<AgentView>({ type: "chat" });
   const [chatFocusRequestKey, setChatFocusRequestKey] = useState(1);
+  const [chatSessionRequest, setChatSessionRequest] = useState<{
+    workspaceId: string;
+    sessionId: string;
+    key: number;
+  } | null>(null);
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = useState(false);
   const [spaceVisibility, setSpaceVisibility] = useState<SpaceVisibilityState>(loadSpaceVisibility);
   const [filesPaneWidth, setFilesPaneWidth] = useState(loadFilesPaneWidth);
@@ -875,6 +989,11 @@ function AppShellContent() {
   const [isLoadingTaskProposals, setIsLoadingTaskProposals] = useState(false);
   const [isTriggeringTaskProposal, setIsTriggeringTaskProposal] = useState(false);
   const [taskProposalStatusMessage, setTaskProposalStatusMessage] = useState("");
+  const [agentSessions, setAgentSessions] = useState<AgentSessionRecordPayload[]>([]);
+  const [runtimeSessions, setRuntimeSessions] = useState<SessionRuntimeRecordPayload[]>([]);
+  const [isLoadingRunningEntries, setIsLoadingRunningEntries] = useState(false);
+  const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(null);
+  const [managedSessionRuntimes, setManagedSessionRuntimes] = useState<Record<string, ManagedSessionRuntimeState>>({});
   const [proposalAction, setProposalAction] = useState<{
     proposalId: string;
     action: "accept" | "dismiss";
@@ -888,16 +1007,21 @@ function AppShellContent() {
   const filesPaneWidthRef = useRef(filesPaneWidth);
   const browserPaneWidthRef = useRef(browserPaneWidth);
   const spaceVisibilityRef = useRef(spaceVisibility);
+  const managedSessionRuntimesRef = useRef<Record<string, ManagedSessionRuntimeState>>({});
+  const managedStreamSessionKeyRef = useRef<Map<string, string>>(new Map());
+  const previousSelectedWorkspaceIdRef = useRef<string | null>(selectedWorkspaceId ?? null);
 
   filesPaneWidthRef.current = filesPaneWidth;
   browserPaneWidthRef.current = browserPaneWidth;
   spaceVisibilityRef.current = spaceVisibility;
+  managedSessionRuntimesRef.current = managedSessionRuntimes;
 
   const clampUtilityPaneWidth = useCallback(
     (paneId: UtilityPaneId, width: number, options?: { filesWidth?: number; browserWidth?: number }) => {
       const hostWidth = utilityPaneHostRef.current?.getBoundingClientRect().width ?? 0;
       const effectiveFilesWidth = options?.filesWidth ?? filesPaneWidthRef.current;
       const effectiveBrowserWidth = options?.browserWidth ?? browserPaneWidthRef.current;
+      const minPaneWidth = minUtilityPaneWidth(paneId);
       const visiblePaneIds = FIXED_SPACE_ORDER.filter((pane) => spaceVisibilityRef.current[pane]);
       const flexPaneId = visiblePaneIds.includes("agent") ? "agent" : visiblePaneIds[visiblePaneIds.length - 1] ?? null;
       const resizerCount = Math.max(0, visiblePaneIds.length - 1);
@@ -907,18 +1031,19 @@ function AppShellContent() {
         }
         return total + (visiblePaneId === "files" ? effectiveFilesWidth : effectiveBrowserWidth);
       }, 0);
-      const minFlexibleWidth = flexPaneId === "agent" ? MIN_AGENT_CONTENT_WIDTH : MIN_UTILITY_PANE_WIDTH;
+      const minFlexibleWidth =
+        flexPaneId === "agent" ? MIN_AGENT_CONTENT_WIDTH : minUtilityPaneWidth(flexPaneId as UtilityPaneId);
       const maxWidth =
         hostWidth > 0
           ? Math.min(
               MAX_UTILITY_PANE_WIDTH,
               Math.max(
-                MIN_UTILITY_PANE_WIDTH,
+                minPaneWidth,
                 hostWidth - fixedOtherWidths - minFlexibleWidth - resizerCount * UTILITY_PANE_RESIZER_WIDTH
               )
             )
           : MAX_UTILITY_PANE_WIDTH;
-      return Math.max(MIN_UTILITY_PANE_WIDTH, Math.min(width, maxWidth));
+      return Math.max(minPaneWidth, Math.min(width, maxWidth));
     },
     []
   );
@@ -926,10 +1051,12 @@ function AppShellContent() {
   const clampPairedUtilityPaneWidths = useCallback(
     (leftPaneId: UtilityPaneId, rightPaneId: UtilityPaneId, leftWidth: number, rightWidth: number) => {
       const hostWidth = utilityPaneHostRef.current?.getBoundingClientRect().width ?? 0;
+      const minLeftWidth = minUtilityPaneWidth(leftPaneId);
+      const minRightWidth = minUtilityPaneWidth(rightPaneId);
       if (hostWidth <= 0) {
         return {
-          leftWidth: Math.max(MIN_UTILITY_PANE_WIDTH, Math.min(leftWidth, MAX_UTILITY_PANE_WIDTH)),
-          rightWidth: Math.max(MIN_UTILITY_PANE_WIDTH, Math.min(rightWidth, MAX_UTILITY_PANE_WIDTH))
+          leftWidth: Math.max(minLeftWidth, Math.min(leftWidth, MAX_UTILITY_PANE_WIDTH)),
+          rightWidth: Math.max(minRightWidth, Math.min(rightWidth, MAX_UTILITY_PANE_WIDTH))
         };
       }
 
@@ -948,14 +1075,14 @@ function AppShellContent() {
       const maxCombinedWidth = Math.min(
         MAX_UTILITY_PANE_WIDTH * 2,
         Math.max(
-          MIN_UTILITY_PANE_WIDTH * 2,
+          minLeftWidth + minRightWidth,
           hostWidth - fixedOtherWidths - MIN_AGENT_CONTENT_WIDTH - resizerCount * UTILITY_PANE_RESIZER_WIDTH
         )
       );
-      const combinedWidth = Math.min(leftWidth + rightWidth, maxCombinedWidth);
+      const combinedWidth = Math.max(minLeftWidth + minRightWidth, Math.min(leftWidth + rightWidth, maxCombinedWidth));
       const nextLeftWidth = Math.max(
-        MIN_UTILITY_PANE_WIDTH,
-        Math.min(leftWidth, combinedWidth - MIN_UTILITY_PANE_WIDTH)
+        minLeftWidth,
+        Math.min(leftWidth, combinedWidth - minRightWidth)
       );
       return {
         leftWidth: nextLeftWidth,
@@ -1183,6 +1310,253 @@ function AppShellContent() {
     setSelectedOutputId(nextEntry.id);
   };
 
+  const refreshRunningEntries = useCallback(async () => {
+    if (!selectedWorkspaceId) {
+      setAgentSessions([]);
+      setRuntimeSessions([]);
+      setIsLoadingRunningEntries(false);
+      return;
+    }
+
+    setIsLoadingRunningEntries(true);
+    try {
+      const [sessionsResponse, runtimeStatesResponse] = await Promise.all([
+        window.electronAPI.workspace.listAgentSessions(selectedWorkspaceId),
+        window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId)
+      ]);
+      setAgentSessions(sessionsResponse.items);
+      setRuntimeSessions(runtimeStatesResponse.items);
+    } finally {
+      setIsLoadingRunningEntries(false);
+    }
+  }, [selectedWorkspaceId]);
+
+  const updateManagedSessionRuntime = useCallback(
+    (
+      key: string,
+      updater: (current: ManagedSessionRuntimeState | null) => ManagedSessionRuntimeState | null
+    ) => {
+      setManagedSessionRuntimes((previous) => {
+        const current = previous[key] ?? null;
+        const next = updater(current);
+        if (!next) {
+          if (!(key in previous)) {
+            return previous;
+          }
+          const trimmed = { ...previous };
+          delete trimmed[key];
+          return trimmed;
+        }
+        return {
+          ...previous,
+          [key]: next
+        };
+      });
+    },
+    []
+  );
+
+  const closeManagedSessionStream = useCallback(
+    async (key: string, reason: string) => {
+      const current = managedSessionRuntimesRef.current[key];
+      const streamId = current?.streamId;
+      if (!streamId) {
+        return;
+      }
+      managedStreamSessionKeyRef.current.delete(streamId);
+      await window.electronAPI.workspace.closeSessionOutputStream(streamId, reason).catch(() => undefined);
+      updateManagedSessionRuntime(key, (snapshot) => (snapshot && snapshot.streamId === streamId ? { ...snapshot, streamId: null } : snapshot));
+    },
+    [updateManagedSessionRuntime]
+  );
+
+  const openManagedSessionStream = useCallback(
+    async (options: {
+      workspaceId: string;
+      sessionId: string;
+      inputId: string;
+      includeHistory?: boolean;
+    }) => {
+      const key = managedSessionKey(options.workspaceId, options.sessionId);
+      const current = managedSessionRuntimesRef.current[key];
+      if (current?.streamId && current.currentInputId === options.inputId) {
+        return current.streamId;
+      }
+      if (current?.streamId) {
+        await closeManagedSessionStream(key, "managed_stream_reopen");
+      }
+      const handle = await window.electronAPI.workspace.openSessionOutputStream({
+        sessionId: options.sessionId,
+        workspaceId: options.workspaceId,
+        inputId: options.inputId,
+        includeHistory: options.includeHistory ?? true,
+        stopOnTerminal: true
+      });
+      managedStreamSessionKeyRef.current.set(handle.streamId, key);
+      updateManagedSessionRuntime(key, (snapshot) =>
+        snapshot
+          ? {
+              ...snapshot,
+              streamId: handle.streamId
+            }
+          : {
+              workspaceId: options.workspaceId,
+              sessionId: options.sessionId,
+              runtimeStatus: "QUEUED",
+              currentInputId: options.inputId,
+              errorMessage: "",
+              events: [],
+              historyVersion: 0,
+              awaitingHistoryHydration: false,
+              streamId: handle.streamId
+            }
+      );
+      return handle.streamId;
+    },
+    [closeManagedSessionStream, updateManagedSessionRuntime]
+  );
+
+  const syncManagedSessionRuntime = useCallback(
+    async (options: {
+      workspaceId: string;
+      sessionId: string;
+      runtimeStatus: string;
+      currentInputId: string | null;
+      errorMessage?: string;
+      currentInputEvents?: SessionOutputEventPayload[];
+    }) => {
+      const key = managedSessionKey(options.workspaceId, options.sessionId);
+      const current = managedSessionRuntimesRef.current[key] ?? null;
+      const normalizedStatus = normalizeRuntimeStatus(options.runtimeStatus);
+      const nextInputId = (options.currentInputId || "").trim() || null;
+      const inputChanged = current?.currentInputId !== nextInputId;
+      const terminalTransition =
+        inputChanged &&
+        !nextInputId &&
+        Boolean(current?.currentInputId) &&
+        (normalizedStatus === "IDLE" || normalizedStatus === "ERROR");
+      if (inputChanged && current?.streamId) {
+        await closeManagedSessionStream(key, "managed_input_changed");
+      }
+
+      const nextEvents =
+        inputChanged
+          ? terminalTransition
+            ? current?.events ?? options.currentInputEvents ?? []
+            : options.currentInputEvents ?? []
+          : mergeSessionOutputEvents(current?.events ?? [], options.currentInputEvents ?? []);
+      const nextErrorMessage =
+        normalizedStatus === "ERROR"
+          ? options.errorMessage || current?.errorMessage || ""
+          : terminalTransition
+            ? current?.errorMessage || ""
+          : inputChanged
+            ? ""
+            : current?.errorMessage || "";
+
+      updateManagedSessionRuntime(key, (snapshot) => {
+        const currentHistoryVersion = snapshot?.historyVersion ?? 0;
+        const alreadyAwaitingHydration = snapshot?.awaitingHistoryHydration ?? false;
+        return {
+          workspaceId: options.workspaceId,
+          sessionId: options.sessionId,
+          runtimeStatus: normalizedStatus,
+          currentInputId: nextInputId,
+          errorMessage: nextErrorMessage,
+          events: nextEvents,
+          historyVersion: terminalTransition && !alreadyAwaitingHydration ? currentHistoryVersion + 1 : currentHistoryVersion,
+          awaitingHistoryHydration: terminalTransition ? true : inputChanged ? false : alreadyAwaitingHydration,
+          streamId: inputChanged ? null : snapshot?.streamId ?? null
+        };
+      });
+
+      if ((normalizedStatus === "BUSY" || normalizedStatus === "QUEUED") && nextInputId) {
+        await openManagedSessionStream({
+          workspaceId: options.workspaceId,
+          sessionId: options.sessionId,
+          inputId: nextInputId,
+          includeHistory: nextEvents.length === 0
+        }).catch(() => undefined);
+      } else if (normalizedStatus !== "BUSY" && normalizedStatus !== "QUEUED" && current?.streamId) {
+        await closeManagedSessionStream(key, `managed_status_${normalizedStatus.toLowerCase() || "idle"}`);
+      }
+    },
+    [closeManagedSessionStream, openManagedSessionStream, updateManagedSessionRuntime]
+  );
+
+  const observeManagedSession = useCallback(
+    (payload: ManagedChatSessionObservedPayload) => {
+      void syncManagedSessionRuntime({
+        workspaceId: payload.workspaceId,
+        sessionId: payload.sessionId,
+        runtimeStatus: payload.runtimeStatus,
+        currentInputId: payload.currentInputId,
+        currentInputEvents: payload.currentInputEvents
+      });
+    },
+    [syncManagedSessionRuntime]
+  );
+
+  const acknowledgeManagedHistoryHydration = useCallback(
+    (payload: { workspaceId: string; sessionId: string; historyVersion: number }) => {
+      const key = managedSessionKey(payload.workspaceId, payload.sessionId);
+      updateManagedSessionRuntime(key, (snapshot) => {
+        if (!snapshot || !snapshot.awaitingHistoryHydration || snapshot.historyVersion !== payload.historyVersion) {
+          return snapshot;
+        }
+        const runtimeStatus = normalizeRuntimeStatus(snapshot.runtimeStatus);
+        if (runtimeStatus === "BUSY" || runtimeStatus === "QUEUED" || runtimeStatus === "WAITING_USER") {
+          return {
+            ...snapshot,
+            awaitingHistoryHydration: false
+          };
+        }
+        return {
+          ...snapshot,
+          currentInputId: null,
+          errorMessage: "",
+          events: [],
+          awaitingHistoryHydration: false
+        };
+      });
+    },
+    [updateManagedSessionRuntime]
+  );
+
+  const queueManagedSessionInput = useCallback(
+    async (payload: ManagedQueueSessionInputPayload) => {
+      const queued = await window.electronAPI.workspace.queueSessionInput({
+        text: payload.text,
+        workspace_id: payload.workspaceId,
+        image_urls: null,
+        attachments: payload.attachments,
+        session_id: payload.sessionId,
+        priority: 0,
+        model: payload.model
+      });
+      const key = managedSessionKey(payload.workspaceId, queued.session_id);
+      updateManagedSessionRuntime(key, (snapshot) => ({
+        workspaceId: payload.workspaceId,
+        sessionId: queued.session_id,
+        runtimeStatus: "QUEUED",
+        currentInputId: queued.input_id,
+        errorMessage: "",
+        events: [],
+        historyVersion: snapshot?.historyVersion ?? 0,
+        awaitingHistoryHydration: false,
+        streamId: snapshot?.streamId ?? null
+      }));
+      await openManagedSessionStream({
+        workspaceId: payload.workspaceId,
+        sessionId: queued.session_id,
+        inputId: queued.input_id,
+        includeHistory: true
+      }).catch(() => undefined);
+      return queued;
+    },
+    [openManagedSessionStream, updateManagedSessionRuntime]
+  );
+
   async function refreshTaskProposals(options?: { logErrors?: boolean }) {
     if (!selectedWorkspaceId || !selectedWorkspace) {
       setTaskProposals([]);
@@ -1266,24 +1640,24 @@ function AppShellContent() {
     setTaskProposalStatusMessage("");
     try {
       const runtimeStatesResponse = await window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId);
-      const targetSessionId = preferredSessionId(selectedWorkspace, runtimeStatesResponse.items);
-      if (!targetSessionId) {
-        throw new Error("No active session found for this workspace.");
-      }
+      const parentSessionId = preferredSessionId(selectedWorkspace, runtimeStatesResponse.items);
 
-      await window.electronAPI.workspace.queueSessionInput({
-        text: proposal.task_prompt,
-        workspace_id: selectedWorkspaceId,
-        image_urls: null,
-        session_id: targetSessionId,
+      const accepted = await window.electronAPI.workspace.acceptTaskProposal({
+        proposal_id: proposal.proposal_id,
+        parent_session_id: parentSessionId,
+        task_name: proposal.task_name,
+        task_prompt: proposal.task_prompt,
         priority: 0,
         model: runtimeConfig?.defaultModel ?? null
       });
-      await window.electronAPI.workspace.updateTaskProposalState(proposal.proposal_id, "accepted");
 
-      const detail = `Queued "${proposal.task_name}" into session ${targetSessionId}.`;
+      const targetSessionId = accepted.session.session_id;
+      setActiveOperationsTab("running");
+      setOperationsDrawerOpen(true);
+
+      const detail = `Queued "${proposal.task_name}" into child session ${targetSessionId}. Open it from Running when you want to enter that session.`;
       const inferredAppId = inferInstalledWorkspaceAppIdFromText(
-        `${proposal.task_name}\n${proposal.task_prompt}`,
+        `${accepted.proposal.task_name}\n${accepted.proposal.task_prompt}`,
         installedApps
       );
       setTaskProposalStatusMessage(detail);
@@ -1304,6 +1678,7 @@ function AppShellContent() {
               surface: "event"
             }
       });
+      await refreshRunningEntries();
       void refreshRuntimeOutputs();
       await refreshTaskProposals();
     } catch (error) {
@@ -1361,6 +1736,58 @@ function AppShellContent() {
   }
 
   useEffect(() => {
+    if (!selectedWorkspaceId) {
+      setAgentSessions([]);
+      setRuntimeSessions([]);
+      setIsLoadingRunningEntries(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const load = async () => {
+      setIsLoadingRunningEntries(true);
+      try {
+        const [sessionsResponse, runtimeStatesResponse] = await Promise.all([
+          window.electronAPI.workspace.listAgentSessions(selectedWorkspaceId),
+          window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId)
+        ]);
+        if (!cancelled) {
+          setAgentSessions(sessionsResponse.items);
+          setRuntimeSessions(runtimeStatesResponse.items);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingRunningEntries(false);
+        }
+      }
+    };
+
+    void load();
+    const timer = window.setInterval(() => {
+      void load();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [selectedWorkspaceId]);
+
+  useEffect(() => {
+    const previousWorkspaceId = previousSelectedWorkspaceIdRef.current;
+    previousSelectedWorkspaceIdRef.current = selectedWorkspaceId ?? null;
+    if (!previousWorkspaceId || previousWorkspaceId === selectedWorkspaceId) {
+      return;
+    }
+    for (const key of Object.keys(managedSessionRuntimesRef.current)) {
+      if (key.startsWith(`${previousWorkspaceId}:`)) {
+        void closeManagedSessionStream(key, "workspace_switch");
+      }
+    }
+  }, [closeManagedSessionStream, selectedWorkspaceId]);
+
+  useEffect(() => {
     if (!selectedWorkspaceId || !selectedWorkspace) {
       setTaskProposals([]);
       setTaskProposalStatusMessage("");
@@ -1400,6 +1827,134 @@ function AppShellContent() {
     };
   }, [selectedWorkspace, selectedWorkspaceId]);
 
+  useEffect(() => {
+    if (!selectedWorkspaceId) {
+      return;
+    }
+    const trackedKeys = new Set<string>();
+    if (activeChatSessionId) {
+      trackedKeys.add(managedSessionKey(selectedWorkspaceId, activeChatSessionId));
+    }
+    for (const key of Object.keys(managedSessionRuntimesRef.current)) {
+      if (key.startsWith(`${selectedWorkspaceId}:`)) {
+        trackedKeys.add(key);
+      }
+    }
+    for (const key of trackedKeys) {
+      const separatorIndex = key.indexOf(":");
+      const sessionId = separatorIndex >= 0 ? key.slice(separatorIndex + 1) : "";
+      if (!sessionId) {
+        continue;
+      }
+      const runtimeState = runtimeSessions.find((item) => item.session_id === sessionId);
+      if (!runtimeState) {
+        continue;
+      }
+      void syncManagedSessionRuntime({
+        workspaceId: selectedWorkspaceId,
+        sessionId,
+        runtimeStatus: runtimeState.status,
+        currentInputId: runtimeState.current_input_id,
+        errorMessage: runtimeErrorDetail(runtimeState.last_error)
+      });
+    }
+  }, [activeChatSessionId, runtimeSessions, selectedWorkspaceId, syncManagedSessionRuntime]);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.workspace.onSessionStreamEvent((payload) => {
+      const key = managedStreamSessionKeyRef.current.get(payload.streamId);
+      if (!key) {
+        return;
+      }
+
+      if (payload.type === "done") {
+        managedStreamSessionKeyRef.current.delete(payload.streamId);
+        updateManagedSessionRuntime(key, (snapshot) =>
+          snapshot && snapshot.streamId === payload.streamId
+            ? {
+                ...snapshot,
+                streamId: null
+              }
+            : snapshot
+        );
+        return;
+      }
+
+      if (payload.type === "error") {
+        managedStreamSessionKeyRef.current.delete(payload.streamId);
+        updateManagedSessionRuntime(key, (snapshot) =>
+          snapshot
+            ? {
+                ...snapshot,
+                streamId: snapshot.streamId === payload.streamId ? null : snapshot.streamId,
+                runtimeStatus: normalizeRuntimeStatus(snapshot.runtimeStatus) === "IDLE" ? snapshot.runtimeStatus : "ERROR",
+                errorMessage: normalizeErrorMessage(payload.error || snapshot.errorMessage || "The agent stream failed.")
+              }
+            : snapshot
+        );
+        return;
+      }
+
+      const event = normalizeSessionOutputEvent(payload);
+      if (!event) {
+        return;
+      }
+
+      updateManagedSessionRuntime(key, (snapshot) => {
+        if (!snapshot) {
+          return snapshot;
+        }
+        if (snapshot.events.some((item) => item.id === event.id)) {
+          return snapshot;
+        }
+        const sameInput =
+          !snapshot.currentInputId || !event.input_id || event.input_id === snapshot.currentInputId;
+        const nextEvents = sameInput ? mergeSessionOutputEvents(snapshot.events, [event]) : snapshot.events;
+        let nextRuntimeStatus = snapshot.runtimeStatus;
+        let nextErrorMessage = snapshot.errorMessage;
+        let nextHistoryVersion = snapshot.historyVersion;
+        let awaitingHistoryHydration = snapshot.awaitingHistoryHydration;
+
+        if (event.event_type === "run_claimed" || event.event_type === "run_started") {
+          nextRuntimeStatus = "BUSY";
+        } else if (event.event_type === "run_waiting_user" || event.event_type === "awaiting_user_input") {
+          nextRuntimeStatus = "WAITING_USER";
+        } else if (event.event_type === "run_completed") {
+          nextRuntimeStatus = "IDLE";
+          nextHistoryVersion += 1;
+          awaitingHistoryHydration = true;
+        } else if (event.event_type === "run_failed") {
+          nextRuntimeStatus = "ERROR";
+          nextErrorMessage = runtimeErrorDetail(event.payload) || nextErrorMessage;
+          nextHistoryVersion += 1;
+          awaitingHistoryHydration = true;
+        }
+
+        return {
+          ...snapshot,
+          currentInputId: sameInput ? snapshot.currentInputId || event.input_id || null : snapshot.currentInputId,
+          events: nextEvents,
+          runtimeStatus: nextRuntimeStatus,
+          errorMessage: nextErrorMessage,
+          historyVersion: nextHistoryVersion,
+          awaitingHistoryHydration
+        };
+      });
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [updateManagedSessionRuntime]);
+
+  useEffect(() => {
+    return () => {
+      for (const key of Object.keys(managedSessionRuntimesRef.current)) {
+        void closeManagedSessionStream(key, "appshell_unmount");
+      }
+    };
+  }, [closeManagedSessionStream]);
+
   const handleDismissUpdate = () => {
     void window.electronAPI.appUpdate.dismiss(appUpdateStatus?.releaseTag ?? null);
   };
@@ -1417,9 +1972,53 @@ function AppShellContent() {
     setOperationsDrawerOpen(true);
   };
 
+  const openChatSession = useCallback(
+    (sessionId: string) => {
+      if (!selectedWorkspaceId) {
+        return;
+      }
+
+      setActiveLeftRailItem("space");
+      setSpaceVisibility((previous) => ({
+        ...previous,
+        agent: true
+      }));
+      setAgentView({ type: "chat" });
+      setChatSessionRequest({
+        workspaceId: selectedWorkspaceId,
+        sessionId,
+        key: Date.now()
+      });
+      setChatFocusRequestKey((current) => current + 1);
+    },
+    [selectedWorkspaceId]
+  );
+
+  const handleOpenRunningSession = useCallback(
+    (sessionId: string) => {
+      openChatSession(sessionId);
+    },
+    [openChatSession]
+  );
+
+  const handleReturnToMainSession = useCallback(() => {
+    const mainSessionId = (selectedWorkspace?.main_session_id || "").trim();
+    if (!mainSessionId) {
+      return;
+    }
+    openChatSession(mainSessionId);
+  }, [openChatSession, selectedWorkspace?.main_session_id]);
+
   const handleLeftRailSelect = (item: LeftRailItem) => {
     if (item === "space") {
       setActiveLeftRailItem("space");
+      if (selectedWorkspaceId && activeChatSessionId) {
+        setChatSessionRequest({
+          workspaceId: selectedWorkspaceId,
+          sessionId: activeChatSessionId,
+          key: Date.now()
+        });
+      }
       if (agentView.type === "app") {
         setAgentView({ type: "chat" });
       }
@@ -1491,6 +2090,53 @@ function AppShellContent() {
       return true;
     });
   }, [outputEntries, runtimeOutputEntries]);
+  const runtimeStateBySessionId = useMemo(
+    () => new Map(runtimeSessions.map((item) => [item.session_id, item])),
+    [runtimeSessions]
+  );
+  const runningEntries = useMemo<OperationsRunningEntry[]>(() => {
+    const mainSessionId = (selectedWorkspace?.main_session_id || "").trim();
+    return agentSessions
+      .filter((session) => session.kind === "task_proposal")
+      .map((session) => {
+        const runtimeState = runtimeStateBySessionId.get(session.session_id);
+        const title = session.title?.trim() || session.session_id;
+        const detail =
+          session.parent_session_id && session.parent_session_id === mainSessionId
+            ? "Continues from main session."
+            : session.parent_session_id
+              ? `Parent session: ${session.parent_session_id}`
+              : "Proposal-created child session.";
+        return {
+          sessionId: session.session_id,
+          title,
+          detail,
+          status: runtimeState?.status || "IDLE",
+          createdAt: session.created_at,
+          updatedAt: runtimeState?.updated_at || session.updated_at,
+          isActive: agentView.type === "chat" && activeChatSessionId === session.session_id
+        };
+      })
+      .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+  }, [activeChatSessionId, agentSessions, agentView.type, runtimeStateBySessionId, selectedWorkspace?.main_session_id]);
+  const activeSessionMeta = useMemo(
+    () => agentSessions.find((session) => session.session_id === activeChatSessionId) ?? null,
+    [activeChatSessionId, agentSessions]
+  );
+  const requestedChatSessionId =
+    chatSessionRequest?.workspaceId === selectedWorkspaceId ? chatSessionRequest.sessionId.trim() : "";
+  const managedChatSessionRuntime =
+    selectedWorkspaceId && (activeChatSessionId || requestedChatSessionId)
+      ? managedSessionRuntimes[managedSessionKey(selectedWorkspaceId, activeChatSessionId || requestedChatSessionId)] ?? null
+      : null;
+  const mainSessionId = (selectedWorkspace?.main_session_id || "").trim();
+  const showChildSessionBanner =
+    agentView.type === "chat" &&
+    !onboardingModeActive &&
+    Boolean(activeChatSessionId) &&
+    Boolean(mainSessionId) &&
+    activeChatSessionId !== mainSessionId;
+  const activeSessionBannerTitle = activeSessionMeta?.title?.trim() || activeChatSessionId || "Child session";
 
   const agentContent = useMemo(() => {
     if (!hasSelectedWorkspace) {
@@ -1500,7 +2146,40 @@ function AppShellContent() {
     if (agentView.type === "chat") {
       return onboardingModeActive
         ? <OnboardingPane onOutputsChanged={() => void refreshRuntimeOutputs()} focusRequestKey={chatFocusRequestKey} />
-        : <ChatPane onOutputsChanged={() => void refreshRuntimeOutputs()} focusRequestKey={chatFocusRequestKey} />;
+        : <div className="flex h-full min-h-0 min-w-0 flex-col gap-3">
+            {showChildSessionBanner ? (
+              <div className="theme-subtle-surface relative z-10 shrink-0 rounded-[20px] border border-neon-green/24 px-4 py-3">
+                <div className="flex min-w-0 flex-col gap-3">
+                  <div className="min-w-0 pr-20 lg:pr-28">
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-neon-green/76">Child session</div>
+                    <div className="mt-1 truncate text-[13px] font-medium text-text-main">{activeSessionBannerTitle}</div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={handleReturnToMainSession}
+                      className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-neon-green/40 bg-neon-green/10 px-3 text-[11px] text-neon-green transition hover:bg-neon-green/14"
+                    >
+                      <ArrowRight size={12} />
+                      <span>Back to main session</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <ChatPane
+                onOutputsChanged={() => void refreshRuntimeOutputs()}
+                focusRequestKey={chatFocusRequestKey}
+                sessionRequest={chatSessionRequest}
+                onActiveSessionChange={setActiveChatSessionId}
+                managedSessionRuntime={managedChatSessionRuntime}
+                onManagedSessionObserved={observeManagedSession}
+                onManagedHistoryHydrated={acknowledgeManagedHistoryHydration}
+                onManagedQueueSessionInput={queueManagedSessionInput}
+              />
+            </div>
+          </div>;
     }
 
     if (agentView.type === "app") {
@@ -1521,7 +2200,26 @@ function AppShellContent() {
         htmlContent={agentView.htmlContent}
       />
     );
-  }, [activeApp, activeAppId, agentView, chatFocusRequestKey, hasSelectedWorkspace, installedApps, onboardingModeActive, refreshRuntimeOutputs]);
+  }, [
+    activeApp,
+    activeAppId,
+    activeChatSessionId,
+    activeSessionBannerTitle,
+    acknowledgeManagedHistoryHydration,
+    agentView,
+    chatFocusRequestKey,
+    chatSessionRequest,
+    handleReturnToMainSession,
+    hasSelectedWorkspace,
+    installedApps,
+    managedChatSessionRuntime,
+    onboardingModeActive,
+    observeManagedSession,
+    queueManagedSessionInput,
+    refreshRuntimeOutputs,
+    selectedWorkspaceId,
+    showChildSessionBanner
+  ]);
 
   const spacePanes = useMemo(
     () =>
@@ -1711,7 +2409,7 @@ function AppShellContent() {
           <div
             className={`relative grid h-full min-h-0 gap-y-3 overflow-hidden transition-[grid-template-columns,column-gap] duration-300 ease-in-out ${
               showOperationsDrawer
-                ? "lg:grid-cols-[60px_minmax(0,1fr)_380px]"
+                ? "lg:grid-cols-[60px_minmax(0,1fr)_304px]"
                 : "lg:grid-cols-[60px_minmax(0,1fr)]"
             }`}
             style={{ columnGap: "0.5rem" }}
@@ -1866,10 +2564,13 @@ function AppShellContent() {
                   isTriggeringProposal={isTriggeringTaskProposal}
                   proposalStatusMessage={taskProposalStatusMessage}
                   proposalAction={proposalAction}
+                  runningEntries={runningEntries}
+                  isLoadingRunningEntries={isLoadingRunningEntries}
                   outputs={combinedOutputEntries}
                   installedApps={installedApps}
                   selectedOutputId={selectedOutputId}
                   onSelectOutput={setSelectedOutputId}
+                  onOpenRunningSession={handleOpenRunningSession}
                   onOpenOutput={handleOpenOutput}
                   onRefreshProposals={() => void refreshTaskProposals({ logErrors: true })}
                   onTriggerProposal={() => void triggerRemoteTaskProposal()}

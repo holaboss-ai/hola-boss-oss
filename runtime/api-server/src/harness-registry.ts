@@ -93,6 +93,7 @@ export interface RuntimeHarnessPlugin {
   adapter: RuntimeHarnessAdapter;
   stageBrowserTools: (params: {
     workspaceDir: string;
+    sessionKind?: string | null;
     browserConfig: RuntimeHarnessBrowserConfig;
   }) => { changed: boolean; toolIds: string[] };
   stageRuntimeTools: (params: { workspaceDir: string }) => { changed: boolean; toolIds: string[] };
@@ -195,6 +196,10 @@ function defaultHarnessTimeoutSeconds(): number {
     return DEFAULT_RUN_TIMEOUT_S;
   }
   return Math.max(1, Math.min(parsed, 7200));
+}
+
+function browserToolsAllowedForSession(sessionKind: string | null | undefined): boolean {
+  return typeof sessionKind === "string" && sessionKind.trim().toLowerCase() === "main";
 }
 
 function opencodeSidecarFingerprint(runtimeConfig: HarnessRuntimeConfigPayload, workspaceId: string): string {
@@ -334,7 +339,7 @@ const opencodeRuntimeHarnessPlugin: RuntimeHarnessPlugin = {
     );
     return {
       changed: result.changed,
-      toolIds: result.tool_ids
+      toolIds: browserToolsAllowedForSession(params.sessionKind) ? result.tool_ids : []
     };
   },
   stageRuntimeTools(params) {
@@ -428,6 +433,7 @@ const piRuntimeHarnessPlugin: RuntimeHarnessPlugin = {
   adapter: piAdapter,
   stageBrowserTools(params) {
     const browserEnabled = Boolean(
+      browserToolsAllowedForSession(params.sessionKind) &&
       params.browserConfig.desktopBrowserEnabled &&
         params.browserConfig.desktopBrowserUrl.trim() &&
         params.browserConfig.desktopBrowserAuthToken.trim()

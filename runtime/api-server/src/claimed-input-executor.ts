@@ -179,6 +179,27 @@ function createdAtForEvent(event: RunnerEvent): string | undefined {
   return typeof event.timestamp === "string" && event.timestamp.trim() ? event.timestamp : undefined;
 }
 
+function inferSessionKind(params: {
+  workspace: WorkspaceRecord;
+  sessionId: string;
+  persistedKind?: string | null;
+}): string {
+  const persistedKind = typeof params.persistedKind === "string" ? params.persistedKind.trim() : "";
+  if (persistedKind) {
+    return persistedKind;
+  }
+  const sessionId = params.sessionId.trim();
+  if (sessionId && sessionId === (params.workspace.mainSessionId ?? "").trim()) {
+    return "main";
+  }
+  const onboardingSessionId = (params.workspace.onboardingSessionId ?? "").trim();
+  const onboardingStatus = (params.workspace.onboardingStatus ?? "").trim().toLowerCase();
+  if (sessionId && sessionId === onboardingSessionId && ["pending", "awaiting_confirmation", "in_progress"].includes(onboardingStatus)) {
+    return "onboarding";
+  }
+  return "workspace_session";
+}
+
 function payloadForEvent(event: RunnerEvent): Record<string, unknown> {
   return isRecord(event.payload) ? event.payload : {};
 }
@@ -239,6 +260,15 @@ export async function processClaimedInput(params: {
   }
 
   const harness = normalizeHarnessId(workspace.harness ?? selectedHarness());
+  const session = store.getSession({
+    workspaceId: record.workspaceId,
+    sessionId: record.sessionId
+  });
+  const sessionKind = inferSessionKind({
+    workspace,
+    sessionId: record.sessionId,
+    persistedKind: session?.kind
+  });
   const harnessSupportsWaitingUser = resolveRuntimeHarnessAdapter(harness)?.capabilities.supportsWaitingUser ?? false;
   const harnessSessionId = ensureLocalBinding({
     store,
@@ -294,6 +324,7 @@ export async function processClaimedInput(params: {
   const payload: Record<string, unknown> = {
     workspace_id: record.workspaceId,
     session_id: record.sessionId,
+    session_kind: sessionKind,
     input_id: record.inputId,
     instruction,
     attachments,

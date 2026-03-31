@@ -24,6 +24,7 @@ function baseRequest(): HarnessHostPiRequest {
     workspace_id: "workspace-1",
     workspace_dir: "/tmp/workspace-1",
     session_id: "session-1",
+    browser_tools_enabled: false,
     input_id: "input-1",
     instruction: "List the files",
     debug: false,

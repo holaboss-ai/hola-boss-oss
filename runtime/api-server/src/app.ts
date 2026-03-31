@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -10,6 +11,7 @@ import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import yauzl from "yauzl";
 
 import {
+  type AgentSessionRecord,
   type AppBuildRecord,
   type CronjobRecord,
   type OutputFolderRecord,
@@ -20,6 +22,7 @@ import {
   type TaskProposalRecord,
   type OutputEventRecord,
   RuntimeStateStore,
+  utcNowIso,
   type WorkspaceRecord
 } from "@holaboss/runtime-state-store";
 
@@ -396,6 +399,21 @@ function workspaceRecordPayload(workspace: WorkspaceRecord): Record<string, unkn
   };
 }
 
+function agentSessionPayload(record: AgentSessionRecord): Record<string, unknown> {
+  return {
+    workspace_id: record.workspaceId,
+    session_id: record.sessionId,
+    kind: record.kind,
+    title: record.title,
+    parent_session_id: record.parentSessionId,
+    source_proposal_id: record.sourceProposalId,
+    created_by: record.createdBy,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt,
+    archived_at: record.archivedAt
+  };
+}
+
 function runtimeStatePayload(record: SessionRuntimeStateRecord): Record<string, unknown> {
   return {
     workspace_id: record.workspaceId,
@@ -510,8 +528,30 @@ function taskProposalPayload(record: TaskProposalRecord): Record<string, unknown
     task_generation_rationale: record.taskGenerationRationale,
     source_event_ids: record.sourceEventIds,
     created_at: record.createdAt,
-    state: record.state
+    state: record.state,
+    accepted_session_id: record.acceptedSessionId,
+    accepted_input_id: record.acceptedInputId,
+    accepted_at: record.acceptedAt
   };
+}
+
+function resolvedWorkspaceHarness(workspace: WorkspaceRecord): string {
+  const harness = (workspace.harness ?? process.env.SANDBOX_AGENT_HARNESS ?? "opencode").trim();
+  return harness || "opencode";
+}
+
+function inferredSessionKind(workspace: WorkspaceRecord, sessionId: string): string {
+  const trimmedSessionId = sessionId.trim();
+  const onboardingSessionId = (workspace.onboardingSessionId ?? "").trim();
+  const onboardingStatus = (workspace.onboardingStatus ?? "").trim().toLowerCase();
+  if (onboardingSessionId && onboardingSessionId === trimmedSessionId && ["pending", "awaiting_confirmation", "in_progress"].includes(onboardingStatus)) {
+    return "onboarding";
+  }
+  const mainSessionId = (workspace.mainSessionId ?? "").trim();
+  if (mainSessionId && mainSessionId === trimmedSessionId) {
+    return "main";
+  }
+  return "workspace_session";
 }
 
 function outputTypeForArtifact(artifactType: string): string {
@@ -577,10 +617,13 @@ function effectiveSessionState(
 
 function runnerOutputEventPayload(record: OutputEventRecord): Record<string, unknown> {
   return {
+    id: record.id,
+    workspace_id: record.workspaceId,
     session_id: record.sessionId,
     input_id: record.inputId,
     sequence: record.sequence,
     event_type: record.eventType,
+    created_at: record.createdAt,
     timestamp: record.createdAt,
     payload: record.payload
   };
@@ -2400,6 +2443,25 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 422, "text or attachments are required");
     }
 
+    store.ensureSession({
+      workspaceId,
+      sessionId: resolvedSessionId,
+      kind: inferredSessionKind(workspace, resolvedSessionId),
+      title:
+        inferredSessionKind(workspace, resolvedSessionId) === "onboarding"
+          ? "Onboarding"
+          : inferredSessionKind(workspace, resolvedSessionId) === "main"
+          ? "Main"
+          : null
+    });
+    if (!store.getBinding({ workspaceId, sessionId: resolvedSessionId })) {
+      store.upsertBinding({
+        workspaceId,
+        sessionId: resolvedSessionId,
+        harness: resolvedWorkspaceHarness(workspace),
+        harnessSessionId: resolvedSessionId
+      });
+    }
     store.ensureRuntimeState({
       workspaceId,
       sessionId: resolvedSessionId,
@@ -2441,6 +2503,29 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       session_id: record.sessionId,
       status: record.status
     };
+  });
+
+  app.get("/api/v1/agent-sessions", async (request, reply) => {
+    const query = isRecord(request.query) ? request.query : {};
+    const workspaceId = optionalString(query.workspace_id);
+    if (!workspaceId) {
+      return sendError(reply, 400, "workspace_id is required");
+    }
+
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    const items = store
+      .listSessions({
+        workspaceId,
+        includeArchived: optionalBoolean(query.include_archived, false),
+        limit: Math.max(1, Math.min(200, optionalInteger(query.limit, 100))),
+        offset: Math.max(0, optionalInteger(query.offset, 0))
+      })
+      .map((item: AgentSessionRecord) => agentSessionPayload(item));
+    return { items, count: items.length };
   });
 
   app.get("/api/v1/agent-sessions/:sessionId/state", async (request, reply) => {
@@ -2875,6 +2960,127 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       state: optionalString(request.body.state) ?? "not_reviewed"
     });
     return { proposal: taskProposalPayload(proposal) };
+  });
+
+  app.post("/api/v1/task-proposals/:proposalId/accept", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+
+    const params = request.params as { proposalId: string };
+    const proposal = store.getTaskProposal(params.proposalId);
+    if (!proposal) {
+      return sendError(reply, 404, "Task proposal not found");
+    }
+
+    const workspace = store.getWorkspace(proposal.workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    if (proposal.state === "dismissed") {
+      return sendError(reply, 409, "Task proposal has already been dismissed");
+    }
+    if (proposal.state === "accepted" && proposal.acceptedSessionId && proposal.acceptedInputId) {
+      return sendError(reply, 409, "Task proposal has already been accepted");
+    }
+
+    const blockingApps = blockingWorkspaceApps({ store, workspaceId: proposal.workspaceId });
+    if (blockingApps.length > 0) {
+      return sendError(reply, 409, blockingWorkspaceAppsMessage(blockingApps));
+    }
+
+    const taskName = requiredString(request.body.task_name ?? proposal.taskName, "task_name");
+    const taskPrompt = requiredString(request.body.task_prompt ?? proposal.taskPrompt, "task_prompt");
+    const sessionId = optionalString(request.body.session_id) ?? `proposal-${randomUUID()}`;
+    const parentSessionId = nullableString(request.body.parent_session_id) ?? null;
+    const priority = optionalInteger(request.body.priority, 0);
+    const model = nullableString(request.body.model) ?? null;
+    const createdBy = nullableString(request.body.created_by) ?? "workspace_user";
+
+    if (store.getSession({ workspaceId: proposal.workspaceId, sessionId })) {
+      return sendError(reply, 409, "session_id is already in use");
+    }
+
+    const session = store.ensureSession({
+      workspaceId: proposal.workspaceId,
+      sessionId,
+      kind: "task_proposal",
+      title: taskName,
+      parentSessionId,
+      sourceProposalId: proposal.proposalId,
+      createdBy
+    });
+    if (!store.getBinding({ workspaceId: proposal.workspaceId, sessionId })) {
+      store.upsertBinding({
+        workspaceId: proposal.workspaceId,
+        sessionId,
+        harness: resolvedWorkspaceHarness(workspace),
+        harnessSessionId: sessionId
+      });
+    }
+    store.ensureRuntimeState({
+      workspaceId: proposal.workspaceId,
+      sessionId,
+      status: "QUEUED"
+    });
+
+    const record = store.enqueueInput({
+      workspaceId: proposal.workspaceId,
+      sessionId,
+      priority,
+      payload: {
+        text: taskPrompt,
+        attachments: [],
+        image_urls: [],
+        model,
+        context: {
+          source: "task_proposal",
+          proposal_id: proposal.proposalId,
+          parent_session_id: parentSessionId
+        }
+      }
+    });
+    store.insertSessionMessage({
+      workspaceId: proposal.workspaceId,
+      sessionId,
+      role: "user",
+      text: taskPrompt,
+      messageId: `user-${record.inputId}`
+    });
+    store.updateRuntimeState({
+      workspaceId: proposal.workspaceId,
+      sessionId,
+      status: "QUEUED",
+      currentInputId: record.inputId,
+      currentWorkerId: null,
+      leaseUntil: null,
+      heartbeatAt: null,
+      lastError: null
+    });
+
+    const updatedProposal = store.updateTaskProposal({
+      proposalId: proposal.proposalId,
+      fields: {
+        taskName,
+        taskPrompt,
+        state: "accepted",
+        acceptedSessionId: sessionId,
+        acceptedInputId: record.inputId,
+        acceptedAt: utcNowIso()
+      }
+    });
+    queueWorker?.wake();
+
+    return reply.send({
+      proposal: taskProposalPayload(updatedProposal ?? proposal),
+      session: agentSessionPayload(session),
+      input: {
+        input_id: record.inputId,
+        session_id: record.sessionId,
+        status: record.status
+      }
+    });
   });
 
   app.get("/api/v1/task-proposals/:proposalId", async (request, reply) => {
