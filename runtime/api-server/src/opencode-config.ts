@@ -86,7 +86,11 @@ export function buildOpencodeProviderConfigPayload(
         },
         models: {
           [modelId]: {
-            name: modelId
+            name: modelId,
+            provider: {
+              npm: providerNpmPackage,
+              api: baseUrl
+            }
           }
         }
       }
