@@ -1,4 +1,5 @@
 import { type RuntimeStateStore } from "@holaboss/runtime-state-store";
+import { validateSignedGrant } from "./grant-signing.js";
 
 export type BrokerErrorCode =
   | "grant_invalid"
@@ -53,11 +54,14 @@ export class IntegrationBrokerService {
     this.store = store;
   }
 
-  exchangeToken(params: {
+  async exchangeToken(params: {
     grant: string;
     provider: string;
-  }): TokenExchangeResult {
-    const parsed = parseAppGrant(params.grant);
+  }): Promise<TokenExchangeResult> {
+    const validated = validateSignedGrant(params.grant);
+    const parsed = validated
+      ? { workspaceId: validated.workspaceId, appId: validated.appId, nonce: validated.nonce }
+      : parseAppGrant(params.grant);
     if (!parsed) {
       throw new BrokerError("grant_invalid", 401, "app grant is malformed");
     }
@@ -116,10 +120,87 @@ export class IntegrationBrokerService {
       );
     }
 
-    return {
-      token: connection.secretRef,
-      provider,
-      connection_id: connection.connectionId
-    };
+    const token = await this.resolveTokenWithRefresh(connection);
+    return { token, provider, connection_id: connection.connectionId };
+  }
+
+  private async resolveTokenWithRefresh(connection: {
+    connectionId: string;
+    providerId: string;
+    secretRef: string | null;
+    status: string;
+    ownerUserId: string;
+    accountLabel: string;
+    authMode: string;
+    grantedScopes: string[];
+    accountExternalId: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }): Promise<string> {
+    const secretRef = connection.secretRef;
+    if (!secretRef) throw new BrokerError("token_unavailable", 503, "connection has no credential");
+
+    let parsed: { access_token?: string; refresh_token?: string; expires_at?: string } | null = null;
+    try { parsed = JSON.parse(secretRef); } catch { return secretRef; }
+    if (!parsed?.access_token) return secretRef;
+
+    if (parsed.expires_at && parsed.refresh_token) {
+      const expiresAt = new Date(parsed.expires_at).getTime();
+      if (Date.now() > expiresAt - 60_000) {
+        const refreshed = await this.refreshToken(connection, parsed.refresh_token);
+        if (refreshed) return refreshed;
+      }
+    }
+    return parsed.access_token;
+  }
+
+  private async refreshToken(connection: {
+    connectionId: string;
+    providerId: string;
+    secretRef: string | null;
+    status: string;
+    ownerUserId: string;
+    accountLabel: string;
+    authMode: string;
+    grantedScopes: string[];
+    accountExternalId: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }, refreshToken: string): Promise<string | null> {
+    const config = this.store.getOAuthAppConfig(connection.providerId);
+    if (!config) return null;
+    try {
+      const response = await fetch(config.tokenUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: refreshToken,
+          client_id: config.clientId,
+          client_secret: config.clientSecret
+        }).toString()
+      });
+      if (!response.ok) return null;
+      const tokens = await response.json() as { access_token: string; refresh_token?: string; expires_in?: number };
+      const expiresAt = tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000).toISOString() : null;
+      const newPayload = JSON.stringify({
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token ?? refreshToken,
+        expires_at: expiresAt,
+        token_type: "Bearer"
+      });
+      this.store.upsertIntegrationConnection({
+        connectionId: connection.connectionId,
+        providerId: connection.providerId,
+        ownerUserId: connection.ownerUserId,
+        accountLabel: connection.accountLabel,
+        authMode: connection.authMode,
+        grantedScopes: connection.grantedScopes,
+        status: "active",
+        secretRef: newPayload,
+        accountExternalId: connection.accountExternalId
+      });
+      return tokens.access_token;
+    } catch { return null; }
   }
 }

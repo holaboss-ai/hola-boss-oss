@@ -3,6 +3,7 @@ export {
   type AppPortRecord,
   type IntegrationBindingRecord,
   type IntegrationConnectionRecord,
+  type OAuthAppConfigRecord,
   RuntimeStateStore,
   runtimeDbPath,
   sanitizeWorkspaceId,

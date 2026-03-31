@@ -64,6 +64,7 @@ import {
   RuntimeIntegrationService
 } from "./integrations.js";
 import { BrokerError, IntegrationBrokerService } from "./integration-broker.js";
+import { OAuthService } from "./oauth-service.js";
 import {
   appendWorkspaceApplication,
   listWorkspaceComposeShutdownTargets,
@@ -1104,6 +1105,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const browserToolService = options.browserToolService ?? new DesktopBrowserToolService();
   const integrationService = new RuntimeIntegrationService(store);
   const brokerService = new IntegrationBrokerService(store);
+  const oauthService = new OAuthService(store);
   const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
   const queueWorker = resolveQueueWorker(options, app, store);
   const cronWorker = resolveCronWorker(options, app, store, queueWorker);
@@ -1565,12 +1567,65 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "grant and provider are required");
     }
     try {
-      return brokerService.exchangeToken({ grant, provider });
+      return await brokerService.exchangeToken({ grant, provider });
     } catch (error) {
       if (error instanceof BrokerError) {
         return reply.status(error.statusCode).send({ error: error.code, message: error.message });
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "broker token exchange failed");
+    }
+  });
+
+  app.get("/api/v1/integrations/oauth/configs", async () => {
+    return { configs: store.listOAuthAppConfigs().map((c) => ({
+      provider_id: c.providerId, client_id: c.clientId,
+      client_secret: "••••••••",
+      authorize_url: c.authorizeUrl, token_url: c.tokenUrl,
+      scopes: c.scopes, redirect_port: c.redirectPort,
+      created_at: c.createdAt, updated_at: c.updatedAt
+    })) };
+  });
+
+  app.put("/api/v1/integrations/oauth/configs/:providerId", async (request, reply) => {
+    const params = request.params as { providerId: string };
+    if (!isRecord(request.body)) return sendError(reply, 400, "body required");
+    try {
+      const record = store.upsertOAuthAppConfig({
+        providerId: params.providerId,
+        clientId: typeof request.body.client_id === "string" ? request.body.client_id : "",
+        clientSecret: typeof request.body.client_secret === "string" ? request.body.client_secret : "",
+        authorizeUrl: typeof request.body.authorize_url === "string" ? request.body.authorize_url : "",
+        tokenUrl: typeof request.body.token_url === "string" ? request.body.token_url : "",
+        scopes: Array.isArray(request.body.scopes) ? request.body.scopes : [],
+        redirectPort: typeof request.body.redirect_port === "number" ? request.body.redirect_port : undefined
+      });
+      return {
+        provider_id: record.providerId, client_id: record.clientId,
+        client_secret: "••••••••",
+        authorize_url: record.authorizeUrl, token_url: record.tokenUrl,
+        scopes: record.scopes, redirect_port: record.redirectPort,
+        created_at: record.createdAt, updated_at: record.updatedAt
+      };
+    } catch (error) {
+      return sendError(reply, 500, error instanceof Error ? error.message : "config save failed");
+    }
+  });
+
+  app.delete("/api/v1/integrations/oauth/configs/:providerId", async (request, reply) => {
+    const params = request.params as { providerId: string };
+    if (!store.deleteOAuthAppConfig(params.providerId)) return sendError(reply, 404, "config not found");
+    return { deleted: true };
+  });
+
+  app.post("/api/v1/integrations/oauth/authorize", async (request, reply) => {
+    if (!isRecord(request.body)) return sendError(reply, 400, "body required");
+    const providerId = typeof request.body.provider === "string" ? request.body.provider : "";
+    const ownerUserId = typeof request.body.owner_user_id === "string" ? request.body.owner_user_id : "local";
+    if (!providerId) return sendError(reply, 400, "provider is required");
+    try {
+      return await oauthService.startFlow(providerId, ownerUserId);
+    } catch (error) {
+      return sendError(reply, 400, error instanceof Error ? error.message : "OAuth flow failed");
     }
   });
 

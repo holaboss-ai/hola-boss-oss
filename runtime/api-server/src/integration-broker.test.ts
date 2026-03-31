@@ -44,7 +44,7 @@ test("parseAppGrant returns null for malformed grant strings", () => {
   assert.equal(parseAppGrant("xgrant:workspace:app:nonce"), null);
 });
 
-test("exchangeToken returns provider token for a valid grant and active binding", () => {
+test("exchangeToken returns provider token for a valid grant and active binding", async () => {
   const root = makeTempDir("hb-broker-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
@@ -77,7 +77,7 @@ test("exchangeToken returns provider token for a valid grant and active binding"
   });
 
   const broker = new IntegrationBrokerService(store);
-  const result = broker.exchangeToken({
+  const result = await broker.exchangeToken({
     grant: "grant:workspace-1:gmail:some-uuid",
     provider: "google"
   });
@@ -89,7 +89,7 @@ test("exchangeToken returns provider token for a valid grant and active binding"
   store.close();
 });
 
-test("exchangeToken throws grant_invalid for a malformed grant", () => {
+test("exchangeToken throws grant_invalid for a malformed grant", async () => {
   const root = makeTempDir("hb-broker-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
@@ -97,8 +97,8 @@ test("exchangeToken throws grant_invalid for a malformed grant", () => {
   });
   const broker = new IntegrationBrokerService(store);
 
-  assert.throws(
-    () => broker.exchangeToken({ grant: "bad-grant", provider: "google" }),
+  await assert.rejects(
+    async () => broker.exchangeToken({ grant: "bad-grant", provider: "google" }),
     (error: unknown) =>
       error instanceof BrokerError &&
       error.code === "grant_invalid" &&
@@ -108,7 +108,7 @@ test("exchangeToken throws grant_invalid for a malformed grant", () => {
   store.close();
 });
 
-test("exchangeToken throws integration_not_bound when no binding exists", () => {
+test("exchangeToken throws integration_not_bound when no binding exists", async () => {
   const root = makeTempDir("hb-broker-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
@@ -122,8 +122,8 @@ test("exchangeToken throws integration_not_bound when no binding exists", () => 
   });
   const broker = new IntegrationBrokerService(store);
 
-  assert.throws(
-    () =>
+  await assert.rejects(
+    async () =>
       broker.exchangeToken({
         grant: "grant:workspace-1:gmail:some-uuid",
         provider: "google"
@@ -137,7 +137,7 @@ test("exchangeToken throws integration_not_bound when no binding exists", () => 
   store.close();
 });
 
-test("exchangeToken throws connection_inactive when connection is expired", () => {
+test("exchangeToken throws connection_inactive when connection is expired", async () => {
   const root = makeTempDir("hb-broker-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
@@ -170,8 +170,8 @@ test("exchangeToken throws connection_inactive when connection is expired", () =
   });
   const broker = new IntegrationBrokerService(store);
 
-  assert.throws(
-    () =>
+  await assert.rejects(
+    async () =>
       broker.exchangeToken({
         grant: "grant:workspace-1:gmail:some-uuid",
         provider: "google"
@@ -185,7 +185,7 @@ test("exchangeToken throws connection_inactive when connection is expired", () =
   store.close();
 });
 
-test("exchangeToken throws token_unavailable when connection has no secret_ref", () => {
+test("exchangeToken throws token_unavailable when connection has no secret_ref", async () => {
   const root = makeTempDir("hb-broker-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
@@ -217,8 +217,8 @@ test("exchangeToken throws token_unavailable when connection has no secret_ref",
   });
   const broker = new IntegrationBrokerService(store);
 
-  assert.throws(
-    () =>
+  await assert.rejects(
+    async () =>
       broker.exchangeToken({
         grant: "grant:workspace-1:gmail:some-uuid",
         provider: "google"
@@ -232,7 +232,7 @@ test("exchangeToken throws token_unavailable when connection has no secret_ref",
   store.close();
 });
 
-test("exchangeToken prefers app-specific binding over workspace default", () => {
+test("exchangeToken prefers app-specific binding over workspace default", async () => {
   const root = makeTempDir("hb-broker-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
@@ -284,7 +284,7 @@ test("exchangeToken prefers app-specific binding over workspace default", () => 
   });
   const broker = new IntegrationBrokerService(store);
 
-  const result = broker.exchangeToken({
+  const result = await broker.exchangeToken({
     grant: "grant:workspace-1:gmail:some-uuid",
     provider: "google"
   });

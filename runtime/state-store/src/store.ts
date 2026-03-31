@@ -188,6 +188,18 @@ export interface CronjobRecord {
   updatedAt: string;
 }
 
+export interface OAuthAppConfigRecord {
+  providerId: string;
+  clientId: string;
+  clientSecret: string;
+  authorizeUrl: string;
+  tokenUrl: string;
+  scopes: string[];
+  redirectPort: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface TaskProposalRecord {
   proposalId: string;
   workspaceId: string;
@@ -724,6 +736,76 @@ export class RuntimeStateStore {
 
   deleteIntegrationBinding(bindingId: string): boolean {
     const result = this.db().prepare("DELETE FROM integration_bindings WHERE binding_id = ?").run(bindingId);
+    return result.changes > 0;
+  }
+
+  upsertOAuthAppConfig(params: {
+    providerId: string;
+    clientId: string;
+    clientSecret: string;
+    authorizeUrl: string;
+    tokenUrl: string;
+    scopes: string[];
+    redirectPort?: number;
+  }): OAuthAppConfigRecord {
+    const now = utcNowIso();
+    const redirectPort = params.redirectPort ?? 38765;
+    this.db().prepare(`
+      INSERT INTO oauth_app_configs (provider_id, client_id, client_secret, authorize_url, token_url, scopes, redirect_port, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (provider_id) DO UPDATE SET
+        client_id = excluded.client_id,
+        client_secret = CASE WHEN excluded.client_secret = '' THEN oauth_app_configs.client_secret ELSE excluded.client_secret END,
+        authorize_url = excluded.authorize_url,
+        token_url = excluded.token_url,
+        scopes = excluded.scopes,
+        redirect_port = excluded.redirect_port,
+        updated_at = excluded.updated_at
+    `).run(
+      params.providerId, params.clientId, params.clientSecret,
+      params.authorizeUrl, params.tokenUrl, JSON.stringify(params.scopes),
+      redirectPort, now, now
+    );
+    const record = this.getOAuthAppConfig(params.providerId);
+    if (!record) {
+      throw new Error("failed to load OAuth app config");
+    }
+    return record;
+  }
+
+  getOAuthAppConfig(providerId: string): OAuthAppConfigRecord | null {
+    const row = this.db().prepare("SELECT * FROM oauth_app_configs WHERE provider_id = ?").get(providerId) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      providerId: row.provider_id as string,
+      clientId: row.client_id as string,
+      clientSecret: row.client_secret as string,
+      authorizeUrl: row.authorize_url as string,
+      tokenUrl: row.token_url as string,
+      scopes: JSON.parse(row.scopes as string ?? "[]") as string[],
+      redirectPort: row.redirect_port as number,
+      createdAt: row.created_at as string,
+      updatedAt: row.updated_at as string,
+    };
+  }
+
+  listOAuthAppConfigs(): OAuthAppConfigRecord[] {
+    const rows = this.db().prepare("SELECT * FROM oauth_app_configs ORDER BY provider_id").all() as Record<string, unknown>[];
+    return rows.map((row) => ({
+      providerId: row.provider_id as string,
+      clientId: row.client_id as string,
+      clientSecret: row.client_secret as string,
+      authorizeUrl: row.authorize_url as string,
+      tokenUrl: row.token_url as string,
+      scopes: JSON.parse(row.scopes as string ?? "[]") as string[],
+      redirectPort: row.redirect_port as number,
+      createdAt: row.created_at as string,
+      updatedAt: row.updated_at as string,
+    }));
+  }
+
+  deleteOAuthAppConfig(providerId: string): boolean {
+    const result = this.db().prepare("DELETE FROM oauth_app_configs WHERE provider_id = ?").run(providerId);
     return result.changes > 0;
   }
 
@@ -2102,6 +2184,18 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_cronjobs_enabled_next_run
           ON cronjobs (enabled, next_run_at);
+
+      CREATE TABLE IF NOT EXISTS oauth_app_configs (
+          provider_id TEXT PRIMARY KEY,
+          client_id TEXT NOT NULL,
+          client_secret TEXT NOT NULL,
+          authorize_url TEXT NOT NULL,
+          token_url TEXT NOT NULL,
+          scopes TEXT NOT NULL DEFAULT '[]',
+          redirect_port INTEGER NOT NULL DEFAULT 38765,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+      );
     `);
   }
 

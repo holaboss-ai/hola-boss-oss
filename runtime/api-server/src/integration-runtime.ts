@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import {
@@ -7,6 +6,7 @@ import {
   type RuntimeStateStore
 } from "@holaboss/runtime-state-store";
 
+import { createSignedGrant } from "./grant-signing.js";
 import { type ResolvedApplicationRuntime } from "./workspace-apps.js";
 
 export const DEFAULT_INTEGRATION_BROKER_URL = "http://127.0.0.1:8080/api/v1/integrations";
@@ -119,7 +119,7 @@ export function resolveIntegrationRuntime(params: {
 
   env.HOLABOSS_INTEGRATION_BROKER_URL = brokerUrl;
   env.WORKSPACE_API_URL = workspaceApiUrl;
-  env.HOLABOSS_APP_GRANT = `grant:${workspaceId}:${params.appId}:${randomUUID()}`;
+  env.HOLABOSS_APP_GRANT = createSignedGrant(workspaceId, params.appId);
 
   const platformIntegrationTokens: string[] = [];
   for (const requirement of requirements) {
