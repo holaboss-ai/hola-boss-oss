@@ -297,6 +297,175 @@ test("integration routes expose catalog, connections, and bindings", async () =>
   store.close();
 });
 
+test("integration binding route restarts matching enabled apps after saving binding", async () => {
+  const root = makeTempDir("hb-runtime-api-integration-restart-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active"
+  });
+  const connection = store.upsertIntegrationConnection({
+    connectionId: "conn-google-1",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "joshua@holaboss.ai",
+    authMode: "oauth_app",
+    grantedScopes: ["gmail.send"],
+    status: "active",
+    secretRef: "token-google-1"
+  });
+
+  const calls: Array<Record<string, unknown>> = [];
+  const executor: AppLifecycleExecutorLike = {
+    async startApp(params) {
+      calls.push({ action: "start", ...params });
+      return {
+        app_id: params.appId,
+        status: "started",
+        detail: "app started with lifecycle manager",
+        ports: {
+          http: params.httpPort ?? 18080,
+          mcp: params.mcpPort ?? 13100
+        }
+      };
+    },
+    async stopApp(params) {
+      calls.push({ action: "stop", ...params });
+      return {
+        app_id: params.appId,
+        status: "stopped",
+        detail: "app stopped via lifecycle manager",
+        ports: {}
+      };
+    },
+    async shutdownAll() {
+      throw new Error("not used");
+    }
+  };
+  const app = buildTestRuntimeApiServer({ store, appLifecycleExecutor: executor });
+
+  await app.inject({ method: "GET", url: "/healthz" });
+
+  const workspaceDir = path.join(workspaceRoot, workspace.id);
+  fs.mkdirSync(path.join(workspaceDir, "apps", "gmail"), { recursive: true });
+  fs.writeFileSync(
+    path.join(workspaceDir, "workspace.yaml"),
+    [
+      "applications:",
+      "  - app_id: gmail",
+      "    config_path: apps/gmail/app.runtime.yaml"
+    ].join("\n"),
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(workspaceDir, "apps", "gmail", "app.runtime.yaml"),
+    [
+      "app_id: gmail",
+      "mcp:",
+      "  port: 3099",
+      "healthchecks:",
+      "  mcp:",
+      "    path: /mcp/health",
+      "    timeout_s: 30",
+      "integrations:",
+      "  - key: google",
+      "    provider: google",
+      "    capability: gmail",
+      "    scopes:",
+      "      - gmail.send",
+      "    required: true",
+      "    credential_source: platform",
+      "    holaboss_user_id_required: true",
+      "lifecycle:",
+      "  start: npm run start",
+      "  stop: npm run stop"
+    ].join("\n"),
+    "utf8"
+  );
+  store.upsertAppBuild({
+    workspaceId: workspace.id,
+    appId: "gmail",
+    status: "running"
+  });
+
+  const bindingResponse = await app.inject({
+    method: "PUT",
+    url: "/api/v1/integrations/bindings/workspace-1/workspace/default/google",
+    payload: {
+      connection_id: connection.connectionId,
+      is_default: true
+    }
+  });
+
+  assert.equal(bindingResponse.statusCode, 200);
+  assert.equal(bindingResponse.json().workspace_id, "workspace-1");
+  assert.deepEqual(calls, [
+    {
+      action: "stop",
+      appId: "gmail",
+      appDir: path.join(workspaceDir, "apps", "gmail"),
+      resolvedApp: {
+        appId: "gmail",
+        mcp: { transport: "http-sse", port: 3099, path: "/mcp" },
+        healthCheck: { path: "/mcp/health", timeoutS: 30, intervalS: 5 },
+        envContract: [],
+        integrations: [
+          {
+            key: "google",
+            provider: "google",
+            capability: "gmail",
+            scopes: ["gmail.send"],
+            required: true,
+            credentialSource: "platform",
+            holabossUserIdRequired: true
+          }
+        ],
+        startCommand: "",
+        baseDir: "apps/gmail",
+        lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
+      }
+    },
+    {
+      action: "start",
+      appId: "gmail",
+      appDir: path.join(workspaceDir, "apps", "gmail"),
+      httpPort: 18080,
+      mcpPort: 13100,
+      skipSetup: true,
+      resolvedApp: {
+        appId: "gmail",
+        mcp: { transport: "http-sse", port: 3099, path: "/mcp" },
+        healthCheck: { path: "/mcp/health", timeoutS: 30, intervalS: 5 },
+        envContract: [],
+        integrations: [
+          {
+            key: "google",
+            provider: "google",
+            capability: "gmail",
+            scopes: ["gmail.send"],
+            required: true,
+            credentialSource: "platform",
+            holabossUserIdRequired: true
+          }
+        ],
+        startCommand: "",
+        baseDir: "apps/gmail",
+        lifecycle: { setup: "", start: "npm run start", stop: "npm run stop" }
+      }
+    }
+  ]);
+  assert.equal(store.getAppBuild({ workspaceId: workspace.id, appId: "gmail" })?.status, "running");
+
+  await app.close();
+  store.close();
+});
+
 test("integration routes return 400 for missing required binding inputs", async () => {
   const root = makeTempDir("hb-runtime-api-integrations-");
   const store = new RuntimeStateStore({

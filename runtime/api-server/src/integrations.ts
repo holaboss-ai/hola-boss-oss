@@ -116,6 +116,13 @@ function requiredString(value: unknown, fieldName: string): string {
   return value.trim();
 }
 
+function lookupProviderDisplayName(providerId: string): string {
+  return (
+    PHASE_1_INTEGRATION_CATALOG.find((provider) => provider.provider_id === providerId)?.display_name ??
+    providerId
+  );
+}
+
 function optionalBoolean(value: unknown, defaultValue = false): boolean {
   if (typeof value === "boolean") {
     return value;
@@ -305,8 +312,11 @@ export class RuntimeIntegrationService {
   }): IntegrationConnectionPayload {
     const providerId = requiredString(params.providerId, "provider_id");
     const ownerUserId = requiredString(params.ownerUserId, "owner_user_id");
-    const accountLabel = requiredString(params.accountLabel, "account_label");
     const authMode = requiredString(params.authMode, "auth_mode");
+    const rawAccountLabel = typeof params.accountLabel === "string" ? params.accountLabel.trim() : "";
+    const accountLabel =
+      rawAccountLabel ||
+      (authMode === "manual_token" ? `${lookupProviderDisplayName(providerId)} connection` : requiredString(params.accountLabel, "account_label"));
 
     const record = this.store.upsertIntegrationConnection({
       connectionId: randomUUID(),

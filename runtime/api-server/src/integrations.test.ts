@@ -249,6 +249,28 @@ test("creates a connection via manual token import and lists it", () => {
   store.close();
 });
 
+test("manual token import generates a default account label when none is provided", () => {
+  const root = makeTempDir("hb-integrations-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const service = new RuntimeIntegrationService(store);
+
+  const connection = service.createConnection({
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "   ",
+    authMode: "manual_token",
+    grantedScopes: ["gmail.send"],
+    secretRef: "gya_manual-token-value"
+  });
+
+  assert.equal(connection.account_label, "Google connection");
+
+  store.close();
+});
+
 test("updates connection status and secret_ref", () => {
   const root = makeTempDir("hb-integrations-");
   const store = new RuntimeStateStore({

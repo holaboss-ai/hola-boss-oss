@@ -1204,6 +1204,82 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     };
   }
 
+  function appUsesIntegration(resolvedApp: {
+    integrations?: Array<{ key: string; provider: string }>;
+  }, integrationKey: string): boolean {
+    const normalizedIntegrationKey = integrationKey.trim().toLowerCase();
+    if (!normalizedIntegrationKey) {
+      return false;
+    }
+    return (resolvedApp.integrations ?? []).some((requirement) => {
+      return (
+        requirement.key.trim().toLowerCase() === normalizedIntegrationKey ||
+        requirement.provider.trim().toLowerCase() === normalizedIntegrationKey
+      );
+    });
+  }
+
+  async function refreshAppsForIntegrationBinding(params: {
+    workspaceId: string;
+    integrationKey: string;
+    targetType: "workspace" | "app" | "agent";
+    targetId: string;
+  }): Promise<void> {
+    if (params.targetType === "agent") {
+      return;
+    }
+
+    const workspace = store.getWorkspace(params.workspaceId);
+    if (!workspace) {
+      return;
+    }
+
+    const workspaceDir = store.workspaceDir(params.workspaceId);
+    const entries = listWorkspaceApplications(workspaceDir);
+    for (const entry of entries) {
+      const appId = typeof entry.app_id === "string" ? entry.app_id : "";
+      if (!appId) {
+        continue;
+      }
+
+      if (params.targetType === "app" && appId !== params.targetId) {
+        continue;
+      }
+
+      const build = store.getAppBuild({ workspaceId: params.workspaceId, appId });
+      if (!appBuildHasCompletedSetup(build?.status)) {
+        continue;
+      }
+
+      let resolved;
+      try {
+        resolved = resolveWorkspaceAppRuntime(workspaceDir, appId, {
+          store,
+          workspaceId: params.workspaceId,
+          allocatePorts: true
+        });
+      } catch (error) {
+        app.log.warn(
+          { workspaceId: params.workspaceId, appId, error: error instanceof Error ? error.message : String(error) },
+          "skipping app refresh after integration binding because app runtime could not be resolved"
+        );
+        continue;
+      }
+
+      if (!appUsesIntegration(resolved.resolvedApp, params.integrationKey)) {
+        continue;
+      }
+
+      await appLifecycleExecutor.stopApp({
+        appId,
+        appDir: resolved.appDir,
+        resolvedApp: resolved.resolvedApp
+      });
+      store.upsertAppBuild({ workspaceId: params.workspaceId, appId, status: "stopped" });
+      await ensureAppRunning(params.workspaceId, appId);
+    }
+  }
+
   function startHealthMonitor(): void {
     if (healthMonitorTimer) {
       return;
@@ -1500,7 +1576,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "connection_id is required");
     }
     try {
-      return integrationService.upsertBinding({
+      const binding = integrationService.upsertBinding({
         workspaceId: requiredString(params.workspaceId, "workspaceId"),
         targetType: requiredString(params.targetType, "targetType"),
         targetId: requiredString(params.targetId, "targetId"),
@@ -1508,6 +1584,13 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         connectionId,
         isDefault: optionalBoolean((request.body as Record<string, unknown>).is_default, false)
       });
+      await refreshAppsForIntegrationBinding({
+        workspaceId: binding.workspace_id,
+        integrationKey: binding.integration_key,
+        targetType: binding.target_type,
+        targetId: binding.target_id
+      });
+      return binding;
     } catch (error) {
       if (error instanceof IntegrationServiceError) {
         return sendError(reply, error.statusCode, error.message);

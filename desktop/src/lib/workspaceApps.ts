@@ -13,6 +13,12 @@ export interface WorkspaceInstalledAppDefinition extends WorkspaceAppDefinition 
 }
 
 const APP_CATALOG: Record<string, WorkspaceAppDefinition> = {
+  gmail: {
+    id: "gmail",
+    label: "Gmail",
+    summary: "Email drafts and sending. Use the agent to search threads, draft replies, and keep context in one place.",
+    accentClassName: "bg-rose-300/80"
+  },
   twitter: {
     id: "twitter",
     label: "Twitter",
