@@ -22,7 +22,7 @@ export function KitDetail({
   selectDisabledReason,
   onSignIn
 }: KitDetailProps) {
-  const readme = templateReadmes[template.name];
+  const readme = templateReadmes[template.name] || template.long_description;
   const displayName = template.name.replaceAll("_", " ");
 
   return (

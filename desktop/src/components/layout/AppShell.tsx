@@ -1,28 +1,4 @@
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type FormEvent,
-  type PointerEvent as ReactPointerEvent,
-  type ReactNode,
-} from "react";
-import {
-  ArrowRight,
-  Bell,
-  ChevronRight,
-  CircleCheck,
-  Clock3,
-  FolderOpen,
-  Loader2,
-  PanelRightClose,
-  PanelRightOpen,
-  Sparkles,
-  TriangleAlert,
-  XCircle,
-} from "lucide-react";
-import {
   LeftNavigationRail,
   type LeftRailItem,
 } from "@/components/layout/LeftNavigationRail";
@@ -31,18 +7,20 @@ import {
   type OperationsDrawerTab,
   type OperationsOutputEntry,
 } from "@/components/layout/OperationsDrawer";
+import { appShellMainGridClassName } from "@/components/layout/appShellLayout";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
-import { AutomationsPane } from "@/components/panes/AutomationsPane";
-import { AppSurfacePane } from "@/components/panes/AppSurfacePane";
-import { BrowserPane } from "@/components/panes/BrowserPane";
-import { ChatPane } from "@/components/panes/ChatPane";
-import { FileExplorerPane } from "@/components/panes/FileExplorerPane";
-import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
-import { IntegrationsPane } from "@/components/panes/IntegrationsPane";
+import { firstWorkspacePaneSectionClassName } from "@/components/layout/firstWorkspacePaneLayout";
 import { KitDetail } from "@/components/marketplace/KitDetail";
 import { KitEmoji } from "@/components/marketplace/KitEmoji";
 import { MarketplaceGallery } from "@/components/marketplace/MarketplaceGallery";
+import { AppSurfacePane } from "@/components/panes/AppSurfacePane";
+import { AutomationsPane } from "@/components/panes/AutomationsPane";
+import { BrowserPane } from "@/components/panes/BrowserPane";
+import { ChatPane } from "@/components/panes/ChatPane";
+import { FileExplorerPane } from "@/components/panes/FileExplorerPane";
+import { IntegrationsPane } from "@/components/panes/IntegrationsPane";
+import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { MarketplacePane } from "@/components/panes/MarketplacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
 import { SkillsPane } from "@/components/panes/SkillsPane";
@@ -60,6 +38,28 @@ import {
   useWorkspaceSelection,
   WorkspaceSelectionProvider,
 } from "@/lib/workspaceSelection";
+import {
+  ArrowRight,
+  Bell,
+  ChevronRight,
+  CircleCheck,
+  Clock3,
+  FolderOpen,
+  Loader2,
+  PanelRightClose,
+  PanelRightOpen,
+  TriangleAlert,
+  User2,
+  XCircle,
+} from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
 const THEME_STORAGE_KEY = "holaboss-theme-v1";
 const OPERATIONS_DRAWER_OPEN_STORAGE_KEY = "holaboss-operations-drawer-open-v1";
@@ -334,8 +334,31 @@ function runtimeOutputToEntry(
   };
 }
 
+function OnboardingUserButton() {
+  const ref = useRef<HTMLButtonElement | null>(null);
+  return (
+    <button
+      ref={ref}
+      type="button"
+      aria-label="Open account menu"
+      onClick={() => {
+        if (!ref.current) return;
+        const rect = ref.current.getBoundingClientRect();
+        void window.electronAPI.auth.togglePopup({
+          x: rect.left,
+          y: rect.top,
+          width: rect.width,
+          height: rect.height,
+        });
+      }}
+      className="grid h-9 w-9 shrink-0 place-items-center rounded-[14px] border border-panel-border/45 text-text-muted transition-colors hover:bg-[var(--theme-hover-bg)] hover:text-text-main"
+    >
+      <User2 size={14} />
+    </button>
+  );
+}
+
 function FirstWorkspacePane() {
-  const authButtonRef = useRef<HTMLButtonElement | null>(null);
   const {
     templateSourceMode,
     setTemplateSourceMode,
@@ -357,12 +380,18 @@ function FirstWorkspacePane() {
     chooseTemplateFolder,
     createWorkspace,
   } = useWorkspaceDesktop();
-  const [onboardingStep, setOnboardingStep] = useState<"gallery" | "detail" | "configure">("gallery");
-  const [detailKit, setDetailKit] = useState<TemplateMetadataPayload | null>(null);
+  const [onboardingStep, setOnboardingStep] = useState<
+    "gallery" | "detail" | "configure"
+  >("gallery");
+  const [detailKit, setDetailKit] = useState<TemplateMetadataPayload | null>(
+    null,
+  );
   const selectedCreateHarnessOption =
     createHarnessOptions.find(
       (option) => option.id === selectedCreateHarness,
     ) ?? createHarnessOptions[0];
+
+  const sectionClassName = firstWorkspacePaneSectionClassName(onboardingStep);
 
   const creatingViaMarketplaceSandbox =
     templateSourceMode === "marketplace" && canUseMarketplaceTemplates;
@@ -377,28 +406,28 @@ function FirstWorkspacePane() {
     : ["Preparing local runtime", "Importing template", "Opening workspace"];
   if (isCreatingWorkspace) {
     return (
-      <section className="theme-shell relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--theme-radius-card)] border border-panel-border/45 px-6 py-10 shadow-card">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(247,90,84,0.08),transparent_36%),radial-gradient(circle_at_82%_14%,rgba(233,117,109,0.1),transparent_34%)]" />
-        <div className="theme-subtle-surface relative w-full max-w-xl rounded-[26px] border border-panel-border/45 px-6 py-8 text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-neon-green/30 bg-neon-green/10 text-neon-green">
-            <Loader2 size={22} className="animate-spin" />
-          </div>
-          <h2 className="mt-5 text-[30px] font-semibold tracking-[-0.04em] text-text-main">
-            {createTitle}
-          </h2>
-          <p className="mt-3 text-[14px] leading-7 text-text-muted/84">
-            {createDetail}
-          </p>
-          <div className="theme-control-surface mt-7 overflow-hidden rounded-full border border-panel-border/45 p-1">
-            <div className="h-2 rounded-full bg-[linear-gradient(90deg,rgba(247,90,84,0.56),rgba(233,117,109,0.72),rgba(247,170,126,0.78))] animate-pulse" />
-          </div>
-          <div className="mt-4 flex items-center justify-center gap-2 text-[11px] uppercase tracking-[0.24em] text-text-dim/80">
-            <span className="h-1.5 w-1.5 rounded-full bg-neon-green/70" />
-            <span>{createSteps[0]}</span>
-            <span className="h-1.5 w-1.5 rounded-full bg-neon-green/55" />
-            <span>{createSteps[1]}</span>
-            <span className="h-1.5 w-1.5 rounded-full bg-neon-green/40" />
-            <span>{createSteps[2]}</span>
+      <section className={sectionClassName}>
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_12%,rgba(247,90,84,0.08),transparent_28%),radial-gradient(circle_at_86%_14%,rgba(233,117,109,0.08),transparent_30%)]" />
+        <div className="absolute right-4 top-4 z-10">
+          <OnboardingUserButton />
+        </div>
+        <div className="w-full max-w-[1080px]">
+          <div className="theme-shell flex w-full flex-col items-center rounded-[var(--theme-radius-card)] border border-panel-border/45 px-6 py-12 shadow-card sm:px-8 lg:px-10">
+            <Loader2 size={20} className="animate-spin text-text-dim/60" />
+            <h2 className="mt-5 text-[17px] font-medium tracking-[-0.01em] text-text-main">
+              {createTitle}
+            </h2>
+            <p className="mt-2 max-w-sm text-center text-[13px] leading-6 text-text-muted/70">
+              {createDetail}
+            </p>
+            <div className="mt-6 flex items-center gap-6 text-[11px] text-text-dim/60">
+              {createSteps.map((step, i) => (
+                <div key={step} className="flex items-center gap-2">
+                  <span className={`inline-block h-1 w-1 rounded-full ${i === 0 ? "bg-text-main/50" : "bg-text-dim/30"}`} />
+                  <span>{step}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </section>
@@ -406,11 +435,7 @@ function FirstWorkspacePane() {
   }
 
   const openAuthPopup = () => {
-    if (!authButtonRef.current) return;
-    const rect = authButtonRef.current.getBoundingClientRect();
-    void window.electronAPI.auth.showPopup({
-      x: rect.left, y: rect.top, width: rect.width, height: rect.height
-    });
+    void window.electronAPI.auth.requestAuth();
   };
 
   function handleSelectKitFromGallery(template: TemplateMetadataPayload) {
@@ -440,14 +465,16 @@ function FirstWorkspacePane() {
 
   const configureCreateDisabled =
     !newWorkspaceName.trim() ||
-    (templateSourceMode === "marketplace" && (!canUseMarketplaceTemplates || !selectedMarketplaceTemplate));
-
+    (templateSourceMode === "marketplace" &&
+      (!canUseMarketplaceTemplates || !selectedMarketplaceTemplate));
   return (
-    <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-auto px-3 py-3 sm:px-4 sm:py-4">
+    <section className={sectionClassName}>
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_12%,rgba(247,90,84,0.08),transparent_28%),radial-gradient(circle_at_86%_14%,rgba(233,117,109,0.08),transparent_30%)]" />
-      <div className="relative w-full max-w-[1080px]">
+      <div className="absolute right-4 top-4 z-10">
+        <OnboardingUserButton />
+      </div>
+      <div className="w-full max-w-[1080px]">
         <div className="theme-shell w-full rounded-[var(--theme-radius-card)] border border-panel-border/45 px-6 py-6 shadow-card sm:px-8 sm:py-7 lg:px-10 lg:py-8">
-
           {onboardingStep === "gallery" ? (
             <MarketplaceGallery
               mode="pick"
@@ -481,12 +508,21 @@ function FirstWorkspacePane() {
                 </h1>
               </div>
 
-              {templateSourceMode === "marketplace" && selectedMarketplaceTemplate ? (
+              {templateSourceMode === "marketplace" &&
+              selectedMarketplaceTemplate ? (
                 <div className="mt-5 flex items-center gap-3 rounded-[18px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-3">
-                  <KitEmoji emoji={selectedMarketplaceTemplate.emoji} size={32} />
+                  <KitEmoji
+                    emoji={selectedMarketplaceTemplate.emoji}
+                    size={32}
+                  />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[14px] font-medium text-text-main">{selectedMarketplaceTemplate.name}</div>
-                    <div className="truncate text-[12px] text-text-muted/72">{selectedMarketplaceTemplate.description || selectedMarketplaceTemplate.apps.join(", ")}</div>
+                    <div className="truncate text-[14px] font-medium text-text-main">
+                      {selectedMarketplaceTemplate.name}
+                    </div>
+                    <div className="truncate text-[12px] text-text-muted/72">
+                      {selectedMarketplaceTemplate.description ||
+                        selectedMarketplaceTemplate.apps.join(", ")}
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -496,12 +532,17 @@ function FirstWorkspacePane() {
                     Change
                   </button>
                 </div>
-              ) : templateSourceMode === "empty" || templateSourceMode === "empty_onboarding" ? (
+              ) : templateSourceMode === "empty" ||
+                templateSourceMode === "empty_onboarding" ? (
                 <div className="mt-5 flex items-center gap-3 rounded-[18px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-3">
                   <span className="text-[28px] leading-none">+</span>
                   <div className="min-w-0 flex-1">
-                    <div className="text-[14px] font-medium text-text-main">Starting from scratch</div>
-                    <div className="text-[12px] text-text-muted/72">Empty workspace scaffold</div>
+                    <div className="text-[14px] font-medium text-text-main">
+                      Starting from scratch
+                    </div>
+                    <div className="text-[12px] text-text-muted/72">
+                      Empty workspace scaffold
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -577,7 +618,7 @@ function FirstWorkspacePane() {
                   type="button"
                   disabled={configureCreateDisabled}
                   onClick={() => void createWorkspace()}
-                  className="inline-flex h-12 items-center justify-center gap-3 rounded-[18px] border border-[rgba(247,90,84,0.38)] bg-[rgba(247,90,84,0.9)] px-5 text-[14px] font-medium text-white transition-colors hover:bg-[rgba(226,79,74,0.94)] disabled:cursor-not-allowed disabled:border-panel-border/45 disabled:bg-panel-bg/60 disabled:text-text-dim/60"
+                  className="inline-flex h-12 items-center justify-center gap-3 rounded-[18px] border border-[rgba(247,90,84,0.38)] bg-[rgba(247,90,84,0.9)] px-5 text-[14px] font-medium text-white transition-colors hover:bg-[rgba(226,79,74,0.94)] disabled:cursor-not-allowed disabled:border-panel-border disabled:bg-panel-border/20 disabled:text-text-muted/60"
                 >
                   <span>Create Workspace</span>
                   <ArrowRight size={16} />
@@ -609,64 +650,16 @@ function EmptyWorkspacePane() {
 }
 
 function WorkspaceBootstrapPane() {
-  const startupStages = [
-    "Loading workspace records",
-    "Restoring recent context",
-    "Attaching desktop surfaces",
-  ] as const;
-
   return (
-    <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_28%,rgba(247,90,84,0.12),transparent_18%),radial-gradient(circle_at_50%_56%,rgba(247,170,126,0.08),transparent_24%)]" />
-      <div className="pointer-events-none absolute left-1/2 top-1/2 h-[420px] w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(247,90,84,0.08),transparent_62%)] blur-3xl" />
-
-      <div className="relative flex w-full max-w-[560px] flex-col items-center px-6 text-center">
-        <div className="inline-flex items-center gap-2 rounded-full border border-panel-border/35 bg-white/45 px-3 py-1.5 text-[10px] uppercase tracking-[0.22em] text-text-dim/74 backdrop-blur">
-          <Sparkles size={12} className="text-[rgba(206,92,84,0.88)]" />
-          <span>Desktop startup</span>
-        </div>
-
-        <div className="mt-6 flex h-14 w-14 items-center justify-center rounded-full border border-[rgba(247,90,84,0.22)] bg-[rgba(247,90,84,0.08)] text-[rgba(206,92,84,0.94)]">
-          <Loader2 size={20} className="animate-spin" />
-        </div>
-
-        <div className="mt-6 text-[34px] font-semibold tracking-[-0.05em] text-text-main sm:text-[40px]">
-          Preparing the desktop shell
-        </div>
-        <div className="mt-3 max-w-[520px] text-[14px] leading-7 text-text-muted/82 sm:text-[15px]">
-          Restoring workspace state so the desktop opens in the last
-          ready-to-work context.
-        </div>
-
-        <div className="mt-8 w-full">
-          <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.16em] text-text-dim/74">
-            <span>Loading workspace records</span>
-            <span className="text-[rgba(206,92,84,0.92)]">In progress</span>
-          </div>
-
-          <div className="mt-3 overflow-hidden rounded-full bg-black/8 p-1">
-            <div className="h-2 rounded-full bg-[linear-gradient(90deg,rgba(247,90,84,0.7),rgba(233,117,109,0.86),rgba(247,170,126,0.78))] animate-pulse" />
-          </div>
-
-          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-            {startupStages.map((stage, index) => (
-              <span
-                key={stage}
-                className={`rounded-full border px-3 py-1.5 text-[11px] uppercase tracking-[0.16em] ${
-                  index === 0
-                    ? "border-[rgba(247,90,84,0.24)] bg-[rgba(247,90,84,0.08)] text-[rgba(206,92,84,0.94)]"
-                    : "border-panel-border/35 bg-white/28 text-text-dim/72 backdrop-blur"
-                }`}
-              >
-                {stage}
-              </span>
-            ))}
-          </div>
-
-          <div className="mt-6 text-[12px] leading-6 text-text-muted/74">
-            This usually completes in a moment.
-          </div>
-        </div>
+    <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden px-6">
+      <div className="flex flex-col items-center text-center">
+        <Loader2 size={20} className="animate-spin text-text-dim/60" />
+        <h2 className="mt-5 text-[17px] font-medium tracking-[-0.01em] text-text-main">
+          Preparing desktop...
+        </h2>
+        <p className="mt-2 max-w-sm text-[13px] leading-6 text-text-muted/70">
+          Restoring workspace state and attaching surfaces.
+        </p>
       </div>
     </section>
   );
@@ -686,72 +679,57 @@ function WorkspaceInitializingGate({
   const readyCount = apps.filter((app) => app.ready).length;
 
   return (
-    <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_28%,rgba(247,90,84,0.12),transparent_18%),radial-gradient(circle_at_50%_56%,rgba(247,170,126,0.08),transparent_24%)]" />
-      <div className="pointer-events-none absolute left-1/2 top-1/2 h-[420px] w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(247,90,84,0.08),transparent_62%)] blur-3xl" />
-
-      <div className="relative flex w-full max-w-[560px] flex-col items-center px-6 text-center">
-        <div className="inline-flex items-center gap-2 rounded-full border border-panel-border/35 bg-white/45 px-3 py-1.5 text-[10px] uppercase tracking-[0.22em] text-text-dim/74 backdrop-blur">
-          <Sparkles size={12} className="text-[rgba(206,92,84,0.88)]" />
-          <span>{hasErrors ? "Needs attention" : "Setting up workspace"}</span>
-        </div>
-
+    <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden px-6">
+      <div className="flex w-full max-w-md flex-col items-center text-center">
         {hasErrors ? (
-          <div className="mt-6 flex h-14 w-14 items-center justify-center rounded-full border border-rose-400/22 bg-rose-400/8 text-rose-400">
-            <TriangleAlert size={20} />
-          </div>
+          <TriangleAlert size={20} className="text-rose-400" />
         ) : (
-          <div className="mt-6 flex h-14 w-14 items-center justify-center rounded-full border border-[rgba(247,90,84,0.22)] bg-[rgba(247,90,84,0.08)] text-[rgba(206,92,84,0.94)]">
-            <Loader2 size={20} className="animate-spin" />
-          </div>
+          <Loader2 size={20} className="animate-spin text-text-dim/60" />
         )}
 
-        <div className="mt-6 text-[34px] font-semibold tracking-[-0.05em] text-text-main sm:text-[40px]">
+        <h2 className="mt-5 text-[17px] font-medium tracking-[-0.01em] text-text-main">
           {hasErrors ? "Some apps need attention" : "Setting up workspace"}
-        </div>
-        <div className="mt-3 max-w-[520px] text-[14px] leading-7 text-text-muted/82 sm:text-[15px]">
+        </h2>
+        <p className="mt-2 max-w-sm text-[13px] leading-6 text-text-muted/70">
           {hasErrors
-            ? "Some workspace apps encountered errors. You can retry or remove them."
-            : "Starting workspace apps. This may take a few minutes on first setup."}
-        </div>
+            ? "Some workspace apps encountered errors."
+            : "Starting workspace apps. This may take a moment on first setup."}
+        </p>
 
-        <div className="mt-8 w-full space-y-3">
+        <div className="mt-6 w-full space-y-2">
           {apps.map((app) => (
             <div
               key={app.id}
-              className="flex items-center gap-3 rounded-[18px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-3"
+              className="flex items-center gap-3 rounded-[14px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-2.5"
             >
               {app.ready ? (
-                <CircleCheck size={16} className="shrink-0 text-neon-green" />
+                <CircleCheck size={14} className="shrink-0 text-neon-green" />
               ) : app.error ? (
-                <XCircle size={16} className="shrink-0 text-rose-400" />
+                <XCircle size={14} className="shrink-0 text-rose-400" />
               ) : (
-                <Loader2
-                  size={16}
-                  className="shrink-0 animate-spin text-[rgba(206,92,84,0.88)]"
-                />
+                <Loader2 size={14} className="shrink-0 animate-spin text-text-dim/50" />
               )}
-              <span className="min-w-0 flex-1 text-left text-[13px] font-medium text-text-main">
+              <span className="min-w-0 flex-1 text-left text-[13px] text-text-main">
                 {app.label}
               </span>
               <span
-                className={`text-[11px] uppercase tracking-[0.14em] ${
+                className={`text-[11px] ${
                   app.ready
                     ? "text-neon-green"
                     : app.error
                       ? "text-rose-400"
-                      : "text-[rgba(206,92,84,0.88)]"
+                      : "text-text-dim/60"
                 }`}
               >
-                {app.ready ? "Ready" : app.error ? "Failed" : "Initializing..."}
+                {app.ready ? "Ready" : app.error ? "Failed" : "Setting up..."}
               </span>
             </div>
           ))}
         </div>
 
         {!hasErrors ? (
-          <div className="mt-4 text-[12px] leading-6 text-text-muted/74">
-            {readyCount} of {apps.length} apps ready
+          <div className="mt-3 text-[12px] text-text-muted/60">
+            {readyCount} of {apps.length} ready
           </div>
         ) : null}
       </div>
@@ -818,7 +796,7 @@ function WorkspaceStartupErrorPane({ message }: { message: string }) {
 
 function WorkspaceOnboardingTakeover({
   onOutputsChanged,
-  focusRequestKey
+  focusRequestKey,
 }: {
   onOutputsChanged: () => void;
   focusRequestKey: number;
@@ -827,7 +805,10 @@ function WorkspaceOnboardingTakeover({
     <section className="relative flex h-full min-h-0 min-w-0 overflow-hidden">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_16%,rgba(247,90,84,0.1),transparent_28%),radial-gradient(circle_at_88%_10%,rgba(247,170,126,0.08),transparent_24%),radial-gradient(circle_at_50%_100%,rgba(247,90,84,0.06),transparent_34%)]" />
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-        <OnboardingPane onOutputsChanged={onOutputsChanged} focusRequestKey={focusRequestKey} />
+        <OnboardingPane
+          onOutputsChanged={onOutputsChanged}
+          focusRequestKey={focusRequestKey}
+        />
       </div>
     </section>
   );
@@ -842,7 +823,7 @@ function AppShellContent() {
     selectedWorkspace,
     installedApps,
     workspaceErrorMessage,
-    onboardingModeActive
+    onboardingModeActive,
   } = useWorkspaceDesktop();
   const [theme, setTheme] = useState<AppTheme>(loadTheme);
   const [runtimeStatus, setRuntimeStatus] =
@@ -1618,8 +1599,15 @@ function AppShellContent() {
         "Embedded runtime failed to start."
       : "";
   const isMacDesktop = window.electronAPI?.platform === "darwin";
+  const mainGridClassName = appShellMainGridClassName({
+    hasWorkspaces,
+    isMacDesktop,
+  });
   const showOnboardingTakeover =
-    hasHydratedWorkspaceList && hasWorkspaces && hasSelectedWorkspace && onboardingModeActive;
+    hasHydratedWorkspaceList &&
+    hasWorkspaces &&
+    hasSelectedWorkspace &&
+    onboardingModeActive;
   const combinedOutputEntries = useMemo(() => {
     const merged = [...runtimeOutputEntries, ...outputEntries];
     const seen = new Set<string>();
@@ -1638,9 +1626,17 @@ function AppShellContent() {
     }
 
     if (agentView.type === "chat") {
-      return onboardingModeActive
-        ? <OnboardingPane onOutputsChanged={() => void refreshRuntimeOutputs()} focusRequestKey={chatFocusRequestKey} />
-        : <ChatPane onOutputsChanged={() => void refreshRuntimeOutputs()} focusRequestKey={chatFocusRequestKey} />;
+      return onboardingModeActive ? (
+        <OnboardingPane
+          onOutputsChanged={() => void refreshRuntimeOutputs()}
+          focusRequestKey={chatFocusRequestKey}
+        />
+      ) : (
+        <ChatPane
+          onOutputsChanged={() => void refreshRuntimeOutputs()}
+          focusRequestKey={chatFocusRequestKey}
+        />
+      );
     }
 
     if (agentView.type === "app") {
@@ -1665,7 +1661,16 @@ function AppShellContent() {
         htmlContent={agentView.htmlContent}
       />
     );
-  }, [activeApp, activeAppId, agentView, chatFocusRequestKey, hasSelectedWorkspace, installedApps, onboardingModeActive, refreshRuntimeOutputs]);
+  }, [
+    activeApp,
+    activeAppId,
+    agentView,
+    chatFocusRequestKey,
+    hasSelectedWorkspace,
+    installedApps,
+    onboardingModeActive,
+    refreshRuntimeOutputs,
+  ]);
 
   const spacePanes = useMemo(
     () =>
@@ -1851,18 +1856,12 @@ function AppShellContent() {
   }, [clampPairedUtilityPaneWidths, clampUtilityPaneWidth]);
 
   return (
-    <main className="fixed inset-0 overflow-hidden text-[13px] text-text-main/90">
+    <main className="fixed inset-0 h-screen overflow-hidden text-text-main/90">
       <div className="theme-grid pointer-events-none absolute inset-0 bg-noise-grid bg-[size:22px_22px]" />
       <div className="theme-orb-primary pointer-events-none absolute -left-32 -top-32 h-80 w-80 rounded-full blur-3xl" />
       <div className="theme-orb-secondary pointer-events-none absolute -bottom-40 right-12 h-96 w-96 rounded-full blur-3xl" />
 
-      <div
-        className={`relative z-10 grid h-full w-full grid-rows-[auto_minmax(0,1fr)] gap-2 p-2 ${
-          isMacDesktop
-            ? "sm:gap-2.5 sm:px-3 sm:pb-3 sm:pt-2.5"
-            : "sm:gap-3 sm:p-3"
-        }`}
-      >
+      <div className={mainGridClassName}>
         {isUtilityPaneResizing ? (
           <div className="absolute inset-0 z-30 cursor-col-resize" />
         ) : null}

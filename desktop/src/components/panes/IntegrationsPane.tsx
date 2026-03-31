@@ -173,6 +173,15 @@ export function IntegrationsPane() {
     setIsSaving(true);
     setErrorMessage("");
     try {
+      // Remove all bindings for this connection first
+      const related = bindings.filter((b) => b.connection_id === connectionId);
+      for (const binding of related) {
+        try {
+          await window.electronAPI.workspace.deleteIntegrationBinding(binding.binding_id, binding.workspace_id);
+        } catch {
+          // Binding may reference a deleted workspace — skip
+        }
+      }
       await window.electronAPI.workspace.deleteIntegrationConnection(connectionId);
       setConnections((prev) => prev.filter((c) => c.connection_id !== connectionId));
       setBindings((prev) => prev.filter((b) => b.connection_id !== connectionId));

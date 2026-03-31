@@ -169,9 +169,6 @@ export function SettingsDialog({
             })}
           </nav>
 
-          <div className="mt-6 hidden rounded-[18px] border border-panel-border/35 bg-black/10 p-3 text-[11px] leading-5 text-text-dim/74 lg:block">
-            The account dropdown stays lightweight. Deeper preferences live here in one shared desktop pane.
-          </div>
         </aside>
 
         <section className="min-h-0 min-w-0 overflow-hidden">

@@ -94,6 +94,10 @@
     ],
     "extraResources": [
       {
+        "from": "resources/icon.png",
+        "to": "icon.png"
+      },
+      {
         "from": "out/holaboss-config.json",
         "to": "holaboss-config.json"
       },
@@ -114,7 +118,9 @@
         ]
       }
     ],
+    "icon": "resources/icon.png",
     "mac": {
+      "icon": "resources/icon.icns",
       "category": "public.app-category.developer-tools",
       "hardenedRuntime": true,
       "gatekeeperAssess": false
@@ -127,6 +133,7 @@
       }
     ],
     "win": {
+      "icon": "resources/icon.ico",
       "signAndEditExecutable": false,
       "target": [
         {

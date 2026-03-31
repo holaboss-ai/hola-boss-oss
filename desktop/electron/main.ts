@@ -9,6 +9,7 @@ import {
   DownloadItem,
   dialog,
   ipcMain,
+  nativeImage,
   screen,
   session,
   shell,
@@ -36,7 +37,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 const verboseTelemetryEnabled =
   process.env.HOLABOSS_VERBOSE_TELEMETRY?.trim() === "1";
-const HOME_URL = "https://app.holaboss.ai/";
+const HOME_URL = "https://google.com/";
 const NEW_TAB_TITLE = "New Tab";
 const DOWNLOADS_POPUP_WIDTH = 360;
 const DOWNLOADS_POPUP_HEIGHT = 340;
@@ -51,7 +52,18 @@ const OVERFLOW_POPUP_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MIN_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MAX_HEIGHT = 320;
 const MAIN_WINDOW_CLOSED_LISTENER_BUFFER = 16;
-const APP_THEMES = new Set(["holaboss", "emerald", "cobalt", "ember", "glacier", "mono", "claude", "slate", "paper", "graphite"]);
+const APP_THEMES = new Set([
+  "holaboss",
+  "emerald",
+  "cobalt",
+  "ember",
+  "glacier",
+  "mono",
+  "claude",
+  "slate",
+  "paper",
+  "graphite",
+]);
 const GITHUB_RELEASES_OWNER = "holaboss-ai";
 const GITHUB_RELEASES_REPO = "hola-boss-oss";
 const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
@@ -328,7 +340,12 @@ let activeBrowserWorkspaceId = "";
 const browserWorkspaces = new Map<string, BrowserWorkspaceState>();
 const browserDownloadTrackingPartitions = new Set<string>();
 const appSurfaceViews = new Map<string, BrowserView>();
-let appSurfaceBounds: BrowserBoundsPayload = { x: 0, y: 0, width: 0, height: 0 };
+let appSurfaceBounds: BrowserBoundsPayload = {
+  x: 0,
+  y: 0,
+  width: 0,
+  height: 0,
+};
 let activeAppSurfaceId: string | null = null;
 let fileBookmarks: FileBookmarkPayload[] = [];
 let runtimeProcess: ChildProcessWithoutNullStreams | null = null;
@@ -1890,7 +1907,9 @@ function terminatePid(pid: number, signal: NodeJS.Signals) {
 async function stopEmbeddedRuntimeOpencodeSidecars() {
   let workspaceEntries: import("node:fs").Dirent[] = [];
   try {
-    workspaceEntries = await fs.readdir(runtimeWorkspaceRoot(), { withFileTypes: true });
+    workspaceEntries = await fs.readdir(runtimeWorkspaceRoot(), {
+      withFileTypes: true,
+    });
   } catch {
     return;
   }
@@ -1902,7 +1921,9 @@ async function stopEmbeddedRuntimeOpencodeSidecars() {
     if (!entry.isDirectory()) {
       continue;
     }
-    const statePath = opencodeSidecarStatePath(path.join(runtimeWorkspaceRoot(), entry.name));
+    const statePath = opencodeSidecarStatePath(
+      path.join(runtimeWorkspaceRoot(), entry.name),
+    );
     statePaths.push(statePath);
     try {
       const payload = JSON.parse(await fs.readFile(statePath, "utf-8")) as {
@@ -1917,7 +1938,9 @@ async function stopEmbeddedRuntimeOpencodeSidecars() {
     }
   }
 
-  for (const pid of Array.from(sidecarPids).sort((left, right) => left - right)) {
+  for (const pid of Array.from(sidecarPids).sort(
+    (left, right) => left - right,
+  )) {
     terminatePid(pid, "SIGTERM");
   }
 
@@ -1925,13 +1948,19 @@ async function stopEmbeddedRuntimeOpencodeSidecars() {
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
 
-  for (const pid of Array.from(sidecarPids).sort((left, right) => left - right)) {
+  for (const pid of Array.from(sidecarPids).sort(
+    (left, right) => left - right,
+  )) {
     if (processIsAlive(pid)) {
       terminatePid(pid, "SIGKILL");
     }
   }
 
-  await Promise.all(statePaths.map((statePath) => fs.rm(statePath, { force: true }).catch(() => undefined)));
+  await Promise.all(
+    statePaths.map((statePath) =>
+      fs.rm(statePath, { force: true }).catch(() => undefined),
+    ),
+  );
 }
 
 function utcNowIso() {
@@ -3395,7 +3424,10 @@ async function provisionRuntimeBindingForAuthenticatedUser(
         modelProxyApiKey,
         userId: binding.holaboss_user_id,
         sandboxId: binding.sandbox_id,
-        modelProxyBaseUrl: (binding.model_proxy_base_url || "").replace("host.docker.internal", "127.0.0.1"),
+        modelProxyBaseUrl: (binding.model_proxy_base_url || "").replace(
+          "host.docker.internal",
+          "127.0.0.1",
+        ),
         defaultModel: binding.default_model,
         controlPlaneBaseUrl: DESKTOP_CONTROL_PLANE_BASE_URL,
       });
@@ -3993,9 +4025,10 @@ async function listIntegrationCatalog(): Promise<IntegrationCatalogResponsePaylo
   });
 }
 
-async function listIntegrationConnections(
-  params?: { providerId?: string; ownerUserId?: string },
-): Promise<IntegrationConnectionListResponsePayload> {
+async function listIntegrationConnections(params?: {
+  providerId?: string;
+  ownerUserId?: string;
+}): Promise<IntegrationConnectionListResponsePayload> {
   return requestRuntimeJson<IntegrationConnectionListResponsePayload>({
     method: "GET",
     path: "/api/v1/integrations/connections",
@@ -4964,8 +4997,13 @@ function normalizeRequestedWorkspaceHarness(
   throw new Error(`Unsupported workspace harness '${value}'.`);
 }
 
-function requestedWorkspaceTemplateMode(payload: HolabossCreateWorkspacePayload): "template" | "empty" {
-  return payload.template_mode === "empty" || payload.template_mode === "empty_onboarding" ? "empty" : "template";
+function requestedWorkspaceTemplateMode(
+  payload: HolabossCreateWorkspacePayload,
+): "template" | "empty" {
+  return payload.template_mode === "empty" ||
+    payload.template_mode === "empty_onboarding"
+    ? "empty"
+    : "template";
 }
 
 function workspaceDirectoryPath(workspaceId: string) {
@@ -6031,11 +6069,13 @@ function renderEmptyOnboardingGuide() {
     "",
     "- Summarize the durable facts you collected.",
     "- Ask the user to confirm the summary is correct.",
-    "- When the user confirms, request onboarding completion."
+    "- When the user confirms, request onboarding completion.",
   ].join("\n");
 }
 
-async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise<WorkspaceResponsePayload> {
+async function createWorkspace(
+  payload: HolabossCreateWorkspacePayload,
+): Promise<WorkspaceResponsePayload> {
   await ensureRuntimeBindingReadyForWorkspaceFlow("workspace_create");
   const mainSessionId = crypto.randomUUID();
   const harness = normalizeRequestedWorkspaceHarness(payload.harness);
@@ -6129,13 +6169,22 @@ async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise
     const workspaceAgentsPath = path.join(workspaceDir, "AGENTS.md");
     const workspaceYamlPath = path.join(workspaceDir, "workspace.yaml");
     const workspaceOnboardPath = path.join(workspaceDir, "ONBOARD.md");
-    const wantsEmptyOnboardingScaffold = payload.template_mode === "empty_onboarding";
+    const wantsEmptyOnboardingScaffold =
+      payload.template_mode === "empty_onboarding";
     if (templateMode === "empty") {
       await fs.mkdir(path.join(workspaceDir, "skills"), { recursive: true });
       await fs.writeFile(workspaceAgentsPath, "", "utf-8");
-      await fs.writeFile(workspaceYamlPath, `${renderEmptyWorkspaceYaml()}\n`, "utf-8");
+      await fs.writeFile(
+        workspaceYamlPath,
+        `${renderEmptyWorkspaceYaml()}\n`,
+        "utf-8",
+      );
       if (wantsEmptyOnboardingScaffold) {
-        await fs.writeFile(workspaceOnboardPath, `${renderEmptyOnboardingGuide()}\n`, "utf-8");
+        await fs.writeFile(
+          workspaceOnboardPath,
+          `${renderEmptyOnboardingGuide()}\n`,
+          "utf-8",
+        );
       }
     } else if (materializedTemplate && resolvedTemplate) {
       await applyMaterializedTemplateToWorkspace(
@@ -6921,7 +6970,10 @@ async function stopEmbeddedRuntime() {
   runtimeProcess = null;
   if (!running) {
     await stopEmbeddedRuntimeOpencodeSidecars();
-    if (runtimeStatus.status === "running" || runtimeStatus.status === "starting") {
+    if (
+      runtimeStatus.status === "running" ||
+      runtimeStatus.status === "starting"
+    ) {
       runtimeStatus = withDesktopBrowserStatus({
         ...runtimeStatus,
         status: "stopped",
@@ -7220,7 +7272,12 @@ function getOrCreateAppSurfaceView(appId: string): BrowserView {
       contextIsolation: true,
     },
   });
-  view.setAutoResize({ width: false, height: false, horizontal: false, vertical: false });
+  view.setAutoResize({
+    width: false,
+    height: false,
+    horizontal: false,
+    vertical: false,
+  });
   view.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url);
     return { action: "deny" };
@@ -7229,9 +7286,14 @@ function getOrCreateAppSurfaceView(appId: string): BrowserView {
   return view;
 }
 
-async function getAppHttpUrl(workspaceId: string, appId: string): Promise<string | null> {
+async function getAppHttpUrl(
+  workspaceId: string,
+  appId: string,
+): Promise<string | null> {
   try {
-    const ports = await requestRuntimeJson<Record<string, { http: number; mcp: number }>>({
+    const ports = await requestRuntimeJson<
+      Record<string, { http: number; mcp: number }>
+    >({
       method: "GET",
       path: "/api/v1/apps/ports",
       params: { workspace_id: workspaceId },
@@ -7260,7 +7322,11 @@ function updateAttachedAppSurfaceView(): void {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
   }
-  if (!activeAppSurfaceId || appSurfaceBounds.width <= 0 || appSurfaceBounds.height <= 0) {
+  if (
+    !activeAppSurfaceId ||
+    appSurfaceBounds.width <= 0 ||
+    appSurfaceBounds.height <= 0
+  ) {
     for (const view of appSurfaceViews.values()) {
       mainWindow.removeBrowserView(view);
     }
@@ -7279,7 +7345,11 @@ function updateAttachedAppSurfaceView(): void {
   view.setBounds(appSurfaceBounds);
 }
 
-async function navigateAppSurface(workspaceId: string, appId: string, urlPath?: string): Promise<void> {
+async function navigateAppSurface(
+  workspaceId: string,
+  appId: string,
+  urlPath?: string,
+): Promise<void> {
   const baseUrl = await getAppHttpUrl(workspaceId, appId);
   if (!baseUrl) {
     throw new Error(`Could not resolve HTTP URL for app ${appId}`);
@@ -7648,7 +7718,7 @@ function createAuthPopupHtml() {
       }
       .panel {
         margin: ${AUTH_POPUP_MARGIN_PX}px;
-        height: calc(100vh - ${AUTH_POPUP_MARGIN_PX * 2}px);
+        max-height: calc(100vh - ${AUTH_POPUP_MARGIN_PX * 2}px);
         border-radius: 26px;
         display: flex;
         flex-direction: column;
@@ -7783,7 +7853,6 @@ function createAuthPopupHtml() {
         transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
       }
       .menuItem:hover {
-        transform: translateY(-1px);
         border-color: var(--popup-border-soft);
         background: color-mix(in srgb, var(--popup-control-bg) 72%, transparent);
       }
@@ -8313,7 +8382,10 @@ function syncMainWindowClosedListenerBudget() {
 
   // The desktop browser keeps many tab views alive at once, so the window needs
   // a higher close-listener budget than Node's default warning threshold.
-  const desiredBudget = Math.max(10, tabCount + MAIN_WINDOW_CLOSED_LISTENER_BUFFER);
+  const desiredBudget = Math.max(
+    10,
+    tabCount + MAIN_WINDOW_CLOSED_LISTENER_BUFFER,
+  );
   if (mainWindow.getMaxListeners() < desiredBudget) {
     mainWindow.setMaxListeners(desiredBudget);
   }
@@ -10027,6 +10099,12 @@ function createMainWindow() {
         }
       : {};
 
+  const appIcon = nativeImage.createFromPath(
+    app.isPackaged
+      ? path.join(process.resourcesPath, "icon.png")
+      : path.join(__dirname, "..", "..", "resources", "icon.png"),
+  );
+
   const win = new BrowserWindow({
     width: 1600,
     height: 980,
@@ -10036,6 +10114,7 @@ function createMainWindow() {
     center: true,
     backgroundColor: "#050907",
     autoHideMenuBar: true,
+    icon: appIcon,
     ...macTitleBarOptions,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -10160,6 +10239,17 @@ if (!singleInstanceLock) {
 }
 
 app.whenReady().then(async () => {
+  if (process.platform === "darwin" && app.dock) {
+    const dockIcon = nativeImage.createFromPath(
+      app.isPackaged
+        ? path.join(process.resourcesPath, "icon.png")
+        : path.join(__dirname, "..", "..", "resources", "icon.png"),
+    );
+    if (!dockIcon.isEmpty()) {
+      app.dock.setIcon(dockIcon);
+    }
+  }
+
   await loadBrowserPersistence();
   await bootstrapRuntimeDatabase();
 
@@ -10404,7 +10494,10 @@ app.whenReady().then(async () => {
         modelProxyApiKey,
         userId: binding.holaboss_user_id,
         sandboxId: binding.sandbox_id,
-        modelProxyBaseUrl: (binding.model_proxy_base_url || "").replace("host.docker.internal", "127.0.0.1"),
+        modelProxyBaseUrl: (binding.model_proxy_base_url || "").replace(
+          "host.docker.internal",
+          "127.0.0.1",
+        ),
         defaultModel: binding.default_model,
         controlPlaneBaseUrl: DESKTOP_CONTROL_PLANE_BASE_URL,
       });
@@ -10591,10 +10684,8 @@ app.whenReady().then(async () => {
     ["main"],
     async () => verboseTelemetryEnabled,
   );
-  handleTrustedIpc(
-    "workspace:listIntegrationCatalog",
-    ["main"],
-    async () => listIntegrationCatalog(),
+  handleTrustedIpc("workspace:listIntegrationCatalog", ["main"], async () =>
+    listIntegrationCatalog(),
   );
   handleTrustedIpc(
     "workspace:listIntegrationConnections",
@@ -10605,8 +10696,7 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "workspace:listIntegrationBindings",
     ["main"],
-    async (_event, workspaceId: string) =>
-      listIntegrationBindings(workspaceId),
+    async (_event, workspaceId: string) => listIntegrationBindings(workspaceId),
   );
   handleTrustedIpc(
     "workspace:upsertIntegrationBinding",
@@ -10642,8 +10732,11 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "workspace:updateIntegrationConnection",
     ["main"],
-    async (_event, connectionId: string, payload: IntegrationUpdateConnectionPayload) =>
-      updateIntegrationConnection(connectionId, payload),
+    async (
+      _event,
+      connectionId: string,
+      payload: IntegrationUpdateConnectionPayload,
+    ) => updateIntegrationConnection(connectionId, payload),
   );
   handleTrustedIpc(
     "workspace:deleteIntegrationConnection",
@@ -10651,10 +10744,8 @@ app.whenReady().then(async () => {
     async (_event, connectionId: string) =>
       deleteIntegrationConnection(connectionId),
   );
-  handleTrustedIpc(
-    "workspace:listOAuthConfigs",
-    ["main"],
-    async () => listOAuthConfigs(),
+  handleTrustedIpc("workspace:listOAuthConfigs", ["main"], async () =>
+    listOAuthConfigs(),
   );
   handleTrustedIpc(
     "workspace:upsertOAuthConfig",
@@ -10665,14 +10756,12 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "workspace:deleteOAuthConfig",
     ["main"],
-    async (_event, providerId: string) =>
-      deleteOAuthConfig(providerId),
+    async (_event, providerId: string) => deleteOAuthConfig(providerId),
   );
   handleTrustedIpc(
     "workspace:startOAuthFlow",
     ["main"],
-    async (_event, provider: string) =>
-      startOAuthFlow(provider),
+    async (_event, provider: string) => startOAuthFlow(provider),
   );
   ipcMain.handle(
     "browser:setActiveWorkspace",

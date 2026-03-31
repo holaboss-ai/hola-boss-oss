@@ -87,8 +87,8 @@ export function MarketplacePane() {
             {isCreatingWorkspace ? (
               <div className="flex flex-1 items-center justify-center">
                 <div className="text-center">
-                  <Loader2 size={22} className="mx-auto animate-spin text-neon-green" />
-                  <div className="mt-3 text-[14px] font-medium text-text-main">
+                  <Loader2 size={18} className="mx-auto animate-spin text-text-dim/60" />
+                  <div className="mt-3 text-[13px] font-medium text-text-main">
                     Creating workspace...
                   </div>
                 </div>

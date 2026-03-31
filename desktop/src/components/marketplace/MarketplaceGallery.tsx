@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { KitCard } from "./KitCard";
 import { FALLBACK_TEMPLATES } from "./fallbackTemplates";
+import { marketplaceGalleryBranding } from "./marketplaceGalleryBranding";
 
 interface MarketplaceGalleryProps {
   mode: "browse" | "pick";
@@ -25,23 +26,27 @@ export function MarketplaceGallery({
   onSelectKit,
   onRetry,
   onStartFromScratch,
-  onUseLocalTemplate
+  onUseLocalTemplate,
 }: MarketplaceGalleryProps) {
   const [query, setQuery] = useState("");
+  const branding = marketplaceGalleryBranding(mode);
 
   // Use fetched templates when authenticated, fallback catalog otherwise
-  const effectiveTemplates = authenticated && templates.length > 0
-    ? templates
-    : FALLBACK_TEMPLATES;
+  const effectiveTemplates =
+    authenticated && templates.length > 0 ? templates : FALLBACK_TEMPLATES;
 
   const visibleTemplates = useMemo(() => {
-    const available = effectiveTemplates.filter((t) => !t.is_hidden);
+    let available = effectiveTemplates.filter((t) => !t.is_hidden);
     const trimmed = query.trim().toLowerCase();
-    if (!trimmed) return available;
-    return available.filter((t) =>
-      [t.name, t.description ?? "", ...t.tags, t.category].some((v) =>
-        v.toLowerCase().includes(trimmed)
-      )
+    if (trimmed) {
+      available = available.filter((t) =>
+        [t.name, t.description ?? "", ...t.tags, t.category].some((v) =>
+          v.toLowerCase().includes(trimmed),
+        ),
+      );
+    }
+    return available.toSorted(
+      (a, b) => Number(a.is_coming_soon) - Number(b.is_coming_soon),
     );
   }, [effectiveTemplates, query]);
 
@@ -51,17 +56,31 @@ export function MarketplaceGallery({
   const showError = authenticated && error;
 
   return (
-    <div className={`flex min-h-0 flex-col ${mode === "browse" ? "h-full" : ""}`}>
+    <div
+      className={`flex min-h-0 flex-col ${mode === "browse" ? "h-full" : ""}`}
+    >
       <div>
+        {branding.showLogo ? (
+          <div className="mb-3 flex items-center gap-3">
+            <div className="flex h-8 items-center gap-2 justify-center">
+              <img src="/logo.svg" alt="Holaboss" className="size-6" />
+              <h1 className="text-sm font-semibold tracking-tight">Holaboss</h1>
+            </div>
+            <div className="h-4 w-px bg-panel-border/45" />
+            <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">
+              {branding.eyebrow}
+            </div>
+          </div>
+        ) : null}
         <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">
-          {mode === "pick" ? "Welcome" : "Marketplace"}
+          {branding.showLogo ? "Workspace setup" : branding.eyebrow}
         </div>
         <div className="mt-1 text-[22px] font-semibold tracking-[-0.03em] text-text-main">
-          {mode === "pick" ? "Pick a kit to get started" : "Explore kits"}
+          {branding.title}
         </div>
-        {mode === "pick" ? (
+        {branding.description ? (
           <div className="mt-1 text-[13px] text-text-muted/82">
-            Choose a workspace template, or start from scratch.
+            {branding.description}
           </div>
         ) : null}
       </div>
@@ -76,7 +95,9 @@ export function MarketplaceGallery({
         />
       </label>
 
-      <div className={`mt-4 min-h-0 overflow-auto ${mode === "browse" ? "flex-1" : ""}`}>
+      <div
+        className={`mt-4 min-h-0 overflow-auto ${mode === "browse" ? "flex-1" : ""}`}
+      >
         {showLoading ? (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {Array.from({ length: 4 }).map((_, i) => (
@@ -115,7 +136,9 @@ export function MarketplaceGallery({
           </div>
         ) : visibleTemplates.length === 0 ? (
           <div className="rounded-[18px] border border-panel-border/35 bg-black/10 px-4 py-5 text-[12px] leading-6 text-text-dim/76">
-            {query.trim() ? "No kits match your search." : "No kits available yet."}
+            {query.trim()
+              ? "No kits match your search."
+              : "No kits available yet."}
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
