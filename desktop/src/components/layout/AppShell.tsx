@@ -2422,7 +2422,7 @@ function AppShellContent() {
           <div
             className={`relative grid h-full min-h-0 gap-y-3 overflow-hidden transition-[grid-template-columns,column-gap] duration-300 ease-in-out ${
               showOperationsDrawer
-                ? "lg:grid-cols-[60px_minmax(0,1fr)_304px]"
+                ? "lg:grid-cols-[60px_minmax(0,1fr)_352px]"
                 : "lg:grid-cols-[60px_minmax(0,1fr)]"
             }`}
             style={{ columnGap: "0.5rem" }}
@@ -2573,7 +2573,6 @@ function AppShellContent() {
                   activeTab={activeOperationsTab}
                   onTabChange={setActiveOperationsTab}
                   proposals={taskProposals}
-                  proactiveStatus={proactiveStatus}
                   isLoadingProposals={isLoadingTaskProposals}
                   isTriggeringProposal={isTriggeringTaskProposal}
                   proposalStatusMessage={taskProposalStatusMessage}
@@ -2606,6 +2605,11 @@ function AppShellContent() {
         themes={THEMES}
         onThemeChange={handleThemeChange}
         onOpenExternalUrl={handleOpenExternalUrl}
+        hasWorkspace={hasSelectedWorkspace}
+        selectedWorkspaceName={selectedWorkspace?.name ?? null}
+        selectedWorkspaceId={selectedWorkspace?.id ?? null}
+        proactiveStatus={proactiveStatus}
+        isLoadingProactiveStatus={isLoadingTaskProposals}
       />
     </main>
   );

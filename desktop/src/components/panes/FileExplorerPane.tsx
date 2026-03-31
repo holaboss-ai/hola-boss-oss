@@ -61,6 +61,8 @@ const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   ".csv": "plaintext"
 };
 
+const HIDDEN_WORKSPACE_ENTRY_NAMES = new Set([".opencode", ".holaboss"]);
+
 function getFolderName(targetPath: string) {
   const normalized = targetPath.replace(/[\\/]+$/, "");
   if (/^[a-zA-Z]:$/.test(normalized)) {
@@ -321,9 +323,10 @@ export function FileExplorerPane() {
   const canGoForward = historyIndex >= 0 && historyIndex < history.length - 1;
 
   const filteredEntries = useMemo(() => {
+    const visibleEntries = entries.filter((entry) => !HIDDEN_WORKSPACE_ENTRY_NAMES.has(entry.name));
     const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) return entries;
-    return entries.filter((entry) => entry.name.toLowerCase().includes(normalizedQuery));
+    if (!normalizedQuery) return visibleEntries;
+    return visibleEntries.filter((entry) => entry.name.toLowerCase().includes(normalizedQuery));
   }, [entries, query]);
 
   const selectedEntry = entries.find((entry) => entry.absolutePath === selectedPath);
@@ -602,7 +605,7 @@ export function FileExplorerPane() {
         <div ref={containerRef} className="flex h-full min-h-0">
           {fileBookmarks.length > 0 ? (
             <aside className="theme-subtle-surface flex w-12 flex-col items-center gap-2 border-r border-neon-green/15 py-3">
-              <div className="chat-scrollbar-hidden flex min-h-0 flex-1 flex-col items-center gap-2 overflow-x-hidden overflow-y-auto px-1">
+              <div className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-x-hidden overflow-y-auto px-1">
                 {fileBookmarks.map((bookmark) => {
                   const isActive = activeBookmarkId === bookmark.targetPath;
                   const Icon = bookmark.isDirectory ? Folder : FileText;
@@ -693,7 +696,7 @@ export function FileExplorerPane() {
               </div>
             ) : null}
 
-            <div className="chat-scrollbar-hidden min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pb-2 pt-1">
+            <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pb-2 pt-1">
               {loading ? <div className="px-3 py-4 text-xs text-text-muted/75">Loading directory...</div> : null}
 
               {error ? <div className="px-3 py-3 text-xs text-rose-300/90">{error}</div> : null}
