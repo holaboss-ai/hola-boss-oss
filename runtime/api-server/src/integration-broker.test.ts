@@ -375,3 +375,106 @@ test("POST /api/v1/integrations/broker/token returns provider token via HTTP", a
   await app.close();
   store.close();
 });
+
+test("exchangeToken resolves token from composio connection via ComposioService", async () => {
+  const root = makeTempDir("hb-broker-composio-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "ws-composio",
+    name: "Composio Workspace",
+    harness: "opencode",
+    status: "active"
+  });
+  store.upsertIntegrationConnection({
+    connectionId: "conn-composio-gmail",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "composio@holaboss.ai",
+    authMode: "composio",
+    grantedScopes: ["gmail.send"],
+    status: "active",
+    secretRef: null,
+    accountExternalId: "ca_composio_123"
+  });
+  store.upsertIntegrationBinding({
+    bindingId: "bind-composio-gmail",
+    workspaceId: "ws-composio",
+    targetType: "app",
+    targetId: "gmail-app",
+    integrationKey: "google",
+    connectionId: "conn-composio-gmail",
+    isDefault: false
+  });
+
+  const mockComposioService = {
+    async getAccessToken(connectedAccountId: string, provider: string) {
+      assert.equal(connectedAccountId, "ca_composio_123");
+      assert.equal(provider, "google");
+      return "ya29.composio-resolved-token";
+    }
+  };
+
+  const broker = new IntegrationBrokerService(store, mockComposioService);
+  const result = await broker.exchangeToken({
+    grant: "grant:ws-composio:gmail-app:test-nonce",
+    provider: "google"
+  });
+
+  assert.equal(result.token, "ya29.composio-resolved-token");
+  assert.equal(result.connection_id, "conn-composio-gmail");
+
+  store.close();
+});
+
+test("exchangeToken throws when composio connection has no accountExternalId", async () => {
+  const root = makeTempDir("hb-broker-composio-no-ext-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "ws-composio-2",
+    name: "Composio Workspace 2",
+    harness: "opencode",
+    status: "active"
+  });
+  store.upsertIntegrationConnection({
+    connectionId: "conn-composio-no-ext",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "composio-noext@holaboss.ai",
+    authMode: "composio",
+    grantedScopes: ["gmail.send"],
+    status: "active",
+    secretRef: null,
+    accountExternalId: null
+  });
+  store.upsertIntegrationBinding({
+    bindingId: "bind-composio-no-ext",
+    workspaceId: "ws-composio-2",
+    targetType: "app",
+    targetId: "gmail-app",
+    integrationKey: "google",
+    connectionId: "conn-composio-no-ext",
+    isDefault: false
+  });
+
+  const broker = new IntegrationBrokerService(store);
+
+  await assert.rejects(
+    async () =>
+      broker.exchangeToken({
+        grant: "grant:ws-composio-2:gmail-app:test-nonce",
+        provider: "google"
+      }),
+    (error: unknown) =>
+      error instanceof BrokerError &&
+      error.code === "token_unavailable" &&
+      error.statusCode === 503
+  );
+
+  store.close();
+});

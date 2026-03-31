@@ -47,11 +47,17 @@ export function parseAppGrant(grant: string): ParsedAppGrant | null {
   return { workspaceId, appId, nonce };
 }
 
+export interface ComposioTokenResolver {
+  getAccessToken(connectedAccountId: string, provider: string): Promise<string>;
+}
+
 export class IntegrationBrokerService {
   readonly store: RuntimeStateStore;
+  private readonly composio: ComposioTokenResolver | null;
 
-  constructor(store: RuntimeStateStore) {
+  constructor(store: RuntimeStateStore, composio?: ComposioTokenResolver | null) {
     this.store = store;
+    this.composio = composio ?? null;
   }
 
   async exchangeToken(params: {
@@ -110,6 +116,36 @@ export class IntegrationBrokerService {
         403,
         `${provider} connection is ${connection.status}`
       );
+    }
+
+    if (connection.authMode === "composio") {
+      if (!connection.accountExternalId) {
+        throw new BrokerError(
+          "token_unavailable",
+          503,
+          `${provider} composio connection has no linked account`
+        );
+      }
+      if (!this.composio) {
+        throw new BrokerError(
+          "token_unavailable",
+          503,
+          `composio token resolver is not configured`
+        );
+      }
+      try {
+        const token = await this.composio.getAccessToken(
+          connection.accountExternalId,
+          provider
+        );
+        return { token, provider, connection_id: connection.connectionId };
+      } catch (error) {
+        throw new BrokerError(
+          "token_unavailable",
+          503,
+          `composio token resolution failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
     }
 
     if (!connection.secretRef) {
