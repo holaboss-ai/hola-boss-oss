@@ -391,12 +391,11 @@ test("decodeOpencodeRuntimeConfigCliRequestBase64 defaults optional arrays and o
       default_provider_id: "openai",
       session_mode: "code",
       workspace_config_checksum: "checksum-1",
-      general_type: "single",
-      single_agent: {
+      agent: {
         id: "agent-1",
         model: "openai/gpt-5.1",
         prompt: "system",
-      },
+      }
     })
   );
 
@@ -417,16 +416,30 @@ test("decodeOpencodeRuntimeConfigCliRequestBase64 defaults optional arrays and o
     tool_server_id_map: null,
     resolved_mcp_tool_refs: [],
     resolved_output_schemas: {},
-    general_type: "single",
-    single_agent: {
+    agent: {
       id: "agent-1",
       model: "openai/gpt-5.1",
       prompt: "system",
       role: undefined,
-    },
-    coordinator: undefined,
-    members: [],
+    }
   });
+});
+
+test("decodeOpencodeRuntimeConfigCliRequestBase64 requires a single agent payload", () => {
+  assert.throws(
+    () =>
+      decodeOpencodeRuntimeConfigCliRequestBase64(
+        encode({
+          session_id: "session-1",
+          workspace_id: "workspace-1",
+          input_id: "input-1",
+          default_provider_id: "openai",
+          session_mode: "code",
+          workspace_config_checksum: "checksum-1"
+        })
+      ),
+    /agent is required/
+  );
 });
 
 test("decodeHarnessHostOpencodeRequestBase64 preserves the legacy request shape", () => {

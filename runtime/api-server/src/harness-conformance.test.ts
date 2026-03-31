@@ -132,9 +132,12 @@ test("shared harness definitions build harness-specific request shapes", () => {
   assert.equal(opencodeRequest.opencode_base_url, "http://127.0.0.1:4096");
   assert.deepEqual(opencodeRequest.workspace_skill_ids, ["skill-creator"]);
   assert.deepEqual(opencodeRequest.output_format, { type: "json_schema", schema: { type: "object" } });
+  assert.match(String(opencodeRequest.system_prompt), /OpenCode MCP tool naming:/);
+  assert.match(String(opencodeRequest.system_prompt), /workspace\.lookup -> workspace_lookup/);
   assert.equal("mcp_tool_refs" in opencodeRequest, false);
 
   assert.equal("opencode_base_url" in piRequest, false);
+  assert.equal(piRequest.system_prompt, "You are concise.");
   assert.deepEqual(piRequest.workspace_skill_dirs, ["/tmp/workspace-1/skills/skill-creator"]);
   assert.deepEqual(piRequest.mcp_tool_refs, [{ tool_id: "workspace.lookup", server_id: "workspace", tool_name: "lookup" }]);
   assert.equal("output_format" in piRequest, false);

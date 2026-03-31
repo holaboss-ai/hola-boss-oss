@@ -370,38 +370,14 @@ function buildAgentRuntimeConfigRequest(params: {
     })),
     resolved_output_schemas: {}
   };
-
-  if (params.compiledPlan.general_config.type === "single") {
-    return {
-      ...common,
-      general_type: "single",
-      single_agent: {
-        id: params.compiledPlan.general_config.agent.id,
-        model: params.compiledPlan.general_config.agent.model,
-        prompt: params.compiledPlan.general_config.agent.prompt,
-        role: params.compiledPlan.general_config.agent.role
-      },
-      coordinator: undefined,
-      members: []
-    };
-  }
-
   return {
     ...common,
-    general_type: "team",
-    single_agent: undefined,
-    coordinator: {
-      id: params.compiledPlan.general_config.coordinator.id,
-      model: params.compiledPlan.general_config.coordinator.model,
-      prompt: params.compiledPlan.general_config.coordinator.prompt,
-      role: params.compiledPlan.general_config.coordinator.role
-    },
-    members: params.compiledPlan.general_config.members.map((member) => ({
-      id: member.id,
-      model: member.model,
-      prompt: member.prompt,
-      role: member.role
-    }))
+    agent: {
+      id: params.compiledPlan.general_config.agent.id,
+      model: params.compiledPlan.general_config.agent.model,
+      prompt: params.compiledPlan.general_config.agent.prompt,
+      role: params.compiledPlan.general_config.agent.role
+    }
   };
 }
 

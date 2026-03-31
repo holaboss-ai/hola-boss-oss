@@ -186,10 +186,7 @@ export interface AgentRuntimeConfigCliRequest {
   tool_server_id_map?: Record<string, string> | null;
   resolved_mcp_tool_refs: Array<Record<string, string>>;
   resolved_output_schemas: Record<string, JsonObject>;
-  general_type: string;
-  single_agent?: AgentRuntimeConfigGeneralMemberPayload | null;
-  coordinator?: AgentRuntimeConfigGeneralMemberPayload | null;
-  members: AgentRuntimeConfigGeneralMemberPayload[];
+  agent: AgentRuntimeConfigGeneralMemberPayload;
 }
 
 export interface AgentRuntimeConfigCliResponse {
@@ -525,14 +522,11 @@ export function decodeAgentRuntimeConfigCliRequestBase64(encoded: string): Agent
             .map(([key, value]) => [key, jsonObject(value)])
         )
       : {},
-    general_type: requiredString(parsed.general_type, "general_type"),
-    single_agent: generalMemberPayload(parsed.single_agent, "single_agent"),
-    coordinator: generalMemberPayload(parsed.coordinator, "coordinator"),
-    members: Array.isArray(parsed.members)
-      ? parsed.members
-          .map((member, index) => generalMemberPayload(member, `members[${index}]`))
-          .filter((member): member is OpencodeRuntimeConfigGeneralMemberPayload => Boolean(member))
-      : [],
+    agent:
+      generalMemberPayload(parsed.agent, "agent") ??
+      (() => {
+        throw new Error("agent is required");
+      })(),
   };
 }
 
