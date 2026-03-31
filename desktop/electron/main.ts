@@ -57,6 +57,11 @@ const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
 const HOLABOSS_HOME_URL = "https://holaboss.ai";
 const HOLABOSS_DOCS_URL = `https://github.com/${GITHUB_RELEASES_OWNER}/${GITHUB_RELEASES_REPO}`;
 const HOLABOSS_HELP_URL = `${HOLABOSS_DOCS_URL}/issues`;
+const RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY = "holaboss_proxy";
+const RUNTIME_PROVIDER_KIND_OPENAI_COMPATIBLE = "openai_compatible";
+const RUNTIME_PROVIDER_KIND_ANTHROPIC_NATIVE = "anthropic_native";
+const RUNTIME_PROVIDER_KIND_OPENROUTER = "openrouter";
+const RUNTIME_HOLABOSS_PROVIDER_ID = "holaboss_model_proxy";
 
 interface DirectoryEntryPayload {
   name: string;
@@ -231,6 +236,19 @@ interface RuntimeConfigPayload {
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
   controlPlaneBaseUrl: string | null;
+  providerModelGroups: RuntimeProviderModelGroupPayload[];
+}
+
+interface RuntimeProviderModelPayload {
+  token: string;
+  modelId: string;
+}
+
+interface RuntimeProviderModelGroupPayload {
+  providerId: string;
+  providerLabel: string;
+  kind: string;
+  models: RuntimeProviderModelPayload[];
 }
 
 interface RuntimeConfigUpdatePayload {
@@ -2429,36 +2447,73 @@ async function readRuntimeConfigFile(): Promise<Record<string, string>> {
   try {
     const raw = await fs.readFile(configPath, "utf-8");
     const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object") {
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return {};
     }
     const parsedRecord = parsed as Record<string, unknown>;
-    const holabossSection = parsedRecord.holaboss;
-    const source = typeof holabossSection === "object" && holabossSection
-      ? (holabossSection as Record<string, unknown>)
-      : parsedRecord;
+    const runtimePayload = runtimeConfigObject(parsedRecord.runtime);
+    const providersPayload = runtimeConfigObject(parsedRecord.providers);
+    const integrationsPayload = runtimeConfigObject(parsedRecord.integrations);
+    const holabossIntegration = runtimeConfigObject(integrationsPayload.holaboss);
+    const holabossProvider = runtimeConfigObject(providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID]);
+    const holabossLegacyPayload = runtimeConfigObject(parsedRecord.holaboss);
+    const legacyPayload = Object.keys(holabossLegacyPayload).length > 0 ? holabossLegacyPayload : parsedRecord;
 
     const normalized: Record<string, string> = {};
-    for (const key of [
-      "auth_token",
-      "model_proxy_api_key",
-      "user_id",
-      "sandbox_id",
-      "model_proxy_base_url",
-      "default_model",
-      "control_plane_base_url"
-    ] as const) {
-      const value = source[key];
-      if (typeof value === "string" && value.trim()) {
-        normalized[key] = value.trim();
-      }
+    const authToken = runtimeFirstNonEmptyString(
+      holabossIntegration.auth_token as string | undefined,
+      holabossProvider.api_key as string | undefined,
+      legacyPayload.auth_token as string | undefined,
+      legacyPayload.model_proxy_api_key as string | undefined
+    );
+    const userId = runtimeFirstNonEmptyString(
+      holabossIntegration.user_id as string | undefined,
+      legacyPayload.user_id as string | undefined
+    );
+    const sandboxId = runtimeFirstNonEmptyString(
+      runtimePayload.sandbox_id as string | undefined,
+      holabossIntegration.sandbox_id as string | undefined,
+      legacyPayload.sandbox_id as string | undefined
+    );
+    const modelProxyBaseUrl = runtimeFirstNonEmptyString(
+      holabossProvider.base_url as string | undefined,
+      legacyPayload.model_proxy_base_url as string | undefined
+    );
+    const defaultModel = runtimeFirstNonEmptyString(
+      runtimePayload.default_model as string | undefined,
+      legacyPayload.default_model as string | undefined
+    );
+    const defaultProvider = runtimeFirstNonEmptyString(
+      runtimePayload.default_provider as string | undefined,
+      legacyPayload.default_provider as string | undefined
+    );
+    const controlPlaneBaseUrl = runtimeFirstNonEmptyString(
+      legacyPayload.control_plane_base_url as string | undefined
+    );
+
+    if (authToken) {
+      normalized.auth_token = authToken;
+      normalized.model_proxy_api_key = authToken;
     }
-    if (!normalized.auth_token && normalized.model_proxy_api_key) {
-      normalized.auth_token = normalized.model_proxy_api_key;
+    if (userId) {
+      normalized.user_id = userId;
     }
-    if (!normalized.model_proxy_api_key && normalized.auth_token) {
-      normalized.model_proxy_api_key = normalized.auth_token;
+    if (sandboxId) {
+      normalized.sandbox_id = sandboxId;
     }
+    if (modelProxyBaseUrl) {
+      normalized.model_proxy_base_url = modelProxyBaseUrl;
+    }
+    if (defaultModel) {
+      normalized.default_model = defaultModel;
+    }
+    if (defaultProvider) {
+      normalized.default_provider = defaultProvider;
+    }
+    if (controlPlaneBaseUrl) {
+      normalized.control_plane_base_url = controlPlaneBaseUrl;
+    }
+
     return normalized;
   } catch {
     return {};
@@ -2477,6 +2532,215 @@ async function readRuntimeConfigDocument(): Promise<Record<string, unknown>> {
   } catch {
     return {};
   }
+}
+
+function runtimeConfigObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function runtimeFirstNonEmptyString(...values: Array<string | null | undefined>): string {
+  for (const value of values) {
+    const normalized = (value ?? "").trim();
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return "";
+}
+
+function runtimeProviderLabel(providerId: string): string {
+  const normalized = providerId.trim().toLowerCase();
+  if (normalized === "openai" || normalized.includes("openai")) {
+    return "OpenAI";
+  }
+  if (normalized === "anthropic" || normalized.includes("anthropic")) {
+    return "Anthropic";
+  }
+  if (normalized.includes("openrouter")) {
+    return "OpenRouter";
+  }
+  if (normalized === RUNTIME_HOLABOSS_PROVIDER_ID || normalized === "holaboss" || normalized.includes("holaboss")) {
+    return "Holaboss Proxy";
+  }
+  return providerId
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function normalizeRuntimeProviderKind(rawKind: string, providerId: string, baseUrl: string): string {
+  const normalizedProviderId = providerId.trim().toLowerCase();
+  const normalizedKind = rawKind.trim().toLowerCase();
+  const normalizedBaseUrl = baseUrl.trim().toLowerCase();
+  if (
+    normalizedKind === RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY ||
+    normalizedProviderId === RUNTIME_HOLABOSS_PROVIDER_ID ||
+    normalizedProviderId === "holaboss" ||
+    normalizedProviderId.includes("holaboss")
+  ) {
+    return RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY;
+  }
+  if (!normalizedKind && normalizedBaseUrl.includes("model-proxy")) {
+    return RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY;
+  }
+  if (normalizedKind === RUNTIME_PROVIDER_KIND_OPENROUTER || normalizedProviderId.includes("openrouter")) {
+    return RUNTIME_PROVIDER_KIND_OPENROUTER;
+  }
+  if (
+    normalizedKind === RUNTIME_PROVIDER_KIND_ANTHROPIC_NATIVE ||
+    normalizedKind === "anthropic" ||
+    normalizedProviderId.includes("anthropic")
+  ) {
+    return RUNTIME_PROVIDER_KIND_ANTHROPIC_NATIVE;
+  }
+  return RUNTIME_PROVIDER_KIND_OPENAI_COMPATIBLE;
+}
+
+function runtimeProviderModelGroups(
+  document: Record<string, unknown>,
+  loadedLegacy: Record<string, string>
+): RuntimeProviderModelGroupPayload[] {
+  const runtimePayload = runtimeConfigObject(document.runtime);
+  const providersPayload = runtimeConfigObject(document.providers);
+  const modelsPayload = runtimeConfigObject(document.models);
+  const integrationsPayload = runtimeConfigObject(document.integrations);
+  const holabossIntegration = runtimeConfigObject(integrationsPayload.holaboss);
+
+  const providers = new Map<string, { id: string; kind: string; label: string }>();
+  for (const [providerId, rawProvider] of Object.entries(providersPayload)) {
+    const providerPayload = runtimeConfigObject(rawProvider);
+    const optionsPayload = runtimeConfigObject(providerPayload.options);
+    const baseUrl = runtimeFirstNonEmptyString(
+      providerPayload.base_url as string | undefined,
+      providerPayload.baseURL as string | undefined,
+      optionsPayload.baseURL as string | undefined,
+      optionsPayload.base_url as string | undefined
+    );
+    const kind = normalizeRuntimeProviderKind(
+      runtimeFirstNonEmptyString(
+        providerPayload.kind as string | undefined,
+        providerPayload.type as string | undefined,
+        optionsPayload.kind as string | undefined
+      ),
+      providerId,
+      baseUrl
+    );
+    providers.set(providerId, {
+      id: providerId,
+      kind,
+      label: runtimeProviderLabel(providerId)
+    });
+  }
+
+  const runtimeDefaultProvider = runtimeFirstNonEmptyString(
+    runtimePayload.default_provider as string | undefined,
+    loadedLegacy.default_provider,
+    RUNTIME_HOLABOSS_PROVIDER_ID
+  );
+  const legacyBaseUrl = runtimeFirstNonEmptyString(
+    loadedLegacy.model_proxy_base_url,
+    holabossIntegration.model_proxy_base_url as string | undefined
+  );
+  const legacyApiKey = runtimeFirstNonEmptyString(
+    loadedLegacy.model_proxy_api_key,
+    loadedLegacy.auth_token,
+    holabossIntegration.auth_token as string | undefined
+  );
+  if ((legacyBaseUrl || legacyApiKey) && runtimeDefaultProvider && !providers.has(runtimeDefaultProvider)) {
+    providers.set(runtimeDefaultProvider, {
+      id: runtimeDefaultProvider,
+      kind: normalizeRuntimeProviderKind("", runtimeDefaultProvider, legacyBaseUrl),
+      label: runtimeProviderLabel(runtimeDefaultProvider)
+    });
+  }
+
+  const groupedModels = new Map<string, Map<string, RuntimeProviderModelPayload>>();
+  const ensureProviderGroup = (providerId: string) => {
+    if (!groupedModels.has(providerId)) {
+      groupedModels.set(providerId, new Map<string, RuntimeProviderModelPayload>());
+    }
+    return groupedModels.get(providerId)!;
+  };
+  const addModel = (providerId: string, token: string, modelId: string) => {
+    const normalizedProviderId = providerId.trim();
+    const normalizedModelId = modelId.trim();
+    if (!normalizedProviderId || !normalizedModelId) {
+      return;
+    }
+    const normalizedToken = token.trim() || `${normalizedProviderId}/${normalizedModelId}`;
+    const group = ensureProviderGroup(normalizedProviderId);
+    if (!group.has(normalizedToken)) {
+      group.set(normalizedToken, {
+        token: normalizedToken,
+        modelId: normalizedModelId
+      });
+    }
+  };
+
+  const configuredModelsCount = Object.keys(modelsPayload).length;
+  for (const [token, rawModel] of Object.entries(modelsPayload)) {
+    const modelPayload = runtimeConfigObject(rawModel);
+    let providerId = runtimeFirstNonEmptyString(
+      modelPayload.provider_id as string | undefined,
+      modelPayload.provider as string | undefined
+    );
+    let modelId = runtimeFirstNonEmptyString(
+      modelPayload.model_id as string | undefined,
+      modelPayload.model as string | undefined
+    );
+    if (!providerId && token.includes("/")) {
+      const [prefix, ...rest] = token.split("/");
+      if (providers.has(prefix) && rest.length > 0) {
+        providerId = prefix;
+        modelId = modelId || rest.join("/");
+      }
+    }
+    if (providerId && modelId) {
+      addModel(providerId, token, modelId);
+    }
+  }
+
+  const fallbackDefaultModel = runtimeFirstNonEmptyString(
+    runtimePayload.default_model as string | undefined,
+    loadedLegacy.default_model
+  );
+  if (fallbackDefaultModel && configuredModelsCount === 0) {
+    const defaultProviderId = runtimeFirstNonEmptyString(
+      runtimeDefaultProvider,
+      loadedLegacy.default_provider,
+      "openai"
+    );
+    if (fallbackDefaultModel.includes("/")) {
+      const [prefix, ...rest] = fallbackDefaultModel.split("/");
+      const modelId = rest.join("/").trim();
+      if (modelId) {
+        addModel(prefix.trim(), fallbackDefaultModel, modelId);
+      }
+    } else if (fallbackDefaultModel.toLowerCase().startsWith("claude")) {
+      const anthropicProvider =
+        Array.from(providers.values()).find((provider) => provider.kind === RUNTIME_PROVIDER_KIND_ANTHROPIC_NATIVE)?.id ??
+        "anthropic";
+      addModel(anthropicProvider, fallbackDefaultModel, fallbackDefaultModel);
+    } else {
+      addModel(defaultProviderId, fallbackDefaultModel, fallbackDefaultModel);
+    }
+  }
+
+  const groups: RuntimeProviderModelGroupPayload[] = [];
+  for (const [providerId, modelMap] of groupedModels.entries()) {
+    const provider = providers.get(providerId);
+    groups.push({
+      providerId,
+      providerLabel: provider?.label ?? runtimeProviderLabel(providerId),
+      kind: provider?.kind ?? normalizeRuntimeProviderKind("", providerId, ""),
+      models: Array.from(modelMap.values())
+    });
+  }
+  return groups;
 }
 
 async function updateDesktopBrowserCapabilityConfig(update: {
@@ -3062,16 +3326,68 @@ async function fetchWithRetry(input: string, init: RequestInit, options?: {
 async function getRuntimeConfig(): Promise<RuntimeConfigPayload> {
   const configPath = runtimeConfigPath();
   const loaded = await readRuntimeConfigFile();
+  const document = await readRuntimeConfigDocument();
   return {
     configPath,
-    loadedFromFile: Object.keys(loaded).length > 0,
+    loadedFromFile: Object.keys(document).length > 0 || Object.keys(loaded).length > 0,
     authTokenPresent: Boolean(runtimeModelProxyApiKeyFromConfig(loaded)),
     userId: loaded.user_id ?? null,
     sandboxId: loaded.sandbox_id ?? null,
     modelProxyBaseUrl: loaded.model_proxy_base_url ?? null,
     defaultModel: loaded.default_model ?? null,
-    controlPlaneBaseUrl: loaded.control_plane_base_url ?? null
+    controlPlaneBaseUrl: loaded.control_plane_base_url ?? null,
+    providerModelGroups: runtimeProviderModelGroups(document, loaded)
   };
+}
+
+async function getRuntimeConfigDocumentText(): Promise<string> {
+  const document = await readRuntimeConfigDocument();
+  const hasContent = Object.keys(document).length > 0;
+  if (hasContent) {
+    return `${JSON.stringify(document, null, 2)}\n`;
+  }
+  return "{\n  \"runtime\": {\n    \"default_model\": \"openai/gpt-5.1\"\n  },\n  \"providers\": {}\n}\n";
+}
+
+async function setRuntimeConfigDocument(rawText: string): Promise<RuntimeConfigPayload> {
+  const trimmed = rawText.trim();
+  if (!trimmed) {
+    throw new Error("Runtime config JSON is required.");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (error) {
+    throw new Error(
+      error instanceof Error ? `Invalid runtime config JSON: ${error.message}` : "Invalid runtime config JSON."
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Runtime config must be a JSON object.");
+  }
+
+  const configPath = runtimeConfigPath();
+  const currentDocument = await readRuntimeConfigDocument();
+  const nextText = JSON.stringify(parsed, null, 2);
+  const currentText = JSON.stringify(currentDocument, null, 2);
+  let fileExists = true;
+  try {
+    await fs.access(configPath);
+  } catch {
+    fileExists = false;
+  }
+
+  if (!fileExists || currentText !== nextText) {
+    await fs.mkdir(path.dirname(configPath), { recursive: true });
+    await fs.writeFile(configPath, `${nextText}\n`, "utf-8");
+    await stopEmbeddedRuntime();
+    void startEmbeddedRuntime();
+  }
+
+  const config = await getRuntimeConfig();
+  await emitRuntimeConfig(config);
+  return config;
 }
 
 async function exchangeDesktopRuntimeBinding(sandboxId: string): Promise<RuntimeBindingExchangePayload> {
@@ -10116,6 +10432,7 @@ app.whenReady().then(async () => {
     hideAuthPopup();
   });
   handleTrustedIpc("runtime:getConfig", ["main", "auth-popup"], () => getRuntimeConfig());
+  handleTrustedIpc("runtime:getConfigDocument", ["main", "auth-popup"], async () => getRuntimeConfigDocumentText());
   handleTrustedIpc("runtime:setConfig", ["main", "auth-popup"], async (_event, payload: RuntimeConfigUpdatePayload) => {
     const currentConfig = await readRuntimeConfigFile();
     const nextConfig = await writeRuntimeConfigFile(payload);
@@ -10123,6 +10440,9 @@ app.whenReady().then(async () => {
     const config = await getRuntimeConfig();
     await emitRuntimeConfig(config);
     return config;
+  });
+  handleTrustedIpc("runtime:setConfigDocument", ["main", "auth-popup"], async (_event, rawDocument: string) => {
+    return setRuntimeConfigDocument(rawDocument);
   });
   handleTrustedIpc("ui:getTheme", ["main", "auth-popup"], async () => currentTheme);
   handleTrustedIpc("ui:openSettingsPane", ["main", "auth-popup"], async (_event, section?: UiSettingsPaneSection) => {

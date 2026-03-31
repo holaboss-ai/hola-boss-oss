@@ -136,6 +136,19 @@ declare global {
     modelProxyBaseUrl: string | null;
     defaultModel: string | null;
     controlPlaneBaseUrl: string | null;
+    providerModelGroups: RuntimeProviderModelGroupPayload[];
+  }
+
+  interface RuntimeProviderModelPayload {
+    token: string;
+    modelId: string;
+  }
+
+  interface RuntimeProviderModelGroupPayload {
+    providerId: string;
+    providerLabel: string;
+    kind: string;
+    models: RuntimeProviderModelPayload[];
   }
 
   interface RuntimeConfigUpdatePayload {
@@ -757,7 +770,9 @@ declare global {
       getStatus: () => Promise<RuntimeStatusPayload>;
       restart: () => Promise<RuntimeStatusPayload>;
       getConfig: () => Promise<RuntimeConfigPayload>;
+      getConfigDocument: () => Promise<string>;
       setConfig: (payload: RuntimeConfigUpdatePayload) => Promise<RuntimeConfigPayload>;
+      setConfigDocument: (rawDocument: string) => Promise<RuntimeConfigPayload>;
       exchangeBinding: (sandboxId: string) => Promise<RuntimeConfigPayload>;
       onConfigChange: (listener: (config: RuntimeConfigPayload) => void) => () => void;
       onStateChange: (listener: (status: RuntimeStatusPayload) => void) => () => void;

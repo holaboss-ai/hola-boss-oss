@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  DEFAULT_MODEL_PROXY_BASE_URL,
-  DEFAULT_RUNTIME_MODEL,
   useDesktopAuthSession,
   type AuthSession
 } from "@/lib/auth/authClient";
+
+type AuthPanelView = "full" | "account" | "runtime";
+
+interface AuthPanelProps {
+  view?: AuthPanelView;
+}
 
 function sessionUserId(session: AuthSession | null): string {
   if (!session || typeof session !== "object") {
@@ -63,30 +67,28 @@ function sessionInitials(session: AuthSession | null): string {
   return (email[0] ?? "H").toUpperCase();
 }
 
-export function AuthPanel() {
+export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const sessionState = useDesktopAuthSession();
   const session = sessionState.data;
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigPayload | null>(null);
-  const [modelProxyBaseUrl, setModelProxyBaseUrl] = useState(DEFAULT_MODEL_PROXY_BASE_URL);
-  const [defaultModel, setDefaultModel] = useState(DEFAULT_RUNTIME_MODEL);
-  const [runtimeUserId, setRuntimeUserId] = useState("");
+  const [runtimeConfigDocument, setRuntimeConfigDocument] = useState("");
   const [sandboxId, setSandboxId] = useState("");
   const [authError, setAuthError] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [isStartingSignIn, setIsStartingSignIn] = useState(false);
-  const [isSavingRuntimeConfig, setIsSavingRuntimeConfig] = useState(false);
+  const [isSavingRuntimeConfigDocument, setIsSavingRuntimeConfigDocument] = useState(false);
   const [isExchangingRuntimeBinding, setIsExchangingRuntimeBinding] = useState(false);
-  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
 
   async function refreshRuntimeConfig() {
     if (!window.electronAPI) {
       return;
     }
-    const config = await window.electronAPI.runtime.getConfig();
+    const [config, document] = await Promise.all([
+      window.electronAPI.runtime.getConfig(),
+      window.electronAPI.runtime.getConfigDocument()
+    ]);
     setRuntimeConfig(config);
-    setModelProxyBaseUrl(config.modelProxyBaseUrl ?? DEFAULT_MODEL_PROXY_BASE_URL);
-    setDefaultModel(config.defaultModel ?? DEFAULT_RUNTIME_MODEL);
-    setRuntimeUserId(config.userId ?? "");
+    setRuntimeConfigDocument(document);
     setSandboxId(config.sandboxId ?? `desktop:${crypto.randomUUID()}`);
   }
 
@@ -96,14 +98,15 @@ export function AuthPanel() {
     }
 
     let cancelled = false;
-    void window.electronAPI.runtime.getConfig().then((config) => {
+    void Promise.all([
+      window.electronAPI.runtime.getConfig(),
+      window.electronAPI.runtime.getConfigDocument()
+    ]).then(([config, document]) => {
       if (cancelled) {
         return;
       }
       setRuntimeConfig(config);
-      setModelProxyBaseUrl(config.modelProxyBaseUrl ?? DEFAULT_MODEL_PROXY_BASE_URL);
-      setDefaultModel(config.defaultModel ?? DEFAULT_RUNTIME_MODEL);
-      setRuntimeUserId(config.userId ?? "");
+      setRuntimeConfigDocument(document);
       setSandboxId(config.sandboxId ?? `desktop:${crypto.randomUUID()}`);
     });
 
@@ -119,11 +122,11 @@ export function AuthPanel() {
 
     const unsubscribe = window.electronAPI.runtime.onConfigChange((config) => {
       setRuntimeConfig(config);
-      setModelProxyBaseUrl(config.modelProxyBaseUrl ?? DEFAULT_MODEL_PROXY_BASE_URL);
-      setDefaultModel(config.defaultModel ?? DEFAULT_RUNTIME_MODEL);
-      setRuntimeUserId(config.userId ?? "");
       setSandboxId(config.sandboxId ?? `desktop:${crypto.randomUUID()}`);
       setAuthError("");
+      void window.electronAPI.runtime.getConfigDocument().then((document) => {
+        setRuntimeConfigDocument(document);
+      });
     });
 
     return unsubscribe;
@@ -137,40 +140,20 @@ export function AuthPanel() {
   }, [session]);
 
   useEffect(() => {
-    const nextUserId = sessionUserId(session);
-    if (nextUserId) {
-      setRuntimeUserId((current) => current || nextUserId);
-    }
-  }, [session]);
-
-  useEffect(() => {
     if (sessionState.error) {
       setAuthError(sessionState.error.message);
     }
   }, [sessionState.error]);
 
   const isSignedIn = Boolean(sessionUserId(session));
-  const resolvedUserId = runtimeUserId.trim() || sessionUserId(session);
+  const showAccountSection = view !== "runtime";
+  const showRuntimeSection = view !== "account";
   const runtimeBindingReady =
     Boolean(runtimeConfig?.authTokenPresent) &&
     Boolean((runtimeConfig?.sandboxId || "").trim()) &&
     Boolean((runtimeConfig?.modelProxyBaseUrl || "").trim());
   const isFinishingSetup = isSignedIn && !runtimeBindingReady && !authError;
   const statusTone = authError ? "error" : runtimeBindingReady ? "ready" : isFinishingSetup ? "syncing" : "idle";
-
-  const runtimeSummary = useMemo(() => {
-    if (!runtimeConfig) {
-      return "runtime config unavailable";
-    }
-
-    const parts = [
-      runtimeConfig.loadedFromFile ? "runtime config loaded" : "runtime config empty",
-      runtimeConfig.authTokenPresent ? "token present" : "token missing",
-      runtimeConfig.userId ? `user ${runtimeConfig.userId}` : "user missing",
-      runtimeConfig.sandboxId ? `sandbox ${runtimeConfig.sandboxId}` : "sandbox missing"
-    ];
-    return parts.join(" - ");
-  }, [runtimeConfig]);
 
   const statusBadgeLabel = sessionState.isPending
     ? "Checking session"
@@ -215,10 +198,6 @@ export function AuthPanel() {
     {
       label: "Runtime",
       value: runtimeBindingReady ? "Ready on this desktop" : isSignedIn ? "Finishing setup" : "Offline"
-    },
-    {
-      label: "Sandbox",
-      value: sandboxId.trim() || "Will be assigned automatically"
     }
   ];
 
@@ -251,27 +230,24 @@ export function AuthPanel() {
     }
   }
 
-  async function handleSaveRuntimeConfig() {
+  async function handleSaveRuntimeConfigDocument() {
     if (!window.electronAPI) {
       return;
     }
 
-    setIsSavingRuntimeConfig(true);
+    setIsSavingRuntimeConfigDocument(true);
     setAuthError("");
     setAuthMessage("");
     try {
-      const nextConfig = await window.electronAPI.runtime.setConfig({
-        userId: resolvedUserId || null,
-        sandboxId: sandboxId.trim() || null,
-        modelProxyBaseUrl: modelProxyBaseUrl.trim() || null,
-        defaultModel: defaultModel.trim() || null
-      });
+      const nextConfig = await window.electronAPI.runtime.setConfigDocument(runtimeConfigDocument);
       setRuntimeConfig(nextConfig);
-      setAuthMessage("Runtime config updated. The runtime was restarted with the new settings.");
+      const nextDocument = await window.electronAPI.runtime.getConfigDocument();
+      setRuntimeConfigDocument(nextDocument);
+      setAuthMessage("Runtime config file saved. The runtime was restarted with the new settings.");
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "Failed to update runtime config.");
+      setAuthError(error instanceof Error ? error.message : "Failed to save runtime config file.");
     } finally {
-      setIsSavingRuntimeConfig(false);
+      setIsSavingRuntimeConfigDocument(false);
     }
   }
 
@@ -293,9 +269,8 @@ export function AuthPanel() {
       const nextConfig = await window.electronAPI.runtime.exchangeBinding(resolvedSandboxId);
       setRuntimeConfig(nextConfig);
       setSandboxId(nextConfig.sandboxId ?? resolvedSandboxId);
-      setRuntimeUserId(nextConfig.userId ?? "");
-      setModelProxyBaseUrl(nextConfig.modelProxyBaseUrl ?? DEFAULT_MODEL_PROXY_BASE_URL);
-      setDefaultModel(nextConfig.defaultModel ?? DEFAULT_RUNTIME_MODEL);
+      const nextDocument = await window.electronAPI.runtime.getConfigDocument();
+      setRuntimeConfigDocument(nextDocument);
       setAuthMessage("Runtime binding refreshed and local runtime config updated.");
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Failed to exchange runtime binding.");
@@ -304,187 +279,177 @@ export function AuthPanel() {
     }
   }
 
+  const runtimeConfigEditor = (
+    <div className="theme-subtle-surface mt-3 grid gap-3 rounded-[18px] border border-panel-border/35 p-3">
+      <div className="text-[10px] tracking-[0.16em] text-text-dim/76">RUNTIME PRODUCT CONFIG</div>
+      <div className="text-[11px] leading-5 text-text-muted/84">
+        Edit the runtime config file directly. Provider and model changes update the chat model picker by provider.
+      </div>
+      {runtimeConfig?.configPath ? (
+        <div className="rounded-[12px] border border-panel-border/30 bg-black/10 px-2.5 py-2 font-mono text-[10px] text-text-dim/78">
+          {runtimeConfig.configPath}
+        </div>
+      ) : null}
+      <textarea
+        className="theme-control-surface min-h-[220px] w-full resize-y rounded-[12px] border border-panel-border/45 px-3 py-2 font-mono text-[11px] leading-6 text-text-main outline-none transition focus:border-neon-green/70"
+        value={runtimeConfigDocument}
+        onChange={(event) => setRuntimeConfigDocument(event.target.value)}
+        spellCheck={false}
+      />
+
+      <div className="mt-1 flex flex-wrap gap-2">
+        <button
+          className="theme-control-surface rounded-[14px] border border-panel-border/45 px-3 py-2 text-[11px] text-text-main transition hover:border-neon-green/35 disabled:cursor-not-allowed disabled:opacity-50"
+          type="button"
+          onClick={() => void refreshRuntimeConfig()}
+        >
+          Reload config file
+        </button>
+        <button
+          className="theme-control-surface rounded-[14px] border border-panel-border/45 px-3 py-2 text-[11px] text-text-main transition hover:border-neon-green/35 disabled:cursor-not-allowed disabled:opacity-50"
+          type="button"
+          onClick={() => void handleSaveRuntimeConfigDocument()}
+          disabled={isSavingRuntimeConfigDocument}
+        >
+          {isSavingRuntimeConfigDocument ? "Saving config file..." : "Save config file"}
+        </button>
+        <button
+          className="theme-control-surface rounded-[14px] border border-panel-border/45 px-3 py-2 text-[11px] text-text-main transition hover:border-neon-green/35 disabled:cursor-not-allowed disabled:opacity-50"
+          type="button"
+          onClick={() => void handleExchangeRuntimeBinding()}
+          disabled={isExchangingRuntimeBinding || !isSignedIn}
+        >
+          {isExchangingRuntimeBinding ? "Refreshing..." : "Refresh runtime binding"}
+        </button>
+      </div>
+
+    </div>
+  );
+
   return (
     <section className="theme-shell w-full max-w-none overflow-hidden rounded-[24px] border border-panel-border/40 text-[11px] text-text-main/88 shadow-card">
-      <div className="border-b border-panel-border/40 px-4 py-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex min-w-0 items-start gap-3">
-            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-neon-green/30 bg-neon-green/10 text-[16px] font-semibold text-neon-green">
-              {sessionInitials(session)}
-            </div>
-            <div className="min-w-0">
-              <div className="text-[15px] font-medium text-text-main">
-                {isSignedIn ? sessionDisplayName(session) || "Holaboss account" : "Holaboss account"}
+      {showAccountSection && (
+        <>
+          <div className="border-b border-panel-border/40 px-4 py-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-3">
+                <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-neon-green/30 bg-neon-green/10 text-[16px] font-semibold text-neon-green">
+                  {sessionInitials(session)}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[15px] font-medium text-text-main">
+                    {isSignedIn ? sessionDisplayName(session) || "Holaboss account" : "Holaboss account"}
+                  </div>
+                  <div className="mt-0.5 truncate text-[12px] text-text-muted/80">
+                    {isSignedIn ? sessionEmail(session) || "Signed in" : "Not connected"}
+                  </div>
+                </div>
               </div>
-              <div className="mt-0.5 truncate text-[12px] text-text-muted/80">
-                {isSignedIn ? sessionEmail(session) || resolvedUserId || "Signed in" : "Not connected"}
-              </div>
+              <div className={`shrink-0 rounded-full border px-3 py-1 text-[10px] tracking-[0.14em] ${badgeClassName}`}>{statusBadgeLabel}</div>
+            </div>
+
+            <div className="theme-subtle-surface mt-4 rounded-[18px] border border-panel-border/35 px-4 py-3">
+              <div className="text-[13px] text-text-main">{statusTitle}</div>
+              <div className="mt-1 text-[11px] leading-5 text-text-muted/82">{statusDescription}</div>
             </div>
           </div>
-          <div className={`shrink-0 rounded-full border px-3 py-1 text-[10px] tracking-[0.14em] ${badgeClassName}`}>{statusBadgeLabel}</div>
-        </div>
 
-        <div className="theme-subtle-surface mt-4 rounded-[18px] border border-panel-border/35 px-4 py-3">
-          <div className="text-[13px] text-text-main">{statusTitle}</div>
-          <div className="mt-1 text-[11px] leading-5 text-text-muted/82">{statusDescription}</div>
-        </div>
-      </div>
-
-      <div className="px-4 py-4">
-        <div className="grid gap-2">
-          {infoRows.map((row) => (
-            <div
-              key={row.label}
-              className="theme-subtle-surface flex items-center justify-between gap-3 rounded-[16px] border border-panel-border/35 px-4 py-3"
-            >
-              <div className="text-[11px] text-text-main/92">{row.label}</div>
-              <div className="max-w-[58%] truncate text-right text-[11px] text-text-muted/82">{row.value}</div>
+          <div className="px-4 py-4">
+            <div className="grid gap-2">
+              {infoRows.map((row) => (
+                <div
+                  key={row.label}
+                  className="theme-subtle-surface flex items-center justify-between gap-3 rounded-[16px] border border-panel-border/35 px-4 py-3"
+                >
+                  <div className="text-[11px] text-text-main/92">{row.label}</div>
+                  <div className="max-w-[58%] truncate text-right text-[11px] text-text-muted/82">{row.value}</div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
 
-        <div className="mt-4 flex flex-wrap gap-2">
-          {!isSignedIn && (
-            <button
-              className="inline-flex h-[42px] items-center justify-center rounded-[16px] border border-neon-green/40 bg-neon-green/10 px-4 text-[12px] text-neon-green transition hover:bg-neon-green/16 disabled:cursor-not-allowed disabled:opacity-50"
-              type="button"
-              onClick={() => void handleStartSignIn()}
-              disabled={isStartingSignIn}
-            >
-              {isStartingSignIn ? "Opening sign-in..." : "Sign in with browser"}
-            </button>
-          )}
-
-          {isSignedIn && !runtimeBindingReady && (
-            <button
-              className="inline-flex h-[42px] items-center justify-center rounded-[16px] border border-neon-green/40 bg-neon-green/10 px-4 text-[12px] text-neon-green transition hover:bg-neon-green/16 disabled:cursor-not-allowed disabled:opacity-50"
-              type="button"
-              onClick={() => void handleExchangeRuntimeBinding()}
-              disabled={isExchangingRuntimeBinding}
-            >
-              {isExchangingRuntimeBinding ? "Retrying setup..." : "Retry setup"}
-            </button>
-          )}
-
-          <button
-            className="theme-control-surface inline-flex h-[42px] items-center justify-center rounded-[16px] border border-panel-border/45 px-4 text-[12px] text-text-main transition hover:border-neon-green/35 disabled:cursor-not-allowed disabled:opacity-50"
-            type="button"
-            onClick={() => void handleRefreshSession()}
-            disabled={sessionState.isPending}
-          >
-            Refresh session
-          </button>
-
-          <button
-            className="inline-flex h-[42px] items-center justify-center rounded-[16px] border border-[rgba(247,90,84,0.28)] bg-[rgba(247,90,84,0.08)] px-4 text-[12px] text-[rgba(206,92,84,0.96)] transition hover:border-[rgba(247,90,84,0.4)] hover:bg-[rgba(247,90,84,0.12)] disabled:cursor-not-allowed disabled:opacity-50"
-            type="button"
-            onClick={() => void handleSignOut()}
-            disabled={!isSignedIn}
-          >
-            Sign out
-          </button>
-        </div>
-
-        {isFinishingSetup && !isExchangingRuntimeBinding && (
-          <div className="mt-3 rounded-[16px] border border-amber-300/25 bg-amber-400/10 px-4 py-3 text-[11px] text-amber-300">
-            Sign-in completed. Holaboss is finishing local runtime setup.
-          </div>
-        )}
-
-        {(authMessage || authError) && (
-          <div
-            className={`mt-3 rounded-[16px] border px-4 py-3 text-[11px] ${
-              authError
-                ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
-                : "border-neon-green/35 bg-neon-green/8 text-neon-green"
-            }`}
-          >
-            {authError || authMessage}
-          </div>
-        )}
-
-        <div className="mt-4 border-t border-panel-border/45 pt-3">
-          <button
-            className="theme-control-surface flex w-full items-center justify-between rounded-[16px] border border-panel-border/45 px-4 py-3 text-left text-[11px] text-text-main transition hover:border-neon-green/35"
-            type="button"
-            onClick={() => setIsAdvancedOpen((current) => !current)}
-          >
-            <span>Advanced runtime settings</span>
-            <span className="text-text-dim">{isAdvancedOpen ? "Hide" : "Show"}</span>
-          </button>
-
-          {isAdvancedOpen && (
-            <div className="theme-subtle-surface mt-3 grid gap-2 rounded-[18px] border border-panel-border/35 p-3">
-              <div className="text-[10px] tracking-[0.16em] text-text-dim/76">RUNTIME PRODUCT CONFIG</div>
-
-              <label className="grid gap-1">
-                <span className="text-[10px] tracking-[0.12em] text-text-dim/76">Runtime sandbox ID</span>
-                <input
-                  className="theme-control-surface rounded-lg border border-panel-border/45 px-3 py-2 text-[12px] text-text-main outline-none transition focus:border-neon-green/70"
-                  type="text"
-                  value={sandboxId}
-                  onChange={(event) => setSandboxId(event.target.value)}
-                  placeholder="desktop:<stable-id>"
-                />
-              </label>
-
-              <label className="grid gap-1">
-                <span className="text-[10px] tracking-[0.12em] text-text-dim/76">Runtime user ID</span>
-                <input
-                  className="theme-control-surface rounded-lg border border-panel-border/45 px-3 py-2 text-[12px] text-text-main outline-none transition focus:border-neon-green/70"
-                  type="text"
-                  value={runtimeUserId}
-                  onChange={(event) => setRuntimeUserId(event.target.value)}
-                  placeholder="user id"
-                />
-              </label>
-
-              <label className="grid gap-1">
-                <span className="text-[10px] tracking-[0.12em] text-text-dim/76">Model proxy base URL</span>
-                <input
-                  className="theme-control-surface rounded-lg border border-panel-border/45 px-3 py-2 text-[12px] text-text-main outline-none transition focus:border-neon-green/70"
-                  type="url"
-                  value={modelProxyBaseUrl}
-                  onChange={(event) => setModelProxyBaseUrl(event.target.value)}
-                  placeholder={DEFAULT_MODEL_PROXY_BASE_URL}
-                />
-              </label>
-
-              <label className="grid gap-1">
-                <span className="text-[10px] tracking-[0.12em] text-text-dim/76">Default model</span>
-                <input
-                  className="theme-control-surface rounded-lg border border-panel-border/45 px-3 py-2 text-[12px] text-text-main outline-none transition focus:border-neon-green/70"
-                  type="text"
-                  value={defaultModel}
-                  onChange={(event) => setDefaultModel(event.target.value)}
-                  placeholder={DEFAULT_RUNTIME_MODEL}
-                />
-              </label>
-
-              <div className="mt-1 flex flex-wrap gap-2">
+            <div className="mt-4 flex flex-wrap gap-2">
+              {!isSignedIn && (
                 <button
-                  className="theme-control-surface rounded-[14px] border border-panel-border/45 px-3 py-2 text-[11px] text-text-main transition hover:border-neon-green/35 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-[42px] items-center justify-center rounded-[16px] border border-neon-green/40 bg-neon-green/10 px-4 text-[12px] text-neon-green transition hover:bg-neon-green/16 disabled:cursor-not-allowed disabled:opacity-50"
+                  type="button"
+                  onClick={() => void handleStartSignIn()}
+                  disabled={isStartingSignIn}
+                >
+                  {isStartingSignIn ? "Opening sign-in..." : "Sign in with browser"}
+                </button>
+              )}
+
+              {isSignedIn && !runtimeBindingReady && (
+                <button
+                  className="inline-flex h-[42px] items-center justify-center rounded-[16px] border border-neon-green/40 bg-neon-green/10 px-4 text-[12px] text-neon-green transition hover:bg-neon-green/16 disabled:cursor-not-allowed disabled:opacity-50"
                   type="button"
                   onClick={() => void handleExchangeRuntimeBinding()}
-                  disabled={isExchangingRuntimeBinding || !isSignedIn}
+                  disabled={isExchangingRuntimeBinding}
                 >
-                  {isExchangingRuntimeBinding ? "Refreshing..." : "Refresh runtime binding"}
+                  {isExchangingRuntimeBinding ? "Retrying setup..." : "Retry setup"}
                 </button>
-                <button
-                  className="theme-control-surface rounded-[14px] border border-panel-border/45 px-3 py-2 text-[11px] text-text-main transition hover:border-neon-green/35 disabled:cursor-not-allowed disabled:opacity-50"
-                  type="button"
-                  onClick={() => void handleSaveRuntimeConfig()}
-                  disabled={isSavingRuntimeConfig}
-                >
-                  {isSavingRuntimeConfig ? "Saving runtime config..." : "Save runtime config"}
-                </button>
-              </div>
+              )}
 
-              <div className="text-[10px] leading-4 text-text-dim/78">{runtimeSummary}</div>
+              <button
+                className="theme-control-surface inline-flex h-[42px] items-center justify-center rounded-[16px] border border-panel-border/45 px-4 text-[12px] text-text-main transition hover:border-neon-green/35 disabled:cursor-not-allowed disabled:opacity-50"
+                type="button"
+                onClick={() => void handleRefreshSession()}
+                disabled={sessionState.isPending}
+              >
+                Refresh session
+              </button>
+
+              <button
+                className="inline-flex h-[42px] items-center justify-center rounded-[16px] border border-[rgba(247,90,84,0.28)] bg-[rgba(247,90,84,0.08)] px-4 text-[12px] text-[rgba(206,92,84,0.96)] transition hover:border-[rgba(247,90,84,0.4)] hover:bg-[rgba(247,90,84,0.12)] disabled:cursor-not-allowed disabled:opacity-50"
+                type="button"
+                onClick={() => void handleSignOut()}
+                disabled={!isSignedIn}
+              >
+                Sign out
+              </button>
+            </div>
+
+            {isFinishingSetup && !isExchangingRuntimeBinding && (
+              <div className="mt-3 rounded-[16px] border border-amber-300/25 bg-amber-400/10 px-4 py-3 text-[11px] text-amber-300">
+                Sign-in completed. Holaboss is finishing local runtime setup.
+              </div>
+            )}
+
+            {(authMessage || authError) && (
+              <div
+                className={`mt-3 rounded-[16px] border px-4 py-3 text-[11px] ${
+                  authError
+                    ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
+                    : "border-neon-green/35 bg-neon-green/8 text-neon-green"
+                }`}
+              >
+                {authError || authMessage}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {!showAccountSection && showRuntimeSection && (
+        <div className="px-4 py-4">
+          <div className="text-[12px] uppercase tracking-[0.16em] text-text-dim/72">Runtime</div>
+          <div className="mt-1 text-[12px] leading-5 text-text-muted/84">
+            Configure model providers and defaults for this desktop runtime.
+          </div>
+          {runtimeConfigEditor}
+          {(authMessage || authError) && (
+            <div
+              className={`mt-3 rounded-[16px] border px-4 py-3 text-[11px] ${
+                authError
+                  ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
+                  : "border-neon-green/35 bg-neon-green/8 text-neon-green"
+              }`}
+            >
+              {authError || authMessage}
             </div>
           )}
         </div>
-      </div>
+      )}
     </section>
   );
 }

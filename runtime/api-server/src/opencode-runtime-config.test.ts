@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 
 import { projectOpencodeRuntimeConfig, runOpencodeRuntimeConfigCli } from "./opencode-runtime-config.js";
@@ -172,11 +175,243 @@ test("projectOpencodeRuntimeConfig uses direct OpenAI fallback when enabled", ()
     assert.equal(result.provider_id, "hb_openai");
     assert.equal(result.model_client.model_proxy_provider, "openai_compatible");
     assert.equal(result.model_client.api_key, "sk-openai");
-    assert.equal(result.model_client.base_url ?? null, null);
+    assert.equal(result.model_client.base_url, "https://api.openai.com/v1");
     assert.equal(result.model_client.default_headers ?? null, null);
   } finally {
     delete process.env.SANDBOX_MODEL_PROXY_ENABLE_DIRECT_OPENAI_FALLBACK;
     delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("projectOpencodeRuntimeConfig supports direct OpenAI config from runtime settings", () => {
+  process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://api.openai.com/v1";
+  process.env.HOLABOSS_SANDBOX_AUTH_TOKEN = "sk-configured";
+  try {
+    const result = projectOpencodeRuntimeConfig({
+      session_id: "session-1",
+      workspace_id: "workspace-1",
+      input_id: "input-1",
+      runtime_exec_model_proxy_api_key: null,
+      runtime_exec_sandbox_id: null,
+      runtime_exec_run_id: null,
+      selected_model: "openai/gpt-5.2",
+      default_provider_id: "openai",
+      session_mode: "code",
+      workspace_config_checksum: "checksum-5",
+      workspace_skill_ids: [],
+      default_tools: ["read"],
+      extra_tools: [],
+      resolved_mcp_tool_refs: [],
+      resolved_output_schemas: {},
+      agent: {
+        id: "workspace.general",
+        model: "gpt-5.2",
+        prompt: "You are concise."
+      }
+    });
+
+    assert.equal(result.provider_id, "hb_openai");
+    assert.equal(result.model_client.model_proxy_provider, "openai_compatible");
+    assert.equal(result.model_client.api_key, "sk-configured");
+    assert.equal(result.model_client.base_url, "https://api.openai.com/v1");
+    assert.equal(result.model_client.default_headers ?? null, null);
+  } finally {
+    delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
+    delete process.env.HOLABOSS_SANDBOX_AUTH_TOKEN;
+  }
+});
+
+test("projectOpencodeRuntimeConfig treats non-provider roots as proxy roots", () => {
+  process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://proxy.example/custom-root";
+  process.env.HOLABOSS_SANDBOX_AUTH_TOKEN = "proxy-token";
+  try {
+    const result = projectOpencodeRuntimeConfig({
+      session_id: "session-1",
+      workspace_id: "workspace-1",
+      input_id: "input-1",
+      runtime_exec_model_proxy_api_key: null,
+      runtime_exec_sandbox_id: null,
+      runtime_exec_run_id: null,
+      selected_model: "openai/gpt-5.2",
+      default_provider_id: "openai",
+      session_mode: "code",
+      workspace_config_checksum: "checksum-6",
+      workspace_skill_ids: [],
+      default_tools: ["read"],
+      extra_tools: [],
+      resolved_mcp_tool_refs: [],
+      resolved_output_schemas: {},
+      agent: {
+        id: "workspace.general",
+        model: "gpt-5.2",
+        prompt: "You are concise."
+      }
+    });
+
+    assert.equal(result.provider_id, "hb_openai");
+    assert.equal(result.model_client.model_proxy_provider, "openai_compatible");
+    assert.equal(result.model_client.api_key, "proxy-token");
+    assert.equal(result.model_client.base_url, "https://proxy.example/custom-root/openai/v1");
+    assert.equal(result.model_client.default_headers ?? null, null);
+  } finally {
+    delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
+    delete process.env.HOLABOSS_SANDBOX_AUTH_TOKEN;
+  }
+});
+
+test("projectOpencodeRuntimeConfig accepts direct OpenAI host without explicit /v1", () => {
+  process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://api.openai.com";
+  process.env.HOLABOSS_SANDBOX_AUTH_TOKEN = "sk-configured";
+  try {
+    const result = projectOpencodeRuntimeConfig({
+      session_id: "session-1",
+      workspace_id: "workspace-1",
+      input_id: "input-1",
+      runtime_exec_model_proxy_api_key: null,
+      runtime_exec_sandbox_id: null,
+      runtime_exec_run_id: null,
+      selected_model: "openai/gpt-5.2",
+      default_provider_id: "openai",
+      session_mode: "code",
+      workspace_config_checksum: "checksum-7",
+      workspace_skill_ids: [],
+      default_tools: ["read"],
+      extra_tools: [],
+      resolved_mcp_tool_refs: [],
+      resolved_output_schemas: {},
+      agent: {
+        id: "workspace.general",
+        model: "gpt-5.2",
+        prompt: "You are concise."
+      }
+    });
+
+    assert.equal(result.provider_id, "hb_openai");
+    assert.equal(result.model_client.model_proxy_provider, "openai_compatible");
+    assert.equal(result.model_client.api_key, "sk-configured");
+    assert.equal(result.model_client.base_url, "https://api.openai.com/v1");
+    assert.equal(result.model_client.default_headers ?? null, null);
+  } finally {
+    delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
+    delete process.env.HOLABOSS_SANDBOX_AUTH_TOKEN;
+  }
+});
+
+test("projectOpencodeRuntimeConfig resolves configured holaboss, openai-compatible, anthropic-compatible, and openrouter providers", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-runtime-config-"));
+  const configPath = path.join(tempRoot, "runtime-config.json");
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify(
+      {
+        runtime: {
+          default_provider: "holaboss",
+          default_model: "holaboss/gpt-5.2"
+        },
+        providers: {
+          holaboss: {
+            kind: "holaboss_proxy",
+            base_url: "https://proxy.example/api/v1/model-proxy",
+            api_key: "proxy-token"
+          },
+          openai_direct: {
+            kind: "openai_compatible",
+            base_url: "https://api.openai.com",
+            api_key: "sk-openai-direct"
+          },
+          anthropic_direct: {
+            kind: "anthropic_native",
+            base_url: "https://api.anthropic.com",
+            api_key: "sk-ant-direct"
+          },
+          openrouter_proxy: {
+            kind: "openrouter",
+            base_url: "https://openrouter.ai/api/v1",
+            api_key: "sk-openrouter-direct"
+          }
+        },
+        models: {
+          "holaboss/gpt-5.2": { provider: "holaboss", model: "gpt-5.2" },
+          "openai_direct/gpt-5.2": { provider: "openai_direct", model: "gpt-5.2" },
+          "anthropic_direct/claude-sonnet-4-5": { provider: "anthropic_direct", model: "claude-sonnet-4-5" },
+          "openrouter_proxy/deepseek/deepseek-chat-v3-0324": {
+            provider: "openrouter_proxy",
+            model: "deepseek/deepseek-chat-v3-0324"
+          }
+        }
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
+
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+  try {
+    const baseRequest = {
+      session_id: "session-1",
+      workspace_id: "workspace-1",
+      input_id: "input-1",
+      runtime_exec_model_proxy_api_key: null,
+      runtime_exec_sandbox_id: null,
+      runtime_exec_run_id: null,
+      default_provider_id: "holaboss",
+      session_mode: "code",
+      workspace_config_checksum: "checksum-configured",
+      workspace_skill_ids: [],
+      default_tools: ["read"],
+      extra_tools: [],
+      resolved_mcp_tool_refs: [],
+      resolved_output_schemas: {},
+      agent: {
+        id: "workspace.general",
+        model: "holaboss/gpt-5.2",
+        prompt: "You are concise."
+      }
+    };
+
+    const holabossResult = projectOpencodeRuntimeConfig({
+      ...baseRequest,
+      selected_model: "holaboss/claude-sonnet-4-5"
+    });
+    assert.equal(holabossResult.provider_id, "hb_anthropic");
+    assert.equal(holabossResult.model_id, "claude-sonnet-4-5");
+    assert.equal(holabossResult.model_client.model_proxy_provider, "anthropic_native");
+    assert.equal(holabossResult.model_client.api_key, "proxy-token");
+    assert.equal(holabossResult.model_client.base_url, "https://proxy.example/api/v1/model-proxy/anthropic/v1");
+
+    const openaiResult = projectOpencodeRuntimeConfig({
+      ...baseRequest,
+      selected_model: "openai_direct/gpt-5.2"
+    });
+    assert.equal(openaiResult.provider_id, "openai_direct");
+    assert.equal(openaiResult.model_id, "gpt-5.2");
+    assert.equal(openaiResult.model_client.model_proxy_provider, "openai_compatible");
+    assert.equal(openaiResult.model_client.api_key, "sk-openai-direct");
+    assert.equal(openaiResult.model_client.base_url, "https://api.openai.com/v1");
+
+    const anthropicResult = projectOpencodeRuntimeConfig({
+      ...baseRequest,
+      selected_model: "anthropic_direct/claude-sonnet-4-5"
+    });
+    assert.equal(anthropicResult.provider_id, "anthropic_direct");
+    assert.equal(anthropicResult.model_id, "claude-sonnet-4-5");
+    assert.equal(anthropicResult.model_client.model_proxy_provider, "anthropic_native");
+    assert.equal(anthropicResult.model_client.api_key, "sk-ant-direct");
+    assert.equal(anthropicResult.model_client.base_url, "https://api.anthropic.com/v1");
+
+    const openrouterResult = projectOpencodeRuntimeConfig({
+      ...baseRequest,
+      selected_model: "openrouter_proxy/deepseek/deepseek-chat-v3-0324"
+    });
+    assert.equal(openrouterResult.provider_id, "openrouter_proxy");
+    assert.equal(openrouterResult.model_id, "deepseek/deepseek-chat-v3-0324");
+    assert.equal(openrouterResult.model_client.model_proxy_provider, "openai_compatible");
+    assert.equal(openrouterResult.model_client.api_key, "sk-openrouter-direct");
+    assert.equal(openrouterResult.model_client.base_url, "https://openrouter.ai/api/v1");
+  } finally {
+    delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+    fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 });
 

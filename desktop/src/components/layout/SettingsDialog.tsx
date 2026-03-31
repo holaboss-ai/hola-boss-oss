@@ -41,13 +41,13 @@ const SETTINGS_SECTIONS: Array<{
   {
     id: "account",
     label: "Account",
-    description: "Session and runtime connection",
+    description: "Session and sign-in state",
     icon: User2
   },
   {
     id: "settings",
     label: "Settings",
-    description: "Appearance and desktop defaults",
+    description: "Runtime config and desktop defaults",
     icon: Palette
   },
   {
@@ -73,12 +73,12 @@ function titleForSection(section: UiSettingsPaneSection): string {
 function subtitleForSection(section: UiSettingsPaneSection): string {
   switch (section) {
     case "account":
-      return "Manage your desktop session, runtime binding, and proactive delivery.";
+      return "Manage your desktop session and proactive delivery.";
     case "about":
       return "Open product resources and support channels.";
     case "settings":
     default:
-      return "Tune desktop appearance and shared preferences.";
+      return "Configure runtime product settings and desktop appearance.";
   }
 }
 
@@ -201,7 +201,7 @@ export function SettingsDialog({
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
             {activeSection === "account" ? (
               <div className="grid w-full max-w-none gap-6">
-                <AuthPanel />
+                <AuthPanel view="account" />
                 <ProactiveStatusCard
                   hasWorkspace={hasWorkspace}
                   workspaceName={selectedWorkspaceName}
@@ -214,6 +214,7 @@ export function SettingsDialog({
 
             {activeSection === "settings" ? (
               <div className="grid gap-6">
+                <AuthPanel view="runtime" />
                 <section className="theme-subtle-surface rounded-[24px] border border-panel-border/40 p-5">
                   <div className="text-[11px] uppercase tracking-[0.18em] text-text-dim/68">Appearance</div>
                   <div className="mt-2 max-w-[640px] text-[13px] leading-6 text-text-muted/86">

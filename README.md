@@ -91,6 +91,20 @@ So a custom proxy is a good fit when it accepts that header contract directly, o
 
 One implementation detail: the internal provider key in `runtime-config.json` remains `holaboss_model_proxy` even when you point it at your own proxy.
 
+#### Direct Provider Endpoint (No Proxy Rewriter)
+
+You can also route directly to a provider endpoint (for example OpenAI) without a model-proxy rewriter.
+
+- set `model_proxy_base_url` to the provider API base, for example `https://api.openai.com/v1`
+- set `auth_token` to your provider API key
+- set `default_model`, for example `openai/gpt-5.1` or `anthropic/claude-sonnet-4-20250514`
+
+Runtime URL behavior:
+
+- if `model_proxy_base_url` is a proxy root, runtime appends provider routes (`/openai/v1`, `/anthropic/v1`)
+- direct mode is enabled when you provide a provider endpoint (recommended: include `/v1`, for example `https://api.openai.com/v1`)
+- known provider hosts `api.openai.com` and `api.anthropic.com` also work without an explicit path; runtime normalizes them to `/v1`
+
 ### Where The Runtime Reads Model Config
 
 The runtime resolves model settings from:
@@ -136,23 +150,56 @@ The runtime also treats unprefixed `claude...` model ids as Anthropic models:
 
 If a model id is unprefixed and does not start with `claude`, the runtime treats it as `openai/<model>`.
 
-### `runtime-config.json` Example For A Custom Proxy
+### `runtime-config.json` Universal Provider Example
 
 ```json
 {
   "runtime": {
-    "default_model": "anthropic/claude-sonnet-4-20250514",
-    "default_provider": "holaboss_model_proxy",
+    "default_provider": "holaboss",
+    "default_model": "holaboss/gpt-5.2",
     "sandbox_id": "local-sandbox"
   },
   "providers": {
-    "holaboss_model_proxy": {
+    "holaboss": {
+      "kind": "holaboss_proxy",
       "base_url": "https://your-proxy.example/api/v1/model-proxy",
-      "api_key": "your-proxy-token"
+      "api_key": "your-holaboss-proxy-token"
+    },
+    "openai_direct": {
+      "kind": "openai_compatible",
+      "base_url": "https://api.openai.com/v1",
+      "api_key": "sk-your-openai-key"
+    },
+    "anthropic_direct": {
+      "kind": "anthropic_native",
+      "base_url": "https://api.anthropic.com/v1",
+      "api_key": "sk-ant-your-anthropic-key"
+    },
+    "openrouter_direct": {
+      "kind": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key": "sk-or-your-openrouter-key"
+    }
+  },
+  "models": {
+    "holaboss/gpt-5.2": { "provider": "holaboss", "model": "gpt-5.2" },
+    "holaboss/claude-sonnet-4-5": { "provider": "holaboss", "model": "claude-sonnet-4-5" },
+    "openai_direct/gpt-5.2": { "provider": "openai_direct", "model": "gpt-5.2" },
+    "anthropic_direct/claude-sonnet-4-5": { "provider": "anthropic_direct", "model": "claude-sonnet-4-5" },
+    "openrouter_direct/deepseek/deepseek-chat-v3-0324": {
+      "provider": "openrouter_direct",
+      "model": "deepseek/deepseek-chat-v3-0324"
     }
   }
 }
 ```
+
+Provider `kind` values supported by the runtime resolver:
+
+- `holaboss_proxy`
+- `openai_compatible`
+- `anthropic_native`
+- `openrouter`
 
 ### Environment Overrides
 

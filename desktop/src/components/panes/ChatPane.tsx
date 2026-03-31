@@ -123,6 +123,17 @@ interface StreamTelemetryEntry {
   detail: string;
 }
 
+interface ChatModelOption {
+  value: string;
+  label: string;
+}
+
+interface ChatModelOptionGroup {
+  providerId: string;
+  providerLabel: string;
+  options: ChatModelOption[];
+}
+
 const STREAM_ATTACH_PENDING = "__stream_attach_pending__";
 const STREAM_TELEMETRY_LIMIT = 240;
 const TOOL_TRACE_TERMINAL_PHASES = new Set(["completed", "failed", "error"]);
@@ -215,6 +226,42 @@ function displayModelLabel(model: string) {
     .split(/[-_]/)
     .filter(Boolean)
     .map((part) => (/^\d+(\.\d+)?$/.test(part) ? part : `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`))
+    .join(" ");
+}
+
+function inferProviderIdForModel(model: string) {
+  const trimmed = model.trim();
+  if (!trimmed) {
+    return "openai";
+  }
+  if (trimmed.includes("/")) {
+    const [provider] = trimmed.split("/");
+    return provider.trim().toLowerCase() || "openai";
+  }
+  if (trimmed.toLowerCase().startsWith("claude")) {
+    return "anthropic";
+  }
+  return "openai";
+}
+
+function displayProviderLabel(providerId: string) {
+  const normalized = providerId.trim().toLowerCase();
+  if (normalized === "openai" || normalized.includes("openai")) {
+    return "OpenAI";
+  }
+  if (normalized === "anthropic" || normalized.includes("anthropic")) {
+    return "Anthropic";
+  }
+  if (normalized.includes("openrouter")) {
+    return "OpenRouter";
+  }
+  if (normalized.includes("holaboss")) {
+    return "Holaboss";
+  }
+  return providerId
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
 }
 
@@ -2523,26 +2570,96 @@ export function ChatPane({
         ? "ready"
         : "loading";
   const isSignedIn = Boolean(sessionUserId(authSessionState.data));
-  const holabossProxyModelsAvailable =
+  const legacyHolabossProxyModelsAvailable =
     isSignedIn &&
     Boolean(runtimeConfig?.authTokenPresent) &&
     Boolean((runtimeConfig?.modelProxyBaseUrl || "").trim());
+  const configuredProviderModelGroups = runtimeConfig?.providerModelGroups ?? [];
+  const hasConfiguredProviderModels = configuredProviderModelGroups.some((group) => group.models.length > 0);
   const runtimeDefaultModel = runtimeConfig?.defaultModel?.trim() || DEFAULT_RUNTIME_MODEL;
-  const runtimeDefaultModelAvailable = holabossProxyModelsAvailable || !isHolabossProxyModel(runtimeDefaultModel);
-  const availableChatModelOptions = Array.from(
-    new Set([
-      runtimeDefaultModel,
-      DEFAULT_RUNTIME_MODEL,
-      ...(chatModelPreference !== CHAT_MODEL_USE_RUNTIME_DEFAULT ? [chatModelPreference] : []),
-      ...CHAT_MODEL_PRESETS
-    ])
-  )
-    .filter(Boolean)
-    .filter((model) => holabossProxyModelsAvailable || !isHolabossProxyModel(model))
-    .map((model) => ({
-      value: model,
-      label: displayModelLabel(model)
-    }));
+  const modelOptionsByProvider = new Map<string, { providerLabel: string; options: Map<string, ChatModelOption> }>();
+  const ensureProviderOptionGroup = (providerId: string, providerLabel: string) => {
+    const normalizedProviderId = providerId.trim() || "openai";
+    if (!modelOptionsByProvider.has(normalizedProviderId)) {
+      modelOptionsByProvider.set(normalizedProviderId, {
+        providerLabel: providerLabel.trim() || displayProviderLabel(normalizedProviderId),
+        options: new Map<string, ChatModelOption>()
+      });
+    }
+    return modelOptionsByProvider.get(normalizedProviderId)!;
+  };
+  const addModelOption = (providerId: string, providerLabel: string, value: string, label: string) => {
+    const normalizedValue = value.trim();
+    if (!normalizedValue) {
+      return;
+    }
+    const group = ensureProviderOptionGroup(providerId, providerLabel);
+    if (!group.options.has(normalizedValue)) {
+      group.options.set(normalizedValue, {
+        value: normalizedValue,
+        label: label.trim() || displayModelLabel(normalizedValue)
+      });
+    }
+  };
+
+  if (hasConfiguredProviderModels) {
+    for (const providerGroup of configuredProviderModelGroups) {
+      for (const model of providerGroup.models) {
+        addModelOption(
+          providerGroup.providerId,
+          providerGroup.providerLabel,
+          model.token,
+          displayModelLabel(model.modelId || model.token)
+        );
+      }
+    }
+  } else {
+    const fallbackModels = Array.from(
+      new Set([
+        runtimeDefaultModel,
+        DEFAULT_RUNTIME_MODEL,
+        ...(chatModelPreference !== CHAT_MODEL_USE_RUNTIME_DEFAULT ? [chatModelPreference] : []),
+        ...CHAT_MODEL_PRESETS
+      ])
+    )
+      .filter(Boolean)
+      .filter((model) => legacyHolabossProxyModelsAvailable || !isHolabossProxyModel(model));
+
+    for (const model of fallbackModels) {
+      const providerId = inferProviderIdForModel(model);
+      addModelOption(providerId, displayProviderLabel(providerId), model, displayModelLabel(model));
+    }
+  }
+
+  if (hasConfiguredProviderModels) {
+    for (const supplementalModel of [runtimeDefaultModel, DEFAULT_RUNTIME_MODEL]) {
+      const normalizedModel = supplementalModel.trim();
+      if (!normalizedModel) {
+        continue;
+      }
+      const providerId = inferProviderIdForModel(normalizedModel);
+      addModelOption(providerId, displayProviderLabel(providerId), normalizedModel, displayModelLabel(normalizedModel));
+    }
+    if (chatModelPreference !== CHAT_MODEL_USE_RUNTIME_DEFAULT) {
+      const normalizedPreference = chatModelPreference.trim();
+      if (normalizedPreference) {
+        const providerId = inferProviderIdForModel(normalizedPreference);
+        addModelOption(providerId, displayProviderLabel(providerId), normalizedPreference, displayModelLabel(normalizedPreference));
+      }
+    }
+  }
+
+  const availableChatModelOptionGroups: ChatModelOptionGroup[] = Array.from(modelOptionsByProvider.entries()).map(
+    ([providerId, group]) => ({
+      providerId,
+      providerLabel: group.providerLabel,
+      options: Array.from(group.options.values())
+    })
+  );
+  const availableChatModelOptions = availableChatModelOptionGroups.flatMap((group) => group.options);
+  const runtimeDefaultModelAvailable = hasConfiguredProviderModels
+    ? availableChatModelOptions.some((option) => option.value === runtimeDefaultModel)
+    : legacyHolabossProxyModelsAvailable || !isHolabossProxyModel(runtimeDefaultModel);
   const modelPreferenceAvailable =
     chatModelPreference === CHAT_MODEL_USE_RUNTIME_DEFAULT
       ? runtimeDefaultModelAvailable
@@ -2558,9 +2675,12 @@ export function ChatPane({
         ? runtimeDefaultModel
         : ""
       : effectiveChatModelPreference.trim() || (runtimeDefaultModelAvailable ? runtimeDefaultModel : "");
-  const modelSelectionUnavailableReason = holabossProxyModelsAvailable
-    ? ""
-    : "Sign in to use Holaboss models";
+  const modelSelectionUnavailableReason =
+    runtimeDefaultModelAvailable || availableChatModelOptions.length > 0
+      ? ""
+      : hasConfiguredProviderModels
+        ? "No models configured in runtime config."
+        : "Sign in to use Holaboss models";
   const textareaPlaceholder = isOnboardingVariant
     ? "Answer the onboarding prompt or share setup details"
     : "Ask anything";
@@ -2912,7 +3032,7 @@ export function ChatPane({
                       selectedModel={effectiveChatModelPreference}
                       resolvedModelLabel={resolvedChatModel || modelSelectionUnavailableReason}
                       runtimeDefaultModelLabel={runtimeDefaultModel}
-                      modelOptions={availableChatModelOptions}
+                      modelOptionGroups={availableChatModelOptionGroups}
                       runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
                       modelSelectionUnavailableReason={modelSelectionUnavailableReason}
                       placeholder={textareaPlaceholder}
@@ -2959,7 +3079,7 @@ export function ChatPane({
                   selectedModel={effectiveChatModelPreference}
                   resolvedModelLabel={resolvedChatModel || modelSelectionUnavailableReason}
                   runtimeDefaultModelLabel={runtimeDefaultModel}
-                  modelOptions={availableChatModelOptions}
+                  modelOptionGroups={availableChatModelOptionGroups}
                   runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
                   modelSelectionUnavailableReason={modelSelectionUnavailableReason}
                   placeholder={textareaPlaceholder}
@@ -2995,7 +3115,7 @@ interface ComposerProps {
   selectedModel: string;
   resolvedModelLabel: string;
   runtimeDefaultModelLabel: string;
-  modelOptions: Array<{ value: string; label: string }>;
+  modelOptionGroups: ChatModelOptionGroup[];
   runtimeDefaultModelAvailable: boolean;
   modelSelectionUnavailableReason: string;
   placeholder: string;
@@ -3316,7 +3436,7 @@ function Composer({
   selectedModel,
   resolvedModelLabel,
   runtimeDefaultModelLabel,
-  modelOptions,
+  modelOptionGroups,
   runtimeDefaultModelAvailable,
   modelSelectionUnavailableReason,
   placeholder,
@@ -3329,7 +3449,8 @@ function Composer({
   onAttachmentInputChange,
   onRemoveAttachment
 }: ComposerProps) {
-  const noAvailableModels = !runtimeDefaultModelAvailable && modelOptions.length === 0;
+  const allModelOptions = modelOptionGroups.flatMap((group) => group.options);
+  const noAvailableModels = !runtimeDefaultModelAvailable && allModelOptions.length === 0;
 
   return (
     <div className="glass-field overflow-hidden rounded-[calc(var(--theme-radius-card)+0.15rem)] border border-panel-border/35 transition">
@@ -3374,10 +3495,17 @@ function Composer({
               ) : (
                 <>
                   {runtimeDefaultModelAvailable ? <option value={CHAT_MODEL_USE_RUNTIME_DEFAULT}>Auto</option> : null}
-                  {modelOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
+                  {modelOptionGroups.map((group) => (
+                    <optgroup
+                      key={`${group.providerId}:${group.providerLabel}`}
+                      label={group.providerLabel}
+                    >
+                      {group.options.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </>
               )}
