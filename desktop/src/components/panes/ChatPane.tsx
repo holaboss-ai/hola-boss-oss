@@ -748,7 +748,6 @@ export function ChatPane({
     clientHeight: 0
   });
   const [streamTelemetry, setStreamTelemetry] = useState<StreamTelemetryEntry[]>([]);
-  const [onboardingGuide, setOnboardingGuide] = useState<WorkspaceOnboardingGuidePayload | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const messagesContentRef = useRef<HTMLDivElement>(null);
   const liveAssistantTurnRef = useRef<HTMLDivElement>(null);
@@ -1257,47 +1256,48 @@ export function ChatPane({
           }
         }
 
-        setMessages(
-          history.messages
-            .map((message) => {
-              const attachments = attachmentsFromMetadata(message.metadata);
-              const nextMessage: ChatMessage = {
-                id: message.id || `history-${message.created_at ?? crypto.randomUUID()}`,
-                role: message.role as ChatMessage["role"],
-                text: message.text,
-                attachments
-              };
+        const nextMessages = history.messages
+          .map((message) => {
+            const attachments = attachmentsFromMetadata(message.metadata);
+            const nextMessage: ChatMessage = {
+              id: message.id || `history-${message.created_at ?? crypto.randomUUID()}`,
+              role: message.role as ChatMessage["role"],
+              text: message.text,
+              attachments
+            };
 
-              if (nextMessage.role === "assistant") {
-                const inputId = inputIdFromMessageId(nextMessage.id, "assistant");
-                if (inputId) {
-                  const restoredAssistantState = assistantHistoryStateFromOutputEvents(outputEventsByInputId.get(inputId) ?? []);
-                  if (restoredAssistantState.traceSteps) {
-                    nextMessage.traceSteps = restoredAssistantState.traceSteps;
-                  }
-                  if (restoredAssistantState.contentBlocks) {
-                    nextMessage.contentBlocks = restoredAssistantState.contentBlocks;
-                  }
+            if (nextMessage.role === "assistant") {
+              const inputId = inputIdFromMessageId(nextMessage.id, "assistant");
+              if (inputId) {
+                const restoredAssistantState = assistantHistoryStateFromOutputEvents(outputEventsByInputId.get(inputId) ?? []);
+                if (restoredAssistantState.traceSteps) {
+                  nextMessage.traceSteps = restoredAssistantState.traceSteps;
+                }
+                if (restoredAssistantState.contentBlocks) {
+                  nextMessage.contentBlocks = restoredAssistantState.contentBlocks;
                 }
               }
+            }
 
-              return nextMessage;
-            })
-            .filter(
-              (message) =>
-                message.role === "user"
-                  ? hasRenderableMessageContent(message.text, message.attachments ?? [])
-                  : message.role === "assistant"
-                    ? hasRenderableAssistantContent(message)
-                    : false
-            )
-        );
+            return nextMessage;
+          })
+          .filter((message) =>
+            message.role === "user"
+              ? hasRenderableMessageContent(message.text, message.attachments ?? [])
+              : message.role === "assistant"
+                ? hasRenderableAssistantContent(message)
+                : false
+          );
+
+        setMessages(nextMessages);
         resetLiveTurn();
 
         const runtimeState = runtimeStates.items.find((item) => item.session_id === nextSessionId) ?? null;
         const currentRuntimeStatus = runtimeStateStatus(runtimeState?.status);
         const currentInputId = (runtimeState?.current_input_id || "").trim();
         const currentInputEvents = currentInputId ? outputEventsByInputId.get(currentInputId) ?? [] : [];
+        const hasAssistantMessage = nextMessages.some((message) => message.role === "assistant");
+
         if (managedMode && onManagedSessionObserved) {
           onManagedSessionObserved({
             workspaceId: selectedWorkspaceId,
@@ -1323,6 +1323,13 @@ export function ChatPane({
         } else {
           const shouldRestoreLiveTurn =
             Boolean(currentInputId) && ["BUSY", "QUEUED", "WAITING_USER", "ERROR"].includes(currentRuntimeStatus);
+          const shouldAttachOnboardingBootstrapStream =
+            isOnboardingVariant &&
+            nextSessionId === onboardingSessionId &&
+            !hasAssistantMessage &&
+            !activeStreamIdRef.current &&
+            !pendingInputIdRef.current &&
+            ["BUSY", "QUEUED"].includes(currentRuntimeStatus);
 
           if (shouldRestoreLiveTurn) {
             const restored = restoreLiveTurnFromOutputEvents(currentInputEvents, {
@@ -1342,6 +1349,31 @@ export function ChatPane({
                 hydratedUpToEventId: restored.lastEventId
               });
             }
+          } else if (shouldAttachOnboardingBootstrapStream) {
+            setIsResponding(true);
+            setLiveAgentStatus("Preparing first question...");
+            setChatErrorMessage("");
+            const stream = await window.electronAPI.workspace.openSessionOutputStream({
+              sessionId: nextSessionId,
+              workspaceId: selectedWorkspaceId,
+              includeHistory: true,
+              stopOnTerminal: true
+            });
+            if (cancelled) {
+              await closeStreamWithReason(stream.streamId, "load_history_cancelled").catch(() => undefined);
+              return;
+            }
+            activeStreamIdRef.current = stream.streamId;
+            appendStreamTelemetry({
+              streamId: stream.streamId,
+              transportType: "client",
+              eventName: "openSessionOutputStream",
+              eventType: "stream_open_onboarding_bootstrap",
+              inputId: "",
+              sessionId: nextSessionId,
+              action: "stream_requested_onboarding_bootstrap",
+              detail: "attached to in-flight onboarding opener"
+            });
           } else {
             pendingInputIdRef.current = null;
             setIsResponding(false);
@@ -1366,6 +1398,7 @@ export function ChatPane({
       cancelled = true;
     };
   }, [
+    isOnboardingVariant,
     selectedWorkspaceId,
     selectedWorkspace?.main_session_id,
     selectedWorkspace?.onboarding_session_id,
@@ -1434,32 +1467,6 @@ export function ChatPane({
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (!selectedWorkspaceId || !isOnboardingVariant) {
-      setOnboardingGuide(null);
-      return;
-    }
-
-    setOnboardingGuide(null);
-    let cancelled = false;
-    void window.electronAPI.workspace
-      .getOnboardingGuide(selectedWorkspaceId)
-      .then((guide) => {
-        if (!cancelled) {
-          setOnboardingGuide(guide);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setOnboardingGuide(null);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isOnboardingVariant, selectedWorkspaceId]);
 
   useEffect(() => {
     if (!verboseTelemetryEnabled) {
@@ -2379,13 +2386,8 @@ export function ChatPane({
   const assistantMode = isOnboardingVariant
     ? "workspace setup"
     : assistantMetaLabel(selectedWorkspace?.harness, runtimeConfig?.defaultModel);
-  const onboardingOpeningSentence = isOnboardingVariant ? (onboardingGuide?.opening_sentence || "").trim() : "";
-  const shouldShowOnboardingOpeningSentence =
-    Boolean(onboardingOpeningSentence) &&
-    !messages.some((message) => message.role === "assistant" && message.text.trim() === onboardingOpeningSentence);
   const hasMessages =
     messages.length > 0 ||
-    shouldShowOnboardingOpeningSentence ||
     Boolean(effectiveLiveAssistantText) ||
     effectiveLiveTraceSteps.length > 0;
   const showLiveAssistantTurn = managedMode
@@ -2777,18 +2779,6 @@ export function ChatPane({
                   ref={messagesContentRef}
                   className="mx-auto flex w-full max-w-[860px] flex-col gap-7 pb-3 pl-4 pr-10 pt-5 sm:pl-5 sm:pr-11"
                 >
-                  {shouldShowOnboardingOpeningSentence ? (
-                    <AssistantTurn
-                      label={assistantLabel}
-                      mode={assistantMode}
-                      text={onboardingOpeningSentence}
-                      contentBlocks={[]}
-                      traceSteps={[]}
-                      collapsedTraceByStepId={{}}
-                      onToggleTraceStep={() => undefined}
-                    />
-                  ) : null}
-
                   {messages.map((message) =>
                     message.role === "user" ? (
                       <UserTurn key={message.id} text={message.text} attachments={message.attachments ?? []} />

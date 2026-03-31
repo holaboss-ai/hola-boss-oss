@@ -259,6 +259,22 @@ interface TaskProposalListResponsePayload {
   count: number;
 }
 
+interface ProactiveStatusSnapshotPayload {
+  state: string;
+  detail: string | null;
+  recorded_at: string | null;
+}
+
+interface ProactiveAgentStatusPayload {
+  workspace_id: string;
+  proposal_count: number;
+  heartbeat: ProactiveStatusSnapshotPayload;
+  bridge: ProactiveStatusSnapshotPayload;
+  delivery_state: string;
+  delivery_summary: string;
+  delivery_detail: string | null;
+}
+
 interface DemoTaskProposalRequestPayload {
   workspace_id: string;
   task_name?: string;
@@ -636,8 +652,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     listSkills: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listSkills", workspaceId) as Promise<WorkspaceSkillListResponsePayload>,
     getWorkspaceRoot: (workspaceId: string) => ipcRenderer.invoke("workspace:getWorkspaceRoot", workspaceId) as Promise<string>,
-    getOnboardingGuide: (workspaceId: string) =>
-      ipcRenderer.invoke("workspace:getOnboardingGuide", workspaceId) as Promise<WorkspaceOnboardingGuidePayload>,
     createWorkspace: (payload: HolabossCreateWorkspacePayload) =>
       ipcRenderer.invoke("workspace:createWorkspace", payload) as Promise<WorkspaceResponsePayload>,
     deleteWorkspace: (workspaceId: string) =>
@@ -654,6 +668,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:listTaskProposals", workspaceId) as Promise<TaskProposalListResponsePayload>,
     acceptTaskProposal: (payload: TaskProposalAcceptPayload) =>
       ipcRenderer.invoke("workspace:acceptTaskProposal", payload) as Promise<TaskProposalAcceptResponsePayload>,
+    getProactiveStatus: (workspaceId: string) =>
+      ipcRenderer.invoke("workspace:getProactiveStatus", workspaceId) as Promise<ProactiveAgentStatusPayload>,
     updateTaskProposalState: (proposalId: string, state: string) =>
       ipcRenderer.invoke("workspace:updateTaskProposalState", proposalId, state) as Promise<TaskProposalStateUpdatePayload>,
     enqueueRemoteDemoTaskProposal: (payload: DemoTaskProposalRequestPayload) =>

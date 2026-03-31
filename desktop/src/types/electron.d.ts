@@ -39,13 +39,6 @@ declare global {
     createdAt: string;
   }
 
-  interface WorkspaceOnboardingGuidePayload {
-    absolute_path: string;
-    body_markdown: string;
-    is_structured: boolean;
-    opening_sentence: string | null;
-  }
-
   interface BrowserBoundsPayload {
     x: number;
     y: number;
@@ -267,6 +260,22 @@ declare global {
   interface TaskProposalListResponsePayload {
     proposals: TaskProposalRecordPayload[];
     count: number;
+  }
+
+  interface ProactiveStatusSnapshotPayload {
+    state: string;
+    detail: string | null;
+    recorded_at: string | null;
+  }
+
+  interface ProactiveAgentStatusPayload {
+    workspace_id: string;
+    proposal_count: number;
+    heartbeat: ProactiveStatusSnapshotPayload;
+    bridge: ProactiveStatusSnapshotPayload;
+    delivery_state: string;
+    delivery_summary: string;
+    delivery_detail: string | null;
   }
 
   interface DemoTaskProposalRequestPayload {
@@ -700,7 +709,6 @@ declare global {
       listOutputs: (workspaceId: string) => Promise<WorkspaceOutputListResponsePayload>;
       listSkills: (workspaceId: string) => Promise<WorkspaceSkillListResponsePayload>;
       getWorkspaceRoot: (workspaceId: string) => Promise<string>;
-      getOnboardingGuide: (workspaceId: string) => Promise<WorkspaceOnboardingGuidePayload>;
       createWorkspace: (payload: HolabossCreateWorkspacePayload) => Promise<WorkspaceResponsePayload>;
       deleteWorkspace: (workspaceId: string) => Promise<WorkspaceResponsePayload>;
       listCronjobs: (workspaceId: string, enabledOnly?: boolean) => Promise<CronjobListResponsePayload>;
@@ -709,6 +717,7 @@ declare global {
       deleteCronjob: (jobId: string) => Promise<{ success: boolean }>;
       listTaskProposals: (workspaceId: string) => Promise<TaskProposalListResponsePayload>;
       acceptTaskProposal: (payload: TaskProposalAcceptPayload) => Promise<TaskProposalAcceptResponsePayload>;
+      getProactiveStatus: (workspaceId: string) => Promise<ProactiveAgentStatusPayload>;
       updateTaskProposalState: (proposalId: string, state: string) => Promise<TaskProposalStateUpdatePayload>;
       enqueueRemoteDemoTaskProposal: (
         payload: DemoTaskProposalRequestPayload

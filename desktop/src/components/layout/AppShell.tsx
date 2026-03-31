@@ -986,6 +986,7 @@ function AppShellContent() {
   const [operationsDrawerOpen, setOperationsDrawerOpen] = useState(loadOperationsDrawerOpen);
   const [activeOperationsTab, setActiveOperationsTab] = useState<OperationsDrawerTab>(loadOperationsDrawerTab);
   const [taskProposals, setTaskProposals] = useState<TaskProposalRecordPayload[]>([]);
+  const [proactiveStatus, setProactiveStatus] = useState<ProactiveAgentStatusPayload | null>(null);
   const [isLoadingTaskProposals, setIsLoadingTaskProposals] = useState(false);
   const [isTriggeringTaskProposal, setIsTriggeringTaskProposal] = useState(false);
   const [taskProposalStatusMessage, setTaskProposalStatusMessage] = useState("");
@@ -1560,6 +1561,7 @@ function AppShellContent() {
   async function refreshTaskProposals(options?: { logErrors?: boolean }) {
     if (!selectedWorkspaceId || !selectedWorkspace) {
       setTaskProposals([]);
+      setProactiveStatus(null);
       setTaskProposalStatusMessage("");
       return;
     }
@@ -1567,8 +1569,12 @@ function AppShellContent() {
     setTaskProposalStatusMessage("");
     setIsLoadingTaskProposals(true);
     try {
-      const response = await window.electronAPI.workspace.listTaskProposals(selectedWorkspace.id);
-      setTaskProposals(response.proposals);
+      const [proposalResponse, statusResponse] = await Promise.all([
+        window.electronAPI.workspace.listTaskProposals(selectedWorkspace.id),
+        window.electronAPI.workspace.getProactiveStatus(selectedWorkspace.id)
+      ]);
+      setTaskProposals(proposalResponse.proposals);
+      setProactiveStatus(statusResponse);
     } catch (error) {
       const message = normalizeErrorMessage(error);
       setTaskProposalStatusMessage(message);
@@ -1592,6 +1598,7 @@ function AppShellContent() {
     if (!selectedWorkspaceId) {
       return;
     }
+
     setIsTriggeringTaskProposal(true);
     setTaskProposalStatusMessage("");
     try {
@@ -1790,18 +1797,24 @@ function AppShellContent() {
   useEffect(() => {
     if (!selectedWorkspaceId || !selectedWorkspace) {
       setTaskProposals([]);
+      setProactiveStatus(null);
       setTaskProposalStatusMessage("");
       setIsLoadingTaskProposals(false);
       return;
     }
 
     let cancelled = false;
+    setProactiveStatus(null);
 
     const load = async () => {
       try {
-        const response = await window.electronAPI.workspace.listTaskProposals(selectedWorkspace.id);
+        const [response, status] = await Promise.all([
+          window.electronAPI.workspace.listTaskProposals(selectedWorkspace.id),
+          window.electronAPI.workspace.getProactiveStatus(selectedWorkspace.id)
+        ]);
         if (!cancelled) {
           setTaskProposals(response.proposals);
+          setProactiveStatus(status);
         }
       } catch (error) {
         if (!cancelled) {
@@ -2560,6 +2573,7 @@ function AppShellContent() {
                   activeTab={activeOperationsTab}
                   onTabChange={setActiveOperationsTab}
                   proposals={taskProposals}
+                  proactiveStatus={proactiveStatus}
                   isLoadingProposals={isLoadingTaskProposals}
                   isTriggeringProposal={isTriggeringTaskProposal}
                   proposalStatusMessage={taskProposalStatusMessage}
@@ -2572,7 +2586,6 @@ function AppShellContent() {
                   onSelectOutput={setSelectedOutputId}
                   onOpenRunningSession={handleOpenRunningSession}
                   onOpenOutput={handleOpenOutput}
-                  onRefreshProposals={() => void refreshTaskProposals({ logErrors: true })}
                   onTriggerProposal={() => void triggerRemoteTaskProposal()}
                   onAcceptProposal={(proposal) => void acceptTaskProposal(proposal)}
                   onDismissProposal={(proposal) => void dismissTaskProposal(proposal)}

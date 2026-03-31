@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from "react";
-import { Bell, Check, ChevronRight, Clock3, Loader2, RefreshCcw, Sparkles, X } from "lucide-react";
+import { Bell, Check, ChevronRight, Clock3, Loader2, Sparkles, X } from "lucide-react";
 import { getWorkspaceAppDefinition, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 
 export type OperationsDrawerTab = "inbox" | "running" | "outputs";
@@ -42,6 +42,7 @@ interface OperationsDrawerProps {
   activeTab: OperationsDrawerTab;
   onTabChange: (tab: OperationsDrawerTab) => void;
   proposals: TaskProposalRecordPayload[];
+  proactiveStatus: ProactiveAgentStatusPayload | null;
   isLoadingProposals: boolean;
   isTriggeringProposal: boolean;
   proposalStatusMessage: string;
@@ -57,7 +58,6 @@ interface OperationsDrawerProps {
   onSelectOutput: (outputId: string) => void;
   onOpenRunningSession: (sessionId: string) => void;
   onOpenOutput: (entry: OperationsOutputEntry) => void;
-  onRefreshProposals: () => void;
   onTriggerProposal: () => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
@@ -68,6 +68,7 @@ export function OperationsDrawer({
   activeTab,
   onTabChange,
   proposals,
+  proactiveStatus,
   isLoadingProposals,
   isTriggeringProposal,
   proposalStatusMessage,
@@ -80,7 +81,6 @@ export function OperationsDrawer({
   onSelectOutput,
   onOpenRunningSession,
   onOpenOutput,
-  onRefreshProposals,
   onTriggerProposal,
   onAcceptProposal,
   onDismissProposal,
@@ -117,12 +117,12 @@ export function OperationsDrawer({
         {activeTab === "inbox" ? (
           <InboxPanel
             proposals={proposals}
+            proactiveStatus={proactiveStatus}
             isLoadingProposals={isLoadingProposals}
             isTriggeringProposal={isTriggeringProposal}
             proposalStatusMessage={proposalStatusMessage}
             proposalAction={proposalAction}
             hasWorkspace={hasWorkspace}
-            onRefreshProposals={onRefreshProposals}
             onTriggerProposal={onTriggerProposal}
             onAcceptProposal={onAcceptProposal}
             onDismissProposal={onDismissProposal}
@@ -179,19 +179,83 @@ function DrawerTabButton({
   );
 }
 
+function proactiveStateLabel(state: string): string {
+  switch (state) {
+    case "healthy":
+      return "Healthy";
+    case "published":
+      return "Published";
+    case "failed":
+      return "Failed";
+    case "skipped":
+      return "Skipped";
+    case "pending":
+      return "Pending";
+    case "delivered":
+      return "Delivered";
+    case "analyzing":
+      return "Analyzing";
+    case "no_proposal":
+      return "No proposal";
+    case "blocked":
+      return "Blocked";
+    case "inactive":
+      return "Inactive";
+    case "error":
+      return "Error";
+    default:
+      return "Checking";
+  }
+}
+
+function proactiveStateClasses(state: string): string {
+  if (["healthy", "published", "delivered"].includes(state)) {
+    return "border-neon-green/40 bg-neon-green/10 text-neon-green";
+  }
+  if (["failed", "blocked", "error"].includes(state)) {
+    return "border-[rgba(206,92,84,0.32)] bg-[rgba(206,92,84,0.12)] text-[rgba(255,172,164,0.96)]";
+  }
+  if (["inactive", "skipped"].includes(state)) {
+    return "border-panel-border/45 bg-panel-border/10 text-text-muted";
+  }
+  return "border-panel-border/45 bg-panel-border/10 text-text-main/78";
+}
+
+function ProactiveStatusRow({
+  label,
+  snapshot
+}: {
+  label: string;
+  snapshot: ProactiveStatusSnapshotPayload;
+}) {
+  return (
+    <div className="rounded-[14px] border border-panel-border/35 px-3 py-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-[10px] uppercase tracking-[0.12em] text-text-dim">{label}</div>
+        <div className={`rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${proactiveStateClasses(snapshot.state)}`}>
+          {proactiveStateLabel(snapshot.state)}
+        </div>
+      </div>
+      {snapshot.detail ? <div className="mt-2 text-[11px] leading-5 text-text-muted">{snapshot.detail}</div> : null}
+      {snapshot.recorded_at ? <div className="mt-2 text-[10px] text-text-dim/78">{formatTimestamp(snapshot.recorded_at)}</div> : null}
+    </div>
+  );
+}
+
 function InboxPanel({
   proposals,
+  proactiveStatus,
   isLoadingProposals,
   isTriggeringProposal,
   proposalStatusMessage,
   proposalAction,
   hasWorkspace,
-  onRefreshProposals,
   onTriggerProposal,
   onAcceptProposal,
   onDismissProposal
 }: {
   proposals: TaskProposalRecordPayload[];
+  proactiveStatus: ProactiveAgentStatusPayload | null;
   isLoadingProposals: boolean;
   isTriggeringProposal: boolean;
   proposalStatusMessage: string;
@@ -200,7 +264,6 @@ function InboxPanel({
     action: "accept" | "dismiss";
   } | null;
   hasWorkspace: boolean;
-  onRefreshProposals: () => void;
   onTriggerProposal: () => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
@@ -215,27 +278,62 @@ function InboxPanel({
               Review backend-delivered task ideas and either queue them immediately or dismiss them at the source.
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={onRefreshProposals}
-              disabled={!hasWorkspace || isLoadingProposals}
-              className="inline-flex h-8 items-center justify-center gap-2 rounded-[14px] border border-panel-border/45 px-3 text-[11px] text-text-muted transition hover:border-neon-green/35 hover:text-text-main disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isLoadingProposals ? <Loader2 size={12} className="animate-spin" /> : <RefreshCcw size={12} />}
-              <span>Refresh</span>
-            </button>
-            <button
-              type="button"
-              onClick={onTriggerProposal}
-              disabled={!hasWorkspace || isTriggeringProposal}
-              className="inline-flex h-8 items-center justify-center gap-2 rounded-[14px] border border-neon-green/40 bg-neon-green/10 px-3 text-[11px] text-neon-green transition hover:bg-neon-green/14 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isTriggeringProposal ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-              <span>Trigger</span>
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={onTriggerProposal}
+            disabled={!hasWorkspace || isTriggeringProposal}
+            className="inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-[14px] border border-neon-green/40 bg-neon-green/10 px-3 text-[11px] text-neon-green transition hover:bg-neon-green/14 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isTriggeringProposal ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+            <span>Trigger</span>
+          </button>
         </div>
+
+        {hasWorkspace ? (
+          <div className="theme-subtle-surface mt-3 rounded-[16px] border border-panel-border/35 px-3 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[10px] uppercase tracking-[0.14em] text-neon-green/76">Proactive agent</div>
+                <div className="mt-1 text-[12px] leading-6 text-text-main/90">
+                  {proactiveStatus?.delivery_summary || (isLoadingProposals ? "Checking proactive delivery status..." : "No proactive status available yet.")}
+                </div>
+                {proactiveStatus?.delivery_detail ? (
+                  <div className="mt-2 text-[11px] leading-5 text-text-muted">{proactiveStatus.delivery_detail}</div>
+                ) : null}
+              </div>
+              <div
+                className={`shrink-0 rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${
+                  proactiveStateClasses(proactiveStatus?.delivery_state || "unknown")
+                }`}
+              >
+                {proactiveStateLabel(proactiveStatus?.delivery_state || "unknown")}
+              </div>
+            </div>
+
+            <div className="mt-3 grid gap-2">
+              <ProactiveStatusRow
+                label="Heartbeat"
+                snapshot={
+                  proactiveStatus?.heartbeat || {
+                    state: isLoadingProposals ? "pending" : "unknown",
+                    detail: null,
+                    recorded_at: null
+                  }
+                }
+              />
+              <ProactiveStatusRow
+                label="Bridge"
+                snapshot={
+                  proactiveStatus?.bridge || {
+                    state: isLoadingProposals ? "pending" : "unknown",
+                    detail: null,
+                    recorded_at: null
+                  }
+                }
+              />
+            </div>
+          </div>
+        ) : null}
 
         {proposalStatusMessage ? (
           <div className="theme-subtle-surface mt-3 rounded-[14px] border border-panel-border/35 px-3 py-2 text-[11px] text-text-muted">
