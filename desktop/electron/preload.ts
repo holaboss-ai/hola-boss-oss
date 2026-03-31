@@ -256,6 +256,22 @@ interface TaskProposalListResponsePayload {
   count: number;
 }
 
+interface ProactiveStatusSnapshotPayload {
+  state: string;
+  detail: string | null;
+  recorded_at: string | null;
+}
+
+interface ProactiveAgentStatusPayload {
+  workspace_id: string;
+  proposal_count: number;
+  heartbeat: ProactiveStatusSnapshotPayload;
+  bridge: ProactiveStatusSnapshotPayload;
+  delivery_state: string;
+  delivery_summary: string;
+  delivery_detail: string | null;
+}
+
 interface DemoTaskProposalRequestPayload {
   workspace_id: string;
   task_name?: string;
@@ -613,6 +629,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:deleteCronjob", jobId) as Promise<{ success: boolean }>,
     listTaskProposals: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listTaskProposals", workspaceId) as Promise<TaskProposalListResponsePayload>,
+    getProactiveStatus: (workspaceId: string) =>
+      ipcRenderer.invoke("workspace:getProactiveStatus", workspaceId) as Promise<ProactiveAgentStatusPayload>,
     updateTaskProposalState: (proposalId: string, state: string) =>
       ipcRenderer.invoke("workspace:updateTaskProposalState", proposalId, state) as Promise<TaskProposalStateUpdatePayload>,
     enqueueRemoteDemoTaskProposal: (payload: DemoTaskProposalRequestPayload) =>

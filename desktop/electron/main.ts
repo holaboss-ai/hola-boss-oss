@@ -1230,6 +1230,9 @@ interface ProactiveIngestItemResultPayload {
   status?: string;
   event_id?: string;
   detail?: string | null;
+  publish_status?: string;
+  stream_id?: string | null;
+  error?: { message?: string | null } | null;
 }
 
 interface WorkspaceRecordPayload {
@@ -1275,6 +1278,22 @@ interface TaskProposalRecordPayload {
 interface TaskProposalListResponsePayload {
   proposals: TaskProposalRecordPayload[];
   count: number;
+}
+
+interface ProactiveStatusSnapshotPayload {
+  state: string;
+  detail: string | null;
+  recorded_at: string | null;
+}
+
+interface ProactiveAgentStatusPayload {
+  workspace_id: string;
+  proposal_count: number;
+  heartbeat: ProactiveStatusSnapshotPayload;
+  bridge: ProactiveStatusSnapshotPayload;
+  delivery_state: string;
+  delivery_summary: string;
+  delivery_detail: string | null;
 }
 
 interface DemoTaskProposalRequestPayload {
@@ -2227,6 +2246,25 @@ async function loadBrowserPersistence() {
 async function appendRuntimeLog(line: string) {
   await fs.mkdir(path.dirname(runtimeLogsPath()), { recursive: true });
   await fs.appendFile(runtimeLogsPath(), line, "utf-8");
+}
+
+async function readRuntimeLogTail(maxBytes = 65536): Promise<string> {
+  let handle: fs.FileHandle | null = null;
+  try {
+    handle = await fs.open(runtimeLogsPath(), "r");
+    const stat = await handle.stat();
+    const length = Math.min(Math.max(stat.size, 0), maxBytes);
+    if (length === 0) {
+      return "";
+    }
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, stat.size - length);
+    return buffer.toString("utf-8");
+  } catch {
+    return "";
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
 }
 
 async function readRuntimeConfigFile(): Promise<Record<string, string>> {
@@ -3457,58 +3495,109 @@ async function emitWorkspaceReadyHeartbeat(params: {
 }): Promise<void> {
   const workspaceId = params.workspaceId.trim();
   const holabossUserId = params.holabossUserId.trim();
-  if (!workspaceId || !holabossUserId || holabossUserId === LOCAL_OSS_TEMPLATE_USER_ID) {
+  if (!workspaceId) {
+    throw new Error("workspaceId is required");
+  }
+  if (!holabossUserId || holabossUserId === LOCAL_OSS_TEMPLATE_USER_ID) {
+    appendRuntimeEventLog({
+      category: "workspace",
+      event: "workspace.heartbeat.emit",
+      outcome: "skipped",
+      detail: !holabossUserId ? "missing_holaboss_user_id" : "local_oss_user"
+    });
     return;
   }
 
   const correlationId = `workspace-ready-${workspaceId}`;
+  const eventId = `evt-heartbeat-${crypto.randomUUID().replace(/-/g, "")}`;
+  const payload = {
+    events: [
+      {
+        event_id: eventId,
+        event_type: "heartbeat",
+        workspace_id: workspaceId,
+        actor: {
+          type: "system",
+          id: "desktop_workspace_create"
+        },
+        correlation_id: correlationId,
+        origin: "system",
+        timestamp: utcNowIso(),
+        source_refs: ["workspace-created:ready"],
+        window: "24h",
+        proposal_scope: "window"
+      }
+    ]
+  };
   appendRuntimeEventLog({
     category: "workspace",
     event: "workspace.heartbeat.emit",
     outcome: "start",
-    detail: correlationId
+    detail: `${correlationId} event_id=${eventId}`
   });
 
-  try {
-    const results = await requestControlPlaneJson<ProactiveIngestItemResultPayload[]>({
-      service: "proactive",
-      method: "POST",
-      path: "/api/v1/proactive/ingest",
-      payload: {
-        events: [
-          {
-            event_id: `evt-heartbeat-${crypto.randomUUID().replace(/-/g, "")}`,
-            event_type: "heartbeat",
-            workspace_id: workspaceId,
-            actor: {
-              type: "system",
-              id: "desktop_workspace_create"
-            },
-            correlation_id: correlationId,
-            origin: "system",
-            timestamp: utcNowIso(),
-            source_refs: ["workspace-created:ready"],
-            window: "24h",
-            proposal_scope: "window"
-          }
-        ]
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const results = await requestControlPlaneJson<ProactiveIngestItemResultPayload[]>({
+        service: "proactive",
+        method: "POST",
+        path: "/api/v1/proactive/ingest",
+        payload
+      });
+      const result = results.find((item) => (item?.event_id || "").trim() === eventId) ?? results[0];
+      const status = (result?.status || "").trim().toLowerCase();
+      const publishStatus = (result?.publish_status || "").trim().toLowerCase();
+      const detail = result?.detail?.trim() || result?.error?.message?.trim() || "";
+      const published = publishStatus === "published";
+      const accepted = status === "accepted" || status === "duplicate";
+      if (!accepted || !published) {
+        throw new Error(
+          `Heartbeat ingest was not published (status=${status || "unknown"} publish_status=${publishStatus || "unknown"}${detail ? ` detail=${detail}` : ""})`
+        );
       }
-    });
-    const acceptedCount = results.filter((item) => (item?.status || "").trim().toLowerCase() === "accepted").length;
-    appendRuntimeEventLog({
-      category: "workspace",
-      event: "workspace.heartbeat.emit",
-      outcome: "success",
-      detail: `workspace_id=${workspaceId} accepted=${acceptedCount}/${results.length}`
-    });
-  } catch (error) {
-    appendRuntimeEventLog({
-      category: "workspace",
-      event: "workspace.heartbeat.emit",
-      outcome: "error",
-      detail: error instanceof Error ? error.message : String(error)
-    });
+      appendRuntimeEventLog({
+        category: "workspace",
+        event: "workspace.heartbeat.emit",
+        outcome: "success",
+        detail:
+          `workspace_id=${workspaceId} event_id=${eventId} attempt=${attempt} ` +
+          `status=${status} publish_status=${publishStatus}${result?.stream_id ? ` stream_id=${result.stream_id}` : ""}`
+      });
+      return;
+    } catch (error) {
+      const retryable =
+        attempt < maxAttempts &&
+        (error instanceof TypeError ||
+          (error instanceof Error &&
+            [
+              "fetch failed",
+              "econnrefused",
+              "econnreset",
+              "socket hang up",
+              "timeout",
+              "status=429",
+              "status=502",
+              "status=503",
+              "status=504"
+            ].some((needle) => error.message.toLowerCase().includes(needle))));
+      appendRuntimeEventLog({
+        category: "workspace",
+        event: "workspace.heartbeat.emit",
+        outcome: retryable ? "retry" : "error",
+        detail:
+          `workspace_id=${workspaceId} event_id=${eventId} attempt=${attempt} ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      });
+      if (retryable) {
+        await sleep(250 * attempt);
+        continue;
+      }
+      throw error;
+    }
   }
+
+  throw new Error(`Workspace-ready heartbeat could not be confirmed for workspace ${workspaceId}.`);
 }
 
 function getHolabossClientConfig(): HolabossClientConfigPayload {
@@ -3599,6 +3688,215 @@ async function listTaskProposals(workspaceId: string): Promise<TaskProposalListR
     path: "/api/v1/task-proposals/unreviewed",
     params: { workspace_id: workspaceId }
   });
+}
+
+function lastRegexCapture(content: string, pattern: RegExp): string | null {
+  let match: RegExpExecArray | null = null;
+  let lastValue: string | null = null;
+  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+  const globalPattern = new RegExp(pattern.source, flags);
+  while ((match = globalPattern.exec(content)) !== null) {
+    lastValue = match[1]?.trim() || null;
+  }
+  return lastValue;
+}
+
+function normalizeProactiveBridgeErrorDetail(raw: string | null): string | null {
+  const trimmed = raw?.trim() || "";
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (parsed && typeof parsed === "object" && "detail" in parsed) {
+      const detail = (parsed as Record<string, unknown>).detail;
+      if (typeof detail === "string" && detail.trim()) {
+        return detail.trim();
+      }
+    }
+  } catch {
+    // Keep raw text when the runtime did not log JSON.
+  }
+  return trimmed;
+}
+
+function secondsSinceIso(value: string | null): number | null {
+  const trimmed = value?.trim() || "";
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Date.parse(trimmed);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return Math.max(0, Math.round((Date.now() - parsed) / 1000));
+}
+
+async function getProactiveStatus(workspaceId: string): Promise<ProactiveAgentStatusPayload> {
+  const normalizedWorkspaceId = workspaceId.trim();
+  const fallbackHeartbeat: ProactiveStatusSnapshotPayload = {
+    state: "unknown",
+    detail: null,
+    recorded_at: null
+  };
+  const fallbackBridge: ProactiveStatusSnapshotPayload = {
+    state: "unknown",
+    detail: null,
+    recorded_at: null
+  };
+  if (!normalizedWorkspaceId) {
+    return {
+      workspace_id: "",
+      proposal_count: 0,
+      heartbeat: fallbackHeartbeat,
+      bridge: fallbackBridge,
+      delivery_state: "idle",
+      delivery_summary: "Select a workspace to inspect proactive status.",
+      delivery_detail: null
+    };
+  }
+
+  let proposalCount = 0;
+  let heartbeat = fallbackHeartbeat;
+  const database = openRuntimeDatabase();
+  try {
+    const proposalRow = database
+      .prepare(
+        `
+          SELECT COUNT(*) AS proposal_count
+          FROM task_proposals
+          WHERE workspace_id = ?
+        `
+      )
+      .get(normalizedWorkspaceId) as { proposal_count?: number } | undefined;
+    proposalCount = Number(proposalRow?.proposal_count ?? 0);
+
+    const heartbeatRow = database
+      .prepare(
+        `
+          SELECT outcome, detail, created_at
+          FROM event_log
+          WHERE category = 'workspace'
+            AND event = 'workspace.heartbeat.emit'
+            AND detail LIKE ?
+          ORDER BY created_at DESC
+          LIMIT 1
+        `
+      )
+      .get(`%${normalizedWorkspaceId}%`) as
+      | {
+          outcome?: string | null;
+          detail?: string | null;
+          created_at?: string | null;
+        }
+      | undefined;
+    if (heartbeatRow) {
+      const outcome = (heartbeatRow.outcome || "").trim().toLowerCase();
+      heartbeat = {
+        state:
+          outcome === "success"
+            ? "published"
+            : outcome === "error"
+              ? "failed"
+              : outcome === "skipped"
+                ? "skipped"
+                : outcome === "start" || outcome === "retry"
+                  ? "pending"
+                  : "unknown",
+        detail: heartbeatRow.detail?.trim() || null,
+        recorded_at: heartbeatRow.created_at?.trim() || null
+      };
+    }
+  } finally {
+    database.close();
+  }
+
+  const runtimeConfig = await readRuntimeConfigFile();
+  const runtimeToken = runtimeModelProxyApiKeyFromConfig(runtimeConfig);
+  let bridge: ProactiveStatusSnapshotPayload;
+  if (!runtimeToken) {
+    bridge = {
+      state: "error",
+      detail: "Runtime bridge auth token is not configured.",
+      recorded_at: null
+    };
+  } else if (runtimeStatus.status !== "running") {
+    bridge = {
+      state: "inactive",
+      detail: runtimeStatus.lastError?.trim() || "Embedded runtime is not running.",
+      recorded_at: null
+    };
+  } else {
+    const logTail = await readRuntimeLogTail();
+    const runtimeErrorDetail =
+      normalizeProactiveBridgeErrorDetail(
+        lastRegexCapture(logTail, /RuntimeError: Proactive bridge request failed: (.+)/)
+      ) ||
+      normalizeProactiveBridgeErrorDetail(lastRegexCapture(logTail, /Proactive bridge request failed: (.+)/));
+    if (runtimeErrorDetail) {
+      bridge = {
+        state: "error",
+        detail: runtimeErrorDetail,
+        recorded_at: null
+      };
+    } else if (logTail.includes("Remote proactive bridge poll failed")) {
+      bridge = {
+        state: "error",
+        detail: "Remote proactive bridge poll failed.",
+        recorded_at: null
+      };
+    } else {
+      bridge = {
+        state: "healthy",
+        detail: "No recent proactive bridge error detected. Delivery is not yet confirmed.",
+        recorded_at: null
+      };
+    }
+  }
+
+  let deliveryState = "idle";
+  let deliverySummary = "No proactive activity recorded yet.";
+  let deliveryDetail: string | null = null;
+  const heartbeatAgeSeconds = secondsSinceIso(heartbeat.recorded_at);
+  const heartbeatSettled = heartbeatAgeSeconds !== null && heartbeatAgeSeconds >= 120;
+  if (proposalCount > 0) {
+    deliveryState = "delivered";
+    deliverySummary = `${proposalCount} proactive proposal${proposalCount === 1 ? "" : "s"} available in this runtime.`;
+  } else if (heartbeat.state === "published" && bridge.state === "error") {
+    deliveryState = "blocked";
+    deliverySummary = "Heartbeat was sent, but proposal delivery into this runtime is blocked.";
+    deliveryDetail = bridge.detail;
+  } else if (heartbeat.state === "published" && !heartbeatSettled) {
+    deliveryState = "analyzing";
+    deliverySummary = "Heartbeat was sent. Remote proactive analysis is still in progress.";
+  } else if (heartbeat.state === "published") {
+    deliveryState = "no_proposal";
+    deliverySummary = "No proposal has been delivered since the last heartbeat.";
+    deliveryDetail =
+      "A heartbeat only asks the remote proactive agent to analyze the workspace. It may decide not to create a proposal.";
+  } else if (heartbeat.state === "failed") {
+    deliveryState = "error";
+    deliverySummary = "Workspace creation finished, but the proactive heartbeat failed.";
+    deliveryDetail = heartbeat.detail;
+  } else if (heartbeat.state === "skipped") {
+    deliveryState = "inactive";
+    deliverySummary = "Proactive delivery is disabled for this workspace.";
+    deliveryDetail = heartbeat.detail;
+  } else if (bridge.state === "error") {
+    deliveryState = "blocked";
+    deliverySummary = "The runtime cannot currently receive proactive jobs.";
+    deliveryDetail = bridge.detail;
+  }
+
+  return {
+    workspace_id: normalizedWorkspaceId,
+    proposal_count: proposalCount,
+    heartbeat,
+    bridge,
+    delivery_state: deliveryState,
+    delivery_summary: deliverySummary,
+    delivery_detail: deliveryDetail
+  };
 }
 
 async function listCronjobs(workspaceId: string, enabledOnly = false): Promise<CronjobListResponsePayload> {
@@ -5603,10 +5901,16 @@ async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise
         }).catch(() => updated);
       }
     }
-    await emitWorkspaceReadyHeartbeat({
-      workspaceId,
-      holabossUserId: payload.holaboss_user_id
-    });
+    try {
+      await emitWorkspaceReadyHeartbeat({
+        workspaceId,
+        holabossUserId: payload.holaboss_user_id
+      });
+    } catch (error) {
+      throw new Error(
+        contextualWorkspaceCreateError("Workspace created locally, but the workspace-ready heartbeat was not confirmed", error)
+      );
+    }
     return updated;
   } catch (error) {
     await requestRuntimeJson<WorkspaceResponsePayload>({
@@ -6347,6 +6651,12 @@ async function startEmbeddedRuntime() {
 
   await fs.mkdir(sandboxRoot, { recursive: true });
   await bootstrapRuntimeDatabase();
+  const runtimeConfig = await readRuntimeConfigFile();
+  const runtimeAuthToken = runtimeModelProxyApiKeyFromConfig(runtimeConfig);
+  const runtimeUserId = (runtimeConfig.user_id || "").trim();
+  const runtimeModelProxyBaseUrl = (runtimeConfig.model_proxy_base_url || "").trim();
+  const runtimeDefaultModel = (runtimeConfig.default_model || "").trim();
+  const controlPlaneBaseUrl = (runtimeConfig.control_plane_base_url || "").trim() || DESKTOP_CONTROL_PLANE_BASE_URL;
 
   if (await isRuntimeHealthy(url)) {
     return refreshRuntimeStatus();
@@ -6366,6 +6676,11 @@ async function startEmbeddedRuntime() {
       HOLABOSS_RUNTIME_DB_PATH: runtimeDatabasePath(),
       PROACTIVE_ENABLE_REMOTE_BRIDGE: "1",
       PROACTIVE_BRIDGE_BASE_URL: proactiveBaseUrl(),
+      HOLABOSS_BACKEND_BASE_URL: controlPlaneBaseUrl,
+      ...(runtimeAuthToken ? { HOLABOSS_SANDBOX_AUTH_TOKEN: runtimeAuthToken } : {}),
+      ...(runtimeUserId ? { HOLABOSS_USER_ID: runtimeUserId } : {}),
+      ...(runtimeModelProxyBaseUrl ? { HOLABOSS_MODEL_PROXY_BASE_URL: runtimeModelProxyBaseUrl } : {}),
+      ...(runtimeDefaultModel ? { HOLABOSS_DEFAULT_MODEL: runtimeDefaultModel } : {}),
       PYTHONDONTWRITEBYTECODE: "1"
     },
     stdio: "pipe"
@@ -9349,6 +9664,7 @@ app.whenReady().then(async () => {
   );
   handleTrustedIpc("workspace:deleteCronjob", ["main"], async (_event, jobId: string) => deleteCronjob(jobId));
   handleTrustedIpc("workspace:listTaskProposals", ["main"], async (_event, workspaceId: string) => listTaskProposals(workspaceId));
+  handleTrustedIpc("workspace:getProactiveStatus", ["main"], async (_event, workspaceId: string) => getProactiveStatus(workspaceId));
   handleTrustedIpc("workspace:updateTaskProposalState", ["main"], async (_event, proposalId: string, state: string) =>
     updateTaskProposalState(proposalId, state)
   );
