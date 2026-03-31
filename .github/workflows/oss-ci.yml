@@ -89,15 +89,7 @@ jobs:
         run: npm --prefix runtime/api-server run typecheck
 
       - name: Runtime API server tests
-        run: |
-          set -euo pipefail
-          cd runtime/api-server
-          node --import tsx --test --test-concurrency=1 --test-shard=1/2 src/**/*.test.ts &
-          shard_one_pid=$!
-          node --import tsx --test --test-concurrency=1 --test-shard=2/2 src/**/*.test.ts &
-          shard_two_pid=$!
-          wait "$shard_one_pid"
-          wait "$shard_two_pid"
+        run: npm --prefix runtime/api-server run test
 
       - name: Runtime API server build
         run: npm --prefix runtime/api-server run build
