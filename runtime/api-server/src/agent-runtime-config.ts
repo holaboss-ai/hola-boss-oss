@@ -202,6 +202,28 @@ function modelProxyProviderForProviderKind(kind: string, modelToken: string): st
   return MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE;
 }
 
+function providerRequiresUnscopedModelId(kind: string): boolean {
+  const normalizedKind = kind.trim().toLowerCase();
+  return (
+    normalizedKind === PROVIDER_KIND_HOLABOSS_PROXY ||
+    normalizedKind === PROVIDER_KIND_OPENAI_COMPATIBLE ||
+    normalizedKind === PROVIDER_KIND_ANTHROPIC_NATIVE
+  );
+}
+
+function assertCanonicalConfiguredModelId(provider: ConfiguredRuntimeProvider, modelId: string): void {
+  const normalizedModelId = modelId.trim();
+  if (!normalizedModelId || !providerRequiresUnscopedModelId(provider.kind)) {
+    return;
+  }
+  if (!normalizedModelId.includes("/")) {
+    return;
+  }
+  throw new Error(
+    `Invalid runtime-config model for provider '${provider.id}': model '${normalizedModelId}' must be a bare model id without provider prefixes`
+  );
+}
+
 function modelProxyProviderRouteSegment(modelProxyProvider: string): string {
   return modelProxyProvider === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE ? "anthropic" : "openai";
 }
@@ -342,11 +364,15 @@ function configuredRuntimeModelCatalog(defaultProviderHint: string): RuntimeMode
       continue;
     }
     const provider = providers.get(providerId);
+    if (!provider) {
+      continue;
+    }
+    assertCanonicalConfiguredModelId(provider, modelId);
     configuredModels.push({
       token,
       providerId,
       modelId,
-      modelProxyProvider: modelProxyProviderForProviderKind(provider?.kind ?? "", modelId)
+      modelProxyProvider: modelProxyProviderForProviderKind(provider.kind, modelId)
     });
   }
 
@@ -439,6 +465,7 @@ function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: stri
 
     const configuredProvider = catalog.providers.get(normalizedProviderToken);
     if (configuredProvider) {
+      assertCanonicalConfiguredModelId(configuredProvider, modelId);
       const modelProxyProvider = modelProxyProviderForProviderKind(configuredProvider.kind, modelId);
       return {
         providerId: runtimeProviderIdForConfiguredProvider(configuredProvider, modelProxyProvider),

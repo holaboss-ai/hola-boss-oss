@@ -131,7 +131,7 @@ async function agentBrowserTool(browserConfig, workspaceId, toolId, args = {}) {
     userId: "",
     sandboxId: "",
     modelProxyBaseUrl: "",
-    defaultModel: "openai/gpt-5.1",
+    defaultModel: "openai/gpt-5.4",
     runtimeMode: "oss",
     defaultProvider: "",
     holabossEnabled: false,

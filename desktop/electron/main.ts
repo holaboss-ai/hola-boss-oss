@@ -62,6 +62,20 @@ const RUNTIME_PROVIDER_KIND_OPENAI_COMPATIBLE = "openai_compatible";
 const RUNTIME_PROVIDER_KIND_ANTHROPIC_NATIVE = "anthropic_native";
 const RUNTIME_PROVIDER_KIND_OPENROUTER = "openrouter";
 const RUNTIME_HOLABOSS_PROVIDER_ID = "holaboss_model_proxy";
+const RUNTIME_HOLABOSS_PROVIDER_ALIASES = ["holaboss", RUNTIME_HOLABOSS_PROVIDER_ID] as const;
+const RUNTIME_HOLABOSS_LEGACY_PROXY_MODELS = [
+  "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.3-codex",
+  "claude-sonnet-4-5",
+  "claude-opus-4-1"
+] as const;
+const RUNTIME_DEPRECATED_MODEL_IDS = new Set([
+  "gpt-5.1",
+  "gpt-5.1-codex",
+  "gpt-5.1-codex-mini",
+  "gpt-5.1-codex-max"
+]);
 
 interface DirectoryEntryPayload {
   name: string;
@@ -196,7 +210,7 @@ interface BrowserAnchorBoundsPayload {
   height: number;
 }
 
-type UiSettingsPaneSection = "account" | "settings" | "about";
+type UiSettingsPaneSection = "account" | "models" | "appearance" | "about";
 
 interface AddressSuggestionPayload {
   id: string;
@@ -791,7 +805,7 @@ async function openExternalUrl(rawUrl: string): Promise<void> {
   await shell.openExternal(parsed.toString());
 }
 
-function emitOpenSettingsPane(section: UiSettingsPaneSection = "settings") {
+function emitOpenSettingsPane(section: UiSettingsPaneSection = "models") {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
   }
@@ -2479,9 +2493,11 @@ async function readRuntimeConfigFile(): Promise<Record<string, string>> {
       holabossProvider.base_url as string | undefined,
       legacyPayload.model_proxy_base_url as string | undefined
     );
-    const defaultModel = runtimeFirstNonEmptyString(
-      runtimePayload.default_model as string | undefined,
-      legacyPayload.default_model as string | undefined
+    const defaultModel = normalizeLegacyRuntimeModelToken(
+      runtimeFirstNonEmptyString(
+        runtimePayload.default_model as string | undefined,
+        legacyPayload.default_model as string | undefined
+      )
     );
     const defaultProvider = runtimeFirstNonEmptyString(
       runtimePayload.default_provider as string | undefined,
@@ -2551,6 +2567,10 @@ function runtimeFirstNonEmptyString(...values: Array<string | null | undefined>)
   return "";
 }
 
+function normalizeLegacyRuntimeModelToken(token: string): string {
+  return token.trim();
+}
+
 function runtimeProviderLabel(providerId: string): string {
   const normalized = providerId.trim().toLowerCase();
   if (normalized === "openai" || normalized.includes("openai")) {
@@ -2561,6 +2581,12 @@ function runtimeProviderLabel(providerId: string): string {
   }
   if (normalized.includes("openrouter")) {
     return "OpenRouter";
+  }
+  if (normalized.includes("gemini") || normalized.includes("google")) {
+    return "Gemini";
+  }
+  if (normalized.includes("ollama")) {
+    return "Ollama";
   }
   if (normalized === RUNTIME_HOLABOSS_PROVIDER_ID || normalized === "holaboss" || normalized.includes("holaboss")) {
     return "Holaboss Proxy";
@@ -2598,6 +2624,35 @@ function normalizeRuntimeProviderKind(rawKind: string, providerId: string, baseU
     return RUNTIME_PROVIDER_KIND_ANTHROPIC_NATIVE;
   }
   return RUNTIME_PROVIDER_KIND_OPENAI_COMPATIBLE;
+}
+
+function runtimeModelIdFromToken(token: string): string {
+  const normalizedToken = token.trim();
+  if (!normalizedToken) {
+    return "";
+  }
+  if (!normalizedToken.includes("/")) {
+    return normalizedToken;
+  }
+  const [prefix, ...rest] = normalizedToken.split("/");
+  const normalizedPrefix = prefix.trim().toLowerCase();
+  if (
+    normalizedPrefix.includes("openai") ||
+    normalizedPrefix.includes("anthropic") ||
+    normalizedPrefix.includes("holaboss") ||
+    normalizedPrefix.includes("openrouter") ||
+    normalizedPrefix.includes("gemini") ||
+    normalizedPrefix.includes("google") ||
+    normalizedPrefix.includes("ollama")
+  ) {
+    return rest.join("/").trim();
+  }
+  return normalizedToken;
+}
+
+function isDeprecatedRuntimeModelId(modelId: string): boolean {
+  const normalized = runtimeModelIdFromToken(modelId).toLowerCase();
+  return RUNTIME_DEPRECATED_MODEL_IDS.has(normalized);
 }
 
 function runtimeProviderModelGroups(
@@ -2650,7 +2705,8 @@ function runtimeProviderModelGroups(
     loadedLegacy.auth_token,
     holabossIntegration.auth_token as string | undefined
   );
-  if ((legacyBaseUrl || legacyApiKey) && runtimeDefaultProvider && !providers.has(runtimeDefaultProvider)) {
+  const hasLegacyProxyBinding = Boolean(legacyBaseUrl && legacyApiKey);
+  if (hasLegacyProxyBinding && runtimeDefaultProvider && !providers.has(runtimeDefaultProvider)) {
     providers.set(runtimeDefaultProvider, {
       id: runtimeDefaultProvider,
       kind: normalizeRuntimeProviderKind("", runtimeDefaultProvider, legacyBaseUrl),
@@ -2668,10 +2724,13 @@ function runtimeProviderModelGroups(
   const addModel = (providerId: string, token: string, modelId: string) => {
     const normalizedProviderId = providerId.trim();
     const normalizedModelId = modelId.trim();
-    if (!normalizedProviderId || !normalizedModelId) {
+    if (!normalizedProviderId || !normalizedModelId || isDeprecatedRuntimeModelId(normalizedModelId)) {
       return;
     }
     const normalizedToken = token.trim() || `${normalizedProviderId}/${normalizedModelId}`;
+    if (isDeprecatedRuntimeModelId(normalizedToken)) {
+      return;
+    }
     const group = ensureProviderGroup(normalizedProviderId);
     if (!group.has(normalizedToken)) {
       group.set(normalizedToken, {
@@ -2700,38 +2759,49 @@ function runtimeProviderModelGroups(
       }
     }
     if (providerId && modelId) {
-      addModel(providerId, token, modelId);
+      const normalizedProviderId = providerId.trim();
+      if (providers.has(normalizedProviderId)) {
+        addModel(normalizedProviderId, token, modelId);
+      }
     }
   }
 
-  const fallbackDefaultModel = runtimeFirstNonEmptyString(
-    runtimePayload.default_model as string | undefined,
-    loadedLegacy.default_model
+  const fallbackDefaultModel = normalizeLegacyRuntimeModelToken(
+    runtimeFirstNonEmptyString(
+      runtimePayload.default_model as string | undefined,
+      loadedLegacy.default_model
+    )
   );
-  if (fallbackDefaultModel && configuredModelsCount === 0) {
-    const defaultProviderId = runtimeFirstNonEmptyString(
-      runtimeDefaultProvider,
-      loadedLegacy.default_provider,
-      "openai"
-    );
-    if (fallbackDefaultModel.includes("/")) {
-      const [prefix, ...rest] = fallbackDefaultModel.split("/");
-      const modelId = rest.join("/").trim();
-      if (modelId) {
-        addModel(prefix.trim(), fallbackDefaultModel, modelId);
-      }
-    } else if (fallbackDefaultModel.toLowerCase().startsWith("claude")) {
-      const anthropicProvider =
-        Array.from(providers.values()).find((provider) => provider.kind === RUNTIME_PROVIDER_KIND_ANTHROPIC_NATIVE)?.id ??
-        "anthropic";
-      addModel(anthropicProvider, fallbackDefaultModel, fallbackDefaultModel);
-    } else {
-      addModel(defaultProviderId, fallbackDefaultModel, fallbackDefaultModel);
+  const hasExplicitProviderCatalog = Object.keys(providersPayload).length > 0 || Object.keys(modelsPayload).length > 0;
+  if (fallbackDefaultModel && configuredModelsCount === 0 && !hasExplicitProviderCatalog && hasLegacyProxyBinding) {
+    const legacyProxyProviderId = RUNTIME_HOLABOSS_PROVIDER_ID;
+    if (!providers.has(legacyProxyProviderId)) {
+      providers.set(legacyProxyProviderId, {
+        id: legacyProxyProviderId,
+        kind: RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY,
+        label: runtimeProviderLabel(legacyProxyProviderId)
+      });
+    }
+    const seededModelIds = new Set<string>();
+    const preferredModelId = runtimeModelIdFromToken(fallbackDefaultModel);
+    if (preferredModelId && !isDeprecatedRuntimeModelId(preferredModelId)) {
+      seededModelIds.add(preferredModelId);
+    }
+    for (const modelId of RUNTIME_HOLABOSS_LEGACY_PROXY_MODELS) {
+      seededModelIds.add(modelId);
+    }
+    for (const modelId of seededModelIds) {
+      addModel(legacyProxyProviderId, `${legacyProxyProviderId}/${modelId}`, modelId);
     }
   }
 
   const groups: RuntimeProviderModelGroupPayload[] = [];
-  for (const [providerId, modelMap] of groupedModels.entries()) {
+  const providerIds = new Set<string>([
+    ...Array.from(providers.keys()),
+    ...Array.from(groupedModels.keys())
+  ]);
+  for (const providerId of providerIds) {
+    const modelMap = groupedModels.get(providerId) ?? new Map<string, RuntimeProviderModelPayload>();
     const provider = providers.get(providerId);
     groups.push({
       providerId,
@@ -3206,16 +3276,116 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
 
   const configPath = runtimeConfigPath();
   await fs.mkdir(path.dirname(configPath), { recursive: true });
-  const nextDocument = {
+  const legacyDocument = {
     ...currentDocument,
     holaboss: next
   };
+  const nextDocument = syncHolabossProviderDocument(legacyDocument, next);
   await fs.writeFile(configPath, `${JSON.stringify(nextDocument, null, 2)}\n`, "utf-8");
   return next;
 }
 
 function runtimeConfigField(value: string | undefined): string {
   return (value || "").trim();
+}
+
+function runtimeAssignOrRemoveField(target: Record<string, unknown>, key: string, value: string | undefined) {
+  const normalized = runtimeConfigField(value);
+  if (normalized) {
+    target[key] = normalized;
+  } else {
+    delete target[key];
+  }
+}
+
+function isHolabossProviderAlias(providerId: string): boolean {
+  const normalized = providerId.trim().toLowerCase();
+  return RUNTIME_HOLABOSS_PROVIDER_ALIASES.some((alias) => alias === normalized);
+}
+
+function holabossModelIdFromToken(token: string): string {
+  const normalized = token.trim();
+  if (!normalized) {
+    return "";
+  }
+  for (const alias of RUNTIME_HOLABOSS_PROVIDER_ALIASES) {
+    const prefix = `${alias}/`;
+    if (normalized.startsWith(prefix)) {
+      return normalized.slice(prefix.length).trim();
+    }
+  }
+  return "";
+}
+
+function syncHolabossProviderDocument(
+  currentDocument: Record<string, unknown>,
+  nextConfig: Record<string, string>
+): Record<string, unknown> {
+  const nextDocument = { ...currentDocument };
+  const runtimePayload = runtimeConfigObject(nextDocument.runtime);
+  const providersPayload = runtimeConfigObject(nextDocument.providers);
+  const integrationsPayload = runtimeConfigObject(nextDocument.integrations);
+  const modelsPayload = runtimeConfigObject(nextDocument.models);
+  const holabossIntegration = runtimeConfigObject(integrationsPayload.holaboss);
+  const authToken = runtimeModelProxyApiKeyFromConfig(nextConfig);
+  const userId = runtimeConfigField(nextConfig.user_id);
+  const sandboxId = runtimeConfigField(nextConfig.sandbox_id);
+  const modelProxyBaseUrl = runtimeConfigField(nextConfig.model_proxy_base_url);
+  const defaultModel = runtimeConfigField(nextConfig.default_model);
+  const holabossEnabled = Boolean(authToken && modelProxyBaseUrl);
+
+  for (const providerId of RUNTIME_HOLABOSS_PROVIDER_ALIASES) {
+    delete providersPayload[providerId];
+  }
+
+  for (const [token, rawModel] of Object.entries(modelsPayload)) {
+    const modelPayload = runtimeConfigObject(rawModel);
+    const providerId = runtimeFirstNonEmptyString(
+      modelPayload.provider as string | undefined,
+      modelPayload.provider_id as string | undefined,
+      token.includes("/") ? token.split("/")[0]?.trim() : ""
+    );
+    if ((providerId && isHolabossProviderAlias(providerId)) || (!providerId && holabossModelIdFromToken(token))) {
+      delete modelsPayload[token];
+    }
+  }
+
+  runtimeAssignOrRemoveField(runtimePayload, "sandbox_id", sandboxId);
+  runtimeAssignOrRemoveField(runtimePayload, "default_model", defaultModel);
+  runtimeAssignOrRemoveField(holabossIntegration, "auth_token", authToken);
+  runtimeAssignOrRemoveField(holabossIntegration, "user_id", userId);
+  runtimeAssignOrRemoveField(holabossIntegration, "sandbox_id", sandboxId);
+  holabossIntegration.enabled = holabossEnabled;
+
+  if (holabossEnabled) {
+    providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID] = {
+      kind: RUNTIME_PROVIDER_KIND_OPENAI_COMPATIBLE,
+      base_url: modelProxyBaseUrl,
+      api_key: authToken
+    };
+    for (const modelId of RUNTIME_HOLABOSS_LEGACY_PROXY_MODELS) {
+      modelsPayload[`${RUNTIME_HOLABOSS_PROVIDER_ID}/${modelId}`] = {
+        provider: RUNTIME_HOLABOSS_PROVIDER_ID,
+        model: modelId
+      };
+    }
+    const currentDefaultProvider = runtimeConfigField(runtimePayload.default_provider as string | undefined);
+    if (!currentDefaultProvider || isHolabossProviderAlias(currentDefaultProvider)) {
+      runtimePayload.default_provider = RUNTIME_HOLABOSS_PROVIDER_ID;
+    }
+  } else {
+    const currentDefaultProvider = runtimeConfigField(runtimePayload.default_provider as string | undefined);
+    if (isHolabossProviderAlias(currentDefaultProvider)) {
+      delete runtimePayload.default_provider;
+    }
+  }
+
+  integrationsPayload.holaboss = holabossIntegration;
+  nextDocument.runtime = runtimePayload;
+  nextDocument.providers = providersPayload;
+  nextDocument.integrations = integrationsPayload;
+  nextDocument.models = modelsPayload;
+  return nextDocument;
 }
 
 function runtimeConfigRestartRequired(current: Record<string, string>, next: Record<string, string>): boolean {
@@ -3372,6 +3542,16 @@ async function getRuntimeConfigDocumentText(): Promise<string> {
       "kind": "openrouter",
       "base_url": "https://openrouter.ai/api/v1",
       "api_key": "replace-with-openrouter-api-key"
+    },
+    "gemini_direct": {
+      "kind": "openai_compatible",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "api_key": "replace-with-gemini-api-key"
+    },
+    "ollama_direct": {
+      "kind": "openai_compatible",
+      "base_url": "http://localhost:11434/v1",
+      "api_key": "ollama"
     }
   },
   "models": {
@@ -3380,18 +3560,25 @@ async function getRuntimeConfigDocumentText(): Promise<string> {
     "holaboss/gpt-4.1-mini": { "provider": "holaboss", "model": "gpt-4.1-mini" },
     "holaboss/claude-sonnet-4-5": { "provider": "holaboss", "model": "claude-sonnet-4-5" },
     "holaboss/claude-opus-4-1": { "provider": "holaboss", "model": "claude-opus-4-1" },
-    "openai_direct/gpt-5.2": { "provider": "openai_direct", "model": "gpt-5.2" },
-    "openai_direct/gpt-5-mini": { "provider": "openai_direct", "model": "gpt-5-mini" },
-    "openai_direct/gpt-5-nano": { "provider": "openai_direct", "model": "gpt-5-nano" },
-    "openai_direct/gpt-4.1": { "provider": "openai_direct", "model": "gpt-4.1" },
-    "openai_direct/gpt-4.1-mini": { "provider": "openai_direct", "model": "gpt-4.1-mini" },
+    "openai_direct/gpt-5.4": { "provider": "openai_direct", "model": "gpt-5.4" },
+    "openai_direct/gpt-5.4-mini": { "provider": "openai_direct", "model": "gpt-5.4-mini" },
+    "openai_direct/gpt-5.3-codex": { "provider": "openai_direct", "model": "gpt-5.3-codex" },
     "anthropic_direct/claude-sonnet-4-5": { "provider": "anthropic_direct", "model": "claude-sonnet-4-5" },
     "anthropic_direct/claude-opus-4-1": { "provider": "anthropic_direct", "model": "claude-opus-4-1" },
-    "openrouter_direct/openai/gpt-5.2": { "provider": "openrouter_direct", "model": "openai/gpt-5.2" },
+    "openrouter_direct/openai/gpt-5.4": { "provider": "openrouter_direct", "model": "openai/gpt-5.4" },
     "openrouter_direct/anthropic/claude-sonnet-4-5": {
       "provider": "openrouter_direct",
       "model": "anthropic/claude-sonnet-4-5"
-    }
+    },
+    "gemini_direct/gemini-3.1-pro-preview": { "provider": "gemini_direct", "model": "gemini-3.1-pro-preview" },
+    "gemini_direct/gemini-3.1-flash-lite-preview": {
+      "provider": "gemini_direct",
+      "model": "gemini-3.1-flash-lite-preview"
+    },
+    "gemini_direct/gemini-2.5-pro": { "provider": "gemini_direct", "model": "gemini-2.5-pro" },
+    "gemini_direct/gemini-2.5-flash": { "provider": "gemini_direct", "model": "gemini-2.5-flash" },
+    "ollama_direct/llama3.1:8b": { "provider": "ollama_direct", "model": "llama3.1:8b" },
+    "ollama_direct/qwen3:8b": { "provider": "ollama_direct", "model": "qwen3:8b" }
   }
 }
 `;
@@ -8163,40 +8350,18 @@ function createAuthPopupHtml() {
                 <svg viewBox="0 0 24 24"><path d="M4 7h10"/><path d="M4 17h16"/><path d="M14 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/><path d="M10 21a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/></svg>
               </span>
               <span class="menuCopy">
-                <span class="menuTitle">Settings</span>
+                <span class="menuTitle">Models</span>
               </span>
             </span>
             <span class="menuArrow">&#8250;</span>
           </button>
-          <button id="homeAction" class="item menuItem" type="button">
+          <button id="aboutAction" class="item menuItem" type="button">
             <span class="menuLead">
               <span class="menuIcon" aria-hidden="true">
-                <svg viewBox="0 0 24 24"><path d="m3 10 9-7 9 7"/><path d="M5 9.5V20h14V9.5"/><path d="M9 20v-6h6v6"/></svg>
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
               </span>
               <span class="menuCopy">
-                <span class="menuTitle">Homepage</span>
-              </span>
-            </span>
-            <span class="menuArrow">&#8250;</span>
-          </button>
-          <button id="docsAction" class="item menuItem" type="button">
-            <span class="menuLead">
-              <span class="menuIcon" aria-hidden="true">
-                <svg viewBox="0 0 24 24"><path d="M6 4.5h9a3 3 0 0 1 3 3V20l-4-2-4 2-4-2-4 2V7.5a3 3 0 0 1 3-3Z"/></svg>
-              </span>
-              <span class="menuCopy">
-                <span class="menuTitle">Docs</span>
-              </span>
-            </span>
-            <span class="menuArrow">&#8250;</span>
-          </button>
-          <button id="helpAction" class="item menuItem" type="button">
-            <span class="menuLead">
-              <span class="menuIcon" aria-hidden="true">
-                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 1 1 5.8 1c0 2-3 2-3 4"/><path d="M12 17h.01"/></svg>
-              </span>
-              <span class="menuCopy">
-                <span class="menuTitle">Get help</span>
+                <span class="menuTitle">About</span>
               </span>
             </span>
             <span class="menuArrow">&#8250;</span>
@@ -8219,12 +8384,6 @@ function createAuthPopupHtml() {
       </div>
     </div>
     <script>
-      const LINKS = {
-        home: ${JSON.stringify(HOLABOSS_HOME_URL)},
-        docs: ${JSON.stringify(HOLABOSS_DOCS_URL)},
-        help: ${JSON.stringify(HOLABOSS_HELP_URL)}
-      };
-
       const state = {
         user: null,
         runtimeConfig: null,
@@ -8248,9 +8407,7 @@ function createAuthPopupHtml() {
         accountAction: document.getElementById("accountAction"),
         accountMeta: document.getElementById("accountMeta"),
         settingsAction: document.getElementById("settingsAction"),
-        homeAction: document.getElementById("homeAction"),
-        docsAction: document.getElementById("docsAction"),
-        helpAction: document.getElementById("helpAction")
+        aboutAction: document.getElementById("aboutAction")
       };
 
       const sessionUserId = (user) => user && typeof user.id === "string" ? user.id : "";
@@ -8398,19 +8555,11 @@ function createAuthPopupHtml() {
         closeAndScheduleNothing();
       });
       els.settingsAction.addEventListener("click", async () => {
-        await window.authPopup.openSettingsPane("settings");
+        await window.authPopup.openSettingsPane("models");
         closeAndScheduleNothing();
       });
-      els.homeAction.addEventListener("click", async () => {
-        await window.authPopup.openExternalUrl(LINKS.home);
-        closeAndScheduleNothing();
-      });
-      els.docsAction.addEventListener("click", async () => {
-        await window.authPopup.openExternalUrl(LINKS.docs);
-        closeAndScheduleNothing();
-      });
-      els.helpAction.addEventListener("click", async () => {
-        await window.authPopup.openExternalUrl(LINKS.help);
+      els.aboutAction.addEventListener("click", async () => {
+        await window.authPopup.openSettingsPane("about");
         closeAndScheduleNothing();
       });
 
@@ -10459,7 +10608,7 @@ app.whenReady().then(async () => {
   handleTrustedIpc("auth:signOut", ["main", "auth-popup"], async () => {
     await requireAuthClient().signOut();
     const runtimeConfig = await readRuntimeConfigFile();
-    if (runtimeConfigIsControlPlaneManaged(runtimeConfig) && runtimeModelProxyApiKeyFromConfig(runtimeConfig)) {
+    if (runtimeConfigIsControlPlaneManaged(runtimeConfig)) {
       await clearRuntimeBindingSecrets("auth_sign_out");
     }
     emitAuthUserUpdated(null);
@@ -10494,7 +10643,7 @@ app.whenReady().then(async () => {
   });
   handleTrustedIpc("ui:getTheme", ["main", "auth-popup"], async () => currentTheme);
   handleTrustedIpc("ui:openSettingsPane", ["main", "auth-popup"], async (_event, section?: UiSettingsPaneSection) => {
-    emitOpenSettingsPane(section ?? "settings");
+    emitOpenSettingsPane(section ?? "models");
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) {
         mainWindow.restore();

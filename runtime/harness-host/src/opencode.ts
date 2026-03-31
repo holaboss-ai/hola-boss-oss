@@ -32,6 +32,10 @@ export type OpencodeEventMapperState = {
 
 const TERMINAL_EVENT_TYPES = new Set<RunnerEventType>(["run_completed", "run_failed"]);
 
+type RunOpencodeDeps = {
+  createClient?: typeof createOpencodeClient;
+};
+
 function emitRunnerEvent(
   request: OpencodeHarnessHostRequest,
   sequence: number,
@@ -1015,7 +1019,10 @@ async function ensureSession(
   });
 }
 
-export async function runOpencode(request: OpencodeHarnessHostRequest): Promise<number> {
+export async function runOpencode(
+  request: OpencodeHarnessHostRequest,
+  deps: RunOpencodeDeps = {}
+): Promise<number> {
   let sequence = 0;
   let activeSessionID: string | null = null;
   const nextSequence = () => {
@@ -1026,7 +1033,8 @@ export async function runOpencode(request: OpencodeHarnessHostRequest): Promise<
   try {
     emitRunnerEvent(request, nextSequence(), "run_started", { ...request.run_started_payload });
 
-    const client = createOpencodeClient({
+    const clientFactory = deps.createClient ?? createOpencodeClient;
+    const client = clientFactory({
       baseUrl: request.opencode_base_url,
       directory: request.workspace_dir,
       experimental_workspaceID: request.workspace_id,
@@ -1039,6 +1047,8 @@ export async function runOpencode(request: OpencodeHarnessHostRequest): Promise<
     const events = await client.event.subscribe();
     const iterator = events.stream[Symbol.asyncIterator]();
     const mapperState = createOpencodeEventMapperState();
+    // Prime the event stream before prompt submission so immediate session.error events are not missed.
+    let nextEventPromise: Promise<IteratorResult<unknown>> | null = iterator.next();
 
     const promptTask = (async () => {
       const response = await client.session.promptAsync({
@@ -1065,7 +1075,6 @@ export async function runOpencode(request: OpencodeHarnessHostRequest): Promise<
     });
 
     let terminalEmitted = false;
-    let nextEventPromise: Promise<IteratorResult<unknown>> | null = null;
     const deadline = Date.now() + request.timeout_seconds * 1000;
 
     while (!terminalEmitted) {

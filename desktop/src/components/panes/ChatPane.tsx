@@ -1,4 +1,4 @@
-import { type ChangeEvent, type DragEvent, FormEvent, KeyboardEvent, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type DragEvent, FormEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { AlertTriangle, ArrowUp, Bot, Cable, Check, ChevronDown, Clock3, FileText, Image as ImageIcon, Loader2, Paperclip, X } from "lucide-react";
 import { PaneCard } from "@/components/ui/PaneCard";
@@ -142,16 +142,18 @@ const CHAT_AUTO_SCROLL_THRESHOLD_PX = 72;
 const CHAT_SCROLLBAR_MIN_THUMB_HEIGHT_PX = 40;
 const CHAT_INITIAL_ASSISTANT_SCROLL_TOP_OFFSET_PX = 20;
 const CHAT_MODEL_STORAGE_KEY = "holaboss-chat-model-v1";
-const CHAT_MODEL_USE_RUNTIME_DEFAULT = "__runtime_default__";
+const CHAT_MODEL_RUNTIME_DEFAULT_LEGACY = "__runtime_default__";
 const LEGACY_UNAVAILABLE_CHAT_MODELS = new Set(["openai/gpt-5.2-mini"]);
+const DEPRECATED_CHAT_MODEL_IDS = new Set([
+  "gpt-5.1",
+  "gpt-5.1-codex",
+  "gpt-5.1-codex-mini",
+  "gpt-5.1-codex-max"
+]);
 const CHAT_MODEL_PRESETS = [
-  "openai/gpt-5.2",
-  "openai/gpt-5.1",
-  "openai/gpt-5",
-  "openai/gpt-5-mini",
-  "openai/gpt-5-nano",
-  "openai/gpt-4.1",
-  "openai/gpt-4.1-mini",
+  "openai/gpt-5.4",
+  "openai/gpt-5.4-mini",
+  "openai/gpt-5.3-codex",
   "anthropic/claude-sonnet-4-5",
   "anthropic/claude-opus-4-1"
 ] as const;
@@ -188,13 +190,20 @@ function normalizeErrorMessage(error: unknown) {
   return message;
 }
 
+function normalizeLegacyChatModelToken(token: string): string {
+  return token.trim();
+}
+
 function normalizeStoredChatModelPreference(value: string | null | undefined) {
-  const stored = value?.trim();
+  const stored = normalizeLegacyChatModelToken(value ?? "");
   if (!stored) {
-    return CHAT_MODEL_USE_RUNTIME_DEFAULT;
+    return "";
+  }
+  if (stored === CHAT_MODEL_RUNTIME_DEFAULT_LEGACY) {
+    return "";
   }
   if (LEGACY_UNAVAILABLE_CHAT_MODELS.has(stored.toLowerCase())) {
-    return CHAT_MODEL_USE_RUNTIME_DEFAULT;
+    return "";
   }
   return stored;
 }
@@ -203,7 +212,7 @@ function loadStoredChatModelPreference() {
   try {
     return normalizeStoredChatModelPreference(localStorage.getItem(CHAT_MODEL_STORAGE_KEY));
   } catch {
-    return CHAT_MODEL_USE_RUNTIME_DEFAULT;
+    return "";
   }
 }
 
@@ -221,7 +230,10 @@ function displayModelLabel(model: string) {
       normalizedPrefix.includes("openai") ||
       normalizedPrefix.includes("anthropic") ||
       normalizedPrefix.includes("holaboss") ||
-      normalizedPrefix.includes("openrouter")
+      normalizedPrefix.includes("openrouter") ||
+      normalizedPrefix.includes("gemini") ||
+      normalizedPrefix.includes("google") ||
+      normalizedPrefix.includes("ollama")
     )
       ? rest.join("/")
       : trimmed;
@@ -263,6 +275,29 @@ function inferProviderIdForModel(model: string) {
   return "openai";
 }
 
+function isDeprecatedChatModel(model: string) {
+  const normalized = model.trim();
+  if (!normalized) {
+    return false;
+  }
+  const [prefix, ...rest] = normalized.split("/");
+  const normalizedPrefix = prefix.trim().toLowerCase();
+  const modelId =
+    rest.length > 0 &&
+    (
+      normalizedPrefix.includes("openai") ||
+      normalizedPrefix.includes("anthropic") ||
+      normalizedPrefix.includes("holaboss") ||
+      normalizedPrefix.includes("openrouter") ||
+      normalizedPrefix.includes("gemini") ||
+      normalizedPrefix.includes("google") ||
+      normalizedPrefix.includes("ollama")
+    )
+      ? rest.join("/").trim().toLowerCase()
+      : normalized.toLowerCase();
+  return DEPRECATED_CHAT_MODEL_IDS.has(modelId);
+}
+
 function displayProviderLabel(providerId: string) {
   const normalized = providerId.trim().toLowerCase();
   if (normalized === "openai" || normalized.includes("openai")) {
@@ -273,6 +308,12 @@ function displayProviderLabel(providerId: string) {
   }
   if (normalized.includes("openrouter")) {
     return "OpenRouter";
+  }
+  if (normalized.includes("gemini") || normalized.includes("google")) {
+    return "Gemini";
+  }
+  if (normalized.includes("ollama")) {
+    return "Ollama";
   }
   if (normalized.includes("holaboss")) {
     return "Holaboss";
@@ -2242,7 +2283,7 @@ export function ChatPane({
           workspaceId: selectedWorkspace.id,
           sessionId: targetSessionId,
           attachments: stagedAttachments,
-          model: resolvedChatModel || null
+          model: resolvedChatModelToken || null
         });
       } else {
         pendingInputIdRef.current = STREAM_ATTACH_PENDING;
@@ -2272,7 +2313,7 @@ export function ChatPane({
           attachments: stagedAttachments,
           session_id: targetSessionId,
           priority: 0,
-          model: resolvedChatModel || null
+          model: resolvedChatModelToken || null
         });
       }
       setActiveSession(queued.session_id);
@@ -2481,7 +2522,7 @@ export function ChatPane({
     void sendMessage(input);
   };
 
-  const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+  const onComposerKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       void sendMessage(input);
@@ -2594,7 +2635,7 @@ export function ChatPane({
     Boolean(runtimeConfig?.authTokenPresent) &&
     Boolean((runtimeConfig?.modelProxyBaseUrl || "").trim());
   const configuredProviderModelGroups = runtimeConfig?.providerModelGroups ?? [];
-  const hasConfiguredProviderModels = configuredProviderModelGroups.some((group) => group.models.length > 0);
+  const hasConfiguredProviderCatalog = configuredProviderModelGroups.length > 0;
   const runtimeDefaultModel = runtimeConfig?.defaultModel?.trim() || DEFAULT_RUNTIME_MODEL;
   const modelOptionsByProvider = new Map<string, { providerLabel: string; options: Map<string, ChatModelOption> }>();
   const ensureProviderOptionGroup = (providerId: string, providerLabel: string) => {
@@ -2609,7 +2650,7 @@ export function ChatPane({
   };
   const addModelOption = (providerId: string, providerLabel: string, value: string, label: string) => {
     const normalizedValue = value.trim();
-    if (!normalizedValue) {
+    if (!normalizedValue || isDeprecatedChatModel(normalizedValue)) {
       return;
     }
     const group = ensureProviderOptionGroup(providerId, providerLabel);
@@ -2621,7 +2662,7 @@ export function ChatPane({
     }
   };
 
-  if (hasConfiguredProviderModels) {
+  if (hasConfiguredProviderCatalog) {
     for (const providerGroup of configuredProviderModelGroups) {
       for (const model of providerGroup.models) {
         addModelOption(
@@ -2635,36 +2676,19 @@ export function ChatPane({
   } else {
     const fallbackModels = Array.from(
       new Set([
+        chatModelPreference,
         runtimeDefaultModel,
         DEFAULT_RUNTIME_MODEL,
-        ...(chatModelPreference !== CHAT_MODEL_USE_RUNTIME_DEFAULT ? [chatModelPreference] : []),
         ...CHAT_MODEL_PRESETS
       ])
     )
       .filter(Boolean)
+      .filter((model) => !isDeprecatedChatModel(model))
       .filter((model) => legacyHolabossProxyModelsAvailable || !isHolabossProxyModel(model));
 
     for (const model of fallbackModels) {
       const providerId = inferProviderIdForModel(model);
       addModelOption(providerId, displayProviderLabel(providerId), model, displayModelLabel(model));
-    }
-  }
-
-  if (hasConfiguredProviderModels) {
-    for (const supplementalModel of [runtimeDefaultModel, DEFAULT_RUNTIME_MODEL]) {
-      const normalizedModel = supplementalModel.trim();
-      if (!normalizedModel) {
-        continue;
-      }
-      const providerId = inferProviderIdForModel(normalizedModel);
-      addModelOption(providerId, displayProviderLabel(providerId), normalizedModel, displayModelLabel(normalizedModel));
-    }
-    if (chatModelPreference !== CHAT_MODEL_USE_RUNTIME_DEFAULT) {
-      const normalizedPreference = chatModelPreference.trim();
-      if (normalizedPreference) {
-        const providerId = inferProviderIdForModel(normalizedPreference);
-        addModelOption(providerId, displayProviderLabel(providerId), normalizedPreference, displayModelLabel(normalizedPreference));
-      }
     }
   }
 
@@ -2676,30 +2700,34 @@ export function ChatPane({
     })
   );
   const availableChatModelOptions = availableChatModelOptionGroups.flatMap((group) => group.options);
-  const runtimeDefaultModelAvailable = hasConfiguredProviderModels
-    ? availableChatModelOptions.some((option) => option.value === runtimeDefaultModel)
-    : legacyHolabossProxyModelsAvailable || !isHolabossProxyModel(runtimeDefaultModel);
+  const normalizedModelPreference = chatModelPreference.trim();
   const modelPreferenceAvailable =
-    chatModelPreference === CHAT_MODEL_USE_RUNTIME_DEFAULT
-      ? runtimeDefaultModelAvailable
-      : availableChatModelOptions.some((option) => option.value === chatModelPreference);
+    normalizedModelPreference.length > 0 &&
+    availableChatModelOptions.some((option) => option.value === normalizedModelPreference);
   const effectiveChatModelPreference = modelPreferenceAvailable
-    ? chatModelPreference
-    : runtimeDefaultModelAvailable
-      ? CHAT_MODEL_USE_RUNTIME_DEFAULT
-      : availableChatModelOptions[0]?.value || CHAT_MODEL_USE_RUNTIME_DEFAULT;
-  const resolvedChatModel =
-    effectiveChatModelPreference === CHAT_MODEL_USE_RUNTIME_DEFAULT
-      ? runtimeDefaultModelAvailable
-        ? runtimeDefaultModel
-        : ""
-      : effectiveChatModelPreference.trim() || (runtimeDefaultModelAvailable ? runtimeDefaultModel : "");
+    ? normalizedModelPreference
+    : availableChatModelOptions[0]?.value || "";
+  const resolvedChatModelToken = effectiveChatModelPreference;
+  const resolvedChatModelLabel = resolvedChatModelToken
+    ? (availableChatModelOptions.find((option) => option.value === resolvedChatModelToken)?.label ??
+      displayModelLabel(resolvedChatModelToken))
+    : "";
   const modelSelectionUnavailableReason =
-    runtimeDefaultModelAvailable || availableChatModelOptions.length > 0
+    availableChatModelOptions.length > 0
       ? ""
-      : hasConfiguredProviderModels
+      : hasConfiguredProviderCatalog
         ? "No models configured in runtime config."
         : "Sign in to use Holaboss models";
+
+  useEffect(() => {
+    if (!effectiveChatModelPreference) {
+      return;
+    }
+    if (chatModelPreference.trim() === effectiveChatModelPreference) {
+      return;
+    }
+    setChatModelPreference(effectiveChatModelPreference);
+  }, [chatModelPreference, effectiveChatModelPreference]);
   const textareaPlaceholder = isOnboardingVariant
     ? "Answer the onboarding prompt or share setup details"
     : "Ask anything";
@@ -3049,10 +3077,8 @@ export function ChatPane({
                       disabled={composerDisabled}
                       disabledReason={composerDisabledReason}
                       selectedModel={effectiveChatModelPreference}
-                      resolvedModelLabel={resolvedChatModel || modelSelectionUnavailableReason}
-                      runtimeDefaultModelLabel={runtimeDefaultModel}
+                      resolvedModelLabel={resolvedChatModelLabel || modelSelectionUnavailableReason}
                       modelOptionGroups={availableChatModelOptionGroups}
-                      runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
                       modelSelectionUnavailableReason={modelSelectionUnavailableReason}
                       placeholder={textareaPlaceholder}
                       showModelSelector={!isOnboardingVariant}
@@ -3096,10 +3122,8 @@ export function ChatPane({
                   disabled={composerDisabled}
                   disabledReason={composerDisabledReason}
                   selectedModel={effectiveChatModelPreference}
-                  resolvedModelLabel={resolvedChatModel || modelSelectionUnavailableReason}
-                  runtimeDefaultModelLabel={runtimeDefaultModel}
+                  resolvedModelLabel={resolvedChatModelLabel || modelSelectionUnavailableReason}
                   modelOptionGroups={availableChatModelOptionGroups}
-                  runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
                   modelSelectionUnavailableReason={modelSelectionUnavailableReason}
                   placeholder={textareaPlaceholder}
                   showModelSelector={!isOnboardingVariant}
@@ -3133,9 +3157,7 @@ interface ComposerProps {
   disabledReason?: string;
   selectedModel: string;
   resolvedModelLabel: string;
-  runtimeDefaultModelLabel: string;
   modelOptionGroups: ChatModelOptionGroup[];
-  runtimeDefaultModelAvailable: boolean;
   modelSelectionUnavailableReason: string;
   placeholder: string;
   showModelSelector: boolean;
@@ -3143,7 +3165,7 @@ interface ComposerProps {
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   fileInputRef: RefObject<HTMLInputElement | null>;
   onChange: (value: string) => void;
-  onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLTextAreaElement>) => void;
   onAttachmentInputChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onRemoveAttachment: (attachmentId: string) => void;
 }
@@ -3454,9 +3476,7 @@ function Composer({
   disabledReason = "",
   selectedModel,
   resolvedModelLabel,
-  runtimeDefaultModelLabel,
   modelOptionGroups,
-  runtimeDefaultModelAvailable,
   modelSelectionUnavailableReason,
   placeholder,
   showModelSelector,
@@ -3469,10 +3489,47 @@ function Composer({
   onRemoveAttachment
 }: ComposerProps) {
   const allModelOptions = modelOptionGroups.flatMap((group) => group.options);
-  const noAvailableModels = !runtimeDefaultModelAvailable && allModelOptions.length === 0;
+  const noAvailableModels = allModelOptions.length === 0;
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const modelMenuContainerRef = useRef<HTMLDivElement | null>(null);
+  const providerModelGroups = modelOptionGroups.filter((group) => group.options.length > 0);
+  const showProviderSections = providerModelGroups.length > 1;
+
+  useEffect(() => {
+    if (!modelMenuOpen) {
+      return;
+    }
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      if (!modelMenuContainerRef.current?.contains(target)) {
+        setModelMenuOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setModelMenuOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [modelMenuOpen]);
+
+  useEffect(() => {
+    if (showModelSelector && !isResponding && !noAvailableModels) {
+      return;
+    }
+    setModelMenuOpen(false);
+  }, [isResponding, noAvailableModels, showModelSelector]);
 
   return (
-    <div className="glass-field overflow-hidden rounded-[calc(var(--theme-radius-card)+0.15rem)] border border-panel-border/35 transition">
+    <div className="glass-field overflow-visible rounded-[calc(var(--theme-radius-card)+0.15rem)] border border-panel-border/35 transition">
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={onAttachmentInputChange} />
       {attachments.length > 0 ? (
         <div className="border-b border-panel-border/20 px-4 py-3">
@@ -3494,45 +3551,70 @@ function Composer({
 
       <div className="flex items-center justify-between gap-2 border-t border-panel-border/20 px-3 py-3 text-text-muted/72">
         {showModelSelector ? (
-          <div className="relative w-[172px] shrink-0 sm:w-[208px]">
-            <select
-              value={selectedModel}
-              onChange={(event) => onModelChange(event.target.value)}
+          <div ref={modelMenuContainerRef} className="relative w-[172px] shrink-0 sm:w-[208px]">
+            <button
+              type="button"
+              onClick={() => setModelMenuOpen((current) => !current)}
               disabled={isResponding || noAvailableModels}
               aria-label="Model selection"
+              aria-haspopup="listbox"
+              aria-expanded={modelMenuOpen && !noAvailableModels}
+              className="block w-full text-left disabled:cursor-not-allowed disabled:opacity-60"
               title={
                 noAvailableModels
                   ? modelSelectionUnavailableReason
-                  : selectedModel === CHAT_MODEL_USE_RUNTIME_DEFAULT
-                    ? `Auto (${runtimeDefaultModelLabel})`
-                    : resolvedModelLabel
+                  : resolvedModelLabel
               }
-              className="composer-select theme-subtle-surface h-9 w-full appearance-none rounded-[11px] border border-panel-border/28 px-3 pr-9 text-[12px] font-medium text-text-main/90 transition hover:border-panel-border/48 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {noAvailableModels ? (
-                <option value={CHAT_MODEL_USE_RUNTIME_DEFAULT}>{modelSelectionUnavailableReason}</option>
-              ) : (
-                <>
-                  {runtimeDefaultModelAvailable ? <option value={CHAT_MODEL_USE_RUNTIME_DEFAULT}>Auto</option> : null}
-                  {modelOptionGroups.map((group) => (
-                    <optgroup
-                      key={`${group.providerId}:${group.providerLabel}`}
-                      label={group.providerLabel}
-                    >
-                      {group.options.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </>
-              )}
-            </select>
+              <span className="composer-select theme-subtle-surface flex h-9 w-full items-center rounded-[11px] border border-panel-border/28 px-3 pr-9 text-[12px] font-medium text-text-main/90 transition hover:border-panel-border/48">
+                <span className="truncate">
+                  {noAvailableModels ? modelSelectionUnavailableReason : resolvedModelLabel}
+                </span>
+              </span>
+            </button>
             <ChevronDown
               size={14}
-              className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-dim/70"
+              className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-dim/70 transition ${
+                modelMenuOpen ? "rotate-180" : ""
+              }`}
             />
+            {modelMenuOpen && !noAvailableModels ? (
+              <div
+                role="listbox"
+                className="theme-subtle-surface absolute bottom-[calc(100%+10px)] left-0 z-40 max-h-[320px] w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-[16px] border border-panel-border/45 p-1.5 shadow-[0_22px_56px_rgba(16,24,40,0.28)] backdrop-blur"
+              >
+                {providerModelGroups.map((group, groupIndex) => (
+                  <div key={`${group.providerId}:${group.providerLabel}`} className={groupIndex > 0 ? "mt-2" : "mt-1"}>
+                    {showProviderSections ? (
+                      <div className="px-3 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-text-dim/72">
+                        {group.providerLabel}
+                      </div>
+                    ) : null}
+                    {group.options.map((option) => {
+                      const isSelected = selectedModel === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          role="option"
+                          aria-selected={isSelected}
+                          onClick={() => {
+                            onModelChange(option.value);
+                            setModelMenuOpen(false);
+                          }}
+                          className={`flex w-full items-center justify-between gap-3 rounded-[11px] px-3 py-2 text-left text-[12px] transition ${
+                            isSelected ? "bg-neon-green/18 text-text-main" : "text-text-main/88 hover:bg-panel-bg/22"
+                          }`}
+                        >
+                          <span className="truncate">{option.label}</span>
+                          {isSelected ? <Check size={13} /> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
         ) : (
           <div className="text-[11px] leading-6 text-text-dim/72">

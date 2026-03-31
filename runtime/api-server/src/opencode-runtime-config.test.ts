@@ -453,6 +453,71 @@ test("projectOpencodeRuntimeConfig resolves configured holaboss, openai-compatib
   }
 });
 
+test("projectOpencodeRuntimeConfig rejects provider-prefixed model ids for direct providers", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-runtime-config-invalid-model-"));
+  const configPath = path.join(tempRoot, "runtime-config.json");
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify(
+      {
+        runtime: {
+          default_provider: "openai_direct",
+          default_model: "openai_direct/gpt-5.4"
+        },
+        providers: {
+          openai_direct: {
+            kind: "openai_compatible",
+            base_url: "https://api.openai.com/v1",
+            api_key: "sk-openai-direct"
+          }
+        },
+        models: {
+          "openai_direct/openai/gpt-5.4": {
+            provider: "openai_direct",
+            model: "openai/gpt-5.4"
+          }
+        }
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
+
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+  try {
+    assert.throws(
+      () =>
+        projectOpencodeRuntimeConfig({
+          session_id: "session-1",
+          workspace_id: "workspace-1",
+          input_id: "input-1",
+          runtime_exec_model_proxy_api_key: null,
+          runtime_exec_sandbox_id: null,
+          runtime_exec_run_id: null,
+          selected_model: "openai_direct/openai/gpt-5.4",
+          default_provider_id: "openai_direct",
+          session_mode: "code",
+          workspace_config_checksum: "checksum-invalid-model",
+          workspace_skill_ids: [],
+          default_tools: ["read"],
+          extra_tools: [],
+          resolved_mcp_tool_refs: [],
+          resolved_output_schemas: {},
+          agent: {
+            id: "workspace.general",
+            model: "openai_direct/openai/gpt-5.4",
+            prompt: "You are concise."
+          }
+        }),
+      /must be a bare model id without provider prefixes/
+    );
+  } finally {
+    delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("runOpencodeRuntimeConfigCli writes JSON response for a valid request", async () => {
   const request = {
     session_id: "session-1",

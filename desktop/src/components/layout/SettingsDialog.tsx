@@ -45,9 +45,15 @@ const SETTINGS_SECTIONS: Array<{
     icon: User2
   },
   {
-    id: "settings",
-    label: "Settings",
-    description: "Runtime config and desktop defaults",
+    id: "models",
+    label: "Models",
+    description: "Provider and model routing",
+    icon: Globe
+  },
+  {
+    id: "appearance",
+    label: "Appearance",
+    description: "Desktop themes and visuals",
     icon: Palette
   },
   {
@@ -62,11 +68,14 @@ function titleForSection(section: UiSettingsPaneSection): string {
   switch (section) {
     case "account":
       return "Account";
+    case "models":
+      return "Models";
+    case "appearance":
+      return "Appearance";
     case "about":
       return "About";
-    case "settings":
     default:
-      return "Settings";
+      return "Models";
   }
 }
 
@@ -74,11 +83,14 @@ function subtitleForSection(section: UiSettingsPaneSection): string {
   switch (section) {
     case "account":
       return "Manage your desktop session and proactive delivery.";
+    case "models":
+      return "Configure model providers and model routing.";
+    case "appearance":
+      return "Choose the desktop visual theme.";
     case "about":
       return "Open product resources and support channels.";
-    case "settings":
     default:
-      return "Configure runtime product settings and desktop appearance.";
+      return "Configure model providers and model routing.";
   }
 }
 
@@ -212,9 +224,14 @@ export function SettingsDialog({
               </div>
             ) : null}
 
-            {activeSection === "settings" ? (
+            {activeSection === "models" ? (
               <div className="grid gap-6">
                 <AuthPanel view="runtime" />
+              </div>
+            ) : null}
+
+            {activeSection === "appearance" ? (
+              <div className="grid gap-6">
                 <section className="theme-subtle-surface rounded-[24px] border border-panel-border/40 p-5">
                   <div className="text-[11px] uppercase tracking-[0.18em] text-text-dim/68">Appearance</div>
                   <div className="mt-2 max-w-[640px] text-[13px] leading-6 text-text-muted/86">

@@ -28,7 +28,7 @@ function makeRequest(workspaceRoot: string) {
   return {
     workspace_root: workspaceRoot,
     provider_id: "hb_openai",
-    model_id: "gpt-5.1",
+    model_id: "gpt-5.4",
     model_client: {
       model_proxy_provider: "openai_compatible",
       api_key: "hbrt.v1.proxy-user-key",
@@ -43,7 +43,7 @@ function makeRequest(workspaceRoot: string) {
 }
 
 test("buildOpencodeProviderConfigPayload preserves only allowlisted headers", () => {
-  const payload = buildOpencodeProviderConfigPayload("hb_openai", "gpt-5.1", {
+  const payload = buildOpencodeProviderConfigPayload("hb_openai", "gpt-5.4", {
     model_proxy_provider: "openai_compatible",
     api_key: "hbrt.v1.proxy-user-key",
     base_url: "http://sandbox-runtime:3060/api/v1/model-proxy/openai/v1",
@@ -69,7 +69,7 @@ test("updateOpencodeConfig writes provider config and model selection", () => {
   assert.equal(result.provider_config_changed, true);
   assert.equal(result.model_selection_changed, false);
   const payload = JSON.parse(fs.readFileSync(path.join(workspaceRoot, "opencode.json"), "utf8"));
-  assert.equal(payload.model, "hb_openai/gpt-5.1");
+  assert.equal(payload.model, "hb_openai/gpt-5.4");
   assert.equal(payload.provider.hb_openai.options.baseURL, "http://sandbox-runtime:3060/api/v1/model-proxy/openai/v1");
 });
 
@@ -86,7 +86,7 @@ test("updateOpencodeConfig rewrites provider config when the stored top-level mo
   assert.equal(result.provider_config_changed, true);
   assert.equal(result.model_selection_changed, false);
   const payload = JSON.parse(fs.readFileSync(path.join(workspaceRoot, "opencode.json"), "utf8"));
-  assert.equal(payload.model, "hb_openai/gpt-5.1");
+  assert.equal(payload.model, "hb_openai/gpt-5.4");
 });
 
 test("runOpencodeConfigCli writes JSON response for a valid request", async () => {
