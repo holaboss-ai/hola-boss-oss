@@ -557,6 +557,36 @@ interface IntegrationUpdateConnectionPayload {
   account_label?: string;
 }
 
+interface OAuthAppConfigPayload {
+  provider_id: string;
+  client_id: string;
+  client_secret: string;
+  authorize_url: string;
+  token_url: string;
+  scopes: string[];
+  redirect_port: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface OAuthAppConfigListResponsePayload {
+  configs: OAuthAppConfigPayload[];
+}
+
+interface OAuthAppConfigUpsertPayload {
+  client_id: string;
+  client_secret: string;
+  authorize_url: string;
+  token_url: string;
+  scopes: string[];
+  redirect_port?: number;
+}
+
+interface OAuthAuthorizeResponsePayload {
+  authorize_url: string;
+  state: string;
+}
+
 contextBridge.exposeInMainWorld("electronAPI", {
   platform: process.platform,
   versions: {
@@ -721,6 +751,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:deleteIntegrationConnection", connectionId) as Promise<{ deleted: boolean }>,
     deleteIntegrationBinding: (bindingId: string, workspaceId: string) =>
       ipcRenderer.invoke("workspace:deleteIntegrationBinding", bindingId, workspaceId) as Promise<{ deleted: boolean }>,
+    listOAuthConfigs: () =>
+      ipcRenderer.invoke("workspace:listOAuthConfigs") as Promise<OAuthAppConfigListResponsePayload>,
+    upsertOAuthConfig: (providerId: string, payload: OAuthAppConfigUpsertPayload) =>
+      ipcRenderer.invoke("workspace:upsertOAuthConfig", providerId, payload) as Promise<OAuthAppConfigPayload>,
+    deleteOAuthConfig: (providerId: string) =>
+      ipcRenderer.invoke("workspace:deleteOAuthConfig", providerId) as Promise<{ deleted: boolean }>,
+    startOAuthFlow: (provider: string) =>
+      ipcRenderer.invoke("workspace:startOAuthFlow", provider) as Promise<OAuthAuthorizeResponsePayload>,
     onSessionStreamEvent: (listener: (payload: HolabossSessionStreamEventPayload) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, payload: HolabossSessionStreamEventPayload) => listener(payload);
       ipcRenderer.on("workspace:sessionStream", wrapped);

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Cable, Check, FileWarning, Link2, Loader2, Search, Trash2, Unplug } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Cable, Check, FileWarning, Link2, Loader2, Search, Settings, Trash2, Unplug } from "lucide-react";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 function normalizeErrorMessage(error: unknown) {
@@ -44,6 +44,33 @@ export function IntegrationsPane() {
   const [importLabel, setImportLabel] = useState("");
   const [importToken, setImportToken] = useState("");
 
+  const loadAll = useCallback(async () => {
+    setIsLoading(true);
+    setErrorMessage("");
+    try {
+      const [catalogResult, connectionsResult, bindingsResult] = await Promise.all([
+        window.electronAPI.workspace.listIntegrationCatalog(),
+        window.electronAPI.workspace.listIntegrationConnections(),
+        selectedWorkspaceId
+          ? window.electronAPI.workspace.listIntegrationBindings(selectedWorkspaceId)
+          : Promise.resolve({ bindings: [] as IntegrationBindingPayload[] }),
+      ]);
+      setCatalog(catalogResult);
+      setConnections(connectionsResult.connections);
+      setBindings(bindingsResult.bindings);
+      setSelectedProviderId((current) => {
+        if (current && catalogResult.providers.some((p) => p.provider_id === current)) {
+          return current;
+        }
+        return catalogResult.providers[0]?.provider_id || "";
+      });
+    } catch (error) {
+      setErrorMessage(normalizeErrorMessage(error));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [selectedWorkspaceId]);
+
   useEffect(() => {
     setCatalog(null);
     setConnections([]);
@@ -51,43 +78,8 @@ export function IntegrationsPane() {
     setSelectedProviderId("");
     setErrorMessage("");
 
-    let cancelled = false;
-
-    async function loadAll() {
-      setIsLoading(true);
-      setErrorMessage("");
-      try {
-        const [catalogResult, connectionsResult, bindingsResult] = await Promise.all([
-          window.electronAPI.workspace.listIntegrationCatalog(),
-          window.electronAPI.workspace.listIntegrationConnections(),
-          selectedWorkspaceId
-            ? window.electronAPI.workspace.listIntegrationBindings(selectedWorkspaceId)
-            : Promise.resolve({ bindings: [] as IntegrationBindingPayload[] }),
-        ]);
-        if (cancelled) return;
-        setCatalog(catalogResult);
-        setConnections(connectionsResult.connections);
-        setBindings(bindingsResult.bindings);
-        setSelectedProviderId((current) => {
-          if (current && catalogResult.providers.some((p) => p.provider_id === current)) {
-            return current;
-          }
-          return catalogResult.providers[0]?.provider_id || "";
-        });
-      } catch (error) {
-        if (!cancelled) {
-          setErrorMessage(normalizeErrorMessage(error));
-        }
-      } finally {
-        if (!cancelled) setIsLoading(false);
-      }
-    }
-
     void loadAll();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedWorkspaceId]);
+  }, [loadAll]);
 
   const enrichedProviders: EnrichedProvider[] = useMemo(() => {
     if (!catalog) return [];
@@ -115,6 +107,7 @@ export function IntegrationsPane() {
   const handleBindConnection = async (connectionId: string) => {
     if (!selectedWorkspaceId || !selectedProvider) return;
     setIsSaving(true);
+    setErrorMessage("");
     try {
       const binding = await window.electronAPI.workspace.upsertIntegrationBinding(
         selectedWorkspaceId,
@@ -140,6 +133,7 @@ export function IntegrationsPane() {
   const handleUnbind = async (bindingId: string) => {
     if (!selectedWorkspaceId) return;
     setIsSaving(true);
+    setErrorMessage("");
     try {
       await window.electronAPI.workspace.deleteIntegrationBinding(bindingId, selectedWorkspaceId);
       setBindings((prev) => prev.filter((b) => b.binding_id !== bindingId));
@@ -151,8 +145,9 @@ export function IntegrationsPane() {
   };
 
   const handleCreateConnection = async () => {
-    if (!selectedProvider || !importLabel.trim() || !importToken.trim()) return;
+    if (!selectedProvider || !importToken.trim()) return;
     setIsSaving(true);
+    setErrorMessage("");
     try {
       const runtimeConfig = await window.electronAPI.runtime.getConfig();
       const connection = await window.electronAPI.workspace.createIntegrationConnection({
@@ -176,10 +171,41 @@ export function IntegrationsPane() {
 
   const handleDisconnect = async (connectionId: string) => {
     setIsSaving(true);
+    setErrorMessage("");
     try {
       await window.electronAPI.workspace.deleteIntegrationConnection(connectionId);
       setConnections((prev) => prev.filter((c) => c.connection_id !== connectionId));
       setBindings((prev) => prev.filter((b) => b.connection_id !== connectionId));
+    } catch (error) {
+      setErrorMessage(normalizeErrorMessage(error));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleOAuthConnect = async () => {
+    if (!selectedProvider) return;
+    setIsSaving(true);
+    try {
+      await window.electronAPI.workspace.startOAuthFlow(selectedProvider.provider_id);
+      // Poll for new connection after OAuth completes in browser
+      setTimeout(() => void loadAll(), 5000);
+      setTimeout(() => void loadAll(), 10000);
+      setTimeout(() => void loadAll(), 15000);
+    } catch (error) {
+      setErrorMessage(normalizeErrorMessage(error));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleReconnect = async (connectionId: string) => {
+    setIsSaving(true);
+    try {
+      const updated = await window.electronAPI.workspace.updateIntegrationConnection(connectionId, {
+        status: "active",
+      });
+      setConnections((prev) => prev.map((c) => (c.connection_id === connectionId ? updated : c)));
     } catch (error) {
       setErrorMessage(normalizeErrorMessage(error));
     } finally {
@@ -303,7 +329,19 @@ export function IntegrationsPane() {
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => { setShowImportDialog(true); setImportLabel(""); setImportToken(""); }}
+                            onClick={handleOAuthConnect}
+                            className="rounded-[12px] border border-neon-green/35 bg-neon-green/8 px-3 py-1.5 text-[11px] font-medium text-neon-green transition-colors duration-200 hover:bg-neon-green/14"
+                          >
+                            Connect
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowImportDialog(true);
+                              setImportLabel("");
+                              setImportToken("");
+                              setErrorMessage("");
+                            }}
                             className="rounded-[12px] border border-neon-green/35 bg-neon-green/8 px-3 py-1.5 text-[11px] font-medium text-neon-green transition-colors duration-200 hover:bg-neon-green/14"
                           >
                             Import Token
@@ -333,9 +371,12 @@ export function IntegrationsPane() {
                           <input
                             value={importLabel}
                             onChange={(e) => setImportLabel(e.target.value)}
-                            placeholder="e.g. joshua@holaboss.ai"
+                            placeholder="Optional. e.g. joshua@holaboss.ai"
                             className="rounded-[12px] border border-panel-border/45 bg-panel-bg/40 px-3 py-2 text-[12px] text-text-main outline-none placeholder:text-text-dim/48"
                           />
+                          <span className="text-[11px] leading-5 text-text-dim/60">
+                            Leave blank to use a default connection name.
+                          </span>
                         </label>
                         <label className="grid gap-1">
                           <span className="text-[11px] text-text-dim/72">Token</span>
@@ -347,17 +388,25 @@ export function IntegrationsPane() {
                             className="rounded-[12px] border border-panel-border/45 bg-panel-bg/40 px-3 py-2 text-[12px] text-text-main outline-none placeholder:text-text-dim/48"
                           />
                         </label>
+                        {errorMessage ? (
+                          <div className="rounded-[14px] border border-rose-400/25 bg-rose-400/8 px-3 py-2 text-[12px] leading-6 text-rose-300">
+                            {errorMessage}
+                          </div>
+                        ) : null}
                         <div className="flex items-center justify-end gap-2">
                           <button
                             type="button"
-                            onClick={() => setShowImportDialog(false)}
+                            onClick={() => {
+                              setShowImportDialog(false);
+                              setErrorMessage("");
+                            }}
                             className="rounded-[12px] border border-panel-border/35 px-3 py-1.5 text-[11px] text-text-muted transition-colors duration-200 hover:bg-[var(--theme-hover-bg)]"
                           >
                             Cancel
                           </button>
                           <button
                             type="button"
-                            disabled={isSaving || !importLabel.trim() || !importToken.trim()}
+                            disabled={isSaving || !importToken.trim()}
                             onClick={handleCreateConnection}
                             className="rounded-[12px] border border-neon-green/35 bg-neon-green/8 px-3 py-1.5 text-[11px] font-medium text-neon-green transition-colors duration-200 hover:bg-neon-green/14 disabled:opacity-50"
                           >
@@ -406,6 +455,16 @@ export function IntegrationsPane() {
                                     </div>
                                   </div>
                                   <div className="flex shrink-0 items-center gap-2">
+                                    {conn.status !== "active" ? (
+                                      <button
+                                        type="button"
+                                        disabled={isSaving}
+                                        onClick={() => conn.auth_mode === "oauth_app" ? handleOAuthConnect() : handleReconnect(conn.connection_id)}
+                                        className="rounded-[12px] border border-amber-400/25 bg-amber-400/6 px-3 py-1.5 text-[11px] font-medium text-amber-400 transition-colors duration-200 hover:bg-amber-400/14 disabled:opacity-50"
+                                      >
+                                        Reconnect
+                                      </button>
+                                    ) : null}
                                     {selectedWorkspaceId && !isBound ? (
                                       <button
                                         type="button"
@@ -495,6 +554,15 @@ export function IntegrationsPane() {
                           Select a workspace to manage integration bindings.
                         </div>
                       )}
+
+                      {/* Developer */}
+                      <div className="rounded-[24px] border border-panel-border/35 bg-[var(--theme-subtle-bg)]">
+                        <div className="flex items-center gap-2 border-b border-panel-border/35 px-4 py-3">
+                          <Settings size={13} className="text-neon-green/86" />
+                          <span className="text-[11px] uppercase tracking-[0.16em] text-text-dim/76">Developer</span>
+                        </div>
+                        <OAuthConfigForm providerId={selectedProvider.provider_id} />
+                      </div>
                     </div>
                   </div>
                 </>
@@ -599,6 +667,115 @@ function EmptyState({
         </div>
         <div className="mt-3 text-[16px] font-medium text-text-main">{title}</div>
         <div className="mt-2 text-[12px] leading-6 text-text-muted/82">{detail}</div>
+      </div>
+    </div>
+  );
+}
+
+const OAUTH_DEFAULTS: Record<string, { authorizeUrl: string; tokenUrl: string; scopes: string[] }> = {
+  google: {
+    authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    scopes: ["https://www.googleapis.com/auth/gmail.modify", "https://www.googleapis.com/auth/spreadsheets"],
+  },
+  github: {
+    authorizeUrl: "https://github.com/login/oauth/authorize",
+    tokenUrl: "https://github.com/login/oauth/access_token",
+    scopes: ["repo", "read:org"],
+  },
+};
+
+function OAuthConfigForm({ providerId }: { providerId: string }) {
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasConfig, setHasConfig] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setIsLoading(true);
+      try {
+        const result = await window.electronAPI.workspace.listOAuthConfigs();
+        if (cancelled) return;
+        const config = result.configs.find((c) => c.provider_id === providerId);
+        if (config) {
+          setClientId(config.client_id);
+          setClientSecret("\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022");
+          setHasConfig(true);
+        } else {
+          setClientId("");
+          setClientSecret("");
+          setHasConfig(false);
+        }
+      } catch {
+        /* ignore */
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [providerId]);
+
+  const handleSave = async () => {
+    if (!clientId.trim()) return;
+    setIsSaving(true);
+    try {
+      const defaults = OAUTH_DEFAULTS[providerId];
+      await window.electronAPI.workspace.upsertOAuthConfig(providerId, {
+        client_id: clientId.trim(),
+        client_secret: clientSecret === "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" ? "" : clientSecret.trim(),
+        authorize_url: defaults?.authorizeUrl ?? "",
+        token_url: defaults?.tokenUrl ?? "",
+        scopes: defaults?.scopes ?? [],
+      });
+      setHasConfig(true);
+    } catch {
+      /* ignore */
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (isLoading) return <div className="p-4 text-[11px] text-text-dim/68">Loading...</div>;
+
+  return (
+    <div className="grid gap-3 p-4">
+      <div className="text-[12px] text-text-muted/82">
+        {hasConfig ? "OAuth app configured." : "Configure your own OAuth app credentials."}
+      </div>
+      <label className="grid gap-1">
+        <span className="text-[11px] text-text-dim/72">Client ID</span>
+        <input
+          value={clientId}
+          onChange={(e) => setClientId(e.target.value)}
+          placeholder="OAuth Client ID"
+          className="rounded-[12px] border border-panel-border/45 bg-panel-bg/40 px-3 py-2 text-[12px] text-text-main outline-none placeholder:text-text-dim/48"
+        />
+      </label>
+      <label className="grid gap-1">
+        <span className="text-[11px] text-text-dim/72">Client Secret</span>
+        <input
+          type="password"
+          value={clientSecret}
+          onChange={(e) => setClientSecret(e.target.value)}
+          placeholder="OAuth Client Secret"
+          className="rounded-[12px] border border-panel-border/45 bg-panel-bg/40 px-3 py-2 text-[12px] text-text-main outline-none placeholder:text-text-dim/48"
+        />
+      </label>
+      <div className="flex justify-end">
+        <button
+          type="button"
+          disabled={isSaving || !clientId.trim()}
+          onClick={handleSave}
+          className="rounded-[12px] border border-neon-green/35 bg-neon-green/8 px-3 py-1.5 text-[11px] font-medium text-neon-green transition-colors duration-200 hover:bg-neon-green/14 disabled:opacity-50"
+        >
+          {isSaving ? "Saving..." : hasConfig ? "Update" : "Save"}
+        </button>
       </div>
     </div>
   );

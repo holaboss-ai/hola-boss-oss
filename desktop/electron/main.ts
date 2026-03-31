@@ -1497,6 +1497,36 @@ interface IntegrationUpdateConnectionPayload {
   account_label?: string;
 }
 
+interface OAuthAppConfigPayload {
+  provider_id: string;
+  client_id: string;
+  client_secret: string;
+  authorize_url: string;
+  token_url: string;
+  scopes: string[];
+  redirect_port: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface OAuthAppConfigListResponsePayload {
+  configs: OAuthAppConfigPayload[];
+}
+
+interface OAuthAppConfigUpsertPayload {
+  client_id: string;
+  client_secret: string;
+  authorize_url: string;
+  token_url: string;
+  scopes: string[];
+  redirect_port?: number;
+}
+
+interface OAuthAuthorizeResponsePayload {
+  authorize_url: string;
+  state: string;
+}
+
 interface SessionRuntimeRecordPayload {
   workspace_id: string;
   session_id: string;
@@ -3974,6 +4004,49 @@ async function deleteIntegrationConnection(
     method: "DELETE",
     path: `/api/v1/integrations/connections/${encodeURIComponent(connectionId)}`,
   });
+}
+
+async function listOAuthConfigs(): Promise<OAuthAppConfigListResponsePayload> {
+  return requestRuntimeJson<OAuthAppConfigListResponsePayload>({
+    method: "GET",
+    path: "/api/v1/integrations/oauth/configs",
+  });
+}
+
+async function upsertOAuthConfig(
+  providerId: string,
+  payload: OAuthAppConfigUpsertPayload,
+): Promise<OAuthAppConfigPayload> {
+  return requestRuntimeJson<OAuthAppConfigPayload>({
+    method: "PUT",
+    path: `/api/v1/integrations/oauth/configs/${encodeURIComponent(providerId)}`,
+    payload,
+  });
+}
+
+async function deleteOAuthConfig(
+  providerId: string,
+): Promise<{ deleted: boolean }> {
+  return requestRuntimeJson<{ deleted: boolean }>({
+    method: "DELETE",
+    path: `/api/v1/integrations/oauth/configs/${encodeURIComponent(providerId)}`,
+  });
+}
+
+async function startOAuthFlow(
+  provider: string,
+): Promise<OAuthAuthorizeResponsePayload> {
+  const runtimeConfig = await readRuntimeConfigFile();
+  const userId = (runtimeConfig.user_id || "").trim() || "local";
+  const result = await requestRuntimeJson<OAuthAuthorizeResponsePayload>({
+    method: "POST",
+    path: "/api/v1/integrations/oauth/authorize",
+    payload: { provider, owner_user_id: userId },
+  });
+  if (result.authorize_url) {
+    shell.openExternal(result.authorize_url);
+  }
+  return result;
 }
 
 async function enqueueRemoteDemoTaskProposal(
@@ -10463,6 +10536,29 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, connectionId: string) =>
       deleteIntegrationConnection(connectionId),
+  );
+  handleTrustedIpc(
+    "workspace:listOAuthConfigs",
+    ["main"],
+    async () => listOAuthConfigs(),
+  );
+  handleTrustedIpc(
+    "workspace:upsertOAuthConfig",
+    ["main"],
+    async (_event, providerId: string, payload: OAuthAppConfigUpsertPayload) =>
+      upsertOAuthConfig(providerId, payload),
+  );
+  handleTrustedIpc(
+    "workspace:deleteOAuthConfig",
+    ["main"],
+    async (_event, providerId: string) =>
+      deleteOAuthConfig(providerId),
+  );
+  handleTrustedIpc(
+    "workspace:startOAuthFlow",
+    ["main"],
+    async (_event, provider: string) =>
+      startOAuthFlow(provider),
   );
   ipcMain.handle(
     "browser:setActiveWorkspace",
