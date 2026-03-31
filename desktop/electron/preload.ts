@@ -395,7 +395,9 @@ interface HolabossClientConfigPayload {
 
 interface HolabossCreateWorkspacePayload {
   holaboss_user_id: string;
+  harness?: string | null;
   name: string;
+  template_mode?: "template" | "empty" | "empty_onboarding" | null;
   template_root_path?: string | null;
   template_name?: string | null;
   template_ref?: string | null;

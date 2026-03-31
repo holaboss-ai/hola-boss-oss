@@ -72,34 +72,12 @@ SCHEMA_VERSION="${HOLABOSS_RUNTIME_SCHEMA_VERSION:-1}"
 BUILD_TIMESTAMP_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 rm -rf "${OUTPUT_ROOT}"
-mkdir -p "${OUTPUT_ROOT}/bin"
 
 stage_source_package "${RUNTIME_ROOT}/harnesses" "harnesses"
 stage_node_package "${RUNTIME_ROOT}/harness-host" "harness-host"
 stage_node_package "${RUNTIME_ROOT}/state-store" "state-store"
 stage_node_package "${RUNTIME_ROOT}/api-server" "api-server"
 cp -R "${SCRIPT_DIR}/bootstrap" "${OUTPUT_ROOT}/bootstrap"
-
-cat > "${OUTPUT_ROOT}/bin/hb" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-RUNTIME_APP_ROOT="${HOLABOSS_RUNTIME_APP_ROOT:-/app}"
-RUNTIME_NODE_BIN="${HOLABOSS_RUNTIME_NODE_BIN:-node}"
-RUNTIME_TS_HB="${RUNTIME_APP_ROOT%/}/api-server/dist/hb.mjs"
-
-if [ ! -f "${RUNTIME_TS_HB}" ]; then
-  echo "runtime hb entrypoint not found: ${RUNTIME_TS_HB}" >&2
-  exit 1
-fi
-if ! command -v "${RUNTIME_NODE_BIN}" >/dev/null 2>&1; then
-  echo "runtime node binary not found: ${RUNTIME_NODE_BIN}" >&2
-  exit 1
-fi
-
-exec "${RUNTIME_NODE_BIN}" "${RUNTIME_TS_HB}" "$@"
-EOF
-chmod +x "${OUTPUT_ROOT}/bin/hb"
 chmod +x "${OUTPUT_ROOT}/bootstrap/"*.sh
 
 cat > "${OUTPUT_ROOT}/metadata.json" <<EOF

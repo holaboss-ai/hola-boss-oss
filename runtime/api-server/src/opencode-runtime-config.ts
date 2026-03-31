@@ -218,6 +218,37 @@ function opencodeToolNameFromMcpServerAndTool(serverId: string, toolName: string
   return `${serverId}_${toolName}`;
 }
 
+function appendToolExecutionGuidance(
+  systemPrompt: string,
+  request: Pick<
+    AgentRuntimeConfigCliRequest,
+    "default_tools" | "extra_tools" | "workspace_skill_ids" | "resolved_mcp_tool_refs"
+  >
+): string {
+  const builtinOrExtraTools = [...request.default_tools, ...request.extra_tools]
+    .map((toolName) => toolName.trim())
+    .filter(Boolean);
+  const hasSkills = (request.workspace_skill_ids ?? []).length > 0;
+  const hasMcpTools = request.resolved_mcp_tool_refs.length > 0;
+  if (builtinOrExtraTools.length === 0 && !hasSkills && !hasMcpTools) {
+    return systemPrompt.trim();
+  }
+
+  const lines = [
+    systemPrompt.trim(),
+    "",
+    "Tool execution guidance:",
+    "When available tools or connected MCP servers can inspect, verify, retrieve, or complete the task, use them instead of answering only with raw text.",
+    "Prefer concrete tool results over guesses, especially for code, files, workspace state, app state, or live integrations.",
+    "If you claim that you checked, changed, ran, or verified something, use the relevant tool first.",
+    "Respond directly without tool calls only when the request is purely conversational or explanatory and tools would not improve the outcome."
+  ];
+  if (hasMcpTools) {
+    lines.push("When a connected MCP tool is relevant, invoke it directly instead of describing what it would do or return.");
+  }
+  return lines.join("\n").trim();
+}
+
 function appendOpencodeMcpToolAliasGuidance(
   systemPrompt: string,
   resolvedMcpToolRefs: AgentRuntimeConfigCliRequest["resolved_mcp_tool_refs"]
@@ -333,6 +364,7 @@ export function projectAgentRuntimeConfig(
   } else {
     throw new Error(`unsupported general runtime mode: ${request.general_type}`);
   }
+  systemPrompt = appendToolExecutionGuidance(systemPrompt, request);
   systemPrompt = appendOpencodeMcpToolAliasGuidance(systemPrompt, request.resolved_mcp_tool_refs);
 
   const [providerId, modelId] = resolveOpencodeProviderAndModel(selectedModel, request.default_provider_id);

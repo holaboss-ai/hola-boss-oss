@@ -36,6 +36,7 @@ import type {
   RunnerOutputEventPayload,
 } from "./contracts.js";
 import { resolvePiDesktopBrowserExtensionFactory } from "./pi-browser-tools.js";
+import { resolvePiRuntimeToolDefinitions } from "./pi-runtime-tools.js";
 
 export type PiMappedEvent = {
   event_type: RunnerEventType;
@@ -944,6 +945,10 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     ? SessionManager.open(persistedSessionFile)
     : SessionManager.create(request.workspace_dir, sessionDir);
   const mcpToolset = await createPiMcpToolset(request);
+  const runtimeTools = await resolvePiRuntimeToolDefinitions({
+    runtimeApiBaseUrl: request.runtime_api_base_url,
+    workspaceId: request.workspace_id,
+  });
 
   let session: AgentSession;
   try {
@@ -962,7 +967,7 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
         createFindTool(request.workspace_dir),
         createLsTool(request.workspace_dir),
       ],
-      customTools: mcpToolset.customTools,
+      customTools: [...runtimeTools, ...mcpToolset.customTools],
     }));
   } catch (error) {
     await mcpToolset.runtime?.close();

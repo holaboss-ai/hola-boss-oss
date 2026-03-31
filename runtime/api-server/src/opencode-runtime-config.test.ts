@@ -45,6 +45,9 @@ test("projectOpencodeRuntimeConfig maps builtin tools, workspace tools, and skil
     assert.equal(result.provider_id, "hb_openai");
     assert.equal(result.model_id, "gpt-5.2");
     assert.match(result.system_prompt, /^You are concise\./);
+    assert.match(result.system_prompt, /Tool execution guidance:/);
+    assert.match(result.system_prompt, /use them instead of answering only with raw text/i);
+    assert.match(result.system_prompt, /invoke it directly instead of describing what it would do or return/i);
     assert.match(result.system_prompt, /MCP tool naming:/);
     assert.match(result.system_prompt, /workspace\.read_file -> workspace_read_file/);
     assert.match(result.system_prompt, /remote\.lookup -> remote_lookup/);
@@ -103,6 +106,7 @@ test("projectOpencodeRuntimeConfig composes team prompt and resolves anthropic p
     assert.equal(result.model_id, "claude-sonnet-4-5");
     assert.equal(result.model_client.model_proxy_provider, "anthropic_native");
     assert.equal(result.model_client.base_url, "https://runtime.example/api/v1/model-proxy/anthropic/v1");
+    assert.match(result.system_prompt, /Tool execution guidance:/);
     assert.match(result.system_prompt, /Coordinator instructions:/);
     assert.match(result.system_prompt, /Member guidance:/);
     assert.match(result.system_prompt, /writer \(writer\):/);

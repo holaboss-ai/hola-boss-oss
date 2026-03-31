@@ -14,6 +14,7 @@ import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 type ChatAttachment = SessionInputAttachmentPayload;
+type ChatPaneVariant = "default" | "onboarding";
 
 interface ChatMessage {
   id: string;
@@ -250,6 +251,34 @@ function runtimeStateErrorDetail(value: unknown): string {
     }
   }
   return "The run failed.";
+}
+
+function onboardingStatusLabel(value: string | null | undefined) {
+  const normalized = (value || "").trim().toLowerCase();
+  if (normalized === "awaiting_confirmation") {
+    return "Awaiting confirmation";
+  }
+  if (normalized === "in_progress") {
+    return "In progress";
+  }
+  if (normalized === "completed") {
+    return "Completed";
+  }
+  return "Pending";
+}
+
+function onboardingStatusTone(value: string | null | undefined) {
+  const normalized = (value || "").trim().toLowerCase();
+  if (normalized === "awaiting_confirmation") {
+    return "border-[rgba(247,170,126,0.22)] bg-[rgba(247,170,126,0.1)] text-[rgba(224,146,103,0.96)]";
+  }
+  if (normalized === "in_progress") {
+    return "border-neon-green/30 bg-neon-green/10 text-neon-green";
+  }
+  if (normalized === "completed") {
+    return "border-[rgba(92,180,120,0.22)] bg-[rgba(92,180,120,0.08)] text-[rgba(118,196,144,0.94)]";
+  }
+  return "border-[rgba(247,90,84,0.22)] bg-[rgba(247,90,84,0.08)] text-[rgba(206,92,84,0.94)]";
 }
 
 function startCase(value: string) {
@@ -547,10 +576,12 @@ function isNearChatBottom(container: HTMLDivElement) {
 
 export function ChatPane({
   onOutputsChanged,
-  focusRequestKey = 0
+  focusRequestKey = 0,
+  variant = "default"
 }: {
   onOutputsChanged?: () => void;
   focusRequestKey?: number;
+  variant?: ChatPaneVariant;
 }) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const authSessionState = useDesktopAuthSession();
@@ -598,6 +629,7 @@ export function ChatPane({
   const pendingInputIdRef = useRef<string | null>(null);
   const seenMainDebugKeysRef = useRef<Set<string>>(new Set());
   const selectedWorkspaceRef = useRef<WorkspaceRecordPayload | null>(null);
+  const isOnboardingVariant = variant === "onboarding";
   const pendingFocusRequestKeyRef = useRef<number | null>(focusRequestKey);
   const liveAssistantTextRef = useRef("");
   const liveThinkingTextRef = useRef("");
@@ -908,39 +940,79 @@ export function ChatPane({
           }
         }
 
-        setMessages(
-          history.messages
-            .map((message) => {
-              const attachments = attachmentsFromMetadata(message.metadata);
-              const nextMessage: ChatMessage = {
-                id: message.id || `history-${message.created_at ?? crypto.randomUUID()}`,
-                role: message.role as ChatMessage["role"],
-                text: message.text,
-                attachments
-              };
+        const nextMessages = history.messages
+          .map((message) => {
+            const attachments = attachmentsFromMetadata(message.metadata);
+            const nextMessage: ChatMessage = {
+              id: message.id || `history-${message.created_at ?? crypto.randomUUID()}`,
+              role: message.role as ChatMessage["role"],
+              text: message.text,
+              attachments
+            };
 
-              if (nextMessage.role === "assistant") {
-                const inputId = inputIdFromMessageId(nextMessage.id, "assistant");
-                if (inputId) {
-                  const restoredAssistantState = assistantHistoryStateFromOutputEvents(outputEventsByInputId.get(inputId) ?? []);
-                  if (restoredAssistantState.thinkingText) {
-                    nextMessage.thinkingText = restoredAssistantState.thinkingText;
-                  }
-                  if (restoredAssistantState.traceSteps) {
-                    nextMessage.traceSteps = restoredAssistantState.traceSteps;
-                  }
+            if (nextMessage.role === "assistant") {
+              const inputId = inputIdFromMessageId(nextMessage.id, "assistant");
+              if (inputId) {
+                const restoredAssistantState = assistantHistoryStateFromOutputEvents(outputEventsByInputId.get(inputId) ?? []);
+                if (restoredAssistantState.thinkingText) {
+                  nextMessage.thinkingText = restoredAssistantState.thinkingText;
+                }
+                if (restoredAssistantState.traceSteps) {
+                  nextMessage.traceSteps = restoredAssistantState.traceSteps;
                 }
               }
+            }
 
-              return nextMessage;
-            })
-            .filter(
-              (message) =>
-                (message.role === "user" || message.role === "assistant") &&
-                hasRenderableMessageContent(message.text, message.attachments ?? [])
-            )
-        );
+            return nextMessage;
+          })
+          .filter(
+            (message) =>
+              (message.role === "user" || message.role === "assistant") &&
+              hasRenderableMessageContent(message.text, message.attachments ?? [])
+          );
+
+        setMessages(nextMessages);
         resetLiveTurn();
+
+        const onboardingSessionId = (selectedWorkspaceRef.current?.onboarding_session_id || "").trim();
+        const currentRuntimeState = runtimeStates.items.find((item) => item.session_id === nextSessionId);
+        const hasAssistantMessage = nextMessages.some((message) => message.role === "assistant");
+        const shouldAttachOnboardingBootstrapStream =
+          isOnboardingVariant &&
+          nextSessionId === onboardingSessionId &&
+          !hasAssistantMessage &&
+          !activeStreamIdRef.current &&
+          !pendingInputIdRef.current &&
+          ["BUSY", "QUEUED"].includes(runtimeStateStatus(currentRuntimeState?.status));
+
+        if (shouldAttachOnboardingBootstrapStream) {
+          setIsResponding(true);
+          setLiveAgentStatus("Preparing first question...");
+          setChatErrorMessage("");
+          const stream = await window.electronAPI.workspace.openSessionOutputStream({
+            sessionId: nextSessionId,
+            workspaceId: selectedWorkspaceId,
+            includeHistory: true,
+            stopOnTerminal: true
+          });
+          if (cancelled) {
+            await closeStreamWithReason(stream.streamId, "load_history_cancelled").catch(() => undefined);
+            return;
+          }
+          activeStreamIdRef.current = stream.streamId;
+          appendStreamTelemetry({
+            streamId: stream.streamId,
+            transportType: "client",
+            eventName: "openSessionOutputStream",
+            eventType: "stream_open_onboarding_bootstrap",
+            inputId: "",
+            sessionId: nextSessionId,
+            action: "stream_requested_onboarding_bootstrap",
+            detail: "attached to in-flight onboarding opener"
+          });
+        } else if (!activeStreamIdRef.current && !pendingInputIdRef.current) {
+          setIsResponding(false);
+        }
       } catch (error) {
         if (!cancelled) {
           setChatErrorMessage(normalizeErrorMessage(error));
@@ -957,6 +1029,7 @@ export function ChatPane({
       cancelled = true;
     };
   }, [
+    isOnboardingVariant,
     selectedWorkspaceId,
     selectedWorkspace?.main_session_id,
     selectedWorkspace?.onboarding_session_id,
@@ -1464,7 +1537,7 @@ export function ChatPane({
       setChatErrorMessage("Sign in or set a runtime user id first.");
       return;
     }
-    if (!workspaceAppsReady) {
+    if (!isOnboardingVariant && !workspaceAppsReady) {
       setChatErrorMessage(workspaceBlockingReason || "Workspace apps are still starting.");
       return;
     }
@@ -1719,9 +1792,13 @@ export function ChatPane({
   };
 
   const assistantLabel = "Holaboss";
-  const assistantMode = assistantMetaLabel(selectedWorkspace?.harness, runtimeConfig?.defaultModel);
-  const hasMessages = messages.length > 0 || Boolean(liveAssistantText) || Boolean(liveThinkingText) || liveTraceSteps.length > 0;
+  const assistantMode = isOnboardingVariant
+    ? "workspace setup"
+    : assistantMetaLabel(selectedWorkspace?.harness, runtimeConfig?.defaultModel);
   const showLiveAssistantTurn = isResponding || Boolean(liveAssistantText) || Boolean(liveThinkingText) || liveTraceSteps.length > 0;
+  const hasMessages =
+    messages.length > 0 ||
+    showLiveAssistantTurn;
   const streamTelemetryTail = useMemo(() => streamTelemetry.slice(-80).reverse(), [streamTelemetry]);
   const pendingAttachmentItems = useMemo(
     () =>
@@ -1739,7 +1816,7 @@ export function ChatPane({
     [pendingAttachments]
   );
   const readinessMessage =
-    !selectedWorkspace || workspaceAppsReady
+    !selectedWorkspace || isOnboardingVariant || workspaceAppsReady
       ? ""
       : workspaceBlockingReason || (isActivatingWorkspace ? "Preparing workspace apps..." : "Workspace apps are still starting.");
   const composerDisabledReason = !selectedWorkspace
@@ -1748,7 +1825,7 @@ export function ChatPane({
       ? "Sign in or set a runtime user id first."
     : isLoadingBootstrap || isLoadingHistory
       ? "Loading workspace context..."
-      : !workspaceAppsReady
+      : !isOnboardingVariant && !workspaceAppsReady
         ? readinessMessage || "Workspace apps are still starting."
         : "";
   const composerDisabled = Boolean(composerDisabledReason);
@@ -1791,6 +1868,9 @@ export function ChatPane({
   const modelSelectionUnavailableReason = holabossProxyModelsAvailable
     ? ""
     : "Sign in to use Holaboss models";
+  const textareaPlaceholder = isOnboardingVariant
+    ? "Answer the onboarding prompt or share setup details"
+    : "Ask anything";
   const chatScrollRange = Math.max(0, chatScrollMetrics.scrollHeight - chatScrollMetrics.clientHeight);
   const showCustomChatScrollbar = hasMessages && chatScrollMetrics.clientHeight > 0 && chatScrollRange > 1;
   const chatScrollbarRailInset = composerBlockHeight > 0 ? composerBlockHeight / 2 : 0;
@@ -1865,9 +1945,36 @@ export function ChatPane({
   }, [hasMessages]);
 
   return (
-    <PaneCard className="shadow-glow">
+    <PaneCard className={isOnboardingVariant ? "w-full shadow-glow border-[rgba(247,90,84,0.2)]" : "w-full shadow-glow"}>
       <div className="relative flex h-full min-h-0 min-w-0 flex-col">
         <div className="theme-chat-composer-glow pointer-events-none absolute inset-x-8 bottom-0 h-44 rounded-[var(--theme-radius-pill)] blur-2xl" />
+
+        {isOnboardingVariant && selectedWorkspace ? (
+          <div className="shrink-0 px-4 pt-4 sm:px-5">
+            <div className="theme-subtle-surface overflow-hidden rounded-[22px] border border-[rgba(247,90,84,0.2)] shadow-[0_24px_60px_rgba(233,117,109,0.08)]">
+              <div className="bg-[radial-gradient(circle_at_top_left,rgba(247,90,84,0.12),transparent_42%),radial-gradient(circle_at_92%_12%,rgba(247,170,126,0.12),transparent_36%)] px-4 py-4 sm:px-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[rgba(206,92,84,0.88)]">
+                      Workspace onboarding
+                    </div>
+                    <div className="mt-2 text-[22px] font-semibold tracking-[-0.04em] text-text-main">
+                      {selectedWorkspace.name.trim() || "Workspace setup"}
+                    </div>
+                  </div>
+
+                  <div
+                    className={`inline-flex shrink-0 items-center rounded-full border px-3 py-1 text-[10px] font-medium uppercase tracking-[0.16em] ${onboardingStatusTone(
+                      selectedWorkspace.onboarding_status
+                    )}`}
+                  >
+                    {onboardingStatusLabel(selectedWorkspace.onboarding_status)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {chatErrorMessage || verboseTelemetryEnabled ? (
           <div className="shrink-0 px-4 pt-3 sm:px-5">
@@ -1965,11 +2072,18 @@ export function ChatPane({
                 <div className="w-full px-4 pb-10 pt-10 sm:px-5">
                   <div className="mx-auto mb-6 max-w-[560px] text-center">
                     <div className="text-[22px] font-semibold tracking-[-0.02em] text-text-main/90">
-                      {isLoadingBootstrap || isLoadingHistory ? "Loading workspace context" : "Ask the workspace agent"}
+                      {isLoadingBootstrap || isLoadingHistory
+                        ? "Loading workspace context"
+                        : isOnboardingVariant
+                          ? "Complete workspace onboarding"
+                          : "Ask the workspace agent"}
                     </div>
                     <div className="mt-3 text-[13px] leading-7 text-text-muted/68">
                       {selectedWorkspace
-                        ? readinessMessage || "Messages are queued into the local runtime workspace flow, then streamed back from the live session output feed."
+                        ? readinessMessage ||
+                          (isOnboardingVariant
+                            ? "Follow the setup conversation here. The agent will use the workspace guide to ask only onboarding questions and capture durable setup facts."
+                            : "Messages are queued into the local runtime workspace flow, then streamed back from the live session output feed.")
                         : "Pick a template, create a workspace, and then send the first instruction."}
                     </div>
                   </div>
@@ -1987,6 +2101,8 @@ export function ChatPane({
                       modelOptions={availableChatModelOptions}
                       runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
                       modelSelectionUnavailableReason={modelSelectionUnavailableReason}
+                      placeholder={textareaPlaceholder}
+                      showModelSelector={!isOnboardingVariant}
                       onModelChange={setChatModelPreference}
                       textareaRef={textareaRef}
                       fileInputRef={fileInputRef}
@@ -2032,6 +2148,8 @@ export function ChatPane({
                   modelOptions={availableChatModelOptions}
                   runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
                   modelSelectionUnavailableReason={modelSelectionUnavailableReason}
+                  placeholder={textareaPlaceholder}
+                  showModelSelector={!isOnboardingVariant}
                   onModelChange={setChatModelPreference}
                   textareaRef={textareaRef}
                   fileInputRef={fileInputRef}
@@ -2068,6 +2186,8 @@ interface ComposerProps {
   modelOptions: Array<{ value: string; label: string }>;
   runtimeDefaultModelAvailable: boolean;
   modelSelectionUnavailableReason: string;
+  placeholder: string;
+  showModelSelector: boolean;
   onModelChange: (value: string) => void;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   fileInputRef: RefObject<HTMLInputElement | null>;
@@ -2383,6 +2503,8 @@ function Composer({
   modelOptions,
   runtimeDefaultModelAvailable,
   modelSelectionUnavailableReason,
+  placeholder,
+  showModelSelector,
   onModelChange,
   textareaRef,
   fileInputRef,
@@ -2479,13 +2601,14 @@ function Composer({
           onKeyDown={onKeyDown}
           rows={1}
           disabled={disabled}
-          placeholder={disabled ? disabledReason || "Chat unavailable right now" : "Ask anything"}
+          placeholder={disabled ? disabledReason || "Chat unavailable right now" : placeholder}
           className="composer-input block max-h-[220px] min-h-[76px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-7 text-text-main/92 outline-none placeholder:text-text-muted/42 disabled:cursor-not-allowed disabled:opacity-55"
         />
       </div>
 
       <div className="flex items-center justify-between gap-2 border-t border-panel-border/20 px-3 py-3 text-text-muted/72">
-        <div className="relative w-[172px] shrink-0 sm:w-[208px]">
+        {showModelSelector ? (
+          <div className="relative w-[172px] shrink-0 sm:w-[208px]">
             <select
               value={selectedModel}
               onChange={(event) => onModelChange(event.target.value)}
@@ -2517,7 +2640,12 @@ function Composer({
               size={14}
               className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-dim/70"
             />
-        </div>
+          </div>
+        ) : (
+          <div className="text-[11px] leading-6 text-text-dim/72">
+            Responses here stay in the workspace onboarding thread.
+          </div>
+        )}
 
         <div className="ml-auto flex items-center gap-2">
           <button

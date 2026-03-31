@@ -50,18 +50,8 @@ const OVERFLOW_POPUP_WIDTH = 220;
 const OVERFLOW_POPUP_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MIN_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MAX_HEIGHT = 320;
-const APP_THEMES = new Set([
-  "holaboss",
-  "emerald",
-  "cobalt",
-  "ember",
-  "glacier",
-  "mono",
-  "claude",
-  "slate",
-  "paper",
-  "graphite",
-]);
+const MAIN_WINDOW_CLOSED_LISTENER_BUFFER = 16;
+const APP_THEMES = new Set(["holaboss", "emerald", "cobalt", "ember", "glacier", "mono", "claude", "slate", "paper", "graphite"]);
 const GITHUB_RELEASES_OWNER = "holaboss-ai";
 const GITHUB_RELEASES_REPO = "hola-boss-oss";
 const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
@@ -323,6 +313,7 @@ let historyPopupWindow: BrowserWindow | null = null;
 let overflowPopupWindow: BrowserWindow | null = null;
 let browserPopupWindow: BrowserWindow | null = null;
 let addressSuggestionsPopupWindow: BrowserWindow | null = null;
+const browserPopupCleanupBound = new WeakSet<BrowserWindow>();
 let currentTheme = "holaboss";
 let browserBounds: BrowserBoundsPayload = { x: 0, y: 0, width: 0, height: 0 };
 let overflowAnchorBounds: BrowserAnchorBoundsPayload | null = null;
@@ -1711,7 +1702,7 @@ interface HolabossCreateWorkspacePayload {
   holaboss_user_id: string;
   harness?: string | null;
   name: string;
-  template_mode?: "template" | "empty" | null;
+  template_mode?: "template" | "empty" | "empty_onboarding" | null;
   template_root_path?: string | null;
   template_name?: string | null;
   template_ref?: string | null;
@@ -1867,6 +1858,80 @@ function runtimeDatabasePath() {
 
 function runtimeWorkspaceRoot() {
   return path.join(runtimeSandboxRoot(), "workspace");
+}
+
+function opencodeSidecarStatePath(workspaceDir: string) {
+  return path.join(workspaceDir, ".holaboss", "opencode-sidecar-state.json");
+}
+
+function processIsAlive(pid: number) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function terminatePid(pid: number, signal: NodeJS.Signals) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return;
+  }
+  try {
+    process.kill(pid, signal);
+  } catch {
+    // ignore
+  }
+}
+
+async function stopEmbeddedRuntimeOpencodeSidecars() {
+  let workspaceEntries: import("node:fs").Dirent[] = [];
+  try {
+    workspaceEntries = await fs.readdir(runtimeWorkspaceRoot(), { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  const sidecarPids = new Set<number>();
+  const statePaths: string[] = [];
+
+  for (const entry of workspaceEntries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const statePath = opencodeSidecarStatePath(path.join(runtimeWorkspaceRoot(), entry.name));
+    statePaths.push(statePath);
+    try {
+      const payload = JSON.parse(await fs.readFile(statePath, "utf-8")) as {
+        sidecar?: { pid?: unknown };
+      };
+      const pid = Number(payload?.sidecar?.pid ?? 0);
+      if (Number.isInteger(pid) && pid > 0) {
+        sidecarPids.add(pid);
+      }
+    } catch {
+      // ignore malformed or missing state
+    }
+  }
+
+  for (const pid of Array.from(sidecarPids).sort((left, right) => left - right)) {
+    terminatePid(pid, "SIGTERM");
+  }
+
+  if (sidecarPids.size > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+
+  for (const pid of Array.from(sidecarPids).sort((left, right) => left - right)) {
+    if (processIsAlive(pid)) {
+      terminatePid(pid, "SIGKILL");
+    }
+  }
+
+  await Promise.all(statePaths.map((statePath) => fs.rm(statePath, { force: true }).catch(() => undefined)));
 }
 
 function utcNowIso() {
@@ -4899,10 +4964,8 @@ function normalizeRequestedWorkspaceHarness(
   throw new Error(`Unsupported workspace harness '${value}'.`);
 }
 
-function requestedWorkspaceTemplateMode(
-  payload: HolabossCreateWorkspacePayload,
-): "template" | "empty" {
-  return payload.template_mode === "empty" ? "empty" : "template";
+function requestedWorkspaceTemplateMode(payload: HolabossCreateWorkspacePayload): "template" | "empty" {
+  return payload.template_mode === "empty" || payload.template_mode === "empty_onboarding" ? "empty" : "template";
 }
 
 function workspaceDirectoryPath(workspaceId: string) {
@@ -5944,9 +6007,35 @@ function renderEmptyWorkspaceYaml() {
   ].join("\n");
 }
 
-async function createWorkspace(
-  payload: HolabossCreateWorkspacePayload,
-): Promise<WorkspaceResponsePayload> {
+function renderEmptyOnboardingGuide() {
+  return [
+    "# Workspace Onboarding",
+    "",
+    "Use this conversation to set up the workspace before regular execution starts.",
+    "",
+    "## Objectives",
+    "",
+    "- Ask concise questions to understand what this workspace is for.",
+    "- Capture durable facts, preferences, and constraints.",
+    "- Do not start execution work until onboarding is complete.",
+    "",
+    "## Gather",
+    "",
+    "- Primary goal for this workspace",
+    "- Preferred outputs or deliverables",
+    "- Style or tone preferences",
+    "- Tools, accounts, or apps that matter",
+    "- Constraints, deadlines, or things to avoid",
+    "",
+    "## Completion",
+    "",
+    "- Summarize the durable facts you collected.",
+    "- Ask the user to confirm the summary is correct.",
+    "- When the user confirms, request onboarding completion."
+  ].join("\n");
+}
+
+async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise<WorkspaceResponsePayload> {
   await ensureRuntimeBindingReadyForWorkspaceFlow("workspace_create");
   const mainSessionId = crypto.randomUUID();
   const harness = normalizeRequestedWorkspaceHarness(payload.harness);
@@ -6039,14 +6128,15 @@ async function createWorkspace(
     const workspaceDir = workspaceDirectoryPath(workspaceId);
     const workspaceAgentsPath = path.join(workspaceDir, "AGENTS.md");
     const workspaceYamlPath = path.join(workspaceDir, "workspace.yaml");
+    const workspaceOnboardPath = path.join(workspaceDir, "ONBOARD.md");
+    const wantsEmptyOnboardingScaffold = payload.template_mode === "empty_onboarding";
     if (templateMode === "empty") {
       await fs.mkdir(path.join(workspaceDir, "skills"), { recursive: true });
       await fs.writeFile(workspaceAgentsPath, "", "utf-8");
-      await fs.writeFile(
-        workspaceYamlPath,
-        `${renderEmptyWorkspaceYaml()}\n`,
-        "utf-8",
-      );
+      await fs.writeFile(workspaceYamlPath, `${renderEmptyWorkspaceYaml()}\n`, "utf-8");
+      if (wantsEmptyOnboardingScaffold) {
+        await fs.writeFile(workspaceOnboardPath, `${renderEmptyOnboardingGuide()}\n`, "utf-8");
+      }
     } else if (materializedTemplate && resolvedTemplate) {
       await applyMaterializedTemplateToWorkspace(
         workspaceId,
@@ -6830,10 +6920,8 @@ async function stopEmbeddedRuntime() {
   const running = runtimeProcess;
   runtimeProcess = null;
   if (!running) {
-    if (
-      runtimeStatus.status === "running" ||
-      runtimeStatus.status === "starting"
-    ) {
+    await stopEmbeddedRuntimeOpencodeSidecars();
+    if (runtimeStatus.status === "running" || runtimeStatus.status === "starting") {
       runtimeStatus = withDesktopBrowserStatus({
         ...runtimeStatus,
         status: "stopped",
@@ -6893,6 +6981,8 @@ async function stopEmbeddedRuntime() {
       settle();
     }
   });
+
+  await stopEmbeddedRuntimeOpencodeSidecars();
 }
 
 async function startEmbeddedRuntime() {
@@ -8211,6 +8301,24 @@ function getActiveBrowserTab(
   return workspace.tabs.get(workspace.activeTabId) ?? null;
 }
 
+function syncMainWindowClosedListenerBudget() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  let tabCount = 0;
+  for (const workspace of browserWorkspaces.values()) {
+    tabCount += workspace.tabs.size;
+  }
+
+  // The desktop browser keeps many tab views alive at once, so the window needs
+  // a higher close-listener budget than Node's default warning threshold.
+  const desiredBudget = Math.max(10, tabCount + MAIN_WINDOW_CLOSED_LISTENER_BUFFER);
+  if (mainWindow.getMaxListeners() < desiredBudget) {
+    mainWindow.setMaxListeners(desiredBudget);
+  }
+}
+
 function applyBoundsToTab(workspaceId: string, tabId: string) {
   const workspace = browserWorkspaceFromMap(workspaceId);
   const tab = workspace?.tabs.get(tabId);
@@ -8423,6 +8531,7 @@ function createBrowserTab(
     initialized: !hasInitialUrl,
   });
   workspace.tabs.set(tabId, { view, state });
+  syncMainWindowClosedListenerBudget();
 
   view.setBounds(browserBounds);
   view.setAutoResize({
@@ -8506,11 +8615,15 @@ function createBrowserTab(
     window.once("ready-to-show", () => {
       window.show();
     });
-    window.on("closed", () => {
-      if (browserPopupWindow === window) {
-        browserPopupWindow = null;
-      }
-    });
+    if (!browserPopupCleanupBound.has(window)) {
+      browserPopupCleanupBound.add(window);
+      window.once("closed", () => {
+        browserPopupCleanupBound.delete(window);
+        if (browserPopupWindow === window) {
+          browserPopupWindow = null;
+        }
+      });
+    }
   });
   view.webContents.setZoomFactor(1);
   view.webContents.setVisualZoomLevelLimits(1, 1).catch(() => undefined);
@@ -9080,7 +9193,7 @@ function ensureAuthPopupWindow() {
     clearScheduledAuthPopupHide();
   });
 
-  authPopupWindow.on("closed", () => {
+  authPopupWindow.once("closed", () => {
     clearScheduledAuthPopupHide();
     authPopupWindow = null;
   });
@@ -9214,7 +9327,7 @@ function ensureDownloadsPopupWindow() {
     downloadsPopupWindow?.hide();
   });
 
-  downloadsPopupWindow.on("closed", () => {
+  downloadsPopupWindow.once("closed", () => {
     downloadsPopupWindow = null;
   });
 
@@ -9489,7 +9602,7 @@ function ensureHistoryPopupWindow() {
     historyPopupWindow?.hide();
   });
 
-  historyPopupWindow.on("closed", () => {
+  historyPopupWindow.once("closed", () => {
     historyPopupWindow = null;
   });
 
@@ -9763,7 +9876,7 @@ function ensureOverflowPopupWindow() {
     overflowPopupWindow?.hide();
   });
 
-  overflowPopupWindow.on("closed", () => {
+  overflowPopupWindow.once("closed", () => {
     overflowPopupWindow = null;
   });
 
@@ -9810,7 +9923,7 @@ function ensureAddressSuggestionsPopupWindow() {
     },
   });
 
-  addressSuggestionsPopupWindow.on("closed", () => {
+  addressSuggestionsPopupWindow.once("closed", () => {
     addressSuggestionsPopupWindow = null;
   });
 
@@ -9933,6 +10046,7 @@ function createMainWindow() {
   });
 
   mainWindow = win;
+  syncMainWindowClosedListenerBudget();
   browserBounds = { x: 0, y: 0, width: 0, height: 0 };
   activeBrowserWorkspaceId = "";
   for (const workspaceId of Array.from(browserWorkspaces.keys())) {
@@ -9979,7 +10093,7 @@ function createMainWindow() {
     win.show();
   });
 
-  win.on("closed", () => {
+  win.once("closed", () => {
     authPopupWindow?.close();
     authPopupWindow = null;
     addressSuggestionsPopupWindow?.close();

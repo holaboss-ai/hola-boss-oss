@@ -2,7 +2,6 @@ import { defineConfig } from "tsup";
 
 export default defineConfig({
   entry: [
-    "src/hb.ts",
     "src/index.ts",
     "src/app.ts",
     "src/opencode-app-bootstrap.ts",

@@ -115,8 +115,8 @@ function buildOnboardingInstruction(params: {
   if (!fs.existsSync(onboardPath)) {
     return trimmed;
   }
-  const onboardPrompt = fs.readFileSync(onboardPath, "utf8").trim();
-  if (!onboardPrompt || trimmed.startsWith(ONBOARD_PROMPT_HEADER)) {
+  const rawOnboardPrompt = fs.readFileSync(onboardPath, "utf8").trim();
+  if (!rawOnboardPrompt || trimmed.startsWith(ONBOARD_PROMPT_HEADER)) {
     return trimmed;
   }
 
@@ -130,11 +130,13 @@ function buildOnboardingInstruction(params: {
     `- If file reads are needed, use ./${params.workspaceId}/... paths rather than files directly under ${params.workspaceRoot}.`,
     "- Ask concise questions and collect durable facts/preferences.",
     "- Do not start regular execution work until onboarding is complete.",
-    "- When all onboarding requirements are satisfied and the user confirms, invoke the `hb` CLI tool with `onboarding request-complete`.",
-    "- Do not merely output or quote the command as text; actually execute the tool.",
+    "- Relevant native onboarding tools:",
+    "- `holaboss_onboarding_status` reads the local onboarding status for this workspace.",
+    "- `holaboss_onboarding_complete` marks onboarding complete. Required argument: `summary`. Optional argument: `requested_by`.",
+    "- When all onboarding requirements are satisfied and the user confirms, call `holaboss_onboarding_complete` with a concise durable summary.",
     "",
     "[ONBOARD.md]",
-    onboardPrompt,
+    rawOnboardPrompt,
     "[/ONBOARD.md]",
     "",
     trimmed

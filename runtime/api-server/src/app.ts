@@ -66,6 +66,10 @@ import {
 import { BrokerError, IntegrationBrokerService } from "./integration-broker.js";
 import { OAuthService } from "./oauth-service.js";
 import {
+  RuntimeAgentToolsService,
+  RuntimeAgentToolsServiceError,
+} from "./runtime-agent-tools.js";
+import {
   appendWorkspaceApplication,
   listWorkspaceComposeShutdownTargets,
   listWorkspaceApplicationPorts,
@@ -257,6 +261,55 @@ function requiredDict(value: unknown, fieldName: string): Record<string, unknown
     throw new Error(`${fieldName} must be an object`);
   }
   return value;
+}
+
+function capabilityWorkspaceId(params: {
+  headers: Record<string, unknown>;
+  query?: Record<string, unknown> | null;
+  body?: Record<string, unknown> | null;
+}): string {
+  return (
+    headerString(params.headers, "x-holaboss-workspace-id") ||
+    optionalString(params.query?.workspace_id) ||
+    optionalString(params.body?.workspace_id) ||
+    ""
+  );
+}
+
+function requiredCapabilityWorkspaceId(params: {
+  headers: Record<string, unknown>;
+  query?: Record<string, unknown> | null;
+  body?: Record<string, unknown> | null;
+}): string {
+  const workspaceId = capabilityWorkspaceId(params);
+  if (!workspaceId) {
+    throw new Error("workspace_id is required");
+  }
+  return workspaceId;
+}
+
+function requiredCronjobDeliveryInput(value: unknown): {
+  channel: string;
+  mode?: string;
+  to?: unknown;
+} {
+  const delivery = requiredDict(value, "delivery");
+  return {
+    channel: requiredString(delivery.channel, "delivery.channel"),
+    mode: optionalString(delivery.mode),
+    to: delivery.to
+  };
+}
+
+function optionalCronjobDeliveryInput(value: unknown): {
+  channel: string;
+  mode?: string;
+  to?: unknown;
+} | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return requiredCronjobDeliveryInput(value);
 }
 
 function optionalStringList(value: unknown): string[] {
@@ -1106,6 +1159,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const integrationService = new RuntimeIntegrationService(store);
   const brokerService = new IntegrationBrokerService(store);
   const oauthService = new OAuthService(store);
+  const runtimeAgentToolsService = new RuntimeAgentToolsService(store);
   const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
   const queueWorker = resolveQueueWorker(options, app, store);
   const cronWorker = resolveCronWorker(options, app, store, queueWorker);
@@ -1709,6 +1763,164 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return await oauthService.startFlow(providerId, ownerUserId);
     } catch (error) {
       return sendError(reply, 400, error instanceof Error ? error.message : "OAuth flow failed");
+    }
+  });
+
+  // ---- Runtime Agent Tools (onboarding, cronjobs) ----
+
+  app.get("/api/v1/capabilities/runtime-tools", async (request) => {
+    const workspaceId = capabilityWorkspaceId({
+      headers: request.headers as Record<string, unknown>,
+      query: isRecord(request.query) ? request.query : null
+    });
+    return runtimeAgentToolsService.capabilityStatus({ workspaceId });
+  });
+
+  app.get("/api/v1/capabilities/runtime-tools/onboarding/status", async (request, reply) => {
+    try {
+      return runtimeAgentToolsService.onboardingStatus(
+        requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null
+        })
+      );
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime onboarding status failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/onboarding/complete", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return runtimeAgentToolsService.completeOnboarding({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body
+        }),
+        summary: requiredString(request.body.summary, "summary"),
+        requestedBy: optionalString(request.body.requested_by)
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime onboarding completion failed");
+    }
+  });
+
+  app.get("/api/v1/capabilities/runtime-tools/cronjobs", async (request, reply) => {
+    try {
+      return runtimeAgentToolsService.listCronjobs({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null
+        }),
+        enabledOnly: optionalBoolean(isRecord(request.query) ? request.query.enabled_only : undefined, false)
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime cronjob list failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/cronjobs", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return runtimeAgentToolsService.createCronjob({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body
+        }),
+        initiatedBy: optionalString(request.body.initiated_by),
+        name: optionalString(request.body.name),
+        cron: requiredString(request.body.cron, "cron"),
+        description: requiredString(request.body.description, "description"),
+        enabled: optionalBoolean(request.body.enabled, true),
+        delivery: optionalCronjobDeliveryInput(request.body.delivery),
+        metadata: optionalDict(request.body.metadata) ?? undefined
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime cronjob create failed");
+    }
+  });
+
+  app.get("/api/v1/capabilities/runtime-tools/cronjobs/:jobId", async (request, reply) => {
+    const params = request.params as { jobId: string };
+    try {
+      const payload = runtimeAgentToolsService.getCronjob({
+        jobId: requiredString(params.jobId, "jobId"),
+        workspaceId: capabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null
+        })
+      });
+      if (!payload) {
+        return sendError(reply, 404, "cronjob not found");
+      }
+      return payload;
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime cronjob fetch failed");
+    }
+  });
+
+  app.patch("/api/v1/capabilities/runtime-tools/cronjobs/:jobId", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { jobId: string };
+    try {
+      return runtimeAgentToolsService.updateCronjob({
+        jobId: requiredString(params.jobId, "jobId"),
+        workspaceId: capabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null,
+          body: request.body
+        }),
+        name: hasOwn(request.body, "name") ? nullableString(request.body.name) : undefined,
+        cron: hasOwn(request.body, "cron") ? nullableString(request.body.cron) : undefined,
+        description: hasOwn(request.body, "description") ? nullableString(request.body.description) : undefined,
+        enabled: hasOwn(request.body, "enabled") ? optionalBoolean(request.body.enabled, false) : undefined,
+        delivery: hasOwn(request.body, "delivery") ? optionalCronjobDeliveryInput(request.body.delivery) ?? null : undefined,
+        metadata: hasOwn(request.body, "metadata") ? (optionalDict(request.body.metadata) ?? {}) : undefined
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime cronjob update failed");
+    }
+  });
+
+  app.delete("/api/v1/capabilities/runtime-tools/cronjobs/:jobId", async (request, reply) => {
+    const params = request.params as { jobId: string };
+    try {
+      return runtimeAgentToolsService.deleteCronjob({
+        jobId: requiredString(params.jobId, "jobId"),
+        workspaceId: capabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          query: isRecord(request.query) ? request.query : null
+        })
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime cronjob delete failed");
     }
   });
 
