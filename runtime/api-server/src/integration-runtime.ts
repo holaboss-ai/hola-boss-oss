@@ -9,7 +9,10 @@ import {
 import { createSignedGrant } from "./grant-signing.js";
 import { type ResolvedApplicationRuntime } from "./workspace-apps.js";
 
-export const DEFAULT_INTEGRATION_BROKER_URL = "http://127.0.0.1:8080/api/v1/integrations";
+function defaultIntegrationBrokerUrl(): string {
+  const port = process.env.SANDBOX_RUNTIME_API_PORT ?? process.env.SANDBOX_AGENT_BIND_PORT ?? process.env.PORT ?? "8080";
+  return `http://127.0.0.1:${port}/api/v1/integrations`;
+}
 
 export interface IntegrationRuntimeResolution {
   workspaceId: string | null;
@@ -98,7 +101,7 @@ export function resolveIntegrationRuntime(params: {
 }): IntegrationRuntimeResolution {
   const resolvedApp = params.resolvedApp;
   const requirements = resolvedApp?.integrations ?? [];
-  const brokerUrl = params.integrationBrokerUrl ?? DEFAULT_INTEGRATION_BROKER_URL;
+  const brokerUrl = params.integrationBrokerUrl ?? defaultIntegrationBrokerUrl();
   const workspaceApiUrl = deriveWorkspaceApiUrl(brokerUrl);
   const workspaceId = params.workspaceId ?? resolveWorkspaceIdFromAppDir(params.store, params.appDir);
   const env: NodeJS.ProcessEnv = {};

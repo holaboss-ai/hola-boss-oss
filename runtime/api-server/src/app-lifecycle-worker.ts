@@ -37,6 +37,7 @@ export interface AppLifecycleStartParams {
 
 export interface RuntimeAppLifecycleExecutorOptions {
   store?: RuntimeStateStore | null;
+  runtimeApiUrl?: string | null;
 }
 
 export interface AppLifecycleExecutorLike {
@@ -782,18 +783,25 @@ function unsupportedStartError(params: {
 export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
   readonly store: RuntimeStateStore | null;
 
+  private readonly runtimeApiUrl: string | null;
+
   constructor(options: RuntimeAppLifecycleExecutorOptions = {}) {
     this.store = options.store ?? null;
+    this.runtimeApiUrl = options.runtimeApiUrl ?? null;
   }
 
   async startApp(params: AppLifecycleStartParams): Promise<AppLifecycleActionResult> {
+    const integrationBrokerUrl = this.runtimeApiUrl
+      ? `${this.runtimeApiUrl.replace(/\/+$/, "")}/api/v1/integrations`
+      : undefined;
     const integrationRuntime =
       this.store && params.appDir && params.resolvedApp
         ? resolveIntegrationRuntime({
             store: this.store,
             appId: params.appId,
             appDir: params.appDir,
-            resolvedApp: params.resolvedApp
+            resolvedApp: params.resolvedApp,
+            integrationBrokerUrl
           })
         : null;
     const integrationEnv = integrationRuntime?.env ?? {};
