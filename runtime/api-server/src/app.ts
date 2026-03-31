@@ -65,6 +65,7 @@ import {
 } from "./integrations.js";
 import { BrokerError, IntegrationBrokerService } from "./integration-broker.js";
 import { OAuthService } from "./oauth-service.js";
+import { ComposioService } from "./composio-service.js";
 import {
   RuntimeAgentToolsService,
   RuntimeAgentToolsServiceError,
@@ -1157,7 +1158,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const runtimeConfigService = options.runtimeConfigService ?? new FileRuntimeConfigService();
   const browserToolService = options.browserToolService ?? new DesktopBrowserToolService();
   const integrationService = new RuntimeIntegrationService(store);
-  const brokerService = new IntegrationBrokerService(store);
+  const composioApiKey = process.env.COMPOSIO_API_KEY ?? "";
+  const composioService = composioApiKey
+    ? new ComposioService({ apiKey: composioApiKey })
+    : null;
+  const brokerService = new IntegrationBrokerService(store, composioService);
   const oauthService = new OAuthService(store);
   const runtimeAgentToolsService = new RuntimeAgentToolsService(store);
   const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
@@ -1451,6 +1456,14 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       }
     }
   });
+
+  const PROVIDER_TO_COMPOSIO_TOOLKIT: Record<string, string> = {
+    google: "gmail",
+    github: "github",
+    reddit: "reddit",
+    twitter: "twitter",
+    linkedin: "linkedin"
+  };
 
   app.get("/healthz", async () => ({ ok: true }));
 
@@ -1763,6 +1776,88 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return await oauthService.startFlow(providerId, ownerUserId);
     } catch (error) {
       return sendError(reply, 400, error instanceof Error ? error.message : "OAuth flow failed");
+    }
+  });
+
+  // ---- Composio Managed Connect ----
+
+  app.post("/api/v1/integrations/composio/connect", async (request, reply) => {
+    if (!composioService) {
+      return sendError(reply, 503, "Composio is not configured (COMPOSIO_API_KEY missing)");
+    }
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const provider = typeof request.body.provider === "string" ? request.body.provider : "";
+    const ownerUserId = typeof request.body.owner_user_id === "string" ? request.body.owner_user_id : "local";
+    const callbackUrl = typeof request.body.callback_url === "string" ? request.body.callback_url : undefined;
+    if (!provider) {
+      return sendError(reply, 400, "provider is required");
+    }
+    const toolkitSlug = PROVIDER_TO_COMPOSIO_TOOLKIT[provider] ?? provider;
+    try {
+      const link = await composioService.createConnectLink({
+        toolkitSlug,
+        userId: ownerUserId,
+        callbackUrl
+      });
+      return {
+        redirect_url: link.redirectUrl,
+        connected_account_id: link.connectedAccountId,
+        auth_config_id: link.authConfigId,
+        expires_at: link.expiresAt
+      };
+    } catch (error) {
+      return sendError(reply, 502, error instanceof Error ? error.message : "composio connect failed");
+    }
+  });
+
+  app.get("/api/v1/integrations/composio/account/:connectedAccountId", async (request, reply) => {
+    if (!composioService) {
+      return sendError(reply, 503, "Composio is not configured");
+    }
+    const params = request.params as { connectedAccountId: string };
+    try {
+      return await composioService.getConnectedAccount(params.connectedAccountId);
+    } catch (error) {
+      return sendError(reply, 502, error instanceof Error ? error.message : "composio account check failed");
+    }
+  });
+
+  app.post("/api/v1/integrations/composio/finalize", async (request, reply) => {
+    if (!composioService) {
+      return sendError(reply, 503, "Composio is not configured");
+    }
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const connectedAccountId = typeof request.body.connected_account_id === "string" ? request.body.connected_account_id : "";
+    const provider = typeof request.body.provider === "string" ? request.body.provider : "";
+    const ownerUserId = typeof request.body.owner_user_id === "string" ? request.body.owner_user_id : "local";
+    const accountLabel = typeof request.body.account_label === "string" ? request.body.account_label : "";
+    if (!connectedAccountId || !provider) {
+      return sendError(reply, 400, "connected_account_id and provider are required");
+    }
+    try {
+      const account = await composioService.getConnectedAccount(connectedAccountId);
+      if (account.status !== "ACTIVE") {
+        return sendError(reply, 409, `account is not ACTIVE (status: ${account.status})`);
+      }
+      const label = accountLabel || `${provider} (Composio)`;
+      const connection = integrationService.createConnection({
+        providerId: provider,
+        ownerUserId,
+        accountLabel: label,
+        authMode: "composio",
+        grantedScopes: [],
+        accountExternalId: connectedAccountId
+      });
+      return connection;
+    } catch (error) {
+      if (error instanceof IntegrationServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 502, error instanceof Error ? error.message : "composio finalize failed");
     }
   });
 
