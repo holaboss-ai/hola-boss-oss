@@ -58,9 +58,11 @@ export function MarketplacePane() {
             mode="browse"
             templates={marketplaceTemplates}
             isLoading={isLoadingMarketplaceTemplates}
+            authenticated={canUseMarketplaceTemplates}
             error={marketplaceTemplatesError || undefined}
             onSelectKit={handleSelectKit}
             onRetry={retryMarketplaceTemplates}
+            onSignIn={() => void window.electronAPI.auth.requestAuth()}
           />
         ) : view === "detail" && detailTemplate ? (
           <KitDetail

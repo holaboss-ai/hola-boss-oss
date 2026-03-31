@@ -452,9 +452,11 @@ function FirstWorkspacePane() {
               mode="pick"
               templates={marketplaceTemplates}
               isLoading={isLoadingMarketplaceTemplates}
+              authenticated={canUseMarketplaceTemplates}
               error={marketplaceTemplatesError || undefined}
               onSelectKit={handleSelectKitFromGallery}
               onRetry={retryMarketplaceTemplates}
+              onSignIn={openAuthPopup}
               onStartFromScratch={handleStartFromScratch}
               onUseLocalTemplate={handleUseLocalTemplate}
             />

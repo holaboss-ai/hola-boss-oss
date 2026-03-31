@@ -1,14 +1,16 @@
 import { useMemo, useState } from "react";
-import { Loader2, Search } from "lucide-react";
+import { Loader2, Search, Sparkles } from "lucide-react";
 import { KitCard } from "./KitCard";
 
 interface MarketplaceGalleryProps {
   mode: "browse" | "pick";
   templates: TemplateMetadataPayload[];
   isLoading: boolean;
+  authenticated: boolean;
   error?: string;
   onSelectKit: (template: TemplateMetadataPayload) => void;
   onRetry?: () => void;
+  onSignIn?: () => void;
   onStartFromScratch?: () => void;
   onUseLocalTemplate?: () => void;
 }
@@ -17,9 +19,11 @@ export function MarketplaceGallery({
   mode,
   templates,
   isLoading,
+  authenticated,
   error,
   onSelectKit,
   onRetry,
+  onSignIn,
   onStartFromScratch,
   onUseLocalTemplate
 }: MarketplaceGalleryProps) {
@@ -52,6 +56,31 @@ export function MarketplaceGallery({
         ) : null}
       </div>
 
+      {!authenticated ? (
+        <div className="mt-6 flex min-h-[240px] items-center justify-center">
+          <div className="w-full max-w-[420px] rounded-[24px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-8 py-8 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-[rgba(247,90,84,0.22)] bg-[rgba(247,90,84,0.08)]">
+              <Sparkles size={20} className="text-[rgba(206,92,84,0.88)]" />
+            </div>
+            <div className="mt-4 text-[16px] font-medium text-text-main">
+              Sign in to explore kits
+            </div>
+            <div className="mt-2 text-[12px] leading-6 text-text-muted/78">
+              Browse curated workspace templates and launch them directly from the desktop.
+            </div>
+            {onSignIn ? (
+              <button
+                type="button"
+                onClick={onSignIn}
+                className="mt-5 inline-flex h-10 items-center justify-center rounded-[14px] border border-[rgba(247,90,84,0.34)] bg-[rgba(247,90,84,0.9)] px-5 text-[12px] font-medium text-white transition-colors hover:bg-[rgba(226,79,74,0.94)]"
+              >
+                Sign in to Holaboss
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : (
+        <>
       <label className="theme-control-surface mt-4 flex items-center gap-2 rounded-[16px] border border-panel-border/45 px-3 py-2.5 text-[12px] text-text-muted">
         <Search size={13} className="text-text-dim/72" />
         <input
@@ -111,6 +140,8 @@ export function MarketplaceGallery({
           </div>
         )}
       </div>
+        </>
+      )}
 
       {mode === "pick" && (onStartFromScratch || onUseLocalTemplate) ? (
         <div className="mt-4 flex items-center justify-center gap-3 border-t border-panel-border/25 pt-4 text-[12px]">
