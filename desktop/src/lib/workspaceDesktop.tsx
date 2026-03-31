@@ -76,6 +76,7 @@ interface WorkspaceDesktopContextValue {
   isLoadingMarketplaceTemplates: boolean;
   canUseMarketplaceTemplates: boolean;
   marketplaceTemplatesError: string;
+  retryMarketplaceTemplates: () => void;
   workspaceErrorMessage: string;
   statusSummary: string;
   lifecycleSteps: DesktopLifecycleStep[];
@@ -168,6 +169,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [deletingWorkspaceId, setDeletingWorkspaceId] = useState<string | null>(null);
   const [isLoadingMarketplaceTemplates, setIsLoadingMarketplaceTemplates] = useState(false);
   const [marketplaceTemplatesError, setMarketplaceTemplatesError] = useState("");
+  const [marketplaceTemplatesRefreshKey, setMarketplaceTemplatesRefreshKey] = useState(0);
   const [workspaceErrorMessage, setWorkspaceErrorMessage] = useState("");
   const [isLoadingInstalledApps, setIsLoadingInstalledApps] = useState(false);
   const [isActivatingWorkspace, setIsActivatingWorkspace] = useState(false);
@@ -445,6 +447,10 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     }
   }
 
+  function retryMarketplaceTemplates() {
+    setMarketplaceTemplatesRefreshKey((k) => k + 1);
+  }
+
   async function chooseTemplateFolder() {
     setWorkspaceErrorMessage("");
     try {
@@ -504,7 +510,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     return () => {
       cancelled = true;
     };
-  }, [canUseMarketplaceTemplates, resolvedUserId]);
+  }, [canUseMarketplaceTemplates, resolvedUserId, marketplaceTemplatesRefreshKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -829,6 +835,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       isLoadingMarketplaceTemplates,
       canUseMarketplaceTemplates,
       marketplaceTemplatesError,
+      retryMarketplaceTemplates,
       workspaceErrorMessage,
       statusSummary,
       lifecycleSteps,

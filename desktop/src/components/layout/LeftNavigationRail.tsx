@@ -1,7 +1,7 @@
-import { Cable, MessageSquareText, Sparkles, Workflow } from "lucide-react";
+import { Cable, LayoutGrid, MessageSquareText, Sparkles, Workflow } from "lucide-react";
 import type { WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 
-export type LeftRailItem = "space" | "automations" | "skills" | "integrations" | "app";
+export type LeftRailItem = "space" | "automations" | "skills" | "integrations" | "marketplace" | "app";
 
 interface LeftNavigationRailProps {
   activeItem: LeftRailItem;
@@ -15,7 +15,8 @@ const PRIMARY_ITEMS: Array<{ id: LeftRailItem; label: string; icon: React.ReactN
   { id: "space", label: "Space", icon: <MessageSquareText size={14} /> },
   { id: "automations", label: "Automations", icon: <Workflow size={14} /> },
   { id: "skills", label: "Skills", icon: <Sparkles size={14} /> },
-  { id: "integrations", label: "Integrations", icon: <Cable size={14} /> }
+  { id: "integrations", label: "Integrations", icon: <Cable size={14} /> },
+  { id: "marketplace", label: "Marketplace", icon: <LayoutGrid size={14} /> }
 ];
 
 function appInitials(label: string): string {

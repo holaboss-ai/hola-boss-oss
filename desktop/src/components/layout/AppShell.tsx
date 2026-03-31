@@ -16,7 +16,6 @@ import {
   Clock3,
   FolderOpen,
   Loader2,
-  LockKeyhole,
   PanelRightClose,
   PanelRightOpen,
   Sparkles,
@@ -41,6 +40,9 @@ import { ChatPane } from "@/components/panes/ChatPane";
 import { FileExplorerPane } from "@/components/panes/FileExplorerPane";
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { IntegrationsPane } from "@/components/panes/IntegrationsPane";
+import { KitDetail } from "@/components/marketplace/KitDetail";
+import { MarketplaceGallery } from "@/components/marketplace/MarketplaceGallery";
+import { MarketplacePane } from "@/components/panes/MarketplacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
 import { SkillsPane } from "@/components/panes/SkillsPane";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
@@ -349,77 +351,17 @@ function FirstWorkspacePane() {
     isLoadingMarketplaceTemplates,
     canUseMarketplaceTemplates,
     marketplaceTemplatesError,
+    retryMarketplaceTemplates,
     workspaceErrorMessage,
     chooseTemplateFolder,
     createWorkspace,
   } = useWorkspaceDesktop();
+  const [onboardingStep, setOnboardingStep] = useState<"gallery" | "detail" | "configure">("gallery");
+  const [detailKit, setDetailKit] = useState<TemplateMetadataPayload | null>(null);
   const selectedCreateHarnessOption =
     createHarnessOptions.find(
       (option) => option.id === selectedCreateHarness,
     ) ?? createHarnessOptions[0];
-  const sourceLabel =
-    templateSourceMode === "marketplace"
-      ? "Marketplace template"
-      : templateSourceMode === "empty_onboarding"
-        ? "Empty onboarding workspace"
-      : templateSourceMode === "empty"
-        ? "Empty workspace"
-        : "Local template";
-  const sourceDescription =
-    templateSourceMode === "marketplace"
-      ? marketplaceTemplatesError ||
-        selectedMarketplaceTemplate?.description ||
-        (canUseMarketplaceTemplates
-          ? "Choose a curated starter."
-          : "Sign in to use curated starters.")
-      : templateSourceMode === "empty_onboarding"
-        ? "Create a minimal workspace shell plus a starter ONBOARD.md for onboarding flow testing."
-      : templateSourceMode === "empty"
-        ? "Create the smallest valid workspace shell."
-        : selectedTemplateFolder?.description ||
-          "Use an existing folder on disk.";
-  const sourceChoiceDetail =
-    templateSourceMode === "marketplace"
-      ? canUseMarketplaceTemplates
-        ? selectedMarketplaceTemplate?.name ||
-          `${marketplaceTemplates.length} templates available`
-        : "Sign in required"
-      : templateSourceMode === "empty_onboarding"
-        ? "Blank scaffold + onboarding guide"
-      : templateSourceMode === "empty"
-        ? "Blank scaffold"
-        : selectedTemplateFolder?.templateName ||
-          selectedTemplateFolder?.rootPath ||
-          "Choose local folder";
-
-  const openAuthPopup = () => {
-    if (!authButtonRef.current) {
-      return;
-    }
-    const rect = authButtonRef.current.getBoundingClientRect();
-    void window.electronAPI.auth.showPopup({
-      x: rect.left,
-      y: rect.top,
-      width: rect.width,
-      height: rect.height,
-    });
-  };
-
-  const createDisabled =
-    isCreatingWorkspace ||
-    !newWorkspaceName.trim() ||
-    (templateSourceMode === "marketplace"
-      ? !canUseMarketplaceTemplates ||
-        !selectedMarketplaceTemplate ||
-        selectedMarketplaceTemplate.is_coming_soon
-      : templateSourceMode === "local"
-        ? !selectedTemplateFolder?.rootPath
-        : false);
-
-  const handleCreateWorkspace = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    void createWorkspace();
-  };
 
   const creatingViaMarketplaceSandbox =
     templateSourceMode === "marketplace" && canUseMarketplaceTemplates;
@@ -462,409 +404,193 @@ function FirstWorkspacePane() {
     );
   }
 
+  const openAuthPopup = () => {
+    if (!authButtonRef.current) return;
+    const rect = authButtonRef.current.getBoundingClientRect();
+    void window.electronAPI.auth.showPopup({
+      x: rect.left, y: rect.top, width: rect.width, height: rect.height
+    });
+  };
+
+  function handleSelectKitFromGallery(template: TemplateMetadataPayload) {
+    setDetailKit(template);
+    setOnboardingStep("detail");
+  }
+
+  function handleUseKit(template: TemplateMetadataPayload) {
+    selectMarketplaceTemplate(template.name);
+    setTemplateSourceMode("marketplace");
+    if (!newWorkspaceName.trim()) {
+      setNewWorkspaceName(template.name);
+    }
+    setOnboardingStep("configure");
+  }
+
+  function handleStartFromScratch() {
+    setTemplateSourceMode("empty");
+    setOnboardingStep("configure");
+  }
+
+  function handleUseLocalTemplate() {
+    void chooseTemplateFolder().then(() => {
+      setOnboardingStep("configure");
+    });
+  }
+
+  const configureCreateDisabled =
+    !newWorkspaceName.trim() ||
+    (templateSourceMode === "marketplace" && (!canUseMarketplaceTemplates || !selectedMarketplaceTemplate));
+
   return (
     <section className="relative flex h-full min-h-0 min-w-0 items-start justify-center overflow-y-auto px-3 py-3 sm:px-4 sm:py-4">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_12%,rgba(247,90,84,0.08),transparent_28%),radial-gradient(circle_at_86%_14%,rgba(233,117,109,0.08),transparent_30%)]" />
       <div className="relative flex w-full max-w-[1080px] items-start justify-center py-4">
         <div className="theme-shell mx-auto w-full rounded-[var(--theme-radius-card)] border border-panel-border/45 px-6 py-6 shadow-card sm:px-8 sm:py-7 lg:px-10 lg:py-8">
-          <div className="max-w-3xl">
-            <div className="text-[11px] uppercase tracking-[0.24em] text-text-dim/78">
-              New workspace
-            </div>
-            <h1 className="mt-3 text-[34px] font-semibold tracking-[-0.05em] text-text-main sm:text-[42px]">
-              Create a workspace
-            </h1>
-            <p className="mt-3 text-[14px] leading-7 text-text-muted/82 sm:text-[15px]">
-              Pick a source, name it, and open it directly in the desktop.
-            </p>
-          </div>
 
-          <form
-            onSubmit={handleCreateWorkspace}
-            className="theme-subtle-surface mt-6 rounded-[28px] border border-panel-border/45 p-4 sm:p-5"
-          >
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)]">
-              <div>
-                <div className="text-[11px] uppercase tracking-[0.22em] text-text-dim/76">
-                  Source
+          {onboardingStep === "gallery" ? (
+            <MarketplaceGallery
+              mode="pick"
+              templates={marketplaceTemplates}
+              isLoading={isLoadingMarketplaceTemplates}
+              error={marketplaceTemplatesError || undefined}
+              onSelectKit={handleSelectKitFromGallery}
+              onRetry={retryMarketplaceTemplates}
+              onStartFromScratch={handleStartFromScratch}
+              onUseLocalTemplate={handleUseLocalTemplate}
+            />
+          ) : onboardingStep === "detail" && detailKit ? (
+            <KitDetail
+              template={detailKit}
+              onBack={() => setOnboardingStep("gallery")}
+              onSelect={handleUseKit}
+              selectDisabled={!canUseMarketplaceTemplates}
+              selectDisabledReason="Sign in required"
+            />
+          ) : onboardingStep === "configure" ? (
+            <div>
+              <div className="max-w-3xl">
+                <div className="text-[11px] uppercase tracking-[0.24em] text-text-dim/78">
+                  New workspace
                 </div>
-                <div className="mt-2 text-[22px] font-medium tracking-[-0.03em] text-text-main">
-                  Choose how it starts
-                </div>
-                <div className="mt-4 grid gap-3 md:grid-cols-3 xl:grid-cols-1">
-                  <FirstWorkspaceChoiceCard
-                    title="Local Template"
-                    description="Use a folder already on this machine."
-                    detail={
-                      selectedTemplateFolder?.templateName ||
-                      selectedTemplateFolder?.rootPath ||
-                      "Choose local folder"
-                    }
-                    icon={<FolderOpen size={18} />}
-                    active={templateSourceMode === "local"}
-                    onClick={() => {
-                      setTemplateSourceMode("local");
-                    }}
-                  />
-                  <FirstWorkspaceChoiceCard
-                    title="Marketplace Template"
-                    description="Start from a curated Holaboss starter."
-                    detail={
-                      canUseMarketplaceTemplates
-                        ? selectedMarketplaceTemplate?.name ||
-                          `${marketplaceTemplates.length} templates available`
-                        : "Sign in required"
-                    }
-                    icon={<Sparkles size={18} />}
-                    active={templateSourceMode === "marketplace"}
-                    badge={
-                      !canUseMarketplaceTemplates ? "Login Required" : undefined
-                    }
-                    onClick={() => {
-                      setTemplateSourceMode("marketplace");
-                    }}
-                  />
-                  <FirstWorkspaceChoiceCard
-                    title="Empty Workspace"
-                    description="Create the smallest valid scaffold."
-                    detail="workspace.yaml + AGENTS.md + skills/"
-                    icon={<span className="text-[18px] leading-none">+</span>}
-                    active={templateSourceMode === "empty"}
-                    onClick={() => {
-                      setTemplateSourceMode("empty");
-                    }}
-                  />
-                  <FirstWorkspaceChoiceCard
-                    title="Empty + Onboarding"
-                    description="Create a blank workspace with ONBOARD.md included."
-                    detail="workspace.yaml + AGENTS.md + skills/ + ONBOARD.md"
-                    icon={<Sparkles size={18} />}
-                    active={templateSourceMode === "empty_onboarding"}
-                    onClick={() => {
-                      setTemplateSourceMode("empty_onboarding");
-                    }}
-                  />
-                </div>
+                <h1 className="mt-3 text-[28px] font-semibold tracking-[-0.04em] text-text-main sm:text-[34px]">
+                  Configure &amp; launch
+                </h1>
               </div>
 
-              <div className="rounded-[24px] border border-panel-border/40 bg-black/8 p-4 sm:p-5">
-                <div className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
-                  Workspace
+              {templateSourceMode === "marketplace" && selectedMarketplaceTemplate ? (
+                <div className="mt-5 flex items-center gap-3 rounded-[18px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-3">
+                  <span className="text-[28px] leading-none">{selectedMarketplaceTemplate.emoji || "📦"}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[14px] font-medium text-text-main">{selectedMarketplaceTemplate.name}</div>
+                    <div className="truncate text-[12px] text-text-muted/72">{selectedMarketplaceTemplate.description || selectedMarketplaceTemplate.apps.join(", ")}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setOnboardingStep("gallery")}
+                    className="shrink-0 text-[12px] text-text-muted/72 underline transition-colors hover:text-text-main"
+                  >
+                    Change
+                  </button>
                 </div>
-                <div className="mt-2 text-[22px] font-medium tracking-[-0.03em] text-text-main">
-                  Name and harness
+              ) : templateSourceMode === "empty" || templateSourceMode === "empty_onboarding" ? (
+                <div className="mt-5 flex items-center gap-3 rounded-[18px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-3">
+                  <span className="text-[28px] leading-none">+</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[14px] font-medium text-text-main">Starting from scratch</div>
+                    <div className="text-[12px] text-text-muted/72">Empty workspace scaffold</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setOnboardingStep("gallery")}
+                    className="shrink-0 text-[12px] text-text-muted/72 underline transition-colors hover:text-text-main"
+                  >
+                    Change
+                  </button>
                 </div>
-                <div className="mt-4 grid gap-4">
-                  <label className="grid gap-2">
-                    <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
-                      Workspace name
-                    </span>
-                    <input
-                      value={newWorkspaceName}
-                      onChange={(event) =>
-                        setNewWorkspaceName(event.target.value)
-                      }
-                      placeholder="My first workspace"
-                      className="theme-control-surface h-12 rounded-[18px] border border-panel-border/45 px-4 text-[14px] text-text-main outline-none placeholder:text-text-dim/50"
-                    />
-                  </label>
-
-                  <label className="grid gap-2">
-                    <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
-                      Harness
-                    </span>
-                    <select
-                      value={selectedCreateHarness}
-                      onChange={(event) =>
-                        setSelectedCreateHarness(event.target.value)
-                      }
-                      className="theme-control-surface h-12 rounded-[18px] border border-panel-border/45 px-4 text-[14px] text-text-main outline-none"
-                    >
-                      {createHarnessOptions.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                    <span className="text-[12px] leading-6 text-text-muted/74">
-                      {selectedCreateHarnessOption?.description ||
-                        "Default harness with backend bootstrapping and structured output support."}
-                    </span>
-                  </label>
-
-                  <div className="rounded-[18px] border border-panel-border/35 bg-panel-bg/18 px-4 py-3">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">
-                      Selection
+              ) : templateSourceMode === "local" ? (
+                <div className="mt-5 flex items-center gap-3 rounded-[18px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-3">
+                  <FolderOpen size={24} className="shrink-0 text-text-dim/72" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[14px] font-medium text-text-main">
+                      {selectedTemplateFolder?.templateName || "Local template"}
                     </div>
-                    <div className="mt-2 text-[14px] font-medium text-text-main">
-                      {sourceLabel}
-                    </div>
-                    <div className="mt-1 text-[12px] leading-6 text-text-muted/76">
-                      {sourceChoiceDetail}
+                    <div className="truncate text-[12px] text-text-muted/72">
+                      {selectedTemplateFolder?.rootPath || "No folder selected"}
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => void chooseTemplateFolder()}
+                    className="shrink-0 text-[12px] text-text-muted/72 underline transition-colors hover:text-text-main"
+                  >
+                    Change folder
+                  </button>
                 </div>
-              </div>
-            </div>
+              ) : null}
 
-            <div className="mt-4 rounded-[20px] border border-panel-border/40 bg-black/10 p-4">
-              <div className="border-b border-panel-border/30 pb-4">
-                <div>
-                  <div className="text-[11px] uppercase tracking-[0.22em] text-text-dim/76">
-                    Source details
-                  </div>
-                  <div className="mt-2 flex items-center gap-2 text-[18px] font-medium tracking-[-0.03em] text-text-main">
-                    {templateSourceMode === "marketplace" ? (
-                      <Sparkles size={16} className="text-[rgba(206,92,84,0.9)]" />
-                    ) : templateSourceMode === "empty_onboarding" ? (
-                      <Sparkles size={16} className="text-[rgba(206,92,84,0.9)]" />
-                    ) : templateSourceMode === "empty" ? (
-                      <span className="text-[18px] leading-none text-[rgba(206,92,84,0.9)]">
-                        +
-                      </span>
-                    ) : (
-                      <FolderOpen
-                        size={16}
-                        className="text-[rgba(206,92,84,0.9)]"
-                      />
-                    )}
-                    <span>{sourceLabel}</span>
-                  </div>
-                  <div className="mt-2 max-w-3xl text-[12px] leading-6 text-text-muted/76">
-                    {sourceDescription}
-                  </div>
-                </div>
+              <div className="mt-6 grid gap-4" style={{ maxWidth: 480 }}>
+                <label className="grid gap-2">
+                  <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
+                    Workspace name
+                  </span>
+                  <input
+                    value={newWorkspaceName}
+                    onChange={(e) => setNewWorkspaceName(e.target.value)}
+                    placeholder="My first workspace"
+                    className="theme-control-surface h-12 rounded-[18px] border border-panel-border/45 px-4 text-[14px] text-text-main outline-none placeholder:text-text-dim/50"
+                  />
+                </label>
+
+                <label className="grid gap-2">
+                  <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
+                    Harness
+                  </span>
+                  <select
+                    value={selectedCreateHarness}
+                    onChange={(e) => setSelectedCreateHarness(e.target.value)}
+                    className="theme-control-surface h-12 rounded-[18px] border border-panel-border/45 px-4 text-[14px] text-text-main outline-none"
+                  >
+                    {createHarnessOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-[12px] leading-6 text-text-muted/74">
+                    {selectedCreateHarnessOption?.description || ""}
+                  </span>
+                </label>
               </div>
 
-              <div className="mt-4">
-                {templateSourceMode === "marketplace" ? (
-                  canUseMarketplaceTemplates ? (
-                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.9fr)]">
-                      <label className="grid gap-2">
-                        <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
-                          Marketplace template
-                        </span>
-                        <select
-                          value={selectedMarketplaceTemplate?.name || ""}
-                          onChange={(event) =>
-                            selectMarketplaceTemplate(event.target.value)
-                          }
-                          disabled={
-                            isLoadingMarketplaceTemplates ||
-                            marketplaceTemplates.length === 0
-                          }
-                          className="theme-control-surface h-12 rounded-[18px] border border-panel-border/45 px-4 text-[14px] text-text-main outline-none disabled:text-text-dim/50"
-                        >
-                          {isLoadingMarketplaceTemplates ? (
-                            <option value="">Loading templates...</option>
-                          ) : marketplaceTemplates.length ? (
-                            marketplaceTemplates.map((template) => (
-                              <option
-                                key={template.name}
-                                value={template.name}
-                                disabled={template.is_coming_soon}
-                              >
-                                {template.is_coming_soon
-                                  ? `${template.name} (Coming soon)`
-                                  : template.name}
-                              </option>
-                            ))
-                          ) : (
-                            <option value="">
-                              No marketplace templates available
-                            </option>
-                          )}
-                        </select>
-                      </label>
+              {workspaceErrorMessage ? (
+                <div className="mt-4 rounded-[14px] border border-[rgba(255,153,102,0.24)] bg-[rgba(255,153,102,0.06)] px-4 py-3 text-[13px] leading-6 text-[rgba(255,153,102,0.92)]">
+                  {workspaceErrorMessage}
+                </div>
+              ) : null}
 
-                      <div className="rounded-[18px] border border-[rgba(247,90,84,0.16)] bg-[rgba(247,90,84,0.04)] px-4 py-3">
-                        <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">
-                          Preview
-                        </div>
-                        <div className="mt-2 text-[13px] font-medium text-text-main">
-                          {selectedMarketplaceTemplate?.name ||
-                            "Choose a marketplace template"}
-                        </div>
-                        <div className="mt-2 text-[12px] leading-6 text-text-muted/78">
-                          {marketplaceTemplatesError ||
-                            selectedMarketplaceTemplate?.description ||
-                            "Curated starter kits are ready to use."}
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="rounded-[20px] border border-[rgba(247,90,84,0.22)] bg-[rgba(247,90,84,0.05)] p-4">
-                      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                        <div className="max-w-2xl">
-                          <div className="text-[13px] font-medium text-text-main">
-                            Sign in to use marketplace templates
-                          </div>
-                          <div className="mt-1 text-[12px] leading-6 text-text-muted/78">
-                            Local folders and empty workspaces still work
-                            without an account.
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            ref={authButtonRef}
-                            type="button"
-                            onClick={openAuthPopup}
-                            className="inline-flex h-10 items-center justify-center rounded-[14px] border border-[rgba(247,90,84,0.34)] bg-[rgba(247,90,84,0.9)] px-4 text-[12px] font-medium text-white transition hover:bg-[rgba(226,79,74,0.94)]"
-                          >
-                            Sign in
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                ) : templateSourceMode === "empty" || templateSourceMode === "empty_onboarding" ? (
-                  <div className="rounded-[18px] border border-panel-border/35 bg-panel-bg/18 px-4 py-3">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">
-                      Scaffold
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {[
-                        "workspace.yaml",
-                        "AGENTS.md",
-                        "skills/",
-                        ...(templateSourceMode === "empty_onboarding" ? ["ONBOARD.md"] : [])
-                      ].map((item) => (
-                        <span
-                          key={item}
-                          className="rounded-full border border-panel-border/35 bg-black/10 px-3 py-1.5 text-[11px] uppercase tracking-[0.14em] text-text-dim/74"
-                        >
-                          {item}
-                        </span>
-                      ))}
-                    </div>
-                    {templateSourceMode === "empty_onboarding" ? (
-                      <div className="mt-3 text-[12px] leading-6 text-text-muted/78">
-                        Includes a starter onboarding guide so the workspace enters onboarding immediately after creation.
-                      </div>
-                    ) : null}
-                  </div>
-                ) : (
-                  <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.9fr)]">
-                    <div className="grid gap-2">
-                      <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
-                        Local template folder
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => void chooseTemplateFolder()}
-                        className="theme-control-surface flex h-12 items-center justify-between rounded-[18px] border border-panel-border/45 px-4 text-left text-[14px] text-text-main transition hover:border-[rgba(247,90,84,0.3)]"
-                      >
-                        <span className="truncate">
-                          {selectedTemplateFolder?.templateName ||
-                            selectedTemplateFolder?.rootPath ||
-                            "Choose local folder"}
-                        </span>
-                        <ArrowRight
-                          size={16}
-                          className="shrink-0 text-text-dim/75"
-                        />
-                      </button>
-                    </div>
-
-                    <div className="rounded-[18px] border border-panel-border/35 bg-panel-bg/18 px-4 py-3">
-                      <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">
-                        Path
-                      </div>
-                      <div className="mt-2 text-[12px] leading-6 text-text-muted/78">
-                        {selectedTemplateFolder?.rootPath ||
-                          "Choose a folder and Holaboss will use it as the source template for the new workspace."}
-                      </div>
-                    </div>
-                  </div>
-                )}
+              <div className="mt-5 flex items-center gap-3">
+                <button
+                  type="button"
+                  disabled={configureCreateDisabled}
+                  onClick={() => void createWorkspace()}
+                  className="inline-flex h-12 items-center justify-center gap-3 rounded-[18px] border border-[rgba(247,90,84,0.38)] bg-[rgba(247,90,84,0.9)] px-5 text-[14px] font-medium text-white transition-colors hover:bg-[rgba(226,79,74,0.94)] disabled:cursor-not-allowed disabled:border-panel-border/45 disabled:bg-panel-bg/60 disabled:text-text-dim/60"
+                >
+                  <span>Create Workspace</span>
+                  <ArrowRight size={16} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOnboardingStep("gallery")}
+                  className="text-[12px] text-text-muted/72 underline transition-colors hover:text-text-main"
+                >
+                  Back to kits
+                </button>
               </div>
             </div>
-
-            {workspaceErrorMessage ? (
-              <div className="theme-chat-system-bubble mt-5 rounded-[18px] border px-4 py-3 text-[13px] leading-6">
-                {workspaceErrorMessage}
-              </div>
-            ) : null}
-
-            <div className="mt-4 flex flex-col gap-3 border-t border-panel-border/35 pt-4 md:flex-row md:items-center md:justify-between">
-              <div className="text-[12px] leading-5 text-text-muted/70">
-                {!newWorkspaceName.trim()
-                  ? "Enter a workspace name to continue."
-                  : templateSourceMode === "marketplace" &&
-                      !canUseMarketplaceTemplates
-                    ? "Sign in to use marketplace templates."
-                    : templateSourceMode === "local" &&
-                        !selectedTemplateFolder?.rootPath
-                      ? "Choose a local template folder."
-                      : "\u00A0"}
-              </div>
-              <button
-                type="submit"
-                disabled={createDisabled}
-                className="inline-flex h-12 items-center justify-center gap-3 rounded-[18px] border border-[rgba(247,90,84,0.38)] bg-[rgba(247,90,84,0.9)] px-5 text-[14px] font-medium text-white transition hover:bg-[rgba(226,79,74,0.94)] disabled:cursor-not-allowed disabled:border-panel-border/45 disabled:bg-panel-bg/60 disabled:text-text-dim/60"
-              >
-                <span>Create Workspace</span>
-                <ArrowRight size={16} />
-              </button>
-            </div>
-          </form>
+          ) : null}
         </div>
       </div>
     </section>
-  );
-}
-
-function FirstWorkspaceChoiceCard({
-  title,
-  description,
-  detail,
-  icon,
-  active,
-  badge,
-  onClick,
-}: {
-  title: string;
-  description: string;
-  detail: string;
-  icon: ReactNode;
-  active: boolean;
-  badge?: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`group relative overflow-hidden rounded-[18px] border p-3 text-left transition-all duration-200 ${
-        active
-          ? "border-[rgba(247,90,84,0.32)] bg-[linear-gradient(145deg,rgba(247,90,84,0.1),rgba(255,255,255,0.03))] shadow-[0_10px_28px_rgba(25,33,53,0.08)]"
-          : "border-panel-border/45 theme-control-surface hover:border-[rgba(247,90,84,0.24)] hover:bg-[var(--theme-hover-bg)]"
-      }`}
-    >
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(247,90,84,0.12),transparent_36%)] opacity-70" />
-      <div className="relative">
-        <div className="flex items-start justify-between gap-3">
-          <div className="theme-subtle-surface flex h-10 w-10 items-center justify-center rounded-[14px] border border-panel-border/45 text-text-main/88">
-            {icon}
-          </div>
-          {badge ? (
-            <span className="theme-subtle-surface inline-flex items-center gap-1 rounded-full border border-panel-border/45 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-text-dim/78">
-              <LockKeyhole size={11} />
-              <span>{badge}</span>
-            </span>
-          ) : null}
-        </div>
-        <div className="mt-2.5 text-[14px] font-medium tracking-[-0.02em] text-text-main">
-          {title}
-        </div>
-        <div className="mt-1 text-[12px] leading-5 text-text-muted/82">
-          {description}
-        </div>
-        <div className="mt-2 text-[10px] uppercase tracking-[0.14em] text-text-dim/72">
-          {detail}
-        </div>
-      </div>
-    </button>
   );
 }
 
@@ -2286,6 +2012,10 @@ function AppShellContent() {
                 ) : activeLeftRailItem === "integrations" ? (
                   <div className="h-full min-h-0 overflow-hidden">
                     <IntegrationsPane />
+                  </div>
+                ) : activeLeftRailItem === "marketplace" ? (
+                  <div className="h-full min-h-0 overflow-hidden">
+                    <MarketplacePane />
                   </div>
                 ) : (
                   <div className="h-full min-h-0 overflow-hidden">
