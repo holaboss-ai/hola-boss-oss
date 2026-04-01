@@ -319,7 +319,7 @@ The launcher environment should stay consistent with how the desktop app starts 
 - `SANDBOX_AGENT_BIND_PORT`: runtime API bind port
 - `OPENCODE_SERVER_HOST`: local OpenCode sidecar host
 - `OPENCODE_SERVER_PORT`: local OpenCode sidecar port
-- `SANDBOX_AGENT_HARNESS`: harness selector, defaults to `opencode`
+- `SANDBOX_AGENT_HARNESS`: harness selector, defaults to `pi`
 - `HOLABOSS_RUNTIME_WORKFLOW_BACKEND`: workflow backend selector, desktop uses `remote_api`
 - `HOLABOSS_RUNTIME_DB_PATH`: SQLite runtime DB path
 - `PROACTIVE_ENABLE_REMOTE_BRIDGE`: desktop enables this with `1`
@@ -357,7 +357,7 @@ SANDBOX_AGENT_BIND_HOST=127.0.0.1 \
 SANDBOX_AGENT_BIND_PORT=8080 \
 OPENCODE_SERVER_HOST=127.0.0.1 \
 OPENCODE_SERVER_PORT=4096 \
-SANDBOX_AGENT_HARNESS=opencode \
+SANDBOX_AGENT_HARNESS=pi \
 HOLABOSS_RUNTIME_WORKFLOW_BACKEND=remote_api \
 HOLABOSS_RUNTIME_DB_PATH=/var/lib/holaboss/state/runtime.db \
 PROACTIVE_ENABLE_REMOTE_BRIDGE=1 \
@@ -393,7 +393,7 @@ SANDBOX_AGENT_BIND_HOST=127.0.0.1 \
 SANDBOX_AGENT_BIND_PORT=8080 \
 OPENCODE_SERVER_HOST=127.0.0.1 \
 OPENCODE_SERVER_PORT=4096 \
-SANDBOX_AGENT_HARNESS=opencode \
+SANDBOX_AGENT_HARNESS=pi \
 HOLABOSS_RUNTIME_WORKFLOW_BACKEND=remote_api \
 HOLABOSS_RUNTIME_DB_PATH="$HOME/Library/Application Support/HolabossRuntime/state/runtime.db" \
 PROACTIVE_ENABLE_REMOTE_BRIDGE=1 \

@@ -94,7 +94,7 @@ export function queueLocalCronjobRun(
     createdBy: job.initiatedBy
   });
   if (!store.getBinding({ workspaceId: job.workspaceId, sessionId: resolvedSessionId })) {
-    const harness = (workspace.harness ?? process.env.SANDBOX_AGENT_HARNESS ?? "opencode").trim() || "opencode";
+    const harness = (workspace.harness ?? process.env.SANDBOX_AGENT_HARNESS ?? "pi").trim() || "pi";
     store.upsertBinding({
       workspaceId: job.workspaceId,
       sessionId: resolvedSessionId,

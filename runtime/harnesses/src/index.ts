@@ -7,6 +7,6 @@ export * from "./types.js";
 import { opencodeHarnessDefinition } from "./opencode.js";
 import { piHarnessDefinition } from "./pi.js";
 
-export const DEFAULT_HARNESS_ID = "opencode";
+export const DEFAULT_HARNESS_ID = "pi";
 
 export const HARNESS_DEFINITIONS = [opencodeHarnessDefinition, piHarnessDefinition] as const;

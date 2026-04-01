@@ -13,7 +13,7 @@ import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 const ONBOARDING_ACTIVE_STATUSES = new Set(["pending", "awaiting_confirmation", "in_progress"]);
 const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
-const DEFAULT_WORKSPACE_HARNESS: WorkspaceHarnessId = "opencode";
+const DEFAULT_WORKSPACE_HARNESS: WorkspaceHarnessId = "pi";
 type TemplateSourceMode = "local" | "marketplace" | "empty" | "empty_onboarding";
 type LifecycleStepState = "pending" | "current" | "done" | "error";
 
@@ -27,14 +27,14 @@ type WorkspaceHarnessId = WorkspaceHarnessOption["id"];
 
 const WORKSPACE_HARNESS_OPTIONS: WorkspaceHarnessOption[] = [
   {
-    id: "opencode",
-    label: "OpenCode",
-    description: "Default harness with backend bootstrapping and structured output support."
-  },
-  {
     id: "pi",
     label: "Pi",
     description: "Lean harness path without backend bootstrapping."
+  },
+  {
+    id: "opencode",
+    label: "OpenCode",
+    description: "Harness with backend bootstrapping and structured output support."
   }
 ];
 
@@ -115,7 +115,7 @@ function sessionUserId(session: AuthSession | null): string {
 }
 
 function normalizeWorkspaceHarness(value: string | null | undefined): WorkspaceHarnessId {
-  return value?.trim().toLowerCase() === "pi" ? "pi" : "opencode";
+  return value?.trim().toLowerCase() === "opencode" ? "opencode" : "pi";
 }
 
 function normalizeErrorMessage(error: unknown) {

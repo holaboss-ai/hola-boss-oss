@@ -5967,15 +5967,15 @@ async function requestRuntimeJson<T>({
 
 function workspaceHarness() {
   return (
-    (process.env.HOLABOSS_RUNTIME_HARNESS || "opencode").trim().toLowerCase() ||
-    "opencode"
+    (process.env.HOLABOSS_RUNTIME_HARNESS || "pi").trim().toLowerCase() ||
+    "pi"
   );
 }
 
 function normalizeRequestedWorkspaceHarness(
   value: string | null | undefined,
 ): string {
-  const normalized = value?.trim().toLowerCase() || "opencode";
+  const normalized = value?.trim().toLowerCase() || "pi";
   if (normalized === "opencode" || normalized === "pi") {
     return normalized;
   }
@@ -8009,7 +8009,7 @@ async function refreshRuntimeStatus() {
     ? path.join(runtimeRoot, "bin", "sandbox-runtime")
     : null;
   const sandboxRoot = runtimeSandboxRoot();
-  const harness = process.env.HOLABOSS_RUNTIME_HARNESS || "opencode";
+  const harness = process.env.HOLABOSS_RUNTIME_HARNESS || "pi";
   const workflowBackend =
     process.env.HOLABOSS_RUNTIME_WORKFLOW_BACKEND || "remote_api";
   const url = `http://127.0.0.1:${RUNTIME_API_PORT}`;
@@ -8142,7 +8142,7 @@ async function startEmbeddedRuntime() {
     ? path.join(runtimeRoot, "bin", "sandbox-runtime")
     : null;
   const sandboxRoot = runtimeSandboxRoot();
-  const harness = process.env.HOLABOSS_RUNTIME_HARNESS || "opencode";
+  const harness = process.env.HOLABOSS_RUNTIME_HARNESS || "pi";
   const workflowBackend =
     process.env.HOLABOSS_RUNTIME_WORKFLOW_BACKEND || "remote_api";
   const url = `http://127.0.0.1:${RUNTIME_API_PORT}`;
@@ -12210,7 +12210,7 @@ app.whenReady().then(async () => {
     status: "starting",
     url: `http://127.0.0.1:${RUNTIME_API_PORT}`,
     sandboxRoot: runtimeSandboxRoot(),
-    harness: process.env.HOLABOSS_RUNTIME_HARNESS || "opencode",
+    harness: process.env.HOLABOSS_RUNTIME_HARNESS || "pi",
     lastError: "",
   });
   emitRuntimeState();

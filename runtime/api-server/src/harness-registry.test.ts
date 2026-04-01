@@ -4,7 +4,7 @@ import test from "node:test";
 import { listRuntimeHarnessAdapters, normalizeHarnessId, requireRuntimeHarnessAdapter, resolveRuntimeHarnessAdapter } from "./harness-registry.js";
 
 test("normalizeHarnessId falls back to the default harness", () => {
-  assert.equal(normalizeHarnessId(undefined), "opencode");
+  assert.equal(normalizeHarnessId(undefined), "pi");
   assert.equal(normalizeHarnessId(" PI "), "pi");
 });
 

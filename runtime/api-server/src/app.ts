@@ -547,8 +547,8 @@ function taskProposalPayload(record: TaskProposalRecord): Record<string, unknown
 }
 
 function resolvedWorkspaceHarness(workspace: WorkspaceRecord): string {
-  const harness = (workspace.harness ?? process.env.SANDBOX_AGENT_HARNESS ?? "opencode").trim();
-  return harness || "opencode";
+  const harness = (workspace.harness ?? process.env.SANDBOX_AGENT_HARNESS ?? "pi").trim();
+  return harness || "pi";
 }
 
 function inferredSessionKind(workspace: WorkspaceRecord, sessionId: string): string {
