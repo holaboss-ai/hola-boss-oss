@@ -742,7 +742,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
         label: "Sandbox assigned",
         state: sandboxAssigned ? "done" : runtimeProvisioned ? "current" : "pending",
         detail: sandboxAssigned
-          ? `Sandbox ${runtimeConfig?.sandboxId}`
+          ? "Sandbox is assigned for this runtime."
           : "Waiting for a sandbox assignment in runtime config."
       },
       {

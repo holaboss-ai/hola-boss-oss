@@ -74,7 +74,7 @@ function baseCompiledPlan() {
       type: "single",
       agent: {
         id: "main",
-        model: "openai/gpt-5.1",
+        model: "openai/gpt-5.4",
         prompt: "You are concise.",
         role: null
       }
@@ -120,7 +120,7 @@ function testDeps(params: {
     bootstrapApplications: async () => [],
     projectAgentRuntimeConfig: () => ({
       provider_id: "openai",
-      model_id: "gpt-5.1",
+      model_id: "gpt-5.4",
       mode: "code",
       system_prompt: "You are concise.",
       model_client: {
@@ -162,7 +162,7 @@ test("decodeTsRunnerRequest decodes a valid runner request", () => {
       input_id: "input-1",
       instruction: "hello",
       context: { k: "v" },
-      model: "openai/gpt-5.1",
+      model: "openai/gpt-5.4",
       debug: true
     })
   );
@@ -176,7 +176,7 @@ test("decodeTsRunnerRequest decodes a valid runner request", () => {
     instruction: "hello",
     attachments: [],
     context: { k: "v" },
-    model: "openai/gpt-5.1",
+    model: "openai/gpt-5.4",
     debug: true
   });
 });
@@ -571,7 +571,7 @@ test("runTsRunnerCli only advertises structured output when the selected harness
         ...testDeps(),
         projectAgentRuntimeConfig: () => ({
           provider_id: "openai",
-          model_id: "gpt-5.1",
+          model_id: "gpt-5.4",
           mode: "code",
           system_prompt: "You are concise.",
           model_client: {
@@ -626,7 +626,7 @@ test("runTsRunnerCli only advertises structured output when the selected harness
   }, {
     instruction_preview: "hello world",
     provider_id: "openai",
-    model_id: "gpt-5.1",
+    model_id: "gpt-5.4",
     workspace_tool_ids: [],
     workspace_skill_ids: [],
     mcp_server_ids: [],
@@ -671,7 +671,7 @@ test("runTsRunnerCli includes staged runtime tool ids in the projected extra too
           capturedProjectRequest = request as unknown as Record<string, unknown>;
           return {
             provider_id: "openai",
-            model_id: "gpt-5.1",
+            model_id: "gpt-5.4",
             mode: "code",
             system_prompt: "You are concise.",
             model_client: {
@@ -731,7 +731,7 @@ test("runTsRunnerCli only stages browser tools for the main session", async () =
           capturedProjectRequest = request as unknown as Record<string, unknown>;
           return {
             provider_id: "openai",
-            model_id: "gpt-5.1",
+            model_id: "gpt-5.4",
             mode: "code",
             system_prompt: "You are concise.",
             model_client: {
@@ -800,7 +800,7 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
           capturedProjectRequest = request as unknown as Record<string, unknown>;
           return {
             provider_id: "openai",
-            model_id: "gpt-5.1",
+            model_id: "gpt-5.4",
             mode: "code",
             system_prompt: "You are concise.",
             model_client: {
@@ -1026,7 +1026,7 @@ test("runTsRunnerCli skips MCP prep when the harness prep plan disables it", { c
             capturedProjectRequest = request as unknown as Record<string, unknown>;
             return {
               provider_id: "openai",
-              model_id: "gpt-5.1",
+              model_id: "gpt-5.4",
               mode: "code",
               system_prompt: "You are concise.",
               model_client: {

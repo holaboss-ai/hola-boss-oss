@@ -95,7 +95,7 @@ function isAppTheme(value: string): value is AppTheme {
 }
 
 function isSettingsPaneSection(value: string): value is UiSettingsPaneSection {
-  return value === "account" || value === "settings" || value === "about";
+  return value === "account" || value === "models" || value === "appearance" || value === "about";
 }
 
 type AgentView =
@@ -975,7 +975,7 @@ function AppShellContent() {
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatusPayload | null>(null);
   const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatusPayload | null>(null);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
-  const [settingsDialogSection, setSettingsDialogSection] = useState<UiSettingsPaneSection>("settings");
+  const [settingsDialogSection, setSettingsDialogSection] = useState<UiSettingsPaneSection>("models");
   const [activeLeftRailItem, setActiveLeftRailItem] = useState<LeftRailItem>("space");
   const [agentView, setAgentView] = useState<AgentView>({ type: "chat" });
   const [chatFocusRequestKey, setChatFocusRequestKey] = useState(1);
@@ -1186,7 +1186,7 @@ function AppShellContent() {
     }
 
     const unsubscribe = window.electronAPI.ui.onOpenSettingsPane((section) => {
-      setSettingsDialogSection(isSettingsPaneSection(section) ? section : "settings");
+      setSettingsDialogSection(isSettingsPaneSection(section) ? section : "models");
       setSettingsDialogOpen(true);
       void window.electronAPI.auth.closePopup();
     });

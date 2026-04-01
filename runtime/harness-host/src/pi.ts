@@ -909,10 +909,15 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
         )
       )
     : undefined;
+  const hasExplicitAuthHeader = Object.keys(providerHeaders ?? {}).some((headerName) => {
+    const normalizedHeaderName = headerName.trim().toLowerCase();
+    return normalizedHeaderName === "x-api-key" || normalizedHeaderName === "authorization";
+  });
   modelRegistry.registerProvider(request.provider_id, {
     baseUrl: firstNonEmptyString(request.model_client.base_url),
     headers: providerHeaders,
-    authHeader: false,
+    // Prefer runtime-managed auth headers when provided by the server, otherwise let Pi attach auth from api_key.
+    authHeader: !hasExplicitAuthHeader,
   });
 
   const model = resolvePiModel(request, modelRegistry);

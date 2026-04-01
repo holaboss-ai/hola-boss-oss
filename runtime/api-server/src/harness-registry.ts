@@ -30,7 +30,7 @@ import { opencodeProxyConfigPath, updateOpencodeConfig } from "./opencode-config
 import { stageOpencodeRuntimeToolsPlugin } from "./opencode-runtime-tools.js";
 import { readOpencodeSidecarBaseUrl, restartOpencodeSidecar } from "./opencode-sidecar.js";
 import { stageOpencodeSkills } from "./opencode-skills.js";
-import { buildRunnerEnv } from "./runner-worker.js";
+import { buildRunnerEnv, resolveOpencodeExecutable } from "./runner-worker.js";
 
 const HB_SANDBOX_ROOT_ENV = "HB_SANDBOX_ROOT";
 const OPENCODE_BASE_URL_ENV = "OPENCODE_BASE_URL";
@@ -229,7 +229,7 @@ function opencodeBootstrapPayload(config: RuntimeHarnessProductConfig): Record<s
     $schema: "https://opencode.ai/config.json",
     provider: {
       openai: {
-        npm: "@ai-sdk/openai-compatible",
+        npm: "@ai-sdk/openai",
         name: "Holaboss Model Proxy (OpenAI)",
         options: {
           apiKey: config.authToken,
@@ -280,12 +280,16 @@ async function ensureOpencodeBackendReady(fetchImpl: typeof fetch): Promise<void
 
   await new Promise<void>((resolve, reject) => {
     let settled = false;
-    const child = spawn("opencode", ["serve", "--hostname", opencodeServerHost(), "--port", String(opencodeServerPort())], {
-      cwd: workspaceRootPath(),
-      env: buildRunnerEnv(),
-      stdio: "ignore",
-      detached: true
-    });
+    const child = spawn(
+      resolveOpencodeExecutable(),
+      ["serve", "--hostname", opencodeServerHost(), "--port", String(opencodeServerPort())],
+      {
+        cwd: workspaceRootPath(),
+        env: buildRunnerEnv(),
+        stdio: "ignore",
+        detached: true
+      }
+    );
     child.once("error", (error) => {
       if (settled) {
         return;

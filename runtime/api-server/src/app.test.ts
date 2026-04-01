@@ -351,7 +351,7 @@ test("runtime config routes delegate to the runtime config executor", async () =
         user_id: null,
         sandbox_id: null,
         model_proxy_base_url: null,
-        default_model: "openai/gpt-5.1",
+        default_model: "openai/gpt-5.4",
         runtime_mode: "oss",
         default_provider: null,
         holaboss_enabled: false,
@@ -383,7 +383,7 @@ test("runtime config routes delegate to the runtime config executor", async () =
         user_id: "user-1",
         sandbox_id: "sandbox-1",
         model_proxy_base_url: "https://runtime.example/api/v1/model-proxy",
-        default_model: "openai/gpt-5.1",
+        default_model: "openai/gpt-5.4",
         runtime_mode: "oss",
         default_provider: "holaboss_model_proxy",
         holaboss_enabled: true,
@@ -410,7 +410,7 @@ test("runtime config routes delegate to the runtime config executor", async () =
       user_id: "user-1",
       sandbox_id: "sandbox-1",
       model_proxy_base_url: "https://runtime.example/api/v1/model-proxy",
-      default_model: "openai/gpt-5.1"
+      default_model: "openai/gpt-5.4"
     }
   });
 
@@ -420,7 +420,7 @@ test("runtime config routes delegate to the runtime config executor", async () =
   assert.deepEqual(calls, [
     "get-config",
     "get-status",
-    "put-config:{\"auth_token\":\"token-1\",\"user_id\":\"user-1\",\"sandbox_id\":\"sandbox-1\",\"model_proxy_base_url\":\"https://runtime.example/api/v1/model-proxy\",\"default_model\":\"openai/gpt-5.1\"}"
+    "put-config:{\"auth_token\":\"token-1\",\"user_id\":\"user-1\",\"sandbox_id\":\"sandbox-1\",\"model_proxy_base_url\":\"https://runtime.example/api/v1/model-proxy\",\"default_model\":\"openai/gpt-5.4\"}"
   ]);
 
   await app.close();

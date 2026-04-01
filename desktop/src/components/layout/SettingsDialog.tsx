@@ -42,13 +42,19 @@ const SETTINGS_SECTIONS: Array<{
   {
     id: "account",
     label: "Account",
-    description: "Session and runtime connection",
+    description: "Session and sign-in state",
     icon: User2
   },
   {
-    id: "settings",
-    label: "Settings",
-    description: "Appearance and desktop defaults",
+    id: "models",
+    label: "Models",
+    description: "Provider and model routing",
+    icon: Globe
+  },
+  {
+    id: "appearance",
+    label: "Appearance",
+    description: "Desktop themes and visuals",
     icon: Palette
   },
   {
@@ -63,23 +69,29 @@ function titleForSection(section: UiSettingsPaneSection): string {
   switch (section) {
     case "account":
       return "Account";
+    case "models":
+      return "Models";
+    case "appearance":
+      return "Appearance";
     case "about":
       return "About";
-    case "settings":
     default:
-      return "Settings";
+      return "Models";
   }
 }
 
 function subtitleForSection(section: UiSettingsPaneSection): string {
   switch (section) {
     case "account":
-      return "Manage your desktop session, runtime binding, and proactive delivery.";
+      return "Manage your desktop session and proactive delivery.";
+    case "models":
+      return "Configure model providers and model routing.";
+    case "appearance":
+      return "Choose the desktop visual theme.";
     case "about":
       return "Open product resources and support channels.";
-    case "settings":
     default:
-      return "Tune desktop appearance and shared preferences.";
+      return "Configure model providers and model routing.";
   }
 }
 
@@ -203,7 +215,7 @@ export function SettingsDialog({
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
             {activeSection === "account" ? (
               <div className="grid w-full max-w-none gap-6">
-                <AuthPanel />
+                <AuthPanel view="account" />
                 <ProactiveStatusCard
                   hasWorkspace={hasWorkspace}
                   workspaceName={selectedWorkspaceName}
@@ -215,7 +227,13 @@ export function SettingsDialog({
               </div>
             ) : null}
 
-            {activeSection === "settings" ? (
+            {activeSection === "models" ? (
+              <div className="grid gap-6">
+                <AuthPanel view="runtime" />
+              </div>
+            ) : null}
+
+            {activeSection === "appearance" ? (
               <div className="grid gap-6">
                 <section className="theme-subtle-surface rounded-[24px] border border-panel-border/40 p-5">
                   <div className="text-[11px] uppercase tracking-[0.18em] text-text-dim/68">Appearance</div>

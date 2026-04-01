@@ -52,7 +52,7 @@ interface BrowserAnchorBoundsPayload {
   height: number;
 }
 
-type UiSettingsPaneSection = "account" | "settings" | "about";
+type UiSettingsPaneSection = "account" | "models" | "appearance" | "about";
 
 interface BrowserStatePayload {
   id: string;
@@ -133,6 +133,19 @@ interface RuntimeConfigPayload {
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
   controlPlaneBaseUrl: string | null;
+  providerModelGroups: RuntimeProviderModelGroupPayload[];
+}
+
+interface RuntimeProviderModelPayload {
+  token: string;
+  modelId: string;
+}
+
+interface RuntimeProviderModelGroupPayload {
+  providerId: string;
+  providerLabel: string;
+  kind: string;
+  models: RuntimeProviderModelPayload[];
 }
 
 interface RuntimeConfigUpdatePayload {
@@ -673,8 +686,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getStatus: () => ipcRenderer.invoke("runtime:getStatus") as Promise<RuntimeStatusPayload>,
     restart: () => ipcRenderer.invoke("runtime:restart") as Promise<RuntimeStatusPayload>,
     getConfig: () => ipcRenderer.invoke("runtime:getConfig") as Promise<RuntimeConfigPayload>,
+    getConfigDocument: () => ipcRenderer.invoke("runtime:getConfigDocument") as Promise<string>,
     setConfig: (payload: RuntimeConfigUpdatePayload) =>
       ipcRenderer.invoke("runtime:setConfig", payload) as Promise<RuntimeConfigPayload>,
+    setConfigDocument: (rawDocument: string) =>
+      ipcRenderer.invoke("runtime:setConfigDocument", rawDocument) as Promise<RuntimeConfigPayload>,
     exchangeBinding: (sandboxId: string) =>
       ipcRenderer.invoke("runtime:exchangeBinding", sandboxId) as Promise<RuntimeConfigPayload>,
     onConfigChange: (listener: (config: RuntimeConfigPayload) => void) => {

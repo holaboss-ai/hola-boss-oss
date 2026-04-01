@@ -214,10 +214,21 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: |
+          soft_limit="$(ulimit -Sn)"
+          hard_limit="$(ulimit -Hn)"
+          echo "open file limits before build: soft=${soft_limit} hard=${hard_limit}"
+          target_limit=10240
+          if [ "${hard_limit}" != "unlimited" ] && [ "${hard_limit}" -lt "${target_limit}" ]; then
+            target_limit="${hard_limit}"
+          fi
+          if [ "${soft_limit}" -lt "${target_limit}" ]; then
+            ulimit -n "${target_limit}" || true
+          fi
+          echo "open file limits for build: soft=$(ulimit -Sn) hard=$(ulimit -Hn)"
           npm run prepare:runtime
           npm run prepare:packaged-config
           npm run build
-          node scripts/run-electron-builder.mjs --projectDir "$PWD" --publish never --mac dmg --arm64 -c.mac.identity=-
+          node scripts/run-electron-builder.mjs --projectDir "$PWD" --publish never --mac dmg --arm64 -c.mac.identity=null -c.mac.hardenedRuntime=false
 
       - name: Build signed and notarized macOS desktop DMG
         if: ${{ env.MAC_CERTIFICATE != '' && env.MAC_CERTIFICATE_PASSWORD != '' && env.APPLE_ID != '' && env.APPLE_APP_SPECIFIC_PASSWORD != '' && env.APPLE_TEAM_ID != '' }}
@@ -239,6 +250,17 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ env.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ env.APPLE_TEAM_ID }}
         run: |
+          soft_limit="$(ulimit -Sn)"
+          hard_limit="$(ulimit -Hn)"
+          echo "open file limits before build: soft=${soft_limit} hard=${hard_limit}"
+          target_limit=10240
+          if [ "${hard_limit}" != "unlimited" ] && [ "${hard_limit}" -lt "${target_limit}" ]; then
+            target_limit="${hard_limit}"
+          fi
+          if [ "${soft_limit}" -lt "${target_limit}" ]; then
+            ulimit -n "${target_limit}" || true
+          fi
+          echo "open file limits for build: soft=$(ulimit -Sn) hard=$(ulimit -Hn)"
           npm run prepare:runtime
           npm run prepare:packaged-config
           npm run build

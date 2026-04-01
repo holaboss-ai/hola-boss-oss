@@ -8,6 +8,7 @@ import {
   buildRunnerEnv,
   currentRuntimeApiUrl,
   NativeRunnerExecutor,
+  resolveOpencodeExecutable,
   RunnerExecutorError
 } from "./runner-worker.js";
 
@@ -254,11 +255,31 @@ test("build runner env injects runtime api url when missing", () => {
 });
 
 test("build runner env prepends api-server local bin helpers", () => {
-  process.env.HOLABOSS_RUNTIME_ROOT = "/runtime-root";
-  process.env.HOLABOSS_RUNTIME_APP_ROOT = "/runtime-app";
+  process.env.HOLABOSS_RUNTIME_ROOT = "/bundle/runtime";
+  process.env.HOLABOSS_RUNTIME_APP_ROOT = "/bundle/runtime";
   process.env.PATH = "/usr/local/bin:/usr/bin";
 
   const env = buildRunnerEnv();
 
-  assert.equal(env.PATH, `/runtime-app/api-server/node_modules/.bin:/usr/local/bin:/usr/bin`);
+  assert.equal(
+    env.PATH,
+    `/bundle/node-runtime/bin:/bundle/runtime/api-server/node_modules/.bin:/usr/local/bin:/usr/bin`
+  );
+});
+
+test("resolveOpencodeExecutable prefers bundled runtime opencode when present", () => {
+  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-runner-worker-opencode-"));
+  TEMP_DIRS.push(runtimeRoot);
+  process.env.HOLABOSS_RUNTIME_ROOT = path.join(runtimeRoot, "runtime");
+  const bundledExecutable = path.join(runtimeRoot, "node-runtime", "bin", "opencode");
+  fs.mkdirSync(path.dirname(bundledExecutable), { recursive: true });
+  fs.writeFileSync(bundledExecutable, "#!/bin/sh\n", "utf8");
+
+  assert.equal(resolveOpencodeExecutable(), bundledExecutable);
+});
+
+test("resolveOpencodeExecutable falls back to PATH lookup when bundled runtime opencode is absent", () => {
+  process.env.HOLABOSS_RUNTIME_ROOT = "/bundle/runtime";
+
+  assert.equal(resolveOpencodeExecutable(), "opencode");
 });

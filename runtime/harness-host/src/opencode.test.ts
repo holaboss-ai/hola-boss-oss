@@ -6,6 +6,7 @@ import {
   mapOpencodeEvent,
   promptPartsForRequest,
   resolveOpencodeSessionId,
+  runOpencode,
   shouldEmitOpencodeEvent,
 } from "./opencode.js";
 import type { OpencodeHarnessHostRequest } from "./contracts.js";
@@ -551,4 +552,73 @@ test("promptPartsForRequest adds staged attachments as file parts", () => {
       filename: "diagram.png",
     },
   ]);
+});
+
+test("runOpencode primes the event stream before prompt submission", async () => {
+  const writes: string[] = [];
+  const originalWrite = process.stdout.write.bind(process.stdout);
+  let nextCalled = false;
+  let eventDelivered = false;
+
+  const iterator: AsyncIterator<unknown> = {
+    next: async () => {
+      nextCalled = true;
+      if (eventDelivered) {
+        return { done: true, value: undefined };
+      }
+      eventDelivered = true;
+      return {
+        done: false,
+        value: {
+          type: "session.status",
+          properties: {
+            sessionID: "created-session-1",
+            status: { type: "idle" },
+          },
+        },
+      };
+    },
+  };
+
+  const fakeClient = {
+    mcp: {
+      status: async () => ({ data: {} }),
+      add: async () => ({ data: {} }),
+      connect: async () => ({ data: {} }),
+    },
+    session: {
+      get: async () => ({ data: undefined }),
+      create: async () => ({ data: { id: "created-session-1" } }),
+      promptAsync: async () => {
+        assert.equal(nextCalled, true);
+        return { data: { accepted: true } };
+      },
+    },
+    event: {
+      subscribe: async () => ({
+        stream: {
+          [Symbol.asyncIterator]() {
+            return iterator;
+          },
+        },
+      }),
+    },
+  };
+
+  try {
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      writes.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+      return true;
+    }) as typeof process.stdout.write;
+
+    const exitCode = await runOpencode(baseRequest(), {
+      createClient: () => fakeClient as never,
+    });
+
+    assert.equal(exitCode, 0);
+    assert.equal(nextCalled, true);
+    assert.match(writes.join(""), /"event_type":"run_completed"/);
+  } finally {
+    process.stdout.write = originalWrite;
+  }
 });
