@@ -534,6 +534,7 @@ declare global {
     template_name?: string | null;
     template_ref?: string | null;
     template_commit?: string | null;
+    template_apps?: string[];
   }
 
   interface TemplateFolderSelectionPayload {

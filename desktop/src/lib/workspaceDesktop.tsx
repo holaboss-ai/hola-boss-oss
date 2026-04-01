@@ -484,7 +484,8 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
           harness: selectedCreateHarness,
           name: trimmedName,
           template_mode: "template",
-          template_name: selectedMarketplaceTemplate.name
+          template_name: selectedMarketplaceTemplate.name,
+          template_apps: selectedMarketplaceTemplate.apps
         };
       } else if (selectedTemplateFolder?.rootPath) {
         payload = {

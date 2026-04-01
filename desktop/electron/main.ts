@@ -1740,6 +1740,8 @@ interface HolabossCreateWorkspacePayload {
   template_name?: string | null;
   template_ref?: string | null;
   template_commit?: string | null;
+  /** App names from template metadata, used for integration resolution without materialization. */
+  template_apps?: string[];
 }
 
 interface TemplateFolderSelectionPayload {
@@ -4269,32 +4271,44 @@ function extractIntegrationRequirementsFromTemplateFiles(
   return requirements;
 }
 
+/**
+ * Known app-name → provider mapping. Used to infer integration requirements
+ * from template metadata (app names) without materializing the template.
+ */
+const APP_TO_PROVIDER: Record<string, string> = {
+  gmail: "google",
+  sheets: "google",
+  github: "github",
+  reddit: "reddit",
+  twitter: "twitter",
+  linkedin: "linkedin",
+};
+
 async function resolveTemplateIntegrations(
   payload: HolabossCreateWorkspacePayload,
 ): Promise<ResolveTemplateIntegrationsResult> {
-  const templateRootPath = payload.template_root_path?.trim() || "";
-  const templateName = payload.template_name?.trim() || "";
+  // Infer requirements from the app names in the payload or selected template
+  const appNames: string[] = payload.template_apps ?? [];
 
-  let materializedTemplate: MaterializeTemplateResponsePayload;
-
-  if (templateRootPath) {
-    materializedTemplate = await materializeLocalTemplate({
-      template_root_path: templateRootPath,
-    });
-  } else if (templateName) {
-    materializedTemplate = await materializeMarketplaceTemplate({
-      holaboss_user_id: payload.holaboss_user_id,
-      template_name: templateName,
-      template_ref: payload.template_ref,
-      template_commit: payload.template_commit,
-    });
-  } else {
+  if (appNames.length === 0) {
     return { requirements: [], connected_providers: [], missing_providers: [] };
   }
 
-  const requirements = extractIntegrationRequirementsFromTemplateFiles(
-    materializedTemplate.files,
-  );
+  const requirements: TemplateIntegrationRequirement[] = [];
+  const seenProviders = new Set<string>();
+
+  for (const appName of appNames) {
+    const provider = APP_TO_PROVIDER[appName.toLowerCase()];
+    if (provider && !seenProviders.has(provider)) {
+      seenProviders.add(provider);
+      requirements.push({
+        key: provider,
+        provider,
+        required: true,
+        app_id: appName,
+      });
+    }
+  }
 
   if (requirements.length === 0) {
     return { requirements: [], connected_providers: [], missing_providers: [] };
@@ -4308,14 +4322,11 @@ async function resolveTemplateIntegrations(
     // If we cannot reach the integration API, treat all as missing.
   }
 
-  const activeConnections = connections.filter((c) => c.status === "active");
   const connectedProviderSet = new Set(
-    activeConnections.map((c) => c.provider_id),
+    connections.filter((c) => c.status === "active").map((c) => c.provider_id),
   );
 
-  const requiredProviders = [
-    ...new Set(requirements.map((r) => r.provider)),
-  ];
+  const requiredProviders = [...seenProviders];
   const connectedProviders = requiredProviders.filter((p) =>
     connectedProviderSet.has(p),
   );
