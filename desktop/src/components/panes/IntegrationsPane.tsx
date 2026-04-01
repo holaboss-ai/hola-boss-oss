@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Loader2, Plus, Search, ShieldAlert } from "lucide-react";
-
+import { Check, Loader2, LogIn, Plus, Search, ShieldAlert, Unplug } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
 
 interface ComposioToolkit {
@@ -155,6 +157,7 @@ export function IntegrationsPane() {
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [connectingProviderId, setConnectingProviderId] = useState<string | null>(null);
+  const [disconnectingProviderId, setDisconnectingProviderId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
 
   const loadData = useCallback(async () => {
@@ -180,15 +183,21 @@ export function IntegrationsPane() {
     void loadData();
   }, [isSignedIn, loadData]);
 
-  const connectedProviderIds = useMemo(() => {
-    const providerIds = new Set<string>();
-    for (const connection of connections) {
-      if (normalizedText(connection.status).toLowerCase() === "active") {
-        providerIds.add(normalizedText(connection.provider_id).toLowerCase());
+  // Map providerId → connection for disconnect support
+  const connectionByProvider = useMemo(() => {
+    const map = new Map<string, IntegrationConnectionPayload>();
+    for (const conn of connections) {
+      if (normalizedText(conn.status).toLowerCase() === "active") {
+        map.set(normalizedText(conn.provider_id).toLowerCase(), conn);
       }
     }
-    return providerIds;
+    return map;
   }, [connections]);
+
+  const connectedProviderIds = useMemo(
+    () => new Set(connectionByProvider.keys()),
+    [connectionByProvider],
+  );
 
   const categories = useMemo(() => {
     const items = new Set<string>();
@@ -238,18 +247,18 @@ export function IntegrationsPane() {
   }, [filteredIntegrations]);
 
   async function handleConnect(integration: IntegrationCard) {
+    if (!isSignedIn) {
+      void authSessionState.requestAuth();
+      return;
+    }
+    if (!integration.supportsManaged) {
+      setStatusMessage(`${integration.name} does not support managed sign-in in this runtime.`);
+      return;
+    }
+
     setConnectingProviderId(integration.providerId);
     setStatusMessage("Complete authorization in your browser...");
     try {
-      if (!isSignedIn) {
-        setStatusMessage("Sign in first to connect managed integrations.");
-        return;
-      }
-      if (!integration.supportsManaged) {
-        setStatusMessage(`${integration.name} does not support managed sign-in in this runtime.`);
-        return;
-      }
-
       const runtimeConfig = await window.electronAPI.runtime.getConfig();
       const userId =
         runtimeConfig.userId ||
@@ -289,62 +298,82 @@ export function IntegrationsPane() {
     }
   }
 
+  async function handleDisconnect(integration: IntegrationCard) {
+    const conn = connectionByProvider.get(integration.providerId);
+    if (!conn) return;
+
+    setDisconnectingProviderId(integration.providerId);
+    setStatusMessage("");
+    try {
+      await window.electronAPI.workspace.deleteIntegrationConnection(conn.connection_id);
+      void loadData();
+    } catch (error) {
+      setStatusMessage(normalizeErrorMessage(error));
+    } finally {
+      setDisconnectingProviderId(null);
+    }
+  }
+
   if (isLoading) {
     return (
-      <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
-        <Loader2 size={18} className="animate-spin text-text-dim/60" />
+      <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+        <Loader2 size={18} className="animate-spin text-muted-foreground" />
       </section>
     );
   }
 
   return (
-    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
+    <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
       <div className="relative min-h-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-5xl px-6 py-6">
-          <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-text-main">
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">
             Integrations
           </h1>
-          <p className="mt-1 text-[13px] text-text-muted/80">
+          <p className="mt-1 text-sm text-muted-foreground">
             Connect your accounts to use them in workspaces.
           </p>
+
+          {/* Auth gate */}
           {!authSessionState.isPending && !isSignedIn ? (
-            <div className="mt-4 flex items-center justify-between gap-4 rounded-[16px] border border-[rgba(206,92,84,0.18)] bg-[rgba(206,92,84,0.06)] px-4 py-3">
+            <div className="mt-4 flex items-center justify-between gap-4 rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3">
               <div className="min-w-0">
-                <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em] text-[rgba(206,92,84,0.92)]">
+                <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-destructive">
                   <ShieldAlert size={13} />
                   <span>Sign-In Required</span>
                 </div>
-                <div className="mt-1 text-[13px] font-medium text-text-main">
+                <p className="mt-1 text-sm font-medium text-foreground">
                   Managed integrations are unavailable until you sign in.
-                </div>
-                <div className="mt-1 text-[12px] leading-6 text-text-muted/76">
-                  You can browse the local provider catalog below, but connecting Google, GitHub, Reddit, LinkedIn, or X requires an authenticated Holaboss session.
-                </div>
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  You can browse the catalog below, but connecting requires an authenticated session.
+                </p>
               </div>
-              <button
-                type="button"
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => void authSessionState.requestAuth()}
-                className="shrink-0 rounded-[12px] border border-[rgba(206,92,84,0.28)] bg-[rgba(206,92,84,0.1)] px-3 py-2 text-[12px] font-medium text-[rgba(206,92,84,0.96)] transition hover:bg-[rgba(206,92,84,0.14)]"
               >
+                <LogIn size={14} />
                 Sign in
-              </button>
+              </Button>
             </div>
           ) : null}
 
+          {/* Search + Filter */}
           <div className="mt-5 flex items-center gap-3">
             <div className="relative flex-1">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-dim/50" />
-              <input
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search integrations..."
-                className="h-9 w-full rounded-[10px] border border-panel-border/40 bg-panel-bg/60 pl-8 pr-3 text-[13px] text-text-main outline-none placeholder:text-text-dim/40"
+                className="h-9 pl-8"
               />
             </div>
             <select
               value={categoryFilter}
               onChange={(event) => setCategoryFilter(event.target.value)}
-              className="h-9 rounded-[10px] border border-panel-border/40 bg-panel-bg/60 px-3 text-[13px] text-text-main outline-none"
+              className="h-9 rounded-lg border border-input bg-transparent px-3 text-sm text-foreground outline-none"
             >
               <option value="all">All</option>
               {categories.map((category) => (
@@ -355,9 +384,10 @@ export function IntegrationsPane() {
             </select>
           </div>
 
+          {/* Connected */}
           {connectedIntegrations.length > 0 ? (
             <div className="mt-6">
-              <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-text-dim/70">
+              <h2 className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
                 Connected
               </h2>
               <div className="mt-3 grid grid-cols-2 gap-2">
@@ -369,7 +399,9 @@ export function IntegrationsPane() {
                     canConnect={false}
                     connectDisabledReason=""
                     onConnect={() => void handleConnect(integration)}
+                    onDisconnect={() => void handleDisconnect(integration)}
                     connecting={connectingProviderId === integration.providerId}
+                    disconnecting={disconnectingProviderId === integration.providerId}
                     actionMode="connected"
                   />
                 ))}
@@ -378,12 +410,13 @@ export function IntegrationsPane() {
           ) : null}
 
           {statusMessage ? (
-            <div className="mt-4 text-[12px] text-text-muted">{statusMessage}</div>
+            <p className="mt-4 text-xs text-muted-foreground">{statusMessage}</p>
           ) : null}
 
+          {/* Available — grouped by category */}
           {groupedIntegrations.map(([category, items]) => (
             <div key={category} className="mt-6">
-              <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-text-dim/70">
+              <h2 className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
                 {category.charAt(0).toUpperCase() + category.slice(1)}
               </h2>
               <div className="mt-3 grid grid-cols-2 gap-2">
@@ -399,7 +432,9 @@ export function IntegrationsPane() {
                         : "Managed sign-in is not supported for this provider."
                     }
                     onConnect={() => void handleConnect(integration)}
+                    onDisconnect={() => {}}
                     connecting={connectingProviderId === integration.providerId}
+                    disconnecting={false}
                     actionMode={
                       !integration.supportsManaged
                         ? "unavailable"
@@ -414,9 +449,9 @@ export function IntegrationsPane() {
           ))}
 
           {filteredIntegrations.length === 0 && connectedIntegrations.length === 0 ? (
-            <div className="mt-12 text-center text-[13px] text-text-muted/60">
+            <p className="mt-12 text-center text-sm text-muted-foreground">
               No integrations found.
-            </div>
+            </p>
           ) : null}
         </div>
       </div>
@@ -430,7 +465,9 @@ function IntegrationRow({
   canConnect,
   connectDisabledReason,
   onConnect,
+  onDisconnect,
   connecting,
+  disconnecting,
   actionMode,
 }: {
   integration: IntegrationCard;
@@ -438,56 +475,77 @@ function IntegrationRow({
   canConnect: boolean;
   connectDisabledReason: string;
   onConnect: () => void;
+  onDisconnect: () => void;
   connecting: boolean;
+  disconnecting: boolean;
   actionMode: "connected" | "connect" | "disabled" | "unavailable";
 }) {
   const muted = actionMode === "disabled";
   return (
     <div
-      className={`flex items-center gap-3 rounded-[12px] border border-panel-border/30 px-3 py-2.5 transition-colors ${
-        muted ? "opacity-50" : "hover:bg-panel-bg/40"
+      className={`flex items-center gap-3 rounded-xl border border-border px-3 py-2.5 transition-colors ${
+        muted ? "opacity-50" : "hover:bg-muted"
       }`}
     >
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[8px] border border-panel-border/20 bg-panel-bg/50">
+      <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-background">
         {integration.logo ? (
-          <img src={integration.logo} alt="" className="h-full w-full object-cover" />
+          <img src={integration.logo} alt="" className="size-full object-cover" />
         ) : (
-          <span className="text-[14px] font-semibold text-text-dim/50">
+          <span className="text-sm font-semibold text-muted-foreground">
             {integration.name.charAt(0)}
           </span>
         )}
       </div>
 
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[13px] font-medium text-text-main">
+        <div className="truncate text-sm font-medium text-foreground">
           {integration.name}
         </div>
-        <div className="truncate text-[11px] text-text-muted/70">
+        <div className="truncate text-xs text-muted-foreground">
           {integration.description}
         </div>
       </div>
 
       {connected ? (
-        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-neon-green">
-          <Check size={12} />
-        </span>
+        <div className="flex items-center gap-1.5">
+          <Badge variant="outline" className="border-primary/25 text-primary">
+            <Check size={10} />
+          </Badge>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            disabled={disconnecting}
+            onClick={onDisconnect}
+            className="text-muted-foreground hover:text-destructive"
+            aria-label={`Disconnect ${integration.name}`}
+          >
+            {disconnecting ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : (
+              <Unplug size={13} />
+            )}
+          </Button>
+        </div>
       ) : actionMode === "unavailable" ? (
-        <span
-          title={connectDisabledReason}
-          className="inline-flex h-7 shrink-0 items-center rounded-[8px] border border-panel-border/28 px-2.5 text-[11px] font-medium text-text-dim/64"
-        >
+        <Badge variant="secondary" title={connectDisabledReason}>
           Unavailable
-        </span>
+        </Badge>
       ) : (
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="icon-sm"
           disabled={connecting || !canConnect}
           onClick={onConnect}
           title={canConnect ? `Connect ${integration.name}` : connectDisabledReason}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-panel-border/30 text-text-dim/60 transition-colors hover:bg-panel-bg/60 hover:text-text-main disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {connecting ? <Loader2 size={13} className="animate-spin" /> : <Plus size={14} />}
-        </button>
+          {connecting ? (
+            <Loader2 size={13} className="animate-spin" />
+          ) : !canConnect ? (
+            <LogIn size={14} />
+          ) : (
+            <Plus size={14} />
+          )}
+        </Button>
       )}
     </div>
   );

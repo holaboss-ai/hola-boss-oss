@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, FileWarning, FolderTree, Loader2, ScrollText, Search, Sparkles } from "lucide-react";
+import { FileWarning, FolderTree, Loader2, ScrollText, Search, Sparkles } from "lucide-react";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 
 function formatModifiedAt(value: string) {
   return new Intl.DateTimeFormat(undefined, {
@@ -148,33 +150,33 @@ export function SkillsPane() {
           />
         ) : (
           <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
-            <aside className="bg-muted flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-border shadow-lg">
+            <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-muted shadow-lg">
               <div className="border-b border-border px-4 py-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Registry</div>
-                    <div className="mt-1 text-[14px] font-medium text-foreground">Workspace skill catalog</div>
+                    <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Registry</div>
+                    <div className="mt-1 text-sm font-medium text-foreground">Workspace skill catalog</div>
                   </div>
-                  <div className="rounded-full border border-border bg-muted px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                  <div className="rounded-full border border-border bg-muted px-2.5 py-1 text-[10px] uppercase tracking-widest text-muted-foreground">
                     {filteredSkills.length} shown
                   </div>
                 </div>
 
-                <label className="bg-muted mt-4 flex items-center gap-2 rounded-xl border border-border px-3 py-2.5 text-[12px] text-muted-foreground">
-                  <Search size={13} className="text-muted-foreground" />
-                  <input
+                <div className="relative mt-4">
+                  <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <Input
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
                     placeholder="Search skills by name or summary"
-                    className="w-full bg-transparent text-foreground outline-none placeholder:text-muted-foreground/50"
+                    className="pl-8"
                   />
-                </label>
+                </div>
 
               </div>
 
               <div className="min-h-0 flex-1 overflow-auto px-3 py-3">
                 {filteredSkills.length === 0 ? (
-                  <div className="rounded-xl border border-border bg-muted px-4 py-5 text-[12px] leading-6 text-muted-foreground">
+                  <div className="rounded-xl border border-border bg-muted px-4 py-5 text-xs leading-6 text-muted-foreground">
                     No skills match the current filter.
                   </div>
                 ) : (
@@ -189,33 +191,27 @@ export function SkillsPane() {
                       className={`group relative overflow-hidden rounded-xl border px-4 py-4 text-left transition-colors ${
                         active
                           ? "border-primary/30 bg-primary/8 shadow-lg"
-                          : "border-border bg-card/18 hover:border-[rgba(247,90,84,0.24)] hover:bg-accent"
+                          : "border-border bg-card hover:border-primary/25 hover:bg-accent"
                       }`}
                     >
                       <div
                         className={`absolute inset-y-4 left-0 w-1 rounded-r-full transition-colors ${
-                          active ? "bg-[rgba(247,90,84,0.82)]" : "bg-transparent group-hover:bg-[rgba(247,90,84,0.35)]"
+                          active ? "bg-primary" : "bg-transparent group-hover:bg-primary/35"
                         }`}
                       />
                       <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="truncate text-[13px] font-medium text-foreground">{skill.title}</div>
-                          <div className="mt-1 truncate text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
+                          <div className="truncate text-sm font-medium text-foreground">{skill.title}</div>
+                          <div className="mt-1 truncate text-xs uppercase tracking-widest text-muted-foreground">
                             {skill.skill_id}
                           </div>
                         </div>
-                        <span
-                          className={`shrink-0 rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.14em] ${
-                            skill.enabled
-                              ? "border-[rgba(247,90,84,0.24)] bg-[rgba(247,90,84,0.08)] text-[rgba(206,92,84,0.92)]"
-                              : "border-border bg-muted text-muted-foreground/74"
-                          }`}
-                        >
+                        <Badge variant={skill.enabled ? "default" : "secondary"}>
                           {skill.enabled ? "Enabled" : "Detected"}
-                        </span>
+                        </Badge>
                       </div>
                       <div
-                        className="mt-2 text-[12px] leading-6 text-muted-foreground"
+                        className="mt-2 text-xs leading-6 text-muted-foreground"
                         style={{
                           display: "-webkit-box",
                           WebkitLineClamp: 2,
@@ -225,7 +221,7 @@ export function SkillsPane() {
                       >
                         {skill.summary}
                       </div>
-                      <div className="mt-3 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                      <div className="mt-3 flex items-center justify-between gap-3 text-[10px] uppercase tracking-widest text-muted-foreground">
                         <span>{formatModifiedAt(skill.modified_at)}</span>
                         <span>{skill.enabled ? "Configured" : "Detected"}</span>
                       </div>
@@ -237,7 +233,7 @@ export function SkillsPane() {
               </div>
             </aside>
 
-            <div className="bg-muted flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-border shadow-lg">
+            <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-muted shadow-lg">
               {selectedSkill ? (
                 <>
                   <div className="relative overflow-hidden border-b border-border px-5 py-5">
@@ -245,12 +241,12 @@ export function SkillsPane() {
                     <div className="relative">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="inline-flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                          <div className="inline-flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-1 text-[10px] uppercase tracking-widest text-muted-foreground">
                             <FolderTree size={12} className="text-muted-foreground" />
                             <span>{selectedSkill.skill_id}</span>
                           </div>
-                          <div className="mt-3 text-[28px] font-semibold tracking-[-0.04em] text-foreground">{selectedSkill.title}</div>
-                          <div className="mt-2 max-w-[760px] text-[13px] leading-7 text-muted-foreground">{selectedSkill.summary}</div>
+                          <div className="mt-3 text-2xl font-semibold tracking-[-0.04em] text-foreground">{selectedSkill.title}</div>
+                          <div className="mt-2 max-w-[760px] text-sm leading-7 text-muted-foreground">{selectedSkill.summary}</div>
                         </div>
                         <StatusPill active={selectedSkill.enabled} label={selectedSkillStatusLabel} />
                       </div>
@@ -264,24 +260,24 @@ export function SkillsPane() {
                   </div>
 
                   <div className="grid min-h-0 flex-1 gap-4 p-4">
-                    <div className="min-h-0 overflow-hidden rounded-2xl border border-border bg-background">
+                    <div className="min-h-0 overflow-hidden rounded-xl border border-border bg-background">
                       <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-                        <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-                          <ScrollText size={13} className="text-[rgba(247,138,132,0.86)]" />
+                        <div className="flex items-center gap-2 text-xs uppercase tracking-widest text-muted-foreground">
+                          <ScrollText size={13} className="text-primary" />
                           <span>Skill definition</span>
                         </div>
-                        <div className="max-w-[55%] truncate text-[11px] text-muted-foreground">{selectedSkill.skill_file_path}</div>
+                        <div className="max-w-[55%] truncate text-xs text-muted-foreground">{selectedSkill.skill_file_path}</div>
                       </div>
                       {isLoadingPreview ? (
                         <div className="flex min-h-[360px] items-center justify-center">
                           <LoadingState label="Loading SKILL.md..." />
                         </div>
                       ) : skillPreview?.kind === "text" ? (
-                        <pre className="h-full min-h-[360px] overflow-auto bg-[linear-gradient(180deg,rgba(255,255,255,0.02),rgba(0,0,0,0.12))] px-5 py-4 font-mono text-[11px] leading-6 text-[rgba(235,239,244,0.92)]">
+                        <pre className="h-full min-h-[360px] overflow-auto bg-muted px-5 py-4 font-mono text-xs leading-6 text-foreground">
                           {skillPreview.content || ""}
                         </pre>
                       ) : (
-                        <div className="px-4 py-6 text-[12px] text-muted-foreground">SKILL.md preview is not available.</div>
+                        <div className="px-4 py-6 text-xs text-muted-foreground">SKILL.md preview is not available.</div>
                       )}
                     </div>
                   </div>
@@ -299,30 +295,24 @@ export function SkillsPane() {
 
 function StatusPill({ active, label }: { active: boolean; label: string }) {
   return (
-    <div
-      className={`rounded-full border px-3 py-1.5 text-[11px] uppercase tracking-[0.14em] ${
-        active
-          ? "border-[rgba(247,90,84,0.24)] bg-[rgba(247,90,84,0.08)] text-[rgba(206,92,84,0.92)]"
-          : "border-border bg-muted text-muted-foreground/74"
-      }`}
-    >
+    <Badge variant={active ? "default" : "secondary"}>
       {label}
-    </div>
+    </Badge>
   );
 }
 
 function MetadataRow({ label, value, className = "" }: { label: string; value: string; className?: string }) {
   return (
     <div className={`rounded-xl border border-border bg-muted px-3 py-2 ${className}`.trim()}>
-      <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{label}</div>
-      <div className="mt-1 break-all text-[12px] text-foreground/86">{value}</div>
+      <div className="text-[10px] uppercase tracking-widest text-muted-foreground">{label}</div>
+      <div className="mt-1 break-all text-xs text-foreground">{value}</div>
     </div>
   );
 }
 
 function LoadingState({ label }: { label: string }) {
   return (
-    <div className="inline-flex items-center gap-2 text-[12px] text-muted-foreground">
+    <div className="inline-flex items-center gap-2 text-xs text-muted-foreground">
       <Loader2 size={14} className="animate-spin" />
       <span>{label}</span>
     </div>
