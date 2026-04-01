@@ -402,14 +402,19 @@ function FirstWorkspacePane() {
     twitter: "Twitter / X", linkedin: "LinkedIn"
   };
 
-  async function handleCreateWithIntegrationCheck() {
-    const pending = await resolveIntegrationsBeforeCreate();
-    if (pending && pending.missing_providers.length > 0) {
-      setOnboardingStep("connect_integrations");
-      return;
+  // Auto-resolve integrations when entering configure step
+  const configureStepActive = onboardingStep === "configure";
+  const prevConfigureRef = useRef(false);
+  useEffect(() => {
+    if (configureStepActive && !prevConfigureRef.current) {
+      void resolveIntegrationsBeforeCreate();
     }
-    void createWorkspace();
-  }
+    prevConfigureRef.current = configureStepActive;
+  }, [configureStepActive]);
+
+  const hasUnconnectedIntegrations = pendingIntegrations
+    ? pendingIntegrations.missing_providers.length > 0
+    : false;
 
   async function handleConnectProvider(provider: string) {
     setConnectingProvider(provider);
@@ -432,11 +437,8 @@ function FirstWorkspacePane() {
           });
           setConnectStatus("");
           setConnectingProvider(null);
-          const updated = await resolveIntegrationsBeforeCreate();
-          if (!updated || updated.missing_providers.length === 0) {
-            clearPendingIntegrations();
-            void createWorkspace();
-          }
+          // Re-resolve to update the list
+          void resolveIntegrationsBeforeCreate();
           return;
         }
       }
@@ -664,6 +666,46 @@ function FirstWorkspacePane() {
                 </label>
               </div>
 
+              {pendingIntegrations && pendingIntegrations.requirements.length > 0 ? (
+                <div className="mt-6" style={{ maxWidth: 480 }}>
+                  <div className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
+                    Integrations
+                  </div>
+                  <div className="mt-2 grid gap-2">
+                    {pendingIntegrations.connected_providers.map(provider => (
+                      <div key={provider} className="flex items-center justify-between rounded-[14px] border border-neon-green/20 bg-neon-green/4 px-4 py-3">
+                        <span className="text-[13px] font-medium text-text-main">
+                          {PROVIDER_DISPLAY_NAMES[provider] ?? provider}
+                        </span>
+                        <span className="text-[11px] font-medium text-neon-green">Connected</span>
+                      </div>
+                    ))}
+                    {pendingIntegrations.missing_providers.map(provider => (
+                      <div key={provider} className="flex items-center justify-between rounded-[14px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-3">
+                        <span className="text-[13px] font-medium text-text-main">
+                          {PROVIDER_DISPLAY_NAMES[provider] ?? provider}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={connectingProvider !== null}
+                          onClick={() => void handleConnectProvider(provider)}
+                          className="rounded-[10px] border border-neon-green/35 bg-neon-green/8 px-3 py-1 text-[11px] font-medium text-neon-green transition-colors hover:bg-neon-green/14 disabled:opacity-50"
+                        >
+                          {connectingProvider === provider ? "Connecting..." : "Connect"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  {connectStatus ? (
+                    <div className="mt-2 text-[12px] text-text-muted">{connectStatus}</div>
+                  ) : null}
+                </div>
+              ) : isResolvingIntegrations ? (
+                <div className="mt-6 text-[12px] text-text-muted" style={{ maxWidth: 480 }}>
+                  Checking integrations...
+                </div>
+              ) : null}
+
               {workspaceErrorMessage ? (
                 <div className="mt-4 rounded-[14px] border border-[rgba(255,153,102,0.24)] bg-[rgba(255,153,102,0.06)] px-4 py-3 text-[13px] leading-6 text-[rgba(255,153,102,0.92)]">
                   {workspaceErrorMessage}
@@ -673,12 +715,12 @@ function FirstWorkspacePane() {
               <div className="mt-5 flex items-center gap-3">
                 <button
                   type="button"
-                  disabled={configureCreateDisabled || isResolvingIntegrations}
-                  onClick={() => void handleCreateWithIntegrationCheck()}
+                  disabled={configureCreateDisabled || hasUnconnectedIntegrations || isResolvingIntegrations}
+                  onClick={() => void createWorkspace()}
                   className="inline-flex h-12 items-center justify-center gap-3 rounded-[18px] border border-[rgba(247,90,84,0.38)] bg-[rgba(247,90,84,0.9)] px-5 text-[14px] font-medium text-white transition-colors hover:bg-[rgba(226,79,74,0.94)] disabled:cursor-not-allowed disabled:border-panel-border disabled:bg-panel-border/20 disabled:text-text-muted/60"
                 >
-                  <span>{isResolvingIntegrations ? "Checking integrations..." : "Create Workspace"}</span>
-                  {isResolvingIntegrations ? null : <ArrowRight size={16} />}
+                  <span>Create Workspace</span>
+                  <ArrowRight size={16} />
                 </button>
                 <button
                   type="button"
