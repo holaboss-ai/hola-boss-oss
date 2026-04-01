@@ -4165,25 +4165,42 @@ async function startOAuthFlow(
   return result;
 }
 
+async function composioFetch<T>(path: string, method: "GET" | "POST", payload?: unknown): Promise<T> {
+  if (!AUTH_BASE_URL) {
+    throw new Error("Backend is not configured (HOLABOSS_AUTH_BASE_URL missing)");
+  }
+  const cookieHeader = authCookieHeader();
+  if (!cookieHeader) {
+    throw new Error("Not authenticated — sign in first");
+  }
+  const response = await fetch(`${AUTH_BASE_URL}${path}`, {
+    method,
+    headers: {
+      Cookie: cookieHeader,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: payload === undefined ? undefined : JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Composio API error (${response.status}): ${text.slice(0, 300)}`);
+  }
+  return response.json() as Promise<T>;
+}
+
 async function composioConnect(payload: {
   provider: string;
   owner_user_id: string;
   callback_url?: string;
 }): Promise<ComposioConnectResult> {
-  return requestRuntimeJson<ComposioConnectResult>({
-    method: "POST",
-    path: "/api/v1/integrations/composio/connect",
-    payload,
-  });
+  return composioFetch<ComposioConnectResult>("/api/composio/connect", "POST", payload);
 }
 
 async function composioAccountStatus(
   connectedAccountId: string,
 ): Promise<ComposioAccountStatus> {
-  return requestRuntimeJson<ComposioAccountStatus>({
-    method: "GET",
-    path: `/api/v1/integrations/composio/account/${encodeURIComponent(connectedAccountId)}`,
-  });
+  return composioFetch<ComposioAccountStatus>(`/api/composio/account/${encodeURIComponent(connectedAccountId)}`, "GET");
 }
 
 async function composioFinalize(payload: {
