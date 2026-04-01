@@ -21,6 +21,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,6 +31,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
@@ -252,9 +254,10 @@ export function TopTabsBar({
             ref={workspaceSwitcherRef}
             className={`${integratedTitleBar ? "window-no-drag " : ""}relative min-w-55 max-w-full`}
           >
-            <button
+            <Button
               ref={workspaceSwitcherButtonRef}
-              type="button"
+              variant={workspaceSwitcherOpen ? "secondary" : "outline"}
+              size="lg"
               onClick={() => {
                 setWorkspaceSwitcherOpen((open) => {
                   const nextOpen = !open;
@@ -269,21 +272,17 @@ export function TopTabsBar({
                   return nextOpen;
                 });
               }}
-              className={`inline-flex h-10 w-full items-center gap-2.5 rounded-lg border px-3 text-left text-sm transition-colors ${
-                workspaceSwitcherOpen
-                  ? "border-primary/40 bg-primary/8 text-foreground"
-                  : "border-border bg-card/60 text-foreground hover:bg-accent"
-              }`}
+              className="w-full justify-start gap-2.5 px-3"
             >
               <FolderKanban size={14} className="shrink-0 text-primary" />
-              <span className="min-w-0 flex-1 truncate font-medium">
+              <span className="min-w-0 flex-1 truncate text-left font-medium">
                 {selectedWorkspace?.name || "Select workspace"}
               </span>
               <ChevronDown
                 size={13}
                 className={`shrink-0 text-muted-foreground transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`}
               />
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -293,24 +292,21 @@ export function TopTabsBar({
           className={`${integratedTitleBar ? "window-no-drag " : ""}flex items-center justify-self-end gap-2`}
         >
           {onOpenMarketplace ? (
-            <button
-              type="button"
+            <Button
+              variant={isMarketplaceActive ? "secondary" : "outline"}
+              size="lg"
               aria-label="Marketplace"
               onClick={onOpenMarketplace}
-              className={`inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors ${
-                isMarketplaceActive
-                  ? "border-primary/40 bg-primary/8 text-primary"
-                  : "border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-              }`}
+              className="gap-2 px-3"
             >
               <LayoutGrid size={14} />
               <span className="hidden sm:inline">Marketplace</span>
-            </button>
+            </Button>
           ) : null}
           <DropdownMenu>
             <DropdownMenuTrigger
               ref={userButtonRef}
-              className="grid size-10 shrink-0 place-items-center rounded-lg border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-input bg-transparent text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
               <User2 size={15} />
             </DropdownMenuTrigger>
@@ -378,7 +374,7 @@ export function TopTabsBar({
         ? createPortal(
             <div
               ref={workspaceSwitcherPopupRef}
-              className={`${integratedTitleBar ? "window-no-drag " : ""}fixed z-[80] rounded-[18px] border border-border/70 bg-card px-3 py-3 shadow-lg`}
+              className={`${integratedTitleBar ? "window-no-drag " : ""}fixed z-[80] rounded-xl border border-border bg-popover p-3 shadow-lg`}
               style={{
                 top: workspaceSwitcherPosition.top,
                 left: workspaceSwitcherPosition.left,
@@ -386,30 +382,30 @@ export function TopTabsBar({
                 maxHeight: workspaceSwitcherPosition.maxHeight,
               }}
             >
-              <div className="theme-control-surface focus-shell mb-2 flex items-center gap-2 rounded-[14px] border border-border/35 px-2.5 py-2">
-                <Search size={13} className="text-primary/80" />
-                <input
+              <div className="relative mb-2">
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
                   value={workspaceQuery}
                   onChange={(event) => setWorkspaceQuery(event.target.value)}
                   placeholder="Search workspaces"
-                  className="embedded-input w-full bg-transparent text-[12px] text-foreground outline-none placeholder:text-muted-foreground/42"
+                  className="h-8 pl-8 text-xs"
                 />
               </div>
 
               <div className="max-h-[240px] overflow-y-auto">
                 {filteredWorkspaces.length ? (
-                  <div className="grid gap-2">
+                  <div className="grid gap-1">
                     {filteredWorkspaces.map((workspace) => {
                       const isActive = workspace.id === selectedWorkspaceId;
                       const isDeleting = deletingWorkspaceId === workspace.id;
                       return (
                         <div
                           key={workspace.id}
-                          className={`flex items-stretch gap-2 rounded-[14px] border px-2 py-2 transition ${
+                          className={`flex items-center gap-1 rounded-lg border px-2 py-1.5 transition-colors ${
                             isActive
-                              ? "border-primary/45 bg-primary/10 text-foreground"
-                              : "border-border/35 bg-transparent text-foreground/86 hover:border-primary/30 hover:bg-accent"
-                          } ${isDeleting ? "opacity-60" : ""}`}
+                              ? "border-primary/30 bg-primary/10"
+                              : "border-transparent hover:bg-accent"
+                          } ${isDeleting ? "opacity-50" : ""}`}
                         >
                           <button
                             type="button"
@@ -418,41 +414,41 @@ export function TopTabsBar({
                               setSelectedWorkspaceId(workspace.id);
                               closeWorkspaceSwitcher();
                             }}
-                            className="min-w-0 flex-1 px-1 text-left disabled:cursor-not-allowed"
+                            className="min-w-0 flex-1 px-1 text-left text-sm font-medium disabled:cursor-not-allowed"
                           >
-                            <div className="truncate text-[12px] font-medium">
-                              {workspace.name}
-                            </div>
+                            <span className="truncate">{workspace.name}</span>
                           </button>
-                          <button
-                            type="button"
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
                             aria-label={`Delete workspace ${workspace.name}`}
                             disabled={Boolean(deletingWorkspaceId)}
                             onClick={() => void onDeleteWorkspace(workspace)}
-                            className="inline-flex h-9 w-9 shrink-0 items-center justify-center self-center rounded-[12px] border border-border/45 text-muted-foreground/72 transition hover:border-red-400/45 hover:bg-red-500/10 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="text-muted-foreground hover:text-destructive"
                           >
                             {isDeleting ? (
-                              <Loader2 size={14} className="animate-spin" />
+                              <Loader2 size={13} className="animate-spin" />
                             ) : (
-                              <Trash2 size={14} />
+                              <Trash2 size={13} />
                             )}
-                          </button>
+                          </Button>
                         </div>
                       );
                     })}
                   </div>
                 ) : (
-                  <div className="rounded-[14px] border border-border/35 px-3 py-4 text-[12px] text-muted-foreground/78">
+                  <div className="rounded-lg border border-border px-3 py-4 text-center text-xs text-muted-foreground">
                     No workspaces matched your search.
                   </div>
                 )}
               </div>
 
-              <div className="mt-3 border-t border-border/35 pt-3">
-                <button
-                  type="button"
+              <div className="mt-3 border-t border-border pt-3">
+                <Button
+                  variant="outline"
+                  size="default"
                   onClick={() => setCreatePanelOpen((open) => !open)}
-                  className="inline-flex h-10 w-full items-center justify-between gap-2 rounded-[16px] border border-primary/40 bg-primary/10 px-3 text-[12px] text-primary transition-all duration-200 hover:bg-primary/14 active:scale-[0.99]"
+                  className="w-full justify-between gap-2"
                 >
                   <span className="inline-flex items-center gap-2">
                     <Plus
@@ -463,69 +459,41 @@ export function TopTabsBar({
                   </span>
                   <ChevronDown
                     size={14}
-                    className={`transition ${createPanelOpen ? "rotate-180" : ""}`}
+                    className={`text-muted-foreground transition-transform ${createPanelOpen ? "rotate-180" : ""}`}
                   />
-                </button>
+                </Button>
 
                 {createPanelOpen ? (
                   <form
                     onSubmit={onCreateWorkspace}
-                    className="theme-subtle-surface mt-3 grid gap-2 rounded-[18px] border border-border/45 p-3"
+                    className="mt-3 grid gap-2 rounded-lg border border-border bg-muted/50 p-3"
                   >
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setTemplateSourceMode("local")}
-                        className={`inline-flex h-[38px] items-center justify-center rounded-[14px] border px-3 text-[11px] transition ${
-                          templateSourceMode === "local"
-                            ? "border-primary/45 bg-primary/10 text-primary"
-                            : "border-border/45 text-muted-foreground hover:border-primary/35 hover:text-foreground"
-                        }`}
-                      >
-                        Local folder
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setTemplateSourceMode("marketplace")}
-                        className={`inline-flex h-[38px] items-center justify-center rounded-[14px] border px-3 text-[11px] transition ${
-                          templateSourceMode === "marketplace"
-                            ? "border-primary/45 bg-primary/10 text-primary"
-                            : "border-border/45 text-muted-foreground hover:border-primary/35 hover:text-foreground"
-                        }`}
-                      >
-                        Marketplace
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setTemplateSourceMode("empty")}
-                        className={`inline-flex h-[38px] items-center justify-center rounded-[14px] border px-3 text-[11px] transition ${
-                          templateSourceMode === "empty"
-                            ? "border-primary/45 bg-primary/10 text-primary"
-                            : "border-border/45 text-muted-foreground hover:border-primary/35 hover:text-foreground"
-                        }`}
-                      >
-                        Empty
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setTemplateSourceMode("empty_onboarding")
-                        }
-                        className={`inline-flex h-[38px] items-center justify-center rounded-[14px] border px-3 text-[11px] transition ${
-                          templateSourceMode === "empty_onboarding"
-                            ? "border-primary/45 bg-primary/10 text-primary"
-                            : "border-border/45 text-muted-foreground hover:border-primary/35 hover:text-foreground"
-                        }`}
-                      >
-                        Empty + Onboarding
-                      </button>
+                    <div className="flex flex-wrap gap-1.5">
+                      {(
+                        [
+                          ["local", "Local folder"],
+                          ["marketplace", "Marketplace"],
+                          ["empty", "Empty"],
+                          ["empty_onboarding", "Empty + Onboarding"],
+                        ] as const
+                      ).map(([mode, label]) => (
+                        <Button
+                          key={mode}
+                          type="button"
+                          variant={templateSourceMode === mode ? "secondary" : "ghost"}
+                          size="xs"
+                          onClick={() => setTemplateSourceMode(mode)}
+                        >
+                          {label}
+                        </Button>
+                      ))}
                     </div>
 
                     <div className="grid gap-2">
                       {templateSourceMode === "marketplace" ? (
                         canUseMarketplaceTemplates ? (
-                          <label className="theme-control-surface flex min-w-0 items-center gap-2 rounded-[16px] border border-border/45 px-3 py-2 text-left text-[12px] text-muted-foreground/82">
-                            <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/72">
+                          <div className="flex min-w-0 items-center gap-2 rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-xs">
+                            <span className="shrink-0 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
                               Template
                             </span>
                             <select
@@ -537,7 +505,7 @@ export function TopTabsBar({
                                 isLoadingMarketplaceTemplates ||
                                 marketplaceTemplates.length === 0
                               }
-                              className="min-w-0 flex-1 bg-transparent text-[12px] text-foreground outline-none disabled:text-muted-foreground/50"
+                              className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none disabled:opacity-50"
                             >
                               {isLoadingMarketplaceTemplates ? (
                                 <option value="">Loading templates...</option>
@@ -559,67 +527,71 @@ export function TopTabsBar({
                                 </option>
                               )}
                             </select>
-                          </label>
+                          </div>
                         ) : (
-                          <button
+                          <Button
                             type="button"
+                            variant="outline"
+                            size="default"
                             onClick={(event) =>
                               openAuthPopup(
                                 event.currentTarget.getBoundingClientRect(),
                               )
                             }
-                            className="inline-flex h-[42px] min-w-0 items-center justify-center rounded-[16px] border border-primary/40 bg-primary/10 px-3 text-[12px] text-primary transition hover:bg-primary/14"
+                            className="w-full"
                           >
                             Sign in to use Marketplace
-                          </button>
+                          </Button>
                         )
                       ) : templateSourceMode === "empty" ? (
-                        <div className="theme-control-surface min-w-0 rounded-[16px] border border-border/45 px-3 py-2 text-[12px] text-muted-foreground/82">
-                          <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground/72">
+                        <div className="rounded-lg border border-input bg-transparent px-3 py-2 text-xs">
+                          <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
                             Scaffold
-                          </div>
-                          <div className="mt-1 text-foreground">
+                          </span>
+                          <p className="mt-1 text-foreground">
                             workspace.yaml + AGENTS.md + empty skills folder
-                          </div>
+                          </p>
                         </div>
                       ) : templateSourceMode === "empty_onboarding" ? (
-                        <div className="theme-control-surface min-w-0 rounded-[16px] border border-border/45 px-3 py-2 text-[12px] text-muted-foreground/82">
-                          <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground/72">
+                        <div className="rounded-lg border border-input bg-transparent px-3 py-2 text-xs">
+                          <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
                             Scaffold
-                          </div>
-                          <div className="mt-1 text-foreground">
+                          </span>
+                          <p className="mt-1 text-foreground">
                             workspace.yaml + AGENTS.md + empty skills folder +
                             ONBOARD.md
-                          </div>
+                          </p>
                         </div>
                       ) : (
-                        <button
+                        <Button
                           type="button"
+                          variant="outline"
+                          size="default"
                           onClick={() => void chooseTemplateFolder()}
-                          className="theme-control-surface flex min-w-0 items-center gap-2 rounded-[16px] border border-border/45 px-3 py-2 text-left text-[12px] text-muted-foreground/82 transition hover:border-primary/35"
+                          className="w-full justify-start gap-2"
                         >
-                          <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/72">
+                          <span className="shrink-0 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
                             Template
                           </span>
-                          <span className="min-w-0 flex-1 truncate text-foreground">
+                          <span className="min-w-0 flex-1 truncate text-left text-foreground">
                             {selectedTemplateFolder?.templateName ||
                               selectedTemplateFolder?.rootPath ||
                               "Choose folder"}
                           </span>
-                        </button>
+                        </Button>
                       )}
 
-                      <input
+                      <Input
                         value={newWorkspaceName}
                         onChange={(event) =>
                           setNewWorkspaceName(event.target.value)
                         }
                         placeholder="New workspace name"
-                        className="theme-control-surface min-w-0 rounded-[16px] border border-border/45 bg-transparent px-3 py-2 text-[12px] text-foreground outline-none placeholder:text-muted-foreground/40"
+                        className="h-8 text-xs"
                       />
 
-                      <label className="theme-control-surface flex min-w-0 items-center gap-2 rounded-[16px] border border-border/45 px-3 py-2 text-left text-[12px] text-muted-foreground/82">
-                        <span className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/72">
+                      <div className="flex min-w-0 items-center gap-2 rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-xs">
+                        <span className="shrink-0 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
                           Harness
                         </span>
                         <select
@@ -627,7 +599,7 @@ export function TopTabsBar({
                           onChange={(event) =>
                             setSelectedCreateHarness(event.target.value)
                           }
-                          className="min-w-0 flex-1 bg-transparent text-[12px] text-foreground outline-none"
+                          className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none"
                         >
                           {createHarnessOptions.map((option) => (
                             <option key={option.id} value={option.id}>
@@ -635,24 +607,24 @@ export function TopTabsBar({
                             </option>
                           ))}
                         </select>
-                      </label>
+                      </div>
 
-                      <button
+                      <Button
                         type="submit"
                         disabled={createDisabled}
-                        className="inline-flex h-[42px] items-center justify-center gap-2 rounded-[16px] border border-primary/40 bg-primary/10 px-3 text-[12px] text-primary transition hover:bg-primary/14 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="w-full gap-2"
                       >
                         {isCreatingWorkspace ? (
                           <Loader2 size={14} className="animate-spin" />
                         ) : (
                           <Plus size={14} />
                         )}
-                        <span>Create</span>
-                      </button>
+                        Create
+                      </Button>
                     </div>
 
                     {templateSourceMode === "marketplace" ? (
-                      <div className="text-[11px] text-muted-foreground/78">
+                      <p className="text-xs text-muted-foreground">
                         {marketplaceTemplatesError
                           ? marketplaceTemplatesError
                           : selectedMarketplaceTemplate
@@ -662,24 +634,24 @@ export function TopTabsBar({
                             : canUseMarketplaceTemplates
                               ? "Choose a marketplace template to bootstrap this workspace."
                               : "Sign in and finish runtime setup to use marketplace templates."}
-                      </div>
+                      </p>
                     ) : templateSourceMode === "empty" ? (
-                      <div className="text-[11px] text-muted-foreground/78">
+                      <p className="text-xs text-muted-foreground">
                         Creates a minimal workspace with `workspace.yaml`, an
                         empty `AGENTS.md`, and an empty `skills/` folder.
-                      </div>
+                      </p>
                     ) : templateSourceMode === "empty_onboarding" ? (
-                      <div className="text-[11px] text-muted-foreground/78">
+                      <p className="text-xs text-muted-foreground">
                         Creates the same minimal workspace shell, plus a starter
                         `ONBOARD.md` so you can test the onboarding flow
                         immediately.
-                      </div>
+                      </p>
                     ) : selectedTemplateFolder ? (
-                      <div className="text-[11px] text-muted-foreground/78">
+                      <p className="text-xs text-muted-foreground">
                         {selectedTemplateFolder.description ||
                           selectedTemplateFolder.rootPath ||
                           "Template folder selected."}
-                      </div>
+                      </p>
                     ) : null}
                   </form>
                 ) : null}

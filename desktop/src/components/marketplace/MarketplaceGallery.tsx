@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { KitCard } from "./KitCard";
 import { FALLBACK_TEMPLATES } from "./fallbackTemplates";
 import { marketplaceGalleryBranding } from "./marketplaceGalleryBranding";
@@ -31,28 +33,28 @@ export function MarketplaceGallery({
   const [query, setQuery] = useState("");
   const branding = marketplaceGalleryBranding(mode);
 
-  // Use fetched templates when authenticated, fallback catalog otherwise
   const effectiveTemplates =
     authenticated && templates.length > 0 ? templates : FALLBACK_TEMPLATES;
 
   const visibleTemplates = useMemo(() => {
-    let available = effectiveTemplates.filter((t) => !t.is_hidden);
+    let available = effectiveTemplates.filter(
+      (t: TemplateMetadataPayload) => !t.is_hidden,
+    );
     const trimmed = query.trim().toLowerCase();
     if (trimmed) {
-      available = available.filter((t) =>
+      available = available.filter((t: TemplateMetadataPayload) =>
         [t.name, t.description ?? "", ...t.tags, t.category].some((v) =>
           v.toLowerCase().includes(trimmed),
         ),
       );
     }
-    return available.toSorted(
-      (a, b) => Number(a.is_coming_soon) - Number(b.is_coming_soon),
+    return [...available].sort(
+      (a: TemplateMetadataPayload, b: TemplateMetadataPayload) =>
+        Number(a.is_coming_soon) - Number(b.is_coming_soon),
     );
   }, [effectiveTemplates, query]);
 
-  // Only show loading when authenticated (unauthenticated uses static fallback)
   const showLoading = authenticated && isLoading;
-  // Only show error when authenticated (unauthenticated has fallback)
   const showError = authenticated && error;
 
   return (
@@ -66,34 +68,37 @@ export function MarketplaceGallery({
               <img src="/logo.svg" alt="Holaboss" className="size-6" />
               <h1 className="text-sm font-semibold tracking-tight">Holaboss</h1>
             </div>
-            <div className="h-4 w-px bg-border/45" />
-            <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/72">
+            <div className="h-4 w-px bg-border" />
+            <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
               {branding.eyebrow}
-            </div>
+            </p>
           </div>
         ) : null}
-        <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/72">
+        <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
           {branding.showLogo ? "Workspace setup" : branding.eyebrow}
-        </div>
-        <div className="mt-1 text-[22px] font-semibold tracking-[-0.03em] text-foreground">
+        </p>
+        <h2 className="mt-1 text-xl font-semibold tracking-tight text-foreground">
           {branding.title}
-        </div>
+        </h2>
         {branding.description ? (
-          <div className="mt-1 text-[13px] text-muted-foreground/82">
+          <p className="mt-1 text-sm text-muted-foreground">
             {branding.description}
-          </div>
+          </p>
         ) : null}
       </div>
 
-      <label className="theme-control-surface mt-4 flex items-center gap-2 rounded-[16px] border border-border/45 px-3 py-2.5 text-[12px] text-muted-foreground">
-        <Search size={13} className="text-muted-foreground/72" />
-        <input
+      <div className="relative mt-4">
+        <Search
+          size={14}
+          className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+        />
+        <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search kits by name or tag"
-          className="w-full bg-transparent text-foreground outline-none placeholder:text-muted-foreground/48"
+          className="h-9 pl-8"
         />
-      </label>
+      </div>
 
       <div
         className={`mt-4 min-h-0 overflow-auto ${mode === "browse" ? "flex-1" : ""}`}
@@ -103,14 +108,14 @@ export function MarketplaceGallery({
             {Array.from({ length: 4 }).map((_, i) => (
               <div
                 key={i}
-                className="animate-pulse rounded-[18px] border border-border/30 bg-muted p-4"
+                className="animate-pulse rounded-xl border border-border bg-muted p-4"
               >
                 <div className="flex items-start gap-3">
-                  <div className="h-8 w-8 rounded-[10px] bg-border/30" />
+                  <div className="size-8 rounded-lg bg-border/50" />
                   <div className="min-w-0 flex-1">
-                    <div className="h-4 w-24 rounded bg-border/30" />
-                    <div className="mt-2 h-3 w-full rounded bg-border/20" />
-                    <div className="mt-1 h-3 w-2/3 rounded bg-border/20" />
+                    <div className="h-4 w-24 rounded bg-border/50" />
+                    <div className="mt-2 h-3 w-full rounded bg-border/30" />
+                    <div className="mt-1 h-3 w-2/3 rounded bg-border/30" />
                   </div>
                 </div>
               </div>
@@ -118,31 +123,32 @@ export function MarketplaceGallery({
           </div>
         ) : showError ? (
           <div className="flex min-h-[200px] items-center justify-center">
-            <div className="w-full max-w-[360px] rounded-[18px] border border-[rgba(255,153,102,0.24)] bg-[rgba(255,153,102,0.06)] px-6 py-5 text-center">
-              <div className="text-[14px] font-medium text-foreground">
+            <div className="w-full max-w-sm rounded-xl border border-destructive/25 bg-destructive/5 px-6 py-5 text-center">
+              <p className="text-sm font-medium text-foreground">
                 Could not load templates
-              </div>
-              <div className="mt-1 text-[12px] text-muted-foreground/78">{error}</div>
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">{error}</p>
               {onRetry ? (
-                <button
-                  type="button"
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={onRetry}
-                  className="mt-3 rounded-[12px] border border-border/45 bg-muted px-4 py-2 text-[12px] font-medium text-foreground transition-colors hover:bg-accent"
+                  className="mt-3"
                 >
                   Try again
-                </button>
+                </Button>
               ) : null}
             </div>
           </div>
         ) : visibleTemplates.length === 0 ? (
-          <div className="rounded-[18px] border border-border/35 bg-black/10 px-4 py-5 text-[12px] leading-6 text-muted-foreground/76">
+          <div className="rounded-xl border border-border bg-muted/50 px-4 py-5 text-xs text-muted-foreground">
             {query.trim()
               ? "No kits match your search."
               : "No kits available yet."}
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {visibleTemplates.map((t) => (
+            {visibleTemplates.map((t: TemplateMetadataPayload) => (
               <KitCard key={t.name} template={t} onClick={onSelectKit} />
             ))}
           </div>
@@ -150,27 +156,29 @@ export function MarketplaceGallery({
       </div>
 
       {mode === "pick" && (onStartFromScratch || onUseLocalTemplate) ? (
-        <div className="mt-4 flex items-center justify-center gap-3 border-t border-border/25 pt-4 text-[12px]">
+        <div className="mt-4 flex items-center justify-center gap-3 border-t border-border pt-4">
           {onStartFromScratch ? (
-            <button
-              type="button"
+            <Button
+              variant="link"
+              size="sm"
               onClick={onStartFromScratch}
-              className="text-muted-foreground/76 underline transition-colors hover:text-foreground"
+              className="text-muted-foreground"
             >
               Start from scratch
-            </button>
+            </Button>
           ) : null}
           {onStartFromScratch && onUseLocalTemplate ? (
             <span className="text-muted-foreground/40">|</span>
           ) : null}
           {onUseLocalTemplate ? (
-            <button
-              type="button"
+            <Button
+              variant="link"
+              size="sm"
               onClick={onUseLocalTemplate}
-              className="text-muted-foreground/76 underline transition-colors hover:text-foreground"
+              className="text-muted-foreground"
             >
               Use a local template
-            </button>
+            </Button>
           ) : null}
         </div>
       ) : null}

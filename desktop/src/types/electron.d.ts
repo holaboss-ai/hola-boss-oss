@@ -757,11 +757,7 @@ declare global {
       onOpenBrowser: (listener: (payload: WorkbenchOpenBrowserPayload) => void) => () => void;
     };
     appSurface: {
-      navigate(workspaceId: string, appId: string, path?: string): Promise<void>;
-      setBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
-      reload(appId: string): Promise<void>;
-      destroy(appId: string): Promise<void>;
-      hide(): Promise<void>;
+      resolveUrl(workspaceId: string, appId: string, path?: string): Promise<string>;
     };
     workspace: {
       getClientConfig: () => Promise<HolabossClientConfigPayload>;

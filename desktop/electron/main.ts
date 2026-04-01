@@ -339,14 +339,6 @@ let addressSuggestionsState: {
 let activeBrowserWorkspaceId = "";
 const browserWorkspaces = new Map<string, BrowserWorkspaceState>();
 const browserDownloadTrackingPartitions = new Set<string>();
-const appSurfaceViews = new Map<string, BrowserView>();
-let appSurfaceBounds: BrowserBoundsPayload = {
-  x: 0,
-  y: 0,
-  width: 0,
-  height: 0,
-};
-let activeAppSurfaceId: string | null = null;
 let fileBookmarks: FileBookmarkPayload[] = [];
 let runtimeProcess: ChildProcessWithoutNullStreams | null = null;
 let pendingAuthUser: AuthUserPayload | null = null;
@@ -7534,36 +7526,6 @@ function defaultBrowserWorkspacePersistence(): BrowserWorkspacePersistencePayloa
   };
 }
 
-// ---------------------------------------------------------------------------
-// App surface BrowserView management
-// ---------------------------------------------------------------------------
-
-function getOrCreateAppSurfaceView(appId: string): BrowserView {
-  const existing = appSurfaceViews.get(appId);
-  if (existing) {
-    return existing;
-  }
-  const view = new BrowserView({
-    webPreferences: {
-      sandbox: false,
-      nodeIntegration: false,
-      contextIsolation: true,
-    },
-  });
-  view.setAutoResize({
-    width: false,
-    height: false,
-    horizontal: false,
-    vertical: false,
-  });
-  view.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
-    return { action: "deny" };
-  });
-  appSurfaceViews.set(appId, view);
-  return view;
-}
-
 async function getAppHttpUrl(
   workspaceId: string,
   appId: string,
@@ -7586,81 +7548,16 @@ async function getAppHttpUrl(
   }
 }
 
-function setAppSurfaceBounds(bounds: BrowserBoundsPayload): void {
-  appSurfaceBounds = {
-    x: Math.max(0, Math.round(bounds.x)),
-    y: Math.max(0, Math.round(bounds.y)),
-    width: Math.max(0, Math.round(bounds.width)),
-    height: Math.max(0, Math.round(bounds.height)),
-  };
-  updateAttachedAppSurfaceView();
-}
-
-function updateAttachedAppSurfaceView(): void {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return;
-  }
-  if (
-    !activeAppSurfaceId ||
-    appSurfaceBounds.width <= 0 ||
-    appSurfaceBounds.height <= 0
-  ) {
-    for (const view of appSurfaceViews.values()) {
-      mainWindow.removeBrowserView(view);
-    }
-    return;
-  }
-  const view = appSurfaceViews.get(activeAppSurfaceId);
-  if (!view) {
-    return;
-  }
-  for (const [id, v] of appSurfaceViews) {
-    if (id !== activeAppSurfaceId) {
-      mainWindow.removeBrowserView(v);
-    }
-  }
-  mainWindow.addBrowserView(view);
-  view.setBounds(appSurfaceBounds);
-}
-
-async function navigateAppSurface(
+async function resolveAppSurfaceUrl(
   workspaceId: string,
   appId: string,
   urlPath?: string,
-): Promise<void> {
+): Promise<string> {
   const baseUrl = await getAppHttpUrl(workspaceId, appId);
   if (!baseUrl) {
     throw new Error(`Could not resolve HTTP URL for app ${appId}`);
   }
-  const view = getOrCreateAppSurfaceView(appId);
-  const targetUrl = urlPath ? `${baseUrl}${urlPath}` : baseUrl;
-  activeAppSurfaceId = appId;
-  await view.webContents.loadURL(targetUrl);
-  updateAttachedAppSurfaceView();
-}
-
-function destroyAppSurfaceView(appId: string): void {
-  const view = appSurfaceViews.get(appId);
-  if (!view) {
-    return;
-  }
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.removeBrowserView(view);
-  }
-  try {
-    (view.webContents as unknown as { destroy?: () => void }).destroy?.();
-  } catch {
-    // best effort
-  }
-  appSurfaceViews.delete(appId);
-  if (activeAppSurfaceId === appId) {
-    activeAppSurfaceId = null;
-  }
-}
-
-function hideAppSurface(): void {
-  activeAppSurfaceId = null;
-  updateAttachedAppSurfaceView();
+  return urlPath ? new URL(urlPath, `${baseUrl}/`).toString() : baseUrl;
 }
 
 // ---------------------------------------------------------------------------
@@ -10821,27 +10718,11 @@ app.whenReady().then(async () => {
       removeInstalledApp(workspaceId, appId),
   );
   handleTrustedIpc(
-    "appSurface:navigate",
+    "appSurface:resolveUrl",
     ["main"],
     async (_event, workspaceId: string, appId: string, urlPath?: string) =>
-      navigateAppSurface(workspaceId, appId, urlPath),
+      resolveAppSurfaceUrl(workspaceId, appId, urlPath),
   );
-  handleTrustedIpc(
-    "appSurface:setBounds",
-    ["main"],
-    (_event, bounds: BrowserBoundsPayload) => {
-      setAppSurfaceBounds(bounds);
-    },
-  );
-  handleTrustedIpc("appSurface:reload", ["main"], (_event, appId: string) => {
-    appSurfaceViews.get(appId)?.webContents.reload();
-  });
-  handleTrustedIpc("appSurface:destroy", ["main"], (_event, appId: string) => {
-    destroyAppSurfaceView(appId);
-  });
-  handleTrustedIpc("appSurface:hide", ["main"], () => {
-    hideAppSurface();
-  });
   handleTrustedIpc(
     "workspace:listOutputs",
     ["main"],

@@ -1,3 +1,4 @@
+import { Badge } from "@/components/ui/badge";
 import { KitEmoji } from "./KitEmoji";
 
 interface KitCardProps {
@@ -14,41 +15,41 @@ export function KitCard({ template, onClick, selected = false }: KitCardProps) {
       type="button"
       disabled={isComingSoon}
       onClick={() => onClick(template)}
-      className={`group relative overflow-hidden rounded-[18px] border px-4 py-4 text-left transition-colors ${
+      className={`group relative overflow-hidden rounded-xl border px-4 py-4 text-left transition-colors ${
         isComingSoon
-          ? "cursor-default border-border/25 bg-card/12 opacity-50"
+          ? "cursor-default border-border bg-card/50 opacity-50"
           : selected
             ? "border-primary/35 bg-primary/10"
-            : "border-border/40 bg-muted hover:bg-accent"
+            : "border-border bg-muted/50 hover:bg-accent"
       }`}
     >
       <div className="flex items-start gap-3">
         <KitEmoji emoji={template.emoji} size={36} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="truncate text-[14px] font-semibold text-foreground">
+            <span className="truncate text-sm font-semibold text-foreground">
               {template.name}
             </span>
             {isComingSoon ? (
-              <span className="shrink-0 rounded-full border border-border/35 bg-black/10 px-2 py-0.5 text-[9px] uppercase tracking-[0.14em] text-muted-foreground/72">
+              <Badge variant="secondary" className="shrink-0 text-[9px]">
                 Coming soon
-              </span>
+              </Badge>
             ) : null}
           </div>
           {template.description ? (
-            <div
-              className="mt-1 text-[12px] leading-5 text-muted-foreground/82"
+            <p
+              className="mt-1 text-xs leading-relaxed text-muted-foreground"
               style={{
                 display: "-webkit-box",
                 WebkitLineClamp: 2,
                 WebkitBoxOrient: "vertical",
-                overflow: "hidden"
+                overflow: "hidden",
               }}
             >
               {template.description}
-            </div>
+            </p>
           ) : null}
-          <div className="mt-2 flex items-center gap-3 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/68">
+          <div className="mt-2 flex items-center gap-3 text-[10px] uppercase tracking-widest text-muted-foreground">
             {template.install_count != null && template.install_count > 0 ? (
               <span>{template.install_count} installs</span>
             ) : null}

@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Activity, Globe, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import { getWorkspaceAppDefinition, type WorkspaceAppDefinition, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
+import { resolveAppSurfacePath } from "./appSurfaceRoute";
 
 interface AppSurfacePaneProps {
   appId: string;
@@ -15,11 +16,14 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
   const { refreshInstalledApps, removeInstalledApp } = useWorkspaceDesktop();
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const app = providedApp || getWorkspaceAppDefinition(appId);
-  const viewportRef = useRef<HTMLDivElement | null>(null);
   const [isRemoving, setIsRemoving] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [surfaceUrl, setSurfaceUrl] = useState("");
+  const [surfaceError, setSurfaceError] = useState("");
+  const [isSurfaceLoading, setIsSurfaceLoading] = useState(false);
+  const [surfaceReloadKey, setSurfaceReloadKey] = useState(0);
   const label = app?.label ?? appId;
   const ready = app && "ready" in app ? app.ready : false;
   const error = app && "error" in app && typeof app.error === "string" ? app.error : null;
@@ -30,6 +34,8 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
   const addressText = resourceId
     ? `${label.toLowerCase()}://workspace/${viewLabel.toLowerCase()}/${resourceId}`
     : `${label.toLowerCase()}://workspace/${viewLabel.toLowerCase()}`;
+  const urlPath = resolveAppSurfacePath({ resourceId, view });
+  const iframeKey = useMemo(() => `${surfaceUrl}:${surfaceReloadKey}`, [surfaceReloadKey, surfaceUrl]);
 
   async function handleRemove() {
     if (isRemoving) return;
@@ -59,47 +65,44 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
   }
 
   useEffect(() => {
-    if (!ready || !selectedWorkspaceId) return;
-    const urlPath = resourceId ? `/posts/${resourceId}` : "/";
-    void window.electronAPI.appSurface.navigate(selectedWorkspaceId, appId, urlPath);
-    return () => {
-      void window.electronAPI.appSurface.destroy(appId);
-    };
-  }, [appId, ready, selectedWorkspaceId, resourceId]);
+    if (!ready || !selectedWorkspaceId) {
+      setSurfaceUrl("");
+      setSurfaceError("");
+      setIsSurfaceLoading(false);
+      setSurfaceReloadKey(0);
+      return;
+    }
 
-  useLayoutEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport || !ready) return;
+    let cancelled = false;
+    setSurfaceUrl("");
+    setSurfaceError("");
+    setIsSurfaceLoading(true);
 
-    let rafId = 0;
-    const syncBounds = () => {
-      const rect = viewport.getBoundingClientRect();
-      void window.electronAPI.appSurface.setBounds({
-        x: rect.left,
-        y: rect.top,
-        width: rect.width,
-        height: rect.height,
+    void window.electronAPI.appSurface.resolveUrl(selectedWorkspaceId, appId, urlPath)
+      .then((nextUrl) => {
+        if (cancelled) {
+          return;
+        }
+        setSurfaceUrl(nextUrl);
+        setSurfaceReloadKey(0);
+      })
+      .catch((err) => {
+        if (cancelled) {
+          return;
+        }
+        setSurfaceUrl("");
+        setSurfaceError(err instanceof Error ? err.message : `Failed to resolve ${label}.`);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsSurfaceLoading(false);
+        }
       });
-    };
-    const queueSync = () => {
-      window.cancelAnimationFrame(rafId);
-      rafId = window.requestAnimationFrame(syncBounds);
-    };
-    queueSync();
-
-    const observer = new ResizeObserver(queueSync);
-    observer.observe(viewport);
-    window.addEventListener("resize", queueSync);
-    window.setTimeout(queueSync, 100);
-    window.setTimeout(queueSync, 400);
 
     return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", queueSync);
-      window.cancelAnimationFrame(rafId);
-      void window.electronAPI.appSurface.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      cancelled = true;
     };
-  }, [ready]);
+  }, [appId, label, ready, selectedWorkspaceId, urlPath]);
 
   // Initializing state
   if (!ready && !error) {
@@ -214,7 +217,14 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
           <div className="flex flex-col gap-1.5">
             <button
               type="button"
-              onClick={() => window.electronAPI.appSurface.reload(appId)}
+              onClick={() => {
+                if (!surfaceUrl) {
+                  return;
+                }
+                setSurfaceError("");
+                setIsSurfaceLoading(true);
+                setSurfaceReloadKey((current) => current + 1);
+              }}
               className="flex h-8 items-center justify-center gap-2 rounded-md border border-border text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
             >
               <RefreshCw size={12} />
@@ -273,14 +283,44 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
           </div>
         </div>
 
-        {/* Viewport — inset so native BrowserView doesn't cover card corners */}
+        {/* Viewport */}
         <div className="relative min-h-0 flex-1 p-1.5 pb-1.5">
-          <div ref={viewportRef} className="h-full w-full rounded-lg" />
-          <div className="pointer-events-none absolute inset-1.5 flex items-center justify-center rounded-lg">
-            <div className="flex flex-col items-center gap-2">
-              <LoaderCircle size={16} className="animate-spin text-muted-foreground" />
-              <span className="text-xs text-muted-foreground">Loading {label}...</span>
-            </div>
+          <div className="relative h-full w-full overflow-hidden rounded-lg border border-border/35 bg-background">
+            {surfaceUrl ? (
+              <iframe
+                key={iframeKey}
+                title={`${label} app surface`}
+                src={surfaceUrl}
+                className="h-full w-full border-0 bg-white"
+                onLoad={() => {
+                  setIsSurfaceLoading(false);
+                  setSurfaceError("");
+                }}
+                onError={() => {
+                  setIsSurfaceLoading(false);
+                  setSurfaceError(`Failed to load ${label}.`);
+                }}
+              />
+            ) : null}
+
+            {surfaceError ? (
+              <div className="absolute inset-0 flex items-center justify-center bg-card/96 p-6 text-center">
+                <div className="max-w-[320px]">
+                  <Activity size={18} className="mx-auto text-destructive" />
+                  <div className="mt-3 text-sm font-medium text-foreground">Couldn't open {label}</div>
+                  <div className="mt-2 text-xs leading-5 text-muted-foreground">{surfaceError}</div>
+                </div>
+              </div>
+            ) : null}
+
+            {isSurfaceLoading ? (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-card/78 backdrop-blur-sm">
+                <div className="flex flex-col items-center gap-2">
+                  <LoaderCircle size={16} className="animate-spin text-muted-foreground" />
+                  <span className="text-xs text-muted-foreground">Loading {label}...</span>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       </section>

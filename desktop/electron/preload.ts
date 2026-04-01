@@ -697,16 +697,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
   appSurface: {
-    navigate: (workspaceId: string, appId: string, path?: string) =>
-      ipcRenderer.invoke("appSurface:navigate", workspaceId, appId, path) as Promise<void>,
-    setBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
-      ipcRenderer.invoke("appSurface:setBounds", bounds) as Promise<void>,
-    reload: (appId: string) =>
-      ipcRenderer.invoke("appSurface:reload", appId) as Promise<void>,
-    destroy: (appId: string) =>
-      ipcRenderer.invoke("appSurface:destroy", appId) as Promise<void>,
-    hide: () =>
-      ipcRenderer.invoke("appSurface:hide") as Promise<void>,
+    resolveUrl: (workspaceId: string, appId: string, path?: string) =>
+      ipcRenderer.invoke("appSurface:resolveUrl", workspaceId, appId, path) as Promise<string>,
   },
   workspace: {
     getClientConfig: () => ipcRenderer.invoke("workspace:getClientConfig") as Promise<HolabossClientConfigPayload>,
