@@ -1,4 +1,6 @@
 import { ArrowLeft } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { KitEmoji } from "./KitEmoji";
 import { SimpleMarkdown } from "./SimpleMarkdown";
 import { templateReadmes } from "./templateReadmes";
@@ -20,7 +22,7 @@ export function KitDetail({
   selectLabel = "Use this kit",
   selectDisabled = false,
   selectDisabledReason,
-  onSignIn
+  onSignIn,
 }: KitDetailProps) {
   const readme = templateReadmes[template.name] || template.long_description;
   const displayName = template.name.replaceAll("_", " ");
@@ -28,45 +30,46 @@ export function KitDetail({
   return (
     <div className="flex min-h-0 flex-col overflow-auto">
       {/* Back */}
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={onBack}
-        className="mb-5 inline-flex items-center gap-1.5 self-start rounded-[12px] px-2 py-1.5 text-[12px] text-muted-foreground/82 transition-colors hover:bg-accent hover:text-foreground"
+        className="mb-5 self-start"
       >
         <ArrowLeft size={13} />
-        <span>Back to kits</span>
-      </button>
+        Back to kits
+      </Button>
 
       {/* Header */}
       <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex items-start gap-4">
-          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-[18px] border border-border/30 bg-muted">
+          <div className="flex size-16 shrink-0 items-center justify-center rounded-2xl border border-border bg-muted">
             <KitEmoji emoji={template.emoji} size={40} />
           </div>
           <div className="min-w-0">
-            <div className="text-[24px] font-semibold capitalize tracking-[-0.03em] text-foreground">
+            <h2 className="text-2xl font-semibold capitalize tracking-tight text-foreground">
               {displayName}
-            </div>
+            </h2>
             {template.description ? (
-              <div className="mt-1.5 max-w-[560px] text-[13px] leading-6 text-muted-foreground/82">
+              <p className="mt-1.5 max-w-[560px] text-sm leading-relaxed text-muted-foreground">
                 {template.description}
-              </div>
+              </p>
             ) : null}
             <div className="mt-2.5 flex flex-wrap items-center gap-2">
               {template.install_count != null && template.install_count > 0 ? (
-                <span className="rounded-full border border-border/35 bg-black/8 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/72">
+                <Badge variant="secondary">
                   {template.install_count} installs
-                </span>
+                </Badge>
               ) : null}
               {template.source === "official" || template.verified ? (
-                <span className="rounded-full border border-[rgba(88,166,255,0.2)] bg-[rgba(88,166,255,0.06)] px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-[rgba(88,166,255,0.88)]">
+                <Badge variant="outline" className="border-blue-500/25 text-blue-500">
                   Official
-                </span>
+                </Badge>
               ) : null}
               {template.apps.length > 0 ? (
-                <span className="rounded-full border border-border/35 bg-black/8 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/72">
+                <Badge variant="secondary">
                   {template.apps.join(" · ")}
-                </span>
+                </Badge>
               ) : null}
             </div>
           </div>
@@ -75,32 +78,23 @@ export function KitDetail({
         {/* CTA */}
         <div className="shrink-0 sm:mt-1">
           {selectDisabled && onSignIn ? (
-            <button
-              type="button"
-              onClick={onSignIn}
-              className="inline-flex h-11 items-center justify-center rounded-[14px] border border-[rgba(247,90,84,0.34)] bg-[rgba(247,90,84,0.9)] px-5 text-[13px] font-medium text-white transition-colors hover:bg-[rgba(226,79,74,0.94)]"
-            >
+            <Button size="lg" onClick={onSignIn}>
               Sign in to use
-            </button>
+            </Button>
           ) : (
-            <button
-              type="button"
+            <Button
+              size="lg"
               disabled={selectDisabled}
               onClick={() => onSelect(template)}
-              className={`inline-flex h-11 items-center justify-center rounded-[14px] px-5 text-[13px] font-medium transition-colors ${
-                selectDisabled
-                  ? "cursor-not-allowed border border-border/35 bg-card/30 text-muted-foreground/50"
-                  : "border border-[rgba(247,90,84,0.34)] bg-[rgba(247,90,84,0.9)] text-white hover:bg-[rgba(226,79,74,0.94)]"
-              }`}
             >
               {selectLabel}
-            </button>
+            </Button>
           )}
         </div>
       </div>
 
       {/* Divider */}
-      <div className="mt-6 border-t border-border/30" />
+      <div className="mt-6 border-t border-border" />
 
       {/* README content */}
       {readme ? (
@@ -109,18 +103,24 @@ export function KitDetail({
         </div>
       ) : (
         <div className="mt-6 space-y-4">
-          {/* Fallback: structured data for templates without README */}
           {template.agents.length > 0 ? (
             <div>
-              <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground/72">
+              <h3 className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
                 AI Agents
-              </div>
+              </h3>
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
                 {template.agents.map((agent) => (
-                  <div key={agent.role} className="rounded-[12px] border border-border/30 bg-muted px-3 py-2.5">
-                    <div className="text-[12px] font-medium text-foreground">{agent.role}</div>
+                  <div
+                    key={agent.role}
+                    className="rounded-xl border border-border bg-muted px-3 py-2.5"
+                  >
+                    <div className="text-xs font-medium text-foreground">
+                      {agent.role}
+                    </div>
                     {agent.description ? (
-                      <div className="mt-0.5 text-[11px] leading-5 text-muted-foreground/72">{agent.description}</div>
+                      <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                        {agent.description}
+                      </p>
                     ) : null}
                   </div>
                 ))}
@@ -130,15 +130,22 @@ export function KitDetail({
 
           {template.views.length > 0 ? (
             <div>
-              <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground/72">
+              <h3 className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
                 Views
-              </div>
+              </h3>
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
                 {template.views.map((view) => (
-                  <div key={view.name} className="rounded-[12px] border border-border/30 bg-muted px-3 py-2.5">
-                    <div className="text-[12px] font-medium text-foreground">{view.name}</div>
+                  <div
+                    key={view.name}
+                    className="rounded-xl border border-border bg-muted px-3 py-2.5"
+                  >
+                    <div className="text-xs font-medium text-foreground">
+                      {view.name}
+                    </div>
                     {view.description ? (
-                      <div className="mt-0.5 text-[11px] leading-5 text-muted-foreground/72">{view.description}</div>
+                      <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                        {view.description}
+                      </p>
                     ) : null}
                   </div>
                 ))}

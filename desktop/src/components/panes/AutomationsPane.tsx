@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Check, Clock3, Loader2, Trash2 } from "lucide-react";
 import { PaneCard } from "@/components/ui/PaneCard";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 function normalizeErrorMessage(error: unknown) {
@@ -91,11 +93,11 @@ export function AutomationsPane() {
         {statusMessage ? (
           <div className="shrink-0 border-b border-border px-4 py-3">
             <div
-              className={`rounded-xl border px-3 py-2 text-[11px] ${
+              className={`rounded-xl border px-3 py-2 text-xs ${
                 statusTone === "success"
-                  ? "border-primary/30 bg-primary/10 text-foreground/92"
+                  ? "border-primary/25 bg-primary/5 text-foreground"
                   : statusTone === "error"
-                    ? "border-destructive/25 bg-[rgba(255,153,102,0.08)] text-destructive"
+                    ? "border-destructive/25 bg-destructive/5 text-destructive"
                     : "border-border bg-muted text-muted-foreground"
               }`}
             >
@@ -123,18 +125,12 @@ export function AutomationsPane() {
                   <div key={job.id} className="rounded-xl border border-border bg-muted px-4 py-4">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-[12px] font-medium text-foreground">{job.name || job.description}</div>
-                        <div className="mt-1 truncate text-[11px] text-muted-foreground">{job.cron}</div>
+                        <div className="truncate text-xs font-medium text-foreground">{job.name || job.description}</div>
+                        <div className="mt-1 truncate text-xs text-muted-foreground">{job.cron}</div>
                       </div>
-                      <span
-                        className={`rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${
-                          job.enabled
-                            ? "border-primary/35 bg-primary/10 text-primary"
-                            : "border-border text-muted-foreground"
-                        }`}
-                      >
+                      <Badge variant={job.enabled ? "default" : "secondary"}>
                         {job.enabled ? "Enabled" : "Disabled"}
-                      </span>
+                      </Badge>
                     </div>
 
                     <div className="mt-3 grid gap-1 text-[10px] text-muted-foreground">
@@ -146,24 +142,24 @@ export function AutomationsPane() {
                     </div>
 
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <button
-                        type="button"
+                      <Button
+                        variant="outline"
+                        size="sm"
                         onClick={() => void handleToggleEnabled(job)}
                         disabled={isBusy}
-                        className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-border px-3 text-[10px] text-muted-foreground transition hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {isBusy ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
                         <span>{job.enabled ? "Disable" : "Enable"}</span>
-                      </button>
-                      <button
-                        type="button"
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
                         onClick={() => void handleDelete(job)}
                         disabled={isBusy}
-                        className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-destructive/25 px-3 text-[10px] text-destructive transition hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {isBusy ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
                         <span>Delete</span>
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 );
