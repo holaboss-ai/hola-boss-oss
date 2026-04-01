@@ -3907,6 +3907,37 @@ function runtimeConfigIsControlPlaneManaged(config: Record<string, string>): boo
   return modelProxyBaseUrl.includes("/api/v1/model-proxy");
 }
 
+function configuredProviderIdForRuntimeModelToken(modelToken: string | null | undefined): string {
+  const normalizedModelToken = normalizeLegacyRuntimeModelToken(runtimeConfigField(modelToken ?? ""));
+  if (!normalizedModelToken.includes("/")) {
+    return "";
+  }
+  const [providerId] = normalizedModelToken.split("/");
+  return providerId.trim();
+}
+
+function sessionQueueRequiresRuntimeBinding(
+  config: Record<string, string>,
+  selectedModelToken: string | null | undefined
+): boolean {
+  const explicitProviderId = configuredProviderIdForRuntimeModelToken(selectedModelToken);
+  if (explicitProviderId) {
+    return isHolabossProviderAlias(explicitProviderId);
+  }
+
+  const defaultProviderId = runtimeConfigField(config.default_provider);
+  if (defaultProviderId) {
+    return isHolabossProviderAlias(defaultProviderId);
+  }
+
+  const defaultModelProviderId = configuredProviderIdForRuntimeModelToken(config.default_model);
+  if (defaultModelProviderId) {
+    return isHolabossProviderAlias(defaultModelProviderId);
+  }
+
+  return runtimeConfigIsControlPlaneManaged(config);
+}
+
 function shouldForceRuntimeBindingRefresh(userId: string): boolean {
   if (!userId) {
     return false;
@@ -3927,7 +3958,9 @@ async function clearRuntimeBindingSecrets(reason: string): Promise<void> {
   const currentConfig = await readRuntimeConfigFile();
   const nextConfig = await writeRuntimeConfigFile({
     authToken: null,
-    modelProxyApiKey: null
+    modelProxyApiKey: null,
+    modelProxyBaseUrl: null,
+    controlPlaneBaseUrl: null
   });
   lastRuntimeBindingRefreshAtMs = 0;
   lastRuntimeBindingRefreshUserId = "";
@@ -7100,7 +7133,10 @@ function contextualWorkspaceCreateError(stage: string, error: unknown) {
 async function queueSessionInput(
   payload: HolabossQueueSessionInputPayload
 ): Promise<EnqueueSessionInputResponsePayload> {
-  await ensureRuntimeBindingReadyForWorkspaceFlow("session_queue");
+  const currentConfig = await readRuntimeConfigFile();
+  if (sessionQueueRequiresRuntimeBinding(currentConfig, payload.model)) {
+    await ensureRuntimeBindingReadyForWorkspaceFlow("session_queue");
+  }
   return requestRuntimeJson<EnqueueSessionInputResponsePayload>({
     method: "POST",
     path: "/api/v1/agent-sessions/queue",
