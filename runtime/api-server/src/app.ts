@@ -1159,9 +1159,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const browserToolService = options.browserToolService ?? new DesktopBrowserToolService();
   const integrationService = new RuntimeIntegrationService(store);
   const honoBaseUrl = process.env.HOLABOSS_AUTH_BASE_URL ?? "";
-  const serviceApiKey = process.env.AGENT_SERVICE_API_KEY ?? "";
-  const composioService = honoBaseUrl && serviceApiKey
-    ? new ComposioService({ honoBaseUrl, serviceApiKey })
+  const authCookie = process.env.HOLABOSS_AUTH_COOKIE ?? "";
+  const composioService = honoBaseUrl && authCookie
+    ? new ComposioService({ honoBaseUrl, authCookie })
     : null;
   const brokerService = new IntegrationBrokerService(store, composioService);
   const oauthService = new OAuthService(store);

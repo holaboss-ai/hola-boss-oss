@@ -1,6 +1,6 @@
 /**
  * ComposioService — runtime-side client that proxies Composio operations
- * through the Hono backend server (authenticated via X-API-Key).
+ * through the Hono backend server, authenticated via the user's session cookie.
  *
  * The runtime never calls Composio directly and never holds COMPOSIO_API_KEY.
  */
@@ -8,8 +8,8 @@
 export interface ComposioServiceConfig {
   /** Hono server base URL, e.g. "http://localhost:4000" or "https://api.holaboss.ai" */
   honoBaseUrl: string;
-  /** AGENT_SERVICE_API_KEY for service-to-service auth */
-  serviceApiKey: string;
+  /** Better Auth session cookie from the desktop */
+  authCookie: string;
   fetchImpl?: typeof fetch;
 }
 
@@ -21,12 +21,12 @@ export interface ProxyResponse<TData = unknown> {
 
 export class ComposioService {
   private readonly honoBaseUrl: string;
-  private readonly serviceApiKey: string;
+  private readonly authCookie: string;
   private readonly fetchImpl: typeof fetch;
 
   constructor(config: ComposioServiceConfig) {
     this.honoBaseUrl = config.honoBaseUrl.replace(/\/+$/, "");
-    this.serviceApiKey = config.serviceApiKey;
+    this.authCookie = config.authCookie;
     this.fetchImpl = config.fetchImpl ?? fetch;
   }
 
@@ -39,7 +39,7 @@ export class ComposioService {
     const response = await this.fetchImpl(`${this.honoBaseUrl}/api/composio/proxy`, {
       method: "POST",
       headers: {
-        "x-api-key": this.serviceApiKey,
+        Cookie: this.authCookie,
         "Content-Type": "application/json",
         Accept: "application/json",
       },

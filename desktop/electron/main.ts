@@ -7389,9 +7389,7 @@ async function startEmbeddedRuntime() {
       PROACTIVE_ENABLE_REMOTE_BRIDGE: "1",
       PROACTIVE_BRIDGE_BASE_URL: proactiveBaseUrl(),
       PYTHONDONTWRITEBYTECODE: "1",
-      ...(process.env.COMPOSIO_API_KEY
-        ? { COMPOSIO_API_KEY: process.env.COMPOSIO_API_KEY }
-        : {}),
+      HOLABOSS_AUTH_COOKIE: authCookieHeader() ?? "",
     },
     stdio: "pipe",
   });
