@@ -698,6 +698,19 @@ declare global {
     userId: string | null;
   }
 
+  interface TemplateIntegrationRequirement {
+    key: string;
+    provider: string;
+    required: boolean;
+    app_id: string;
+  }
+
+  interface ResolveTemplateIntegrationsResult {
+    requirements: TemplateIntegrationRequirement[];
+    connected_providers: string[];
+    missing_providers: string[];
+  }
+
   interface ElectronAPI {
     platform: string;
     versions: {
@@ -799,6 +812,7 @@ declare global {
       composioConnect: (payload: { provider: string; owner_user_id: string; callback_url?: string }) => Promise<ComposioConnectResult>;
       composioAccountStatus: (connectedAccountId: string) => Promise<ComposioAccountStatus>;
       composioFinalize: (payload: { connected_account_id: string; provider: string; owner_user_id: string; account_label?: string }) => Promise<IntegrationConnectionPayload>;
+      resolveTemplateIntegrations: (payload: HolabossCreateWorkspacePayload) => Promise<ResolveTemplateIntegrationsResult>;
       onSessionStreamEvent: (listener: (payload: HolabossSessionStreamEventPayload) => void) => () => void;
     };
     auth: {

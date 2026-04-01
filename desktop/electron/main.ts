@@ -4197,6 +4197,139 @@ async function composioFinalize(payload: {
   });
 }
 
+interface TemplateIntegrationRequirement {
+  key: string;
+  provider: string;
+  required: boolean;
+  app_id: string;
+}
+
+interface ResolveTemplateIntegrationsResult {
+  requirements: TemplateIntegrationRequirement[];
+  connected_providers: string[];
+  missing_providers: string[];
+}
+
+function extractIntegrationRequirementsFromTemplateFiles(
+  files: MaterializedTemplateFilePayload[],
+): TemplateIntegrationRequirement[] {
+  const requirements: TemplateIntegrationRequirement[] = [];
+  const appRuntimePattern = /^apps\/([^/]+)\/app\.runtime\.yaml$/;
+
+  for (const file of files) {
+    const match = file.path.match(appRuntimePattern);
+    if (!match) continue;
+    const appId = match[1];
+
+    let parsed: Record<string, unknown>;
+    try {
+      const content = Buffer.from(file.content_base64, "base64").toString(
+        "utf-8",
+      );
+      parsed = parseYaml(content) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== "object") continue;
+
+    // List format: integrations: [{ key, provider, required }]
+    if (Array.isArray(parsed.integrations)) {
+      for (const entry of parsed.integrations) {
+        if (entry && typeof entry === "object" && entry.key && entry.provider) {
+          requirements.push({
+            key: String(entry.key),
+            provider: String(entry.provider),
+            required: entry.required !== false,
+            app_id: appId,
+          });
+        }
+      }
+    }
+    // Legacy format: integration: { destination, credential_source }
+    else if (
+      parsed.integration &&
+      typeof parsed.integration === "object" &&
+      !Array.isArray(parsed.integration)
+    ) {
+      const legacy = parsed.integration as Record<string, unknown>;
+      const destination = legacy.destination
+        ? String(legacy.destination)
+        : null;
+      if (destination) {
+        requirements.push({
+          key: destination,
+          provider: destination,
+          required: true,
+          app_id: appId,
+        });
+      }
+    }
+  }
+
+  return requirements;
+}
+
+async function resolveTemplateIntegrations(
+  payload: HolabossCreateWorkspacePayload,
+): Promise<ResolveTemplateIntegrationsResult> {
+  const templateRootPath = payload.template_root_path?.trim() || "";
+  const templateName = payload.template_name?.trim() || "";
+
+  let materializedTemplate: MaterializeTemplateResponsePayload;
+
+  if (templateRootPath) {
+    materializedTemplate = await materializeLocalTemplate({
+      template_root_path: templateRootPath,
+    });
+  } else if (templateName) {
+    materializedTemplate = await materializeMarketplaceTemplate({
+      holaboss_user_id: payload.holaboss_user_id,
+      template_name: templateName,
+      template_ref: payload.template_ref,
+      template_commit: payload.template_commit,
+    });
+  } else {
+    return { requirements: [], connected_providers: [], missing_providers: [] };
+  }
+
+  const requirements = extractIntegrationRequirementsFromTemplateFiles(
+    materializedTemplate.files,
+  );
+
+  if (requirements.length === 0) {
+    return { requirements: [], connected_providers: [], missing_providers: [] };
+  }
+
+  let connections: IntegrationConnectionPayload[] = [];
+  try {
+    const resp = await listIntegrationConnections();
+    connections = resp.connections;
+  } catch {
+    // If we cannot reach the integration API, treat all as missing.
+  }
+
+  const activeConnections = connections.filter((c) => c.status === "active");
+  const connectedProviderSet = new Set(
+    activeConnections.map((c) => c.provider_id),
+  );
+
+  const requiredProviders = [
+    ...new Set(requirements.map((r) => r.provider)),
+  ];
+  const connectedProviders = requiredProviders.filter((p) =>
+    connectedProviderSet.has(p),
+  );
+  const missingProviders = requiredProviders.filter(
+    (p) => !connectedProviderSet.has(p),
+  );
+
+  return {
+    requirements,
+    connected_providers: connectedProviders,
+    missing_providers: missingProviders,
+  };
+}
+
 async function enqueueRemoteDemoTaskProposal(
   payload: DemoTaskProposalRequestPayload,
 ): Promise<DemoTaskProposalEnqueueResponsePayload> {
@@ -6292,6 +6425,59 @@ async function createWorkspace(
         error_message: null,
       },
     });
+
+    // --- Auto-bind integrations (best-effort) ---
+    if (materializedTemplate) {
+      try {
+        const integrationReqs =
+          extractIntegrationRequirementsFromTemplateFiles(
+            materializedTemplate.files,
+          );
+        if (integrationReqs.length > 0) {
+          let connections: IntegrationConnectionPayload[] = [];
+          try {
+            const resp = await listIntegrationConnections();
+            connections = resp.connections.filter(
+              (c) => c.status === "active",
+            );
+          } catch {
+            // Cannot reach integration API; skip auto-bind.
+          }
+
+          if (connections.length > 0) {
+            const connectionsByProvider = new Map<
+              string,
+              IntegrationConnectionPayload
+            >();
+            for (const conn of connections) {
+              // Keep the first (most recently created) connection per provider
+              if (!connectionsByProvider.has(conn.provider_id)) {
+                connectionsByProvider.set(conn.provider_id, conn);
+              }
+            }
+
+            for (const req of integrationReqs) {
+              const conn = connectionsByProvider.get(req.provider);
+              if (!conn) continue;
+              try {
+                await upsertIntegrationBinding(
+                  workspaceId,
+                  "app",
+                  req.app_id,
+                  req.key,
+                  { connection_id: conn.connection_id, is_default: true },
+                );
+              } catch {
+                // Best-effort: skip binding failures silently.
+              }
+            }
+          }
+        }
+      } catch {
+        // Auto-bind is best-effort; do not fail workspace creation.
+      }
+    }
+
     if (onboardingSessionId) {
       try {
         await requestRuntimeJson<EnqueueSessionInputResponsePayload>({
@@ -10846,6 +11032,12 @@ app.whenReady().then(async () => {
         account_label?: string;
       },
     ) => composioFinalize(payload),
+  );
+  handleTrustedIpc(
+    "workspace:resolveTemplateIntegrations",
+    ["main"],
+    async (_event, payload: HolabossCreateWorkspacePayload) =>
+      resolveTemplateIntegrations(payload),
   );
   ipcMain.handle(
     "browser:setActiveWorkspace",

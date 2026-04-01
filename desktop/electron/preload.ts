@@ -604,6 +604,19 @@ interface ComposioAccountStatus {
   userId: string | null;
 }
 
+interface TemplateIntegrationRequirement {
+  key: string;
+  provider: string;
+  required: boolean;
+  app_id: string;
+}
+
+interface ResolveTemplateIntegrationsResult {
+  requirements: TemplateIntegrationRequirement[];
+  connected_providers: string[];
+  missing_providers: string[];
+}
+
 contextBridge.exposeInMainWorld("electronAPI", {
   platform: process.platform,
   versions: {
@@ -782,6 +795,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:composioAccountStatus", connectedAccountId) as Promise<ComposioAccountStatus>,
     composioFinalize: (payload: { connected_account_id: string; provider: string; owner_user_id: string; account_label?: string }) =>
       ipcRenderer.invoke("workspace:composioFinalize", payload) as Promise<IntegrationConnectionPayload>,
+    resolveTemplateIntegrations: (payload: HolabossCreateWorkspacePayload) =>
+      ipcRenderer.invoke("workspace:resolveTemplateIntegrations", payload) as Promise<ResolveTemplateIntegrationsResult>,
     onSessionStreamEvent: (listener: (payload: HolabossSessionStreamEventPayload) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, payload: HolabossSessionStreamEventPayload) => listener(payload);
       ipcRenderer.on("workspace:sessionStream", wrapped);
