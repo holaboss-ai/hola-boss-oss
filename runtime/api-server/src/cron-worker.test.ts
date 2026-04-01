@@ -62,7 +62,7 @@ test("runtime cron worker queues due session_run cronjobs and updates bookkeepin
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
@@ -128,7 +128,7 @@ test("runtime cron worker records failures for unsupported delivery channels", a
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
@@ -163,7 +163,7 @@ test("cronjob routes compute next_run_at and cron worker lifecycle hooks run", a
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });

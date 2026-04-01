@@ -2,25 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  decodeHarnessHostOpencodeRequestBase64,
+  decodeAgentRuntimeConfigCliRequestBase64,
   decodeHarnessHostPiRequestBase64,
-  decodeOpencodeCommandsCliRequestBase64,
-  decodeOpencodeConfigCliRequestBase64,
-  decodeOpencodeHarnessHostRequestBase64,
-  decodeOpencodeRuntimeConfigCliRequestBase64,
-  decodeOpencodeSidecarCliRequestBase64,
-  decodeOpencodeSkillsCliRequestBase64,
   decodeRunnerRequestBase64,
   decodeWorkspaceMcpSidecarCliRequestBase64,
 } from "./contracts.js";
 import type {
   HarnessHostModelClientPayload,
-  HarnessHostOpencodeRequest,
   HarnessHostPiMcpToolRef,
   HarnessHostPiRequest,
   JsonObject,
   ModelClientConfigPayload,
-  OpencodeHarnessHostRequest,
   RunnerOutputEvent,
   RunnerOutputEventPayload,
 } from "./contracts.js";
@@ -29,7 +21,7 @@ function encode(value: unknown): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64");
 }
 
-test("contract exports stay compatible with legacy aliases", () => {
+test("contract exports keep the shared payload aliases compatible", () => {
   const payload = {
     phase: "booting",
     details: {
@@ -54,32 +46,8 @@ test("contract exports stay compatible with legacy aliases", () => {
   } satisfies HarnessHostModelClientPayload;
   const legacyModelClient: ModelClientConfigPayload = modelClient;
 
-  const request = {
-    workspace_id: "workspace-1",
-    workspace_dir: "/tmp/workspace-1",
-    session_id: "session-1",
-    input_id: "input-1",
-    instruction: "Do the thing",
-    debug: false,
-    provider_id: "openai",
-    model_id: "gpt-5.1",
-    mode: "code",
-    opencode_base_url: "http://127.0.0.1:4096",
-    timeout_seconds: 30,
-    system_prompt: "system",
-    tools: { read: true },
-    workspace_tool_ids: ["workspace.lookup"],
-    workspace_skill_ids: ["skill-a"],
-    mcp_servers: [{ name: "workspace", config: { type: "remote", url: "http://127.0.0.1:5000" } }],
-    output_format: { type: "json_object" },
-    workspace_config_checksum: "checksum-1",
-    run_started_payload: payload,
-    model_client: legacyModelClient,
-  } satisfies HarnessHostOpencodeRequest;
-  const legacyRequest: OpencodeHarnessHostRequest = request;
-
   assert.equal(legacyEvent.payload.phase, "booting");
-  assert.equal(legacyRequest.model_client.base_url, "http://127.0.0.1:4000/openai/v1");
+  assert.equal(legacyModelClient.base_url, "http://127.0.0.1:4000/openai/v1");
 });
 
 test("decodeRunnerRequestBase64 applies defaults for optional fields", () => {
@@ -119,157 +87,6 @@ test("decodeRunnerRequestBase64 rejects non-object payloads", () => {
   assert.throws(
     () => decodeRunnerRequestBase64(encode(["not", "an", "object"])),
     /runner request payload must be an object/
-  );
-});
-
-test("decodeOpencodeHarnessHostRequestBase64 validates and normalizes request payloads", () => {
-  const request = decodeOpencodeHarnessHostRequestBase64(
-    encode({
-      workspace_id: "workspace-1",
-      workspace_dir: "/tmp/workspace-1",
-      session_id: "session-1",
-      browser_tools_enabled: true,
-      input_id: "input-1",
-      instruction: "Do the thing",
-      provider_id: "openai",
-      model_id: "gpt-5.1",
-      mode: "code",
-      opencode_base_url: "http://127.0.0.1:4096",
-      timeout_seconds: 30,
-      system_prompt: "system",
-      tools: { read: true },
-      workspace_tool_ids: ["workspace.lookup"],
-      workspace_skill_ids: ["skill-a"],
-      mcp_servers: [{ name: "workspace" }, "ignored"],
-      output_format: { type: "json" },
-      workspace_config_checksum: "checksum-1",
-      run_started_payload: { phase: "booting" },
-      model_client: {
-        model_proxy_provider: "openai_compatible",
-        api_key: "token",
-        default_headers: {
-          "X-Test": "1",
-          ignore: 2,
-        },
-      },
-    })
-  );
-
-  assert.deepEqual(request, {
-    workspace_id: "workspace-1",
-    workspace_dir: "/tmp/workspace-1",
-    session_id: "session-1",
-    input_id: "input-1",
-    instruction: "Do the thing",
-    attachments: [],
-    debug: false,
-    harness_session_id: undefined,
-    persisted_harness_session_id: undefined,
-    provider_id: "openai",
-    model_id: "gpt-5.1",
-    mode: "code",
-    opencode_base_url: "http://127.0.0.1:4096",
-    timeout_seconds: 30,
-    system_prompt: "system",
-    tools: { read: true },
-    workspace_tool_ids: ["workspace.lookup"],
-    workspace_skill_ids: ["skill-a"],
-    mcp_servers: [{ name: "workspace" }],
-    output_format: { type: "json" },
-    workspace_config_checksum: "checksum-1",
-    run_started_payload: { phase: "booting" },
-    model_client: {
-      model_proxy_provider: "openai_compatible",
-      api_key: "token",
-      base_url: undefined,
-      default_headers: { "X-Test": "1" },
-    },
-  });
-});
-
-test("decodeOpencodeHarnessHostRequestBase64 allows empty or missing system_prompt", () => {
-  const emptyPrompt = decodeOpencodeHarnessHostRequestBase64(
-    encode({
-      workspace_id: "workspace-1",
-      workspace_dir: "/tmp/workspace-1",
-      session_id: "session-1",
-      browser_tools_enabled: true,
-      input_id: "input-1",
-      instruction: "Do the thing",
-      provider_id: "openai",
-      model_id: "gpt-5.1",
-      mode: "code",
-      opencode_base_url: "http://127.0.0.1:4096",
-      timeout_seconds: 30,
-      system_prompt: "",
-      tools: {},
-      workspace_tool_ids: [],
-      workspace_skill_ids: [],
-      mcp_servers: [],
-      workspace_config_checksum: "checksum-1",
-      run_started_payload: {},
-      model_client: {
-        model_proxy_provider: "openai_compatible",
-        api_key: "token"
-      }
-    })
-  );
-  const missingPrompt = decodeOpencodeHarnessHostRequestBase64(
-    encode({
-      workspace_id: "workspace-1",
-      workspace_dir: "/tmp/workspace-1",
-      session_id: "session-1",
-      browser_tools_enabled: true,
-      input_id: "input-1",
-      instruction: "Do the thing",
-      provider_id: "openai",
-      model_id: "gpt-5.1",
-      mode: "code",
-      opencode_base_url: "http://127.0.0.1:4096",
-      timeout_seconds: 30,
-      tools: {},
-      workspace_tool_ids: [],
-      workspace_skill_ids: [],
-      mcp_servers: [],
-      workspace_config_checksum: "checksum-1",
-      run_started_payload: {},
-      model_client: {
-        model_proxy_provider: "openai_compatible",
-        api_key: "token"
-      }
-    })
-  );
-
-  assert.equal(emptyPrompt.system_prompt, "");
-  assert.equal(missingPrompt.system_prompt, "");
-});
-
-test("decodeOpencodeHarnessHostRequestBase64 rejects invalid model_client payloads", () => {
-  assert.throws(
-    () =>
-      decodeOpencodeHarnessHostRequestBase64(
-        encode({
-          workspace_id: "workspace-1",
-          workspace_dir: "/tmp/workspace-1",
-          session_id: "session-1",
-          input_id: "input-1",
-          instruction: "Do the thing",
-          provider_id: "openai",
-          model_id: "gpt-5.1",
-          mode: "code",
-          opencode_base_url: "http://127.0.0.1:4096",
-          timeout_seconds: 30,
-          system_prompt: "system",
-          tools: {},
-          workspace_tool_ids: [],
-          workspace_skill_ids: [],
-          mcp_servers: [],
-          workspace_config_checksum: "checksum-1",
-          run_started_payload: {},
-          model_client: "bad",
-        })
-      ),
-    /model_client must be an object/
   );
 });
 
@@ -382,8 +199,8 @@ test("decodeHarnessHostPiRequestBase64 allows empty or missing system_prompt", (
   assert.equal(missingPrompt.system_prompt, "");
 });
 
-test("decodeOpencodeRuntimeConfigCliRequestBase64 defaults optional arrays and objects", () => {
-  const request = decodeOpencodeRuntimeConfigCliRequestBase64(
+test("decodeAgentRuntimeConfigCliRequestBase64 defaults optional arrays and objects", () => {
+  const request = decodeAgentRuntimeConfigCliRequestBase64(
     encode({
       session_id: "session-1",
       workspace_id: "workspace-1",
@@ -425,10 +242,10 @@ test("decodeOpencodeRuntimeConfigCliRequestBase64 defaults optional arrays and o
   });
 });
 
-test("decodeOpencodeRuntimeConfigCliRequestBase64 requires a single agent payload", () => {
+test("decodeAgentRuntimeConfigCliRequestBase64 requires a single agent payload", () => {
   assert.throws(
     () =>
-      decodeOpencodeRuntimeConfigCliRequestBase64(
+      decodeAgentRuntimeConfigCliRequestBase64(
         encode({
           session_id: "session-1",
           workspace_id: "workspace-1",
@@ -442,37 +259,7 @@ test("decodeOpencodeRuntimeConfigCliRequestBase64 requires a single agent payloa
   );
 });
 
-test("decodeHarnessHostOpencodeRequestBase64 preserves the legacy request shape", () => {
-  const request = decodeHarnessHostOpencodeRequestBase64(
-    encode({
-      workspace_id: "workspace-1",
-      workspace_dir: "/tmp/workspace-1",
-      session_id: "session-1",
-      input_id: "input-1",
-      instruction: "Do the thing",
-      provider_id: "openai",
-      model_id: "gpt-5.1",
-      mode: "code",
-      opencode_base_url: "http://127.0.0.1:4096",
-      timeout_seconds: 30,
-      system_prompt: "system",
-      tools: { read: true },
-      workspace_tool_ids: [],
-      workspace_skill_ids: [],
-      mcp_servers: [],
-      workspace_config_checksum: "checksum-1",
-      run_started_payload: {},
-      model_client: {
-        model_proxy_provider: "openai_compatible",
-        api_key: "token",
-      },
-    })
-  );
-
-  assert.equal(request.provider_id, "openai");
-});
-
-test("decode additional harness CLI request payloads", () => {
+test("decode workspace MCP sidecar request payloads", () => {
   assert.deepEqual(
     decodeWorkspaceMcpSidecarCliRequestBase64(
       encode({
@@ -491,80 +278,6 @@ test("decode additional harness CLI request payloads", () => {
       timeout_ms: 15000,
       readiness_timeout_s: 10.5,
       catalog_json_base64: "eyJ0ZXN0Ijp0cnVlfQ==",
-    }
-  );
-
-  assert.deepEqual(
-    decodeOpencodeSidecarCliRequestBase64(
-      encode({
-        workspace_root: "/tmp/workspace-1",
-        workspace_id: "workspace-1",
-        config_fingerprint: "fingerprint-1",
-        allow_reuse_existing: true,
-        host: "127.0.0.1",
-        port: 4096,
-        readiness_url: "http://127.0.0.1:4096/ready",
-        ready_timeout_s: 30,
-      })
-    ),
-    {
-      workspace_root: "/tmp/workspace-1",
-      workspace_id: "workspace-1",
-      config_fingerprint: "fingerprint-1",
-      allow_reuse_existing: true,
-      host: "127.0.0.1",
-      port: 4096,
-      readiness_url: "http://127.0.0.1:4096/ready",
-      ready_timeout_s: 30,
-    }
-  );
-
-  assert.deepEqual(
-    decodeOpencodeConfigCliRequestBase64(
-      encode({
-        workspace_root: "/tmp/workspace-1",
-        provider_id: "openai",
-        model_id: "gpt-5.1",
-        model_client: {
-          model_proxy_provider: "openai_compatible",
-          api_key: "token",
-        },
-      })
-    ),
-    {
-      workspace_root: "/tmp/workspace-1",
-      provider_id: "openai",
-      model_id: "gpt-5.1",
-      model_client: {
-        model_proxy_provider: "openai_compatible",
-        api_key: "token",
-        base_url: undefined,
-        default_headers: null,
-      },
-    }
-  );
-
-  assert.deepEqual(
-    decodeOpencodeSkillsCliRequestBase64(
-      encode({
-        workspace_dir: "/tmp/workspace-1",
-        runtime_root: "/tmp/runtime",
-      })
-    ),
-    {
-      workspace_dir: "/tmp/workspace-1",
-      runtime_root: "/tmp/runtime",
-    }
-  );
-
-  assert.deepEqual(
-    decodeOpencodeCommandsCliRequestBase64(
-      encode({
-        workspace_dir: "/tmp/workspace-1",
-      })
-    ),
-    {
-      workspace_dir: "/tmp/workspace-1",
     }
   );
 });

@@ -43,11 +43,11 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
-test("file runtime config service updates runtime config and writes opencode bootstrap config", async () => {
+test("file runtime config service updates runtime config without writing harness bootstrap config", async () => {
   const root = makeTempDir("hb-runtime-config-");
   process.env.HB_SANDBOX_ROOT = root;
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = path.join(root, "state", "runtime-config.json");
-  process.env.SANDBOX_AGENT_HARNESS = "opencode";
+  process.env.SANDBOX_AGENT_HARNESS = "pi";
 
   let ensureCalls = 0;
   const service = new FileRuntimeConfigService({
@@ -89,21 +89,14 @@ test("file runtime config service updates runtime config and writes opencode boo
   assert.equal(configDocument.integrations.holaboss.user_id, "user-1");
   assert.equal(configDocument.capabilities.desktop_browser.url, "http://127.0.0.1:8787/api/v1/browser");
   assert.equal(configDocument.capabilities.desktop_browser.auth_token, "browser-token");
-
-  const opencodeDocument = JSON.parse(fs.readFileSync(path.join(root, "workspace", "opencode.json"), "utf8"));
-  assert.equal(opencodeDocument.model, "openai/gpt-5.4");
-  assert.equal(opencodeDocument.provider.openai.npm, "@ai-sdk/openai");
-  assert.equal(
-    opencodeDocument.provider.openai.options.baseURL,
-    "https://runtime.example/api/v1/model-proxy/openai/v1"
-  );
+  assert.equal(fs.existsSync(path.join(root, "workspace")), false);
 });
 
 test("file runtime config service returns harness and browser readiness state", async () => {
   const root = makeTempDir("hb-runtime-config-");
   process.env.HB_SANDBOX_ROOT = root;
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = path.join(root, "state", "runtime-config.json");
-  process.env.SANDBOX_AGENT_HARNESS = "opencode";
+  process.env.SANDBOX_AGENT_HARNESS = "pi";
 
   fs.mkdirSync(path.join(root, "state"), { recursive: true });
   fs.writeFileSync(
@@ -138,8 +131,6 @@ test("file runtime config service returns harness and browser readiness state", 
     }, null, 2)}\n`,
     "utf8"
   );
-  fs.mkdirSync(path.join(root, "workspace"), { recursive: true });
-  fs.writeFileSync(path.join(root, "workspace", "opencode.json"), "{}\n", "utf8");
 
   const service = new FileRuntimeConfigService({
     fetchImpl: async () =>
@@ -151,11 +142,10 @@ test("file runtime config service returns harness and browser readiness state", 
   const status = await service.getStatus();
 
   assert.deepEqual(status, {
-    harness: "opencode",
+    harness: "pi",
     config_loaded: true,
     config_path: path.join(root, "state", "runtime-config.json"),
-    backend_config_present: true,
-    opencode_config_present: true,
+    backend_config_present: false,
     harness_ready: true,
     harness_state: "ready",
     browser_available: true,
@@ -164,7 +154,7 @@ test("file runtime config service returns harness and browser readiness state", 
   });
 });
 
-test("file runtime config service treats pi harness as ready without opencode bootstrap", async () => {
+test("file runtime config service treats pi harness as ready without extra harness bootstrap", async () => {
   const root = makeTempDir("hb-runtime-config-");
   process.env.HB_SANDBOX_ROOT = root;
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = path.join(root, "state", "runtime-config.json");
@@ -197,8 +187,6 @@ test("file runtime config service treats pi harness as ready without opencode bo
     }, null, 2)}\n`,
     "utf8"
   );
-  fs.mkdirSync(path.join(root, "workspace"), { recursive: true });
-  fs.writeFileSync(path.join(root, "workspace", "opencode.json"), "{}\n", "utf8");
 
   const service = new FileRuntimeConfigService();
   const status = await service.getStatus();
@@ -208,7 +196,6 @@ test("file runtime config service treats pi harness as ready without opencode bo
     config_loaded: true,
     config_path: path.join(root, "state", "runtime-config.json"),
     backend_config_present: false,
-    opencode_config_present: false,
     harness_ready: true,
     harness_state: "ready",
     browser_available: false,

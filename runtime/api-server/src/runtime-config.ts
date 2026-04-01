@@ -10,7 +10,6 @@ const HOLABOSS_MODEL_PROXY_BASE_URL_DEFAULT_ENV = "HOLABOSS_MODEL_PROXY_BASE_URL
 const HOLABOSS_SANDBOX_AUTH_TOKEN_ENV = "HOLABOSS_SANDBOX_AUTH_TOKEN";
 const HOLABOSS_USER_ID_ENV = "HOLABOSS_USER_ID";
 const HOLABOSS_DEFAULT_MODEL_ENV = "HOLABOSS_DEFAULT_MODEL";
-const OPENCODE_BOOT_MODEL_ENV = "OPENCODE_BOOT_MODEL";
 const HOLABOSS_RUNTIME_CONFIG_PATH_ENV = "HOLABOSS_RUNTIME_CONFIG_PATH";
 const HB_SANDBOX_ROOT_ENV = "HB_SANDBOX_ROOT";
 const SANDBOX_AGENT_HARNESS_ENV = "SANDBOX_AGENT_HARNESS";
@@ -254,7 +253,7 @@ function selectedHarness(): string {
 }
 
 function defaultModel(payload: Record<string, string>): string {
-  return payload.default_model || firstEnvValue(HOLABOSS_DEFAULT_MODEL_ENV, OPENCODE_BOOT_MODEL_ENV) || DEFAULT_MODEL;
+  return payload.default_model || firstEnvValue(HOLABOSS_DEFAULT_MODEL_ENV) || DEFAULT_MODEL;
 }
 
 function runtimeMode(payload: Record<string, string>): string {
@@ -384,7 +383,6 @@ async function runtimeStatus(fetchImpl: typeof fetch): Promise<Record<string, un
     config_loaded: Boolean(configPayload.loaded_from_file),
     config_path: configPayload.config_path,
     backend_config_present: status.backendConfigPresent,
-    opencode_config_present: harness === "opencode" ? status.backendConfigPresent : false,
     harness_ready: status.harnessStatus.ready,
     harness_state: status.harnessStatus.state,
     browser_available: browserAvailable,

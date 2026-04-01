@@ -29,19 +29,19 @@ test("persistWorkspaceMainSessionId writes the expected session state payload", 
 
   persistWorkspaceMainSessionId({
     workspaceDir,
-    harness: "opencode",
+    harness: "pi",
     sessionId: "session-123"
   });
 
   assert.deepEqual(readWorkspaceSessionState(workspaceDir), {
     version: 2,
     harness_sessions: {
-      opencode: {
+      pi: {
         main_session_id: "session-123"
       }
     }
   });
-  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "opencode" }), "session-123");
+  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "pi" }), "session-123");
 });
 
 test("readWorkspaceMainSessionId keeps legacy harness payloads readable", () => {
@@ -58,7 +58,7 @@ test("readWorkspaceMainSessionId keeps legacy harness payloads readable", () => 
     "utf8"
   );
 
-  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "opencode" }), null);
+  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "pi" }), null);
 });
 
 test("persistWorkspaceMainSessionId stores multiple harness session ids side by side", () => {
@@ -77,14 +77,14 @@ test("persistWorkspaceMainSessionId stores multiple harness session ids side by 
 
   persistWorkspaceMainSessionId({
     workspaceDir,
-    harness: "opencode",
+    harness: "pi",
     sessionId: "session-456"
   });
 
   assert.deepEqual(readWorkspaceSessionState(workspaceDir), {
     version: 2,
     harness_sessions: {
-      opencode: {
+      pi: {
         main_session_id: "session-456"
       },
       other: {
@@ -93,7 +93,7 @@ test("persistWorkspaceMainSessionId stores multiple harness session ids side by 
     }
   });
   assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "other" }), "session-123");
-  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "opencode" }), "session-456");
+  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "pi" }), "session-456");
 });
 
 test("clearWorkspaceMainSessionId removes only the targeted harness entry", () => {
@@ -106,13 +106,13 @@ test("clearWorkspaceMainSessionId removes only the targeted harness entry", () =
   });
   persistWorkspaceMainSessionId({
     workspaceDir,
-    harness: "opencode",
+    harness: "pi",
     sessionId: "session-456"
   });
 
   clearWorkspaceMainSessionId({
     workspaceDir,
-    harness: "opencode"
+    harness: "pi"
   });
 
   assert.deepEqual(readWorkspaceSessionState(workspaceDir), {
@@ -123,6 +123,6 @@ test("clearWorkspaceMainSessionId removes only the targeted harness entry", () =
       }
     }
   });
-  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "opencode" }), null);
+  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "pi" }), null);
   assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "other" }), "session-123");
 });

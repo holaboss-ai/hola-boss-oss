@@ -53,7 +53,7 @@ test("exchangeToken returns provider token for a valid grant and active binding"
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   store.upsertIntegrationConnection({
@@ -117,7 +117,7 @@ test("exchangeToken throws integration_not_bound when no binding exists", async 
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const broker = new IntegrationBrokerService(store);
@@ -146,7 +146,7 @@ test("exchangeToken throws connection_inactive when connection is expired", asyn
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   store.upsertIntegrationConnection({
@@ -194,7 +194,7 @@ test("exchangeToken throws token_unavailable when connection has no secret_ref",
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   store.upsertIntegrationConnection({
@@ -241,7 +241,7 @@ test("exchangeToken prefers app-specific binding over workspace default", async 
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   store.upsertIntegrationConnection({
@@ -304,7 +304,7 @@ test("POST /api/v1/integrations/broker/token returns provider token via HTTP", a
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   store.upsertIntegrationConnection({
@@ -385,7 +385,7 @@ test("exchangeToken rejects composio connections (must use /broker/proxy)", asyn
   store.createWorkspace({
     workspaceId: "ws-composio",
     name: "Composio Workspace",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   store.upsertIntegrationConnection({
@@ -435,7 +435,7 @@ test("exchangeToken throws for composio connection even without accountExternalI
   store.createWorkspace({
     workspaceId: "ws-composio-2",
     name: "Composio Workspace 2",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   store.upsertIntegrationConnection({

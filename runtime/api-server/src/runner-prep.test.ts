@@ -14,14 +14,14 @@ import {
   readWorkspaceRuntimePlanReferences,
   workspaceMcpCatalogFingerprint,
   workspaceMcpPhysicalServerId,
-} from "./opencode-runner-prep.js";
+} from "./runner-prep.js";
 
 function makeTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
 test("compileWorkspaceRuntimePlanFromWorkspace reads referenced prompt files from disk", () => {
-  const root = makeTempDir("hb-opencode-runner-prep-");
+  const root = makeTempDir("hb-runner-prep-");
   fs.writeFileSync(
     path.join(root, "workspace.yaml"),
     [

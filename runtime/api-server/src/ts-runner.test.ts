@@ -102,7 +102,7 @@ function testDeps(params: {
     stageBrowserTools: () => ({ changed: false, toolIds: [] }),
     stageRuntimeTools: () => ({ changed: false, toolIds: [] }),
     stageSkills: () => ({ changed: false, skillIds: [] }),
-    stageCommands: () => ({ changed: false }),
+    stageCommands: () => ({ changed: false, commandIds: [] }),
     prepareRun: async () => {},
     describeRuntimeStatus: async () => ({
       backendConfigPresent: false,
@@ -203,7 +203,7 @@ test("resolveTsRunnerBootstrapState loads requested and persisted harness sessio
     path.join(workspaceDir, ".holaboss", "harness-session-state.json"),
     JSON.stringify({
       version: 1,
-      harness: "opencode",
+      harness: "pi",
       main_session_id: "persisted-session-1"
     }),
     "utf8"
@@ -216,6 +216,7 @@ test("resolveTsRunnerBootstrapState loads requested and persisted harness sessio
     instruction: "hello",
     context: {
       _sandbox_runtime_exec_v1: {
+        harness: "pi",
         harness_session_id: "requested-session-1"
       }
     },
@@ -224,7 +225,7 @@ test("resolveTsRunnerBootstrapState loads requested and persisted harness sessio
   });
 
   assert.equal(bootstrap.workspaceDir, workspaceDir);
-  assert.equal(bootstrap.harness, "opencode");
+  assert.equal(bootstrap.harness, "pi");
   assert.equal(bootstrap.requestedHarnessSessionId, "requested-session-1");
   assert.equal(bootstrap.persistedHarnessSessionId, "persisted-session-1");
 });
@@ -234,7 +235,7 @@ test("relayTsRunnerEvent persists harness_session_id from terminal events", asyn
   const emitted: Array<{ event_type: string; payload: Record<string, unknown> }> = [];
 
   await relayTsRunnerEvent({
-    harness: "opencode",
+    harness: "pi",
     workspaceDir,
     event: {
       session_id: "session-1",
@@ -261,7 +262,7 @@ test("relayTsRunnerEvent persists harness_session_id from terminal events", asyn
     {
       version: 2,
       harness_sessions: {
-        opencode: {
+        pi: {
           main_session_id: "persisted-session-2"
         }
       }
@@ -273,12 +274,12 @@ test("relayTsRunnerEvent clears persisted harness session ids after run_failed",
   const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-relay-clear-"));
   persistWorkspaceMainSessionId({
     workspaceDir,
-    harness: "opencode",
+    harness: "pi",
     sessionId: "persisted-session-2"
   });
 
   await relayTsRunnerEvent({
-    harness: "opencode",
+    harness: "pi",
     workspaceDir,
     event: {
       session_id: "session-1",
@@ -295,7 +296,7 @@ test("relayTsRunnerEvent clears persisted harness session ids after run_failed",
     emitEvent: async () => {}
   });
 
-  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "opencode" }), null);
+  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "pi" }), null);
 });
 
 test("runTsRunnerCli relays harness-host events after run_claimed", async () => {
@@ -306,7 +307,14 @@ test("runTsRunnerCli relays harness-host events after run_claimed", async () => 
   const exitCode = await runTsRunnerCli(
     [
       "--request-base64",
-      encodeRequest(baseRequest())
+      encodeRequest({
+        ...baseRequest(),
+        context: {
+          _sandbox_runtime_exec_v1: {
+            harness: "pi",
+          }
+        }
+      })
     ],
     {
       deps: testDeps({
@@ -357,7 +365,7 @@ test("runTsRunnerCli relays harness-host events after run_claimed", async () => 
     {
       version: 2,
       harness_sessions: {
-        opencode: {
+        pi: {
           main_session_id: "persisted-session-3"
         }
       }
@@ -698,6 +706,15 @@ test("runTsRunnerCli includes staged runtime tool ids in the projected extra too
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
+  assert.equal((capturedProjectRequest as { browser_tools_available: boolean }).browser_tools_available, true);
+  assert.deepEqual(
+    (capturedProjectRequest as { browser_tool_ids: string[] }).browser_tool_ids,
+    ["browser_get_state"]
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { runtime_tool_ids: string[] }).runtime_tool_ids,
+    ["holaboss_onboarding_complete"]
+  );
   assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
     ["browser_get_state", "holaboss_onboarding_complete"]
@@ -759,6 +776,13 @@ test("runTsRunnerCli only stages browser tools for the main session", async () =
   assert.equal(exitCode, 0);
   assert.deepEqual(seenSessionKinds, ["task_proposal"]);
   assert.ok(capturedProjectRequest);
+  assert.equal((capturedProjectRequest as { browser_tools_available: boolean }).browser_tools_available, false);
+  assert.equal((capturedProjectRequest as { session_kind: string | null }).session_kind, "task_proposal");
+  assert.deepEqual((capturedProjectRequest as { browser_tool_ids: string[] }).browser_tool_ids, []);
+  assert.deepEqual(
+    (capturedProjectRequest as { runtime_tool_ids: string[] }).runtime_tool_ids,
+    ["holaboss_onboarding_complete"]
+  );
   assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
     ["holaboss_onboarding_complete"]
@@ -837,6 +861,7 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
 
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
+  assert.equal((capturedProjectRequest as { harness_id: string | null }).harness_id, "pi");
   assert.deepEqual((capturedProjectRequest as { workspace_skill_ids: string[] }).workspace_skill_ids, ["alpha"]);
   assert.ok(capturedHarnessRequest);
   assert.deepEqual((capturedHarnessRequest as { workspace_skill_dirs: string[] }).workspace_skill_dirs, [fs.realpathSync(skillDir)]);
@@ -865,7 +890,7 @@ test("runTsRunnerCli skips workspace command staging for harnesses that do not s
           pluginOverrides: {
             stageCommands: () => {
               stageCommandsCalls += 1;
-              return { changed: false };
+              return { changed: false, commandIds: [] };
             }
           }
         }),

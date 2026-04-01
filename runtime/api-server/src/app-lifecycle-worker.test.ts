@@ -342,7 +342,7 @@ test("runtime executor resolves store-backed integration env for bound shell app
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const appDir = path.join(workspaceRoot, workspace.id, "apps", "app-a");

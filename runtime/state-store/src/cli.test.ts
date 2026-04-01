@@ -31,7 +31,7 @@ test("handleRequest maps binding and session message operations to snake_case pa
     options,
     workspace_id: "workspace-1",
     session_id: "session-main",
-    harness: "opencode",
+    harness: "pi",
     harness_session_id: "harness-1"
   }) as Record<string, unknown>;
 
@@ -74,7 +74,7 @@ test("handleRequest maps workspace CRUD operations to snake_case payloads", () =
     options,
     workspace_id: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "provisioning",
     main_session_id: "session-main"
   }) as Record<string, unknown>;
@@ -113,7 +113,7 @@ test("handleRequest returns the resolved workspace directory", () => {
     options,
     workspace_id: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode"
+    harness: "pi"
   });
 
   const resolved = handleRequest("workspace-dir", {

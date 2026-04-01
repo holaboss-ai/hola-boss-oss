@@ -133,7 +133,7 @@ You can override that path with:
   - default model selection, for example `openai/gpt-5.1`
 - `HOLABOSS_DEFAULT_MODEL`
   - environment override for `default_model`
-- `OPENCODE_BOOT_MODEL`
+- `SANDBOX_AGENT_DEFAULT_MODEL`
   - fallback env if `HOLABOSS_DEFAULT_MODEL` is not set
 
 ### Model String Format
@@ -317,8 +317,6 @@ The launcher environment should stay consistent with how the desktop app starts 
 - `HB_SANDBOX_ROOT`: runtime workspace/state root
 - `SANDBOX_AGENT_BIND_HOST`: runtime API bind host
 - `SANDBOX_AGENT_BIND_PORT`: runtime API bind port
-- `OPENCODE_SERVER_HOST`: local OpenCode sidecar host
-- `OPENCODE_SERVER_PORT`: local OpenCode sidecar port
 - `SANDBOX_AGENT_HARNESS`: harness selector, defaults to `pi`
 - `HOLABOSS_RUNTIME_WORKFLOW_BACKEND`: workflow backend selector, desktop uses `remote_api`
 - `HOLABOSS_RUNTIME_DB_PATH`: SQLite runtime DB path
@@ -355,8 +353,6 @@ Run it with desktop-compatible environment variables:
 HB_SANDBOX_ROOT=/var/lib/holaboss \
 SANDBOX_AGENT_BIND_HOST=127.0.0.1 \
 SANDBOX_AGENT_BIND_PORT=8080 \
-OPENCODE_SERVER_HOST=127.0.0.1 \
-OPENCODE_SERVER_PORT=4096 \
 SANDBOX_AGENT_HARNESS=pi \
 HOLABOSS_RUNTIME_WORKFLOW_BACKEND=remote_api \
 HOLABOSS_RUNTIME_DB_PATH=/var/lib/holaboss/state/runtime.db \
@@ -391,8 +387,6 @@ Run it with the same environment contract:
 HB_SANDBOX_ROOT="$HOME/Library/Application Support/HolabossRuntime" \
 SANDBOX_AGENT_BIND_HOST=127.0.0.1 \
 SANDBOX_AGENT_BIND_PORT=8080 \
-OPENCODE_SERVER_HOST=127.0.0.1 \
-OPENCODE_SERVER_PORT=4096 \
 SANDBOX_AGENT_HARNESS=pi \
 HOLABOSS_RUNTIME_WORKFLOW_BACKEND=remote_api \
 HOLABOSS_RUNTIME_DB_PATH="$HOME/Library/Application Support/HolabossRuntime/state/runtime.db" \
@@ -405,7 +399,7 @@ holaboss-runtime
 
 - The packaged bundle includes the runtime app and its packaged runtime dependencies.
 - The current bootstrap still expects a working `node` binary on the host machine at runtime. Install Node.js 22+ on the target machine before starting the runtime.
-- The desktop app launches the same `bin/sandbox-runtime` entrypoint and passes the same bind host, bind port, sandbox root, and sidecar-related environment variables.
+- The desktop app launches the same `bin/sandbox-runtime` entrypoint and passes the same bind host, bind port, sandbox root, and workflow-related environment variables.
 
 ## Development Notes
 

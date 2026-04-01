@@ -1930,10 +1930,6 @@ function runtimeWorkspaceRoot() {
   return path.join(runtimeSandboxRoot(), "workspace");
 }
 
-function opencodeSidecarStatePath(workspaceDir: string) {
-  return path.join(workspaceDir, ".holaboss", "opencode-sidecar-state.json");
-}
-
 function processIsAlive(pid: number) {
   if (!Number.isInteger(pid) || pid <= 0) {
     return false;
@@ -1955,65 +1951,6 @@ function terminatePid(pid: number, signal: NodeJS.Signals) {
   } catch {
     // ignore
   }
-}
-
-async function stopEmbeddedRuntimeOpencodeSidecars() {
-  let workspaceEntries: import("node:fs").Dirent[] = [];
-  try {
-    workspaceEntries = await fs.readdir(runtimeWorkspaceRoot(), {
-      withFileTypes: true,
-    });
-  } catch {
-    return;
-  }
-
-  const sidecarPids = new Set<number>();
-  const statePaths: string[] = [];
-
-  for (const entry of workspaceEntries) {
-    if (!entry.isDirectory()) {
-      continue;
-    }
-    const statePath = opencodeSidecarStatePath(
-      path.join(runtimeWorkspaceRoot(), entry.name),
-    );
-    statePaths.push(statePath);
-    try {
-      const payload = JSON.parse(await fs.readFile(statePath, "utf-8")) as {
-        sidecar?: { pid?: unknown };
-      };
-      const pid = Number(payload?.sidecar?.pid ?? 0);
-      if (Number.isInteger(pid) && pid > 0) {
-        sidecarPids.add(pid);
-      }
-    } catch {
-      // ignore malformed or missing state
-    }
-  }
-
-  for (const pid of Array.from(sidecarPids).sort(
-    (left, right) => left - right,
-  )) {
-    terminatePid(pid, "SIGTERM");
-  }
-
-  if (sidecarPids.size > 0) {
-    await new Promise((resolve) => setTimeout(resolve, 300));
-  }
-
-  for (const pid of Array.from(sidecarPids).sort(
-    (left, right) => left - right,
-  )) {
-    if (processIsAlive(pid)) {
-      terminatePid(pid, "SIGKILL");
-    }
-  }
-
-  await Promise.all(
-    statePaths.map((statePath) =>
-      fs.rm(statePath, { force: true }).catch(() => undefined),
-    ),
-  );
 }
 
 function utcNowIso() {
@@ -5986,8 +5923,8 @@ function normalizeRequestedWorkspaceHarness(
   value: string | null | undefined,
 ): string {
   const normalized = value?.trim().toLowerCase() || "pi";
-  if (normalized === "opencode" || normalized === "pi") {
-    return normalized;
+  if (normalized === "pi") {
+    return "pi";
   }
   throw new Error(`Unsupported workspace harness '${value}'.`);
 }
@@ -8079,7 +8016,6 @@ async function stopEmbeddedRuntime() {
   const running = runtimeProcess;
   runtimeProcess = null;
   if (!running) {
-    await stopEmbeddedRuntimeOpencodeSidecars();
     if (
       runtimeStatus.status === "running" ||
       runtimeStatus.status === "starting"
@@ -8143,8 +8079,6 @@ async function stopEmbeddedRuntime() {
       settle();
     }
   });
-
-  await stopEmbeddedRuntimeOpencodeSidecars();
 }
 
 async function startEmbeddedRuntime() {
@@ -8227,7 +8161,6 @@ async function startEmbeddedRuntime() {
       HB_SANDBOX_ROOT: sandboxRoot,
       SANDBOX_AGENT_BIND_HOST: "127.0.0.1",
       SANDBOX_AGENT_BIND_PORT: String(RUNTIME_API_PORT),
-      OPENCODE_SERVER_HOST: "127.0.0.1",
       HOLABOSS_EMBEDDED_RUNTIME: "1",
       SANDBOX_AGENT_HARNESS: harness,
       HOLABOSS_RUNTIME_WORKFLOW_BACKEND: workflowBackend,

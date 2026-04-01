@@ -12,65 +12,9 @@ holaboss_runtime_dump_startup_diagnostics() {
   if command -v ss >/dev/null 2>&1; then
     ss -ltnp >&2 || true
   fi
-  if [ -f /tmp/opencode-server.log ]; then
-    holaboss_runtime_log "startup diagnostics: /tmp/opencode-server.log"
-    tail -n 200 /tmp/opencode-server.log >&2 || true
-  fi
   if [ -f /tmp/dockerd.log ]; then
     holaboss_runtime_log "startup diagnostics: /tmp/dockerd.log"
     tail -n 200 /tmp/dockerd.log >&2 || true
-  fi
-}
-
-holaboss_runtime_opencode_http_reachable() {
-  local base_url="$1"
-  local path=""
-  for path in ${OPENCODE_READY_PATHS}; do
-    if curl -sS --max-time 2 -o /dev/null "${base_url}${path}" >/dev/null 2>&1; then
-      OPENCODE_READY_PATH_HIT="${path}"
-      return 0
-    fi
-  done
-  return 1
-}
-
-holaboss_runtime_log_opencode_listener_state() {
-  local pids=""
-  local pid=""
-  local matched=0
-  local pid_list=""
-
-  if [ -n "${OPCODE_PID:-}" ] && kill -0 "${OPCODE_PID}" >/dev/null 2>&1; then
-    pid_list="${OPCODE_PID}"
-  fi
-
-  pids="$(ps -eo pid=,args= 2>/dev/null | awk '/[o]pencode serve --hostname/ {print $1}' | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
-  if [ -n "${pids}" ]; then
-    if [ -n "${pid_list}" ]; then
-      pid_list="${pid_list} ${pids}"
-    else
-      pid_list="${pids}"
-    fi
-  fi
-
-  if [ -z "${pid_list}" ]; then
-    holaboss_runtime_log "opencode pid candidates: none"
-    return 0
-  fi
-
-  pid_list="$(printf '%s\n' ${pid_list} | awk '!seen[$0]++' | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')"
-  holaboss_runtime_log "opencode pid candidates: ${pid_list}"
-
-  if command -v ss >/dev/null 2>&1; then
-    for pid in ${pid_list}; do
-      if ss -ltnp 2>/dev/null | grep -F "pid=${pid}," >&2; then
-        matched=1
-      fi
-    done
-  fi
-
-  if [ "${matched}" -eq 0 ]; then
-    holaboss_runtime_log "no listening sockets found for opencode pid candidates"
   fi
 }
 

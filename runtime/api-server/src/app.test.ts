@@ -245,7 +245,7 @@ test("runtime tools capability routes expose local onboarding and cronjob action
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     onboardingStatus: "pending",
     onboardingSessionId: "session-1"
   });
@@ -362,11 +362,10 @@ test("runtime config routes delegate to the runtime config executor", async () =
     async getStatus() {
       calls.push("get-status");
       return {
-        harness: "opencode",
+        harness: "pi",
         config_loaded: true,
         config_path: "/tmp/runtime-config.json",
         backend_config_present: true,
-        opencode_config_present: true,
         harness_ready: true,
         harness_state: "ready",
         browser_available: false,
@@ -708,7 +707,7 @@ test("workspace CRUD routes preserve local payload shape", async () => {
     url: "/api/v1/workspaces",
     payload: {
       name: "Workspace 1",
-      harness: "opencode",
+      harness: "pi",
       status: "provisioning",
       main_session_id: "session-main"
     }
@@ -764,14 +763,14 @@ test("runtime states and history endpoints read TS state store", async () => {
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
   store.upsertBinding({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    harness: "opencode",
+    harness: "pi",
     harnessSessionId: "harness-1"
   });
   store.insertSessionMessage({
@@ -823,7 +822,7 @@ test("runtime states and history endpoints read TS state store", async () => {
   assert.deepEqual(states.json().items, []);
   assert.equal(history.statusCode, 200);
   assert.equal(history.json().source, "sandbox_local_storage");
-  assert.equal(history.json().harness, "opencode");
+  assert.equal(history.json().harness, "pi");
   assert.deepEqual(
     history.json().messages.map((item: { role: string }) => item.role),
     ["user", "assistant"]
@@ -844,7 +843,7 @@ test("output events endpoint supports incremental fetches and tail mode", async 
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
@@ -898,7 +897,7 @@ test("output stream endpoint emits SSE events and stops on terminal", async () =
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
@@ -944,7 +943,7 @@ test("outputs, folders, and artifacts routes preserve local payload shape", asyn
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace Outputs",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
@@ -1025,14 +1024,14 @@ test("cronjobs, task proposals, and session state routes preserve local payload 
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace Jobs",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
   store.upsertBinding({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    harness: "opencode",
+    harness: "pi",
     harnessSessionId: "harness-1"
   });
   store.enqueueInput({
@@ -1131,7 +1130,7 @@ test("workspace exec route runs inside the workspace directory", async () => {
     url: "/api/v1/workspaces",
     payload: {
       name: "Workspace Exec",
-      harness: "opencode",
+      harness: "pi",
       status: "active"
     }
   });
@@ -1172,7 +1171,7 @@ test("workspace template, file, and snapshot routes preserve local payload shape
     url: "/api/v1/workspaces",
     payload: {
       name: "Workspace Files",
-      harness: "opencode",
+      harness: "pi",
       status: "active"
     }
   });
@@ -1258,7 +1257,7 @@ test("workspace apply-template-from-url downloads and extracts a zip archive", a
     url: "/api/v1/workspaces",
     payload: {
       name: "Workspace Template URL",
-      harness: "opencode",
+      harness: "pi",
       status: "active"
     }
   });
@@ -1322,7 +1321,7 @@ test("workspace apply-template-from-url rejects invalid archive paths", async ()
     url: "/api/v1/workspaces",
     payload: {
       name: "Workspace Template Invalid URL",
-      harness: "opencode",
+      harness: "pi",
       status: "active"
     }
   });
@@ -1370,7 +1369,7 @@ test("workspace export route streams a tar.gz with the workspace files", async (
     url: "/api/v1/workspaces",
     payload: {
       name: "Workspace Export",
-      harness: "opencode",
+      harness: "pi",
       status: "active"
     }
   });
@@ -1451,7 +1450,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace Apps",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   store.upsertAppBuild({
@@ -1613,7 +1612,7 @@ test("app start queues lifecycle setup apps in background", async () => {
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace Apps",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
 
@@ -1700,7 +1699,7 @@ test("app setup route does not start duplicate setup for an app already building
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace Apps",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const workspaceDir = path.join(workspaceRoot, workspace.id);
@@ -1763,7 +1762,7 @@ test("app setup timeout honors configured timeout", async () => {
   const workspace = store.createWorkspace({
     workspaceId: "workspace-timeout",
     name: "Workspace Apps",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const workspaceDir = path.join(workspaceRoot, workspace.id);
@@ -1810,7 +1809,7 @@ test("app setup timeout honors configured timeout", async () => {
   }
 });
 
-test("internal opencode app bootstrap route starts resolved apps and returns MCP urls", async () => {
+test("internal resolved app bootstrap route starts resolved apps and returns MCP urls", async () => {
   const root = makeTempDir("hb-runtime-api-");
   const workspaceRoot = path.join(root, "workspace");
   const store = new RuntimeStateStore({
@@ -1820,7 +1819,7 @@ test("internal opencode app bootstrap route starts resolved apps and returns MCP
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace Apps",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   store.upsertAppBuild({
@@ -1853,7 +1852,7 @@ test("internal opencode app bootstrap route starts resolved apps and returns MCP
 
   const response = await app.inject({
     method: "POST",
-    url: "/api/v1/internal/workspaces/workspace-1/opencode-apps/start",
+    url: "/api/v1/internal/workspaces/workspace-1/resolved-apps/start",
     payload: {
       workspace_dir: path.join(workspaceRoot, "workspace-1"),
       holaboss_user_id: "user-1",
@@ -1912,7 +1911,7 @@ test("internal opencode app bootstrap route starts resolved apps and returns MCP
   store.close();
 });
 
-test("internal opencode app bootstrap route rejects base_dir that escapes the workspace", async () => {
+test("internal resolved app bootstrap route rejects base_dir that escapes the workspace", async () => {
   const root = makeTempDir("hb-runtime-api-");
   const workspaceRoot = path.join(root, "workspace");
   const store = new RuntimeStateStore({
@@ -1922,7 +1921,7 @@ test("internal opencode app bootstrap route rejects base_dir that escapes the wo
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace Apps",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
 
@@ -1943,7 +1942,7 @@ test("internal opencode app bootstrap route rejects base_dir that escapes the wo
 
   const response = await app.inject({
     method: "POST",
-    url: "/api/v1/internal/workspaces/workspace-1/opencode-apps/start",
+    url: "/api/v1/internal/workspaces/workspace-1/resolved-apps/start",
     payload: {
       workspace_dir: path.join(workspaceRoot, "workspace-1"),
       resolved_applications: [
@@ -1970,7 +1969,7 @@ test("internal opencode app bootstrap route rejects base_dir that escapes the wo
   store.close();
 });
 
-test("internal opencode app bootstrap route prevalidates all app dirs before starting any apps", async () => {
+test("internal resolved app bootstrap route prevalidates all app dirs before starting any apps", async () => {
   const root = makeTempDir("hb-runtime-api-prevalidate-");
   const workspaceRoot = path.join(root, "workspace");
   const store = new RuntimeStateStore({
@@ -1980,7 +1979,7 @@ test("internal opencode app bootstrap route prevalidates all app dirs before sta
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace Apps",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   fs.mkdirSync(path.join(workspaceRoot, "workspace-1", "apps", "app-a"), { recursive: true });
@@ -2002,7 +2001,7 @@ test("internal opencode app bootstrap route prevalidates all app dirs before sta
 
   const response = await app.inject({
     method: "POST",
-    url: "/api/v1/internal/workspaces/workspace-1/opencode-apps/start",
+    url: "/api/v1/internal/workspaces/workspace-1/resolved-apps/start",
     payload: {
       workspace_dir: path.join(workspaceRoot, "workspace-1"),
       resolved_applications: [
@@ -2038,7 +2037,7 @@ test("internal opencode app bootstrap route prevalidates all app dirs before sta
   store.close();
 });
 
-test("internal opencode app bootstrap route rejects missing expected workspace dir", async () => {
+test("internal resolved app bootstrap route rejects missing expected workspace dir", async () => {
   const root = makeTempDir("hb-runtime-api-missing-workspace-");
   const workspaceRoot = path.join(root, "workspace");
   const store = new RuntimeStateStore({
@@ -2048,7 +2047,7 @@ test("internal opencode app bootstrap route rejects missing expected workspace d
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace Apps",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   fs.rmSync(path.join(workspaceRoot, "workspace-1"), { recursive: true, force: true });
@@ -2070,7 +2069,7 @@ test("internal opencode app bootstrap route rejects missing expected workspace d
 
   const response = await app.inject({
     method: "POST",
-    url: "/api/v1/internal/workspaces/workspace-1/opencode-apps/start",
+    url: "/api/v1/internal/workspaces/workspace-1/resolved-apps/start",
     payload: {
       resolved_applications: [
         {
@@ -2096,7 +2095,7 @@ test("internal opencode app bootstrap route rejects missing expected workspace d
   store.close();
 });
 
-test("internal opencode app bootstrap route rejects unknown workspace ids before startup", async () => {
+test("internal resolved app bootstrap route rejects unknown workspace ids before startup", async () => {
   const root = makeTempDir("hb-runtime-api-unknown-workspace-");
   const workspaceRoot = path.join(root, "workspace");
   const store = new RuntimeStateStore({
@@ -2121,7 +2120,7 @@ test("internal opencode app bootstrap route rejects unknown workspace ids before
 
   const response = await app.inject({
     method: "POST",
-    url: "/api/v1/internal/workspaces/workspace-unknown/opencode-apps/start",
+    url: "/api/v1/internal/workspaces/workspace-unknown/resolved-apps/start",
     payload: {
       workspace_dir: path.join(workspaceRoot, "workspace-unknown"),
       resolved_applications: [
@@ -2148,7 +2147,7 @@ test("internal opencode app bootstrap route rejects unknown workspace ids before
   store.close();
 });
 
-test("internal opencode app bootstrap route rejects workspace_dir mismatches before startup", async () => {
+test("internal resolved app bootstrap route rejects workspace_dir mismatches before startup", async () => {
   const root = makeTempDir("hb-runtime-api-workspace-mismatch-");
   const workspaceRoot = path.join(root, "workspace");
   const store = new RuntimeStateStore({
@@ -2158,7 +2157,7 @@ test("internal opencode app bootstrap route rejects workspace_dir mismatches bef
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace Apps",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
 
@@ -2179,7 +2178,7 @@ test("internal opencode app bootstrap route rejects workspace_dir mismatches bef
 
   const response = await app.inject({
     method: "POST",
-    url: "/api/v1/internal/workspaces/workspace-1/opencode-apps/start",
+    url: "/api/v1/internal/workspaces/workspace-1/resolved-apps/start",
     payload: {
       workspace_dir: path.join(workspaceRoot, "workspace-other"),
       resolved_applications: [
@@ -2206,7 +2205,7 @@ test("internal opencode app bootstrap route rejects workspace_dir mismatches bef
   store.close();
 });
 
-test("internal opencode app bootstrap route rejects duplicate app ids", async () => {
+test("internal resolved app bootstrap route rejects duplicate app ids", async () => {
   const root = makeTempDir("hb-runtime-api-dup-");
   const workspaceRoot = path.join(root, "workspace");
   const store = new RuntimeStateStore({
@@ -2216,7 +2215,7 @@ test("internal opencode app bootstrap route rejects duplicate app ids", async ()
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace Apps",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const calls: Array<Record<string, unknown>> = [];
@@ -2236,7 +2235,7 @@ test("internal opencode app bootstrap route rejects duplicate app ids", async ()
 
   const response = await app.inject({
     method: "POST",
-    url: "/api/v1/internal/workspaces/workspace-1/opencode-apps/start",
+    url: "/api/v1/internal/workspaces/workspace-1/resolved-apps/start",
     payload: {
       workspace_dir: path.join(workspaceRoot, "workspace-1"),
       resolved_applications: [
@@ -2272,7 +2271,7 @@ test("internal opencode app bootstrap route rejects duplicate app ids", async ()
   store.close();
 });
 
-test("internal opencode app bootstrap route rejects empty resolved applications", async () => {
+test("internal resolved app bootstrap route rejects empty resolved applications", async () => {
   const root = makeTempDir("hb-runtime-api-empty-");
   const workspaceRoot = path.join(root, "workspace");
   const store = new RuntimeStateStore({
@@ -2282,7 +2281,7 @@ test("internal opencode app bootstrap route rejects empty resolved applications"
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace Apps",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const calls: Array<Record<string, unknown>> = [];
@@ -2302,7 +2301,7 @@ test("internal opencode app bootstrap route rejects empty resolved applications"
 
   const response = await app.inject({
     method: "POST",
-    url: "/api/v1/internal/workspaces/workspace-1/opencode-apps/start",
+    url: "/api/v1/internal/workspaces/workspace-1/resolved-apps/start",
     payload: {
       workspace_dir: path.join(workspaceRoot, "workspace-1"),
       resolved_applications: []
@@ -2319,7 +2318,7 @@ test("internal opencode app bootstrap route rejects empty resolved applications"
   store.close();
 });
 
-test("internal opencode app bootstrap route rejects mismatched lifecycle response shape", async () => {
+test("internal resolved app bootstrap route rejects mismatched lifecycle response shape", async () => {
   const root = makeTempDir("hb-runtime-api-mismatch-");
   const workspaceRoot = path.join(root, "workspace");
   const store = new RuntimeStateStore({
@@ -2329,7 +2328,7 @@ test("internal opencode app bootstrap route rejects mismatched lifecycle respons
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace Apps",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const executor: AppLifecycleExecutorLike = {
@@ -2352,7 +2351,7 @@ test("internal opencode app bootstrap route rejects mismatched lifecycle respons
 
   const response = await app.inject({
     method: "POST",
-    url: "/api/v1/internal/workspaces/workspace-1/opencode-apps/start",
+    url: "/api/v1/internal/workspaces/workspace-1/resolved-apps/start",
     payload: {
       workspace_dir: path.join(workspaceRoot, "workspace-1"),
       resolved_applications: [
@@ -2371,7 +2370,7 @@ test("internal opencode app bootstrap route rejects mismatched lifecycle respons
 
   assert.equal(response.statusCode, 500);
   assert.deepEqual(response.json(), {
-    detail: "opencode bootstrap returned mismatched app id 'other-app' for 'app-a'"
+    detail: "resolved app startup returned mismatched app id 'other-app' for 'app-a'"
   });
 
   await app.close();
@@ -2388,7 +2387,7 @@ test("lifecycle shutdown route delegates to the lifecycle executor", async () =>
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace Apps",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const workspaceDir = path.join(workspaceRoot, "workspace-1");
@@ -2479,7 +2478,7 @@ test("app install, list, build-status, and setup routes preserve local payload s
     url: "/api/v1/workspaces",
     payload: {
       name: "Workspace Apps",
-      harness: "opencode",
+      harness: "pi",
       status: "active"
     }
   });
@@ -2571,7 +2570,7 @@ test("app list and build-status infer pending when installed app has setup but n
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace Apps",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const workspaceDir = path.join(workspaceRoot, workspace.id);
@@ -2641,7 +2640,7 @@ test("queue route persists input, user message, and runtime state", async () => 
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
@@ -2708,14 +2707,14 @@ test("accept task proposal creates a child session with queued work", async () =
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
   store.upsertBinding({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    harness: "opencode",
+    harness: "pi",
     harnessSessionId: "session-main"
   });
   store.createTaskProposal({
@@ -2756,7 +2755,7 @@ test("accept task proposal creates a child session with queued work", async () =
 
   const childBinding = store.getBinding({ workspaceId: workspace.id, sessionId: body.session.session_id });
   assert.ok(childBinding);
-  assert.equal(childBinding.harness, "opencode");
+  assert.equal(childBinding.harness, "pi");
   assert.equal(childBinding.harnessSessionId, body.session.session_id);
 
   const childRuntimeState = store.getRuntimeState({
@@ -2809,7 +2808,7 @@ test("queue route rejects inputs while workspace apps are still building", async
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
@@ -2861,14 +2860,14 @@ test("queue route accepts staged attachments and history hydrates attachment met
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
   store.upsertBinding({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    harness: "opencode",
+    harness: "pi",
     harnessSessionId: "session-main"
   });
 

@@ -4,16 +4,10 @@ export default defineConfig({
   entry: [
     "src/index.ts",
     "src/app.ts",
-    "src/opencode-app-bootstrap.ts",
-    "src/opencode-commands.ts",
-    "src/opencode-config.ts",
     "src/runtime-config-cli.ts",
     "src/workspace-runtime-plan.ts",
-    "src/opencode-runtime-config.ts",
-    "src/opencode-skills.ts",
     "src/workspace-mcp-host.ts",
     "src/workspace-mcp-sidecar.ts",
-    "src/opencode-sidecar.ts",
     "src/ts-runner.ts"
   ],
   format: ["esm"],

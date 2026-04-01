@@ -17,6 +17,8 @@ export type DesktopBrowserToolId = (typeof DESKTOP_BROWSER_TOOL_IDS)[number];
 export interface DesktopBrowserToolDefinition {
   id: DesktopBrowserToolId;
   description: string;
+  policy: "inspect" | "mutate";
+  session_scope: "all_sessions" | "main_only";
   input_schema: Record<string, unknown>;
 }
 
@@ -24,6 +26,8 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   {
     id: "browser_navigate",
     description: "Navigate the desktop browser to a URL.",
+    policy: "mutate",
+    session_scope: "main_only",
     input_schema: {
       type: "object",
       additionalProperties: false,
@@ -36,6 +40,8 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   {
     id: "browser_get_state",
     description: "Read the current desktop browser page, visible interactive elements, and optional screenshot.",
+    policy: "inspect",
+    session_scope: "main_only",
     input_schema: {
       type: "object",
       additionalProperties: false,
@@ -47,6 +53,8 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   {
     id: "browser_click",
     description: "Click an interactive element from browser_get_state by index.",
+    policy: "mutate",
+    session_scope: "main_only",
     input_schema: {
       type: "object",
       additionalProperties: false,
@@ -59,6 +67,8 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   {
     id: "browser_type",
     description: "Type text into an interactive element from browser_get_state by index.",
+    policy: "mutate",
+    session_scope: "main_only",
     input_schema: {
       type: "object",
       additionalProperties: false,
@@ -74,6 +84,8 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   {
     id: "browser_press",
     description: "Send a keyboard key to the currently focused element.",
+    policy: "mutate",
+    session_scope: "main_only",
     input_schema: {
       type: "object",
       additionalProperties: false,
@@ -86,6 +98,8 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   {
     id: "browser_scroll",
     description: "Scroll the current page vertically.",
+    policy: "mutate",
+    session_scope: "main_only",
     input_schema: {
       type: "object",
       additionalProperties: false,
@@ -99,6 +113,8 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   {
     id: "browser_back",
     description: "Go back in the active browser tab history.",
+    policy: "mutate",
+    session_scope: "main_only",
     input_schema: {
       type: "object",
       additionalProperties: false,
@@ -108,6 +124,8 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   {
     id: "browser_forward",
     description: "Go forward in the active browser tab history.",
+    policy: "mutate",
+    session_scope: "main_only",
     input_schema: {
       type: "object",
       additionalProperties: false,
@@ -117,6 +135,8 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   {
     id: "browser_reload",
     description: "Reload the active browser tab.",
+    policy: "mutate",
+    session_scope: "main_only",
     input_schema: {
       type: "object",
       additionalProperties: false,
@@ -126,6 +146,8 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   {
     id: "browser_screenshot",
     description: "Capture a screenshot of the active browser tab.",
+    policy: "inspect",
+    session_scope: "main_only",
     input_schema: {
       type: "object",
       additionalProperties: false,
@@ -138,6 +160,8 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   {
     id: "browser_list_tabs",
     description: "List open browser tabs and the active tab id.",
+    policy: "inspect",
+    session_scope: "main_only",
     input_schema: {
       type: "object",
       additionalProperties: false,

@@ -31,7 +31,7 @@ test("workspace registry round trip uses hidden identity file", () => {
   const created = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Acme",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
 
@@ -95,7 +95,7 @@ test("runtime schema migrates workspace rows to registry and identity file", () 
     "workspace-legacy",
     "Legacy",
     "active",
-    "opencode",
+    "pi",
     "session-1",
     null,
     "not_required",
@@ -143,7 +143,7 @@ test("workspaceDir recovers when folder is renamed", () => {
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Acme",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const originalPath = path.join(workspaceRoot, "workspace-1");
@@ -168,13 +168,13 @@ test("getWorkspace recovers missing row from identity file", () => {
   const store = new RuntimeStateStore({
     dbPath,
     workspaceRoot,
-    sandboxAgentHarness: "opencode"
+    sandboxAgentHarness: "pi"
   });
 
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Acme",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const db = new Database(dbPath);
@@ -186,7 +186,7 @@ test("getWorkspace recovers missing row from identity file", () => {
   assert.ok(recovered);
   assert.equal(recovered.id, "workspace-1");
   assert.equal(recovered.name, "workspace-1");
-  assert.equal(recovered.harness, "opencode");
+  assert.equal(recovered.harness, "pi");
   assert.equal(recovered.status, "active");
 
   const dbAfter = new Database(dbPath, { readonly: true });
@@ -200,7 +200,7 @@ test("getWorkspace recovers missing row from identity file", () => {
   assert.ok(row);
   assert.equal(row.id, "workspace-1");
   assert.equal(path.resolve(row.workspace_path), path.join(workspaceRoot, "workspace-1"));
-  assert.equal(row.harness, "opencode");
+  assert.equal(row.harness, "pi");
   assert.equal(row.status, "active");
   store.close();
 });
@@ -215,13 +215,13 @@ test("binding round trip upserts and reloads persisted session binding", () => {
   const created = store.upsertBinding({
     workspaceId: "workspace-1",
     sessionId: "session-main",
-    harness: "opencode",
+    harness: "pi",
     harnessSessionId: "harness-1"
   });
   const updated = store.upsertBinding({
     workspaceId: "workspace-1",
     sessionId: "session-main",
-    harness: "opencode",
+    harness: "pi",
     harnessSessionId: "harness-2"
   });
 

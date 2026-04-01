@@ -11,15 +11,11 @@ test("normalizeHarnessId falls back to the default harness", () => {
 test("listRuntimeHarnessAdapters exposes registered harnesses", () => {
   assert.deepEqual(
     listRuntimeHarnessAdapters().map((adapter) => ({ id: adapter.id, hostCommand: adapter.hostCommand })),
-    [
-      { id: "opencode", hostCommand: "run-opencode" },
-      { id: "pi", hostCommand: "run-pi" },
-    ]
+    [{ id: "pi", hostCommand: "run-pi" }]
   );
 });
 
 test("resolveRuntimeHarnessAdapter resolves supported harnesses", () => {
-  assert.equal(resolveRuntimeHarnessAdapter("opencode")?.id, "opencode");
   assert.equal(resolveRuntimeHarnessAdapter("pi")?.hostCommand, "run-pi");
   assert.equal(resolveRuntimeHarnessAdapter("unsupported"), null);
 });

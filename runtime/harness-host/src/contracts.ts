@@ -57,34 +57,6 @@ export interface HarnessHostModelClientPayload {
 
 export type ModelClientConfigPayload = HarnessHostModelClientPayload;
 
-export interface HarnessHostOpencodeRequest {
-  workspace_id: string;
-  workspace_dir: string;
-  session_id: string;
-  input_id: string;
-  instruction: string;
-  attachments?: HarnessHostInputAttachmentPayload[];
-  debug: boolean;
-  harness_session_id?: string | null;
-  persisted_harness_session_id?: string | null;
-  provider_id: string;
-  model_id: string;
-  mode: string;
-  opencode_base_url: string;
-  timeout_seconds: number;
-  system_prompt: string;
-  tools: Record<string, boolean>;
-  workspace_tool_ids: string[];
-  workspace_skill_ids: string[];
-  mcp_servers: JsonObject[];
-  output_format?: JsonObject | null;
-  workspace_config_checksum: string;
-  run_started_payload: JsonObject;
-  model_client: HarnessHostModelClientPayload;
-}
-
-export type OpencodeHarnessHostRequest = HarnessHostOpencodeRequest;
-
 export interface HarnessHostPiRequest {
   workspace_id: string;
   workspace_dir: string;
@@ -132,36 +104,6 @@ export interface WorkspaceMcpSidecarCliResponse {
   reused: boolean;
 }
 
-export interface OpencodeSidecarCliRequest {
-  workspace_root: string;
-  workspace_id: string;
-  config_fingerprint: string;
-  allow_reuse_existing: boolean;
-  host: string;
-  port: number;
-  readiness_url: string;
-  ready_timeout_s: number;
-}
-
-export interface OpencodeSidecarCliResponse {
-  outcome: string;
-  pid: number;
-  url: string;
-}
-
-export interface OpencodeConfigCliRequest {
-  workspace_root: string;
-  provider_id: string;
-  model_id: string;
-  model_client: HarnessHostModelClientPayload;
-}
-
-export interface OpencodeConfigCliResponse {
-  path: string;
-  provider_config_changed: boolean;
-  model_selection_changed: boolean;
-}
-
 export interface AgentRuntimeConfigGeneralMemberPayload {
   id: string;
   model: string;
@@ -201,28 +143,6 @@ export interface AgentRuntimeConfigCliResponse {
   output_schema_member_id?: string | null;
   output_format?: JsonObject | null;
   workspace_config_checksum: string;
-}
-
-export type OpencodeRuntimeConfigGeneralMemberPayload = AgentRuntimeConfigGeneralMemberPayload;
-export type OpencodeRuntimeConfigCliRequest = AgentRuntimeConfigCliRequest;
-export type OpencodeRuntimeConfigCliResponse = AgentRuntimeConfigCliResponse;
-
-export interface OpencodeSkillsCliRequest {
-  workspace_dir: string;
-  runtime_root: string;
-}
-
-export interface OpencodeSkillsCliResponse {
-  changed: boolean;
-  skill_ids: string[];
-}
-
-export interface OpencodeCommandsCliRequest {
-  workspace_dir: string;
-}
-
-export interface OpencodeCommandsCliResponse {
-  changed: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -418,40 +338,6 @@ export function decodeRunnerRequestBase64(encoded: string): RunnerRequest {
   };
 }
 
-export function decodeHarnessHostOpencodeRequestBase64(encoded: string): HarnessHostOpencodeRequest {
-  const parsed = decodeRequestBase64<unknown>(encoded);
-  if (!isRecord(parsed)) {
-    throw new Error("opencode harness request payload must be an object");
-  }
-  return {
-    workspace_id: requiredString(parsed.workspace_id, "workspace_id"),
-    workspace_dir: requiredString(parsed.workspace_dir, "workspace_dir"),
-    session_id: requiredString(parsed.session_id, "session_id"),
-    input_id: requiredString(parsed.input_id, "input_id"),
-    instruction: requiredString(parsed.instruction, "instruction"),
-    attachments: inputAttachments(parsed.attachments, "attachments"),
-    debug: optionalBoolean(parsed.debug, false),
-    harness_session_id: optionalString(parsed.harness_session_id),
-    persisted_harness_session_id: optionalString(parsed.persisted_harness_session_id),
-    provider_id: requiredString(parsed.provider_id, "provider_id"),
-    model_id: requiredString(parsed.model_id, "model_id"),
-    mode: requiredString(parsed.mode, "mode"),
-    opencode_base_url: requiredString(parsed.opencode_base_url, "opencode_base_url"),
-    timeout_seconds: requiredInteger(parsed.timeout_seconds, "timeout_seconds"),
-    system_prompt: stringOrEmpty(parsed.system_prompt, "system_prompt"),
-    tools: booleanRecord(parsed.tools),
-    workspace_tool_ids: stringArray(parsed.workspace_tool_ids),
-    workspace_skill_ids: stringArray(parsed.workspace_skill_ids),
-    mcp_servers: jsonObjectArray(parsed.mcp_servers),
-    output_format: isRecord(parsed.output_format) && isJsonValue(parsed.output_format) ? jsonObject(parsed.output_format) : null,
-    workspace_config_checksum: requiredString(parsed.workspace_config_checksum, "workspace_config_checksum"),
-    run_started_payload: jsonObject(parsed.run_started_payload),
-    model_client: modelClientConfigPayload(parsed.model_client, "model_client"),
-  };
-}
-
-export const decodeOpencodeHarnessHostRequestBase64 = decodeHarnessHostOpencodeRequestBase64;
-
 export function decodeHarnessHostPiRequestBase64(encoded: string): HarnessHostPiRequest {
   const parsed = decodeRequestBase64<unknown>(encoded);
   if (!isRecord(parsed)) {
@@ -495,7 +381,7 @@ export const decodePiHarnessHostRequestBase64 = decodeHarnessHostPiRequestBase64
 export function decodeAgentRuntimeConfigCliRequestBase64(encoded: string): AgentRuntimeConfigCliRequest {
   const parsed = decodeRequestBase64<unknown>(encoded);
   if (!isRecord(parsed)) {
-    throw new Error("opencode runtime config request payload must be an object");
+    throw new Error("agent runtime config request payload must be an object");
   }
   return {
     session_id: requiredString(parsed.session_id, "session_id"),
@@ -530,8 +416,6 @@ export function decodeAgentRuntimeConfigCliRequestBase64(encoded: string): Agent
   };
 }
 
-export const decodeOpencodeRuntimeConfigCliRequestBase64 = decodeAgentRuntimeConfigCliRequestBase64;
-
 export function decodeWorkspaceMcpSidecarCliRequestBase64(encoded: string): WorkspaceMcpSidecarCliRequest {
   const parsed = decodeRequestBase64<unknown>(encoded);
   if (!isRecord(parsed)) {
@@ -544,56 +428,5 @@ export function decodeWorkspaceMcpSidecarCliRequestBase64(encoded: string): Work
     timeout_ms: requiredInteger(parsed.timeout_ms, "timeout_ms"),
     readiness_timeout_s: requiredNumber(parsed.readiness_timeout_s, "readiness_timeout_s"),
     catalog_json_base64: requiredString(parsed.catalog_json_base64, "catalog_json_base64"),
-  };
-}
-
-export function decodeOpencodeSidecarCliRequestBase64(encoded: string): OpencodeSidecarCliRequest {
-  const parsed = decodeRequestBase64<unknown>(encoded);
-  if (!isRecord(parsed)) {
-    throw new Error("opencode sidecar request payload must be an object");
-  }
-  return {
-    workspace_root: requiredString(parsed.workspace_root, "workspace_root"),
-    workspace_id: requiredString(parsed.workspace_id, "workspace_id"),
-    config_fingerprint: requiredString(parsed.config_fingerprint, "config_fingerprint"),
-    allow_reuse_existing: requiredBoolean(parsed.allow_reuse_existing, "allow_reuse_existing"),
-    host: requiredString(parsed.host, "host"),
-    port: requiredInteger(parsed.port, "port"),
-    readiness_url: requiredString(parsed.readiness_url, "readiness_url"),
-    ready_timeout_s: requiredNumber(parsed.ready_timeout_s, "ready_timeout_s"),
-  };
-}
-
-export function decodeOpencodeConfigCliRequestBase64(encoded: string): OpencodeConfigCliRequest {
-  const parsed = decodeRequestBase64<unknown>(encoded);
-  if (!isRecord(parsed)) {
-    throw new Error("opencode config request payload must be an object");
-  }
-  return {
-    workspace_root: requiredString(parsed.workspace_root, "workspace_root"),
-    provider_id: requiredString(parsed.provider_id, "provider_id"),
-    model_id: requiredString(parsed.model_id, "model_id"),
-    model_client: modelClientConfigPayload(parsed.model_client, "model_client"),
-  };
-}
-
-export function decodeOpencodeSkillsCliRequestBase64(encoded: string): OpencodeSkillsCliRequest {
-  const parsed = decodeRequestBase64<unknown>(encoded);
-  if (!isRecord(parsed)) {
-    throw new Error("opencode skills request payload must be an object");
-  }
-  return {
-    workspace_dir: requiredString(parsed.workspace_dir, "workspace_dir"),
-    runtime_root: requiredString(parsed.runtime_root, "runtime_root"),
-  };
-}
-
-export function decodeOpencodeCommandsCliRequestBase64(encoded: string): OpencodeCommandsCliRequest {
-  const parsed = decodeRequestBase64<unknown>(encoded);
-  if (!isRecord(parsed)) {
-    throw new Error("opencode commands request payload must be an object");
-  }
-  return {
-    workspace_dir: requiredString(parsed.workspace_dir, "workspace_dir"),
   };
 }

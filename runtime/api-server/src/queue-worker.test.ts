@@ -32,7 +32,7 @@ test("runtime queue worker claims queued inputs and executes them in claim order
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
@@ -78,7 +78,7 @@ test("runtime queue worker executes different sessions concurrently while preser
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
@@ -133,7 +133,7 @@ test("runtime queue worker marks claimed input failed when delegated execution r
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
@@ -185,7 +185,7 @@ test("runtime queue worker recovers expired claimed input before processing fres
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
@@ -275,7 +275,7 @@ test("queue route wakes configured queue worker", async () => {
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });

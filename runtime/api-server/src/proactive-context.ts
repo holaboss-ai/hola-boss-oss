@@ -5,7 +5,7 @@ import type { RuntimeStateStore, WorkspaceRecord } from "@holaboss/runtime-state
 import yaml from "js-yaml";
 
 import type { MemoryServiceLike } from "./memory.js";
-import { compileWorkspaceRuntimePlanFromWorkspace } from "./opencode-runner-prep.js";
+import { compileWorkspaceRuntimePlanFromWorkspace } from "./runner-prep.js";
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
 import { collectWorkspaceSnapshot } from "./workspace-snapshot.js";
 

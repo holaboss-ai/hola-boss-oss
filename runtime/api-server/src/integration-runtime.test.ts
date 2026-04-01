@@ -86,7 +86,7 @@ test("injects workspace api url and legacy token for a single active binding", (
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const googleConnection = store.upsertIntegrationConnection({
@@ -140,7 +140,7 @@ test("suppresses legacy token when multiple active platform-backed bindings reso
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const googleConnection = store.upsertIntegrationConnection({
@@ -209,7 +209,7 @@ test("skips inactive connections when building compatibility env", () => {
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const inactiveConnection = store.upsertIntegrationConnection({
@@ -258,7 +258,7 @@ test("prefers an app-specific binding override over a workspace default binding"
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const defaultConnection = store.upsertIntegrationConnection({
@@ -323,7 +323,7 @@ test("checkIntegrationReadiness returns integration_not_bound when no binding ex
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
 
@@ -352,7 +352,7 @@ test("checkIntegrationReadiness returns integration_needs_reauth for inactive co
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const inactiveConnection = store.upsertIntegrationConnection({
@@ -399,7 +399,7 @@ test("checkIntegrationReadiness returns ready when all required integrations are
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const googleConnection = store.upsertIntegrationConnection({
@@ -444,7 +444,7 @@ test("checkIntegrationReadiness skips optional integrations", () => {
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const googleConnection = store.upsertIntegrationConnection({

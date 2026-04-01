@@ -138,25 +138,13 @@ ORDER BY created_at DESC LIMIT 5;
   echo "  $icon [$status] \"$text\" ($created)"
 done
 
-# 7. OpenCode config
+# 7. Workspace root
 echo ""
-echo "── OpenCode Config ──"
-find "$SANDBOX_ROOT/workspace" -name "opencode.json" 2>/dev/null | while read f; do
-  wid=$(echo "$f" | grep -oE '[0-9a-f-]{36}')
-  python3 -c "
-import json
-with open('$f') as fh:
-    d = json.load(fh)
-provider = d.get('provider', {})
-model = d.get('model', '?')
-for pid, pconf in provider.items():
-    npm = pconf.get('npm', '?')
-    base = pconf.get('options', {}).get('baseURL', '?')
-    print(f'  {pid}: npm={npm}  model={model}  baseURL={base}')
-" 2>/dev/null
-done
-if [ -z "$(find "$SANDBOX_ROOT/workspace" -name "opencode.json" 2>/dev/null)" ]; then
-  echo "  No opencode.json found (will be regenerated on next run)"
+echo "── Workspace Root ──"
+if [ -d "$SANDBOX_ROOT/workspace" ]; then
+  find "$SANDBOX_ROOT/workspace" -maxdepth 2 -mindepth 1 -type d 2>/dev/null | sed 's#^#  #' || true
+else
+  echo "  No workspace root found"
 fi
 
 # 8. Log tail

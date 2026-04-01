@@ -31,7 +31,5 @@ RUN apt-get update \
          && qmd --index qmd-preload-build query "preload" --json -n 1 >/tmp/qmd-preload-build-query.json \
          && rm -rf /tmp/qmd-preload-build /tmp/qmd-preload-build-query.json; \
        fi \
-    && npm install -g opencode-ai@latest \
-    && opencode --version \
     && apt-get purge -y --auto-remove gnupg \
     && rm -rf /var/lib/apt/lists/*

@@ -19,7 +19,7 @@
 ### Task 2: Bootstrap uses store for port allocation
 
 **Files:**
-- Modify: `runtime/api-server/src/opencode-bootstrap-shared.ts:14-15,223-230`
+- Modify: `runtime/api-server/src/resolved-app-bootstrap-shared.ts:14-15,223-230`
 
 ### Task 3: workspace-apps.ts supports store-based port lookup
 

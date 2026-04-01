@@ -5,16 +5,10 @@
   "type": "module",
   "bin": {
     "holaboss-runtime-api": "dist/index.mjs",
-    "holaboss-runtime-opencode-app-bootstrap": "dist/opencode-app-bootstrap.mjs",
-    "holaboss-runtime-opencode-commands": "dist/opencode-commands.mjs",
-    "holaboss-runtime-opencode-config": "dist/opencode-config.mjs",
     "holaboss-runtime-runtime-config": "dist/runtime-config-cli.mjs",
     "holaboss-runtime-workspace-runtime-plan": "dist/workspace-runtime-plan.mjs",
-    "holaboss-runtime-opencode-runtime-config": "dist/opencode-runtime-config.mjs",
-    "holaboss-runtime-opencode-skills": "dist/opencode-skills.mjs",
     "holaboss-runtime-workspace-mcp-host": "dist/workspace-mcp-host.mjs",
-    "holaboss-runtime-workspace-mcp-sidecar": "dist/workspace-mcp-sidecar.mjs",
-    "holaboss-runtime-opencode-sidecar": "dist/opencode-sidecar.mjs"
+    "holaboss-runtime-workspace-mcp-sidecar": "dist/workspace-mcp-sidecar.mjs"
   },
   "scripts": {
     "build": "tsup --config tsup.config.ts",

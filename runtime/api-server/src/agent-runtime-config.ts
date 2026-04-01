@@ -1,6 +1,15 @@
 import fs from "node:fs";
 
-import { composeBaseAgentSystemPrompt } from "./agent-runtime-prompt.js";
+import type { HarnessPromptLayerPayload } from "../../harnesses/src/types.js";
+import {
+  buildAgentCapabilityManifest,
+  buildEnabledToolMapFromManifest,
+  type AgentCapabilityManifest,
+} from "./agent-capability-registry.js";
+import {
+  composeBaseAgentPrompt,
+  type AgentRecentRuntimeContext,
+} from "./agent-runtime-prompt.js";
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
 
 export type AgentRuntimeConfigGeneralMemberPayload = {
@@ -14,9 +23,16 @@ export interface AgentRuntimeConfigCliRequest {
   session_id: string;
   workspace_id: string;
   input_id: string;
+  session_kind?: string | null;
+  harness_id?: string | null;
+  browser_tools_available?: boolean | null;
+  browser_tool_ids?: string[] | null;
+  runtime_tool_ids?: string[] | null;
+  workspace_command_ids?: string[] | null;
   runtime_exec_model_proxy_api_key?: string | null;
   runtime_exec_sandbox_id?: string | null;
   runtime_exec_run_id?: string | null;
+  recent_runtime_context?: AgentRecentRuntimeContext | null;
   selected_model?: string | null;
   default_provider_id: string;
   session_mode: string;
@@ -35,6 +51,7 @@ export interface AgentRuntimeConfigCliResponse {
   model_id: string;
   mode: string;
   system_prompt: string;
+  prompt_layers?: HarnessPromptLayerPayload[];
   model_client: {
     model_proxy_provider: string;
     api_key: string;
@@ -47,11 +64,8 @@ export interface AgentRuntimeConfigCliResponse {
   output_schema_member_id?: string | null;
   output_format?: Record<string, unknown> | null;
   workspace_config_checksum: string;
+  capability_manifest?: AgentCapabilityManifest;
 }
-
-export type OpencodeRuntimeConfigGeneralMemberPayload = AgentRuntimeConfigGeneralMemberPayload;
-export type OpencodeRuntimeConfigCliRequest = AgentRuntimeConfigCliRequest;
-export type OpencodeRuntimeConfigCliResponse = AgentRuntimeConfigCliResponse;
 
 const MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE = "openai_compatible";
 const MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE = "anthropic_native";
@@ -110,6 +124,20 @@ function firstNonEmptyString(...values: Array<string | null | undefined>): strin
     }
   }
   return "";
+}
+
+function uniqueNonEmptyStringsInOrder(values: Array<string | null | undefined>): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const normalized = (value ?? "").trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -830,19 +858,6 @@ function resolveModelClientConfig(request: AgentRuntimeConfigCliRequest, target:
   throw new Error(message);
 }
 
-function decodeCliRequest(encoded: string): AgentRuntimeConfigCliRequest {
-  const trimmed = encoded.trim();
-  if (!trimmed) {
-    throw new Error("request_base64 is required");
-  }
-  const raw = Buffer.from(trimmed, "base64").toString("utf8");
-  const parsed = JSON.parse(raw);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("request payload must be an object");
-  }
-  return parsed as AgentRuntimeConfigCliRequest;
-}
-
 function normalizeModelProxyProvider(provider: string): string {
   const normalized = provider.trim().toLowerCase();
   if (normalized === "openai" || normalized === MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE) {
@@ -854,41 +869,13 @@ function normalizeModelProxyProvider(provider: string): string {
   return normalized;
 }
 
-function opencodeProviderAlias(providerId: string, modelProxyProvider: string): string {
-  const normalized = providerId.trim().toLowerCase();
-  if (normalized === HOLABOSS_PROXY_PROVIDER_ID) {
-    return normalizeModelProxyProvider(modelProxyProvider) === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE
-      ? "hb_anthropic"
-      : "hb_openai";
-  }
-  if (
-    normalized === "anthropic" ||
-    normalized === "hb_anthropic" ||
-    normalized === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE
-  ) {
-    return "hb_anthropic";
-  }
-  if (
-    normalized === "openai" ||
-    normalized === "hb_openai" ||
-    normalized === MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE
-  ) {
-    return "hb_openai";
-  }
-  return providerId;
-}
-
 function runtimeStructuredRetryCount(): number {
-  const raw = (process.env.OPENCODE_STRUCTURED_OUTPUT_RETRY_COUNT ?? String(DEFAULT_RUNTIME_STRUCTURED_RETRY_COUNT)).trim();
+  const raw = (process.env.HOLABOSS_STRUCTURED_OUTPUT_RETRY_COUNT ?? String(DEFAULT_RUNTIME_STRUCTURED_RETRY_COUNT)).trim();
   const value = Number.parseInt(raw, 10);
   if (!Number.isFinite(value)) {
     return DEFAULT_RUNTIME_STRUCTURED_RETRY_COUNT;
   }
   return Math.max(0, Math.min(value, 10));
-}
-
-function callableToolNameFromMcpServerAndTool(serverId: string, toolName: string): string {
-  return `${serverId}_${toolName}`;
 }
 
 function selectedRuntimeOutputSchema(
@@ -915,80 +902,52 @@ export function projectAgentRuntimeConfig(
   request: AgentRuntimeConfigCliRequest
 ): AgentRuntimeConfigCliResponse {
   const selectedModel = request.selected_model?.trim() || request.agent.model;
-  const systemPrompt = composeBaseAgentSystemPrompt(request.agent.prompt, {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    harnessId: request.harness_id ?? null,
+    sessionKind: request.session_kind ?? null,
+    browserToolsAvailable:
+      typeof request.browser_tools_available === "boolean" ? request.browser_tools_available : null,
+    browserToolIds: request.browser_tool_ids ?? null,
+    runtimeToolIds: request.runtime_tool_ids ?? null,
+    workspaceCommandIds: request.workspace_command_ids ?? null,
     defaultTools: request.default_tools,
     extraTools: request.extra_tools,
     workspaceSkillIds: request.workspace_skill_ids ?? [],
-    resolvedMcpToolRefs: request.resolved_mcp_tool_refs
+    resolvedMcpToolRefs: request.resolved_mcp_tool_refs,
+    toolServerIdMap: request.tool_server_id_map ?? null,
+  });
+  const promptComposition = composeBaseAgentPrompt(request.agent.prompt, {
+    defaultTools: request.default_tools,
+    extraTools: request.extra_tools,
+    workspaceSkillIds: request.workspace_skill_ids ?? [],
+    resolvedMcpToolRefs: request.resolved_mcp_tool_refs,
+    sessionKind: request.session_kind ?? null,
+    sessionMode: request.session_mode,
+    harnessId: request.harness_id ?? null,
+    recentRuntimeContext: request.recent_runtime_context ?? null,
+    capabilityManifest,
   });
 
   const target = resolveRuntimeModelTarget(selectedModel, request.default_provider_id);
-  const workspaceToolIds = request.resolved_mcp_tool_refs.map((toolRef) => toolRef.tool_id);
-  const tools: Record<string, boolean> = {};
-  for (const toolName of request.default_tools) {
-    if (toolName.trim()) {
-      tools[toolName] = true;
-    }
-  }
-  for (const toolRef of request.resolved_mcp_tool_refs) {
-    tools[callableToolNameFromMcpServerAndTool(toolRef.server_id, toolRef.tool_name)] = true;
-  }
-  for (const toolName of request.extra_tools) {
-    if (toolName.trim()) {
-      tools[toolName.trim()] = true;
-    }
-  }
-  if ((request.workspace_skill_ids ?? []).length > 0) {
-    tools.read = true;
-    tools.skill = true;
-  }
+  const workspaceToolIds = uniqueNonEmptyStringsInOrder(
+    request.resolved_mcp_tool_refs.map((toolRef) => toolRef.tool_id)
+  );
+  const tools = buildEnabledToolMapFromManifest(capabilityManifest);
 
   const { outputSchemaMemberId, outputFormat } = selectedRuntimeOutputSchema(request);
   return {
     provider_id: target.providerId,
     model_id: target.modelId,
     mode: request.session_mode,
-    system_prompt: systemPrompt,
+    system_prompt: promptComposition.systemPrompt,
+    prompt_layers: promptComposition.promptLayers,
     model_client: resolveModelClientConfig(request, target),
     tools,
     workspace_tool_ids: workspaceToolIds,
     workspace_skill_ids: request.workspace_skill_ids ?? [],
     output_schema_member_id: outputSchemaMemberId,
     output_format: outputFormat,
-    workspace_config_checksum: request.workspace_config_checksum
+    workspace_config_checksum: request.workspace_config_checksum,
+    capability_manifest: capabilityManifest,
   };
-}
-
-export function projectOpencodeRuntimeConfig(
-  request: AgentRuntimeConfigCliRequest
-): AgentRuntimeConfigCliResponse {
-  const result = projectAgentRuntimeConfig(request);
-  return {
-    ...result,
-    provider_id: opencodeProviderAlias(result.provider_id, result.model_client.model_proxy_provider)
-  };
-}
-
-export async function runOpencodeRuntimeConfigCli(
-  argv: string[],
-  options: {
-    io?: { stdout: NodeJS.WritableStream; stderr: NodeJS.WritableStream };
-    projectConfig?: (request: AgentRuntimeConfigCliRequest) => AgentRuntimeConfigCliResponse;
-  } = {}
-): Promise<number> {
-  const io = options.io ?? { stdout: process.stdout, stderr: process.stderr };
-  const requestBase64 = argv[0] === "--request-base64" ? argv[1] ?? "" : argv[0] ?? "";
-  if (!requestBase64) {
-    io.stderr.write("request_base64 is required\n");
-    return 2;
-  }
-  try {
-    const request = decodeCliRequest(requestBase64);
-    const result = (options.projectConfig ?? projectOpencodeRuntimeConfig)(request);
-    io.stdout.write(JSON.stringify(result));
-    return 0;
-  } catch (error) {
-    io.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    return 1;
-  }
 }

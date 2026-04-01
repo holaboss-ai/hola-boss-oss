@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import { Buffer } from "node:buffer";
-import fs from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 
@@ -81,12 +80,6 @@ function runtimeNode(): string {
 
 export function bundledRuntimeNodeBinDir(): string {
   return path.join(runtimeBundleRoot(), "node-runtime", "bin");
-}
-
-export function resolveOpencodeExecutable(): string {
-  const executableName = process.platform === "win32" ? "opencode.cmd" : "opencode";
-  const bundledPath = path.join(bundledRuntimeNodeBinDir(), executableName);
-  return fs.existsSync(bundledPath) ? bundledPath : "opencode";
 }
 
 function pathDelimiter(): string {

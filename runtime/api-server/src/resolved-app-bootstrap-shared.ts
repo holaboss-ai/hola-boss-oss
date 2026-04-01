@@ -13,21 +13,21 @@ import { portsForWorkspaceApp, type ResolvedApplicationRuntime } from "./workspa
 
 type StringMap = Record<string, unknown>;
 
-export type OpencodeBootstrapRequestPayload = {
+export type ResolvedApplicationsBootstrapRequestPayload = {
   workspace_dir?: string;
   holaboss_user_id?: string;
   resolved_applications?: unknown;
 };
 
-export type OpencodeBootstrapApplication = {
+export type ResolvedApplicationsBootstrapApplication = {
   app_id: string;
   mcp_url: string;
   timeout_ms: number;
   ports: { http: number; mcp: number };
 };
 
-export type OpencodeBootstrapResponse = {
-  applications: OpencodeBootstrapApplication[];
+export type ResolvedApplicationsBootstrapResponse = {
+  applications: ResolvedApplicationsBootstrapApplication[];
 };
 
 function isRecord(value: unknown): value is StringMap {
@@ -132,23 +132,23 @@ export function appDirForResolvedApplication(workspaceDir: string, resolvedApp: 
   return appDir;
 }
 
-function normalizeOpencodeBootstrapApplication(params: {
+function normalizeResolvedApplicationsBootstrapApplication(params: {
   requestedAppId: string;
   started: AppLifecycleActionResult;
   mcpPath: string;
   timeoutMs: number;
-}): OpencodeBootstrapApplication {
+}): ResolvedApplicationsBootstrapApplication {
   if (params.started.app_id !== params.requestedAppId) {
     throw new AppLifecycleExecutorError(
       500,
-      `opencode bootstrap returned mismatched app id '${params.started.app_id}' for '${params.requestedAppId}'`
+      `resolved app startup returned mismatched app id '${params.started.app_id}' for '${params.requestedAppId}'`
     );
   }
   const { http, mcp } = params.started.ports;
   if (!Number.isInteger(http) || http <= 0 || !Number.isInteger(mcp) || mcp <= 0) {
     throw new AppLifecycleExecutorError(
       500,
-      `opencode bootstrap returned invalid ports for '${params.requestedAppId}'`
+      `resolved app startup returned invalid ports for '${params.requestedAppId}'`
     );
   }
   return {
@@ -191,7 +191,7 @@ export async function bootstrapResolvedApplications(params: {
   store?: RuntimeStateStore;
   workspaceId?: string;
   appLifecycleExecutor: AppLifecycleExecutorLike;
-}): Promise<OpencodeBootstrapResponse> {
+}): Promise<ResolvedApplicationsBootstrapResponse> {
   const resolvedWorkspaceDir = path.resolve(params.workspaceDir);
   if (!fs.existsSync(resolvedWorkspaceDir) || !fs.statSync(resolvedWorkspaceDir).isDirectory()) {
     throw new AppLifecycleExecutorError(404, `workspace_dir not found: '${params.workspaceDir}'`);
@@ -228,7 +228,7 @@ export async function bootstrapResolvedApplications(params: {
       allocate: true
     })
   }));
-  const applications: OpencodeBootstrapApplication[] = [];
+  const applications: ResolvedApplicationsBootstrapApplication[] = [];
   for (const preparedStart of preparedStarts) {
     let build =
       params.store && params.workspaceId
@@ -266,7 +266,7 @@ export async function bootstrapResolvedApplications(params: {
       skipSetup: appBuildHasCompletedSetup(build?.status)
     });
     applications.push(
-      normalizeOpencodeBootstrapApplication({
+      normalizeResolvedApplicationsBootstrapApplication({
         requestedAppId: preparedStart.resolvedApp.appId,
         started,
         mcpPath: preparedStart.resolvedApp.mcp.path,
@@ -277,12 +277,12 @@ export async function bootstrapResolvedApplications(params: {
   return { applications };
 }
 
-export async function startOpencodeApplications(params: {
+export async function startResolvedApplications(params: {
   store: RuntimeStateStore;
   appLifecycleExecutor: AppLifecycleExecutorLike;
   workspaceId: string;
-  body: OpencodeBootstrapRequestPayload;
-}): Promise<OpencodeBootstrapResponse> {
+  body: ResolvedApplicationsBootstrapRequestPayload;
+}): Promise<ResolvedApplicationsBootstrapResponse> {
   const workspace = params.store.getWorkspace(params.workspaceId);
   if (!workspace) {
     throw new AppLifecycleExecutorError(404, "workspace not found");

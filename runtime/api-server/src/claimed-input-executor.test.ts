@@ -67,7 +67,7 @@ test("claimed input marks missing workspace failed and runtime error", async () 
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
@@ -116,7 +116,7 @@ test("claimed input persists runner events, assistant text, and idle state on su
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
@@ -177,53 +177,6 @@ test("claimed input persists runner events, assistant text, and idle state on su
   store.close();
 });
 
-test("claimed input preserves waiting_user state when terminal payload requests it", async () => {
-  const store = makeStore("hb-claimed-input-waiting-user-");
-  const workspace = store.createWorkspace({
-    workspaceId: "workspace-1",
-    name: "Workspace 1",
-    harness: "opencode",
-    status: "active",
-    mainSessionId: "session-main"
-  });
-  const queued = store.enqueueInput({
-    workspaceId: workspace.id,
-    sessionId: "session-main",
-    payload: { text: "hello" }
-  });
-  setNodeRunnerCommand([
-    "const request = process.argv.at(-1) ?? '';",
-    "void request;",
-    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');`,
-    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'run_completed', payload: { status: 'waiting_user' } }) + '\\n');`
-  ]);
-
-  const claimed = store.claimInputs({
-    limit: 1,
-    claimedBy: "sandbox-agent-ts-worker",
-    leaseSeconds: 300
-  });
-
-  await processClaimedInput({
-    store,
-    record: claimed[0],
-    claimedBy: "sandbox-agent-ts-worker"
-  });
-
-  const updated = store.getInput(queued.inputId);
-  const runtimeState = store.getRuntimeState({
-    workspaceId: workspace.id,
-    sessionId: "session-main"
-  });
-
-  assert.ok(updated);
-  assert.equal(updated.status, "DONE");
-  assert.ok(runtimeState);
-  assert.equal(runtimeState.status, "WAITING_USER");
-
-  store.close();
-});
-
 test("claimed input ignores waiting_user terminal status for harnesses that do not support it", async () => {
   const store = makeStore("hb-claimed-input-pi-waiting-user-");
   const workspace = store.createWorkspace({
@@ -276,7 +229,7 @@ test("claimed input synthesizes run_failed when runner exits without terminal ev
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
@@ -331,7 +284,7 @@ test("claimed input succeeds when runner emits terminal event but keeps the proc
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
@@ -389,7 +342,7 @@ test("claimed input fails when runner becomes idle after run_started", async () 
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
@@ -453,7 +406,7 @@ test("claimed input hydrates runtime exec context from runtime config", async ()
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
@@ -490,7 +443,7 @@ test("claimed input hydrates runtime exec context from runtime config", async ()
   const runtimeExecContext = events[0].payload.runtime_exec_context as Record<string, unknown>;
   assert.equal(runtimeExecContext.model_proxy_api_key, "token-1");
   assert.equal(runtimeExecContext.sandbox_id, "sandbox-1");
-  assert.equal(runtimeExecContext.harness, "opencode");
+  assert.equal(runtimeExecContext.harness, "pi");
   assert.equal(runtimeExecContext.harness_session_id, "session-main");
 
   store.close();
@@ -501,7 +454,7 @@ test("claimed onboarding input instructs native onboarding tools directly", asyn
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main",
     onboardingStatus: "pending",
@@ -560,7 +513,7 @@ test("claimed onboarding input includes ONBOARD.md verbatim", async () => {
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main",
     onboardingStatus: "pending",
@@ -618,14 +571,14 @@ test("claimed input persists replacement harness session id from terminal runner
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
   store.upsertBinding({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    harness: "opencode",
+    harness: "pi",
     harnessSessionId: "existing-session"
   });
   const queued = store.enqueueInput({
@@ -668,7 +621,7 @@ test("claimed input passes persisted child session kind into the runner payload"
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
@@ -723,15 +676,15 @@ test("claimed input resets harness session binding to the local session after ru
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active",
     mainSessionId: "session-main"
   });
   store.upsertBinding({
     workspaceId: workspace.id,
     sessionId: "session-main",
-    harness: "opencode",
-    harnessSessionId: "stale-opencode-session"
+    harness: "pi",
+    harnessSessionId: "stale-pi-session"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,

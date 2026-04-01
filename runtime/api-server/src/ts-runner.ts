@@ -66,10 +66,10 @@ type LoggerLike = Pick<typeof console, "warn">;
 const TERMINAL_EVENT_TYPES = new Set<TsRunnerEvent["event_type"]>(["run_completed", "run_failed"]);
 const HARNESS_HOST_NOT_IMPLEMENTED_EXIT_CODE = 86;
 const RUNTIME_EXEC_CONTEXT_KEY = "_sandbox_runtime_exec_v1";
-const DEFAULT_OPENCODE_SESSION_MODE = "code";
-const DEFAULT_OPENCODE_PROVIDER_ID = "openai";
+const DEFAULT_SESSION_MODE = "code";
+const DEFAULT_PROVIDER_ID = "openai";
 const WORKSPACE_MCP_READY_TIMEOUT_S = 10;
-const OPENCODE_DEFAULT_TOOLS = [
+const DEFAULT_TOOLS = [
   "read",
   "edit",
   "bash",
@@ -254,10 +254,10 @@ function normalizeProviderId(value: string | null): string {
   if (normalized === "anthropic" || normalized === "anthropic_native") {
     return "anthropic";
   }
-  return normalized || DEFAULT_OPENCODE_PROVIDER_ID;
+  return normalized || DEFAULT_PROVIDER_ID;
 }
 
-function opencodeDefaultProviderId(): string {
+function defaultProviderId(): string {
   try {
     const configured = resolveProductRuntimeConfig({
       requireAuth: false,
@@ -266,16 +266,16 @@ function opencodeDefaultProviderId(): string {
     }).defaultProvider;
     return normalizeProviderId(configured);
   } catch {
-    return normalizeProviderId(process.env.OPENCODE_PROVIDER_ID ?? DEFAULT_OPENCODE_PROVIDER_ID);
+    return normalizeProviderId(process.env.HOLABOSS_DEFAULT_PROVIDER_ID ?? DEFAULT_PROVIDER_ID);
   }
 }
 
-function opencodeSessionMode(): string {
-  return firstNonEmptyString(process.env.OPENCODE_SESSION_MODE, DEFAULT_OPENCODE_SESSION_MODE) ?? DEFAULT_OPENCODE_SESSION_MODE;
+function defaultSessionMode(): string {
+  return firstNonEmptyString(process.env.HOLABOSS_SESSION_MODE, DEFAULT_SESSION_MODE) ?? DEFAULT_SESSION_MODE;
 }
 
-function opencodeExtraTools(): string[] {
-  return (process.env.OPENCODE_EXTRA_TOOLS ?? "")
+function defaultExtraTools(): string[] {
+  return (process.env.HOLABOSS_EXTRA_TOOLS ?? "")
     .split(",")
     .map((token) => token.trim())
     .filter(Boolean);
@@ -342,26 +342,37 @@ function currentBrowserConfig(): {
 
 function buildAgentRuntimeConfigRequest(params: {
   request: TsRunnerRequest;
+  harnessId: string;
+  browserToolsAvailable: boolean;
+  browserToolIds: string[];
+  runtimeToolIds: string[];
   compiledPlan: CompiledWorkspaceRuntimePlan;
   extraToolIds: string[];
   workspaceSkillIds: string[];
+  workspaceCommandIds: string[];
   toolServerIdMap: Readonly<Record<string, string>>;
   resolvedMcpToolRefs: CompiledWorkspaceRuntimePlan["resolved_mcp_tool_refs"];
 }): AgentRuntimeConfigCliRequest {
-  const extraTools = Array.from(new Set([...opencodeExtraTools(), ...params.extraToolIds]));
+  const extraTools = Array.from(new Set([...defaultExtraTools(), ...params.extraToolIds]));
   const common = {
     session_id: params.request.session_id,
     workspace_id: params.request.workspace_id,
     input_id: params.request.input_id,
+    session_kind: params.request.session_kind ?? null,
+    harness_id: params.harnessId,
+    browser_tools_available: params.browserToolsAvailable,
+    browser_tool_ids: [...params.browserToolIds],
+    runtime_tool_ids: [...params.runtimeToolIds],
     runtime_exec_model_proxy_api_key: runtimeExecContextString(params.request, "model_proxy_api_key") ?? undefined,
     runtime_exec_sandbox_id: runtimeExecContextString(params.request, "sandbox_id") ?? undefined,
     runtime_exec_run_id: runtimeExecContextString(params.request, "run_id") ?? undefined,
     selected_model: firstNonEmptyString(params.request.model) ?? undefined,
-    default_provider_id: opencodeDefaultProviderId(),
-    session_mode: opencodeSessionMode(),
+    default_provider_id: defaultProviderId(),
+    session_mode: defaultSessionMode(),
     workspace_config_checksum: params.compiledPlan.config_checksum,
     workspace_skill_ids: [...params.workspaceSkillIds],
-    default_tools: [...OPENCODE_DEFAULT_TOOLS],
+    workspace_command_ids: [...params.workspaceCommandIds],
+    default_tools: [...DEFAULT_TOOLS],
     extra_tools: extraTools,
     tool_server_id_map: { ...params.toolServerIdMap },
     resolved_mcp_tool_refs: params.resolvedMcpToolRefs.map((toolRef) => ({
@@ -737,13 +748,13 @@ export async function executeTsRunnerRequest(
           })
         )
       : { changed: false, skillIds: [] };
-    if (runnerPrepPlan.stageWorkspaceCommands) {
-      measureBootstrapStage(bootstrapStageTimingsMs, "stage_workspace_commands", () =>
-        harnessPlugin.stageCommands({
-          workspaceDir: bootstrap.workspaceDir
-        })
-      );
-    }
+    const stagedCommands = runnerPrepPlan.stageWorkspaceCommands
+      ? measureBootstrapStage(bootstrapStageTimingsMs, "stage_workspace_commands", () =>
+          harnessPlugin.stageCommands({
+            workspaceDir: bootstrap.workspaceDir
+          })
+        )
+      : { changed: false, commandIds: [] };
 
     const compiledPlan = measureBootstrapStage(bootstrapStageTimingsMs, "compile_runtime_plan", () =>
       deps.compilePlan({
@@ -807,9 +818,14 @@ export async function executeTsRunnerRequest(
       deps.projectAgentRuntimeConfig(
         buildAgentRuntimeConfigRequest({
           request,
+          harnessId: bootstrap.harness,
+          browserToolsAvailable: stagedBrowserTools.toolIds.length > 0,
+          browserToolIds: [...stagedBrowserTools.toolIds],
+          runtimeToolIds: [...stagedRuntimeTools.toolIds],
           compiledPlan,
           extraToolIds: [...stagedBrowserTools.toolIds, ...stagedRuntimeTools.toolIds],
           workspaceSkillIds: workspaceSkills.map((skill) => skill.skill_id),
+          workspaceCommandIds: stagedCommands.commandIds,
           toolServerIdMap: serverIdMap,
           resolvedMcpToolRefs
         })

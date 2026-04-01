@@ -47,15 +47,11 @@ NODE_RUNTIME_DIR="${OUTPUT_ROOT}/node-runtime"
 BIN_DIR="${OUTPUT_ROOT}/bin"
 PACKAGE_METADATA_PATH="${OUTPUT_ROOT}/package-metadata.json"
 SKIP_NODE_DEPS="${HOLABOSS_SKIP_NODE_DEPS:-0}"
-INSTALL_OPENCODE="${HOLABOSS_INSTALL_OPENCODE:-1}"
 INSTALL_QMD="${HOLABOSS_INSTALL_QMD:-1}"
 
 mkdir -p "${BIN_DIR}"
 
 NODE_PACKAGES=()
-if [ "${INSTALL_OPENCODE}" = "1" ]; then
-  NODE_PACKAGES+=("opencode-ai@1.3.0")
-fi
 if [ "${INSTALL_QMD}" = "1" ]; then
   NODE_PACKAGES+=("@tobilu/qmd@latest")
 fi
@@ -86,7 +82,6 @@ cat > "${PACKAGE_METADATA_PATH}" <<EOF
 {
   "platform": "macos",
   "node_deps_installed": $([ "${SKIP_NODE_DEPS}" = "1" ] && printf 'false' || printf 'true'),
-  "opencode_installed": $([ "${SKIP_NODE_DEPS}" = "1" ] || [ "${INSTALL_OPENCODE}" != "1" ] && printf 'false' || printf 'true'),
   "qmd_installed": $([ "${SKIP_NODE_DEPS}" = "1" ] || [ "${INSTALL_QMD}" != "1" ] && printf 'false' || printf 'true')
 }
 EOF

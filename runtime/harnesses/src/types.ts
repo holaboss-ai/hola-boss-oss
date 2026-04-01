@@ -37,11 +37,29 @@ export interface HarnessModelClientPayload {
   default_headers?: Record<string, string> | null;
 }
 
+export type HarnessPromptLayerApplyAt = "runtime_config" | "harness_adapter";
+
+export type HarnessPromptLayerId =
+  | "runtime_core"
+  | "execution_policy"
+  | "session_policy"
+  | "capability_policy"
+  | "workspace_policy"
+  | "harness_quirks"
+  | "recent_runtime_context";
+
+export interface HarnessPromptLayerPayload {
+  id: HarnessPromptLayerId;
+  apply_at: HarnessPromptLayerApplyAt;
+  content: string;
+}
+
 export interface HarnessRuntimeConfigPayload {
   provider_id: string;
   model_id: string;
   mode: string;
   system_prompt: string;
+  prompt_layers?: HarnessPromptLayerPayload[];
   model_client: HarnessModelClientPayload;
   tools: Record<string, boolean>;
   workspace_tool_ids: string[];

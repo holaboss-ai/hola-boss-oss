@@ -21,3 +21,5 @@ runtime/state-store/dist/
 
 node_modules/
 .superpowers
+docs/claude-code-research.md
+docs/plans/2026-04-01-agent-runtime-capability-implementation-plan.md

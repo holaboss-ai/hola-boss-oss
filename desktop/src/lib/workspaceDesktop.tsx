@@ -18,7 +18,7 @@ type TemplateSourceMode = "local" | "marketplace" | "empty" | "empty_onboarding"
 type LifecycleStepState = "pending" | "current" | "done" | "error";
 
 export interface WorkspaceHarnessOption {
-  id: "opencode" | "pi";
+  id: "pi";
   label: string;
   description: string;
 }
@@ -30,11 +30,6 @@ const WORKSPACE_HARNESS_OPTIONS: WorkspaceHarnessOption[] = [
     id: "pi",
     label: "Pi",
     description: "Lean harness path without backend bootstrapping."
-  },
-  {
-    id: "opencode",
-    label: "OpenCode",
-    description: "Harness with backend bootstrapping and structured output support."
   }
 ];
 
@@ -115,7 +110,8 @@ function sessionUserId(session: AuthSession | null): string {
 }
 
 function normalizeWorkspaceHarness(value: string | null | undefined): WorkspaceHarnessId {
-  return value?.trim().toLowerCase() === "opencode" ? "opencode" : "pi";
+  void value;
+  return "pi";
 }
 
 function normalizeErrorMessage(error: unknown) {

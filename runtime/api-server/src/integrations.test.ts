@@ -60,7 +60,7 @@ test("upserts workspace-scoped bindings and rejects invalid target types", () =>
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
 
@@ -116,7 +116,7 @@ test("rejects missing connections, cross-provider bindings, and missing workspac
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
 
@@ -182,13 +182,13 @@ test("rejects delete binding requests without workspace scoping or with the wron
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   store.createWorkspace({
     workspaceId: "workspace-2",
     name: "Workspace 2",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const binding = service.upsertBinding({
@@ -311,7 +311,7 @@ test("deletes a connection and rejects deletion when bindings exist", () => {
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const connection = service.createConnection({

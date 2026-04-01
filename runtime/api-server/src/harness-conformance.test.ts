@@ -23,6 +23,7 @@ function baseBuildParams() {
       model_id: "gpt-5.4",
       mode: "code",
       system_prompt: "You are concise.",
+      prompt_layers: [],
       model_client: {
         model_proxy_provider: "openai_compatible",
         api_key: "token",
@@ -56,12 +57,12 @@ function baseBuildParams() {
     ],
     mcpToolRefs: [{ tool_id: "workspace.lookup", server_id: "workspace", tool_name: "lookup" }],
     runStartedPayload: { phase: "booting" },
-    backendBaseUrl: "http://127.0.0.1:4096",
+    backendBaseUrl: "",
     timeoutSeconds: 30,
   };
 }
 
-test("shared harness definitions expose stable ids, commands, and capabilities", () => {
+test("shared harness definitions expose only the pi harness", () => {
   assert.deepEqual(
     HARNESS_DEFINITIONS.map((definition) => ({
       id: definition.id,
@@ -85,24 +86,6 @@ test("shared harness definitions expose stable ids, commands, and capabilities",
     })),
     [
       {
-        id: "opencode",
-        hostCommand: "run-opencode",
-        capabilities: {
-          requiresBackend: true,
-          supportsStructuredOutput: true,
-          supportsWaitingUser: true,
-          supportsSkills: true,
-          supportsMcpTools: true,
-        },
-        prepPlan: {
-          stageWorkspaceSkills: true,
-          stageWorkspaceCommands: true,
-          prepareMcpTooling: true,
-          startWorkspaceMcpSidecar: true,
-          bootstrapResolvedApplications: true,
-        },
-      },
-      {
         id: "pi",
         hostCommand: "run-pi",
         capabilities: {
@@ -124,106 +107,12 @@ test("shared harness definitions expose stable ids, commands, and capabilities",
   );
 });
 
-test("shared harness definitions build harness-specific request shapes", () => {
-  const [opencodeDefinition, piDefinition] = HARNESS_DEFINITIONS;
-  const opencodeRequest = opencodeDefinition.runtimeAdapter.buildHarnessHostRequest(baseBuildParams());
+test("shared harness definitions build pi harness request shapes", () => {
+  const [piDefinition] = HARNESS_DEFINITIONS;
   const piRequest = piDefinition.runtimeAdapter.buildHarnessHostRequest(baseBuildParams());
-  const opencodeRunStartedPayload = opencodeRequest.run_started_payload as Record<string, unknown>;
 
-  assert.equal(opencodeRequest.opencode_base_url, "http://127.0.0.1:4096");
-  assert.deepEqual(opencodeRequest.workspace_skill_ids, ["skill-creator"]);
-  assert.deepEqual(opencodeRequest.output_format, { type: "json_schema", schema: { type: "object" } });
-  assert.equal(opencodeRunStartedPayload.provider_id, "hb_openai");
-  assert.match(String(opencodeRequest.system_prompt), /OpenCode MCP tool naming:/);
-  assert.match(String(opencodeRequest.system_prompt), /workspace\.lookup -> workspace_lookup/);
-  assert.equal("mcp_tool_refs" in opencodeRequest, false);
-
-  assert.equal("opencode_base_url" in piRequest, false);
   assert.equal(piRequest.system_prompt, "You are concise.");
   assert.deepEqual(piRequest.workspace_skill_dirs, ["/tmp/workspace-1/skills/skill-creator"]);
   assert.deepEqual(piRequest.mcp_tool_refs, [{ tool_id: "workspace.lookup", server_id: "workspace", tool_name: "lookup" }]);
   assert.equal("output_format" in piRequest, false);
-});
-
-test("opencode harness aliases legacy openai/anthropic provider ids to hb_*", () => {
-  const [opencodeDefinition] = HARNESS_DEFINITIONS;
-
-  const openaiRequest = opencodeDefinition.runtimeAdapter.buildHarnessHostRequest({
-    ...baseBuildParams(),
-    runtimeConfig: {
-      ...baseBuildParams().runtimeConfig,
-      provider_id: "openai",
-      model_client: {
-        ...baseBuildParams().runtimeConfig.model_client,
-        model_proxy_provider: "openai_compatible",
-      },
-    },
-  });
-  assert.equal(openaiRequest.provider_id, "hb_openai");
-
-  const anthropicRequest = opencodeDefinition.runtimeAdapter.buildHarnessHostRequest({
-    ...baseBuildParams(),
-    runtimeConfig: {
-      ...baseBuildParams().runtimeConfig,
-      provider_id: "anthropic",
-      model_client: {
-        ...baseBuildParams().runtimeConfig.model_client,
-        model_proxy_provider: "anthropic_native",
-      },
-    },
-  });
-  assert.equal(anthropicRequest.provider_id, "hb_anthropic");
-
-  const holabossRequest = opencodeDefinition.runtimeAdapter.buildHarnessHostRequest({
-    ...baseBuildParams(),
-    runtimeConfig: {
-      ...baseBuildParams().runtimeConfig,
-      provider_id: "holaboss_model_proxy",
-      model_client: {
-        ...baseBuildParams().runtimeConfig.model_client,
-        model_proxy_provider: "anthropic_native",
-      },
-    },
-  });
-  assert.equal(holabossRequest.provider_id, "hb_anthropic");
-});
-
-test("opencode harness uses aliased provider id when syncing model config", async () => {
-  const [opencodeDefinition] = HARNESS_DEFINITIONS;
-  const params = baseBuildParams();
-  let syncedProviderId = "";
-  let restartCalls = 0;
-
-  await opencodeDefinition.runtimeAdapter.prepareRun?.({
-    request: params.request,
-    bootstrap: params.bootstrap,
-    runtimeConfig: {
-      ...params.runtimeConfig,
-      provider_id: "openai",
-      model_client: {
-        ...params.runtimeConfig.model_client,
-        model_proxy_provider: "openai_compatible",
-      },
-    },
-    stagedSkillsChanged: false,
-    syncModelConfig: (request) => {
-      syncedProviderId = request.provider_id;
-      return {
-        path: "/tmp/opencode.json",
-        backend_config_changed: false,
-        model_selection_changed: false,
-      };
-    },
-    restartBackend: async () => {
-      restartCalls += 1;
-    },
-    backendBaseUrl: params.backendBaseUrl,
-    backendHost: "127.0.0.1",
-    backendPort: 4096,
-    backendReadyTimeoutSeconds: 30,
-    buildBackendFingerprint: () => "fingerprint",
-  });
-
-  assert.equal(syncedProviderId, "hb_openai");
-  assert.equal(restartCalls, 0);
 });

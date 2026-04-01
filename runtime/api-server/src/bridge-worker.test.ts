@@ -196,7 +196,7 @@ test("executeBridgeJobNatively creates task proposals in the TS state store", as
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace One",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const memoryService = new FilesystemMemoryService({ workspaceRoot });
@@ -233,7 +233,7 @@ test("executeBridgeJobNatively supports memory operations", async () => {
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace One",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const memoryService = new FilesystemMemoryService({ workspaceRoot });
@@ -305,7 +305,7 @@ test("executeBridgeJobNatively captures bundled proactive workspace context", as
   store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace One",
-    harness: "opencode",
+    harness: "pi",
     status: "active"
   });
   const workspaceDir = store.workspaceDir("workspace-1");
