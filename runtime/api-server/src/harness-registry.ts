@@ -87,7 +87,7 @@ export interface RuntimeHarnessPlugin {
   }) => Promise<void>;
   ensureReady: (fetchImpl: typeof fetch) => Promise<void>;
   backendBaseUrl: (params: { workspaceId: string; workspaceDir: string }) => string;
-  timeoutSeconds: () => number;
+  timeoutSeconds: (params: { request: HarnessRunnerRequestLike }) => number;
 }
 
 function normalizeHarnessIdInternal(value: unknown): string {
@@ -99,13 +99,28 @@ function browserToolsAllowedForSession(sessionKind: string | null | undefined): 
   return typeof sessionKind === "string" && sessionKind.trim().toLowerCase() === "main";
 }
 
-function defaultHarnessTimeoutSeconds(): number {
-  const raw = (process.env.HOLABOSS_HARNESS_RUN_TIMEOUT_S ?? "1800").trim();
+function normalizeSessionKind(value: string | null | undefined): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function timeoutSecondsFromEnv(envName: string, defaultValue: number): number {
+  const raw = (process.env[envName] ?? String(defaultValue)).trim();
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed)) {
-    return 1800;
+    return defaultValue;
   }
   return Math.max(1, Math.min(parsed, 7200));
+}
+
+function defaultHarnessTimeoutSeconds(sessionKind: string | null | undefined): number {
+  const baseTimeoutSeconds = timeoutSecondsFromEnv("HOLABOSS_HARNESS_RUN_TIMEOUT_S", 1800);
+  if (normalizeSessionKind(sessionKind) !== "task_proposal") {
+    return baseTimeoutSeconds;
+  }
+  return timeoutSecondsFromEnv(
+    "HOLABOSS_TASK_PROPOSAL_HARNESS_RUN_TIMEOUT_S",
+    Math.max(baseTimeoutSeconds, 7200)
+  );
 }
 
 const adapterById = new Map(HARNESS_DEFINITIONS.map((definition) => [definition.id, definition.runtimeAdapter]));
@@ -187,8 +202,8 @@ const piRuntimeHarnessPlugin: RuntimeHarnessPlugin = {
   backendBaseUrl(_params) {
     return "";
   },
-  timeoutSeconds() {
-    return defaultHarnessTimeoutSeconds();
+  timeoutSeconds(params) {
+    return defaultHarnessTimeoutSeconds(params.request.session_kind);
   }
 };
 

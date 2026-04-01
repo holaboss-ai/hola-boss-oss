@@ -158,7 +158,7 @@ const BUILTIN_CAPABILITY_DEFINITIONS: Record<string, CapabilityDefinition> = {
     kind: "builtin_tool",
     policy: "coordinate",
     title: "Skill",
-    description: "Consult staged workspace skills when they are relevant.",
+    description: "Consult available embedded or workspace skills when they are relevant.",
   },
 };
 
@@ -424,7 +424,7 @@ export function buildAgentCapabilityManifest(
         kind: "skill",
         policy: "coordinate",
         title: titleFromToken(skillId),
-        description: `Workspace skill '${skillId}' is available for domain-specific guidance.`,
+        description: `Skill '${skillId}' is available for domain-specific guidance.`,
         callable_name: null,
         source: "workspace_skill",
       });
@@ -528,7 +528,7 @@ export function renderCapabilityPolicyPromptSection(manifest: AgentCapabilityMan
     `Session kind for this run: ${manifest.context.session_kind ?? "unknown"}.`,
     "Use inspection capabilities to gather context before mutating workspace, app, browser, or runtime state whenever possible.",
     "After edits, shell commands, browser actions, MCP mutations, or runtime mutations, run a follow-up inspection or verification step before claiming success.",
-    "Use coordination capabilities to track progress, consult staged skills, or ask for clarification instead of keeping hidden state.",
+    "Use coordination capabilities to track progress, consult available skills, or ask for clarification instead of keeping hidden state.",
     "If a capability is not listed below, do not assume it is available in this run.",
     `Inspect capabilities available now: ${summarizeList(namesForCapabilities(manifest.inspect))}`,
     `Mutating capabilities available now: ${summarizeList(namesForCapabilities(manifest.mutate))}`,
@@ -545,7 +545,7 @@ export function renderCapabilityPolicyPromptSection(manifest: AgentCapabilityMan
     lines.push(`Workspace commands available now: ${summarizeList(manifest.workspace_commands)}`);
   }
   if (manifest.workspace_skills.length > 0) {
-    lines.push(`Workspace skills available now: ${summarizeList(manifest.workspace_skills)}`);
+    lines.push(`Skills available now: ${summarizeList(manifest.workspace_skills)}`);
   }
   if (manifest.context.browser_tools_available === false) {
     lines.push("Browser tools are not available in this run.");

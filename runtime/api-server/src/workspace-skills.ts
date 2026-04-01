@@ -1,12 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import yaml from "js-yaml";
+
+export type ResolvedSkillOrigin = "workspace" | "embedded";
 
 export interface ResolvedWorkspaceSkill {
   skill_id: string;
   source_dir: string;
+  origin: ResolvedSkillOrigin;
 }
+
+const EMBEDDED_SKILLS_DIR_ENV = "HOLABOSS_EMBEDDED_SKILLS_DIR";
 
 function normalizeSkillId(value: unknown): string | null {
   if (typeof value !== "string") {
@@ -22,16 +28,32 @@ function normalizeSkillId(value: unknown): string | null {
   return skillId;
 }
 
-function readWorkspaceYamlMapping(workspaceDir: string): Record<string, unknown> | null {
+function runtimeRootDir(): string {
+  const configured = (process.env.HOLABOSS_RUNTIME_ROOT ?? "").trim();
+  if (configured) {
+    return path.resolve(configured);
+  }
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+}
+
+function embeddedSkillsRoot(): string {
+  const override = (process.env[EMBEDDED_SKILLS_DIR_ENV] ?? "").trim();
+  if (override) {
+    return path.resolve(override);
+  }
+  return path.join(runtimeRootDir(), "harnesses", "src", "embedded-skills");
+}
+
+function readWorkspaceYamlMapping(workspaceDir: string): Record<string, unknown> {
   const workspaceYamlPath = path.join(path.resolve(workspaceDir), "workspace.yaml");
   if (!fs.existsSync(workspaceYamlPath)) {
-    return null;
+    return {};
   }
   try {
     const loaded = yaml.load(fs.readFileSync(workspaceYamlPath, "utf8"));
-    return loaded && typeof loaded === "object" && !Array.isArray(loaded) ? (loaded as Record<string, unknown>) : null;
+    return loaded && typeof loaded === "object" && !Array.isArray(loaded) ? (loaded as Record<string, unknown>) : {};
   } catch {
-    return null;
+    return {};
   }
 }
 
@@ -78,16 +100,47 @@ function workspaceEnabledSkillIds(payload: Record<string, unknown>): string[] {
   return ordered;
 }
 
-export function resolveWorkspaceSkills(workspaceDirInput: string): ResolvedWorkspaceSkill[] {
+function listSkillsInRoot(skillRoot: string, origin: ResolvedSkillOrigin): ResolvedWorkspaceSkill[] {
+  const skillRootPath = path.resolve(skillRoot);
+  const stats = fs.statSync(skillRootPath, { throwIfNoEntry: false });
+  if (!stats?.isDirectory()) {
+    return [];
+  }
+
+  return fs
+    .readdirSync(skillRootPath, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
+      const skillId = normalizeSkillId(entry.name);
+      if (!skillId) {
+        return null;
+      }
+      const sourceDir = path.join(skillRootPath, entry.name);
+      let sourceRealPath: string;
+      try {
+        sourceRealPath = fs.realpathSync(sourceDir);
+      } catch {
+        return null;
+      }
+      if (!fs.existsSync(path.join(sourceRealPath, "SKILL.md"))) {
+        return null;
+      }
+      return {
+        skill_id: skillId,
+        source_dir: sourceRealPath,
+        origin,
+      } satisfies ResolvedWorkspaceSkill;
+    })
+    .filter((skill): skill is ResolvedWorkspaceSkill => Boolean(skill))
+    .sort((left, right) => left.skill_id.localeCompare(right.skill_id));
+}
+
+function resolveWorkspaceLocalSkills(workspaceDirInput: string, payload: Record<string, unknown>): ResolvedWorkspaceSkill[] {
   const workspaceDir = path.resolve(workspaceDirInput);
   let workspaceRealRoot: string;
   try {
     workspaceRealRoot = fs.realpathSync(workspaceDir);
   } catch {
-    return [];
-  }
-  const payload = readWorkspaceYamlMapping(workspaceDir);
-  if (!payload) {
     return [];
   }
 
@@ -113,44 +166,46 @@ export function resolveWorkspaceSkills(workspaceDirInput: string): ResolvedWorks
     return [];
   }
 
-  const skillsStats = fs.statSync(skillsRealPath, { throwIfNoEntry: false });
-  if (!skillsStats?.isDirectory()) {
-    return [];
+  return listSkillsInRoot(skillsRealPath, "workspace").filter((skill) => {
+    const relativeSourcePath = path.relative(workspaceRealRoot, skill.source_dir);
+    return !(relativeSourcePath.startsWith("..") || path.isAbsolute(relativeSourcePath));
+  });
+}
+
+export function resolveWorkspaceSkills(workspaceDirInput: string): ResolvedWorkspaceSkill[] {
+  const payload = readWorkspaceYamlMapping(workspaceDirInput);
+  const enabledSkillIds = workspaceEnabledSkillIds(payload);
+  const embeddedSkills = listSkillsInRoot(embeddedSkillsRoot(), "embedded");
+  const workspaceSkills = resolveWorkspaceLocalSkills(workspaceDirInput, payload);
+
+  const resolvedById = new Map<string, ResolvedWorkspaceSkill>();
+  for (const skill of workspaceSkills) {
+    resolvedById.set(skill.skill_id, skill);
+  }
+  for (const skill of embeddedSkills) {
+    resolvedById.set(skill.skill_id, skill);
   }
 
-  let selectedSkillIds = workspaceEnabledSkillIds(payload);
-  if (selectedSkillIds.length === 0) {
-    selectedSkillIds = fs
-      .readdirSync(skillsRealPath, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(skillsRealPath, entry.name, "SKILL.md")))
-      .map((entry) => entry.name)
-      .sort((left, right) => left.localeCompare(right));
-  }
+  const orderedSkillIds =
+    enabledSkillIds.length > 0
+      ? enabledSkillIds
+      : (() => {
+          const ordered: string[] = [];
+          const seen = new Set<string>();
+          for (const skill of [...embeddedSkills, ...workspaceSkills]) {
+            if (seen.has(skill.skill_id)) {
+              continue;
+            }
+            seen.add(skill.skill_id);
+            ordered.push(skill.skill_id);
+          }
+          return ordered;
+        })();
 
-  const resolvedSkills: ResolvedWorkspaceSkill[] = [];
-  for (const skillId of selectedSkillIds) {
-    const normalizedSkillId = normalizeSkillId(skillId);
-    if (!normalizedSkillId) {
-      continue;
-    }
-    const sourceDir = path.resolve(skillsRealPath, normalizedSkillId);
-    let sourceRealPath: string;
-    try {
-      sourceRealPath = fs.realpathSync(sourceDir);
-    } catch {
-      continue;
-    }
-    const relativeSourcePath = path.relative(workspaceRealRoot, sourceRealPath);
-    if (relativeSourcePath.startsWith("..") || path.isAbsolute(relativeSourcePath)) {
-      continue;
-    }
-    if (!fs.existsSync(path.join(sourceRealPath, "SKILL.md"))) {
-      continue;
-    }
-    resolvedSkills.push({
-      skill_id: normalizedSkillId,
-      source_dir: sourceRealPath,
-    });
-  }
-  return resolvedSkills;
+  return orderedSkillIds
+    .map((skillId) => {
+      const normalizedSkillId = normalizeSkillId(skillId);
+      return normalizedSkillId ? resolvedById.get(normalizedSkillId) ?? null : null;
+    })
+    .filter((skill): skill is ResolvedWorkspaceSkill => Boolean(skill));
 }

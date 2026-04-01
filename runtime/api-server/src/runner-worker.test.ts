@@ -14,6 +14,9 @@ import {
 const ORIGINAL_ENV = {
   SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE: process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE,
   SANDBOX_AGENT_RUN_TIMEOUT_S: process.env.SANDBOX_AGENT_RUN_TIMEOUT_S,
+  SANDBOX_AGENT_TASK_PROPOSAL_RUN_TIMEOUT_S: process.env.SANDBOX_AGENT_TASK_PROPOSAL_RUN_TIMEOUT_S,
+  SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S: process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S,
+  SANDBOX_AGENT_TASK_PROPOSAL_RUN_IDLE_TIMEOUT_S: process.env.SANDBOX_AGENT_TASK_PROPOSAL_RUN_IDLE_TIMEOUT_S,
   SANDBOX_RUNTIME_API_URL: process.env.SANDBOX_RUNTIME_API_URL,
   SANDBOX_RUNTIME_API_HOST: process.env.SANDBOX_RUNTIME_API_HOST,
   SANDBOX_RUNTIME_API_PORT: process.env.SANDBOX_RUNTIME_API_PORT,
@@ -36,6 +39,21 @@ afterEach(() => {
     delete process.env.SANDBOX_AGENT_RUN_TIMEOUT_S;
   } else {
     process.env.SANDBOX_AGENT_RUN_TIMEOUT_S = ORIGINAL_ENV.SANDBOX_AGENT_RUN_TIMEOUT_S;
+  }
+  if (ORIGINAL_ENV.SANDBOX_AGENT_TASK_PROPOSAL_RUN_TIMEOUT_S === undefined) {
+    delete process.env.SANDBOX_AGENT_TASK_PROPOSAL_RUN_TIMEOUT_S;
+  } else {
+    process.env.SANDBOX_AGENT_TASK_PROPOSAL_RUN_TIMEOUT_S = ORIGINAL_ENV.SANDBOX_AGENT_TASK_PROPOSAL_RUN_TIMEOUT_S;
+  }
+  if (ORIGINAL_ENV.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S === undefined) {
+    delete process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S;
+  } else {
+    process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S = ORIGINAL_ENV.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S;
+  }
+  if (ORIGINAL_ENV.SANDBOX_AGENT_TASK_PROPOSAL_RUN_IDLE_TIMEOUT_S === undefined) {
+    delete process.env.SANDBOX_AGENT_TASK_PROPOSAL_RUN_IDLE_TIMEOUT_S;
+  } else {
+    process.env.SANDBOX_AGENT_TASK_PROPOSAL_RUN_IDLE_TIMEOUT_S = ORIGINAL_ENV.SANDBOX_AGENT_TASK_PROPOSAL_RUN_IDLE_TIMEOUT_S;
   }
   if (ORIGINAL_ENV.SANDBOX_RUNTIME_API_URL === undefined) {
     delete process.env.SANDBOX_RUNTIME_API_URL;
@@ -82,13 +100,14 @@ afterEach(() => {
   }
 });
 
-function payload(): Record<string, unknown> {
+function payload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     workspace_id: "workspace-1",
     session_id: "session-1",
     input_id: "input-1",
     instruction: "hello",
-    context: {}
+    context: {},
+    ...overrides
   };
 }
 
@@ -225,6 +244,52 @@ test("native runner executor can use the TypeScript runner template", async () =
     event_type: "run_completed",
     payload: { status: "success" }
   });
+});
+
+test("native runner executor gives task proposal runs a longer hard timeout budget", async () => {
+  process.env.SANDBOX_AGENT_RUN_TIMEOUT_S = "1";
+  process.env.SANDBOX_AGENT_TASK_PROPOSAL_RUN_TIMEOUT_S = "5";
+  process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S = "10";
+  process.env.SANDBOX_AGENT_TASK_PROPOSAL_RUN_IDLE_TIMEOUT_S = "10";
+
+  setNodeRunnerTemplate([
+    "setTimeout(() => {",
+    "  process.stdout.write(JSON.stringify({ session_id: 'session-1', input_id: 'input-1', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');",
+    "  process.stdout.write(JSON.stringify({ session_id: 'session-1', input_id: 'input-1', sequence: 2, event_type: 'run_completed', payload: { status: 'success' } }) + '\\n');",
+    "}, 1500);"
+  ]);
+
+  const executor = new NativeRunnerExecutor();
+  const response = await executor.run(payload({ session_kind: "task_proposal" }));
+  const events = response.events as Array<Record<string, unknown>>;
+
+  assert.deepEqual(
+    events.map((event) => event.event_type),
+    ["run_started", "run_completed"]
+  );
+});
+
+test("native runner executor gives task proposal runs a longer idle timeout budget", async () => {
+  process.env.SANDBOX_AGENT_RUN_TIMEOUT_S = "10";
+  process.env.SANDBOX_AGENT_TASK_PROPOSAL_RUN_TIMEOUT_S = "10";
+  process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S = "1";
+  process.env.SANDBOX_AGENT_TASK_PROPOSAL_RUN_IDLE_TIMEOUT_S = "5";
+
+  setNodeRunnerTemplate([
+    "process.stdout.write(JSON.stringify({ session_id: 'session-1', input_id: 'input-1', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');",
+    "setTimeout(() => {",
+    "  process.stdout.write(JSON.stringify({ session_id: 'session-1', input_id: 'input-1', sequence: 2, event_type: 'run_completed', payload: { status: 'success' } }) + '\\n');",
+    "}, 1500);"
+  ]);
+
+  const executor = new NativeRunnerExecutor();
+  const response = await executor.run(payload({ session_kind: "task_proposal" }));
+  const events = response.events as Array<Record<string, unknown>>;
+
+  assert.deepEqual(
+    events.map((event) => event.event_type),
+    ["run_started", "run_completed"]
+  );
 });
 
 test("current runtime api url prefers explicit value", () => {

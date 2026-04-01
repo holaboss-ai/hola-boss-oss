@@ -7,7 +7,9 @@ const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
 const DEFAULT_TS_RUNNER_COMMAND_TEMPLATE =
   "cd {runtime_root}/api-server && {runtime_node} dist/ts-runner.mjs --request-base64 {request_base64}";
 const HEARTBEAT_INTERVAL_MS = 5000;
+const DEFAULT_RUN_TIMEOUT_SECONDS = 1800;
 const DEFAULT_IDLE_TIMEOUT_SECONDS = 180;
+const DEFAULT_TASK_PROPOSAL_RUN_TIMEOUT_SECONDS = 7200;
 
 export interface RunnerExecutorLike {
   run(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
@@ -101,22 +103,52 @@ function prependPathEntries(currentPath: string | undefined, entries: string[]):
   return deduped.join(delimiter);
 }
 
-function runnerTimeoutSeconds(): number {
-  const raw = (process.env.SANDBOX_AGENT_RUN_TIMEOUT_S ?? "1800").trim();
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) {
-    return 1800;
-  }
-  return Math.max(1, Math.min(parsed, 7200));
+function normalizeSessionKind(payload: Record<string, unknown>): string {
+  const value = payload.session_kind;
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
-function runnerIdleTimeoutSeconds(): number {
-  const raw = (process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S ?? `${DEFAULT_IDLE_TIMEOUT_SECONDS}`).trim();
+function secondsFromEnv(
+  envName: string,
+  defaultValue: number,
+  options: { min: number; max: number }
+): number {
+  const raw = (process.env[envName] ?? String(defaultValue)).trim();
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed)) {
-    return DEFAULT_IDLE_TIMEOUT_SECONDS;
+    return defaultValue;
   }
-  return Math.max(1, Math.min(parsed, 3600));
+  return Math.max(options.min, Math.min(parsed, options.max));
+}
+
+function runnerTimeoutSeconds(payload: Record<string, unknown>): number {
+  const baseTimeoutSeconds = secondsFromEnv("SANDBOX_AGENT_RUN_TIMEOUT_S", DEFAULT_RUN_TIMEOUT_SECONDS, {
+    min: 1,
+    max: 7200
+  });
+  if (normalizeSessionKind(payload) !== "task_proposal") {
+    return baseTimeoutSeconds;
+  }
+  return secondsFromEnv(
+    "SANDBOX_AGENT_TASK_PROPOSAL_RUN_TIMEOUT_S",
+    Math.max(baseTimeoutSeconds, DEFAULT_TASK_PROPOSAL_RUN_TIMEOUT_SECONDS),
+    { min: 1, max: 7200 }
+  );
+}
+
+function runnerIdleTimeoutSeconds(payload: Record<string, unknown>): number {
+  const baseIdleTimeoutSeconds = secondsFromEnv("SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S", DEFAULT_IDLE_TIMEOUT_SECONDS, {
+    min: 1,
+    max: 7200
+  });
+  if (normalizeSessionKind(payload) !== "task_proposal") {
+    return baseIdleTimeoutSeconds;
+  }
+  return secondsFromEnv(
+    "SANDBOX_AGENT_TASK_PROPOSAL_RUN_IDLE_TIMEOUT_S",
+    runnerTimeoutSeconds(payload),
+    { min: 1, max: 7200 }
+  );
 }
 
 function normalizeRuntimeApiHost(value: string): string {
@@ -319,8 +351,8 @@ export async function executeRunnerRequest(
     throw new Error("sandbox runner subprocess streams were not initialized");
   }
 
-  const timeoutMs = runnerTimeoutSeconds() * 1000;
-  const idleTimeoutMs = runnerIdleTimeoutSeconds() * 1000;
+  const timeoutMs = runnerTimeoutSeconds(payload) * 1000;
+  const idleTimeoutMs = runnerIdleTimeoutSeconds(payload) * 1000;
   let timedOut = false;
   let idleTimedOut = false;
   let sawTerminal = false;

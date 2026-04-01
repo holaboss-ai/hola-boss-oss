@@ -150,7 +150,7 @@ test("renderCapabilityPolicyPromptSection summarizes grouped capabilities", () =
   assert.match(section, /Coordination capabilities available now:/);
   assert.match(section, /Runtime capabilities available now:/);
   assert.match(section, /Workspace commands available now: hello/);
-  assert.match(section, /Workspace skills available now: skill-creator/);
+  assert.match(section, /Skills available now: skill-creator/);
   assert.match(section, /Browser tools are not available in this run\./);
   assert.match(section, /Connected MCP tools available now:/);
   assert.doesNotMatch(section, /MCP callable tool names for this run:/);

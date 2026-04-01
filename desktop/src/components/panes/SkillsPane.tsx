@@ -128,15 +128,19 @@ export function SkillsPane() {
 
   const hasWorkspace = Boolean(selectedWorkspaceId);
   const hasSkills = Boolean(catalog?.skills.length);
-  const selectedSkillStatusLabel = selectedSkill?.enabled ? "Enabled in workspace.yaml" : "Available in skills path";
+  const selectedSkillStatusLabel = selectedSkill
+    ? selectedSkill.enabled
+      ? "Enabled in workspace"
+      : "Detected in workspace"
+    : "";
 
   return (
     <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
       <div className="relative mx-auto min-h-0 max-w-5xl flex-1 p-4">
         {!hasWorkspace ? (
-          <EmptyState title="No workspace selected" detail="Select a workspace to load its configured skills." />
+          <EmptyState title="No workspace selected" detail="Select a workspace to load its available skills." />
         ) : isLoadingCatalog ? (
-          <LoadingState label="Loading workspace skills..." />
+          <LoadingState label="Loading skills..." />
         ) : errorMessage ? (
           <EmptyState title="Skills failed to load" detail={errorMessage} tone="error" />
         ) : !catalog || !hasSkills ? (
@@ -144,7 +148,7 @@ export function SkillsPane() {
             title="No skills found"
             detail={
               catalog
-                ? `No skill folders with SKILL.md were found under ${catalog.configured_path}.`
+                ? `No workspace skills with SKILL.md were found under ${catalog.configured_path}.`
                 : "No skill folders with SKILL.md were found for the selected workspace."
             }
           />
@@ -155,7 +159,7 @@ export function SkillsPane() {
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Registry</div>
-                    <div className="mt-1 text-sm font-medium text-foreground">Workspace skill catalog</div>
+                    <div className="mt-1 text-sm font-medium text-foreground">Skill catalog</div>
                   </div>
                   <div className="rounded-full border border-border bg-muted px-2.5 py-1 text-[10px] uppercase tracking-widest text-muted-foreground">
                     {filteredSkills.length} shown
@@ -206,9 +210,7 @@ export function SkillsPane() {
                             {skill.skill_id}
                           </div>
                         </div>
-                        <Badge variant={skill.enabled ? "default" : "secondary"}>
-                          {skill.enabled ? "Enabled" : "Detected"}
-                        </Badge>
+                        <Badge variant="default">Workspace</Badge>
                       </div>
                       <div
                         className="mt-2 text-xs leading-6 text-muted-foreground"
@@ -223,7 +225,7 @@ export function SkillsPane() {
                       </div>
                       <div className="mt-3 flex items-center justify-between gap-3 text-[10px] uppercase tracking-widest text-muted-foreground">
                         <span>{formatModifiedAt(skill.modified_at)}</span>
-                        <span>{skill.enabled ? "Configured" : "Detected"}</span>
+                        <span>{skill.enabled ? "Enabled" : "Detected"}</span>
                       </div>
                     </button>
                   );

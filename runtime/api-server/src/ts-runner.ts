@@ -876,7 +876,7 @@ export async function executeTsRunnerRequest(
       })),
       runStartedPayload,
       backendBaseUrl,
-      timeoutSeconds: harnessPlugin.timeoutSeconds()
+      timeoutSeconds: harnessPlugin.timeoutSeconds({ request })
     });
     bootstrapStageTimingsMs.build_harness_host_request = elapsedMs(buildHarnessHostRequestStartedAtMs);
     runStartedPayload.bootstrap_ready_at = new Date().toISOString();

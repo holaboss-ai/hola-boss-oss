@@ -166,14 +166,14 @@ export function composeBaseAgentPrompt(
     "After edits, shell commands, browser actions, or state-changing tool calls, verify the result with the most direct inspection capability available before claiming success.",
     "Keep plans and missing decisions explicit: use coordination capabilities such as question, todo, and skill access instead of relying on hidden state.",
     "Tool and verification guidance:",
-    "YOU MUST Use available tools, workspace skills, and connected MCP tools whenever they can inspect, verify, retrieve, or complete the task more reliably than reasoning alone.",
+    "YOU MUST Use available tools, skills, and connected MCP tools whenever they can inspect, verify, retrieve, or complete the task more reliably than reasoning alone.",
     "Prefer direct tool results over assumptions, especially for code, files, workspace state, app state, or live integrations.",
     "If the task mentions a concrete file, command, test, resource, API, or integration, check it with the relevant tool before answering.",
     "If you say that you checked, changed, ran, fetched, or verified something, use the relevant tool first and base the answer on the result.",
     "Respond without tool calls only when the request is purely conversational or explanatory and tool use would not improve correctness or completeness."
   ];
   if (request.workspaceSkillIds.length > 0) {
-    executionLines.push("When workspace skills are available and relevant, consult them instead of improvising from scratch.");
+    executionLines.push("When skills are available and relevant, consult them instead of improvising from scratch.");
   }
   if (request.resolvedMcpToolRefs.length > 0) {
     executionLines.push("When a connected MCP tool is relevant, call it directly instead of only describing what it would do.");
