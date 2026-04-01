@@ -17,19 +17,17 @@ export function IconButton({
   disabled = false,
   className = ""
 }: IconButtonProps) {
-  const stateClass = active
-    ? "border-neon-green/60 text-neon-green shadow-glow"
-    : "border-panel-border/60 text-text-muted/85 hover:border-neon-green/45 hover:text-neon-green";
-
   return (
     <button
       type="button"
       aria-label={label}
       disabled={disabled}
       onClick={onClick}
-      className={`theme-subtle-surface inline-flex h-8 w-8 items-center justify-center rounded-[var(--theme-radius-control)] border transition-all duration-200 ${stateClass} ${
-        disabled ? "cursor-not-allowed opacity-40" : ""
-      } ${className}`}
+      className={`inline-flex size-7 items-center justify-center rounded-md border transition-colors ${
+        active
+          ? "border-primary/50 bg-primary/10 text-primary"
+          : "border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+      } ${disabled ? "cursor-not-allowed opacity-40" : ""} ${className}`}
     >
       {icon}
     </button>

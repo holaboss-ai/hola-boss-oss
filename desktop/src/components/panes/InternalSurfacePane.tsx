@@ -91,7 +91,7 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
               title="Output preview"
               sandbox=""
               srcDoc={htmlContent}
-              className="min-h-[60vh] w-full rounded-[18px] border border-panel-border/35 bg-white"
+              className="min-h-[60vh] w-full rounded-[18px] border border-border/35 bg-white"
             />
           </div>
         );
@@ -106,7 +106,7 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
     if (isLoading) {
       return (
         <div className="flex h-full items-center justify-center">
-          <div className="inline-flex items-center gap-2 text-[12px] text-text-muted">
+          <div className="inline-flex items-center gap-2 text-[12px] text-muted-foreground">
             <Loader2 size={14} className="animate-spin" />
             <span>Loading file preview...</span>
           </div>
@@ -127,7 +127,7 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
         <div className="grid min-h-0 gap-3">
           <MetadataRow label="Path" value={preview.absolutePath} />
           <MetadataRow label="Modified" value={new Date(preview.modifiedAt).toLocaleString()} />
-          <pre className="min-h-0 overflow-auto rounded-[18px] border border-panel-border/35 bg-black/20 p-4 text-[12px] leading-6 text-text-main/88">
+          <pre className="min-h-0 overflow-auto rounded-[18px] border border-border/35 bg-black/20 p-4 text-[12px] leading-6 text-foreground/88">
             {preview.content || ""}
           </pre>
         </div>
@@ -138,7 +138,7 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
       return (
         <div className="grid min-h-0 gap-3">
           <MetadataRow label="Path" value={preview.absolutePath} />
-          <div className="overflow-auto rounded-[18px] border border-panel-border/35 bg-black/20 p-4">
+          <div className="overflow-auto rounded-[18px] border border-border/35 bg-black/20 p-4">
             <img src={preview.dataUrl} alt={preview.name} className="mx-auto max-h-[60vh] max-w-full rounded-[12px]" />
           </div>
         </div>
@@ -149,7 +149,7 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
       return (
         <div className="grid min-h-0 gap-3">
           <MetadataRow label="Path" value={preview.absolutePath} />
-          <iframe title={preview.name} src={preview.dataUrl} className="min-h-[60vh] w-full rounded-[18px] border border-panel-border/35 bg-white" />
+          <iframe title={preview.name} src={preview.dataUrl} className="min-h-[60vh] w-full rounded-[18px] border border-border/35 bg-white" />
         </div>
       );
     }
@@ -163,7 +163,7 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
   }, [errorMessage, htmlContent, isLoading, preview, resourceId, surface]);
 
   return (
-    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
+    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
       <div className="min-h-0 flex-1 overflow-auto p-5">{body}</div>
     </section>
   );
@@ -171,9 +171,9 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
 
 function MetadataRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[16px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-3 py-2">
-      <div className="text-[10px] uppercase tracking-[0.14em] text-text-dim/72">{label}</div>
-      <div className="mt-1 break-all text-[12px] text-text-main/86">{value}</div>
+    <div className="rounded-[16px] border border-border/35 bg-muted px-3 py-2">
+      <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground/72">{label}</div>
+      <div className="mt-1 break-all text-[12px] text-foreground/86">{value}</div>
     </div>
   );
 }
@@ -192,15 +192,15 @@ function EmptyState({
       className={`flex h-full items-center justify-center rounded-[20px] border px-6 py-8 text-center ${
         tone === "error"
           ? "border-[rgba(255,153,102,0.24)] bg-[rgba(255,153,102,0.08)]"
-          : "border-panel-border/35 bg-black/10"
+          : "border-border/35 bg-black/10"
       }`}
     >
       <div className="max-w-[520px]">
-        <div className="mx-auto grid h-10 w-10 place-items-center rounded-full border border-panel-border/35 text-neon-green/80">
+        <div className="mx-auto grid h-10 w-10 place-items-center rounded-full border border-border/35 text-primary/80">
           {tone === "error" ? <FileWarning size={18} /> : <FileText size={18} />}
         </div>
-        <div className="mt-3 text-[16px] font-medium text-text-main">{title}</div>
-        <div className="mt-2 text-[12px] leading-6 text-text-muted/82">{detail}</div>
+        <div className="mt-3 text-[16px] font-medium text-foreground">{title}</div>
+        <div className="mt-2 text-[12px] leading-6 text-muted-foreground/82">{detail}</div>
       </div>
     </div>
   );

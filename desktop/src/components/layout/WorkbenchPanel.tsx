@@ -10,9 +10,9 @@ interface WorkbenchPanelProps {
 
 export function WorkbenchPanel({ onClose, children }: WorkbenchPanelProps) {
   return (
-    <section className="theme-shell soft-vignette neon-border relative flex h-[360px] min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
-      <header className="theme-header-surface flex shrink-0 items-center justify-between gap-3 border-b border-neon-green/15 px-4 py-3">
-        <div className="inline-flex h-10 items-center gap-2 rounded-[16px] border border-neon-green/45 bg-neon-green/10 px-3 text-[12px] text-neon-green">
+    <section className="theme-shell soft-vignette neon-border relative flex h-[360px] min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
+      <header className="theme-header-surface flex shrink-0 items-center justify-between gap-3 border-b border-primary/15 px-4 py-3">
+        <div className="inline-flex h-10 items-center gap-2 rounded-[16px] border border-primary/45 bg-primary/10 px-3 text-[12px] text-primary">
           <Globe size={14} />
           <span>Browser</span>
         </div>
@@ -21,7 +21,7 @@ export function WorkbenchPanel({ onClose, children }: WorkbenchPanelProps) {
           type="button"
           aria-label="Close workbench"
           onClick={onClose}
-          className="grid h-9 w-9 place-items-center rounded-[var(--theme-radius-pill)] border border-panel-border/45 text-text-muted/78 transition hover:border-neon-green/45 hover:text-neon-green"
+          className="grid h-9 w-9 place-items-center rounded-[9999px] border border-border/45 text-muted-foreground/78 transition hover:border-primary/45 hover:text-primary"
         >
           <X size={15} />
         </button>

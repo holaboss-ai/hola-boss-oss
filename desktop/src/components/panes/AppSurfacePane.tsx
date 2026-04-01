@@ -24,7 +24,7 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
   const ready = app && "ready" in app ? app.ready : false;
   const error = app && "error" in app && typeof app.error === "string" ? app.error : null;
   const summary = app?.summary ?? "";
-  const accentClassName = app && "accentClassName" in app ? app.accentClassName : "bg-text-dim/40";
+  const accentClassName = app && "accentClassName" in app ? app.accentClassName : "bg-muted-foreground/40";
 
   const viewLabel = view ? view.charAt(0).toUpperCase() + view.slice(1) : "Home";
   const addressText = resourceId
@@ -104,168 +104,186 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
   // Initializing state
   if (!ready && !error) {
     return (
-      <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden">
-        <div className="flex flex-col items-center gap-4">
-          <LoaderCircle size={20} className="animate-spin text-text-dim/60" />
-          <div className="text-[15px] font-medium text-text-main">{label}</div>
-          <div className="max-w-[300px] text-center text-[13px] leading-6 text-text-muted/70">
-            Initializing... This may take a few minutes on first setup.
+      <div className="flex h-full min-h-0 gap-2">
+        <section className="flex w-[260px] shrink-0 items-center justify-center rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+          <div className="max-w-[200px] text-center">
+            <LoaderCircle size={20} className="mx-auto animate-spin text-muted-foreground" />
+            <div className="mt-3 text-sm font-medium text-foreground">{label}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              Initializing... This may take a few minutes on first setup.
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+        <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+          <div className="text-center">
+            <LoaderCircle size={16} className="mx-auto animate-spin text-muted-foreground" />
+            <div className="mt-2 text-xs text-muted-foreground">Waiting for app...</div>
+          </div>
+        </section>
+      </div>
     );
   }
 
   // Error state
   if (!ready && error) {
     return (
-      <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden p-4">
-        <div className="flex items-center gap-2 text-rose-400">
-          <Activity size={14} />
-          <span className="text-[11px] uppercase tracking-[0.16em]">App error</span>
-        </div>
-        <div className="mt-3 text-[17px] font-medium text-text-main">{label}</div>
-        <div className="mt-4 rounded-[14px] border border-rose-400/25 bg-rose-400/8 p-4">
-          <div className="text-[13px] leading-6 text-text-main/80">{error}</div>
+      <div className="flex h-full min-h-0 gap-2">
+        <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 p-4 shadow-md backdrop-blur-sm">
+          <div className="flex items-center gap-2 text-destructive">
+            <Activity size={14} />
+            <span className="text-[10px] uppercase tracking-widest">App error</span>
+          </div>
+          <div className="mt-3 text-sm font-semibold text-foreground">{label}</div>
+          <div className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 p-3">
+            <div className="text-xs leading-5 text-foreground">{error}</div>
+          </div>
           <div className="mt-3 flex items-center gap-2">
             <button
               type="button"
               onClick={() => void handleRetry()}
               disabled={isRetrying}
-              className="inline-flex h-9 items-center gap-2 rounded-[12px] border border-panel-border/45 px-3 text-[12px] text-text-main transition-colors hover:bg-[var(--theme-hover-bg)] disabled:opacity-50"
+              className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-50"
             >
               {isRetrying ? <LoaderCircle size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-              <span>Retry</span>
+              Retry
             </button>
             <button
               type="button"
               onClick={() => void handleRemove()}
               disabled={isRemoving}
-              className="inline-flex h-9 items-center gap-2 rounded-[12px] border border-panel-border/45 px-3 text-[12px] text-text-muted transition-colors hover:text-text-main disabled:opacity-50"
+              className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
             >
               {isRemoving ? <LoaderCircle size={13} className="animate-spin" /> : <Trash2 size={13} />}
-              <span>Remove</span>
+              Remove
             </button>
           </div>
-        </div>
-        {actionError ? (
-          <div className="mt-3 rounded-[12px] border border-rose-400/25 bg-rose-400/8 px-3 py-2 text-[12px] text-text-main/80">
-            {actionError}
+          {actionError ? (
+            <div className="mt-2 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              {actionError}
+            </div>
+          ) : null}
+        </section>
+        <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+          <div className="text-center">
+            <Activity size={18} className="mx-auto text-destructive" />
+            <div className="mt-2 text-xs text-muted-foreground">App failed to start</div>
           </div>
-        ) : null}
-      </section>
+        </section>
+      </div>
     );
   }
 
-  // Ready state — left info + right browser preview
+  // Ready state — left info card + right browser card
   return (
-    <section className="relative flex h-full min-h-0 min-w-0 overflow-hidden">
-      {/* Left: App info */}
-      <div className="flex w-[280px] shrink-0 flex-col border-r border-panel-border/30 p-4">
-        <div className="flex items-center gap-3">
-          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${accentClassName}`} />
-          <span className="text-[15px] font-medium text-text-main">{label}</span>
+    <div className="flex h-full min-h-0 gap-2">
+      {/* Left: App info card */}
+      <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+        <div className="flex-1 p-4">
+          <div className="flex items-center gap-2.5">
+            <span className={`size-2.5 shrink-0 rounded-full ${accentClassName}`} />
+            <span className="text-sm font-semibold text-foreground">{label}</span>
+          </div>
+
+          {summary ? (
+            <p className="mt-2.5 text-xs leading-5 text-muted-foreground">{summary}</p>
+          ) : null}
+
+          <div className="mt-4 space-y-1.5">
+            <div className="flex items-center justify-between rounded-md border border-border bg-muted/50 px-3 py-2">
+              <span className="text-xs text-muted-foreground">Status</span>
+              <span className="flex items-center gap-1.5 text-xs font-medium text-primary">
+                <span className="size-1.5 rounded-full bg-primary" />
+                Running
+              </span>
+            </div>
+            <div className="flex items-center justify-between rounded-md border border-border bg-muted/50 px-3 py-2">
+              <span className="text-xs text-muted-foreground">View</span>
+              <span className="text-xs font-medium text-foreground">{viewLabel}</span>
+            </div>
+            {resourceId ? (
+              <div className="flex items-center justify-between rounded-md border border-border bg-muted/50 px-3 py-2">
+                <span className="text-xs text-muted-foreground">Resource</span>
+                <span className="max-w-[120px] truncate text-xs font-medium text-foreground">{resourceId}</span>
+              </div>
+            ) : null}
+          </div>
         </div>
 
-        {summary ? (
-          <p className="mt-3 text-[12px] leading-5 text-text-muted/75">{summary}</p>
-        ) : null}
+        {/* Actions pinned to bottom */}
+        <div className="border-t border-border p-3">
+          <div className="flex flex-col gap-1.5">
+            <button
+              type="button"
+              onClick={() => window.electronAPI.appSurface.reload(appId)}
+              className="flex h-8 items-center justify-center gap-2 rounded-md border border-border text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+            >
+              <RefreshCw size={12} />
+              Reload
+            </button>
+            {confirmRemove ? (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => void handleRemove()}
+                  disabled={isRemoving}
+                  className="flex h-8 flex-1 items-center justify-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 text-xs text-destructive transition-colors hover:bg-destructive/15 disabled:opacity-50"
+                >
+                  {isRemoving ? "Removing..." : "Confirm"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmRemove(false)}
+                  className="flex h-8 flex-1 items-center justify-center rounded-md border border-border text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmRemove(true)}
+                className="flex h-8 items-center justify-center gap-2 rounded-md border border-border text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              >
+                <Trash2 size={12} />
+                Remove app
+              </button>
+            )}
+          </div>
 
-        <div className="mt-4 space-y-2">
-          <div className="flex items-center justify-between rounded-[10px] border border-panel-border/30 bg-[var(--theme-subtle-bg)] px-3 py-2">
-            <span className="text-[11px] text-text-dim/70">Status</span>
-            <span className="flex items-center gap-1.5 text-[11px] text-neon-green">
-              <span className="h-1.5 w-1.5 rounded-full bg-neon-green" />
-              Running
-            </span>
-          </div>
-          <div className="flex items-center justify-between rounded-[10px] border border-panel-border/30 bg-[var(--theme-subtle-bg)] px-3 py-2">
-            <span className="text-[11px] text-text-dim/70">View</span>
-            <span className="text-[11px] text-text-main">{viewLabel}</span>
-          </div>
-          {resourceId ? (
-            <div className="flex items-center justify-between rounded-[10px] border border-panel-border/30 bg-[var(--theme-subtle-bg)] px-3 py-2">
-              <span className="text-[11px] text-text-dim/70">Resource</span>
-              <span className="max-w-[140px] truncate text-[11px] text-text-main">{resourceId}</span>
+          {actionError ? (
+            <div className="mt-2 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
+              {actionError}
             </div>
           ) : null}
         </div>
+      </section>
 
-        {/* Actions */}
-        <div className="mt-auto flex flex-col gap-2 pt-4">
-          <button
-            type="button"
-            onClick={() => window.electronAPI.appSurface.reload(appId)}
-            className="flex h-9 items-center justify-center gap-2 rounded-[10px] border border-panel-border/35 text-[12px] text-text-muted transition-colors hover:bg-[var(--theme-hover-bg)] hover:text-text-main"
-          >
-            <RefreshCw size={12} />
-            <span>Reload</span>
-          </button>
-          {confirmRemove ? (
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => void handleRemove()}
-                disabled={isRemoving}
-                className="flex h-9 flex-1 items-center justify-center gap-2 rounded-[10px] border border-rose-400/30 bg-rose-400/10 text-[12px] text-rose-400 transition-colors hover:bg-rose-400/16 disabled:opacity-50"
-              >
-                {isRemoving ? "Removing..." : "Confirm"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfirmRemove(false)}
-                className="flex h-9 flex-1 items-center justify-center rounded-[10px] border border-panel-border/35 text-[12px] text-text-muted transition-colors hover:text-text-main"
-              >
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setConfirmRemove(true)}
-              className="flex h-9 items-center justify-center gap-2 rounded-[10px] border border-panel-border/35 text-[12px] text-text-muted transition-colors hover:bg-[var(--theme-hover-bg)] hover:text-text-main"
-            >
-              <Trash2 size={12} />
-              <span>Remove app</span>
-            </button>
-          )}
-        </div>
-
-        {actionError ? (
-          <div className="mt-2 rounded-[10px] border border-rose-400/25 bg-rose-400/8 px-3 py-2 text-[11px] text-rose-400">
-            {actionError}
+      {/* Right: Browser card */}
+      <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+        {/* Browser chrome bar */}
+        <div className="flex items-center gap-2.5 border-b border-border px-3 py-2">
+          <div className="flex items-center gap-1.5">
+            <span className="size-[10px] rounded-full bg-[#ff5f57]" />
+            <span className="size-[10px] rounded-full bg-[#febc2e]" />
+            <span className="size-[10px] rounded-full bg-[#28c840]" />
           </div>
-        ) : null}
-      </div>
-
-      {/* Right: Browser preview */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        {/* Browser chrome */}
-        <div className="flex items-center gap-2 border-b border-panel-border/30 px-3 py-2">
-          <div className="flex items-center gap-1.5 pr-1">
-            <span className="h-[10px] w-[10px] rounded-full bg-[#ff5f57]/80" />
-            <span className="h-[10px] w-[10px] rounded-full bg-[#febc2e]/80" />
-            <span className="h-[10px] w-[10px] rounded-full bg-[#28c840]/80" />
-          </div>
-          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-[8px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-3 py-1">
-            <Globe size={11} className="shrink-0 text-text-dim/45" />
-            <span className="truncate text-[11px] text-text-muted/60">{addressText}</span>
+          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1">
+            <Globe size={11} className="shrink-0 text-muted-foreground" />
+            <span className="truncate text-[11px] text-muted-foreground">{addressText}</span>
           </div>
         </div>
 
-        {/* Viewport — BrowserView renders on top */}
-        <div className="relative min-h-0 flex-1 p-2 pb-2 pr-2">
-          <div className="relative h-full w-full overflow-hidden rounded-[12px] border border-panel-border/25">
-            <div ref={viewportRef} className="h-full w-full" />
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-[12px]">
-              <div className="flex flex-col items-center gap-2">
-                <LoaderCircle size={16} className="animate-spin text-text-dim/40" />
-                <span className="text-[12px] text-text-dim/50">Loading {label}...</span>
-              </div>
+        {/* Viewport — inset so native BrowserView doesn't cover card corners */}
+        <div className="relative min-h-0 flex-1 p-1.5 pb-1.5">
+          <div ref={viewportRef} className="h-full w-full rounded-lg" />
+          <div className="pointer-events-none absolute inset-1.5 flex items-center justify-center rounded-lg">
+            <div className="flex flex-col items-center gap-2">
+              <LoaderCircle size={16} className="animate-spin text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Loading {label}...</span>
             </div>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
+    </div>
   );
 }

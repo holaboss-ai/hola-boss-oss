@@ -78,8 +78,8 @@ export function OperationsDrawer({
   }, [outputs, selectedOutputId]);
 
   return (
-    <aside className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-[360px] max-w-[420px] flex-col overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
-      <header className="theme-header-surface flex shrink-0 items-center justify-between gap-3 border-b border-neon-green/15 px-4 py-3">
+    <aside className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-[360px] max-w-[420px] flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
+      <header className="theme-header-surface flex shrink-0 items-center justify-between gap-3 border-b border-primary/15 px-4 py-3">
         <div className="flex items-center gap-2">
           <DrawerTabButton active={activeTab === "inbox"} icon={<Bell size={14} />} label="Inbox" onClick={() => onTabChange("inbox")} />
           <DrawerTabButton
@@ -146,8 +146,8 @@ function DrawerTabButton({
       onClick={onClick}
       className={`inline-flex h-10 items-center gap-2 rounded-[16px] border px-3 text-[12px] transition ${
         active
-          ? "border-neon-green/45 bg-neon-green/10 text-neon-green"
-          : "border-panel-border/45 text-text-muted hover:border-neon-green/35 hover:text-text-main"
+          ? "border-primary/45 bg-primary/10 text-primary"
+          : "border-border/45 text-muted-foreground hover:border-primary/35 hover:text-foreground"
       }`}
     >
       {icon}
@@ -184,11 +184,11 @@ function InboxPanel({
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-panel-border/35 px-4 py-4">
+      <div className="shrink-0 border-b border-border/35 px-4 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-[0.16em] text-neon-green/76">Remote proposals</div>
-            <div className="mt-1 text-[12px] leading-6 text-text-main/88">
+            <div className="text-[10px] uppercase tracking-[0.16em] text-primary/76">Remote proposals</div>
+            <div className="mt-1 text-[12px] leading-6 text-foreground/88">
               Review backend-delivered task ideas and either queue them immediately or dismiss them at the source.
             </div>
           </div>
@@ -197,7 +197,7 @@ function InboxPanel({
               type="button"
               onClick={onRefreshProposals}
               disabled={!hasWorkspace || isLoadingProposals}
-              className="inline-flex h-8 items-center justify-center gap-2 rounded-[14px] border border-panel-border/45 px-3 text-[11px] text-text-muted transition hover:border-neon-green/35 hover:text-text-main disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-8 items-center justify-center gap-2 rounded-[14px] border border-border/45 px-3 text-[11px] text-muted-foreground transition hover:border-primary/35 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isLoadingProposals ? <Loader2 size={12} className="animate-spin" /> : <RefreshCcw size={12} />}
               <span>Refresh</span>
@@ -206,7 +206,7 @@ function InboxPanel({
               type="button"
               onClick={onTriggerProposal}
               disabled={!hasWorkspace || isTriggeringProposal}
-              className="inline-flex h-8 items-center justify-center gap-2 rounded-[14px] border border-neon-green/40 bg-neon-green/10 px-3 text-[11px] text-neon-green transition hover:bg-neon-green/14 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-8 items-center justify-center gap-2 rounded-[14px] border border-primary/40 bg-primary/10 px-3 text-[11px] text-primary transition hover:bg-primary/14 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isTriggeringProposal ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
               <span>Trigger</span>
@@ -215,7 +215,7 @@ function InboxPanel({
         </div>
 
         {proposalStatusMessage ? (
-          <div className="theme-subtle-surface mt-3 rounded-[14px] border border-panel-border/35 px-3 py-2 text-[11px] text-text-muted">
+          <div className="theme-subtle-surface mt-3 rounded-[14px] border border-border/35 px-3 py-2 text-[11px] text-muted-foreground">
             {proposalStatusMessage}
           </div>
         ) : null}
@@ -231,25 +231,25 @@ function InboxPanel({
             {proposals.map((proposal) => {
               const isActing = proposalAction?.proposalId === proposal.proposal_id;
               return (
-                <article key={proposal.proposal_id} className="theme-subtle-surface rounded-[18px] border border-panel-border/35 px-4 py-4">
+                <article key={proposal.proposal_id} className="theme-subtle-surface rounded-[18px] border border-border/35 px-4 py-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
-                      <div className="text-[12px] font-medium text-text-main">{proposal.task_name}</div>
-                      <div className="mt-2 whitespace-pre-wrap text-[11px] leading-6 text-text-muted">{proposal.task_prompt}</div>
+                      <div className="text-[12px] font-medium text-foreground">{proposal.task_name}</div>
+                      <div className="mt-2 whitespace-pre-wrap text-[11px] leading-6 text-muted-foreground">{proposal.task_prompt}</div>
                     </div>
-                    <div className="shrink-0 rounded-full border border-panel-border/45 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-text-dim">
+                    <div className="shrink-0 rounded-full border border-border/45 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
                       {proposal.state}
                     </div>
                   </div>
 
-                  <div className="mt-3 text-[10px] text-text-dim/78">{formatTimestamp(proposal.created_at)}</div>
+                  <div className="mt-3 text-[10px] text-muted-foreground/78">{formatTimestamp(proposal.created_at)}</div>
 
                   <div className="mt-4 flex flex-wrap gap-2">
                     <button
                       type="button"
                       onClick={() => onAcceptProposal(proposal)}
                       disabled={isActing}
-                      className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-neon-green/40 bg-neon-green/10 px-3 text-[11px] text-neon-green transition hover:bg-neon-green/14 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-primary/40 bg-primary/10 px-3 text-[11px] text-primary transition hover:bg-primary/14 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {isActing && proposalAction?.action === "accept" ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
                       <span>Accept</span>
@@ -258,7 +258,7 @@ function InboxPanel({
                       type="button"
                       onClick={() => onDismissProposal(proposal)}
                       disabled={isActing}
-                      className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-panel-border/45 px-3 text-[11px] text-text-muted transition hover:border-[rgba(255,153,102,0.3)] hover:text-[rgba(255,212,189,0.92)] disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-border/45 px-3 text-[11px] text-muted-foreground transition hover:border-[rgba(255,153,102,0.3)] hover:text-[rgba(255,212,189,0.92)] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {isActing && proposalAction?.action === "dismiss" ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
                       <span>Dismiss</span>
@@ -277,10 +277,10 @@ function InboxPanel({
 function RunningPanel() {
   return (
     <div className="flex h-full items-center justify-center p-6">
-      <div className="theme-subtle-surface max-w-[260px] rounded-[20px] border border-panel-border/35 px-5 py-5 text-center">
-        <div className="text-[11px] uppercase tracking-[0.16em] text-neon-green/76">Running</div>
-        <div className="mt-2 text-[15px] font-medium text-text-main">Execution stream coming next</div>
-        <div className="mt-2 text-[12px] leading-6 text-text-muted/82">
+      <div className="theme-subtle-surface max-w-[260px] rounded-[20px] border border-border/35 px-5 py-5 text-center">
+        <div className="text-[11px] uppercase tracking-[0.16em] text-primary/76">Running</div>
+        <div className="mt-2 text-[15px] font-medium text-foreground">Execution stream coming next</div>
+        <div className="mt-2 text-[12px] leading-6 text-muted-foreground/82">
           This panel is reserved for active runs. For now it stays as a placeholder while Inbox and Outputs take over the right rail.
         </div>
       </div>
@@ -303,9 +303,9 @@ function OutputsPanel({
 }) {
   return (
     <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]">
-      <div className="shrink-0 border-b border-panel-border/35 px-4 py-4">
-        <div className="text-[10px] uppercase tracking-[0.16em] text-neon-green/76">Outputs</div>
-        <div className="mt-1 text-[12px] leading-6 text-text-main/88">
+      <div className="shrink-0 border-b border-border/35 px-4 py-4">
+        <div className="text-[10px] uppercase tracking-[0.16em] text-primary/76">Outputs</div>
+        <div className="mt-1 text-[12px] leading-6 text-foreground/88">
           Latest operator-side events from the desktop surface, including proposal actions and workflow handoffs.
         </div>
       </div>
@@ -316,7 +316,7 @@ function OutputsPanel({
         </div>
       ) : (
         <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)]">
-          <div className="shrink-0 border-b border-panel-border/35 px-3 py-3">
+          <div className="shrink-0 border-b border-border/35 px-3 py-3">
             <div className="flex gap-2 overflow-x-auto pb-1">
               {outputs.map((entry) => (
                 <button
@@ -326,11 +326,11 @@ function OutputsPanel({
                   className={`min-w-[120px] rounded-[14px] border px-3 py-2 text-left transition ${
                     selectedOutput?.id === entry.id
                       ? outputToneClasses(entry.tone, true)
-                      : "theme-subtle-surface border-panel-border/35 text-text-main/86 hover:border-neon-green/30"
+                      : "theme-subtle-surface border-border/35 text-foreground/86 hover:border-primary/30"
                   }`}
                 >
                   <div className="truncate text-[11px] font-medium">{entry.title}</div>
-                  <div className="mt-1 text-[10px] text-text-dim/78">{formatTimestamp(entry.createdAt)}</div>
+                  <div className="mt-1 text-[10px] text-muted-foreground/78">{formatTimestamp(entry.createdAt)}</div>
                 </button>
               ))}
             </div>
@@ -339,22 +339,22 @@ function OutputsPanel({
           <div className="min-h-0 overflow-y-auto p-4">
             {selectedOutput ? (
               <article className={`rounded-[20px] border px-4 py-4 ${outputToneClasses(selectedOutput.tone, false)}`}>
-                <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/75">
+                <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/75">
                   {selectedOutput.renderer.type === "app" ? "Workspace app output" : "Internal output"}
                 </div>
-                <div className="mt-2 text-[16px] font-medium text-text-main">{selectedOutput.title}</div>
-                <div className="mt-2 whitespace-pre-wrap text-[12px] leading-6 text-text-main/86">{selectedOutput.detail}</div>
+                <div className="mt-2 text-[16px] font-medium text-foreground">{selectedOutput.title}</div>
+                <div className="mt-2 whitespace-pre-wrap text-[12px] leading-6 text-foreground/86">{selectedOutput.detail}</div>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <button
                     type="button"
                     onClick={() => onOpenOutput(selectedOutput)}
-                    className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-neon-green/40 bg-neon-green/10 px-3 text-[11px] text-neon-green transition hover:bg-neon-green/14"
+                    className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-primary/40 bg-primary/10 px-3 text-[11px] text-primary transition hover:bg-primary/14"
                   >
                     <ChevronRight size={12} />
                     <span>{openOutputLabel(selectedOutput, installedApps)}</span>
                   </button>
                 </div>
-                <div className="mt-4 text-[10px] text-text-dim/78">{formatTimestamp(selectedOutput.createdAt)}</div>
+                <div className="mt-4 text-[10px] text-muted-foreground/78">{formatTimestamp(selectedOutput.createdAt)}</div>
               </article>
             ) : null}
           </div>
@@ -384,7 +384,7 @@ function openOutputLabel(entry: OperationsOutputEntry, installedApps: WorkspaceI
 
 function EmptyNotice({ message }: { message: string }) {
   return (
-    <div className="theme-subtle-surface rounded-[18px] border border-panel-border/35 px-4 py-5 text-[12px] leading-6 text-text-dim/78">
+    <div className="theme-subtle-surface rounded-[18px] border border-border/35 px-4 py-5 text-[12px] leading-6 text-muted-foreground/78">
       {message}
     </div>
   );
@@ -401,8 +401,8 @@ function formatTimestamp(value: string): string {
 function outputToneClasses(tone: OperationsOutputEntry["tone"], compact: boolean): string {
   if (tone === "success") {
     return compact
-      ? "border-neon-green/40 bg-neon-green/10 text-neon-green"
-      : "border-neon-green/30 bg-neon-green/10";
+      ? "border-primary/40 bg-primary/10 text-primary"
+      : "border-primary/30 bg-primary/10";
   }
   if (tone === "error") {
     return compact
@@ -410,6 +410,6 @@ function outputToneClasses(tone: OperationsOutputEntry["tone"], compact: boolean
       : "border-[rgba(255,153,102,0.24)] bg-[rgba(255,153,102,0.08)]";
   }
   return compact
-    ? "border-panel-border/45 bg-[var(--theme-subtle-bg)] text-text-main/88"
-    : "border-panel-border/35 bg-[var(--theme-subtle-bg)]";
+    ? "border-border/45 bg-muted text-foreground/88"
+    : "border-border/35 bg-muted";
 }

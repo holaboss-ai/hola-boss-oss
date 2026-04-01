@@ -3,16 +3,20 @@ import { CircleHelp, ExternalLink, Globe, Info, Palette, User2, X } from "lucide
 import { AuthPanel } from "@/components/auth/AuthPanel";
 
 const THEME_SWATCHES: Record<string, [string, string, string]> = {
-  holaboss: ["#fff7f2", "#f75a54", "#d7dde8"],
-  emerald: ["#081b15", "#3ddc97", "#123d31"],
-  cobalt: ["#0a1528", "#5aa3ff", "#1e3f72"],
-  ember: ["#20110b", "#ff8c42", "#5b2c16"],
-  glacier: ["#edf8ff", "#59b8ff", "#c8e8ff"],
-  mono: ["#101010", "#d6d6d6", "#454545"],
-  claude: ["#f8f4ec", "#d97745", "#ead7b8"],
-  slate: ["#111827", "#94a3b8", "#334155"],
-  paper: ["#fcfbf7", "#8a5a44", "#e2d7c8"],
-  graphite: ["#15171c", "#9ca3af", "#2a2f37"]
+  "amber-minimal-dark": ["#1a1814", "#e8853a", "#2e2920"],
+  "amber-minimal-light": ["#ffffff", "#e8853a", "#fef5ec"],
+  "cosmic-night-dark": ["#1a1035", "#a78bfa", "#352a5c"],
+  "cosmic-night-light": ["#f5f3ff", "#7c3aed", "#e4dff7"],
+  "claude-dark": ["#2c2520", "#c0825a", "#3d332e"],
+  "claude-light": ["#faf6ef", "#c0825a", "#ebe3d2"],
+  "clean-slate-dark": ["#1a1d25", "#6d8cf5", "#2d3340"],
+  "clean-slate-light": ["#f8f9fc", "#5b72e0", "#e4e7f0"],
+  "bold-tech-dark": ["#0f0b1a", "#a855f7", "#261e3d"],
+  "bold-tech-light": ["#ffffff", "#8b5cf6", "#f0ecfb"],
+  "catppuccin-dark": ["#1e1e2e", "#cba6f7", "#313244"],
+  "catppuccin-light": ["#eff1f5", "#8839ef", "#ccd0da"],
+  "bubblegum-dark": ["#1f2937", "#f9a8d4", "#374151"],
+  "bubblegum-light": ["#fef2f8", "#ec4899", "#fce7f3"],
 };
 
 interface SettingsDialogProps {
@@ -76,8 +80,19 @@ function subtitleForSection(section: UiSettingsPaneSection): string {
   }
 }
 
+const THEME_DISPLAY_NAMES: Record<string, string> = {
+  "amber-minimal-dark": "Default Dark",
+  "amber-minimal-light": "Default Light",
+};
+
 function prettifyThemeLabel(theme: string): string {
-  return theme.charAt(0).toUpperCase() + theme.slice(1);
+  if (THEME_DISPLAY_NAMES[theme]) {
+    return THEME_DISPLAY_NAMES[theme];
+  }
+  return theme
+    .split("-")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
 }
 
 export function SettingsDialog({
@@ -124,16 +139,16 @@ export function SettingsDialog({
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        className="theme-shell soft-vignette neon-border pointer-events-auto relative z-10 grid max-h-[min(760px,calc(100vh-40px))] w-[min(980px,calc(100vw-32px))] min-w-0 overflow-hidden rounded-[28px] shadow-card lg:grid-cols-[240px_minmax(0,1fr)]"
+        className="theme-shell soft-vignette neon-border pointer-events-auto relative z-10 grid max-h-[min(760px,calc(100vh-40px))] w-[min(980px,calc(100vw-32px))] min-w-0 overflow-hidden rounded-[28px] shadow-lg grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[240px_minmax(0,1fr)] lg:grid-rows-1"
       >
-        <aside className="theme-header-surface border-b border-panel-border/35 p-4 lg:border-b-0 lg:border-r">
+        <aside className="theme-header-surface border-b border-border/35 p-4 lg:border-b-0 lg:border-r">
           <div className="flex items-center gap-3">
-            <div className="grid h-11 w-11 place-items-center rounded-[16px] border border-neon-green/30 bg-neon-green/10 text-neon-green">
+            <div className="grid h-11 w-11 place-items-center rounded-[16px] border border-primary/30 bg-primary/10 text-primary">
               <Palette size={18} />
             </div>
             <div>
-              <div className="text-[12px] uppercase tracking-[0.18em] text-text-dim/72">Holaboss</div>
-              <div className="mt-1 text-[18px] font-semibold text-text-main">Desktop Settings</div>
+              <div className="text-[12px] uppercase tracking-[0.18em] text-muted-foreground/72">Holaboss</div>
+              <div className="mt-1 text-[18px] font-semibold text-foreground">Desktop Settings</div>
             </div>
           </div>
 
@@ -147,22 +162,22 @@ export function SettingsDialog({
                   onClick={() => onSectionChange(id)}
                   className={`flex items-start gap-3 rounded-[18px] border px-3.5 py-3 text-left transition ${
                     active
-                      ? "border-neon-green/40 bg-neon-green/10 text-text-main shadow-[0_12px_36px_rgba(0,0,0,0.16)]"
-                      : "border-transparent text-text-muted hover:border-panel-border/45 hover:bg-[var(--theme-hover-bg)] hover:text-text-main"
+                      ? "border-primary/40 bg-primary/10 text-foreground shadow-[0_12px_36px_rgba(0,0,0,0.16)]"
+                      : "border-transparent text-muted-foreground hover:border-border/45 hover:bg-accent hover:text-foreground"
                   }`}
                 >
                   <span
                     className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-[12px] border ${
                       active
-                        ? "border-neon-green/35 bg-neon-green/12 text-neon-green"
-                        : "border-panel-border/35 text-text-dim/80"
+                        ? "border-primary/35 bg-primary/12 text-primary"
+                        : "border-border/35 text-muted-foreground/80"
                     }`}
                   >
                     <Icon size={15} />
                   </span>
                   <span className="min-w-0">
                     <span className="block text-[13px] font-medium">{label}</span>
-                    <span className="mt-1 block text-[11px] leading-5 text-text-dim/72">{description}</span>
+                    <span className="mt-1 block text-[11px] leading-5 text-muted-foreground/72">{description}</span>
                   </span>
                 </button>
               );
@@ -171,24 +186,24 @@ export function SettingsDialog({
 
         </aside>
 
-        <section className="min-h-0 min-w-0 overflow-hidden">
-          <header className="theme-header-surface flex items-start justify-between gap-4 border-b border-panel-border/35 px-5 py-4">
+        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+          <header className="theme-header-surface flex items-start justify-between gap-4 border-b border-border/35 px-5 py-4">
             <div>
-              <div className="text-[20px] font-semibold text-text-main">{titleForSection(activeSection)}</div>
-              <div className="mt-1 text-[12px] text-text-dim/72">{subtitleForSection(activeSection)}</div>
+              <div className="text-[20px] font-semibold text-foreground">{titleForSection(activeSection)}</div>
+              <div className="mt-1 text-[12px] text-muted-foreground/72">{subtitleForSection(activeSection)}</div>
             </div>
 
             <button
               type="button"
               onClick={onClose}
               aria-label="Close settings"
-              className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-panel-border/45 text-text-muted transition hover:border-neon-green/35 hover:text-text-main"
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-border/45 text-muted-foreground transition hover:border-primary/35 hover:text-foreground"
             >
               <X size={16} />
             </button>
           </header>
 
-          <div className="min-h-0 overflow-y-auto px-5 py-5">
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
             {activeSection === "account" ? (
               <div className="max-w-[560px]">
                 <AuthPanel />
@@ -197,9 +212,9 @@ export function SettingsDialog({
 
             {activeSection === "settings" ? (
               <div className="grid gap-6">
-                <section className="theme-subtle-surface rounded-[24px] border border-panel-border/40 p-5">
-                  <div className="text-[11px] uppercase tracking-[0.18em] text-text-dim/68">Appearance</div>
-                  <div className="mt-2 max-w-[640px] text-[13px] leading-6 text-text-muted/86">
+                <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground/68">Appearance</div>
+                  <div className="mt-2 max-w-[640px] text-[13px] leading-6 text-muted-foreground/86">
                     Choose the global desktop theme for shell surfaces, overlays, controls, and the account menu.
                   </div>
 
@@ -214,11 +229,11 @@ export function SettingsDialog({
                           onClick={() => onThemeChange(themeOption)}
                           className={`rounded-[20px] border p-3 text-left transition ${
                             selected
-                              ? "border-neon-green/45 bg-neon-green/10 shadow-[0_14px_38px_rgba(0,0,0,0.18)]"
-                              : "border-panel-border/40 bg-black/10 hover:border-neon-green/28 hover:bg-[var(--theme-hover-bg)]"
+                              ? "border-primary/45 bg-primary/10 shadow-[0_14px_38px_rgba(0,0,0,0.18)]"
+                              : "border-border/40 bg-black/10 hover:border-primary/28 hover:bg-accent"
                           }`}
                         >
-                          <div className="rounded-[16px] border border-panel-border/30 bg-panel-bg/80 p-3">
+                          <div className="rounded-[16px] border border-border/30 bg-card/80 p-3">
                             <div className="grid grid-cols-[1.2fr_0.9fr] gap-2">
                               <div
                                 className="h-16 rounded-[14px] border border-white/10"
@@ -237,12 +252,12 @@ export function SettingsDialog({
                             </div>
                           </div>
                           <div className="mt-3 flex items-center justify-between gap-3">
-                            <span className="text-[13px] font-medium text-text-main">{prettifyThemeLabel(themeOption)}</span>
+                            <span className="text-[13px] font-medium text-foreground">{prettifyThemeLabel(themeOption)}</span>
                             <span
                               className={`rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] ${
                                 selected
-                                  ? "border-neon-green/40 bg-neon-green/12 text-neon-green"
-                                  : "border-panel-border/35 text-text-dim/68"
+                                  ? "border-primary/40 bg-primary/12 text-primary"
+                                  : "border-border/35 text-muted-foreground/68"
                               }`}
                             >
                               {selected ? "Active" : "Preview"}
@@ -258,9 +273,9 @@ export function SettingsDialog({
 
             {activeSection === "about" ? (
               <div className="grid max-w-[720px] gap-4">
-                <section className="theme-subtle-surface rounded-[24px] border border-panel-border/40 p-5">
-                  <div className="text-[11px] uppercase tracking-[0.18em] text-text-dim/68">Links</div>
-                  <div className="mt-2 text-[13px] leading-6 text-text-muted/84">
+                <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground/68">Links</div>
+                  <div className="mt-2 text-[13px] leading-6 text-muted-foreground/84">
                     Open the main product site, OSS docs, or support issue tracker in your default browser.
                   </div>
 
@@ -292,18 +307,18 @@ export function SettingsDialog({
                         key={id}
                         type="button"
                         onClick={() => onOpenExternalUrl(href)}
-                        className="flex items-center justify-between gap-3 rounded-[18px] border border-panel-border/40 bg-black/10 px-4 py-3 text-left transition hover:border-neon-green/30 hover:bg-[var(--theme-hover-bg)]"
+                        className="flex items-center justify-between gap-3 rounded-[18px] border border-border/40 bg-black/10 px-4 py-3 text-left transition hover:border-primary/30 hover:bg-accent"
                       >
                         <span className="flex min-w-0 items-center gap-3">
-                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-panel-border/35 text-text-muted/82">
+                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-border/35 text-muted-foreground/82">
                             <Icon size={16} />
                           </span>
                           <span className="min-w-0">
-                            <span className="block text-[13px] font-medium text-text-main">{label}</span>
-                            <span className="mt-1 block text-[11px] leading-5 text-text-dim/72">{detail}</span>
+                            <span className="block text-[13px] font-medium text-foreground">{label}</span>
+                            <span className="mt-1 block text-[11px] leading-5 text-muted-foreground/72">{detail}</span>
                           </span>
                         </span>
-                        <ExternalLink size={15} className="shrink-0 text-text-dim/70" />
+                        <ExternalLink size={15} className="shrink-0 text-muted-foreground/70" />
                       </button>
                     ))}
                   </div>

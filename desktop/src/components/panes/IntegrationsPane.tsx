@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Loader2, Plus, Search } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 interface Toolkit {
@@ -14,7 +14,9 @@ interface Toolkit {
 export function IntegrationsPane() {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const [toolkits, setToolkits] = useState<Toolkit[]>([]);
-  const [connections, setConnections] = useState<IntegrationConnectionPayload[]>([]);
+  const [connections, setConnections] = useState<
+    IntegrationConnectionPayload[]
+  >([]);
   const [isLoading, setIsLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -49,7 +51,10 @@ export function IntegrationsPane() {
         const toolkit = toolkits.find((t) => {
           const providerSlug = t.slug.toLowerCase();
           const connProvider = conn.provider_id.toLowerCase();
-          return providerSlug === connProvider || PROVIDER_TO_TOOLKIT_SLUG[connProvider] === providerSlug;
+          return (
+            providerSlug === connProvider ||
+            PROVIDER_TO_TOOLKIT_SLUG[connProvider] === providerSlug
+          );
         });
         if (toolkit) {
           slugs.add(toolkit.slug);
@@ -71,7 +76,7 @@ export function IntegrationsPane() {
 
   const connectedToolkits = useMemo(
     () => toolkits.filter((t) => connectedSlugs.has(t.slug)),
-    [toolkits, connectedSlugs]
+    [toolkits, connectedSlugs],
   );
 
   const filteredToolkits = useMemo(() => {
@@ -79,7 +84,9 @@ export function IntegrationsPane() {
     if (query.trim()) {
       const q = query.toLowerCase();
       list = list.filter(
-        (t) => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q)
+        (t) =>
+          t.name.toLowerCase().includes(q) ||
+          t.description.toLowerCase().includes(q),
       );
     }
     if (categoryFilter !== "all") {
@@ -116,7 +123,7 @@ export function IntegrationsPane() {
       for (let i = 0; i < 100; i++) {
         await new Promise((r) => setTimeout(r, 3000));
         const status = await window.electronAPI.workspace.composioAccountStatus(
-          link.connected_account_id
+          link.connected_account_id,
         );
         if (status.status === "ACTIVE") {
           await window.electronAPI.workspace.composioFinalize({
@@ -133,7 +140,9 @@ export function IntegrationsPane() {
       }
       setConnectStatus("Connection timed out.");
     } catch (error) {
-      setConnectStatus(error instanceof Error ? error.message : "Connection failed.");
+      setConnectStatus(
+        error instanceof Error ? error.message : "Connection failed.",
+      );
     } finally {
       setConnectingSlug(null);
     }
@@ -141,39 +150,42 @@ export function IntegrationsPane() {
 
   if (isLoading) {
     return (
-      <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
-        <Loader2 size={18} className="animate-spin text-text-dim/60" />
+      <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+        <Loader2 size={18} className="animate-spin text-muted-foreground" />
       </section>
     );
   }
 
   return (
-    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
+    <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
       <div className="relative min-h-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-5xl px-6 py-6">
           {/* Header */}
-          <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-text-main">
+          <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-foreground">
             Integrations
           </h1>
-          <p className="mt-1 text-[13px] text-text-muted/80">
+          <p className="mt-1 text-[13px] text-muted-foreground">
             Connect your accounts to use them in workspaces.
           </p>
 
           {/* Search + Filter */}
           <div className="mt-5 flex items-center gap-3">
             <div className="relative flex-1">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-dim/50" />
+              <Search
+                size={14}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/50"
+              />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search integrations..."
-                className="h-9 w-full rounded-[10px] border border-panel-border/40 bg-panel-bg/60 pl-8 pr-3 text-[13px] text-text-main outline-none placeholder:text-text-dim/40"
+                className="h-9 w-full rounded-lg border border-border bg-muted pl-8 pr-3 text-[13px] text-foreground outline-none placeholder:text-muted-foreground/50"
               />
             </div>
             <select
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
-              className="h-9 rounded-[10px] border border-panel-border/40 bg-panel-bg/60 px-3 text-[13px] text-text-main outline-none"
+              className="h-9 rounded-lg border border-border bg-muted px-3 text-[13px] text-foreground outline-none"
             >
               <option value="all">All</option>
               {categories.map((cat) => (
@@ -187,12 +199,18 @@ export function IntegrationsPane() {
           {/* Connected */}
           {connectedToolkits.length > 0 ? (
             <div className="mt-6">
-              <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-text-dim/70">
+              <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
                 Connected
               </h2>
               <div className="mt-3 grid grid-cols-2 gap-2">
                 {connectedToolkits.map((t) => (
-                  <ToolkitRow key={t.slug} toolkit={t} connected onConnect={() => void handleConnect(t)} connecting={connectingSlug === t.slug} />
+                  <ToolkitRow
+                    key={t.slug}
+                    toolkit={t}
+                    connected
+                    onConnect={() => void handleConnect(t)}
+                    connecting={connectingSlug === t.slug}
+                  />
                 ))}
               </div>
             </div>
@@ -200,25 +218,33 @@ export function IntegrationsPane() {
 
           {/* Status message */}
           {connectStatus ? (
-            <div className="mt-4 text-[12px] text-text-muted">{connectStatus}</div>
+            <div className="mt-4 text-[12px] text-muted-foreground">
+              {connectStatus}
+            </div>
           ) : null}
 
           {/* Available — grouped by category */}
           {groupedToolkits.map(([category, items]) => (
             <div key={category} className="mt-6">
-              <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-text-dim/70">
+              <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
                 {category.charAt(0).toUpperCase() + category.slice(1)}
               </h2>
               <div className="mt-3 grid grid-cols-2 gap-2">
                 {items.map((t) => (
-                  <ToolkitRow key={t.slug} toolkit={t} connected={false} onConnect={() => void handleConnect(t)} connecting={connectingSlug === t.slug} />
+                  <ToolkitRow
+                    key={t.slug}
+                    toolkit={t}
+                    connected={false}
+                    onConnect={() => void handleConnect(t)}
+                    connecting={connectingSlug === t.slug}
+                  />
                 ))}
               </div>
             </div>
           ))}
 
           {filteredToolkits.length === 0 && connectedToolkits.length === 0 ? (
-            <div className="mt-12 text-center text-[13px] text-text-muted/60">
+            <div className="mt-12 text-center text-[13px] text-muted-foreground">
               No integrations found.
             </div>
           ) : null}
@@ -240,13 +266,13 @@ function ToolkitRow({
   connecting: boolean;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-[12px] border border-panel-border/30 px-3 py-2.5 transition-colors hover:bg-panel-bg/40">
+    <div className="flex items-center gap-3 rounded-xl border border-border px-3 py-2.5 transition-colors hover:bg-muted">
       {/* Logo */}
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[8px] border border-panel-border/20 bg-panel-bg/50">
+      <div className="flex size-10 p-1.5 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-background">
         {toolkit.logo ? (
-          <img src={toolkit.logo} alt="" className="h-full w-full object-cover" />
+          <img src={toolkit.logo} alt="" className="size-full object-cover" />
         ) : (
-          <span className="text-[14px] font-semibold text-text-dim/50">
+          <span className="text-[14px] font-semibold text-muted-foreground/50">
             {toolkit.name.charAt(0)}
           </span>
         )}
@@ -254,13 +280,17 @@ function ToolkitRow({
 
       {/* Info */}
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[13px] font-medium text-text-main">{toolkit.name}</div>
-        <div className="truncate text-[11px] text-text-muted/70">{toolkit.description}</div>
+        <div className="truncate text-[13px] font-medium text-foreground">
+          {toolkit.name}
+        </div>
+        <div className="truncate text-[11px] text-muted-foreground">
+          {toolkit.description}
+        </div>
       </div>
 
       {/* Action */}
       {connected ? (
-        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-neon-green">
+        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-primary">
           <Check size={12} />
         </span>
       ) : (
@@ -268,9 +298,13 @@ function ToolkitRow({
           type="button"
           disabled={connecting}
           onClick={onConnect}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-panel-border/30 text-text-dim/60 transition-colors hover:bg-panel-bg/60 hover:text-text-main disabled:opacity-40"
+          className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-40"
         >
-          {connecting ? <Loader2 size={13} className="animate-spin" /> : <Plus size={14} />}
+          {connecting ? (
+            <Loader2 size={13} className="animate-spin" />
+          ) : (
+            <Plus size={14} />
+          )}
         </button>
       )}
     </div>

@@ -273,7 +273,7 @@ function onboardingStatusTone(value: string | null | undefined) {
     return "border-[rgba(247,170,126,0.22)] bg-[rgba(247,170,126,0.1)] text-[rgba(224,146,103,0.96)]";
   }
   if (normalized === "in_progress") {
-    return "border-neon-green/30 bg-neon-green/10 text-neon-green";
+    return "border-primary/30 bg-primary/10 text-primary";
   }
   if (normalized === "completed") {
     return "border-[rgba(92,180,120,0.22)] bg-[rgba(92,180,120,0.08)] text-[rgba(118,196,144,0.94)]";
@@ -1945,20 +1945,20 @@ export function ChatPane({
   }, [hasMessages]);
 
   return (
-    <PaneCard className={isOnboardingVariant ? "w-full shadow-glow border-[rgba(247,90,84,0.2)]" : "w-full shadow-glow"}>
+    <PaneCard className={isOnboardingVariant ? "w-full shadow-md border-[rgba(247,90,84,0.2)]" : "w-full shadow-md"}>
       <div className="relative flex h-full min-h-0 min-w-0 flex-col">
-        <div className="theme-chat-composer-glow pointer-events-none absolute inset-x-8 bottom-0 h-44 rounded-[var(--theme-radius-pill)] blur-2xl" />
+        <div className="theme-chat-composer-glow pointer-events-none absolute inset-x-8 bottom-0 h-44 rounded-full blur-2xl" />
 
         {isOnboardingVariant && selectedWorkspace ? (
           <div className="shrink-0 px-4 pt-4 sm:px-5">
-            <div className="theme-subtle-surface overflow-hidden rounded-[22px] border border-[rgba(247,90,84,0.2)] shadow-[0_24px_60px_rgba(233,117,109,0.08)]">
+            <div className="bg-muted overflow-hidden rounded-[22px] border border-[rgba(247,90,84,0.2)] shadow-[0_24px_60px_rgba(233,117,109,0.08)]">
               <div className="bg-[radial-gradient(circle_at_top_left,rgba(247,90,84,0.12),transparent_42%),radial-gradient(circle_at_92%_12%,rgba(247,170,126,0.12),transparent_36%)] px-4 py-4 sm:px-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="text-[10px] font-medium uppercase tracking-[0.18em] text-[rgba(206,92,84,0.88)]">
                       Workspace onboarding
                     </div>
-                    <div className="mt-2 text-[22px] font-semibold tracking-[-0.04em] text-text-main">
+                    <div className="mt-2 text-[22px] font-semibold tracking-[-0.04em] text-foreground">
                       {selectedWorkspace.name.trim() || "Workspace setup"}
                     </div>
                   </div>
@@ -1985,22 +1985,22 @@ export function ChatPane({
             ) : null}
 
             {verboseTelemetryEnabled ? (
-              <div className="theme-subtle-surface mt-3 rounded-[14px] border border-panel-border/45 px-3 py-2">
+              <div className="bg-muted mt-3 rounded-[14px] border border-border/45 px-3 py-2">
                 <div className="mb-2 flex items-center justify-between">
-                  <div className="text-[10px] tracking-[0.12em] text-text-dim">
+                  <div className="text-[10px] tracking-[0.12em] text-muted-foreground">
                     Stream telemetry ({streamTelemetry.length})
                   </div>
                   <button
                     type="button"
                     onClick={() => setStreamTelemetry([])}
-                    className="rounded border border-panel-border/50 px-2 py-1 text-[10px] text-text-muted transition hover:border-neon-green/35 hover:text-text-main"
+                    className="rounded border border-border/50 px-2 py-1 text-[10px] text-muted-foreground transition hover:border-primary/35 hover:text-foreground"
                   >
                     Clear
                   </button>
                 </div>
-                <div className="theme-control-surface max-h-36 overflow-y-auto rounded border border-panel-border/35 p-2 font-mono text-[10px] text-text-muted">
+                <div className="bg-muted max-h-36 overflow-y-auto rounded border border-border/35 p-2 font-mono text-[10px] text-muted-foreground">
                   {streamTelemetryTail.length === 0 ? (
-                    <div className="text-text-dim">No stream events yet.</div>
+                    <div className="text-muted-foreground">No stream events yet.</div>
                   ) : (
                     streamTelemetryTail.map((entry) => (
                       <div key={entry.id} className="whitespace-pre-wrap break-all">
@@ -2071,14 +2071,14 @@ export function ChatPane({
               ) : (
                 <div className="w-full px-4 pb-10 pt-10 sm:px-5">
                   <div className="mx-auto mb-6 max-w-[560px] text-center">
-                    <div className="text-[22px] font-semibold tracking-[-0.02em] text-text-main/90">
+                    <div className="text-[22px] font-semibold tracking-[-0.02em] text-foreground">
                       {isLoadingBootstrap || isLoadingHistory
                         ? "Loading workspace context"
                         : isOnboardingVariant
                           ? "Complete workspace onboarding"
                           : "Ask the workspace agent"}
                     </div>
-                    <div className="mt-3 text-[13px] leading-7 text-text-muted/68">
+                    <div className="mt-3 text-[13px] leading-7 text-muted-foreground/68">
                       {selectedWorkspace
                         ? readinessMessage ||
                           (isOnboardingVariant
@@ -2088,7 +2088,7 @@ export function ChatPane({
                     </div>
                   </div>
                   <form onSubmit={onSubmit} className="mx-auto max-w-[760px]">
-                    {readinessMessage ? <div className="mb-3 text-[12px] text-text-muted/82">{readinessMessage}</div> : null}
+                    {readinessMessage ? <div className="mb-3 text-[12px] text-muted-foreground">{readinessMessage}</div> : null}
                     <Composer
                       input={input}
                       attachments={pendingAttachmentItems}
@@ -2126,7 +2126,7 @@ export function ChatPane({
                 style={{
                   top: `${chatScrollbarRailInset + chatScrollbarThumbOffset}px`,
                   height: `${chatScrollbarThumbHeight}px`,
-                  background: "linear-gradient(180deg, var(--theme-scroll-thumb-top), var(--theme-scroll-thumb-bottom))"
+                  background: "color-mix(in oklch, var(--primary) 28%, transparent)"
                 }}
               />
             </div>
@@ -2135,7 +2135,7 @@ export function ChatPane({
           {hasMessages ? (
             <div ref={composerBlockRef} className="shrink-0 px-4 pb-4 pt-3 sm:px-5 sm:pb-5">
               <form onSubmit={onSubmit} className="mx-auto max-w-[760px]">
-                {readinessMessage ? <div className="mb-3 text-[12px] text-text-muted/82">{readinessMessage}</div> : null}
+                {readinessMessage ? <div className="mb-3 text-[12px] text-muted-foreground">{readinessMessage}</div> : null}
                 <Composer
                   input={input}
                   attachments={pendingAttachmentItems}
@@ -2217,7 +2217,7 @@ function UserTurn({
     <div className="flex justify-end">
       <div className="flex max-w-[420px] flex-col items-end gap-2">
         {text ? (
-          <div className="theme-chat-user-bubble inline-flex max-w-full rounded-[18px] border px-4 py-3 text-[13px] leading-7 text-text-main/95">
+          <div className="theme-chat-user-bubble inline-flex max-w-full rounded-[18px] border px-4 py-3 text-[13px] leading-7 text-foreground/95">
             <div className="whitespace-pre-wrap break-words">{text}</div>
           </div>
         ) : null}
@@ -2256,13 +2256,13 @@ function AssistantTurn({
     <div className="flex justify-start">
       <article className="max-w-[760px]">
         <div className="flex items-start gap-3">
-          <div className="theme-subtle-surface mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full border border-panel-border/35 text-text-main/84">
+          <div className="bg-muted mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full border border-border/35 text-foreground/84">
             <Bot size={15} />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <div className="text-[12px] font-medium text-text-main/94">{label}</div>
-              <div className="rounded-full border border-panel-border/35 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-text-dim/76">
+              <div className="text-[12px] font-medium text-foreground/94">{label}</div>
+              <div className="rounded-full border border-border/35 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/76">
                 {mode}
               </div>
               {live ? (
@@ -2273,11 +2273,11 @@ function AssistantTurn({
             </div>
 
             {status && !text ? (
-              <div className="mt-2 text-[13px] leading-7 text-text-muted/78">{status}</div>
+              <div className="mt-2 text-[13px] leading-7 text-muted-foreground">{status}</div>
             ) : null}
 
             {traceSteps.length > 0 ? (
-              <div className="mt-4 grid gap-2.5 border-l border-panel-border/25 pl-4">
+              <div className="mt-4 grid gap-2.5 border-l border-border/25 pl-4">
                 {traceSteps.map((step) => (
                   <TraceStepCard
                     key={step.id}
@@ -2293,7 +2293,7 @@ function AssistantTurn({
               <ThinkingPanel text={thinkingText} collapsed={thinkingCollapsed} onToggle={onToggleThinking} live={live} />
             ) : null}
 
-            {text ? <div className="mt-4 whitespace-pre-wrap text-[15px] leading-8 text-text-main/92">{text}</div> : null}
+            {text ? <div className="mt-4 whitespace-pre-wrap text-[15px] leading-8 text-foreground">{text}</div> : null}
           </div>
         </div>
       </article>
@@ -2345,21 +2345,21 @@ function TraceStepCard({
       : step.status === "error"
         ? "border-[rgba(247,90,84,0.24)] bg-[rgba(247,90,84,0.08)] text-[rgba(206,92,84,0.94)]"
         : step.status === "waiting"
-          ? "border-panel-border/35 bg-panel-bg/24 text-text-dim/78"
+          ? "border-border/35 bg-card/24 text-muted-foreground"
           : "border-[rgba(247,170,126,0.18)] bg-[rgba(247,170,126,0.08)] text-[rgba(224,146,103,0.92)]";
   const buttonClassName = collapsed
-    ? "flex w-full items-center gap-2.5 rounded-[14px] px-1 py-1 text-left transition hover:bg-panel-bg/18"
-    : "theme-subtle-surface flex w-full items-start gap-3 rounded-[18px] border border-panel-border/35 px-3.5 py-3 text-left transition hover:border-panel-border/55";
+    ? "flex w-full items-center gap-2.5 rounded-[14px] px-1 py-1 text-left transition hover:bg-card/18"
+    : "bg-muted flex w-full items-start gap-3 rounded-[18px] border border-border/35 px-3.5 py-3 text-left transition hover:border-border/55";
   const iconClassName = collapsed
     ? `grid h-5 w-5 shrink-0 place-items-center rounded-full border ${statusTone}`
     : `mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full border ${statusTone}`;
   const titleClassName = collapsed
-    ? "truncate text-[12px] font-medium leading-5 text-text-main/88"
-    : "text-[13px] font-medium leading-6 text-text-main/92";
+    ? "truncate text-[12px] font-medium leading-5 text-foreground"
+    : "text-[13px] font-medium leading-6 text-foreground";
 
   return (
     <div className="relative">
-      <div className="absolute -left-[1.3125rem] top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full border border-panel-border/50 bg-panel-bg/90" />
+      <div className="absolute -left-[1.3125rem] top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full border border-border/50 bg-card/90" />
       <button
         type="button"
         onClick={onToggle}
@@ -2387,7 +2387,7 @@ function TraceStepCard({
           </div>
 
           {!collapsed && step.details.length > 0 ? (
-            <div className="mt-1 text-[12px] leading-6 text-text-muted/78">
+            <div className="mt-1 text-[12px] leading-6 text-muted-foreground">
               {step.details.join("\n")}
             </div>
           ) : null}
@@ -2397,7 +2397,7 @@ function TraceStepCard({
         {step.details.length > 0 ? (
           <ChevronDown
             size={collapsed ? 13 : 14}
-            className={`shrink-0 text-text-dim/70 transition ${collapsed ? "" : "mt-1 rotate-180"}`}
+            className={`shrink-0 text-muted-foreground transition ${collapsed ? "" : "mt-1 rotate-180"}`}
           />
         ) : null}
       </button>
@@ -2424,23 +2424,23 @@ function ThinkingPanel({ text, collapsed, onToggle, live = false }: ThinkingPane
         type="button"
         onClick={onToggle}
         aria-expanded={!collapsed}
-        className="theme-subtle-surface flex w-full items-center justify-between gap-3 rounded-[18px] border border-panel-border/35 px-3.5 py-3 text-left transition hover:border-panel-border/55"
+        className="bg-muted flex w-full items-center justify-between gap-3 rounded-[18px] border border-border/35 px-3.5 py-3 text-left transition hover:border-border/55"
       >
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-text-dim/72">{live ? "Thinking" : "Reasoning"}</span>
+            <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{live ? "Thinking" : "Reasoning"}</span>
             {live ? (
               <span className="rounded-full border border-[rgba(247,90,84,0.18)] bg-[rgba(247,90,84,0.08)] px-2 py-0.5 text-[9px] uppercase tracking-[0.14em] text-[rgba(206,92,84,0.92)]">
                 LIVE
               </span>
             ) : null}
           </div>
-          <div className="mt-1 truncate text-[12px] text-text-muted/76">{collapsed ? summary : "Expanded reasoning trace"}</div>
+          <div className="mt-1 truncate text-[12px] text-muted-foreground/76">{collapsed ? summary : "Expanded reasoning trace"}</div>
         </div>
-        <ChevronDown size={14} className={`shrink-0 text-text-muted/72 transition ${collapsed ? "" : "rotate-180"}`} />
+        <ChevronDown size={14} className={`shrink-0 text-muted-foreground transition ${collapsed ? "" : "rotate-180"}`} />
       </button>
       {!collapsed ? (
-        <div className="theme-chat-thinking-inner mt-2 whitespace-pre-wrap rounded-[18px] border border-panel-border/30 px-4 py-3 text-[12px] leading-6 text-text-muted/86">
+        <div className="theme-chat-thinking-inner mt-2 whitespace-pre-wrap rounded-[18px] border border-border/30 px-4 py-3 text-[12px] leading-6 text-muted-foreground/86">
           {text}
         </div>
       ) : null}
@@ -2467,19 +2467,19 @@ function AttachmentList({
       {attachments.map((attachment) => (
         <div
           key={attachment.id}
-          className="theme-control-surface inline-flex max-w-full items-center gap-2 rounded-full border border-panel-border/35 px-3 py-1.5 text-[11px] text-text-main/84"
+          className="bg-muted inline-flex max-w-full items-center gap-2 rounded-full border border-border/35 px-3 py-1.5 text-[11px] text-foreground/84"
         >
           {attachment.kind === "image" ? (
-            <ImageIcon size={12} className="shrink-0 text-neon-green/72" />
+            <ImageIcon size={12} className="shrink-0 text-primary/72" />
           ) : (
-            <FileText size={12} className="shrink-0 text-neon-green/72" />
+            <FileText size={12} className="shrink-0 text-primary/72" />
           )}
           <span className="truncate">{attachmentButtonLabel(attachment)}</span>
           {onRemove ? (
             <button
               type="button"
               onClick={() => onRemove(attachment.id)}
-              className="grid h-4 w-4 place-items-center rounded-full text-text-muted transition hover:text-text-main"
+              className="grid h-4 w-4 place-items-center rounded-full text-muted-foreground transition hover:text-foreground"
               aria-label={`Remove ${attachment.name}`}
             >
               <X size={11} />
@@ -2583,13 +2583,13 @@ function Composer({
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
-      className={`glass-field overflow-hidden rounded-[calc(var(--theme-radius-card)+0.15rem)] border transition ${
-        isDragActive ? "border-neon-green/45 bg-neon-green/[0.04]" : "border-panel-border/35"
+      className={`overflow-hidden rounded-xl border border-border bg-muted/50 transition-colors focus-within:border-ring ${
+        isDragActive ? "border-primary/45 bg-primary/[0.04]" : "border-border/35"
       }`}
     >
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={onAttachmentInputChange} />
       {attachments.length > 0 ? (
-        <div className="border-b border-panel-border/20 px-4 py-3">
+        <div className="border-b border-border/20 px-4 py-3">
           <AttachmentList attachments={attachments} onRemove={onRemoveAttachment} />
         </div>
       ) : null}
@@ -2602,11 +2602,11 @@ function Composer({
           rows={1}
           disabled={disabled}
           placeholder={disabled ? disabledReason || "Chat unavailable right now" : placeholder}
-          className="composer-input block max-h-[220px] min-h-[76px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-7 text-text-main/92 outline-none placeholder:text-text-muted/42 disabled:cursor-not-allowed disabled:opacity-55"
+          className="composer-input block max-h-[220px] min-h-[76px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-7 text-foreground outline-none placeholder:text-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-55"
         />
       </div>
 
-      <div className="flex items-center justify-between gap-2 border-t border-panel-border/20 px-3 py-3 text-text-muted/72">
+      <div className="flex items-center justify-between gap-2 border-t border-border/20 px-3 py-3 text-muted-foreground">
         {showModelSelector ? (
           <div className="relative w-[172px] shrink-0 sm:w-[208px]">
             <select
@@ -2621,7 +2621,7 @@ function Composer({
                     ? `Auto (${runtimeDefaultModelLabel})`
                     : resolvedModelLabel
               }
-              className="composer-select theme-subtle-surface h-9 w-full appearance-none rounded-[11px] border border-panel-border/28 px-3 pr-9 text-[12px] font-medium text-text-main/90 transition hover:border-panel-border/48 disabled:cursor-not-allowed disabled:opacity-60"
+              className="composer-select bg-muted h-9 w-full appearance-none rounded-[11px] border border-border/28 px-3 pr-9 text-[12px] font-medium text-foreground transition hover:border-border/48 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {noAvailableModels ? (
                 <option value={CHAT_MODEL_USE_RUNTIME_DEFAULT}>{modelSelectionUnavailableReason}</option>
@@ -2638,11 +2638,11 @@ function Composer({
             </select>
             <ChevronDown
               size={14}
-              className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-text-dim/70"
+              className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
             />
           </div>
         ) : (
-          <div className="text-[11px] leading-6 text-text-dim/72">
+          <div className="text-[11px] leading-6 text-muted-foreground">
             Responses here stay in the workspace onboarding thread.
           </div>
         )}
@@ -2652,7 +2652,7 @@ function Composer({
             type="button"
             disabled={isResponding || disabled}
             onClick={() => fileInputRef.current?.click()}
-            className="grid h-9 w-9 place-items-center rounded-[var(--theme-radius-pill)] border border-panel-border/40 text-text-muted transition hover:border-neon-green/35 hover:text-text-main disabled:cursor-not-allowed disabled:opacity-35"
+            className="grid h-9 w-9 place-items-center rounded-full border border-border/40 text-muted-foreground transition hover:border-primary/35 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
             aria-label="Attach files"
           >
             <Paperclip size={15} />
@@ -2660,7 +2660,7 @@ function Composer({
           <button
             type="submit"
             disabled={(!input.trim() && attachments.length === 0) || isResponding || disabled}
-            className="grid h-9 w-9 place-items-center rounded-[var(--theme-radius-pill)] bg-text-main text-[rgb(var(--color-obsidian))] transition hover:opacity-92 disabled:cursor-not-allowed disabled:opacity-35"
+            className="grid h-9 w-9 place-items-center rounded-full bg-foreground text-background transition hover:opacity-92 disabled:cursor-not-allowed disabled:opacity-35"
           >
             {isResponding ? <Loader2 size={16} className="animate-spin" /> : <ArrowUp size={16} />}
           </button>

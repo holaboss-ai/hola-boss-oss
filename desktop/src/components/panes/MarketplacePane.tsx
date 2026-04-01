@@ -118,7 +118,7 @@ export function MarketplacePane() {
     createHarnessOptions.find((o) => o.id === selectedCreateHarness) ?? createHarnessOptions[0];
 
   return (
-    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
+    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.03),transparent_24%)]" />
       <div className="relative min-h-0 flex-1 overflow-auto p-4">
         <div className="mx-auto max-w-5xl">
@@ -147,7 +147,7 @@ export function MarketplacePane() {
             <button
               type="button"
               onClick={() => setView("detail")}
-              className="mb-4 self-start text-[12px] text-text-muted/76 underline transition-colors hover:text-text-main"
+              className="mb-4 self-start text-[12px] text-muted-foreground/76 underline transition-colors hover:text-foreground"
             >
               &larr; Back to kit details
             </button>
@@ -155,32 +155,32 @@ export function MarketplacePane() {
             {isCreatingWorkspace ? (
               <div className="flex flex-1 items-center justify-center">
                 <div className="text-center">
-                  <Loader2 size={18} className="mx-auto animate-spin text-text-dim/60" />
-                  <div className="mt-3 text-[13px] font-medium text-text-main">
+                  <Loader2 size={18} className="mx-auto animate-spin text-muted-foreground/60" />
+                  <div className="mt-3 text-[13px] font-medium text-foreground">
                     Creating workspace...
                   </div>
                 </div>
               </div>
             ) : (
               <div className="mx-auto w-full max-w-md">
-                <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">
+                <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/72">
                   Create workspace
                 </div>
-                <div className="mt-1 text-[20px] font-semibold tracking-[-0.03em] text-text-main">
+                <div className="mt-1 text-[20px] font-semibold tracking-[-0.03em] text-foreground">
                   Configure &amp; launch
                 </div>
 
                 {detailTemplate ? (
-                  <div className="mt-4 flex items-center gap-3 rounded-[14px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-3 py-2.5">
+                  <div className="mt-4 flex items-center gap-3 rounded-[14px] border border-border/35 bg-muted px-3 py-2.5">
                     <KitEmoji emoji={detailTemplate.emoji} size={28} />
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px] font-medium text-text-main">{detailTemplate.name}</div>
-                      <div className="truncate text-[11px] text-text-muted/72">{detailTemplate.apps.join(", ")}</div>
+                      <div className="truncate text-[13px] font-medium text-foreground">{detailTemplate.name}</div>
+                      <div className="truncate text-[11px] text-muted-foreground/72">{detailTemplate.apps.join(", ")}</div>
                     </div>
                     <button
                       type="button"
                       onClick={() => setView("gallery")}
-                      className="shrink-0 text-[11px] text-text-muted/72 underline transition-colors hover:text-text-main"
+                      className="shrink-0 text-[11px] text-muted-foreground/72 underline transition-colors hover:text-foreground"
                     >
                       Change
                     </button>
@@ -189,25 +189,25 @@ export function MarketplacePane() {
 
                 <div className="mt-4 grid gap-4">
                   <label className="grid gap-2">
-                    <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
+                    <span className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground/78">
                       Workspace name
                     </span>
                     <input
                       value={newWorkspaceName}
                       onChange={(e) => setNewWorkspaceName(e.target.value)}
                       placeholder="My workspace"
-                      className="theme-control-surface h-12 rounded-[18px] border border-panel-border/45 px-4 text-[14px] text-text-main outline-none placeholder:text-text-dim/50"
+                      className="theme-control-surface h-12 rounded-[18px] border border-border/45 px-4 text-[14px] text-foreground outline-none placeholder:text-muted-foreground/50"
                     />
                   </label>
 
                   <label className="grid gap-2">
-                    <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
+                    <span className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground/78">
                       Harness
                     </span>
                     <select
                       value={selectedCreateHarness}
                       onChange={(e) => setSelectedCreateHarness(e.target.value)}
-                      className="theme-control-surface h-12 rounded-[18px] border border-panel-border/45 px-4 text-[14px] text-text-main outline-none"
+                      className="theme-control-surface h-12 rounded-[18px] border border-border/45 px-4 text-[14px] text-foreground outline-none"
                     >
                       {createHarnessOptions.map((option) => (
                         <option key={option.id} value={option.id}>
@@ -215,7 +215,7 @@ export function MarketplacePane() {
                         </option>
                       ))}
                     </select>
-                    <span className="text-[12px] leading-6 text-text-muted/74">
+                    <span className="text-[12px] leading-6 text-muted-foreground/74">
                       {selectedHarnessOption?.description || ""}
                     </span>
                   </label>
@@ -243,37 +243,37 @@ export function MarketplacePane() {
             <button
               type="button"
               onClick={() => { clearPendingIntegrations(); setView("creating"); }}
-              className="mb-4 self-start text-[12px] text-text-muted/76 underline transition-colors hover:text-text-main"
+              className="mb-4 self-start text-[12px] text-muted-foreground/76 underline transition-colors hover:text-foreground"
             >
               &larr; Back
             </button>
             <div className="mx-auto w-full max-w-md">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">Connect integrations</div>
-              <div className="mt-1 text-[20px] font-semibold tracking-[-0.03em] text-text-main">This workspace needs access</div>
-              <div className="mt-2 text-[13px] leading-7 text-text-muted/84">Connect the following accounts to continue.</div>
+              <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/72">Connect integrations</div>
+              <div className="mt-1 text-[20px] font-semibold tracking-[-0.03em] text-foreground">This workspace needs access</div>
+              <div className="mt-2 text-[13px] leading-7 text-muted-foreground/84">Connect the following accounts to continue.</div>
               <div className="mt-4 grid gap-3">
                 {pendingIntegrations.missing_providers.map((provider) => (
-                  <div key={provider} className="flex items-center justify-between rounded-[14px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-3">
-                    <div className="text-[13px] font-medium text-text-main">{providerDisplayName(provider)}</div>
+                  <div key={provider} className="flex items-center justify-between rounded-[14px] border border-border/35 bg-muted px-4 py-3">
+                    <div className="text-[13px] font-medium text-foreground">{providerDisplayName(provider)}</div>
                     <button
                       type="button"
                       disabled={connectingProvider !== null}
                       onClick={() => void handleConnectProvider(provider)}
-                      className="rounded-[12px] border border-neon-green/35 bg-neon-green/8 px-3 py-1.5 text-[11px] font-medium text-neon-green transition-colors hover:bg-neon-green/14 disabled:opacity-50"
+                      className="rounded-[12px] border border-primary/35 bg-primary/8 px-3 py-1.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/14 disabled:opacity-50"
                     >
                       {connectingProvider === provider ? "Connecting..." : "Connect"}
                     </button>
                   </div>
                 ))}
                 {pendingIntegrations.connected_providers.map((provider) => (
-                  <div key={provider} className="flex items-center justify-between rounded-[14px] border border-neon-green/20 bg-neon-green/4 px-4 py-3">
-                    <div className="text-[13px] font-medium text-text-main">{providerDisplayName(provider)}</div>
-                    <span className="text-[11px] text-neon-green">Connected</span>
+                  <div key={provider} className="flex items-center justify-between rounded-[14px] border border-primary/20 bg-primary/4 px-4 py-3">
+                    <div className="text-[13px] font-medium text-foreground">{providerDisplayName(provider)}</div>
+                    <span className="text-[11px] text-primary">Connected</span>
                   </div>
                 ))}
               </div>
               {connectStatus ? (
-                <div className="mt-3 text-[12px] text-text-muted">{connectStatus}</div>
+                <div className="mt-3 text-[12px] text-muted-foreground">{connectStatus}</div>
               ) : null}
             </div>
           </div>

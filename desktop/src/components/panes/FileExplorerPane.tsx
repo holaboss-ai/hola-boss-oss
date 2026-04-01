@@ -497,7 +497,7 @@ export function FileExplorerPane() {
             <button
               type="button"
               onClick={closePreview}
-              className="inline-flex items-center gap-1 rounded-lg border border-panel-border bg-obsidian-soft/80 px-2.5 py-1.5 text-[11px] text-text-muted/85 transition hover:border-neon-green/45 hover:text-neon-green"
+              className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
             >
               <ArrowLeft size={12} />
               Files
@@ -505,7 +505,6 @@ export function FileExplorerPane() {
             <IconButton
               icon={<Star size={12} className={activeBookmark ? "fill-current" : ""} />}
               label={activeBookmark ? "Remove bookmark" : "Add bookmark"}
-              className="h-7 w-7"
               active={Boolean(activeBookmark)}
               onClick={() => void toggleBookmark()}
               disabled={!bookmarkTargetPath}
@@ -514,15 +513,12 @@ export function FileExplorerPane() {
               <button
                 type="button"
                 onClick={() => setTextPreviewMode((mode) => (mode === "preview" ? "edit" : "preview"))}
-                className="inline-flex items-center gap-2 rounded-lg border border-neon-green/35 bg-neon-green/8 px-2.5 py-1.5 text-[11px] text-text-main/90 transition hover:border-neon-green/55 hover:bg-neon-green/12 hover:text-neon-green"
+                className="inline-flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/8 px-2 py-1 text-xs text-foreground transition-colors hover:bg-primary/15"
               >
-                <span className="rounded-full border border-panel-border/50 bg-[var(--theme-subtle-bg)] px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] text-text-dim/80">
+                <span className="rounded-sm border border-border bg-muted px-1.5 py-px text-[10px] uppercase tracking-wider text-muted-foreground">
                   {textPreviewMode}
                 </span>
-                <span className="inline-flex items-center gap-1">
-                  {textPreviewMode === "preview" ? <PencilLine size={12} /> : <Eye size={12} />}
-                  {textPreviewMode === "preview" ? "Switch to edit" : "Switch to preview"}
-                </span>
+                {textPreviewMode === "preview" ? <PencilLine size={11} /> : <Eye size={11} />}
               </button>
             ) : null}
             {preview?.isEditable ? (
@@ -530,7 +526,7 @@ export function FileExplorerPane() {
                 type="button"
                 onClick={() => void savePreview()}
                 disabled={!isDirty || saving}
-                className="inline-flex items-center gap-1 rounded-lg border border-panel-border bg-obsidian-soft/80 px-2.5 py-1.5 text-[11px] text-text-muted/85 transition hover:border-neon-green/45 hover:text-neon-green disabled:cursor-not-allowed disabled:opacity-40"
+                className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Save size={12} />
                 {saving ? "Saving" : "Save"}
@@ -542,30 +538,30 @@ export function FileExplorerPane() {
     >
       {preview || previewLoading || previewError ? (
         <div className="flex h-full min-h-0 flex-col">
-          <div className="shrink-0 border-b border-neon-green/20 px-4 py-3">
-            <div className="truncate text-sm font-semibold text-text-main/92">
+          <div className="shrink-0 border-b border-border px-4 py-2.5">
+            <div className="truncate text-sm font-semibold text-foreground">
               {preview?.name || selectedEntry?.name || "Preview"}
-              {isDirty ? <span className="ml-2 text-xs text-neon-green/85">• unsaved</span> : null}
+              {isDirty ? <span className="ml-2 text-xs text-primary">unsaved</span> : null}
             </div>
-            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-text-muted/72">
+            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
               {preview?.absolutePath ? <span>{preview.absolutePath}</span> : null}
               {preview?.size != null ? <span>{formatFileSize(preview.size)}</span> : null}
               {preview?.modifiedAt ? <span>{formatModified(preview.modifiedAt)}</span> : null}
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-hidden p-3">
+          <div className="min-h-0 flex-1 overflow-hidden p-2.5">
             {previewLoading ? (
-              <div className="theme-subtle-surface grid h-full place-items-center rounded-xl border border-panel-border/60 text-sm text-text-muted/75">
+              <div className="grid h-full place-items-center rounded-lg border border-border bg-muted text-sm text-muted-foreground">
                 Loading preview...
               </div>
             ) : previewError ? (
-              <div className="theme-subtle-surface grid h-full place-items-center rounded-xl border border-rose-300/30 px-4 text-center text-sm text-rose-200/85">
+              <div className="grid h-full place-items-center rounded-lg border border-destructive/30 bg-destructive/5 px-4 text-center text-sm text-destructive">
                 {previewError}
               </div>
             ) : preview?.kind === "text" && textPreviewMode === "preview" ? (
-              <div className="theme-control-surface h-full overflow-auto rounded-xl border border-panel-border/60">
-                <pre className="m-0 min-h-full overflow-auto p-4 font-mono text-[12px] leading-6 text-text-main/92">
+              <div className="h-full overflow-auto rounded-lg border border-border bg-muted">
+                <pre className="m-0 min-h-full overflow-auto p-4 font-mono text-xs leading-6 text-foreground">
                   <code className="hljs" dangerouslySetInnerHTML={{ __html: highlightedHtml }} />
                 </pre>
               </div>
@@ -574,21 +570,21 @@ export function FileExplorerPane() {
                 value={previewDraft}
                 onChange={(event) => setPreviewDraft(event.target.value)}
                 spellCheck={false}
-                className="theme-control-surface h-full w-full resize-none rounded-xl border border-panel-border/60 p-4 font-mono text-[12px] leading-6 text-text-main/92 outline-none transition focus:border-neon-green/45"
+                className="h-full w-full resize-none rounded-lg border border-border bg-muted p-4 font-mono text-xs leading-6 text-foreground outline-none transition-colors focus:border-ring"
               />
             ) : preview?.kind === "image" && preview.dataUrl ? (
-              <div className="theme-subtle-surface flex h-full items-center justify-center overflow-auto rounded-xl border border-panel-border/60 p-3">
-                <img src={preview.dataUrl} alt={preview.name} className="max-h-full max-w-full rounded-lg object-contain" />
+              <div className="flex h-full items-center justify-center overflow-auto rounded-lg border border-border bg-muted p-3">
+                <img src={preview.dataUrl} alt={preview.name} className="max-h-full max-w-full rounded-md object-contain" />
               </div>
             ) : preview?.kind === "pdf" && preview.dataUrl ? (
-              <div className="h-full overflow-hidden rounded-xl border border-panel-border/60 bg-white">
+              <div className="h-full overflow-hidden rounded-lg border border-border bg-white">
                 <iframe src={preview.dataUrl} title={preview.name} className="h-full w-full border-0" />
               </div>
             ) : (
-              <div className="theme-subtle-surface flex h-full flex-col items-center justify-center rounded-xl border border-panel-border/60 px-5 text-center">
-                <FileText size={22} className="mb-3 text-text-muted/65" />
-                <div className="text-sm font-medium text-text-main/88">Preview unavailable</div>
-                <div className="mt-2 max-w-xs text-xs leading-6 text-text-muted/70">
+              <div className="flex h-full flex-col items-center justify-center rounded-lg border border-border bg-muted px-5 text-center">
+                <FileText size={22} className="mb-3 text-muted-foreground" />
+                <div className="text-sm font-medium text-foreground">Preview unavailable</div>
+                <div className="mt-2 max-w-xs text-xs leading-6 text-muted-foreground">
                   {preview?.unsupportedReason || "This file type is not supported for inline preview yet."}
                 </div>
               </div>
@@ -598,8 +594,8 @@ export function FileExplorerPane() {
       ) : (
         <div ref={containerRef} className="flex h-full min-h-0">
           {fileBookmarks.length > 0 ? (
-            <aside className="theme-subtle-surface flex w-12 flex-col items-center gap-2 border-r border-neon-green/15 py-3">
-              <div className="chat-scrollbar-hidden flex min-h-0 flex-1 flex-col items-center gap-2 overflow-x-hidden overflow-y-auto px-1">
+            <aside className="flex w-11 flex-col items-center gap-1.5 border-r border-border py-2.5">
+              <div className="chat-scrollbar-hidden flex min-h-0 flex-1 flex-col items-center gap-1 overflow-x-hidden overflow-y-auto px-1">
                 {fileBookmarks.map((bookmark) => {
                   const isActive = activeBookmarkId === bookmark.targetPath;
                   const Icon = bookmark.isDirectory ? Folder : FileText;
@@ -609,10 +605,10 @@ export function FileExplorerPane() {
                       type="button"
                       onClick={() => void openBookmarkedTarget(bookmark)}
                       title={bookmark.label}
-                      className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg border transition ${
+                      className={`grid size-7 shrink-0 place-items-center rounded-md transition-colors ${
                         isActive
-                          ? "border-neon-green/55 bg-neon-green/12 text-neon-green shadow-glow"
-                          : "theme-control-surface border-panel-border text-text-muted/82 hover:border-neon-green/50 hover:text-neon-green"
+                          ? "bg-primary/12 text-primary"
+                          : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                       }`}
                     >
                       <Icon size={14} />
@@ -624,79 +620,59 @@ export function FileExplorerPane() {
           ) : null}
 
           <div className="flex min-w-0 flex-1 flex-col">
-            <div className="shrink-0 border-b border-neon-green/20 px-3 py-2">
-              <div className="mb-2 flex min-w-0 items-center gap-1">
-                <div className="flex shrink-0 items-center gap-1">
-                  <IconButton icon={<Undo2 size={13} />} label="Back" className="h-7 w-7" onClick={() => void onBack()} disabled={!canGoBack} />
+            <div className="shrink-0 border-b border-border px-3 py-2">
+              <div className="mb-2 flex min-w-0 items-center gap-0.5">
+                <IconButton icon={<Undo2 size={13} />} label="Back" onClick={() => void onBack()} disabled={!canGoBack} />
+                <IconButton icon={<Forward size={13} />} label="Forward" onClick={() => void onForward()} disabled={!canGoForward} />
+                <IconButton icon={<ArrowUp size={13} />} label="Up" onClick={() => parentPath && void openPath(parentPath)} disabled={!parentPath} />
+                {!isVeryCompact ? (
                   <IconButton
-                    icon={<Forward size={13} />}
-                    label="Forward"
-                    className="h-7 w-7"
-                    onClick={() => void onForward()}
-                    disabled={!canGoForward}
+                    icon={<Home size={13} />}
+                    label="Home"
+                    onClick={() => {
+                      if (!confirmDiscardIfDirty()) return;
+                      void loadDirectory(null, true);
+                    }}
                   />
-                  <IconButton
-                    icon={<ArrowUp size={13} />}
-                    label="Up"
-                    className="h-7 w-7"
-                    onClick={() => parentPath && void openPath(parentPath)}
-                    disabled={!parentPath}
-                  />
-                  {!isVeryCompact ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!confirmDiscardIfDirty()) {
-                          return;
-                        }
-
-                        void loadDirectory(null, true);
-                      }}
-                      className="theme-control-surface grid h-7 w-7 place-items-center rounded-lg border border-panel-border text-text-muted/85 transition hover:border-neon-green/50 hover:text-neon-green"
-                    >
-                      <Home size={13} />
-                    </button>
-                  ) : null}
-                </div>
+                ) : null}
                 <div className="min-w-0 flex-1" />
                 <IconButton
                   icon={<Star size={13} className={activeBookmark ? "fill-current" : ""} />}
                   label={activeBookmark ? "Remove bookmark" : "Add bookmark"}
-                  className="h-7 w-7 shrink-0"
                   active={Boolean(activeBookmark)}
                   onClick={() => void toggleBookmark()}
                   disabled={!bookmarkTargetPath}
                 />
               </div>
-              <div className="glass-field flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-text-muted/85">
-                <Search size={13} className="text-neon-green/85" />
+              <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs transition-colors focus-within:border-ring">
+                <Search size={13} className="shrink-0 text-muted-foreground" />
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  className="embedded-input w-full bg-transparent text-xs text-text-main/90 outline-none placeholder:text-text-muted/40"
+                  className="w-full bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/50"
                   placeholder="Search files"
                 />
               </div>
-              <div className="mt-2 truncate text-[10px] uppercase tracking-[0.16em] text-text-muted/50">
+              <div className="mt-1.5 truncate text-[10px] uppercase tracking-widest text-muted-foreground/60">
                 {isCompact ? getFolderName(currentPath) : currentPath}
               </div>
             </div>
 
             {!isCompact ? (
-              <div className="shrink-0 grid grid-cols-[minmax(0,1fr)_110px] border-b border-neon-green/10 px-3 py-2 text-[10px] uppercase tracking-[0.15em] text-text-muted/50 lg:grid-cols-[minmax(0,1fr)_140px_90px]">
+              <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_110px] border-b border-border px-3 py-1.5 text-[10px] uppercase tracking-widest text-muted-foreground/60 lg:grid-cols-[minmax(0,1fr)_140px_90px]">
                 <span>Name</span>
                 <span>Modified</span>
                 <span className="hidden lg:block">Size</span>
               </div>
             ) : null}
 
-            <div className="chat-scrollbar-hidden min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pb-2 pt-1">
-              {loading ? <div className="px-3 py-4 text-xs text-text-muted/75">Loading directory...</div> : null}
+            <div className="chat-scrollbar-hidden min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-1.5 pb-1.5 pt-1">
+              {loading ? <div className="px-2 py-4 text-xs text-muted-foreground">Loading directory...</div> : null}
 
-              {error ? <div className="px-3 py-3 text-xs text-rose-300/90">{error}</div> : null}
+              {error ? <div className="px-2 py-3 text-xs text-destructive">{error}</div> : null}
 
               {!loading && !error && filteredEntries.length === 0 ? (
-                <div className="px-3 py-4 text-xs text-text-muted/70">No files matched your search.</div>
+                <div className="px-2 py-4 text-xs text-muted-foreground">No files matched your search.</div>
               ) : null}
 
               {!loading && !error
@@ -743,24 +719,24 @@ export function FileExplorerPane() {
                           dragPreviewRef.current?.remove();
                           dragPreviewRef.current = null;
                         }}
-                        className={`group mb-1 w-full rounded-lg border px-2 py-2 text-left transition-all duration-150 ${
+                        className={`group mb-0.5 w-full rounded-md px-2 py-1.5 text-left transition-colors ${
                           selected
-                            ? "border-neon-green/35 bg-neon-green/10 text-neon-green"
-                            : "border-transparent text-text-main/78 hover:bg-white/5"
+                            ? "bg-primary/10 text-primary"
+                            : "text-foreground/80 hover:bg-accent hover:text-accent-foreground"
                         } ${entry.isDirectory ? "" : "cursor-grab active:cursor-grabbing"}`}
-                        title={entry.isDirectory ? entry.name : `${entry.name} • drag into chat to attach`}
+                        title={entry.isDirectory ? entry.name : `${entry.name} — drag into chat to attach`}
                       >
                         {isCompact ? (
-                          <span className="flex min-w-0 flex-col gap-1">
+                          <span className="flex min-w-0 flex-col gap-0.5">
                             <span className="flex min-w-0 items-center gap-2">
                               {entry.isDirectory ? (
-                                <Folder size={14} className="shrink-0 text-neon-green/90" />
+                                <Folder size={14} className="shrink-0 text-primary" />
                               ) : (
-                                <FileText size={14} className="shrink-0 text-text-muted/78" />
+                                <FileText size={14} className="shrink-0 text-muted-foreground" />
                               )}
-                              <span className="truncate text-[12px] font-medium">{entry.name}</span>
+                              <span className="truncate text-xs font-medium">{entry.name}</span>
                             </span>
-                            <span className="flex min-w-0 items-center gap-2 pl-6 text-[11px] text-text-muted/72 group-hover:text-text-main/84">
+                            <span className="flex min-w-0 items-center gap-2 pl-6 text-[11px] text-muted-foreground">
                               <span className="truncate">{formatModified(entry.modifiedAt)}</span>
                               {!entry.isDirectory ? <span className="shrink-0">{formatFileSize(entry.size)}</span> : null}
                             </span>
@@ -769,16 +745,16 @@ export function FileExplorerPane() {
                           <span className="grid min-w-0 grid-cols-[minmax(0,1fr)_110px] items-center lg:grid-cols-[minmax(0,1fr)_140px_90px]">
                             <span className="flex min-w-0 items-center gap-2">
                               {entry.isDirectory ? (
-                                <Folder size={14} className="text-neon-green/90" />
+                                <Folder size={14} className="text-primary" />
                               ) : (
-                                <FileText size={14} className="text-text-muted/78" />
+                                <FileText size={14} className="text-muted-foreground" />
                               )}
-                              <span className="truncate text-[12px] font-medium">{entry.name}</span>
+                              <span className="truncate text-xs font-medium">{entry.name}</span>
                             </span>
-                            <span className="truncate text-[11px] text-text-muted/75 group-hover:text-text-main/88">
+                            <span className="truncate text-[11px] text-muted-foreground">
                               {formatModified(entry.modifiedAt)}
                             </span>
-                            <span className="hidden text-[11px] text-text-muted/70 group-hover:text-text-main/82 lg:block">
+                            <span className="hidden text-[11px] text-muted-foreground lg:block">
                               {entry.isDirectory ? "-" : formatFileSize(entry.size)}
                             </span>
                           </span>

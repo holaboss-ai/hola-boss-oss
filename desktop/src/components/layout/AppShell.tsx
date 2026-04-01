@@ -68,16 +68,20 @@ const FILES_PANE_WIDTH_STORAGE_KEY = "holaboss-files-pane-width-v1";
 const BROWSER_PANE_WIDTH_STORAGE_KEY = "holaboss-browser-pane-width-v1";
 const SPACE_VISIBILITY_STORAGE_KEY = "holaboss-space-visibility-v1";
 const THEMES = [
-  "holaboss",
-  "emerald",
-  "cobalt",
-  "ember",
-  "glacier",
-  "mono",
-  "claude",
-  "slate",
-  "paper",
-  "graphite",
+  "amber-minimal-dark",
+  "amber-minimal-light",
+  "cosmic-night-dark",
+  "cosmic-night-light",
+  "claude-dark",
+  "claude-light",
+  "clean-slate-dark",
+  "clean-slate-light",
+  "bold-tech-dark",
+  "bold-tech-light",
+  "catppuccin-dark",
+  "catppuccin-light",
+  "bubblegum-dark",
+  "bubblegum-light",
 ] as const;
 const MIN_UTILITY_PANE_WIDTH = 200;
 const MAX_UTILITY_PANE_WIDTH = 720;
@@ -218,7 +222,7 @@ function loadTheme(): AppTheme {
     // ignore
   }
 
-  return "holaboss";
+  return "amber-minimal-dark";
 }
 
 function spaceComponentLabel(componentId: SpaceComponentId) {
@@ -351,7 +355,7 @@ function OnboardingUserButton() {
           height: rect.height,
         });
       }}
-      className="grid h-9 w-9 shrink-0 place-items-center rounded-[14px] border border-panel-border/45 text-text-muted transition-colors hover:bg-[var(--theme-hover-bg)] hover:text-text-main"
+      className="grid h-9 w-9 shrink-0 place-items-center rounded-[14px] border border-border/45 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
     >
       <User2 size={14} />
     </button>
@@ -471,18 +475,18 @@ function FirstWorkspacePane() {
           <OnboardingUserButton />
         </div>
         <div className="w-full max-w-[1080px]">
-          <div className="theme-shell flex w-full flex-col items-center rounded-[var(--theme-radius-card)] border border-panel-border/45 px-6 py-12 shadow-card sm:px-8 lg:px-10">
-            <Loader2 size={20} className="animate-spin text-text-dim/60" />
-            <h2 className="mt-5 text-[17px] font-medium tracking-[-0.01em] text-text-main">
+          <div className="theme-shell flex w-full flex-col items-center rounded-[var(--radius-xl)] border border-border/45 px-6 py-12 shadow-lg sm:px-8 lg:px-10">
+            <Loader2 size={20} className="animate-spin text-muted-foreground/60" />
+            <h2 className="mt-5 text-[17px] font-medium tracking-[-0.01em] text-foreground">
               {createTitle}
             </h2>
-            <p className="mt-2 max-w-sm text-center text-[13px] leading-6 text-text-muted/70">
+            <p className="mt-2 max-w-sm text-center text-[13px] leading-6 text-muted-foreground/70">
               {createDetail}
             </p>
-            <div className="mt-6 flex items-center gap-6 text-[11px] text-text-dim/60">
+            <div className="mt-6 flex items-center gap-6 text-[11px] text-muted-foreground/60">
               {createSteps.map((step, i) => (
                 <div key={step} className="flex items-center gap-2">
-                  <span className={`inline-block h-1 w-1 rounded-full ${i === 0 ? "bg-text-main/50" : "bg-text-dim/30"}`} />
+                  <span className={`inline-block h-1 w-1 rounded-full ${i === 0 ? "bg-foreground/50" : "bg-muted-foreground/30"}`} />
                   <span>{step}</span>
                 </div>
               ))}
@@ -533,7 +537,7 @@ function FirstWorkspacePane() {
         <OnboardingUserButton />
       </div>
       <div className="w-full max-w-[1080px]">
-        <div className="theme-shell w-full rounded-[var(--theme-radius-card)] border border-panel-border/45 px-6 py-6 shadow-card sm:px-8 sm:py-7 lg:px-10 lg:py-8">
+        <div className="theme-shell w-full rounded-[var(--radius-xl)] border border-border/45 px-6 py-6 shadow-lg sm:px-8 sm:py-7 lg:px-10 lg:py-8">
           {onboardingStep === "gallery" ? (
             <MarketplaceGallery
               mode="pick"
@@ -559,26 +563,26 @@ function FirstWorkspacePane() {
           ) : onboardingStep === "configure" ? (
             <div>
               <div className="max-w-3xl">
-                <div className="text-[11px] uppercase tracking-[0.24em] text-text-dim/78">
+                <div className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground/78">
                   New workspace
                 </div>
-                <h1 className="mt-3 text-[28px] font-semibold tracking-[-0.04em] text-text-main sm:text-[34px]">
+                <h1 className="mt-3 text-[28px] font-semibold tracking-[-0.04em] text-foreground sm:text-[34px]">
                   Configure &amp; launch
                 </h1>
               </div>
 
               {templateSourceMode === "marketplace" &&
               selectedMarketplaceTemplate ? (
-                <div className="mt-5 flex items-center gap-3 rounded-[18px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-3">
+                <div className="mt-5 flex items-center gap-3 rounded-[18px] border border-border/35 bg-muted px-4 py-3">
                   <KitEmoji
                     emoji={selectedMarketplaceTemplate.emoji}
                     size={32}
                   />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[14px] font-medium text-text-main">
+                    <div className="truncate text-[14px] font-medium text-foreground">
                       {selectedMarketplaceTemplate.name}
                     </div>
-                    <div className="truncate text-[12px] text-text-muted/72">
+                    <div className="truncate text-[12px] text-muted-foreground/72">
                       {selectedMarketplaceTemplate.description ||
                         selectedMarketplaceTemplate.apps.join(", ")}
                     </div>
@@ -586,46 +590,46 @@ function FirstWorkspacePane() {
                   <button
                     type="button"
                     onClick={() => setOnboardingStep("gallery")}
-                    className="shrink-0 text-[12px] text-text-muted/72 underline transition-colors hover:text-text-main"
+                    className="shrink-0 text-[12px] text-muted-foreground/72 underline transition-colors hover:text-foreground"
                   >
                     Change
                   </button>
                 </div>
               ) : templateSourceMode === "empty" ||
                 templateSourceMode === "empty_onboarding" ? (
-                <div className="mt-5 flex items-center gap-3 rounded-[18px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-3">
+                <div className="mt-5 flex items-center gap-3 rounded-[18px] border border-border/35 bg-muted px-4 py-3">
                   <span className="text-[28px] leading-none">+</span>
                   <div className="min-w-0 flex-1">
-                    <div className="text-[14px] font-medium text-text-main">
+                    <div className="text-[14px] font-medium text-foreground">
                       Starting from scratch
                     </div>
-                    <div className="text-[12px] text-text-muted/72">
+                    <div className="text-[12px] text-muted-foreground/72">
                       Empty workspace scaffold
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => setOnboardingStep("gallery")}
-                    className="shrink-0 text-[12px] text-text-muted/72 underline transition-colors hover:text-text-main"
+                    className="shrink-0 text-[12px] text-muted-foreground/72 underline transition-colors hover:text-foreground"
                   >
                     Change
                   </button>
                 </div>
               ) : templateSourceMode === "local" ? (
-                <div className="mt-5 flex items-center gap-3 rounded-[18px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-3">
-                  <FolderOpen size={24} className="shrink-0 text-text-dim/72" />
+                <div className="mt-5 flex items-center gap-3 rounded-[18px] border border-border/35 bg-muted px-4 py-3">
+                  <FolderOpen size={24} className="shrink-0 text-muted-foreground/72" />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[14px] font-medium text-text-main">
+                    <div className="truncate text-[14px] font-medium text-foreground">
                       {selectedTemplateFolder?.templateName || "Local template"}
                     </div>
-                    <div className="truncate text-[12px] text-text-muted/72">
+                    <div className="truncate text-[12px] text-muted-foreground/72">
                       {selectedTemplateFolder?.rootPath || "No folder selected"}
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => void chooseTemplateFolder()}
-                    className="shrink-0 text-[12px] text-text-muted/72 underline transition-colors hover:text-text-main"
+                    className="shrink-0 text-[12px] text-muted-foreground/72 underline transition-colors hover:text-foreground"
                   >
                     Change folder
                   </button>
@@ -634,25 +638,25 @@ function FirstWorkspacePane() {
 
               <div className="mt-6 grid gap-4" style={{ maxWidth: 480 }}>
                 <label className="grid gap-2">
-                  <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
+                  <span className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground/78">
                     Workspace name
                   </span>
                   <input
                     value={newWorkspaceName}
                     onChange={(e) => setNewWorkspaceName(e.target.value)}
                     placeholder="My first workspace"
-                    className="theme-control-surface h-12 rounded-[18px] border border-panel-border/45 px-4 text-[14px] text-text-main outline-none placeholder:text-text-dim/50"
+                    className="theme-control-surface h-12 rounded-[18px] border border-border/45 px-4 text-[14px] text-foreground outline-none placeholder:text-muted-foreground/50"
                   />
                 </label>
 
                 <label className="grid gap-2">
-                  <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
+                  <span className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground/78">
                     Harness
                   </span>
                   <select
                     value={selectedCreateHarness}
                     onChange={(e) => setSelectedCreateHarness(e.target.value)}
-                    className="theme-control-surface h-12 rounded-[18px] border border-panel-border/45 px-4 text-[14px] text-text-main outline-none"
+                    className="theme-control-surface h-12 rounded-[18px] border border-border/45 px-4 text-[14px] text-foreground outline-none"
                   >
                     {createHarnessOptions.map((option) => (
                       <option key={option.id} value={option.id}>
@@ -660,7 +664,7 @@ function FirstWorkspacePane() {
                       </option>
                     ))}
                   </select>
-                  <span className="text-[12px] leading-6 text-text-muted/74">
+                  <span className="text-[12px] leading-6 text-muted-foreground/74">
                     {selectedCreateHarnessOption?.description || ""}
                   </span>
                 </label>
@@ -668,31 +672,31 @@ function FirstWorkspacePane() {
 
               {pendingIntegrations && pendingIntegrations.requirements.length > 0 ? (
                 <div className="mt-6" style={{ maxWidth: 480 }}>
-                  <div className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
+                  <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground/78">
                     Integrations
                   </div>
                   <div className="mt-2 grid gap-2">
                     {pendingIntegrations.connected_providers.map(provider => (
-                      <div key={provider} className="flex items-center justify-between rounded-[14px] border border-neon-green/25 bg-neon-green/6 px-4 py-3">
-                        <span className="text-[13px] font-medium text-text-main">
+                      <div key={provider} className="flex items-center justify-between rounded-[14px] border border-primary/25 bg-primary/6 px-4 py-3">
+                        <span className="text-[13px] font-medium text-foreground">
                           {PROVIDER_DISPLAY_NAMES[provider] ?? provider}
                         </span>
-                        <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-neon-green">
-                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-neon-green" />
+                        <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-primary">
+                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" />
                           Connected
                         </span>
                       </div>
                     ))}
                     {pendingIntegrations.missing_providers.map(provider => (
-                      <div key={provider} className="flex items-center justify-between rounded-[14px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-3">
-                        <span className="text-[13px] font-medium text-text-main">
+                      <div key={provider} className="flex items-center justify-between rounded-[14px] border border-border/35 bg-muted px-4 py-3">
+                        <span className="text-[13px] font-medium text-foreground">
                           {PROVIDER_DISPLAY_NAMES[provider] ?? provider}
                         </span>
                         <button
                           type="button"
                           disabled={connectingProvider !== null}
                           onClick={() => void handleConnectProvider(provider)}
-                          className="rounded-[10px] border border-neon-green/35 bg-neon-green/8 px-3 py-1 text-[11px] font-medium text-neon-green transition-colors hover:bg-neon-green/14 disabled:opacity-50"
+                          className="rounded-[10px] border border-primary/35 bg-primary/8 px-3 py-1 text-[11px] font-medium text-primary transition-colors hover:bg-primary/14 disabled:opacity-50"
                         >
                           {connectingProvider === provider ? "Connecting..." : "Connect"}
                         </button>
@@ -700,11 +704,11 @@ function FirstWorkspacePane() {
                     ))}
                   </div>
                   {connectStatus ? (
-                    <div className="mt-2 text-[12px] text-text-muted">{connectStatus}</div>
+                    <div className="mt-2 text-[12px] text-muted-foreground">{connectStatus}</div>
                   ) : null}
                 </div>
               ) : isResolvingIntegrations ? (
-                <div className="mt-6 text-[12px] text-text-muted" style={{ maxWidth: 480 }}>
+                <div className="mt-6 text-[12px] text-muted-foreground" style={{ maxWidth: 480 }}>
                   Checking integrations...
                 </div>
               ) : null}
@@ -720,7 +724,7 @@ function FirstWorkspacePane() {
                   type="button"
                   disabled={configureCreateDisabled || hasUnconnectedIntegrations || isResolvingIntegrations}
                   onClick={() => void createWorkspace()}
-                  className="inline-flex h-12 items-center justify-center gap-3 rounded-[18px] border border-[rgba(247,90,84,0.38)] bg-[rgba(247,90,84,0.9)] px-5 text-[14px] font-medium text-white transition-colors hover:bg-[rgba(226,79,74,0.94)] disabled:cursor-not-allowed disabled:border-panel-border disabled:bg-panel-border/20 disabled:text-text-muted/60"
+                  className="inline-flex h-12 items-center justify-center gap-3 rounded-[18px] border border-[rgba(247,90,84,0.38)] bg-[rgba(247,90,84,0.9)] px-5 text-[14px] font-medium text-white transition-colors hover:bg-[rgba(226,79,74,0.94)] disabled:cursor-not-allowed disabled:border-border disabled:bg-border/20 disabled:text-muted-foreground/60"
                 >
                   <span>Create Workspace</span>
                   <ArrowRight size={16} />
@@ -728,7 +732,7 @@ function FirstWorkspacePane() {
                 <button
                   type="button"
                   onClick={() => setOnboardingStep("gallery")}
-                  className="text-[12px] text-text-muted/72 underline transition-colors hover:text-text-main"
+                  className="text-[12px] text-muted-foreground/72 underline transition-colors hover:text-foreground"
                 >
                   Back to kits
                 </button>
@@ -737,52 +741,52 @@ function FirstWorkspacePane() {
           ) : onboardingStep === "connect_integrations" && pendingIntegrations ? (
             <div>
               <div className="max-w-3xl">
-                <div className="text-[11px] uppercase tracking-[0.24em] text-text-dim/78">
+                <div className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground/78">
                   Connect integrations
                 </div>
-                <h1 className="mt-3 text-[28px] font-semibold tracking-[-0.04em] text-text-main sm:text-[34px]">
+                <h1 className="mt-3 text-[28px] font-semibold tracking-[-0.04em] text-foreground sm:text-[34px]">
                   This workspace needs access
                 </h1>
-                <p className="mt-2 text-[14px] leading-7 text-text-muted/84">
+                <p className="mt-2 text-[14px] leading-7 text-muted-foreground/84">
                   Connect the following accounts to continue.
                 </p>
               </div>
 
               <div className="mt-6 grid gap-3" style={{ maxWidth: 480 }}>
                 {pendingIntegrations.missing_providers.map(provider => (
-                  <div key={provider} className="flex items-center justify-between rounded-[18px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-5 py-4">
-                    <div className="text-[14px] font-medium text-text-main">
+                  <div key={provider} className="flex items-center justify-between rounded-[18px] border border-border/35 bg-muted px-5 py-4">
+                    <div className="text-[14px] font-medium text-foreground">
                       {PROVIDER_DISPLAY_NAMES[provider] ?? provider}
                     </div>
                     <button
                       type="button"
                       disabled={connectingProvider !== null}
                       onClick={() => void handleConnectProvider(provider)}
-                      className="inline-flex h-9 items-center rounded-[12px] border border-neon-green/35 bg-neon-green/8 px-4 text-[12px] font-medium text-neon-green transition-colors hover:bg-neon-green/14 disabled:opacity-50"
+                      className="inline-flex h-9 items-center rounded-[12px] border border-primary/35 bg-primary/8 px-4 text-[12px] font-medium text-primary transition-colors hover:bg-primary/14 disabled:opacity-50"
                     >
                       {connectingProvider === provider ? "Connecting..." : "Connect"}
                     </button>
                   </div>
                 ))}
                 {pendingIntegrations.connected_providers.map(provider => (
-                  <div key={provider} className="flex items-center justify-between rounded-[18px] border border-neon-green/20 bg-neon-green/4 px-5 py-4">
-                    <div className="text-[14px] font-medium text-text-main">
+                  <div key={provider} className="flex items-center justify-between rounded-[18px] border border-primary/20 bg-primary/4 px-5 py-4">
+                    <div className="text-[14px] font-medium text-foreground">
                       {PROVIDER_DISPLAY_NAMES[provider] ?? provider}
                     </div>
-                    <span className="text-[12px] font-medium text-neon-green">Connected</span>
+                    <span className="text-[12px] font-medium text-primary">Connected</span>
                   </div>
                 ))}
               </div>
 
               {connectStatus ? (
-                <div className="mt-4 text-[13px] text-text-muted">{connectStatus}</div>
+                <div className="mt-4 text-[13px] text-muted-foreground">{connectStatus}</div>
               ) : null}
 
               <div className="mt-5">
                 <button
                   type="button"
                   onClick={() => { clearPendingIntegrations(); setOnboardingStep("configure"); }}
-                  className="text-[12px] text-text-muted/72 underline transition-colors hover:text-text-main"
+                  className="text-[12px] text-muted-foreground/72 underline transition-colors hover:text-foreground"
                 >
                   &larr; Back to configure
                 </button>
@@ -809,11 +813,11 @@ function WorkspaceBootstrapPane() {
   return (
     <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden px-6">
       <div className="flex flex-col items-center text-center">
-        <Loader2 size={20} className="animate-spin text-text-dim/60" />
-        <h2 className="mt-5 text-[17px] font-medium tracking-[-0.01em] text-text-main">
+        <Loader2 size={20} className="animate-spin text-muted-foreground/60" />
+        <h2 className="mt-5 text-[17px] font-medium tracking-[-0.01em] text-foreground">
           Preparing desktop...
         </h2>
-        <p className="mt-2 max-w-sm text-[13px] leading-6 text-text-muted/70">
+        <p className="mt-2 max-w-sm text-[13px] leading-6 text-muted-foreground/70">
           Restoring workspace state and attaching surfaces.
         </p>
       </div>
@@ -840,13 +844,13 @@ function WorkspaceInitializingGate({
         {hasErrors ? (
           <TriangleAlert size={20} className="text-rose-400" />
         ) : (
-          <Loader2 size={20} className="animate-spin text-text-dim/60" />
+          <Loader2 size={20} className="animate-spin text-muted-foreground/60" />
         )}
 
-        <h2 className="mt-5 text-[17px] font-medium tracking-[-0.01em] text-text-main">
+        <h2 className="mt-5 text-[17px] font-medium tracking-[-0.01em] text-foreground">
           {hasErrors ? "Some apps need attention" : "Setting up workspace"}
         </h2>
-        <p className="mt-2 max-w-sm text-[13px] leading-6 text-text-muted/70">
+        <p className="mt-2 max-w-sm text-[13px] leading-6 text-muted-foreground/70">
           {hasErrors
             ? "Some workspace apps encountered errors."
             : "Starting workspace apps. This may take a moment on first setup."}
@@ -856,25 +860,25 @@ function WorkspaceInitializingGate({
           {apps.map((app) => (
             <div
               key={app.id}
-              className="flex items-center gap-3 rounded-[14px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-2.5"
+              className="flex items-center gap-3 rounded-[14px] border border-border/35 bg-muted px-4 py-2.5"
             >
               {app.ready ? (
-                <CircleCheck size={14} className="shrink-0 text-neon-green" />
+                <CircleCheck size={14} className="shrink-0 text-primary" />
               ) : app.error ? (
                 <XCircle size={14} className="shrink-0 text-rose-400" />
               ) : (
-                <Loader2 size={14} className="shrink-0 animate-spin text-text-dim/50" />
+                <Loader2 size={14} className="shrink-0 animate-spin text-muted-foreground/50" />
               )}
-              <span className="min-w-0 flex-1 text-left text-[13px] text-text-main">
+              <span className="min-w-0 flex-1 text-left text-[13px] text-foreground">
                 {app.label}
               </span>
               <span
                 className={`text-[11px] ${
                   app.ready
-                    ? "text-neon-green"
+                    ? "text-primary"
                     : app.error
                       ? "text-rose-400"
-                      : "text-text-dim/60"
+                      : "text-muted-foreground/60"
                 }`}
               >
                 {app.ready ? "Ready" : app.error ? "Failed" : "Setting up..."}
@@ -884,7 +888,7 @@ function WorkspaceInitializingGate({
         </div>
 
         {!hasErrors ? (
-          <div className="mt-3 text-[12px] text-text-muted/60">
+          <div className="mt-3 text-[12px] text-muted-foreground/60">
             {readyCount} of {apps.length} ready
           </div>
         ) : null}
@@ -903,16 +907,16 @@ function FocusPlaceholder({
   description: string;
 }) {
   return (
-    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
+    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(87,255,173,0.08),transparent_45%)]" />
       <div className="relative max-w-[520px] px-8 text-center">
-        <div className="text-[10px] uppercase tracking-[0.18em] text-neon-green/78">
+        <div className="text-[10px] uppercase tracking-[0.18em] text-primary/78">
           {eyebrow}
         </div>
-        <div className="mt-3 text-[28px] font-semibold tracking-[-0.03em] text-text-main">
+        <div className="mt-3 text-[28px] font-semibold tracking-[-0.03em] text-foreground">
           {title}
         </div>
-        <div className="mt-3 text-[13px] leading-7 text-text-muted/84">
+        <div className="mt-3 text-[13px] leading-7 text-muted-foreground/84">
           {description}
         </div>
       </div>
@@ -922,25 +926,25 @@ function FocusPlaceholder({
 
 function WorkspaceStartupErrorPane({ message }: { message: string }) {
   return (
-    <section className="theme-shell relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
+    <section className="theme-shell relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(247,90,84,0.12),transparent_32%),radial-gradient(circle_at_bottom,rgba(247,170,126,0.08),transparent_36%)]" />
       <div className="relative w-full max-w-[720px] px-6 py-8">
-        <div className="theme-subtle-surface rounded-[30px] border border-[rgba(247,90,84,0.24)] p-6 shadow-card sm:p-8">
+        <div className="theme-subtle-surface rounded-[30px] border border-[rgba(247,90,84,0.24)] p-6 shadow-lg sm:p-8">
           <div className="inline-flex items-center gap-2 rounded-full border border-[rgba(247,90,84,0.22)] bg-[rgba(247,90,84,0.08)] px-3 py-1.5 text-[10px] uppercase tracking-[0.22em] text-[rgba(206,92,84,0.92)]">
             <TriangleAlert size={12} />
             <span>Desktop startup blocked</span>
           </div>
-          <div className="mt-6 text-[30px] font-semibold tracking-[-0.04em] text-text-main">
+          <div className="mt-6 text-[30px] font-semibold tracking-[-0.04em] text-foreground">
             The local runtime failed to start
           </div>
-          <div className="mt-3 text-[14px] leading-7 text-text-muted/84">
+          <div className="mt-3 text-[14px] leading-7 text-muted-foreground/84">
             The desktop shell cannot finish restoring workspaces until the
             embedded runtime comes online.
           </div>
-          <div className="mt-6 rounded-[20px] border border-[rgba(247,90,84,0.22)] bg-[rgba(247,90,84,0.06)] px-4 py-4 text-[13px] leading-7 text-text-main">
+          <div className="mt-6 rounded-[20px] border border-[rgba(247,90,84,0.22)] bg-[rgba(247,90,84,0.06)] px-4 py-4 text-[13px] leading-7 text-foreground">
             {message}
           </div>
-          <div className="mt-5 text-[12px] leading-6 text-text-muted/76">
+          <div className="mt-5 text-[12px] leading-6 text-muted-foreground/76">
             Check `runtime.log` in the Electron userData directory and confirm
             the required desktop runtime configuration is present.
           </div>
@@ -2012,7 +2016,7 @@ function AppShellContent() {
   }, [clampPairedUtilityPaneWidths, clampUtilityPaneWidth]);
 
   return (
-    <main className="fixed inset-0 h-screen overflow-hidden text-text-main/90">
+    <main className="fixed inset-0 h-screen overflow-hidden text-foreground/90">
       <div className="theme-grid pointer-events-none absolute inset-0 bg-noise-grid bg-[size:22px_22px]" />
       <div className="theme-orb-primary pointer-events-none absolute -left-32 -top-32 h-80 w-80 rounded-full blur-3xl" />
       <div className="theme-orb-secondary pointer-events-none absolute -bottom-40 right-12 h-96 w-96 rounded-full blur-3xl" />
@@ -2036,6 +2040,15 @@ function AppShellContent() {
               onWorkspaceSwitcherVisibilityChange={setWorkspaceSwitcherOpen}
               onOpenMarketplace={() => handleLeftRailSelect("marketplace")}
               isMarketplaceActive={activeLeftRailItem === "marketplace"}
+              onOpenSettings={() => {
+                setSettingsDialogSection("settings");
+                setSettingsDialogOpen(true);
+              }}
+              onOpenAccount={() => {
+                setSettingsDialogSection("account");
+                setSettingsDialogOpen(true);
+              }}
+              onOpenExternalUrl={handleOpenExternalUrl}
             />
           </div>
         ) : null}
@@ -2113,7 +2126,7 @@ function AppShellContent() {
                                     }
                                     className="group relative z-10 flex w-4 shrink-0 cursor-col-resize touch-none items-center justify-center"
                                   >
-                                    <div className="pointer-events-none absolute inset-y-2 left-1/2 w-px -translate-x-1/2 rounded-full bg-panel-border/55 transition-all duration-150 group-hover:w-[2px] group-hover:bg-[rgba(247,90,84,0.5)]" />
+                                    <div className="pointer-events-none absolute inset-y-2 left-1/2 w-px -translate-x-1/2 rounded-full bg-border/55 transition-all duration-150 group-hover:w-[2px] group-hover:bg-[rgba(247,90,84,0.5)]" />
                                     <div className="pointer-events-none absolute left-1/2 top-1/2 h-14 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[rgba(247,90,84,0.08)] opacity-0 transition duration-150 group-hover:opacity-100" />
                                   </div>
                                 ) : null}
@@ -2122,12 +2135,12 @@ function AppShellContent() {
                           })}
                         </div>
                       ) : (
-                        <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-[var(--theme-radius-card)] border border-panel-border/45 shadow-card">
+                        <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-[var(--radius-xl)] border border-border/45 shadow-lg">
                           <div className="max-w-[360px] px-6 text-center">
-                            <div className="text-[22px] font-medium tracking-[-0.03em] text-text-main">
+                            <div className="text-[22px] font-medium tracking-[-0.03em] text-foreground">
                               Turn on a space surface
                             </div>
-                            <div className="mt-3 text-[13px] leading-6 text-text-muted/78">
+                            <div className="mt-3 text-[13px] leading-6 text-muted-foreground/78">
                               Space keeps your files, browser, and agent panes
                               available together.
                             </div>
@@ -2153,12 +2166,12 @@ function AppShellContent() {
                         view={agentView.view}
                       />
                     ) : (
-                      <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-[var(--theme-radius-card)] border border-panel-border/45 shadow-card">
+                      <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-[var(--radius-xl)] border border-border/45 shadow-lg">
                         <div className="max-w-[360px] px-6 text-center">
-                          <div className="text-[22px] font-medium tracking-[-0.03em] text-text-main">
+                          <div className="text-[22px] font-medium tracking-[-0.03em] text-foreground">
                             Choose an app
                           </div>
-                          <div className="mt-3 text-[13px] leading-6 text-text-muted/78">
+                          <div className="mt-3 text-[13px] leading-6 text-muted-foreground/78">
                             Select a workspace app from the left rail to open
                             its dedicated screen.
                           </div>
@@ -2188,13 +2201,13 @@ function AppShellContent() {
 
             {spaceMode && spaceVisibility.agent ? (
               <div className="pointer-events-none absolute right-0 top-0 z-20 hidden lg:block">
-                <div className="pointer-events-auto inline-flex items-center gap-1 rounded-bl-[16px] rounded-tr-[var(--theme-radius-card)] border border-panel-border/50 border-r-0 border-t-0 bg-panel-bg/94 px-2 py-2 text-text-muted shadow-card backdrop-blur">
+                <div className="pointer-events-auto inline-flex items-center gap-1 rounded-bl-[16px] rounded-tr-[var(--radius-xl)] border border-border/50 border-r-0 border-t-0 bg-card/94 px-2 py-2 text-muted-foreground shadow-lg backdrop-blur">
                   {showOperationsDrawer ? (
                     <button
                       type="button"
                       onClick={() => toggleOperationsDrawer()}
                       aria-label="Hide right panel"
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-neon-green/45 bg-neon-green/10 text-neon-green transition-all duration-200 hover:border-neon-green/60 hover:bg-neon-green/14 active:scale-95"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-primary/45 bg-primary/10 text-primary transition-all duration-200 hover:border-primary/60 hover:bg-primary/14 active:scale-95"
                     >
                       <PanelRightClose size={14} />
                     </button>
@@ -2204,7 +2217,7 @@ function AppShellContent() {
                         type="button"
                         onClick={() => openOperationsDrawerTab("inbox")}
                         aria-label="Open inbox panel"
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-panel-border/45 text-text-muted transition-all duration-200 hover:border-neon-green/45 hover:text-neon-green active:scale-95"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-border/45 text-muted-foreground transition-all duration-200 hover:border-primary/45 hover:text-primary active:scale-95"
                       >
                         <Bell size={13} />
                       </button>
@@ -2212,7 +2225,7 @@ function AppShellContent() {
                         type="button"
                         onClick={() => openOperationsDrawerTab("running")}
                         aria-label="Open running panel"
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-panel-border/45 text-text-muted transition-all duration-200 hover:border-neon-green/45 hover:text-neon-green active:scale-95"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-border/45 text-muted-foreground transition-all duration-200 hover:border-primary/45 hover:text-primary active:scale-95"
                       >
                         <Clock3 size={13} />
                       </button>
@@ -2220,7 +2233,7 @@ function AppShellContent() {
                         type="button"
                         onClick={() => openOperationsDrawerTab("outputs")}
                         aria-label="Open outputs panel"
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-panel-border/45 text-text-muted transition-all duration-200 hover:border-neon-green/45 hover:text-neon-green active:scale-95"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-border/45 text-muted-foreground transition-all duration-200 hover:border-primary/45 hover:text-primary active:scale-95"
                       >
                         <ChevronRight size={13} />
                       </button>
@@ -2228,7 +2241,7 @@ function AppShellContent() {
                         type="button"
                         onClick={() => toggleOperationsDrawer()}
                         aria-label="Show right panel"
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-panel-border/45 text-text-muted transition-all duration-200 hover:border-neon-green/45 hover:text-neon-green active:scale-95"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-border/45 text-muted-foreground transition-all duration-200 hover:border-primary/45 hover:text-primary active:scale-95"
                       >
                         <PanelRightOpen size={14} />
                       </button>

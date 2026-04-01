@@ -202,10 +202,10 @@ export function AuthPanel() {
     statusTone === "error"
       ? "border-rose-400/35 bg-rose-500/10 text-rose-400"
       : statusTone === "ready"
-        ? "border-neon-green/35 bg-neon-green/10 text-neon-green"
+        ? "border-primary/35 bg-primary/10 text-primary"
         : statusTone === "syncing"
           ? "border-amber-300/35 bg-amber-400/10 text-amber-300"
-          : "border-panel-border/45 bg-black/10 text-text-dim/78";
+          : "border-border/45 bg-black/10 text-muted-foreground/78";
 
   const infoRows = [
     {
@@ -305,18 +305,18 @@ export function AuthPanel() {
   }
 
   return (
-    <section className="theme-shell soft-vignette w-full max-w-[560px] overflow-hidden rounded-[24px] border border-panel-border/40 text-[11px] text-text-main/88 shadow-card">
-      <div className="border-b border-panel-border/40 px-4 py-4">
+    <section className="theme-shell soft-vignette w-full max-w-[560px] overflow-hidden rounded-[24px] border border-border/40 text-[11px] text-foreground/88 shadow-lg">
+      <div className="border-b border-border/40 px-4 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
-            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-neon-green/30 bg-neon-green/10 text-[16px] font-semibold text-neon-green">
+            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-primary/30 bg-primary/10 text-[16px] font-semibold text-primary">
               {sessionInitials(session)}
             </div>
             <div className="min-w-0">
-              <div className="text-[15px] font-medium text-text-main">
+              <div className="text-[15px] font-medium text-foreground">
                 {isSignedIn ? sessionDisplayName(session) || "Holaboss account" : "Holaboss account"}
               </div>
-              <div className="mt-0.5 truncate text-[12px] text-text-muted/80">
+              <div className="mt-0.5 truncate text-[12px] text-muted-foreground/80">
                 {isSignedIn ? sessionEmail(session) || resolvedUserId || "Signed in" : "Not connected"}
               </div>
             </div>
@@ -324,9 +324,9 @@ export function AuthPanel() {
           <div className={`shrink-0 rounded-full border px-3 py-1 text-[10px] tracking-[0.14em] ${badgeClassName}`}>{statusBadgeLabel}</div>
         </div>
 
-        <div className="theme-subtle-surface mt-4 rounded-[18px] border border-panel-border/35 px-4 py-3">
-          <div className="text-[13px] text-text-main">{statusTitle}</div>
-          <div className="mt-1 text-[11px] leading-5 text-text-muted/82">{statusDescription}</div>
+        <div className="theme-subtle-surface mt-4 rounded-[18px] border border-border/35 px-4 py-3">
+          <div className="text-[13px] text-foreground">{statusTitle}</div>
+          <div className="mt-1 text-[11px] leading-5 text-muted-foreground/82">{statusDescription}</div>
         </div>
       </div>
 
@@ -335,10 +335,10 @@ export function AuthPanel() {
           {infoRows.map((row) => (
             <div
               key={row.label}
-              className="theme-subtle-surface flex items-center justify-between gap-3 rounded-[16px] border border-panel-border/35 px-4 py-3"
+              className="theme-subtle-surface flex items-center justify-between gap-3 rounded-[16px] border border-border/35 px-4 py-3"
             >
-              <div className="text-[11px] text-text-main/92">{row.label}</div>
-              <div className="max-w-[58%] truncate text-right text-[11px] text-text-muted/82">{row.value}</div>
+              <div className="text-[11px] text-foreground/92">{row.label}</div>
+              <div className="max-w-[58%] truncate text-right text-[11px] text-muted-foreground/82">{row.value}</div>
             </div>
           ))}
         </div>
@@ -346,7 +346,7 @@ export function AuthPanel() {
         <div className="mt-4 flex flex-wrap gap-2">
           {!isSignedIn && (
             <button
-              className="inline-flex h-[42px] items-center justify-center rounded-[16px] border border-neon-green/40 bg-neon-green/10 px-4 text-[12px] text-neon-green transition hover:bg-neon-green/16 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-[42px] items-center justify-center rounded-[16px] border border-primary/40 bg-primary/10 px-4 text-[12px] text-primary transition hover:bg-primary/16 disabled:cursor-not-allowed disabled:opacity-50"
               type="button"
               onClick={() => void handleStartSignIn()}
               disabled={isStartingSignIn}
@@ -357,7 +357,7 @@ export function AuthPanel() {
 
           {isSignedIn && !runtimeBindingReady && (
             <button
-              className="inline-flex h-[42px] items-center justify-center rounded-[16px] border border-neon-green/40 bg-neon-green/10 px-4 text-[12px] text-neon-green transition hover:bg-neon-green/16 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-[42px] items-center justify-center rounded-[16px] border border-primary/40 bg-primary/10 px-4 text-[12px] text-primary transition hover:bg-primary/16 disabled:cursor-not-allowed disabled:opacity-50"
               type="button"
               onClick={() => void handleExchangeRuntimeBinding()}
               disabled={isExchangingRuntimeBinding}
@@ -367,7 +367,7 @@ export function AuthPanel() {
           )}
 
           <button
-            className="theme-control-surface inline-flex h-[42px] items-center justify-center rounded-[16px] border border-panel-border/45 px-4 text-[12px] text-text-main transition hover:border-neon-green/35 disabled:cursor-not-allowed disabled:opacity-50"
+            className="theme-control-surface inline-flex h-[42px] items-center justify-center rounded-[16px] border border-border/45 px-4 text-[12px] text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
             type="button"
             onClick={() => void handleRefreshSession()}
             disabled={sessionState.isPending}
@@ -376,7 +376,7 @@ export function AuthPanel() {
           </button>
 
           <button
-            className="theme-control-surface inline-flex h-[42px] items-center justify-center rounded-[16px] border border-panel-border/45 px-4 text-[12px] text-text-main transition hover:border-neon-green/35 disabled:cursor-not-allowed disabled:opacity-50"
+            className="theme-control-surface inline-flex h-[42px] items-center justify-center rounded-[16px] border border-border/45 px-4 text-[12px] text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
             type="button"
             onClick={() => void handleSignOut()}
             disabled={!isSignedIn}
@@ -392,7 +392,7 @@ export function AuthPanel() {
         )}
 
         {runtimeBindingReady && !authMessage && !authError && (
-          <div className="mt-3 rounded-[16px] border border-neon-green/18 bg-neon-green/8 px-4 py-3 text-[11px] text-neon-green">
+          <div className="mt-3 rounded-[16px] border border-primary/18 bg-primary/8 px-4 py-3 text-[11px] text-primary">
             Connected. Remote proactive and marketplace features are available on this desktop runtime.
           </div>
         )}
@@ -402,31 +402,31 @@ export function AuthPanel() {
             className={`mt-3 rounded-[16px] border px-4 py-3 text-[11px] ${
               authError
                 ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
-                : "border-neon-green/35 bg-neon-green/8 text-neon-green"
+                : "border-primary/35 bg-primary/8 text-primary"
             }`}
           >
             {authError || authMessage}
           </div>
         )}
 
-        <div className="mt-4 border-t border-panel-border/45 pt-3">
+        <div className="mt-4 border-t border-border/45 pt-3">
           <button
-            className="theme-control-surface flex w-full items-center justify-between rounded-[16px] border border-panel-border/45 px-4 py-3 text-left text-[11px] text-text-main transition hover:border-neon-green/35"
+            className="theme-control-surface flex w-full items-center justify-between rounded-[16px] border border-border/45 px-4 py-3 text-left text-[11px] text-foreground transition hover:border-primary/35"
             type="button"
             onClick={() => setIsAdvancedOpen((current) => !current)}
           >
             <span>Advanced runtime settings</span>
-            <span className="text-text-dim">{isAdvancedOpen ? "Hide" : "Show"}</span>
+            <span className="text-muted-foreground">{isAdvancedOpen ? "Hide" : "Show"}</span>
           </button>
 
           {isAdvancedOpen && (
-            <div className="theme-subtle-surface mt-3 grid gap-2 rounded-[18px] border border-panel-border/35 p-3">
-              <div className="text-[10px] tracking-[0.16em] text-text-dim/76">RUNTIME PRODUCT CONFIG</div>
+            <div className="theme-subtle-surface mt-3 grid gap-2 rounded-[18px] border border-border/35 p-3">
+              <div className="text-[10px] tracking-[0.16em] text-muted-foreground/76">RUNTIME PRODUCT CONFIG</div>
 
               <label className="grid gap-1">
-                <span className="text-[10px] tracking-[0.12em] text-text-dim/76">Runtime sandbox ID</span>
+                <span className="text-[10px] tracking-[0.12em] text-muted-foreground/76">Runtime sandbox ID</span>
                 <input
-                  className="theme-control-surface rounded-lg border border-panel-border/45 px-3 py-2 text-[12px] text-text-main outline-none transition focus:border-neon-green/70"
+                  className="theme-control-surface rounded-lg border border-border/45 px-3 py-2 text-[12px] text-foreground outline-none transition focus:border-primary/70"
                   type="text"
                   value={sandboxId}
                   onChange={(event) => setSandboxId(event.target.value)}
@@ -435,9 +435,9 @@ export function AuthPanel() {
               </label>
 
               <label className="grid gap-1">
-                <span className="text-[10px] tracking-[0.12em] text-text-dim/76">Runtime user ID</span>
+                <span className="text-[10px] tracking-[0.12em] text-muted-foreground/76">Runtime user ID</span>
                 <input
-                  className="theme-control-surface rounded-lg border border-panel-border/45 px-3 py-2 text-[12px] text-text-main outline-none transition focus:border-neon-green/70"
+                  className="theme-control-surface rounded-lg border border-border/45 px-3 py-2 text-[12px] text-foreground outline-none transition focus:border-primary/70"
                   type="text"
                   value={runtimeUserId}
                   onChange={(event) => setRuntimeUserId(event.target.value)}
@@ -446,9 +446,9 @@ export function AuthPanel() {
               </label>
 
               <label className="grid gap-1">
-                <span className="text-[10px] tracking-[0.12em] text-text-dim/76">Model proxy base URL</span>
+                <span className="text-[10px] tracking-[0.12em] text-muted-foreground/76">Model proxy base URL</span>
                 <input
-                  className="theme-control-surface rounded-lg border border-panel-border/45 px-3 py-2 text-[12px] text-text-main outline-none transition focus:border-neon-green/70"
+                  className="theme-control-surface rounded-lg border border-border/45 px-3 py-2 text-[12px] text-foreground outline-none transition focus:border-primary/70"
                   type="url"
                   value={modelProxyBaseUrl}
                   onChange={(event) => setModelProxyBaseUrl(event.target.value)}
@@ -457,9 +457,9 @@ export function AuthPanel() {
               </label>
 
               <label className="grid gap-1">
-                <span className="text-[10px] tracking-[0.12em] text-text-dim/76">Default model</span>
+                <span className="text-[10px] tracking-[0.12em] text-muted-foreground/76">Default model</span>
                 <input
-                  className="theme-control-surface rounded-lg border border-panel-border/45 px-3 py-2 text-[12px] text-text-main outline-none transition focus:border-neon-green/70"
+                  className="theme-control-surface rounded-lg border border-border/45 px-3 py-2 text-[12px] text-foreground outline-none transition focus:border-primary/70"
                   type="text"
                   value={defaultModel}
                   onChange={(event) => setDefaultModel(event.target.value)}
@@ -469,7 +469,7 @@ export function AuthPanel() {
 
               <div className="mt-1 flex flex-wrap gap-2">
                 <button
-                  className="theme-control-surface rounded-[14px] border border-panel-border/45 px-3 py-2 text-[11px] text-text-main transition hover:border-neon-green/35 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="theme-control-surface rounded-[14px] border border-border/45 px-3 py-2 text-[11px] text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
                   type="button"
                   onClick={() => void handleExchangeRuntimeBinding()}
                   disabled={isExchangingRuntimeBinding || !isSignedIn}
@@ -477,7 +477,7 @@ export function AuthPanel() {
                   {isExchangingRuntimeBinding ? "Refreshing..." : "Refresh runtime binding"}
                 </button>
                 <button
-                  className="theme-control-surface rounded-[14px] border border-panel-border/45 px-3 py-2 text-[11px] text-text-main transition hover:border-neon-green/35 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="theme-control-surface rounded-[14px] border border-border/45 px-3 py-2 text-[11px] text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
                   type="button"
                   onClick={() => void handleSaveRuntimeConfig()}
                   disabled={isSavingRuntimeConfig}
@@ -486,7 +486,7 @@ export function AuthPanel() {
                 </button>
               </div>
 
-              <div className="text-[10px] leading-4 text-text-dim/78">{runtimeSummary}</div>
+              <div className="text-[10px] leading-4 text-muted-foreground/78">{runtimeSummary}</div>
             </div>
           )}
         </div>

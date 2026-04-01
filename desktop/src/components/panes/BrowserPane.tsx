@@ -485,9 +485,9 @@ export function BrowserPane({
   };
 
   return (
-    <PaneCard title="" className="shadow-glow">
+    <PaneCard title="" className="shadow-md">
       <div ref={paneRef} className="flex h-full min-h-0 flex-col">
-        <div className="shrink-0 border-b border-neon-green/20 px-2 py-1.5">
+        <div className="shrink-0 border-b border-border px-2 py-1.5">
           <div className="mb-1.5 flex items-center gap-1.5 overflow-x-auto pb-0.5">
             {browserState.tabs.map((tab) => {
               const isActive = tab.id === activeTab.id;
@@ -496,10 +496,10 @@ export function BrowserPane({
                 <div
                   key={tab.id}
                   className={[
-                    "group flex min-w-0 max-w-[200px] items-center gap-1.5 rounded-[var(--theme-radius-pill)] border px-2.5 py-1 transition",
+                    "group flex min-w-0 max-w-[200px] items-center gap-1.5 rounded-full border px-2.5 py-1 transition-colors",
                     isActive
-                      ? "border-neon-green/65 bg-neon-green/16 text-neon-green shadow-glow"
-                      : "theme-control-surface border-panel-border text-text-muted/78 hover:border-neon-green/35 hover:text-text-main",
+                      ? "border-primary/50 bg-primary/12 text-primary"
+                      : "bg-muted border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                   ].join(" ")}
                 >
                   <button
@@ -523,7 +523,7 @@ export function BrowserPane({
                   <button
                     type="button"
                     onClick={() => onCloseTab(tab.id)}
-                    className="grid h-4.5 w-4.5 shrink-0 place-items-center rounded-[var(--theme-radius-pill)] text-current/70 transition hover:bg-[var(--theme-hover-bg)] hover:text-current"
+                    className="grid size-4.5 shrink-0 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-current"
                     aria-label={`Close ${tab.title || "tab"}`}
                   >
                     <X size={11} />
@@ -535,7 +535,7 @@ export function BrowserPane({
             <button
               type="button"
               onClick={onNewTab}
-              className="theme-control-surface grid h-7 w-7 shrink-0 place-items-center rounded-[var(--theme-radius-pill)] border border-panel-border text-text-muted/85 transition hover:border-neon-green/50 hover:text-neon-green"
+              className="bg-muted grid size-7 shrink-0 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
               aria-label="New tab"
             >
               <Plus size={12} />
@@ -554,21 +554,21 @@ export function BrowserPane({
                   label="Back"
                   onClick={() => void window.electronAPI.browser.back()}
                   disabled={!activeTab.canGoBack}
-                  className="h-7 w-7"
+                  className="size-7"
                 />
                 <IconButton
                   icon={<ChevronRight size={13} />}
                   label="Forward"
                   onClick={() => void window.electronAPI.browser.forward()}
                   disabled={!activeTab.canGoForward}
-                  className="h-7 w-7"
+                  className="size-7"
                 />
                 <IconButton
                   icon={<RefreshCcw size={13} />}
                   label="Refresh"
                   onClick={() => void window.electronAPI.browser.reload()}
                   disabled={!activeTab.initialized}
-                  className="h-7 w-7"
+                  className="size-7"
                 />
               </div>
 
@@ -580,8 +580,8 @@ export function BrowserPane({
                     ref={downloadsButtonRef}
                     type="button"
                     className={[
-                      "theme-subtle-surface relative grid h-7 w-7 place-items-center rounded-[var(--theme-radius-control)] border transition-all duration-200",
-                      "border-panel-border/60 text-text-muted/85 hover:border-neon-green/45 hover:text-neon-green",
+                      "bg-muted relative grid size-7 place-items-center rounded-md border transition-colors",
+                      "border-border/60 text-muted-foreground hover:border-primary/45 hover:text-primary",
                     ].join(" ")}
                     aria-label="Downloads"
                     title="Downloads"
@@ -589,7 +589,7 @@ export function BrowserPane({
                   >
                     <Download size={14} />
                     {activeDownloadCount > 0 ? (
-                      <span className="absolute -right-1 -top-1 min-w-[16px] rounded-full border border-neon-green/55 bg-neon-green/90 px-1 text-[9px] font-bold leading-4 text-black">
+                      <span className="absolute -right-1 -top-1 min-w-[16px] rounded-full border border-primary/55 bg-primary/90 px-1 text-[9px] font-bold leading-4 text-black">
                         {activeDownloadCount}
                       </span>
                     ) : null}
@@ -600,8 +600,8 @@ export function BrowserPane({
                   ref={moreButtonRef}
                   type="button"
                   className={[
-                    "theme-subtle-surface relative grid h-7 w-7 place-items-center rounded-[var(--theme-radius-control)] border transition-all duration-200",
-                    "border-panel-border/60 text-text-muted/85 hover:border-neon-green/45 hover:text-neon-green",
+                    "bg-muted relative grid size-7 place-items-center rounded-md border transition-colors",
+                    "border-border/60 text-muted-foreground hover:border-primary/45 hover:text-primary",
                   ].join(" ")}
                   aria-label="More browser options"
                   title="More"
@@ -627,8 +627,8 @@ export function BrowserPane({
                 ref={addressFieldRef}
                 className="relative flex min-w-0 flex-1"
               >
-                <div className="glass-field flex min-w-0 flex-1 items-center gap-1.5 rounded-[var(--theme-radius-control)] px-2.5 py-1.5">
-                  <Globe size={12} className="shrink-0 text-neon-green/85" />
+                <div className="border border-border bg-muted/50 transition-colors focus-within:border-ring flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2.5 py-1.5">
+                  <Globe size={12} className="shrink-0 text-primary/85" />
                   <input
                     ref={addressInputRef}
                     value={inputValue}
@@ -641,7 +641,7 @@ export function BrowserPane({
                       window.setTimeout(() => setAddressFocused(false), 120)
                     }
                     onKeyDown={onAddressKeyDown}
-                    className="embedded-input w-full min-w-0 bg-transparent text-[11px] text-text-main/90 outline-none placeholder:text-text-muted/40"
+                    className="w-full min-w-0 bg-transparent text-[11px] text-foreground outline-none placeholder:text-muted-foreground"
                     placeholder={
                       isNarrowPane ? "Search" : "Enter URL or search"
                     }
@@ -651,10 +651,10 @@ export function BrowserPane({
                       type="button"
                       onClick={onToggleBookmark}
                       className={[
-                        "grid h-6 w-6 shrink-0 place-items-center rounded-[var(--theme-radius-pill)] border transition",
+                        "grid size-6 shrink-0 place-items-center rounded-full border transition-colors",
                         isBookmarked
-                          ? "border-neon-green/60 bg-neon-green/18 text-neon-green"
-                          : "border-transparent bg-transparent text-text-muted/65 hover:border-neon-green/35 hover:bg-black/20 hover:text-neon-green",
+                          ? "border-primary/60 bg-primary/18 text-primary"
+                          : "border-transparent bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                       ].join(" ")}
                       aria-label={
                         isBookmarked ? "Remove bookmark" : "Add bookmark"
@@ -682,17 +682,17 @@ export function BrowserPane({
                   type="button"
                   key={bookmark.id}
                   onClick={() => navigateTo(bookmark.url)}
-                  className="shrink-0 rounded-[var(--theme-radius-control)] px-1.5 py-0.5 text-[10px] font-medium text-text-muted/55 transition hover:bg-[var(--theme-hover-bg)] hover:text-text-main/80"
+                  className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground/80"
                 >
                   <span className="flex items-center gap-1.5">
                     {bookmark.faviconUrl ? (
                       <img
                         src={bookmark.faviconUrl}
                         alt=""
-                        className="h-3 w-3 shrink-0 rounded-sm"
+                        className="size-3 shrink-0 rounded-sm"
                       />
                     ) : (
-                      <span className="grid h-3 w-3 shrink-0 place-items-center rounded-sm bg-white/6 text-[8px] text-text-muted/60">
+                      <span className="grid size-3 shrink-0 place-items-center rounded-sm bg-muted text-[8px] text-muted-foreground">
                         •
                       </span>
                     )}
@@ -709,22 +709,22 @@ export function BrowserPane({
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-px pb-px">
           <div
             ref={viewportRef}
-            className="relative min-h-0 flex-1 overflow-hidden rounded-b-[calc(var(--theme-radius-card)-2px)] bg-[var(--theme-shell-bg)]"
+            className="relative min-h-0 flex-1 overflow-hidden rounded-b-xl bg-card"
           >
             {!activeTab.initialized ? (
-              <div className="absolute inset-0 grid place-items-center bg-[radial-gradient(circle_at_top,rgba(247,90,84,0.08),transparent_30%),linear-gradient(180deg,rgba(255,255,255,0.82),rgba(255,255,255,0.72))] p-6 text-center">
-                <div className="pointer-events-none w-full max-w-[320px] rounded-[24px] border border-panel-border/55 bg-panel-bg/88 px-5 py-5 shadow-[0_18px_48px_rgba(25,33,53,0.12)] backdrop-blur">
-                  <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[18px] border border-[rgba(247,90,84,0.24)] bg-[rgba(247,90,84,0.08)] text-[rgba(206,92,84,0.92)]">
+              <div className="absolute inset-0 grid place-items-center bg-card p-6 text-center">
+                <div className="pointer-events-none w-full max-w-[320px] rounded-[24px] border border-border/55 bg-card px-5 py-5 shadow-xl backdrop-blur">
+                  <div className="mx-auto flex size-12 items-center justify-center rounded-[18px] border border-primary/25 bg-primary/8 text-primary">
                     <Loader2 size={18} className="animate-spin" />
                   </div>
-                  <div className="mt-4 text-[15px] font-medium tracking-[-0.02em] text-text-main">
+                  <div className="mt-4 text-[15px] font-medium tracking-[-0.02em] text-foreground">
                     Starting browser
                   </div>
-                  <div className="mt-1.5 text-[12px] leading-6 text-text-muted/76">
+                  <div className="mt-1.5 text-[12px] leading-6 text-muted-foreground">
                     Opening the embedded browser for this workspace.
                   </div>
-                  <div className="theme-control-surface mt-4 overflow-hidden rounded-full border border-panel-border/40 p-1">
-                    <div className="h-1.5 rounded-full bg-[linear-gradient(90deg,rgba(247,90,84,0.52),rgba(233,117,109,0.78),rgba(247,170,126,0.72))] animate-pulse" />
+                  <div className="bg-muted mt-4 overflow-hidden rounded-full border border-border/40 p-1">
+                    <div className="h-1.5 rounded-full bg-primary/60 animate-pulse" />
                   </div>
                 </div>
               </div>
@@ -732,10 +732,10 @@ export function BrowserPane({
 
             {activeTab.initialized && activeTab.loading ? (
               <div className="pointer-events-none absolute inset-x-3 top-3 z-10">
-                <div className="inline-flex items-center gap-2 rounded-full border border-panel-border/50 bg-panel-bg/86 px-3 py-1.5 text-[11px] text-text-muted/82 shadow-[0_10px_24px_rgba(25,33,53,0.08)] backdrop-blur">
+                <div className="inline-flex items-center gap-2 rounded-full border border-border/50 bg-card px-3 py-1.5 text-[11px] text-muted-foreground shadow-lg backdrop-blur">
                   <Loader2
                     size={12}
-                    className="animate-spin text-[rgba(206,92,84,0.92)]"
+                    className="animate-spin text-primary"
                   />
                   <span>Loading page</span>
                 </div>

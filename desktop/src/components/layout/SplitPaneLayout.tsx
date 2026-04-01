@@ -87,10 +87,10 @@ function Handle({ onPointerDown, active }: { onPointerDown: () => void; active: 
         aria-label="Resize pane"
         onPointerDown={onPointerDown}
         className={`group relative w-[10px] cursor-col-resize rounded-full border transition-all ${
-          active ? "border-neon-green/70 bg-neon-green/35" : "border-neon-green/15 bg-neon-green/5 hover:border-neon-green/45"
+          active ? "border-primary/70 bg-primary/35" : "border-primary/15 bg-primary/5 hover:border-primary/45"
         }`}
       >
-        <span className="absolute inset-y-5 left-1/2 w-[2px] -translate-x-1/2 rounded-full bg-neon-green/35 transition group-hover:bg-neon-green/70" />
+        <span className="absolute inset-y-5 left-1/2 w-[2px] -translate-x-1/2 rounded-full bg-primary/35 transition group-hover:bg-primary/70" />
       </button>
     </div>
   );

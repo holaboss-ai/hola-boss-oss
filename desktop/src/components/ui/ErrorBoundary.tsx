@@ -32,13 +32,13 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     }
 
     return (
-      <main className="flex h-full w-full items-center justify-center bg-obsidian p-6 text-text-main">
-        <div className="max-w-xl rounded-xl border border-neon-green/40 bg-obsidian-soft/90 p-5 shadow-glow">
-          <h1 className="mb-2 text-lg font-semibold text-neon-green">Renderer Error</h1>
-          <p className="text-sm text-text-muted/85">
+      <main className="flex h-full w-full items-center justify-center bg-background p-6 text-foreground">
+        <div className="max-w-xl rounded-xl border border-primary/40 bg-muted/90 p-5 shadow-md">
+          <h1 className="mb-2 text-lg font-semibold text-primary">Renderer Error</h1>
+          <p className="text-sm text-muted-foreground/85">
             A component crashed. Check terminal logs for the stack trace and restart the app.
           </p>
-          <pre className="mt-3 overflow-auto rounded-lg border border-neon-green/20 bg-black/40 p-3 text-xs text-text-main/80">
+          <pre className="mt-3 overflow-auto rounded-lg border border-primary/20 bg-black/40 p-3 text-xs text-foreground/80">
             {this.state.message}
           </pre>
         </div>
