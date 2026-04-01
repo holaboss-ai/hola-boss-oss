@@ -3478,30 +3478,15 @@ async function withRuntimeBindingRefreshLock<T>(
     await runtimeBindingRefreshPromise;
   }
 
-  const lockState: {
-    resolve: (() => void) | null;
-    reject: ((error: unknown) => void) | null;
-  } = {
-    resolve: null,
-    reject: null,
-  };
-  runtimeBindingRefreshPromise = new Promise<void>((resolve, reject) => {
-    lockState.resolve = resolve;
-    lockState.reject = reject;
+  let releaseLock = () => {};
+  runtimeBindingRefreshPromise = new Promise<void>((resolve) => {
+    releaseLock = resolve;
   });
 
   try {
-    const result = await work();
-    if (lockState.resolve) {
-      lockState.resolve();
-    }
-    return result;
-  } catch (error) {
-    if (lockState.reject) {
-      lockState.reject(error);
-    }
-    throw error;
+    return await work();
   } finally {
+    releaseLock();
     runtimeBindingRefreshPromise = null;
   }
 }
@@ -3590,9 +3575,10 @@ async function exchangeDesktopRuntimeBinding(
     throw new Error("Better Auth session cookies are missing.");
   }
 
-  const response = await fetch(
-    `${controlPlaneBaseUrl}${DESKTOP_RUNTIME_BINDING_EXCHANGE_PATH}`,
-    {
+  const exchangeUrl = `${controlPlaneBaseUrl}${DESKTOP_RUNTIME_BINDING_EXCHANGE_PATH}`;
+  let response: Response;
+  try {
+    response = await fetch(exchangeUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -3602,8 +3588,12 @@ async function exchangeDesktopRuntimeBinding(
         sandbox_id: sandboxId,
         target_kind: "desktop",
       }),
-    },
-  );
+    });
+  } catch (error) {
+    throw new Error(
+      `Runtime binding exchange request failed for ${exchangeUrl}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 
   if (!response.ok) {
     const detail = await response.text();
@@ -5166,6 +5156,9 @@ const LOCAL_TEMPLATE_IGNORE_NAMES = new Set([
   ".turbo",
   "coverage",
   ".DS_Store",
+  ".holaboss",
+  ".opencode",
+  "workspace.json",
 ]);
 const LOCAL_TEMPLATE_APP_BINDINGS: Record<string, string[]> = {
   build_in_public: ["github", "twitter"],
@@ -5188,6 +5181,23 @@ interface LocalAppTemplateBinding {
 
 function shouldSkipLocalTemplateEntry(name: string) {
   return LOCAL_TEMPLATE_IGNORE_NAMES.has(name);
+}
+
+function shouldPreserveWorkspaceRuntimeEntry(name: string) {
+  return name === ".holaboss" || name === "workspace.json";
+}
+
+function shouldSkipMaterializedWorkspacePath(relativePath: string) {
+  const normalized = path.posix.normalize(relativePath.trim());
+  if (!normalized || normalized === "." || normalized.startsWith("../")) {
+    return false;
+  }
+  const rootSegment = normalized.split("/")[0];
+  return (
+    rootSegment === ".holaboss" ||
+    rootSegment === ".opencode" ||
+    rootSegment === "workspace.json"
+  );
 }
 
 function decodeMaterializedTemplateFile(
@@ -6110,15 +6120,20 @@ async function applyMaterializedTemplateToWorkspace(
     withFileTypes: true,
   });
   await Promise.all(
-    existingEntries.map((entry) =>
-      fs.rm(path.join(workspaceDir, entry.name), {
-        recursive: true,
-        force: true,
-      }),
-    ),
+    existingEntries
+      .filter((entry) => !shouldPreserveWorkspaceRuntimeEntry(entry.name))
+      .map((entry) =>
+        fs.rm(path.join(workspaceDir, entry.name), {
+          recursive: true,
+          force: true,
+        }),
+      ),
   );
 
   for (const item of files) {
+    if (shouldSkipMaterializedWorkspacePath(item.path)) {
+      continue;
+    }
     const absolutePath = resolveWorkspaceMaterializedFilePath(
       workspaceDir,
       item.path,

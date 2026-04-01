@@ -1,6 +1,6 @@
 import { type ChangeEvent, type DragEvent, FormEvent, KeyboardEvent, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { AlertTriangle, ArrowUp, Bot, Cable, Check, ChevronDown, Clock3, FileText, Image as ImageIcon, Loader2, Paperclip, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, ArrowUp, Bot, Cable, Check, ChevronDown, Clock3, FileText, Image as ImageIcon, Loader2, Paperclip, Waypoints, X } from "lucide-react";
 import { PaneCard } from "@/components/ui/PaneCard";
 import {
   EXPLORER_ATTACHMENT_DRAG_TYPE,
@@ -1891,7 +1891,9 @@ export function ChatPane({
     }
   }
   const runtimeDefaultModel = runtimeConfig?.defaultModel?.trim() || DEFAULT_RUNTIME_MODEL;
+  const requiresModelProviderSetup = !hasConfiguredProviderCatalog && !holabossProxyModelsAvailable;
   const runtimeDefaultModelAvailable =
+    !requiresModelProviderSetup &&
     !hasConfiguredProviderCatalog &&
     (holabossProxyModelsAvailable || !isHolabossProxyModel(runtimeDefaultModel));
   const availableChatModelOptionGroups: ChatModelOptionGroup[] = hasConfiguredProviderCatalog
@@ -1911,6 +1913,8 @@ export function ChatPane({
     : [];
   const availableChatModelOptions = hasConfiguredProviderCatalog
     ? availableChatModelOptionGroups.flatMap((group) => group.options)
+    : requiresModelProviderSetup
+      ? []
     : Array.from(
         new Set([
           runtimeDefaultModel,
@@ -1950,7 +1954,7 @@ export function ChatPane({
   const modelSelectionUnavailableReason =
     availableChatModelOptions.length > 0
       ? ""
-      : "No models available. Sign in to use Holaboss or add a provider.";
+      : "No models available. Configure a provider to start chatting.";
   const composerDisabledReason =
     baseComposerDisabledReason ||
     (!isOnboardingVariant && !resolvedChatModel ? modelSelectionUnavailableReason : "");
@@ -2203,6 +2207,7 @@ export function ChatPane({
                       placeholder={textareaPlaceholder}
                       showModelSelector={!isOnboardingVariant}
                       onModelChange={setChatModelPreference}
+                      onOpenModelProviders={() => void window.electronAPI.ui.openSettingsPane("providers")}
                       textareaRef={textareaRef}
                       fileInputRef={fileInputRef}
                       onChange={setInput}
@@ -2251,6 +2256,7 @@ export function ChatPane({
                   placeholder={textareaPlaceholder}
                   showModelSelector={!isOnboardingVariant}
                   onModelChange={setChatModelPreference}
+                  onOpenModelProviders={() => void window.electronAPI.ui.openSettingsPane("providers")}
                   textareaRef={textareaRef}
                   fileInputRef={fileInputRef}
                   onChange={setInput}
@@ -2290,6 +2296,7 @@ interface ComposerProps {
   placeholder: string;
   showModelSelector: boolean;
   onModelChange: (value: string) => void;
+  onOpenModelProviders: () => void;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   fileInputRef: RefObject<HTMLInputElement | null>;
   onChange: (value: string) => void;
@@ -2608,6 +2615,7 @@ function Composer({
   placeholder,
   showModelSelector,
   onModelChange,
+  onOpenModelProviders,
   textareaRef,
   fileInputRef,
   onChange,
@@ -2712,25 +2720,39 @@ function Composer({
 
       <div className="flex items-center justify-between gap-2 border-t border-border/20 px-3 py-3 text-muted-foreground">
         {showModelSelector ? (
-          <div className="relative w-[172px] shrink-0 sm:w-[208px]">
-            <select
-              value={selectedModel}
-              onChange={(event) => onModelChange(event.target.value)}
-              disabled={isResponding || noAvailableModels}
-              aria-label="Model selection"
-              title={
-                noAvailableModels
-                  ? modelSelectionUnavailableReason
-                  : selectedModel === CHAT_MODEL_USE_RUNTIME_DEFAULT
-                    ? `Auto (${runtimeDefaultModelLabel})`
-                    : selectedModelOptionLabel
-              }
-              className="composer-select bg-muted h-9 w-full appearance-none rounded-[11px] border border-border/28 px-3 pr-9 text-[12px] font-medium text-foreground transition hover:border-border/48 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {noAvailableModels ? (
-                <option value={CHAT_MODEL_USE_RUNTIME_DEFAULT}>{modelSelectionUnavailableReason}</option>
-              ) : (
-                <>
+          <div className={noAvailableModels ? "min-w-0 flex flex-1 items-center gap-3" : "w-[172px] shrink-0 sm:w-[208px]"}>
+            {noAvailableModels ? (
+              <>
+                <button
+                  type="button"
+                  onClick={onOpenModelProviders}
+                  className="bg-card flex h-9 shrink-0 items-center justify-between gap-2 rounded-[11px] border border-border/28 px-3 text-left text-[12px] font-semibold text-foreground transition hover:border-primary/35 hover:bg-card/92"
+                  aria-label="Configure model providers"
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <Waypoints size={13} className="shrink-0 text-muted-foreground" />
+                    <span className="truncate">Set up providers</span>
+                  </span>
+                  <ArrowRight size={14} className="shrink-0 text-muted-foreground" />
+                </button>
+                <div className="min-w-0 text-[10px] leading-5 text-muted-foreground">
+                  Open provider settings to connect a model.
+                </div>
+              </>
+            ) : (
+              <div className="relative">
+                <select
+                  value={selectedModel}
+                  onChange={(event) => onModelChange(event.target.value)}
+                  disabled={isResponding}
+                  aria-label="Model selection"
+                  title={
+                    selectedModel === CHAT_MODEL_USE_RUNTIME_DEFAULT
+                      ? `Auto (${runtimeDefaultModelLabel})`
+                      : selectedModelOptionLabel
+                  }
+                  className="composer-select bg-muted h-9 w-full appearance-none rounded-[11px] border border-border/28 px-3 pr-9 text-[12px] font-medium text-foreground transition hover:border-border/48 disabled:cursor-not-allowed disabled:opacity-60"
+                >
                   {runtimeDefaultModelAvailable ? <option value={CHAT_MODEL_USE_RUNTIME_DEFAULT}>Auto</option> : null}
                   {modelOptionGroups.length > 0
                     ? modelOptionGroups.map((group, groupIndex) => (
@@ -2747,13 +2769,13 @@ function Composer({
                           {option.label}
                         </option>
                       ))}
-                </>
-              )}
-            </select>
-            <ChevronDown
-              size={14}
-              className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-            />
+                </select>
+                <ChevronDown
+                  size={14}
+                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                />
+              </div>
+            )}
           </div>
         ) : (
           <div className="text-[11px] leading-6 text-muted-foreground">
