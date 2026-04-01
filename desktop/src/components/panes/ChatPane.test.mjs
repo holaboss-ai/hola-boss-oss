@@ -27,3 +27,13 @@ test("chat pane shows provider setup CTA when no chat models are available", asy
   );
   assert.doesNotMatch(source, /if \(!resolvedUserId\) \{/);
 });
+
+test("chat pane exposes a return path from sub-sessions back to the main session", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /const showMainSessionReturn =[\s\S]*activeSessionId !== mainSessionId;/);
+  assert.match(source, /You are viewing a separate run session\. Return to the main workspace chat to continue there\./);
+  assert.match(source, /Back to main session/);
+  assert.match(source, /await loadSessionConversation\(mainSessionId, selectedWorkspaceId, runtimeStates\.items\);/);
+  assert.match(source, /const targetSessionId = activeSessionIdRef\.current \|\| preferredSessionId\(selectedWorkspace, \[\]\);/);
+});

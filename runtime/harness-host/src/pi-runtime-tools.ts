@@ -164,10 +164,20 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId) {
           initiated_by: Type.Optional(Type.String({ description: "Actor creating the cronjob." })),
           name: Type.Optional(Type.String({ description: "Optional cronjob name." })),
           enabled: Type.Optional(Type.Boolean({ description: "Whether the cronjob is enabled." })),
-          delivery_channel: Type.Optional(Type.String({ description: "Delivery channel." })),
+          delivery_channel: Type.Optional(
+            Type.String({
+              description:
+                "Delivery channel. Use `session_run` for recurring agent work such as running instructions, tasks, analysis, browsing, or writing. Use `system_notification` only for lightweight reminder/notification messages."
+            })
+          ),
           delivery_mode: Type.Optional(Type.String({ description: "Delivery mode." })),
           delivery_to: Type.Optional(Type.String({ description: "Optional delivery target." })),
-          metadata_json: Type.Optional(Type.String({ description: "JSON object string for cronjob metadata." })),
+          metadata_json: Type.Optional(
+            Type.String({
+              description:
+                "JSON object string for cronjob metadata. For `system_notification`, include a short `message`. For `session_run`, use metadata for execution context only; keep the actual task instruction in `description`."
+            })
+          ),
         },
         { additionalProperties: false }
       );
@@ -179,10 +189,20 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId) {
           cron: Type.Optional(Type.String({ description: "Cron expression." })),
           description: Type.Optional(Type.String({ description: "Human-readable cronjob description." })),
           enabled: Type.Optional(Type.Boolean({ description: "Whether the cronjob is enabled." })),
-          delivery_channel: Type.Optional(Type.String({ description: "Delivery channel." })),
+          delivery_channel: Type.Optional(
+            Type.String({
+              description:
+                "Delivery channel. Use `session_run` for recurring agent work such as running instructions, tasks, analysis, browsing, or writing. Use `system_notification` only for lightweight reminder/notification messages."
+            })
+          ),
           delivery_mode: Type.Optional(Type.String({ description: "Delivery mode." })),
           delivery_to: Type.Optional(Type.String({ description: "Optional delivery target." })),
-          metadata_json: Type.Optional(Type.String({ description: "JSON object string for cronjob metadata." })),
+          metadata_json: Type.Optional(
+            Type.String({
+              description:
+                "JSON object string for cronjob metadata. For `system_notification`, include a short `message`. For `session_run`, use metadata for execution context only; keep the actual task instruction in `description`."
+            })
+          ),
         },
         { additionalProperties: false }
       );

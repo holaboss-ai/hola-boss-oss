@@ -716,6 +716,168 @@ export function ChatPane({
     setLiveTraceSteps([]);
   }
 
+  function clearSessionView() {
+    setMessages([]);
+    resetLiveTurn();
+    setCollapsedThinkingByMessageId({});
+    setCollapsedTraceByStepId({});
+    shouldAutoScrollRef.current = true;
+  }
+
+  function historyMessagesFromSessionState(
+    historyMessages: SessionHistoryMessagePayload[],
+    outputEvents: SessionOutputEventPayload[]
+  ): ChatMessage[] {
+    const outputEventsByInputId = new Map<string, SessionOutputEventPayload[]>();
+    for (const event of outputEvents) {
+      const inputId = event.input_id.trim();
+      if (!inputId) {
+        continue;
+      }
+      const existing = outputEventsByInputId.get(inputId);
+      if (existing) {
+        existing.push(event);
+      } else {
+        outputEventsByInputId.set(inputId, [event]);
+      }
+    }
+
+    return historyMessages
+      .map((message) => {
+        const attachments = attachmentsFromMetadata(message.metadata);
+        const nextMessage: ChatMessage = {
+          id: message.id || `history-${message.created_at ?? crypto.randomUUID()}`,
+          role: message.role as ChatMessage["role"],
+          text: message.text,
+          attachments
+        };
+
+        if (nextMessage.role === "assistant") {
+          const inputId = inputIdFromMessageId(nextMessage.id, "assistant");
+          if (inputId) {
+            const restoredAssistantState = assistantHistoryStateFromOutputEvents(outputEventsByInputId.get(inputId) ?? []);
+            if (restoredAssistantState.thinkingText) {
+              nextMessage.thinkingText = restoredAssistantState.thinkingText;
+            }
+            if (restoredAssistantState.traceSteps) {
+              nextMessage.traceSteps = restoredAssistantState.traceSteps;
+            }
+          }
+        }
+
+        return nextMessage;
+      })
+      .filter(
+        (message) =>
+          (message.role === "user" || message.role === "assistant") &&
+          hasRenderableMessageContent(message.text, message.attachments ?? [])
+      );
+  }
+
+  async function loadSessionConversation(
+    nextSessionId: string | null,
+    workspaceId: string,
+    runtimeStates: SessionRuntimeRecordPayload[],
+    options?: {
+      cancelled?: () => boolean;
+    }
+  ) {
+    const cancelled = options?.cancelled ?? (() => false);
+
+    if (activeSessionIdRef.current !== nextSessionId) {
+      clearSessionView();
+    }
+    setActiveSession(nextSessionId);
+    if (!nextSessionId) {
+      return;
+    }
+
+    const [history, outputEventHistory] = await Promise.all([
+      window.electronAPI.workspace.getSessionHistory({
+        sessionId: nextSessionId,
+        workspaceId
+      }),
+      window.electronAPI.workspace.getSessionOutputEvents({
+        sessionId: nextSessionId
+      })
+    ]);
+    if (cancelled()) {
+      return;
+    }
+
+    const nextMessages = historyMessagesFromSessionState(history.messages, outputEventHistory.items);
+    setMessages(nextMessages);
+    resetLiveTurn();
+
+    const onboardingSessionId = (selectedWorkspaceRef.current?.onboarding_session_id || "").trim();
+    const currentRuntimeState = runtimeStates.find((item) => item.session_id === nextSessionId);
+    const hasAssistantMessage = nextMessages.some((message) => message.role === "assistant");
+    const shouldAttachOnboardingBootstrapStream =
+      isOnboardingVariant &&
+      nextSessionId === onboardingSessionId &&
+      !hasAssistantMessage &&
+      !activeStreamIdRef.current &&
+      !pendingInputIdRef.current &&
+      ["BUSY", "QUEUED"].includes(runtimeStateStatus(currentRuntimeState?.status));
+
+    if (shouldAttachOnboardingBootstrapStream) {
+      setIsResponding(true);
+      setLiveAgentStatus("Preparing first question...");
+      setChatErrorMessage("");
+      const stream = await window.electronAPI.workspace.openSessionOutputStream({
+        sessionId: nextSessionId,
+        workspaceId,
+        includeHistory: true,
+        stopOnTerminal: true
+      });
+      if (cancelled()) {
+        await closeStreamWithReason(stream.streamId, "load_history_cancelled").catch(() => undefined);
+        return;
+      }
+      activeStreamIdRef.current = stream.streamId;
+      appendStreamTelemetry({
+        streamId: stream.streamId,
+        transportType: "client",
+        eventName: "openSessionOutputStream",
+        eventType: "stream_open_onboarding_bootstrap",
+        inputId: "",
+        sessionId: nextSessionId,
+        action: "stream_requested_onboarding_bootstrap",
+        detail: "attached to in-flight onboarding opener"
+      });
+    } else if (!activeStreamIdRef.current && !pendingInputIdRef.current) {
+      setIsResponding(false);
+    }
+  }
+
+  async function returnToMainSession() {
+    const mainSessionId = (selectedWorkspace?.main_session_id || "").trim();
+    if (!selectedWorkspaceId || !mainSessionId || activeSessionIdRef.current === mainSessionId) {
+      return;
+    }
+
+    setIsLoadingHistory(true);
+    setChatErrorMessage("");
+    pendingInputIdRef.current = null;
+    activeAssistantMessageIdRef.current = null;
+    setIsResponding(false);
+
+    const activeStreamId = activeStreamIdRef.current;
+    activeStreamIdRef.current = null;
+    if (activeStreamId) {
+      await closeStreamWithReason(activeStreamId, "chatpane_return_to_main_session").catch(() => undefined);
+    }
+
+    try {
+      const runtimeStates = await window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId);
+      await loadSessionConversation(mainSessionId, selectedWorkspaceId, runtimeStates.items);
+    } catch (error) {
+      setChatErrorMessage(normalizeErrorMessage(error));
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }
+
   function appendLiveAssistantDelta(delta: string) {
     flushSync(() => {
       setLiveAssistantText((prev) => {
@@ -905,13 +1067,9 @@ export function ChatPane({
 
   useEffect(() => {
     if (!selectedWorkspaceId) {
-      setMessages([]);
-      resetLiveTurn();
-      setCollapsedThinkingByMessageId({});
-      setCollapsedTraceByStepId({});
+      clearSessionView();
       setPendingAttachments([]);
       setActiveSession(null);
-      shouldAutoScrollRef.current = true;
       pendingInputIdRef.current = null;
       return;
     }
@@ -929,118 +1087,9 @@ export function ChatPane({
         }
 
         const nextSessionId = preferredSessionId(selectedWorkspaceRef.current, runtimeStates.items);
-        if (activeSessionIdRef.current !== nextSessionId) {
-          setMessages([]);
-          resetLiveTurn();
-          setCollapsedThinkingByMessageId({});
-          setCollapsedTraceByStepId({});
-          shouldAutoScrollRef.current = true;
-        }
-        setActiveSession(nextSessionId);
-        if (!nextSessionId) {
-          return;
-        }
-
-        const [history, outputEventHistory] = await Promise.all([
-          window.electronAPI.workspace.getSessionHistory({
-            sessionId: nextSessionId,
-            workspaceId: selectedWorkspaceId
-          }),
-          window.electronAPI.workspace.getSessionOutputEvents({
-            sessionId: nextSessionId
-          })
-        ]);
-        if (cancelled) {
-          return;
-        }
-
-        const outputEventsByInputId = new Map<string, SessionOutputEventPayload[]>();
-        for (const event of outputEventHistory.items) {
-          const inputId = event.input_id.trim();
-          if (!inputId) {
-            continue;
-          }
-          const existing = outputEventsByInputId.get(inputId);
-          if (existing) {
-            existing.push(event);
-          } else {
-            outputEventsByInputId.set(inputId, [event]);
-          }
-        }
-
-        const nextMessages = history.messages
-          .map((message) => {
-            const attachments = attachmentsFromMetadata(message.metadata);
-            const nextMessage: ChatMessage = {
-              id: message.id || `history-${message.created_at ?? crypto.randomUUID()}`,
-              role: message.role as ChatMessage["role"],
-              text: message.text,
-              attachments
-            };
-
-            if (nextMessage.role === "assistant") {
-              const inputId = inputIdFromMessageId(nextMessage.id, "assistant");
-              if (inputId) {
-                const restoredAssistantState = assistantHistoryStateFromOutputEvents(outputEventsByInputId.get(inputId) ?? []);
-                if (restoredAssistantState.thinkingText) {
-                  nextMessage.thinkingText = restoredAssistantState.thinkingText;
-                }
-                if (restoredAssistantState.traceSteps) {
-                  nextMessage.traceSteps = restoredAssistantState.traceSteps;
-                }
-              }
-            }
-
-            return nextMessage;
-          })
-          .filter(
-            (message) =>
-              (message.role === "user" || message.role === "assistant") &&
-              hasRenderableMessageContent(message.text, message.attachments ?? [])
-          );
-
-        setMessages(nextMessages);
-        resetLiveTurn();
-
-        const onboardingSessionId = (selectedWorkspaceRef.current?.onboarding_session_id || "").trim();
-        const currentRuntimeState = runtimeStates.items.find((item) => item.session_id === nextSessionId);
-        const hasAssistantMessage = nextMessages.some((message) => message.role === "assistant");
-        const shouldAttachOnboardingBootstrapStream =
-          isOnboardingVariant &&
-          nextSessionId === onboardingSessionId &&
-          !hasAssistantMessage &&
-          !activeStreamIdRef.current &&
-          !pendingInputIdRef.current &&
-          ["BUSY", "QUEUED"].includes(runtimeStateStatus(currentRuntimeState?.status));
-
-        if (shouldAttachOnboardingBootstrapStream) {
-          setIsResponding(true);
-          setLiveAgentStatus("Preparing first question...");
-          setChatErrorMessage("");
-          const stream = await window.electronAPI.workspace.openSessionOutputStream({
-            sessionId: nextSessionId,
-            workspaceId: selectedWorkspaceId,
-            includeHistory: true,
-            stopOnTerminal: true
-          });
-          if (cancelled) {
-            await closeStreamWithReason(stream.streamId, "load_history_cancelled").catch(() => undefined);
-            return;
-          }
-          activeStreamIdRef.current = stream.streamId;
-          appendStreamTelemetry({
-            streamId: stream.streamId,
-            transportType: "client",
-            eventName: "openSessionOutputStream",
-            eventType: "stream_open_onboarding_bootstrap",
-            inputId: "",
-            sessionId: nextSessionId,
-            action: "stream_requested_onboarding_bootstrap",
-            detail: "attached to in-flight onboarding opener"
-          });
-        } else if (!activeStreamIdRef.current && !pendingInputIdRef.current) {
-          setIsResponding(false);
-        }
+        await loadSessionConversation(nextSessionId, selectedWorkspaceId, runtimeStates.items, {
+          cancelled: () => cancelled
+        });
       } catch (error) {
         if (!cancelled) {
           setChatErrorMessage(normalizeErrorMessage(error));
@@ -1569,7 +1618,7 @@ export function ChatPane({
       setChatErrorMessage(modelSelectionUnavailableReason || "No models available.");
       return;
     }
-    const targetSessionId = preferredSessionId(selectedWorkspace, []) || activeSessionIdRef.current;
+    const targetSessionId = activeSessionIdRef.current || preferredSessionId(selectedWorkspace, []);
     if (!targetSessionId) {
       setChatErrorMessage("No active session found for this workspace.");
       return;
@@ -1966,6 +2015,12 @@ export function ChatPane({
   const textareaPlaceholder = isOnboardingVariant
     ? "Answer the onboarding prompt or share setup details"
     : "Ask anything";
+  const mainSessionId = (selectedWorkspace?.main_session_id || "").trim();
+  const showMainSessionReturn =
+    !isOnboardingVariant &&
+    Boolean(mainSessionId) &&
+    Boolean(activeSessionId) &&
+    activeSessionId !== mainSessionId;
   const chatScrollRange = Math.max(0, chatScrollMetrics.scrollHeight - chatScrollMetrics.clientHeight);
   const showCustomChatScrollbar = hasMessages && chatScrollMetrics.clientHeight > 0 && chatScrollRange > 1;
   const chatScrollbarRailInset = composerBlockHeight > 0 ? composerBlockHeight / 2 : 0;
@@ -2067,6 +2122,29 @@ export function ChatPane({
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        ) : null}
+
+        {showMainSessionReturn ? (
+          <div className="shrink-0 px-4 pt-3 sm:px-5">
+            <div className="bg-muted/72 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-border/55 px-3 py-2.5">
+              <div className="min-w-0">
+                <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                  Sub-session
+                </div>
+                <div className="mt-1 text-[12px] leading-5 text-muted-foreground">
+                  You are viewing a separate run session. Return to the main workspace chat to continue there.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => void returnToMainSession()}
+                disabled={isLoadingHistory}
+                className="inline-flex shrink-0 items-center rounded-full border border-border/60 bg-background px-3 py-1.5 text-[12px] font-medium text-foreground transition hover:border-primary/35 hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Back to main session
+              </button>
             </div>
           </div>
         ) : null}
