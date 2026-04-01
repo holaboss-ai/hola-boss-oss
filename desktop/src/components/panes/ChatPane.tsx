@@ -54,6 +54,16 @@ interface PendingExplorerAttachmentFile {
 
 type PendingAttachment = PendingLocalAttachmentFile | PendingExplorerAttachmentFile;
 
+interface ChatModelOption {
+  value: string;
+  label: string;
+}
+
+interface ChatModelOptionGroup {
+  label: string;
+  options: ChatModelOption[];
+}
+
 interface StreamTelemetryEntry {
   id: string;
   at: string;
@@ -75,6 +85,16 @@ const CHAT_SCROLLBAR_MIN_THUMB_HEIGHT_PX = 40;
 const CHAT_MODEL_STORAGE_KEY = "holaboss-chat-model-v1";
 const CHAT_MODEL_USE_RUNTIME_DEFAULT = "__runtime_default__";
 const LEGACY_UNAVAILABLE_CHAT_MODELS = new Set(["openai/gpt-5.2-mini"]);
+const DEPRECATED_CHAT_MODELS = new Set([
+  "openai/gpt-5.1",
+  "openai/gpt-5.1-codex",
+  "openai/gpt-5.1-codex-mini",
+  "openai/gpt-5.1-codex-max",
+  "gpt-5.1",
+  "gpt-5.1-codex",
+  "gpt-5.1-codex-mini",
+  "gpt-5.1-codex-max"
+]);
 const CHAT_MODEL_PRESETS = [
   "openai/gpt-5.1",
   "openai/gpt-5",
@@ -97,6 +117,15 @@ function isHolabossProxyModel(model: string) {
     normalized.startsWith("gpt-") ||
     normalized.startsWith("claude-")
   );
+}
+
+function isHolabossProviderId(providerId: string) {
+  const normalized = providerId.trim().toLowerCase();
+  return normalized === "holaboss_model_proxy" || normalized === "holaboss" || normalized.includes("holaboss");
+}
+
+function isDeprecatedChatModel(model: string) {
+  return DEPRECATED_CHAT_MODELS.has(model.trim().toLowerCase());
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1541,6 +1570,10 @@ export function ChatPane({
       setChatErrorMessage(workspaceBlockingReason || "Workspace apps are still starting.");
       return;
     }
+    if (!isOnboardingVariant && !resolvedChatModel) {
+      setChatErrorMessage(modelSelectionUnavailableReason || "No models available.");
+      return;
+    }
     const targetSessionId = preferredSessionId(selectedWorkspace, []) || activeSessionIdRef.current;
     if (!targetSessionId) {
       setChatErrorMessage("No active session found for this workspace.");
@@ -1819,7 +1852,7 @@ export function ChatPane({
     !selectedWorkspace || isOnboardingVariant || workspaceAppsReady
       ? ""
       : workspaceBlockingReason || (isActivatingWorkspace ? "Preparing workspace apps..." : "Workspace apps are still starting.");
-  const composerDisabledReason = !selectedWorkspace
+  const baseComposerDisabledReason = !selectedWorkspace
     ? "Select a workspace to start chatting."
     : !resolvedUserId
       ? "Sign in or set a runtime user id first."
@@ -1828,46 +1861,111 @@ export function ChatPane({
       : !isOnboardingVariant && !workspaceAppsReady
         ? readinessMessage || "Workspace apps are still starting."
         : "";
-  const composerDisabled = Boolean(composerDisabledReason);
   const isSignedIn = Boolean(sessionUserId(authSessionState.data));
   const holabossProxyModelsAvailable =
     isSignedIn &&
     Boolean(runtimeConfig?.authTokenPresent) &&
     Boolean((runtimeConfig?.modelProxyBaseUrl || "").trim());
+  const configuredProviderModelGroups = runtimeConfig?.providerModelGroups ?? [];
+  const visibleConfiguredProviderModelGroups = configuredProviderModelGroups
+    .map((providerGroup) => ({
+      ...providerGroup,
+      models: providerGroup.models.filter((model) => {
+        const normalizedToken = model.token.trim();
+        if (!normalizedToken || isDeprecatedChatModel(normalizedToken)) {
+          return false;
+        }
+        if (holabossProxyModelsAvailable) {
+          return true;
+        }
+        return !isHolabossProviderId(providerGroup.providerId);
+      })
+    }))
+    .filter((providerGroup) => providerGroup.models.length > 0);
+  const hasConfiguredProviderCatalog = visibleConfiguredProviderModelGroups.length > 0;
+  const providerModelLabelCounts = new Map<string, number>();
+  for (const providerGroup of visibleConfiguredProviderModelGroups) {
+    for (const model of providerGroup.models) {
+      const modelLabel = displayModelLabel(model.modelId || model.token);
+      providerModelLabelCounts.set(modelLabel, (providerModelLabelCounts.get(modelLabel) ?? 0) + 1);
+    }
+  }
   const runtimeDefaultModel = runtimeConfig?.defaultModel?.trim() || DEFAULT_RUNTIME_MODEL;
-  const runtimeDefaultModelAvailable = holabossProxyModelsAvailable || !isHolabossProxyModel(runtimeDefaultModel);
-  const availableChatModelOptions = Array.from(
-    new Set([
-      runtimeDefaultModel,
-      DEFAULT_RUNTIME_MODEL,
-      ...(chatModelPreference !== CHAT_MODEL_USE_RUNTIME_DEFAULT ? [chatModelPreference] : []),
-      ...CHAT_MODEL_PRESETS
-    ])
-  )
-    .filter(Boolean)
-    .filter((model) => holabossProxyModelsAvailable || !isHolabossProxyModel(model))
-    .map((model) => ({
-      value: model,
-      label: displayModelLabel(model)
-    }));
-  const modelPreferenceAvailable =
-    chatModelPreference === CHAT_MODEL_USE_RUNTIME_DEFAULT
+  const runtimeDefaultModelAvailable =
+    !hasConfiguredProviderCatalog &&
+    (holabossProxyModelsAvailable || !isHolabossProxyModel(runtimeDefaultModel));
+  const availableChatModelOptionGroups: ChatModelOptionGroup[] = hasConfiguredProviderCatalog
+    ? visibleConfiguredProviderModelGroups.map((providerGroup) => ({
+        label: providerGroup.providerLabel,
+        options: providerGroup.models.map((model) => {
+          const modelLabel = displayModelLabel(model.modelId || model.token);
+          const needsProviderPrefix =
+            visibleConfiguredProviderModelGroups.length > 1 &&
+            (providerModelLabelCounts.get(modelLabel) ?? 0) > 1;
+          return {
+            value: model.token,
+            label: needsProviderPrefix ? `${providerGroup.providerLabel} · ${modelLabel}` : modelLabel
+          };
+        })
+      }))
+    : [];
+  const availableChatModelOptions = hasConfiguredProviderCatalog
+    ? availableChatModelOptionGroups.flatMap((group) => group.options)
+    : Array.from(
+        new Set([
+          runtimeDefaultModel,
+          DEFAULT_RUNTIME_MODEL,
+          ...(chatModelPreference !== CHAT_MODEL_USE_RUNTIME_DEFAULT ? [chatModelPreference] : []),
+          ...CHAT_MODEL_PRESETS
+        ])
+      )
+        .filter(Boolean)
+        .filter((model) => !isDeprecatedChatModel(model))
+        .filter((model) => holabossProxyModelsAvailable || !isHolabossProxyModel(model))
+        .map((model) => ({
+          value: model,
+          label: displayModelLabel(model)
+        }));
+  const normalizedModelPreference = chatModelPreference.trim();
+  const modelPreferenceAvailable = hasConfiguredProviderCatalog
+    ? normalizedModelPreference.length > 0 &&
+      availableChatModelOptions.some((option) => option.value === normalizedModelPreference)
+    : chatModelPreference === CHAT_MODEL_USE_RUNTIME_DEFAULT
       ? runtimeDefaultModelAvailable
-      : availableChatModelOptions.some((option) => option.value === chatModelPreference);
-  const effectiveChatModelPreference = modelPreferenceAvailable
-    ? chatModelPreference
-    : runtimeDefaultModelAvailable
-      ? CHAT_MODEL_USE_RUNTIME_DEFAULT
-      : availableChatModelOptions[0]?.value || CHAT_MODEL_USE_RUNTIME_DEFAULT;
-  const resolvedChatModel =
-    effectiveChatModelPreference === CHAT_MODEL_USE_RUNTIME_DEFAULT
+      : availableChatModelOptions.some((option) => option.value === normalizedModelPreference);
+  const effectiveChatModelPreference = hasConfiguredProviderCatalog
+    ? (modelPreferenceAvailable ? normalizedModelPreference : availableChatModelOptions[0]?.value || "")
+    : modelPreferenceAvailable
+      ? chatModelPreference
+      : runtimeDefaultModelAvailable
+        ? CHAT_MODEL_USE_RUNTIME_DEFAULT
+        : availableChatModelOptions[0]?.value || CHAT_MODEL_USE_RUNTIME_DEFAULT;
+  const resolvedChatModel = hasConfiguredProviderCatalog
+    ? effectiveChatModelPreference
+    : effectiveChatModelPreference === CHAT_MODEL_USE_RUNTIME_DEFAULT
       ? runtimeDefaultModelAvailable
         ? runtimeDefaultModel
         : ""
       : effectiveChatModelPreference.trim() || (runtimeDefaultModelAvailable ? runtimeDefaultModel : "");
-  const modelSelectionUnavailableReason = holabossProxyModelsAvailable
-    ? ""
-    : "Sign in to use Holaboss models";
+  const modelSelectionUnavailableReason =
+    availableChatModelOptions.length > 0
+      ? ""
+      : "No models available. Sign in to use Holaboss or add a provider.";
+  const composerDisabledReason =
+    baseComposerDisabledReason ||
+    (!isOnboardingVariant && !resolvedChatModel ? modelSelectionUnavailableReason : "");
+  const composerDisabled = Boolean(composerDisabledReason);
+
+  useEffect(() => {
+    if (!effectiveChatModelPreference) {
+      return;
+    }
+    if (chatModelPreference.trim() === effectiveChatModelPreference) {
+      return;
+    }
+    setChatModelPreference(effectiveChatModelPreference);
+  }, [chatModelPreference, effectiveChatModelPreference]);
+
   const textareaPlaceholder = isOnboardingVariant
     ? "Answer the onboarding prompt or share setup details"
     : "Ask anything";
@@ -2099,6 +2197,7 @@ export function ChatPane({
                       resolvedModelLabel={resolvedChatModel || modelSelectionUnavailableReason}
                       runtimeDefaultModelLabel={runtimeDefaultModel}
                       modelOptions={availableChatModelOptions}
+                      modelOptionGroups={availableChatModelOptionGroups}
                       runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
                       modelSelectionUnavailableReason={modelSelectionUnavailableReason}
                       placeholder={textareaPlaceholder}
@@ -2146,6 +2245,7 @@ export function ChatPane({
                   resolvedModelLabel={resolvedChatModel || modelSelectionUnavailableReason}
                   runtimeDefaultModelLabel={runtimeDefaultModel}
                   modelOptions={availableChatModelOptions}
+                  modelOptionGroups={availableChatModelOptionGroups}
                   runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
                   modelSelectionUnavailableReason={modelSelectionUnavailableReason}
                   placeholder={textareaPlaceholder}
@@ -2183,7 +2283,8 @@ interface ComposerProps {
   selectedModel: string;
   resolvedModelLabel: string;
   runtimeDefaultModelLabel: string;
-  modelOptions: Array<{ value: string; label: string }>;
+  modelOptions: ChatModelOption[];
+  modelOptionGroups: ChatModelOptionGroup[];
   runtimeDefaultModelAvailable: boolean;
   modelSelectionUnavailableReason: string;
   placeholder: string;
@@ -2501,6 +2602,7 @@ function Composer({
   resolvedModelLabel,
   runtimeDefaultModelLabel,
   modelOptions,
+  modelOptionGroups,
   runtimeDefaultModelAvailable,
   modelSelectionUnavailableReason,
   placeholder,
@@ -2517,6 +2619,8 @@ function Composer({
 }: ComposerProps) {
   const [isDragActive, setIsDragActive] = useState(false);
   const noAvailableModels = !runtimeDefaultModelAvailable && modelOptions.length === 0;
+  const selectedModelOptionLabel =
+    modelOptions.find((option) => option.value === selectedModel)?.label ?? resolvedModelLabel;
 
   const allowAttachmentDrop = (dataTransfer: DataTransfer | null) => {
     if (!dataTransfer || disabled || isResponding) {
@@ -2619,7 +2723,7 @@ function Composer({
                   ? modelSelectionUnavailableReason
                   : selectedModel === CHAT_MODEL_USE_RUNTIME_DEFAULT
                     ? `Auto (${runtimeDefaultModelLabel})`
-                    : resolvedModelLabel
+                    : selectedModelOptionLabel
               }
               className="composer-select bg-muted h-9 w-full appearance-none rounded-[11px] border border-border/28 px-3 pr-9 text-[12px] font-medium text-foreground transition hover:border-border/48 disabled:cursor-not-allowed disabled:opacity-60"
             >
@@ -2628,11 +2732,21 @@ function Composer({
               ) : (
                 <>
                   {runtimeDefaultModelAvailable ? <option value={CHAT_MODEL_USE_RUNTIME_DEFAULT}>Auto</option> : null}
-                  {modelOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
+                  {modelOptionGroups.length > 0
+                    ? modelOptionGroups.map((group, groupIndex) => (
+                        <optgroup key={`${group.label}-${groupIndex}`} label={group.label}>
+                          {group.options.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))
+                    : modelOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
                 </>
               )}
             </select>

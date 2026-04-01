@@ -127,7 +127,7 @@ function isAppTheme(value: string): value is AppTheme {
 }
 
 function isSettingsPaneSection(value: string): value is UiSettingsPaneSection {
-  return value === "account" || value === "settings" || value === "about";
+  return value === "account" || value === "providers" || value === "settings" || value === "about";
 }
 
 type AgentView =

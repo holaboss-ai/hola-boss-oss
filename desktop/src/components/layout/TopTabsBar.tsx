@@ -122,6 +122,10 @@ export function TopTabsBar({
     }
   };
 
+  const openAuthPopup = useCallback(() => {
+    void window.electronAPI.auth.requestAuth();
+  }, []);
+
   const closeWorkspaceSwitcher = () => {
     setWorkspaceSwitcherOpen(false);
     setCreatePanelOpen(false);
@@ -563,11 +567,7 @@ export function TopTabsBar({
                         ) : (
                           <button
                             type="button"
-                            onClick={(event) =>
-                              openAuthPopup(
-                                event.currentTarget.getBoundingClientRect(),
-                              )
-                            }
+                            onClick={() => openAuthPopup()}
                             className="inline-flex h-[42px] min-w-0 items-center justify-center rounded-[16px] border border-primary/40 bg-primary/10 px-3 text-[12px] text-primary transition hover:bg-primary/14"
                           >
                             Sign in to use Marketplace

@@ -45,8 +45,9 @@ export function MarketplaceGallery({
         ),
       );
     }
-    return available.toSorted(
-      (a, b) => Number(a.is_coming_soon) - Number(b.is_coming_soon),
+    return [...available].sort(
+      (a: TemplateMetadataPayload, b: TemplateMetadataPayload) =>
+        Number(a.is_coming_soon) - Number(b.is_coming_soon),
     );
   }, [effectiveTemplates, query]);
 

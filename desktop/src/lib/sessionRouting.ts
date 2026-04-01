@@ -26,9 +26,13 @@ export function preferredSessionId(
     }
   }
 
+  if (runtimeStates.length > 0) {
+    return runtimeStates[0]?.session_id ?? null;
+  }
+
   const mainSessionId = (workspace.main_session_id || "").trim();
   if (mainSessionId) {
     return mainSessionId;
   }
-  return runtimeStates[0]?.session_id ?? null;
+  return null;
 }

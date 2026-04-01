@@ -5,6 +5,8 @@ import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
+import { buildRunnerEnv, resolveOpencodeExecutable } from "./runner-worker.js";
+
 const OPENCODE_STATE_VERSION = 1;
 const OPENCODE_READY_POLL_MS = 100;
 const OPENCODE_STOP_TIMEOUT_MS = 3000;
@@ -420,7 +422,7 @@ export async function restartOpencodeSidecar(
   let child: ChildProcessLike;
   try {
     child = (deps.spawnProcess ?? defaultSpawnProcess)(
-      "opencode",
+      resolveOpencodeExecutable(),
       [
         "serve",
         "--print-logs",
@@ -433,6 +435,7 @@ export async function restartOpencodeSidecar(
       ],
       {
         cwd: workspaceRoot,
+        env: buildRunnerEnv(),
         stdio: ["ignore", logFd, logFd],
         detached: true
       }

@@ -1,8 +1,9 @@
-import { Check, Loader2, Plus, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useWorkspaceSelection } from "@/lib/workspaceSelection";
+import { Check, Loader2, Plus, Search, ShieldAlert } from "lucide-react";
 
-interface Toolkit {
+import { useDesktopAuthSession } from "@/lib/auth/authClient";
+
+interface ComposioToolkit {
   slug: string;
   name: string;
   description: string;
@@ -11,29 +12,165 @@ interface Toolkit {
   categories: string[];
 }
 
+interface IntegrationCard {
+  slug: string;
+  providerId: string;
+  name: string;
+  description: string;
+  logo: string | null;
+  authSchemes: string[];
+  categories: string[];
+  supportsManaged: boolean;
+}
+
+function normalizeErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Request failed.";
+}
+
+function normalizedText(value: string | null | undefined): string {
+  return (value || "").trim();
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const items: string[] = [];
+  for (const value of values) {
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    items.push(normalized);
+  }
+  return items;
+}
+
+function providerIdForToolkit(slug: string): string {
+  const normalizedSlug = slug.trim().toLowerCase();
+  return (TOOLKIT_SLUG_TO_PROVIDER[normalizedSlug] || normalizedSlug).trim().toLowerCase();
+}
+
+function providerCategories(providerId: string): string[] {
+  return PROVIDER_CATEGORY_GROUPS[providerId] || ["other"];
+}
+
+function toolkitPreferenceRank(providerId: string, slug: string): number {
+  const normalizedSlug = slug.trim().toLowerCase();
+  const preferredSlugs = PROVIDER_TOOLKIT_PREFERENCE[providerId] || [];
+  const index = preferredSlugs.indexOf(normalizedSlug);
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+}
+
+function preferredToolkitForProvider(
+  providerId: string,
+  current: ComposioToolkit | undefined,
+  candidate: ComposioToolkit,
+): ComposioToolkit {
+  if (!current) {
+    return candidate;
+  }
+  return toolkitPreferenceRank(providerId, candidate.slug) < toolkitPreferenceRank(providerId, current.slug)
+    ? candidate
+    : current;
+}
+
+function mergeIntegrationCards(
+  catalogProviders: IntegrationCatalogProviderPayload[],
+  toolkits: ComposioToolkit[],
+): IntegrationCard[] {
+  const toolkitByProvider = new Map<string, ComposioToolkit>();
+  for (const toolkit of toolkits) {
+    const providerId = providerIdForToolkit(toolkit.slug);
+    toolkitByProvider.set(
+      providerId,
+      preferredToolkitForProvider(providerId, toolkitByProvider.get(providerId), toolkit),
+    );
+  }
+
+  const cards: IntegrationCard[] = [];
+  const seenProviderIds = new Set<string>();
+
+  for (const provider of catalogProviders) {
+    const providerId = normalizedText(provider.provider_id).toLowerCase();
+    if (!providerId) {
+      continue;
+    }
+    seenProviderIds.add(providerId);
+    const toolkit = toolkitByProvider.get(providerId);
+    const toolkitCategories = uniqueStrings(toolkit?.categories || []);
+
+    cards.push({
+      slug: providerId,
+      providerId,
+      name:
+        normalizedText(provider.display_name) ||
+        normalizedText(toolkit?.name) ||
+        providerId,
+      description:
+        normalizedText(toolkit?.description) ||
+        normalizedText(provider.description) ||
+        normalizedText(provider.display_name) ||
+        providerId,
+      logo: toolkit?.logo ?? null,
+      authSchemes: uniqueStrings([
+        ...(toolkit?.auth_schemes || []),
+        ...(provider.auth_modes || []),
+      ]),
+      categories:
+        toolkitCategories.length > 0
+          ? toolkitCategories
+          : providerCategories(providerId),
+      supportsManaged: provider.supports_managed !== false,
+    });
+  }
+
+  for (const [providerId, toolkit] of toolkitByProvider.entries()) {
+    if (seenProviderIds.has(providerId)) {
+      continue;
+    }
+    cards.push({
+      slug: providerId,
+      providerId,
+      name: normalizedText(toolkit.name) || providerId,
+      description: normalizedText(toolkit.description) || providerId,
+      logo: toolkit.logo,
+      authSchemes: uniqueStrings(toolkit.auth_schemes || []),
+      categories:
+        uniqueStrings(toolkit.categories || []).length > 0
+          ? uniqueStrings(toolkit.categories || [])
+          : providerCategories(providerId),
+      supportsManaged: true,
+    });
+  }
+
+  return cards.sort((left, right) => left.name.localeCompare(right.name));
+}
+
 export function IntegrationsPane() {
-  const { selectedWorkspaceId } = useWorkspaceSelection();
-  const [toolkits, setToolkits] = useState<Toolkit[]>([]);
-  const [connections, setConnections] = useState<
-    IntegrationConnectionPayload[]
-  >([]);
+  const authSessionState = useDesktopAuthSession();
+  const isSignedIn = Boolean(authSessionState.data?.user?.id?.trim());
+  const [integrations, setIntegrations] = useState<IntegrationCard[]>([]);
+  const [connections, setConnections] = useState<IntegrationConnectionPayload[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
-  const [connectingSlug, setConnectingSlug] = useState<string | null>(null);
-  const [connectStatus, setConnectStatus] = useState("");
+  const [connectingProviderId, setConnectingProviderId] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState("");
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [toolkitResult, connectionResult] = await Promise.all([
-        window.electronAPI.workspace.composioListToolkits(),
+      const [catalogResult, connectionResult, toolkitResult] = await Promise.all([
+        window.electronAPI.workspace.listIntegrationCatalog(),
         window.electronAPI.workspace.listIntegrationConnections(),
+        window.electronAPI.workspace.composioListToolkits().catch(() => ({ toolkits: [] as ComposioToolkit[] })),
       ]);
-      setToolkits(toolkitResult.toolkits);
+      setIntegrations(mergeIntegrationCards(catalogResult.providers, toolkitResult.toolkits));
       setConnections(connectionResult.connections);
-    } catch {
-      // Silently fail — toolkits will be empty
+    } catch (error) {
+      setIntegrations([]);
+      setConnections([]);
+      setStatusMessage(normalizeErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
@@ -41,210 +178,243 @@ export function IntegrationsPane() {
 
   useEffect(() => {
     void loadData();
-  }, [loadData]);
+  }, [isSignedIn, loadData]);
 
-  const connectedSlugs = useMemo(() => {
-    const slugs = new Set<string>();
-    for (const conn of connections) {
-      if (conn.status === "active" && conn.auth_mode === "composio") {
-        // Map provider_id back to toolkit slug
-        const toolkit = toolkits.find((t) => {
-          const providerSlug = t.slug.toLowerCase();
-          const connProvider = conn.provider_id.toLowerCase();
-          return (
-            providerSlug === connProvider ||
-            PROVIDER_TO_TOOLKIT_SLUG[connProvider] === providerSlug
-          );
-        });
-        if (toolkit) {
-          slugs.add(toolkit.slug);
+  const connectedProviderIds = useMemo(() => {
+    const providerIds = new Set<string>();
+    for (const connection of connections) {
+      if (normalizedText(connection.status).toLowerCase() === "active") {
+        providerIds.add(normalizedText(connection.provider_id).toLowerCase());
+      }
+    }
+    return providerIds;
+  }, [connections]);
+
+  const categories = useMemo(() => {
+    const items = new Set<string>();
+    for (const integration of integrations) {
+      for (const category of integration.categories) {
+        if (category) {
+          items.add(category);
         }
       }
     }
-    return slugs;
-  }, [connections, toolkits]);
+    return Array.from(items).sort();
+  }, [integrations]);
 
-  const categories = useMemo(() => {
-    const cats = new Set<string>();
-    for (const t of toolkits) {
-      for (const c of t.categories) {
-        if (c) cats.add(c);
-      }
-    }
-    return [...cats].sort();
-  }, [toolkits]);
-
-  const connectedToolkits = useMemo(
-    () => toolkits.filter((t) => connectedSlugs.has(t.slug)),
-    [toolkits, connectedSlugs],
+  const connectedIntegrations = useMemo(
+    () => integrations.filter((integration) => connectedProviderIds.has(integration.providerId)),
+    [connectedProviderIds, integrations],
   );
 
-  const filteredToolkits = useMemo(() => {
-    let list = toolkits.filter((t) => !connectedSlugs.has(t.slug));
+  const filteredIntegrations = useMemo(() => {
+    let items = integrations.filter((integration) => !connectedProviderIds.has(integration.providerId));
     if (query.trim()) {
-      const q = query.toLowerCase();
-      list = list.filter(
-        (t) =>
-          t.name.toLowerCase().includes(q) ||
-          t.description.toLowerCase().includes(q),
+      const normalizedQuery = query.trim().toLowerCase();
+      items = items.filter((integration) =>
+        [
+          integration.providerId,
+          integration.name,
+          integration.description,
+        ].some((value) => value.toLowerCase().includes(normalizedQuery)),
       );
     }
     if (categoryFilter !== "all") {
-      list = list.filter((t) => t.categories.includes(categoryFilter));
+      items = items.filter((integration) => integration.categories.includes(categoryFilter));
     }
-    return list;
-  }, [toolkits, connectedSlugs, query, categoryFilter]);
+    return items;
+  }, [categoryFilter, connectedProviderIds, integrations, query]);
 
-  const groupedToolkits = useMemo(() => {
-    const groups: Record<string, Toolkit[]> = {};
-    for (const t of filteredToolkits) {
-      const cat = t.categories[0] || "other";
-      if (!groups[cat]) groups[cat] = [];
-      groups[cat].push(t);
+  const groupedIntegrations = useMemo(() => {
+    const groups: Record<string, IntegrationCard[]> = {};
+    for (const integration of filteredIntegrations) {
+      const category = integration.categories[0] || "other";
+      if (!groups[category]) {
+        groups[category] = [];
+      }
+      groups[category].push(integration);
     }
-    return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b));
-  }, [filteredToolkits]);
+    return Object.entries(groups).sort(([left], [right]) => left.localeCompare(right));
+  }, [filteredIntegrations]);
 
-  async function handleConnect(toolkit: Toolkit) {
-    setConnectingSlug(toolkit.slug);
-    setConnectStatus("Complete authorization in your browser...");
+  async function handleConnect(integration: IntegrationCard) {
+    setConnectingProviderId(integration.providerId);
+    setStatusMessage("Complete authorization in your browser...");
     try {
+      if (!isSignedIn) {
+        setStatusMessage("Sign in first to connect managed integrations.");
+        return;
+      }
+      if (!integration.supportsManaged) {
+        setStatusMessage(`${integration.name} does not support managed sign-in in this runtime.`);
+        return;
+      }
+
       const runtimeConfig = await window.electronAPI.runtime.getConfig();
-      const userId = runtimeConfig.userId ?? "local";
-      const provider = TOOLKIT_SLUG_TO_PROVIDER[toolkit.slug] ?? toolkit.slug;
+      const userId =
+        runtimeConfig.userId ||
+        authSessionState.data?.user?.id?.trim() ||
+        "local";
 
       const link = await window.electronAPI.workspace.composioConnect({
-        provider,
+        provider: integration.providerId,
         owner_user_id: userId,
       });
 
       await window.electronAPI.ui.openExternalUrl(link.redirect_url);
 
-      for (let i = 0; i < 100; i++) {
-        await new Promise((r) => setTimeout(r, 3000));
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
         const status = await window.electronAPI.workspace.composioAccountStatus(
           link.connected_account_id,
         );
         if (status.status === "ACTIVE") {
           await window.electronAPI.workspace.composioFinalize({
             connected_account_id: link.connected_account_id,
-            provider,
+            provider: integration.providerId,
             owner_user_id: userId,
-            account_label: `${toolkit.name} (Managed)`,
+            account_label: `${integration.name} (Managed)`,
           });
-          setConnectStatus("");
-          setConnectingSlug(null);
+          setStatusMessage("");
           void loadData();
           return;
         }
       }
-      setConnectStatus("Connection timed out.");
+
+      setStatusMessage("Connection timed out.");
     } catch (error) {
-      setConnectStatus(
-        error instanceof Error ? error.message : "Connection failed.",
-      );
+      setStatusMessage(normalizeErrorMessage(error));
     } finally {
-      setConnectingSlug(null);
+      setConnectingProviderId(null);
     }
   }
 
   if (isLoading) {
     return (
-      <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
-        <Loader2 size={18} className="animate-spin text-muted-foreground" />
+      <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
+        <Loader2 size={18} className="animate-spin text-text-dim/60" />
       </section>
     );
   }
 
   return (
-    <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
       <div className="relative min-h-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-5xl px-6 py-6">
-          {/* Header */}
-          <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-foreground">
+          <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-text-main">
             Integrations
           </h1>
-          <p className="mt-1 text-[13px] text-muted-foreground">
+          <p className="mt-1 text-[13px] text-text-muted/80">
             Connect your accounts to use them in workspaces.
           </p>
+          {!authSessionState.isPending && !isSignedIn ? (
+            <div className="mt-4 flex items-center justify-between gap-4 rounded-[16px] border border-[rgba(206,92,84,0.18)] bg-[rgba(206,92,84,0.06)] px-4 py-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.16em] text-[rgba(206,92,84,0.92)]">
+                  <ShieldAlert size={13} />
+                  <span>Sign-In Required</span>
+                </div>
+                <div className="mt-1 text-[13px] font-medium text-text-main">
+                  Managed integrations are unavailable until you sign in.
+                </div>
+                <div className="mt-1 text-[12px] leading-6 text-text-muted/76">
+                  You can browse the local provider catalog below, but connecting Google, GitHub, Reddit, LinkedIn, or X requires an authenticated Holaboss session.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => void authSessionState.requestAuth()}
+                className="shrink-0 rounded-[12px] border border-[rgba(206,92,84,0.28)] bg-[rgba(206,92,84,0.1)] px-3 py-2 text-[12px] font-medium text-[rgba(206,92,84,0.96)] transition hover:bg-[rgba(206,92,84,0.14)]"
+              >
+                Sign in
+              </button>
+            </div>
+          ) : null}
 
-          {/* Search + Filter */}
           <div className="mt-5 flex items-center gap-3">
             <div className="relative flex-1">
-              <Search
-                size={14}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/50"
-              />
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-dim/50" />
               <input
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search integrations..."
-                className="h-9 w-full rounded-lg border border-border bg-muted pl-8 pr-3 text-[13px] text-foreground outline-none placeholder:text-muted-foreground/50"
+                className="h-9 w-full rounded-[10px] border border-panel-border/40 bg-panel-bg/60 pl-8 pr-3 text-[13px] text-text-main outline-none placeholder:text-text-dim/40"
               />
             </div>
             <select
               value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              className="h-9 rounded-lg border border-border bg-muted px-3 text-[13px] text-foreground outline-none"
+              onChange={(event) => setCategoryFilter(event.target.value)}
+              className="h-9 rounded-[10px] border border-panel-border/40 bg-panel-bg/60 px-3 text-[13px] text-text-main outline-none"
             >
               <option value="all">All</option>
-              {categories.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat.charAt(0).toUpperCase() + cat.slice(1)}
+              {categories.map((category) => (
+                <option key={category} value={category}>
+                  {category.charAt(0).toUpperCase() + category.slice(1)}
                 </option>
               ))}
             </select>
           </div>
 
-          {/* Connected */}
-          {connectedToolkits.length > 0 ? (
+          {connectedIntegrations.length > 0 ? (
             <div className="mt-6">
-              <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+              <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-text-dim/70">
                 Connected
               </h2>
               <div className="mt-3 grid grid-cols-2 gap-2">
-                {connectedToolkits.map((t) => (
-                  <ToolkitRow
-                    key={t.slug}
-                    toolkit={t}
+                {connectedIntegrations.map((integration) => (
+                  <IntegrationRow
+                    key={integration.slug}
+                    integration={integration}
                     connected
-                    onConnect={() => void handleConnect(t)}
-                    connecting={connectingSlug === t.slug}
+                    canConnect={false}
+                    connectDisabledReason=""
+                    onConnect={() => void handleConnect(integration)}
+                    connecting={connectingProviderId === integration.providerId}
+                    actionMode="connected"
                   />
                 ))}
               </div>
             </div>
           ) : null}
 
-          {/* Status message */}
-          {connectStatus ? (
-            <div className="mt-4 text-[12px] text-muted-foreground">
-              {connectStatus}
-            </div>
+          {statusMessage ? (
+            <div className="mt-4 text-[12px] text-text-muted">{statusMessage}</div>
           ) : null}
 
-          {/* Available — grouped by category */}
-          {groupedToolkits.map(([category, items]) => (
+          {groupedIntegrations.map(([category, items]) => (
             <div key={category} className="mt-6">
-              <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-muted-foreground">
+              <h2 className="text-[11px] font-medium uppercase tracking-[0.2em] text-text-dim/70">
                 {category.charAt(0).toUpperCase() + category.slice(1)}
               </h2>
               <div className="mt-3 grid grid-cols-2 gap-2">
-                {items.map((t) => (
-                  <ToolkitRow
-                    key={t.slug}
-                    toolkit={t}
+                {items.map((integration) => (
+                  <IntegrationRow
+                    key={integration.slug}
+                    integration={integration}
                     connected={false}
-                    onConnect={() => void handleConnect(t)}
-                    connecting={connectingSlug === t.slug}
+                    canConnect={isSignedIn && integration.supportsManaged}
+                    connectDisabledReason={
+                      integration.supportsManaged
+                        ? "Sign in first to connect managed integrations."
+                        : "Managed sign-in is not supported for this provider."
+                    }
+                    onConnect={() => void handleConnect(integration)}
+                    connecting={connectingProviderId === integration.providerId}
+                    actionMode={
+                      !integration.supportsManaged
+                        ? "unavailable"
+                        : isSignedIn
+                          ? "connect"
+                          : "disabled"
+                    }
                   />
                 ))}
               </div>
             </div>
           ))}
 
-          {filteredToolkits.length === 0 && connectedToolkits.length === 0 ? (
-            <div className="mt-12 text-center text-[13px] text-muted-foreground">
+          {filteredIntegrations.length === 0 && connectedIntegrations.length === 0 ? (
+            <div className="mt-12 text-center text-[13px] text-text-muted/60">
               No integrations found.
             </div>
           ) : null}
@@ -254,74 +424,91 @@ export function IntegrationsPane() {
   );
 }
 
-function ToolkitRow({
-  toolkit,
+function IntegrationRow({
+  integration,
   connected,
+  canConnect,
+  connectDisabledReason,
   onConnect,
   connecting,
+  actionMode,
 }: {
-  toolkit: Toolkit;
+  integration: IntegrationCard;
   connected: boolean;
+  canConnect: boolean;
+  connectDisabledReason: string;
   onConnect: () => void;
   connecting: boolean;
+  actionMode: "connected" | "connect" | "disabled" | "unavailable";
 }) {
+  const muted = actionMode === "disabled";
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-border px-3 py-2.5 transition-colors hover:bg-muted">
-      {/* Logo */}
-      <div className="flex size-10 p-1.5 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-background">
-        {toolkit.logo ? (
-          <img src={toolkit.logo} alt="" className="size-full object-cover" />
+    <div
+      className={`flex items-center gap-3 rounded-[12px] border border-panel-border/30 px-3 py-2.5 transition-colors ${
+        muted ? "opacity-50" : "hover:bg-panel-bg/40"
+      }`}
+    >
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[8px] border border-panel-border/20 bg-panel-bg/50">
+        {integration.logo ? (
+          <img src={integration.logo} alt="" className="h-full w-full object-cover" />
         ) : (
-          <span className="text-[14px] font-semibold text-muted-foreground/50">
-            {toolkit.name.charAt(0)}
+          <span className="text-[14px] font-semibold text-text-dim/50">
+            {integration.name.charAt(0)}
           </span>
         )}
       </div>
 
-      {/* Info */}
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[13px] font-medium text-foreground">
-          {toolkit.name}
+        <div className="truncate text-[13px] font-medium text-text-main">
+          {integration.name}
         </div>
-        <div className="truncate text-[11px] text-muted-foreground">
-          {toolkit.description}
+        <div className="truncate text-[11px] text-text-muted/70">
+          {integration.description}
         </div>
       </div>
 
-      {/* Action */}
       {connected ? (
-        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-primary">
+        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-neon-green">
           <Check size={12} />
+        </span>
+      ) : actionMode === "unavailable" ? (
+        <span
+          title={connectDisabledReason}
+          className="inline-flex h-7 shrink-0 items-center rounded-[8px] border border-panel-border/28 px-2.5 text-[11px] font-medium text-text-dim/64"
+        >
+          Unavailable
         </span>
       ) : (
         <button
           type="button"
-          disabled={connecting}
+          disabled={connecting || !canConnect}
           onClick={onConnect}
-          className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-40"
+          title={canConnect ? `Connect ${integration.name}` : connectDisabledReason}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-panel-border/30 text-text-dim/60 transition-colors hover:bg-panel-bg/60 hover:text-text-main disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {connecting ? (
-            <Loader2 size={13} className="animate-spin" />
-          ) : (
-            <Plus size={14} />
-          )}
+          {connecting ? <Loader2 size={13} className="animate-spin" /> : <Plus size={14} />}
         </button>
       )}
     </div>
   );
 }
 
-/**
- * Maps Holaboss provider_id → Composio toolkit slug.
- * e.g. a connection with provider_id "google" maps to toolkit "gmail".
- */
-const PROVIDER_TO_TOOLKIT_SLUG: Record<string, string> = {
-  google: "gmail",
+const PROVIDER_CATEGORY_GROUPS: Record<string, string[]> = {
+  google: ["productivity"],
+  github: ["developer"],
+  reddit: ["community"],
+  twitter: ["social"],
+  linkedin: ["social"],
 };
 
-/**
- * Maps Composio toolkit slug → Holaboss provider_id for the connect flow.
- */
+const PROVIDER_TOOLKIT_PREFERENCE: Record<string, string[]> = {
+  google: ["gmail", "googledrive", "googlecalendar", "googlesheets"],
+  github: ["github"],
+  reddit: ["reddit"],
+  twitter: ["twitter"],
+  linkedin: ["linkedin"],
+};
+
 const TOOLKIT_SLUG_TO_PROVIDER: Record<string, string> = {
   gmail: "google",
   googlesheets: "google",

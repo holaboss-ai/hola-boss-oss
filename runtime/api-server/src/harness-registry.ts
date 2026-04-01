@@ -30,7 +30,7 @@ import { opencodeProxyConfigPath, updateOpencodeConfig } from "./opencode-config
 import { stageOpencodeRuntimeToolsPlugin } from "./opencode-runtime-tools.js";
 import { readOpencodeSidecarBaseUrl, restartOpencodeSidecar } from "./opencode-sidecar.js";
 import { stageOpencodeSkills } from "./opencode-skills.js";
-import { buildRunnerEnv } from "./runner-worker.js";
+import { buildRunnerEnv, resolveOpencodeExecutable } from "./runner-worker.js";
 
 const HB_SANDBOX_ROOT_ENV = "HB_SANDBOX_ROOT";
 const OPENCODE_BASE_URL_ENV = "OPENCODE_BASE_URL";
@@ -93,6 +93,7 @@ export interface RuntimeHarnessPlugin {
   adapter: RuntimeHarnessAdapter;
   stageBrowserTools: (params: {
     workspaceDir: string;
+    sessionKind?: string | null;
     browserConfig: RuntimeHarnessBrowserConfig;
   }) => { changed: boolean; toolIds: string[] };
   stageRuntimeTools: (params: { workspaceDir: string }) => { changed: boolean; toolIds: string[] };
@@ -197,6 +198,10 @@ function defaultHarnessTimeoutSeconds(): number {
   return Math.max(1, Math.min(parsed, 7200));
 }
 
+function browserToolsAllowedForSession(sessionKind: string | null | undefined): boolean {
+  return typeof sessionKind === "string" && sessionKind.trim().toLowerCase() === "main";
+}
+
 function opencodeSidecarFingerprint(runtimeConfig: HarnessRuntimeConfigPayload, workspaceId: string): string {
   return createHash("sha256")
     .update(
@@ -224,7 +229,7 @@ function opencodeBootstrapPayload(config: RuntimeHarnessProductConfig): Record<s
     $schema: "https://opencode.ai/config.json",
     provider: {
       openai: {
-        npm: "@ai-sdk/openai-compatible",
+        npm: "@ai-sdk/openai",
         name: "Holaboss Model Proxy (OpenAI)",
         options: {
           apiKey: config.authToken,
@@ -275,12 +280,16 @@ async function ensureOpencodeBackendReady(fetchImpl: typeof fetch): Promise<void
 
   await new Promise<void>((resolve, reject) => {
     let settled = false;
-    const child = spawn("opencode", ["serve", "--hostname", opencodeServerHost(), "--port", String(opencodeServerPort())], {
-      cwd: workspaceRootPath(),
-      env: buildRunnerEnv(),
-      stdio: "ignore",
-      detached: true
-    });
+    const child = spawn(
+      resolveOpencodeExecutable(),
+      ["serve", "--hostname", opencodeServerHost(), "--port", String(opencodeServerPort())],
+      {
+        cwd: workspaceRootPath(),
+        env: buildRunnerEnv(),
+        stdio: "ignore",
+        detached: true
+      }
+    );
     child.once("error", (error) => {
       if (settled) {
         return;
@@ -334,7 +343,7 @@ const opencodeRuntimeHarnessPlugin: RuntimeHarnessPlugin = {
     );
     return {
       changed: result.changed,
-      toolIds: result.tool_ids
+      toolIds: browserToolsAllowedForSession(params.sessionKind) ? result.tool_ids : []
     };
   },
   stageRuntimeTools(params) {
@@ -428,6 +437,7 @@ const piRuntimeHarnessPlugin: RuntimeHarnessPlugin = {
   adapter: piAdapter,
   stageBrowserTools(params) {
     const browserEnabled = Boolean(
+      browserToolsAllowedForSession(params.sessionKind) &&
       params.browserConfig.desktopBrowserEnabled &&
         params.browserConfig.desktopBrowserUrl.trim() &&
         params.browserConfig.desktopBrowserAuthToken.trim()

@@ -76,7 +76,7 @@ interface WorkspaceListResponsePayload {
   offset: number;
 }
 
-type UiSettingsPaneSection = "account" | "settings" | "about";
+type UiSettingsPaneSection = "account" | "models" | "appearance" | "about";
 
 const INTERNAL_DEV_BACKEND_OVERRIDES_ENABLED =
   Boolean(process.env.VITE_DEV_SERVER_URL) || process.env.HOLABOSS_INTERNAL_DEV?.trim() === "1";
@@ -109,7 +109,7 @@ const BACKEND_BASE_URL = configuredRemoteBaseUrl("HOLABOSS_BACKEND_BASE_URL");
 const CONTROL_PLANE_BASE_URL =
   serviceBaseUrlFromHost(BACKEND_BASE_URL, 3060) || configuredRemoteBaseUrl("HOLABOSS_DESKTOP_CONTROL_PLANE_BASE_URL");
 const DEFAULT_MODEL_PROXY_BASE_URL = CONTROL_PLANE_BASE_URL ? `${CONTROL_PLANE_BASE_URL}/api/v1/model-proxy` : "";
-const DEFAULT_RUNTIME_MODEL = "openai/gpt-5.1";
+const DEFAULT_RUNTIME_MODEL = "openai/gpt-5.4";
 
 contextBridge.exposeInMainWorld("authPopup", {
   getDefaults: () => ({

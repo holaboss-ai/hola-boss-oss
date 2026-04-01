@@ -663,6 +663,61 @@ test("claimed input persists replacement harness session id from terminal runner
   store.close();
 });
 
+test("claimed input passes persisted child session kind into the runner payload", async () => {
+  const store = makeStore("hb-claimed-input-session-kind-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "proposal-session-1",
+    kind: "task_proposal",
+    parentSessionId: "session-main"
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "proposal-session-1",
+    payload: { text: "hello" }
+  });
+
+  let capturedSessionKind = "";
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      capturedSessionKind = String(payload.session_kind ?? "");
+      await options.onEvent?.({
+        session_id: String(payload.session_id),
+        input_id: String(payload.input_id),
+        sequence: 1,
+        event_type: "run_started",
+        payload: {}
+      });
+      await options.onEvent?.({
+        session_id: String(payload.session_id),
+        input_id: String(payload.input_id),
+        sequence: 2,
+        event_type: "run_completed",
+        payload: { status: "ok" }
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true
+      };
+    }
+  });
+
+  assert.equal(capturedSessionKind, "task_proposal");
+  store.close();
+});
+
 test("claimed input resets harness session binding to the local session after run_failed", async () => {
   const store = makeStore("hb-claimed-input-harness-session-reset-");
   const workspace = store.createWorkspace({
@@ -709,6 +764,5 @@ test("claimed input resets harness session binding to the local session after ru
 
   assert.ok(binding);
   assert.equal(binding.harnessSessionId, "session-main");
-
   store.close();
 });

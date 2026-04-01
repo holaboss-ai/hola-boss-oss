@@ -62,6 +62,219 @@ This starts:
 - the Electron main/preload watcher
 - the Electron app itself
 
+## Model Configuration
+
+The app ships with a default model setup. This section only covers how to override it with your own model configuration.
+
+- default model: `openai/gpt-5.1`
+- default provider id for unprefixed models: `openai`
+
+### Customization Mode
+
+#### Your Own Proxy
+
+You can point the runtime at your own proxy.
+
+- set `model_proxy_base_url` to your proxy root
+- set `auth_token` to the token your proxy expects
+- set `sandbox_id`
+- set `default_model` to the model you want to use
+
+Important behavior:
+
+- for OpenAI-compatible models, the runtime uses `<base>/openai/v1`
+- for Anthropic models, the runtime uses `<base>/anthropic/v1`
+- the runtime passes `X-API-Key` and `X-Holaboss-Sandbox-Id`
+- OpenCode provider config also persists `X-Holaboss-User-Id` when available
+
+So a custom proxy is a good fit when it accepts that header contract directly, or at least safely ignores the extra Holaboss-specific headers.
+
+One implementation detail: the internal provider key in `runtime-config.json` remains `holaboss_model_proxy` even when you point it at your own proxy.
+
+#### Direct Provider Endpoint (No Proxy Rewriter)
+
+You can also route directly to a provider endpoint (for example OpenAI) without a model-proxy rewriter.
+
+- set `model_proxy_base_url` to the provider API base, for example `https://api.openai.com/v1`
+- set `auth_token` to your provider API key
+- set `default_model`, for example `openai/gpt-5.1` or `anthropic/claude-sonnet-4-20250514`
+
+Runtime URL behavior:
+
+- if `model_proxy_base_url` is a proxy root, runtime appends provider routes (`/openai/v1`, `/anthropic/v1`)
+- direct mode is enabled when you provide a provider endpoint (recommended: include `/v1`, for example `https://api.openai.com/v1`)
+- known provider hosts `api.openai.com` and `api.anthropic.com` also work without an explicit path; runtime normalizes them to `/v1`
+
+### Where The Runtime Reads Model Config
+
+The runtime resolves model settings from:
+
+1. `runtime-config.json`
+2. environment variables
+3. built-in defaults
+
+By default, `runtime-config.json` lives at:
+
+- `${HB_SANDBOX_ROOT}/state/runtime-config.json`
+
+You can override that path with:
+
+- `HOLABOSS_RUNTIME_CONFIG_PATH`
+
+### Important Settings
+
+- `model_proxy_base_url`
+  - base URL root for your proxy, for example `https://your-proxy.example/api/v1/model-proxy`
+- `auth_token`
+  - token sent as `X-API-Key`
+- `sandbox_id`
+  - sandbox identifier propagated into runtime execution context and proxy headers
+- `default_model`
+  - default model selection, for example `openai/gpt-5.1`
+- `HOLABOSS_DEFAULT_MODEL`
+  - environment override for `default_model`
+- `OPENCODE_BOOT_MODEL`
+  - fallback env if `HOLABOSS_DEFAULT_MODEL` is not set
+
+### Model String Format
+
+Use provider-prefixed model ids when you want to be explicit:
+
+- `openai/gpt-5.1`
+- `openai/gpt-4.1-mini-2025-04-14`
+- `anthropic/claude-sonnet-4-20250514`
+
+The runtime also treats unprefixed `claude...` model ids as Anthropic models:
+
+- `claude-sonnet-4-20250514`
+
+If a model id is unprefixed and does not start with `claude`, the runtime treats it as `openai/<model>`.
+
+### `runtime-config.json` Universal Provider Example
+
+```json
+{
+  "runtime": {
+    "default_provider": "holaboss",
+    "default_model": "holaboss/gpt-5.2",
+    "sandbox_id": "local-sandbox"
+  },
+  "providers": {
+    "holaboss": {
+      "kind": "holaboss_proxy",
+      "base_url": "https://your-proxy.example/api/v1/model-proxy",
+      "api_key": "your-holaboss-proxy-token"
+    },
+    "openai_direct": {
+      "kind": "openai_compatible",
+      "base_url": "https://api.openai.com/v1",
+      "api_key": "sk-your-openai-key"
+    },
+    "anthropic_direct": {
+      "kind": "anthropic_native",
+      "base_url": "https://api.anthropic.com/v1",
+      "api_key": "sk-ant-your-anthropic-key"
+    },
+    "openrouter_direct": {
+      "kind": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key": "sk-or-your-openrouter-key"
+    },
+    "ollama_direct": {
+      "kind": "openai_compatible",
+      "base_url": "http://localhost:11434/v1",
+      "api_key": "ollama"
+    }
+  },
+  "models": {
+    "holaboss/gpt-5.2": { "provider": "holaboss", "model": "gpt-5.2" },
+    "holaboss/gpt-5-mini": { "provider": "holaboss", "model": "gpt-5-mini" },
+    "holaboss/gpt-4.1-mini": { "provider": "holaboss", "model": "gpt-4.1-mini" },
+    "holaboss/claude-sonnet-4-5": { "provider": "holaboss", "model": "claude-sonnet-4-5" },
+    "holaboss/claude-opus-4-1": { "provider": "holaboss", "model": "claude-opus-4-1" },
+    "openai_direct/gpt-5.2": { "provider": "openai_direct", "model": "gpt-5.2" },
+    "openai_direct/gpt-5-mini": { "provider": "openai_direct", "model": "gpt-5-mini" },
+    "openai_direct/gpt-5-nano": { "provider": "openai_direct", "model": "gpt-5-nano" },
+    "openai_direct/gpt-4.1": { "provider": "openai_direct", "model": "gpt-4.1" },
+    "openai_direct/gpt-4.1-mini": { "provider": "openai_direct", "model": "gpt-4.1-mini" },
+    "anthropic_direct/claude-sonnet-4-5": { "provider": "anthropic_direct", "model": "claude-sonnet-4-5" },
+    "anthropic_direct/claude-opus-4-1": { "provider": "anthropic_direct", "model": "claude-opus-4-1" },
+    "openrouter_direct/deepseek/deepseek-chat-v3-0324": {
+      "provider": "openrouter_direct",
+      "model": "deepseek/deepseek-chat-v3-0324"
+    },
+    "openrouter_direct/openai/gpt-5.2": {
+      "provider": "openrouter_direct",
+      "model": "openai/gpt-5.2"
+    },
+    "openrouter_direct/anthropic/claude-sonnet-4-5": {
+      "provider": "openrouter_direct",
+      "model": "anthropic/claude-sonnet-4-5"
+    },
+    "ollama_direct/qwen2.5:0.5b": {
+      "provider": "ollama_direct",
+      "model": "qwen2.5:0.5b"
+    }
+  }
+}
+```
+
+Provider `kind` values supported by the runtime resolver:
+
+- `holaboss_proxy`
+- `openai_compatible`
+- `anthropic_native`
+- `openrouter`
+
+### Verify Ollama Through The Desktop UI
+
+This is the simplest end-to-end check for the local `ollama_direct` path.
+
+1. Install and start Ollama on your machine.
+2. Pull a minimal local model:
+
+```bash
+ollama pull qwen2.5:0.5b
+```
+
+3. Launch the desktop app.
+4. Open `Settings -> Models`.
+5. Connect `Ollama` with:
+   - base URL: `http://localhost:11434/v1`
+   - API key: `ollama`
+   - models: `qwen2.5:0.5b`
+6. Open a workspace chat and select `ollama_direct/qwen2.5:0.5b`.
+7. Send this prompt:
+
+```text
+Reply with exactly: OK
+```
+
+Expected result:
+
+- the run starts with provider `ollama_direct`
+- the model resolves to `qwen2.5:0.5b`
+- the assistant replies with `OK`
+
+If the model does not show up or the request fails, verify Ollama directly first:
+
+```bash
+curl http://localhost:11434/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer ollama' \
+  -d '{"model":"qwen2.5:0.5b","messages":[{"role":"user","content":"Reply with exactly: OK"}],"temperature":0}'
+```
+
+### Environment Overrides
+
+```bash
+export HOLABOSS_MODEL_PROXY_BASE_URL="https://your-proxy.example/api/v1/model-proxy"
+export HOLABOSS_SANDBOX_AUTH_TOKEN="your-proxy-token"
+export HOLABOSS_DEFAULT_MODEL="anthropic/claude-sonnet-4-20250514"
+```
+
+These env vars override the file-based values above. `sandbox_id` still needs to come from `runtime-config.json`.
+
 ## Common Commands
 
 Run the desktop typecheck:

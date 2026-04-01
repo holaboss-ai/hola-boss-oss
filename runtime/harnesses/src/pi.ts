@@ -27,6 +27,7 @@ export const piHarnessDefinition: HarnessDefinition = {
         workspace_id: params.request.workspace_id,
         workspace_dir: params.bootstrap.workspaceDir,
         session_id: params.request.session_id,
+        browser_tools_enabled: String(params.request.session_kind ?? "").trim().toLowerCase() === "main",
         input_id: params.request.input_id,
         instruction: params.request.instruction,
         attachments: params.request.attachments ?? [],

@@ -31,7 +31,10 @@ export type OpencodeEventMapperState = {
   textSnapshots: Map<string, string>;
   toolSnapshots: Map<string, ToolSnapshot>;
   partTypeSnapshots: Map<string, string>;
+  partMessageSnapshots: Map<string, string>;
+  messageRoleSnapshots: Map<string, string>;
   pendingPartDeltas: Map<string, Array<[string, string]>>;
+  pendingMessageEvents: Map<string, OpencodeMappedEvent[]>;
 };
 
 const TERMINAL_EVENT_TYPES = new Set<RunnerEventType>([
@@ -86,6 +89,10 @@ export function appendOpencodeDiagnosticLog(
     // Best-effort diagnostics only.
   }
 }
+
+type RunOpencodeDeps = {
+  createClient?: typeof createOpencodeClient;
+};
 
 function emitRunnerEvent(
   request: OpencodeHarnessHostRequest,
@@ -298,10 +305,11 @@ function normalizePartType(value: unknown): string {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
-function partValue(
-  part: Record<string, unknown> | null,
-  ...keys: string[]
-): unknown {
+function normalizeMessageRole(value: unknown): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function partValue(part: Record<string, unknown> | null, ...keys: string[]): unknown {
   if (!part) {
     return undefined;
   }
@@ -357,6 +365,35 @@ function eventPartId(
       properties?.id,
     ) ?? ""
   );
+}
+
+function eventMessageId(
+  rawEvent: unknown,
+  part: Record<string, unknown> | null,
+  partMessageSnapshots: Map<string, string>
+): string {
+  const payload = asRecord(rawEvent);
+  const properties = asRecord(payload?.properties);
+  const info = asRecord(properties?.info);
+  const direct =
+    firstNonEmptyString(
+      partValue(part, "messageID", "messageId", "message_id"),
+      properties?.messageID,
+      properties?.messageId,
+      properties?.message_id,
+      info?.messageID,
+      info?.messageId,
+      info?.message_id,
+      info?.id
+    ) ?? "";
+  if (direct) {
+    return direct;
+  }
+  const partID = eventPartId(rawEvent, part);
+  if (!partID) {
+    return "";
+  }
+  return partMessageSnapshots.get(partID) ?? "";
 }
 
 function eventSessionStatusType(rawEvent: unknown): string {
@@ -432,9 +469,32 @@ function queuedPartDeltaEvents(
   }));
 }
 
-function flushPendingPartDeltas(
-  pendingPartDeltas: Map<string, Array<[string, string]>>,
+function discardPartTracking(partID: string, state: OpencodeEventMapperState): void {
+  const normalizedPartID = partID.trim();
+  if (!normalizedPartID) {
+    return;
+  }
+  state.textSnapshots.delete(normalizedPartID);
+  state.partTypeSnapshots.delete(normalizedPartID);
+  state.partMessageSnapshots.delete(normalizedPartID);
+  state.pendingPartDeltas.delete(normalizedPartID);
+}
+
+function releasePendingMessageEvents(
+  messageID: string,
+  role: string,
+  pendingMessageEvents: Map<string, OpencodeMappedEvent[]>
 ): OpencodeMappedEvent[] {
+  const normalizedMessageID = messageID.trim();
+  if (!normalizedMessageID) {
+    return [];
+  }
+  const pending = pendingMessageEvents.get(normalizedMessageID) ?? [];
+  pendingMessageEvents.delete(normalizedMessageID);
+  return role === "assistant" ? pending : [];
+}
+
+function flushPendingPartDeltas(pendingPartDeltas: Map<string, Array<[string, string]>>): OpencodeMappedEvent[] {
   const flushed: OpencodeMappedEvent[] = [];
   for (const [partID, queued] of pendingPartDeltas.entries()) {
     for (const [eventName, delta] of queued) {
@@ -545,16 +605,21 @@ function questionToolTerminalPayload(
 function messageUpdatedEvents(
   rawEvent: unknown,
   eventName: string,
-  textSnapshots: Map<string, string>,
-  partTypeSnapshots: Map<string, string>,
-  pendingPartDeltas: Map<string, Array<[string, string]>>,
+  state: OpencodeEventMapperState
 ): OpencodeMappedEvent[] {
+  const { textSnapshots, partTypeSnapshots, partMessageSnapshots, messageRoleSnapshots, pendingPartDeltas, pendingMessageEvents } = state;
   const payload = asRecord(rawEvent);
   const properties = asRecord(payload?.properties);
   const info = asRecord(properties?.info);
+  const messageID = firstNonEmptyString(info?.id, info?.messageID, info?.messageId, info?.message_id) ?? "";
+  const role = normalizeMessageRole(info?.role);
+  if (messageID && role) {
+    messageRoleSnapshots.set(messageID, role);
+  }
   const parts = asArray(info?.parts);
+  const releasedPendingEvents = releasePendingMessageEvents(messageID, role, pendingMessageEvents);
   if (!parts) {
-    return [];
+    return releasedPendingEvents;
   }
 
   const outputEvents: OpencodeMappedEvent[] = [];
@@ -568,6 +633,13 @@ function messageUpdatedEvents(
       continue;
     }
     const partID = firstNonEmptyString(part.id) ?? `message-updated-${index}`;
+    if (messageID) {
+      partMessageSnapshots.set(partID, messageID);
+    }
+    if (role && role !== "assistant") {
+      discardPartTracking(partID, state);
+      continue;
+    }
     partTypeSnapshots.set(partID, partType);
     const delta = textDeltaFromValues(
       partID,
@@ -593,7 +665,7 @@ function messageUpdatedEvents(
       },
     });
   }
-  return outputEvents;
+  return [...releasedPendingEvents, ...outputEvents];
 }
 
 function eventErrorPayload(rawEvent: unknown): JsonObject {
@@ -671,7 +743,10 @@ export function createOpencodeEventMapperState(): OpencodeEventMapperState {
     textSnapshots: new Map<string, string>(),
     toolSnapshots: new Map<string, ToolSnapshot>(),
     partTypeSnapshots: new Map<string, string>(),
+    partMessageSnapshots: new Map<string, string>(),
+    messageRoleSnapshots: new Map<string, string>(),
     pendingPartDeltas: new Map<string, Array<[string, string]>>(),
+    pendingMessageEvents: new Map<string, OpencodeMappedEvent[]>(),
   };
 }
 
@@ -680,8 +755,15 @@ export function mapOpencodeEvent(
   targetSessionID: string,
   state: OpencodeEventMapperState,
 ): OpencodeMappedEvent[] {
-  const { textSnapshots, toolSnapshots, partTypeSnapshots, pendingPartDeltas } =
-    state;
+  const {
+    textSnapshots,
+    toolSnapshots,
+    partTypeSnapshots,
+    partMessageSnapshots,
+    messageRoleSnapshots,
+    pendingPartDeltas,
+    pendingMessageEvents,
+  } = state;
   const payload = asRecord(rawEvent);
   const eventName = firstNonEmptyString(payload?.type) ?? "";
   if (!eventName) {
@@ -741,13 +823,7 @@ export function mapOpencodeEvent(
   }
 
   if (eventName === "message.updated") {
-    return messageUpdatedEvents(
-      rawEvent,
-      eventName,
-      textSnapshots,
-      partTypeSnapshots,
-      pendingPartDeltas,
-    );
+    return messageUpdatedEvents(rawEvent, eventName, state);
   }
 
   if (
@@ -760,6 +836,11 @@ export function mapOpencodeEvent(
   const part = eventPart(rawEvent);
   const partType = normalizePartType(partValue(part, "type"));
   const partID = eventPartId(rawEvent, part);
+  const messageID = eventMessageId(rawEvent, part, partMessageSnapshots);
+  const messageRole = normalizeMessageRole(messageRoleSnapshots.get(messageID) ?? "");
+  if (partID && messageID) {
+    partMessageSnapshots.set(partID, messageID);
+  }
   if (partID && partType) {
     partTypeSnapshots.set(partID, partType);
   }
@@ -810,7 +891,7 @@ export function mapOpencodeEvent(
     if (!delta) {
       return queuedEvents;
     }
-    return [
+    const mappedEvents: OpencodeMappedEvent[] = [
       ...queuedEvents,
       {
         event_type: eventType,
@@ -824,25 +905,20 @@ export function mapOpencodeEvent(
         },
       },
     ];
+    if (messageRole && messageRole !== "assistant") {
+      return [];
+    }
+    return mappedEvents;
   }
 
   if (resolvedPartType === "text") {
-    const rawDelta = eventDelta(rawEvent);
     let delta = "";
     if (partID) {
       const rawText = partValue(part, "text", "snapshot");
       const text = rawText !== undefined ? String(rawText) : "";
       if (text) {
         delta = textDeltaFromValues(partID, text, textSnapshots);
-      } else if (rawDelta) {
-        delta = rawDelta;
-        textSnapshots.set(
-          partID,
-          `${textSnapshots.get(partID) ?? ""}${rawDelta}`,
-        );
       }
-    } else if (rawDelta) {
-      delta = rawDelta;
     } else {
       delta = textDelta(part, textSnapshots);
     }
@@ -857,7 +933,7 @@ export function mapOpencodeEvent(
     if (!delta) {
       return queuedEvents;
     }
-    return [
+    const mappedEvents: OpencodeMappedEvent[] = [
       ...queuedEvents,
       {
         event_type: "output_delta",
@@ -871,6 +947,19 @@ export function mapOpencodeEvent(
         },
       },
     ];
+    if (messageRole === "assistant") {
+      return mappedEvents;
+    }
+    if (messageRole && messageRole !== "assistant") {
+      return [];
+    }
+    if (messageID) {
+      const queued = pendingMessageEvents.get(messageID) ?? [];
+      queued.push(...mappedEvents);
+      pendingMessageEvents.set(messageID, queued);
+      return [];
+    }
+    return mappedEvents;
   }
 
   if (resolvedPartType === "reasoning") {
@@ -878,15 +967,8 @@ export function mapOpencodeEvent(
     if (!delta) {
       return [];
     }
-    const queuedEvents = partID
-      ? queuedPartDeltaEvents(
-          partID,
-          resolvedPartType,
-          eventName,
-          pendingPartDeltas,
-        )
-      : [];
-    return [
+    const queuedEvents = partID ? queuedPartDeltaEvents(partID, resolvedPartType, eventName, pendingPartDeltas) : [];
+    const mappedEvents: OpencodeMappedEvent[] = [
       ...queuedEvents,
       {
         event_type: "thinking_delta",
@@ -900,6 +982,19 @@ export function mapOpencodeEvent(
         },
       },
     ];
+    if (messageRole === "assistant") {
+      return mappedEvents;
+    }
+    if (messageRole && messageRole !== "assistant") {
+      return [];
+    }
+    if (eventName === "message.part.updated" && messageID) {
+      const queued = pendingMessageEvents.get(messageID) ?? [];
+      queued.push(...mappedEvents);
+      pendingMessageEvents.set(messageID, queued);
+      return [];
+    }
+    return mappedEvents;
   }
 
   if (resolvedPartType === "snapshot") {
@@ -968,14 +1063,6 @@ export function shouldEmitOpencodeEvent(
   if (eventType === "thinking_delta") {
     const delta = asString(payload.delta);
     if (delta === "step-start" || delta === "step-finish") {
-      return false;
-    }
-  }
-
-  if (eventType === "output_delta") {
-    const delta = asString(payload.delta);
-    const source = asString(payload.source);
-    if (source === "opencode" && delta.trim() === instruction.trim()) {
       return false;
     }
   }
@@ -1241,6 +1328,7 @@ async function probeModelClient(request: OpencodeHarnessHostRequest): Promise<vo
 
 export async function runOpencode(
   request: OpencodeHarnessHostRequest,
+  deps: RunOpencodeDeps = {}
 ): Promise<number> {
   let sequence = 0;
   let activeSessionID: string | null = null;
@@ -1269,7 +1357,8 @@ export async function runOpencode(
       ...request.run_started_payload,
     });
 
-    const client = createOpencodeClient({
+    const clientFactory = deps.createClient ?? createOpencodeClient;
+    const client = clientFactory({
       baseUrl: request.opencode_base_url,
       directory: request.workspace_dir,
       experimental_workspaceID: request.workspace_id,
@@ -1297,6 +1386,8 @@ export async function runOpencode(
       request.workspace_dir,
       "event_subscribe_complete",
     );
+    // Prime the event stream before prompt submission so immediate session.error events are not missed.
+    let nextEventPromise: Promise<IteratorResult<unknown>> | null = iterator.next();
 
     const promptTask = (async () => {
       appendOpencodeDiagnosticLog(request.workspace_dir, "prompt_async_start", {
@@ -1357,7 +1448,6 @@ export async function runOpencode(
     });
 
     let terminalEmitted = false;
-    let nextEventPromise: Promise<IteratorResult<unknown>> | null = null;
     const deadline = Date.now() + request.timeout_seconds * 1000;
 
     while (!terminalEmitted) {

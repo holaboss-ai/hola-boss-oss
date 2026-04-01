@@ -74,6 +74,28 @@ const HOLABOSS_HOME_URL = "https://holaboss.ai";
 const HOLABOSS_DOCS_URL = `https://github.com/${GITHUB_RELEASES_OWNER}/${GITHUB_RELEASES_REPO}`;
 const HOLABOSS_HELP_URL = `${HOLABOSS_DOCS_URL}/issues`;
 const APP_DISPLAY_NAME = "Holaboss";
+const RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY = "holaboss_proxy";
+const RUNTIME_PROVIDER_KIND_OPENAI_COMPATIBLE = "openai_compatible";
+const RUNTIME_PROVIDER_KIND_ANTHROPIC_NATIVE = "anthropic_native";
+const RUNTIME_PROVIDER_KIND_OPENROUTER = "openrouter";
+const RUNTIME_HOLABOSS_PROVIDER_ID = "holaboss_model_proxy";
+const RUNTIME_HOLABOSS_PROVIDER_ALIASES = [
+  "holaboss",
+  RUNTIME_HOLABOSS_PROVIDER_ID,
+] as const;
+const RUNTIME_HOLABOSS_LEGACY_PROXY_MODELS = [
+  "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.3-codex",
+  "claude-sonnet-4-5",
+  "claude-opus-4-1",
+] as const;
+const RUNTIME_DEPRECATED_MODEL_IDS = new Set([
+  "gpt-5.1",
+  "gpt-5.1-codex",
+  "gpt-5.1-codex-mini",
+  "gpt-5.1-codex-max",
+]);
 
 interface DirectoryEntryPayload {
   name: string;
@@ -252,6 +274,19 @@ interface RuntimeConfigPayload {
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
   controlPlaneBaseUrl: string | null;
+  providerModelGroups: RuntimeProviderModelGroupPayload[];
+}
+
+interface RuntimeProviderModelPayload {
+  token: string;
+  modelId: string;
+}
+
+interface RuntimeProviderModelGroupPayload {
+  providerId: string;
+  providerLabel: string;
+  kind: string;
+  models: RuntimeProviderModelPayload[];
 }
 
 interface RuntimeConfigUpdatePayload {
@@ -2470,37 +2505,80 @@ async function readRuntimeConfigFile(): Promise<Record<string, string>> {
   try {
     const raw = await fs.readFile(configPath, "utf-8");
     const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object") {
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return {};
     }
     const parsedRecord = parsed as Record<string, unknown>;
-    const holabossSection = parsedRecord.holaboss;
-    const source =
-      typeof holabossSection === "object" && holabossSection
-        ? (holabossSection as Record<string, unknown>)
+    const runtimePayload = runtimeConfigObject(parsedRecord.runtime);
+    const providersPayload = runtimeConfigObject(parsedRecord.providers);
+    const integrationsPayload = runtimeConfigObject(parsedRecord.integrations);
+    const holabossIntegration = runtimeConfigObject(integrationsPayload.holaboss);
+    const holabossProvider = runtimeConfigObject(
+      providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID],
+    );
+    const holabossLegacyPayload = runtimeConfigObject(parsedRecord.holaboss);
+    const legacyPayload =
+      Object.keys(holabossLegacyPayload).length > 0
+        ? holabossLegacyPayload
         : parsedRecord;
 
     const normalized: Record<string, string> = {};
-    for (const key of [
-      "auth_token",
-      "model_proxy_api_key",
-      "user_id",
-      "sandbox_id",
-      "model_proxy_base_url",
-      "default_model",
-      "control_plane_base_url",
-    ] as const) {
-      const value = source[key];
-      if (typeof value === "string" && value.trim()) {
-        normalized[key] = value.trim();
-      }
+    const authToken = runtimeFirstNonEmptyString(
+      holabossIntegration.auth_token as string | undefined,
+      holabossProvider.api_key as string | undefined,
+      legacyPayload.auth_token as string | undefined,
+      legacyPayload.model_proxy_api_key as string | undefined,
+    );
+    const userId = runtimeFirstNonEmptyString(
+      holabossIntegration.user_id as string | undefined,
+      legacyPayload.user_id as string | undefined,
+    );
+    const sandboxId = runtimeFirstNonEmptyString(
+      runtimePayload.sandbox_id as string | undefined,
+      holabossIntegration.sandbox_id as string | undefined,
+      legacyPayload.sandbox_id as string | undefined,
+    );
+    const modelProxyBaseUrl = runtimeFirstNonEmptyString(
+      holabossProvider.base_url as string | undefined,
+      legacyPayload.model_proxy_base_url as string | undefined,
+    );
+    const defaultModel = normalizeLegacyRuntimeModelToken(
+      runtimeFirstNonEmptyString(
+        runtimePayload.default_model as string | undefined,
+        legacyPayload.default_model as string | undefined,
+      ),
+    );
+    const defaultProvider = runtimeFirstNonEmptyString(
+      runtimePayload.default_provider as string | undefined,
+      legacyPayload.default_provider as string | undefined,
+    );
+    const controlPlaneBaseUrl = runtimeFirstNonEmptyString(
+      legacyPayload.control_plane_base_url as string | undefined,
+    );
+
+    if (authToken) {
+      normalized.auth_token = authToken;
+      normalized.model_proxy_api_key = authToken;
     }
-    if (!normalized.auth_token && normalized.model_proxy_api_key) {
-      normalized.auth_token = normalized.model_proxy_api_key;
+    if (userId) {
+      normalized.user_id = userId;
     }
-    if (!normalized.model_proxy_api_key && normalized.auth_token) {
-      normalized.model_proxy_api_key = normalized.auth_token;
+    if (sandboxId) {
+      normalized.sandbox_id = sandboxId;
     }
+    if (modelProxyBaseUrl) {
+      normalized.model_proxy_base_url = modelProxyBaseUrl;
+    }
+    if (defaultModel) {
+      normalized.default_model = defaultModel;
+    }
+    if (defaultProvider) {
+      normalized.default_provider = defaultProvider;
+    }
+    if (controlPlaneBaseUrl) {
+      normalized.control_plane_base_url = controlPlaneBaseUrl;
+    }
+
     return normalized;
   } catch {
     return {};
@@ -2987,6 +3065,380 @@ function runtimeConfigField(value: string | undefined): string {
   return (value || "").trim();
 }
 
+function runtimeConfigObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function runtimeFirstNonEmptyString(
+  ...values: Array<string | null | undefined>
+): string {
+  for (const value of values) {
+    const normalized = (value ?? "").trim();
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return "";
+}
+
+function canonicalRuntimeProviderId(providerId: string): string {
+  const normalized = providerId.trim();
+  if (!normalized) {
+    return "";
+  }
+  if (
+    RUNTIME_HOLABOSS_PROVIDER_ALIASES.some(
+      (alias) => alias === normalized.toLowerCase(),
+    )
+  ) {
+    return RUNTIME_HOLABOSS_PROVIDER_ID;
+  }
+  return normalized;
+}
+
+function canonicalRuntimeModelToken(
+  providerId: string,
+  token: string,
+  modelId: string,
+): string {
+  const canonicalProviderId = canonicalRuntimeProviderId(providerId);
+  const normalizedModelId = modelId.trim();
+  const normalizedToken = token.trim();
+  if (!canonicalProviderId) {
+    return normalizedToken;
+  }
+  if (!normalizedToken) {
+    return `${canonicalProviderId}/${normalizedModelId}`;
+  }
+  if (canonicalProviderId !== RUNTIME_HOLABOSS_PROVIDER_ID) {
+    return normalizedToken;
+  }
+  if (!normalizedToken.includes("/")) {
+    return normalizedToken;
+  }
+  const [prefix, ...rest] = normalizedToken.split("/");
+  if (
+    rest.length > 0 &&
+    RUNTIME_HOLABOSS_PROVIDER_ALIASES.some(
+      (alias) => alias === prefix.trim().toLowerCase(),
+    )
+  ) {
+    return `${canonicalProviderId}/${rest.join("/").trim()}`;
+  }
+  return normalizedToken;
+}
+
+function normalizeLegacyRuntimeModelToken(token: string): string {
+  return token.trim();
+}
+
+function runtimeProviderLabel(providerId: string): string {
+  const normalized = providerId.trim().toLowerCase();
+  if (normalized === "openai" || normalized.includes("openai")) {
+    return "OpenAI";
+  }
+  if (normalized === "anthropic" || normalized.includes("anthropic")) {
+    return "Anthropic";
+  }
+  if (normalized.includes("openrouter")) {
+    return "OpenRouter";
+  }
+  if (normalized.includes("gemini") || normalized.includes("google")) {
+    return "Gemini";
+  }
+  if (normalized.includes("ollama")) {
+    return "Ollama";
+  }
+  if (
+    normalized === RUNTIME_HOLABOSS_PROVIDER_ID ||
+    normalized === "holaboss" ||
+    normalized.includes("holaboss")
+  ) {
+    return "Holaboss Proxy";
+  }
+  return providerId
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function normalizeRuntimeProviderKind(
+  rawKind: string,
+  providerId: string,
+  baseUrl: string,
+): string {
+  const normalizedProviderId = providerId.trim().toLowerCase();
+  const normalizedKind = rawKind.trim().toLowerCase();
+  const normalizedBaseUrl = baseUrl.trim().toLowerCase();
+  if (
+    normalizedKind === RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY ||
+    normalizedProviderId === RUNTIME_HOLABOSS_PROVIDER_ID ||
+    normalizedProviderId === "holaboss" ||
+    normalizedProviderId.includes("holaboss")
+  ) {
+    return RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY;
+  }
+  if (!normalizedKind && normalizedBaseUrl.includes("model-proxy")) {
+    return RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY;
+  }
+  if (
+    normalizedKind === RUNTIME_PROVIDER_KIND_OPENROUTER ||
+    normalizedProviderId.includes("openrouter")
+  ) {
+    return RUNTIME_PROVIDER_KIND_OPENROUTER;
+  }
+  if (
+    normalizedKind === RUNTIME_PROVIDER_KIND_ANTHROPIC_NATIVE ||
+    normalizedKind === "anthropic" ||
+    normalizedProviderId.includes("anthropic")
+  ) {
+    return RUNTIME_PROVIDER_KIND_ANTHROPIC_NATIVE;
+  }
+  return RUNTIME_PROVIDER_KIND_OPENAI_COMPATIBLE;
+}
+
+function runtimeModelIdFromToken(token: string): string {
+  const normalizedToken = token.trim();
+  if (!normalizedToken) {
+    return "";
+  }
+  if (!normalizedToken.includes("/")) {
+    return normalizedToken;
+  }
+  const [prefix, ...rest] = normalizedToken.split("/");
+  const normalizedPrefix = prefix.trim().toLowerCase();
+  if (
+    normalizedPrefix.includes("openai") ||
+    normalizedPrefix.includes("anthropic") ||
+    normalizedPrefix.includes("holaboss") ||
+    normalizedPrefix.includes("openrouter") ||
+    normalizedPrefix.includes("gemini") ||
+    normalizedPrefix.includes("google") ||
+    normalizedPrefix.includes("ollama")
+  ) {
+    return rest.join("/").trim();
+  }
+  return normalizedToken;
+}
+
+function isDeprecatedRuntimeModelId(modelId: string): boolean {
+  const normalized = runtimeModelIdFromToken(modelId).toLowerCase();
+  return RUNTIME_DEPRECATED_MODEL_IDS.has(normalized);
+}
+
+function runtimeProviderModelGroups(
+  document: Record<string, unknown>,
+  loadedLegacy: Record<string, string>,
+): RuntimeProviderModelGroupPayload[] {
+  const runtimePayload = runtimeConfigObject(document.runtime);
+  const providersPayload = runtimeConfigObject(document.providers);
+  const modelsPayload = runtimeConfigObject(document.models);
+  const integrationsPayload = runtimeConfigObject(document.integrations);
+  const holabossIntegration = runtimeConfigObject(integrationsPayload.holaboss);
+
+  const providers = new Map<string, { id: string; kind: string; label: string }>();
+  for (const [providerId, rawProvider] of Object.entries(providersPayload)) {
+    const canonicalProviderId = canonicalRuntimeProviderId(providerId);
+    const providerPayload = runtimeConfigObject(rawProvider);
+    const optionsPayload = runtimeConfigObject(providerPayload.options);
+    const baseUrl = runtimeFirstNonEmptyString(
+      providerPayload.base_url as string | undefined,
+      providerPayload.baseURL as string | undefined,
+      optionsPayload.baseURL as string | undefined,
+      optionsPayload.base_url as string | undefined,
+    );
+    const kind = normalizeRuntimeProviderKind(
+      runtimeFirstNonEmptyString(
+        providerPayload.kind as string | undefined,
+        providerPayload.type as string | undefined,
+        optionsPayload.kind as string | undefined,
+      ),
+      canonicalProviderId,
+      baseUrl,
+    );
+    providers.set(canonicalProviderId, {
+      id: canonicalProviderId,
+      kind,
+      label: runtimeProviderLabel(canonicalProviderId),
+    });
+  }
+
+  const runtimeDefaultProvider = canonicalRuntimeProviderId(
+    runtimeFirstNonEmptyString(
+      runtimePayload.default_provider as string | undefined,
+      loadedLegacy.default_provider,
+      RUNTIME_HOLABOSS_PROVIDER_ID,
+    ),
+  );
+  const legacyBaseUrl = runtimeFirstNonEmptyString(
+    loadedLegacy.model_proxy_base_url,
+    holabossIntegration.model_proxy_base_url as string | undefined,
+  );
+  const legacyApiKey = runtimeFirstNonEmptyString(
+    loadedLegacy.model_proxy_api_key,
+    loadedLegacy.auth_token,
+    holabossIntegration.auth_token as string | undefined,
+  );
+  const hasLegacyProxyBinding = Boolean(legacyBaseUrl && legacyApiKey);
+  if (
+    hasLegacyProxyBinding &&
+    runtimeDefaultProvider &&
+    !providers.has(runtimeDefaultProvider)
+  ) {
+    providers.set(runtimeDefaultProvider, {
+      id: runtimeDefaultProvider,
+      kind: normalizeRuntimeProviderKind(
+        "",
+        runtimeDefaultProvider,
+        legacyBaseUrl,
+      ),
+      label: runtimeProviderLabel(runtimeDefaultProvider),
+    });
+  }
+
+  const groupedModels = new Map<string, Map<string, RuntimeProviderModelPayload>>();
+  const ensureProviderGroup = (providerId: string) => {
+    if (!groupedModels.has(providerId)) {
+      groupedModels.set(providerId, new Map<string, RuntimeProviderModelPayload>());
+    }
+    return groupedModels.get(providerId)!;
+  };
+  const addModel = (providerId: string, token: string, modelId: string) => {
+    const normalizedProviderId = canonicalRuntimeProviderId(providerId);
+    const normalizedModelId = modelId.trim();
+    if (
+      !normalizedProviderId ||
+      !normalizedModelId ||
+      isDeprecatedRuntimeModelId(normalizedModelId)
+    ) {
+      return;
+    }
+    const normalizedToken = canonicalRuntimeModelToken(
+      normalizedProviderId,
+      token,
+      normalizedModelId,
+    );
+    if (isDeprecatedRuntimeModelId(normalizedToken)) {
+      return;
+    }
+    const group = ensureProviderGroup(normalizedProviderId);
+    if (!group.has(normalizedToken)) {
+      group.set(normalizedToken, {
+        token: normalizedToken,
+        modelId: normalizedModelId,
+      });
+    }
+  };
+  const seedLegacyHolabossProxyModels = (providerId: string, defaultModelToken: string) => {
+    if (!providers.has(providerId)) {
+      providers.set(providerId, {
+        id: providerId,
+        kind: RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY,
+        label: runtimeProviderLabel(providerId),
+      });
+    }
+
+    const seededModelIds = new Set<string>();
+    const preferredModelId = runtimeModelIdFromToken(defaultModelToken);
+    if (preferredModelId && !isDeprecatedRuntimeModelId(preferredModelId)) {
+      seededModelIds.add(preferredModelId);
+    }
+    for (const modelId of RUNTIME_HOLABOSS_LEGACY_PROXY_MODELS) {
+      seededModelIds.add(modelId);
+    }
+    for (const modelId of seededModelIds) {
+      addModel(providerId, `${providerId}/${modelId}`, modelId);
+    }
+  };
+
+  const configuredModelsCount = Object.keys(modelsPayload).length;
+  for (const [token, rawModel] of Object.entries(modelsPayload)) {
+    const modelPayload = runtimeConfigObject(rawModel);
+    let providerId = runtimeFirstNonEmptyString(
+      modelPayload.provider_id as string | undefined,
+      modelPayload.provider as string | undefined,
+    );
+    let modelId = runtimeFirstNonEmptyString(
+      modelPayload.model_id as string | undefined,
+      modelPayload.model as string | undefined,
+    );
+    if (!providerId && token.includes("/")) {
+      const [prefix, ...rest] = token.split("/");
+      const normalizedPrefix = canonicalRuntimeProviderId(prefix);
+      if (providers.has(normalizedPrefix) && rest.length > 0) {
+        providerId = normalizedPrefix;
+        modelId = modelId || rest.join("/");
+      }
+    }
+    if (providerId && modelId) {
+      const normalizedProviderId = canonicalRuntimeProviderId(providerId);
+      if (providers.has(normalizedProviderId)) {
+        addModel(normalizedProviderId, token, modelId);
+      }
+    }
+  }
+
+  const fallbackDefaultModel = normalizeLegacyRuntimeModelToken(
+    runtimeFirstNonEmptyString(
+      runtimePayload.default_model as string | undefined,
+      loadedLegacy.default_model,
+    ),
+  );
+  const hasExplicitProviderCatalog =
+    Object.keys(providersPayload).length > 0 ||
+    Object.keys(modelsPayload).length > 0;
+  if (
+    fallbackDefaultModel &&
+    configuredModelsCount === 0 &&
+    !hasExplicitProviderCatalog &&
+    hasLegacyProxyBinding
+  ) {
+    seedLegacyHolabossProxyModels(
+      RUNTIME_HOLABOSS_PROVIDER_ID,
+      fallbackDefaultModel,
+    );
+  }
+
+  if (hasLegacyProxyBinding) {
+    const legacyProxyProviderId = runtimeDefaultProvider || RUNTIME_HOLABOSS_PROVIDER_ID;
+    const hasExplicitHolabossModels =
+      (groupedModels.get(legacyProxyProviderId)?.size ?? 0) > 0;
+    if (!hasExplicitHolabossModels) {
+      seedLegacyHolabossProxyModels(
+        legacyProxyProviderId,
+        fallbackDefaultModel,
+      );
+    }
+  }
+
+  const groups: RuntimeProviderModelGroupPayload[] = [];
+  const providerIds = new Set<string>([
+    ...Array.from(providers.keys()),
+    ...Array.from(groupedModels.keys()),
+  ]);
+  for (const providerId of providerIds) {
+    const modelMap =
+      groupedModels.get(providerId) ?? new Map<string, RuntimeProviderModelPayload>();
+    const provider = providers.get(providerId);
+    groups.push({
+      providerId,
+      providerLabel: provider?.label ?? runtimeProviderLabel(providerId),
+      kind: provider?.kind ?? normalizeRuntimeProviderKind("", providerId, ""),
+      models: Array.from(modelMap.values()),
+    });
+  }
+  return groups;
+}
+
+function isHolabossProviderAlias(providerId: string): boolean {
+  const normalized = providerId.trim().toLowerCase();
+  return RUNTIME_HOLABOSS_PROVIDER_ALIASES.some((alias) => alias === normalized);
+}
+
 function runtimeConfigRestartRequired(
   current: Record<string, string>,
   next: Record<string, string>,
@@ -3057,16 +3509,76 @@ async function withRuntimeBindingRefreshLock<T>(
 async function getRuntimeConfig(): Promise<RuntimeConfigPayload> {
   const configPath = runtimeConfigPath();
   const loaded = await readRuntimeConfigFile();
+  const document = await readRuntimeConfigDocument();
   return {
     configPath,
-    loadedFromFile: Object.keys(loaded).length > 0,
+    loadedFromFile: Object.keys(document).length > 0 || Object.keys(loaded).length > 0,
     authTokenPresent: Boolean(runtimeModelProxyApiKeyFromConfig(loaded)),
     userId: loaded.user_id ?? null,
     sandboxId: loaded.sandbox_id ?? null,
     modelProxyBaseUrl: loaded.model_proxy_base_url ?? null,
     defaultModel: loaded.default_model ?? null,
     controlPlaneBaseUrl: loaded.control_plane_base_url ?? null,
+    providerModelGroups: runtimeProviderModelGroups(document, loaded),
   };
+}
+
+async function getRuntimeConfigDocumentText(): Promise<string> {
+  const document = await readRuntimeConfigDocument();
+  if (Object.keys(document).length > 0) {
+    return `${JSON.stringify(document, null, 2)}\n`;
+  }
+  return `{
+  "runtime": {
+    "sandbox_id": "desktop:replace-me"
+  },
+  "providers": {},
+  "models": {}
+}
+`;
+}
+
+async function setRuntimeConfigDocument(
+  rawDocument: string,
+): Promise<RuntimeConfigPayload> {
+  const trimmed = rawDocument.trim();
+  if (!trimmed) {
+    throw new Error("Runtime config JSON is required.");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (error) {
+    throw new Error(
+      error instanceof Error
+        ? `Invalid runtime config JSON: ${error.message}`
+        : "Invalid runtime config JSON.",
+    );
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Runtime config must be a JSON object.");
+  }
+
+  const configPath = runtimeConfigPath();
+  const nextText = `${JSON.stringify(parsed, null, 2)}\n`;
+  const currentDocument = await readRuntimeConfigDocument();
+  const currentText =
+    Object.keys(currentDocument).length > 0
+      ? `${JSON.stringify(currentDocument, null, 2)}\n`
+      : "";
+
+  if (currentText !== nextText) {
+    await fs.mkdir(path.dirname(configPath), { recursive: true });
+    await fs.writeFile(configPath, nextText, "utf-8");
+    await stopEmbeddedRuntime();
+    void startEmbeddedRuntime();
+  }
+
+  const config = await getRuntimeConfig();
+  await emitRuntimeConfig(config);
+  return config;
 }
 
 async function exchangeDesktopRuntimeBinding(
@@ -3353,6 +3865,45 @@ function runtimeConfigIsControlPlaneManaged(
   return modelProxyBaseUrl.includes("/api/v1/model-proxy");
 }
 
+function configuredProviderIdForRuntimeModelToken(
+  modelToken: string | null | undefined,
+): string {
+  const normalizedModelToken = normalizeLegacyRuntimeModelToken(
+    runtimeConfigField(modelToken ?? ""),
+  );
+  if (!normalizedModelToken.includes("/")) {
+    return "";
+  }
+  const [providerId] = normalizedModelToken.split("/");
+  return providerId.trim();
+}
+
+function sessionQueueRequiresRuntimeBinding(
+  config: Record<string, string>,
+  selectedModelToken: string | null | undefined,
+): boolean {
+  const explicitProviderId = configuredProviderIdForRuntimeModelToken(
+    selectedModelToken,
+  );
+  if (explicitProviderId) {
+    return isHolabossProviderAlias(explicitProviderId);
+  }
+
+  const defaultProviderId = runtimeConfigField(config.default_provider);
+  if (defaultProviderId) {
+    return isHolabossProviderAlias(defaultProviderId);
+  }
+
+  const defaultModelProviderId = configuredProviderIdForRuntimeModelToken(
+    config.default_model,
+  );
+  if (defaultModelProviderId) {
+    return isHolabossProviderAlias(defaultModelProviderId);
+  }
+
+  return runtimeConfigIsControlPlaneManaged(config);
+}
+
 function shouldForceRuntimeBindingRefresh(userId: string): boolean {
   if (!userId) {
     return false;
@@ -3377,6 +3928,10 @@ async function clearRuntimeBindingSecrets(reason: string): Promise<void> {
   const nextConfig = await writeRuntimeConfigFile({
     authToken: null,
     modelProxyApiKey: null,
+    userId: null,
+    sandboxId: null,
+    modelProxyBaseUrl: null,
+    controlPlaneBaseUrl: null,
   });
   lastRuntimeBindingRefreshAtMs = 0;
   lastRuntimeBindingRefreshUserId = "";
@@ -3997,6 +4552,209 @@ async function listTaskProposals(
   });
 }
 
+function secondsSinceIso(value: string | null): number | null {
+  const trimmed = value?.trim() || "";
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Date.parse(trimmed);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return Math.max(0, Math.round((Date.now() - parsed) / 1000));
+}
+
+async function acceptTaskProposal(
+  payload: TaskProposalAcceptPayload,
+): Promise<TaskProposalAcceptResponsePayload> {
+  return requestRuntimeJson<TaskProposalAcceptResponsePayload>({
+    method: "POST",
+    path: `/api/v1/task-proposals/${encodeURIComponent(payload.proposal_id)}/accept`,
+    payload: {
+      task_name: payload.task_name,
+      task_prompt: payload.task_prompt,
+      session_id: payload.session_id,
+      parent_session_id: payload.parent_session_id,
+      created_by: payload.created_by,
+      priority: payload.priority ?? 0,
+      model: payload.model ?? null,
+    },
+  });
+}
+
+async function getProactiveStatus(
+  workspaceId: string,
+): Promise<ProactiveAgentStatusPayload> {
+  const normalizedWorkspaceId = workspaceId.trim();
+  const fallbackHeartbeat: ProactiveStatusSnapshotPayload = {
+    state: "unknown",
+    detail: null,
+    recorded_at: null,
+  };
+  const fallbackBridge: ProactiveStatusSnapshotPayload = {
+    state: "unknown",
+    detail: null,
+    recorded_at: null,
+  };
+  if (!normalizedWorkspaceId) {
+    return {
+      workspace_id: "",
+      proposal_count: 0,
+      heartbeat: fallbackHeartbeat,
+      bridge: fallbackBridge,
+      delivery_state: "idle",
+      delivery_summary: "Select a workspace to inspect proactive status.",
+      delivery_detail: null,
+    };
+  }
+
+  let proposalCount = 0;
+  let heartbeat = fallbackHeartbeat;
+  const database = openRuntimeDatabase();
+  try {
+    const proposalRow = database
+      .prepare(
+        `
+          SELECT COUNT(*) AS proposal_count
+          FROM task_proposals
+          WHERE workspace_id = ?
+        `,
+      )
+      .get(normalizedWorkspaceId) as { proposal_count?: number } | undefined;
+    proposalCount = Number(proposalRow?.proposal_count ?? 0);
+
+    const correlationId = `workspace-ready-${normalizedWorkspaceId}`;
+    const heartbeatRow = database
+      .prepare(
+        `
+          SELECT outcome, detail, created_at
+          FROM event_log
+          WHERE category = 'workspace'
+            AND event = 'workspace.heartbeat.emit'
+            AND (
+              detail LIKE ?
+              OR detail LIKE ?
+            )
+          ORDER BY created_at DESC
+          LIMIT 1
+        `,
+      )
+      .get(
+        `%workspace_id=${normalizedWorkspaceId}%`,
+        `%${correlationId}%`,
+      ) as
+      | {
+          outcome?: string | null;
+          detail?: string | null;
+          created_at?: string | null;
+        }
+      | undefined;
+    if (heartbeatRow) {
+      const outcome = (heartbeatRow.outcome || "").trim().toLowerCase();
+      heartbeat = {
+        state:
+          outcome === "success"
+            ? "published"
+            : outcome === "error"
+              ? "failed"
+              : outcome === "skipped"
+                ? "skipped"
+                : outcome === "start" || outcome === "retry"
+                  ? "pending"
+                  : "unknown",
+        detail: heartbeatRow.detail?.trim() || null,
+        recorded_at: heartbeatRow.created_at?.trim() || null,
+      };
+    }
+  } catch {
+    heartbeat = fallbackHeartbeat;
+  } finally {
+    database.close();
+  }
+
+  const runtimeConfig = await readRuntimeConfigFile().catch(() => ({}));
+  const runtimeToken = runtimeModelProxyApiKeyFromConfig(runtimeConfig);
+  let bridge: ProactiveStatusSnapshotPayload;
+  if (!runtimeToken) {
+    bridge = {
+      state: "inactive",
+      detail: "Sign in to enable proactive delivery.",
+      recorded_at: null,
+    };
+  } else if (runtimeStatus.status === "running") {
+    bridge = {
+      state: "healthy",
+      detail: "Embedded runtime is ready to receive proactive work.",
+      recorded_at: null,
+    };
+  } else if (runtimeStatus.status === "starting") {
+    bridge = {
+      state: "pending",
+      detail: "Embedded runtime is still starting.",
+      recorded_at: null,
+    };
+  } else if (runtimeStatus.status === "error") {
+    bridge = {
+      state: "error",
+      detail: runtimeStatus.lastError?.trim() || "Embedded runtime reported an error.",
+      recorded_at: null,
+    };
+  } else {
+    bridge = {
+      state: "inactive",
+      detail: runtimeStatus.lastError?.trim() || "Embedded runtime is not running.",
+      recorded_at: null,
+    };
+  }
+
+  let deliveryState = "idle";
+  let deliverySummary = "No proactive activity recorded yet.";
+  let deliveryDetail: string | null = null;
+  const heartbeatAgeSeconds = secondsSinceIso(heartbeat.recorded_at);
+  const heartbeatSettled = heartbeatAgeSeconds !== null && heartbeatAgeSeconds >= 120;
+  if (proposalCount > 0) {
+    deliveryState = "delivered";
+    deliverySummary = `${proposalCount} proactive proposal${proposalCount === 1 ? "" : "s"} available in this runtime.`;
+  } else if (heartbeat.state === "published" && bridge.state === "error") {
+    deliveryState = "blocked";
+    deliverySummary = "Heartbeat was sent, but proposal delivery into this runtime is blocked.";
+    deliveryDetail = bridge.detail;
+  } else if (heartbeat.state === "published" && !heartbeatSettled) {
+    deliveryState = "analyzing";
+    deliverySummary = "Heartbeat was sent. Remote proactive analysis is still in progress.";
+  } else if (heartbeat.state === "published") {
+    deliveryState = "no_proposal";
+    deliverySummary = "No proposal has been delivered since the last heartbeat.";
+    deliveryDetail =
+      "A heartbeat only asks the remote proactive agent to analyze the workspace. It may decide not to create a proposal.";
+  } else if (heartbeat.state === "failed") {
+    deliveryState = "error";
+    deliverySummary = "Workspace creation finished, but the proactive heartbeat failed.";
+    deliveryDetail = heartbeat.detail;
+  } else if (heartbeat.state === "skipped") {
+    deliveryState = "inactive";
+    deliverySummary = "Proactive delivery is disabled for this workspace.";
+    deliveryDetail = heartbeat.detail;
+  } else if (bridge.state === "error") {
+    deliveryState = "blocked";
+    deliverySummary = "The runtime cannot currently receive proactive jobs.";
+    deliveryDetail = bridge.detail;
+  } else if (bridge.state === "inactive") {
+    deliveryState = "inactive";
+    deliverySummary = bridge.detail || "Proactive delivery is inactive.";
+  }
+
+  return {
+    workspace_id: normalizedWorkspaceId,
+    proposal_count: proposalCount,
+    heartbeat,
+    bridge,
+    delivery_state: deliveryState,
+    delivery_summary: deliverySummary,
+    delivery_detail: deliveryDetail,
+  };
+}
+
 async function listCronjobs(
   workspaceId: string,
   enabledOnly = false,
@@ -4207,6 +4965,9 @@ interface ComposioToolkit {
 }
 
 async function composioListToolkits(): Promise<{ toolkits: ComposioToolkit[] }> {
+  if (!authCookieHeader()) {
+    return { toolkits: [] };
+  }
   return composioFetch<{ toolkits: ComposioToolkit[] }>("/api/composio/toolkits", "GET");
 }
 
@@ -6300,12 +7061,16 @@ function renderEmptyOnboardingGuide() {
 async function createWorkspace(
   payload: HolabossCreateWorkspacePayload,
 ): Promise<WorkspaceResponsePayload> {
-  await ensureRuntimeBindingReadyForWorkspaceFlow("workspace_create");
   const mainSessionId = crypto.randomUUID();
   const harness = normalizeRequestedWorkspaceHarness(payload.harness);
   const templateMode = requestedWorkspaceTemplateMode(payload);
   const templateRootPath = payload.template_root_path?.trim() || "";
   const templateName = payload.template_name?.trim() || "";
+  const requiresRuntimeBinding =
+    templateMode !== "empty" && !templateRootPath && Boolean(templateName);
+  if (requiresRuntimeBinding) {
+    await ensureRuntimeBindingReadyForWorkspaceFlow("workspace_create");
+  }
   if (templateMode !== "empty" && !templateRootPath && templateName) {
     const holabossUserId = (payload.holaboss_user_id || "").trim();
     if (
@@ -6544,10 +7309,42 @@ async function createWorkspace(
         }).catch(() => updated);
       }
     }
-    await emitWorkspaceReadyHeartbeat({
-      workspaceId,
-      holabossUserId: payload.holaboss_user_id,
-    });
+    const runtimeConfigForHeartbeat = await readRuntimeConfigFile();
+    const runtimeHeartbeatToken = runtimeModelProxyApiKeyFromConfig(
+      runtimeConfigForHeartbeat,
+    );
+    const runtimeHeartbeatUserId = (runtimeConfigForHeartbeat.user_id || "").trim();
+    const requestedHeartbeatUserId = (payload.holaboss_user_id || "").trim();
+    const shouldEmitWorkspaceReadyHeartbeat =
+      Boolean(runtimeHeartbeatToken) &&
+      Boolean(requestedHeartbeatUserId) &&
+      requestedHeartbeatUserId !== LOCAL_OSS_TEMPLATE_USER_ID &&
+      runtimeHeartbeatUserId === requestedHeartbeatUserId;
+
+    if (shouldEmitWorkspaceReadyHeartbeat) {
+      try {
+        await emitWorkspaceReadyHeartbeat({
+          workspaceId,
+          holabossUserId: requestedHeartbeatUserId,
+        });
+      } catch (error) {
+        throw new Error(
+          contextualWorkspaceCreateError(
+            "Workspace created locally, but the workspace-ready heartbeat was not confirmed",
+            error,
+          ),
+        );
+      }
+    } else {
+      appendRuntimeEventLog({
+        category: "workspace",
+        event: "workspace.heartbeat.emit",
+        outcome: "skipped",
+        detail:
+          `workspace_id=${workspaceId} skipped=no_active_runtime_binding ` +
+          `requested_user_id=${requestedHeartbeatUserId || "missing"} runtime_user_id=${runtimeHeartbeatUserId || "missing"}`,
+      });
+    }
     return updated;
   } catch (error) {
     await requestRuntimeJson<WorkspaceResponsePayload>({
@@ -6578,6 +7375,24 @@ async function listRuntimeStates(
     method: "GET",
     path: `/api/v1/agent-sessions/by-workspace/${workspaceId}/runtime-states`,
     params: {
+      limit: 100,
+      offset: 0,
+    },
+  });
+}
+
+async function listAgentSessions(
+  workspaceId: string,
+): Promise<AgentSessionListResponsePayload> {
+  if (!workspaceId.trim()) {
+    return { items: [], count: 0 };
+  }
+  return requestRuntimeJson<AgentSessionListResponsePayload>({
+    method: "GET",
+    path: "/api/v1/agent-sessions",
+    params: {
+      workspace_id: workspaceId,
+      include_archived: false,
       limit: 100,
       offset: 0,
     },
@@ -6658,7 +7473,10 @@ function contextualWorkspaceCreateError(stage: string, error: unknown) {
 async function queueSessionInput(
   payload: HolabossQueueSessionInputPayload,
 ): Promise<EnqueueSessionInputResponsePayload> {
-  await ensureRuntimeBindingReadyForWorkspaceFlow("session_queue");
+  const currentConfig = await readRuntimeConfigFile();
+  if (sessionQueueRequiresRuntimeBinding(currentConfig, payload.model)) {
+    await ensureRuntimeBindingReadyForWorkspaceFlow("session_queue");
+  }
   return requestRuntimeJson<EnqueueSessionInputResponsePayload>({
     method: "POST",
     path: "/api/v1/agent-sessions/queue",
@@ -10665,6 +11483,11 @@ app.whenReady().then(async () => {
     getRuntimeConfig(),
   );
   handleTrustedIpc(
+    "runtime:getConfigDocument",
+    ["main", "auth-popup"],
+    () => getRuntimeConfigDocumentText(),
+  );
+  handleTrustedIpc(
     "runtime:setConfig",
     ["main", "auth-popup"],
     async (_event, payload: RuntimeConfigUpdatePayload) => {
@@ -10675,6 +11498,11 @@ app.whenReady().then(async () => {
       await emitRuntimeConfig(config);
       return config;
     },
+  );
+  handleTrustedIpc(
+    "runtime:setConfigDocument",
+    ["main", "auth-popup"],
+    async (_event, rawDocument: string) => setRuntimeConfigDocument(rawDocument),
   );
   handleTrustedIpc(
     "ui:getTheme",
@@ -10896,6 +11724,17 @@ app.whenReady().then(async () => {
     async (_event, workspaceId: string) => listTaskProposals(workspaceId),
   );
   handleTrustedIpc(
+    "workspace:acceptTaskProposal",
+    ["main"],
+    async (_event, payload: TaskProposalAcceptPayload) =>
+      acceptTaskProposal(payload),
+  );
+  handleTrustedIpc(
+    "workspace:getProactiveStatus",
+    ["main"],
+    async (_event, workspaceId: string) => getProactiveStatus(workspaceId),
+  );
+  handleTrustedIpc(
     "workspace:updateTaskProposalState",
     ["main"],
     async (_event, proposalId: string, state: string) =>
@@ -10911,6 +11750,11 @@ app.whenReady().then(async () => {
     "workspace:listRuntimeStates",
     ["main"],
     async (_event, workspaceId: string) => listRuntimeStates(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:listAgentSessions",
+    ["main"],
+    async (_event, workspaceId: string) => listAgentSessions(workspaceId),
   );
   handleTrustedIpc(
     "workspace:getSessionHistory",

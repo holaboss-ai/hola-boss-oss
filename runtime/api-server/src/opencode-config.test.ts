@@ -28,7 +28,7 @@ function makeRequest(workspaceRoot: string) {
   return {
     workspace_root: workspaceRoot,
     provider_id: "hb_openai",
-    model_id: "gpt-5.1",
+    model_id: "gpt-5.4",
     model_client: {
       model_proxy_provider: "openai_compatible",
       api_key: "hbrt.v1.proxy-user-key",
@@ -43,7 +43,7 @@ function makeRequest(workspaceRoot: string) {
 }
 
 test("buildOpencodeProviderConfigPayload preserves only allowlisted headers", () => {
-  const payload = buildOpencodeProviderConfigPayload("hb_openai", "gpt-5.1", {
+  const payload = buildOpencodeProviderConfigPayload("hb_openai", "gpt-5.4", {
     model_proxy_provider: "openai_compatible",
     api_key: "hbrt.v1.proxy-user-key",
     base_url: "http://sandbox-runtime:3060/api/v1/model-proxy/openai/v1",
@@ -55,11 +55,17 @@ test("buildOpencodeProviderConfigPayload preserves only allowlisted headers", ()
   });
 
   const provider = (payload.provider as Record<string, unknown>).hb_openai as Record<string, unknown>;
+  assert.equal(provider.npm, "@ai-sdk/openai");
   const options = provider.options as Record<string, unknown>;
   const headers = options.headers as Record<string, string>;
+  const models = provider.models as Record<string, Record<string, unknown>>;
+  const model = models["gpt-5.4"] as Record<string, unknown>;
+  const modelProvider = model.provider as Record<string, string>;
   assert.equal(headers["X-API-Key"], "hbrt.v1.proxy-user-key");
   assert.equal(headers["X-Holaboss-Sandbox-Id"], "sandbox-1");
   assert.equal("X-Holaboss-Run-Id" in headers, false);
+  assert.equal(modelProvider.npm, "@ai-sdk/openai");
+  assert.equal(modelProvider.api, "http://sandbox-runtime:3060/api/v1/model-proxy/openai/v1");
 });
 
 test("updateOpencodeConfig writes provider config and model selection", () => {
@@ -69,8 +75,10 @@ test("updateOpencodeConfig writes provider config and model selection", () => {
   assert.equal(result.provider_config_changed, true);
   assert.equal(result.model_selection_changed, false);
   const payload = JSON.parse(fs.readFileSync(path.join(workspaceRoot, "opencode.json"), "utf8"));
-  assert.equal(payload.model, "hb_openai/gpt-5.1");
+  assert.equal(payload.model, "hb_openai/gpt-5.4");
+  assert.equal(payload.provider.hb_openai.npm, "@ai-sdk/openai");
   assert.equal(payload.provider.hb_openai.options.baseURL, "http://sandbox-runtime:3060/api/v1/model-proxy/openai/v1");
+  assert.equal(payload.provider.hb_openai.models["gpt-5.4"].provider.npm, "@ai-sdk/openai");
 });
 
 test("updateOpencodeConfig rewrites provider config when the stored top-level model drifts", () => {
@@ -86,7 +94,23 @@ test("updateOpencodeConfig rewrites provider config when the stored top-level mo
   assert.equal(result.provider_config_changed, true);
   assert.equal(result.model_selection_changed, false);
   const payload = JSON.parse(fs.readFileSync(path.join(workspaceRoot, "opencode.json"), "utf8"));
-  assert.equal(payload.model, "hb_openai/gpt-5.1");
+  assert.equal(payload.model, "hb_openai/gpt-5.4");
+});
+
+test("buildOpencodeProviderConfigPayload keeps non-OpenAI-compatible providers on openai-compatible sdk", () => {
+  const payload = buildOpencodeProviderConfigPayload("openrouter_direct", "openai/gpt-5.4", {
+    model_proxy_provider: "openai_compatible",
+    api_key: "sk-or-test",
+    base_url: "https://openrouter.ai/api/v1",
+    default_headers: {
+      "X-API-Key": "sk-or-test"
+    }
+  });
+
+  const provider = (payload.provider as Record<string, unknown>).openrouter_direct as Record<string, unknown>;
+  const models = provider.models as Record<string, Record<string, unknown>>;
+  assert.equal(provider.npm, "@ai-sdk/openai-compatible");
+  assert.equal((models["openai/gpt-5.4"]?.provider as Record<string, string>)?.npm, "@ai-sdk/openai-compatible");
 });
 
 test("runOpencodeConfigCli writes JSON response for a valid request", async () => {
