@@ -601,6 +601,7 @@ declare global {
     template_name?: string | null;
     template_ref?: string | null;
     template_commit?: string | null;
+    template_apps?: string[];
   }
 
   interface TemplateFolderSelectionPayload {
@@ -750,6 +751,33 @@ declare global {
     state: string;
   }
 
+  interface ComposioConnectResult {
+    redirect_url: string;
+    connected_account_id: string;
+    auth_config_id: string;
+    expires_at: string | null;
+  }
+
+  interface ComposioAccountStatus {
+    id: string;
+    status: string;
+    authConfigId: string | null;
+    toolkitSlug: string | null;
+    userId: string | null;
+  }
+
+  interface TemplateIntegrationRequirement {
+    key: string;
+    provider: string;
+    required: boolean;
+    app_id: string;
+  }
+
+  interface ResolveTemplateIntegrationsResult {
+    requirements: TemplateIntegrationRequirement[];
+    connected_providers: string[];
+    missing_providers: string[];
+  }
   interface ElectronAPI {
     platform: string;
     versions: {
@@ -853,6 +881,11 @@ declare global {
       upsertOAuthConfig: (providerId: string, payload: OAuthAppConfigUpsertPayload) => Promise<OAuthAppConfigPayload>;
       deleteOAuthConfig: (providerId: string) => Promise<{ deleted: boolean }>;
       startOAuthFlow: (provider: string) => Promise<OAuthAuthorizeResponsePayload>;
+      composioListToolkits: () => Promise<{ toolkits: Array<{ slug: string; name: string; description: string; logo: string | null; auth_schemes: string[]; categories: string[] }> }>;
+      composioConnect: (payload: { provider: string; owner_user_id: string; callback_url?: string }) => Promise<ComposioConnectResult>;
+      composioAccountStatus: (connectedAccountId: string) => Promise<ComposioAccountStatus>;
+      composioFinalize: (payload: { connected_account_id: string; provider: string; owner_user_id: string; account_label?: string }) => Promise<IntegrationConnectionPayload>;
+      resolveTemplateIntegrations: (payload: HolabossCreateWorkspacePayload) => Promise<ResolveTemplateIntegrationsResult>;
       onSessionStreamEvent: (listener: (payload: HolabossSessionStreamEventPayload) => void) => () => void;
     };
     auth: {

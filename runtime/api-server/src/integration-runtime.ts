@@ -124,7 +124,6 @@ export function resolveIntegrationRuntime(params: {
   env.WORKSPACE_API_URL = workspaceApiUrl;
   env.HOLABOSS_APP_GRANT = createSignedGrant(workspaceId, params.appId);
 
-  const platformIntegrationTokens: string[] = [];
   for (const requirement of requirements) {
     const binding = resolveBindingForRequirement({
       store: params.store,
@@ -143,20 +142,6 @@ export function resolveIntegrationRuntime(params: {
     connections.push(connection);
 
     env[`WORKSPACE_${toProviderEnvKey(requirement.provider)}_INTEGRATION_ID`] = connection.connectionId;
-    if (requirement.credentialSource === "platform" && connection.secretRef) {
-      platformIntegrationTokens.push(connection.secretRef);
-    }
-  }
-
-  if (platformIntegrationTokens.length === 1) {
-    env.PLATFORM_INTEGRATION_TOKEN = platformIntegrationTokens[0]!;
-    if (typeof process !== "undefined" && process.stderr) {
-      process.stderr.write(
-        `[holaboss] DEPRECATION: PLATFORM_INTEGRATION_TOKEN is set for app "${params.appId}". ` +
-        `Migrate to HOLABOSS_INTEGRATION_BROKER_URL + HOLABOSS_APP_GRANT. ` +
-        `This env var will be removed in a future release.\n`
-      );
-    }
   }
 
   return {

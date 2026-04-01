@@ -656,6 +656,33 @@ interface OAuthAuthorizeResponsePayload {
   state: string;
 }
 
+interface ComposioConnectResult {
+  redirect_url: string;
+  connected_account_id: string;
+  auth_config_id: string;
+  expires_at: string | null;
+}
+
+interface ComposioAccountStatus {
+  id: string;
+  status: string;
+  authConfigId: string | null;
+  toolkitSlug: string | null;
+  userId: string | null;
+}
+
+interface TemplateIntegrationRequirement {
+  key: string;
+  provider: string;
+  required: boolean;
+  app_id: string;
+}
+
+interface ResolveTemplateIntegrationsResult {
+  requirements: TemplateIntegrationRequirement[];
+  connected_providers: string[];
+  missing_providers: string[];
+}
 contextBridge.exposeInMainWorld("electronAPI", {
   platform: process.platform,
   versions: {
@@ -838,6 +865,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:deleteOAuthConfig", providerId) as Promise<{ deleted: boolean }>,
     startOAuthFlow: (provider: string) =>
       ipcRenderer.invoke("workspace:startOAuthFlow", provider) as Promise<OAuthAuthorizeResponsePayload>,
+    composioListToolkits: () =>
+      ipcRenderer.invoke("workspace:composioListToolkits") as Promise<{ toolkits: Array<{ slug: string; name: string; description: string; logo: string | null; auth_schemes: string[]; categories: string[] }> }>,
+    composioConnect: (payload: { provider: string; owner_user_id: string; callback_url?: string }) =>
+      ipcRenderer.invoke("workspace:composioConnect", payload) as Promise<ComposioConnectResult>,
+    composioAccountStatus: (connectedAccountId: string) =>
+      ipcRenderer.invoke("workspace:composioAccountStatus", connectedAccountId) as Promise<ComposioAccountStatus>,
+    composioFinalize: (payload: { connected_account_id: string; provider: string; owner_user_id: string; account_label?: string }) =>
+      ipcRenderer.invoke("workspace:composioFinalize", payload) as Promise<IntegrationConnectionPayload>,
+    resolveTemplateIntegrations: (payload: HolabossCreateWorkspacePayload) =>
+      ipcRenderer.invoke("workspace:resolveTemplateIntegrations", payload) as Promise<ResolveTemplateIntegrationsResult>,
     onSessionStreamEvent: (listener: (payload: HolabossSessionStreamEventPayload) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, payload: HolabossSessionStreamEventPayload) => listener(payload);
       ipcRenderer.on("workspace:sessionStream", wrapped);

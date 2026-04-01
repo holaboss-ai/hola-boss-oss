@@ -403,7 +403,7 @@ test("runtime executor resolves store-backed integration env for bound shell app
       appId: "app-a",
       mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
       healthCheck: { path: "/health", timeoutS: 1, intervalS: 0.01 },
-      envContract: ["HOLABOSS_USER_ID", "PLATFORM_INTEGRATION_TOKEN", "WORKSPACE_GOOGLE_INTEGRATION_ID", "WORKSPACE_API_URL"],
+      envContract: ["HOLABOSS_USER_ID", "WORKSPACE_GOOGLE_INTEGRATION_ID", "WORKSPACE_API_URL"],
       integrations: [
         {
           key: "google",
@@ -428,7 +428,7 @@ test("runtime executor resolves store-backed integration env for bound shell app
 
   const env = calls.find((entry) => entry.key === "npm run start")?.env;
   assert.equal(env?.HOLABOSS_USER_ID, "user-1");
-  assert.equal(env?.PLATFORM_INTEGRATION_TOKEN, "token-google-1");
+  assert.equal(env?.PLATFORM_INTEGRATION_TOKEN, undefined);
   assert.equal(env?.WORKSPACE_GOOGLE_INTEGRATION_ID, "conn-google-1");
   assert.equal(env?.WORKSPACE_API_URL, "http://127.0.0.1:8080/api/v1");
   assert.equal(env?.HOLABOSS_INTEGRATION_BROKER_URL, "http://127.0.0.1:8080/api/v1/integrations");

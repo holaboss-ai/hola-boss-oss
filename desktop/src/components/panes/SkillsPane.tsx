@@ -122,7 +122,7 @@ export function SkillsPane() {
     <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.03),transparent_24%)]" />
 
-      <div className="relative min-h-0 flex-1 p-4">
+      <div className="relative mx-auto min-h-0 max-w-5xl flex-1 p-4">
         {!hasWorkspace ? (
           <EmptyState title="No workspace selected" detail="Select a workspace to load its configured skills." />
         ) : isLoadingCatalog ? (

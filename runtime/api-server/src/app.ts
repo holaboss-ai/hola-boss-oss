@@ -68,6 +68,7 @@ import {
 } from "./integrations.js";
 import { BrokerError, IntegrationBrokerService } from "./integration-broker.js";
 import { OAuthService } from "./oauth-service.js";
+import { ComposioService } from "./composio-service.js";
 import {
   RuntimeAgentToolsService,
   RuntimeAgentToolsServiceError,
@@ -1122,7 +1123,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const runtimeConfigService = options.runtimeConfigService ?? new FileRuntimeConfigService();
   const browserToolService = options.browserToolService ?? new DesktopBrowserToolService();
   const integrationService = new RuntimeIntegrationService(store);
-  const brokerService = new IntegrationBrokerService(store);
+  const honoBaseUrl = process.env.HOLABOSS_AUTH_BASE_URL ?? "";
+  const authCookie = process.env.HOLABOSS_AUTH_COOKIE ?? "";
+  const composioService = honoBaseUrl && authCookie
+    ? new ComposioService({ honoBaseUrl, authCookie })
+    : null;
+  const brokerService = new IntegrationBrokerService(store, composioService);
   const oauthService = new OAuthService(store);
   const runtimeAgentToolsService = new RuntimeAgentToolsService(store);
   const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
@@ -1421,6 +1427,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+
   app.get("/healthz", async () => ({ ok: true }));
 
   app.get("/api/v1/runtime/config", async (request, reply) => {
@@ -1682,6 +1689,38 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  app.post("/api/v1/integrations/broker/proxy", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const grant = typeof request.body.grant === "string" ? request.body.grant : "";
+    const provider = typeof request.body.provider === "string" ? request.body.provider : "";
+    const req = isRecord(request.body.request) ? request.body.request : null;
+    if (!grant || !provider || !req) {
+      return sendError(reply, 400, "grant, provider, and request are required");
+    }
+    const method = typeof req.method === "string" ? req.method : "GET";
+    const endpoint = typeof req.endpoint === "string" ? req.endpoint : "";
+    if (!endpoint) {
+      return sendError(reply, 400, "request.endpoint is required");
+    }
+    try {
+      return await brokerService.proxyProviderRequest({
+        grant,
+        provider,
+        request: {
+          method: method as "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+          endpoint,
+          body: req.body
+        }
+      });
+    } catch (error) {
+      if (error instanceof BrokerError) {
+        return reply.status(error.statusCode).send({ error: error.code, message: error.message });
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "broker proxy failed");
+    }
+  });
   app.get("/api/v1/integrations/oauth/configs", async () => {
     return { configs: store.listOAuthAppConfigs().map((c) => ({
       provider_id: c.providerId, client_id: c.clientId,
@@ -1735,6 +1774,37 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  // ---- Composio local connection creation (connect + account status handled by Hono server) ----
+
+  app.post("/api/v1/integrations/composio/finalize", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const connectedAccountId = typeof request.body.connected_account_id === "string" ? request.body.connected_account_id : "";
+    const provider = typeof request.body.provider === "string" ? request.body.provider : "";
+    const ownerUserId = typeof request.body.owner_user_id === "string" ? request.body.owner_user_id : "local";
+    const accountLabel = typeof request.body.account_label === "string" ? request.body.account_label : "";
+    if (!connectedAccountId || !provider) {
+      return sendError(reply, 400, "connected_account_id and provider are required");
+    }
+    try {
+      const label = accountLabel || `${provider} (Managed)`;
+      const connection = integrationService.createConnection({
+        providerId: provider,
+        ownerUserId,
+        accountLabel: label,
+        authMode: "composio",
+        grantedScopes: [],
+        accountExternalId: connectedAccountId
+      });
+      return connection;
+    } catch (error) {
+      if (error instanceof IntegrationServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 502, error instanceof Error ? error.message : "composio finalize failed");
+    }
+  });
   // ---- Runtime Agent Tools (onboarding, cronjobs) ----
 
   app.get("/api/v1/capabilities/runtime-tools", async (request) => {

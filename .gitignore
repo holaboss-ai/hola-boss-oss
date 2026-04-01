@@ -20,3 +20,4 @@ runtime/state-store/node_modules/
 runtime/state-store/dist/
 
 node_modules/
+.superpowers

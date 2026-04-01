@@ -968,7 +968,7 @@ test("task proposal acceptance fields and child session metadata round trip", ()
   store.close();
 });
 
-test("allocateAppPort assigns sequential ports starting from 3001", () => {
+test("allocateAppPort assigns sequential ports starting from 38080", () => {
   const root = makeTempDir("hb-store-ports-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "test.db"),

@@ -1,28 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import {
-  ArrowRight,
-  Bell,
-  ChevronRight,
-  Clock3,
-  FolderOpen,
-  Loader2,
-  LockKeyhole,
-  PanelRightClose,
-  PanelRightOpen,
-  Sparkles,
-  TriangleAlert
-} from "lucide-react";
-import { LeftNavigationRail, type LeftRailItem } from "@/components/layout/LeftNavigationRail";
+  LeftNavigationRail,
+  type LeftRailItem,
+} from "@/components/layout/LeftNavigationRail";
 import {
   OperationsDrawer,
   type OperationsDrawerTab,
   type OperationsRunningEntry,
   type OperationsOutputEntry
 } from "@/components/layout/OperationsDrawer";
+import { appShellMainGridClassName } from "@/components/layout/appShellLayout";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
-import { AutomationsPane } from "@/components/panes/AutomationsPane";
+import { firstWorkspacePaneSectionClassName } from "@/components/layout/firstWorkspacePaneLayout";
+import { KitDetail } from "@/components/marketplace/KitDetail";
+import { KitEmoji } from "@/components/marketplace/KitEmoji";
+import { MarketplaceGallery } from "@/components/marketplace/MarketplaceGallery";
 import { AppSurfacePane } from "@/components/panes/AppSurfacePane";
+import { AutomationsPane } from "@/components/panes/AutomationsPane";
 import { BrowserPane } from "@/components/panes/BrowserPane";
 import {
   ChatPane,
@@ -31,16 +25,47 @@ import {
   type ManagedQueueSessionInputPayload
 } from "@/components/panes/ChatPane";
 import { FileExplorerPane } from "@/components/panes/FileExplorerPane";
-import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { IntegrationsPane } from "@/components/panes/IntegrationsPane";
+import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { MarketplacePane } from "@/components/panes/MarketplacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
 import { SkillsPane } from "@/components/panes/SkillsPane";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
 import { preferredSessionId } from "@/lib/sessionRouting";
-import { getWorkspaceAppDefinition, inferInstalledWorkspaceAppIdFromText } from "@/lib/workspaceApps";
-import { useWorkspaceDesktop, WorkspaceDesktopProvider } from "@/lib/workspaceDesktop";
-import { useWorkspaceSelection, WorkspaceSelectionProvider } from "@/lib/workspaceSelection";
+import {
+  getWorkspaceAppDefinition,
+  inferInstalledWorkspaceAppIdFromText,
+} from "@/lib/workspaceApps";
+import {
+  useWorkspaceDesktop,
+  WorkspaceDesktopProvider,
+} from "@/lib/workspaceDesktop";
+import {
+  useWorkspaceSelection,
+  WorkspaceSelectionProvider,
+} from "@/lib/workspaceSelection";
+import {
+  ArrowRight,
+  Bell,
+  ChevronRight,
+  CircleCheck,
+  Clock3,
+  FolderOpen,
+  Loader2,
+  PanelRightClose,
+  PanelRightOpen,
+  TriangleAlert,
+  User2,
+  XCircle,
+} from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
 const THEME_STORAGE_KEY = "holaboss-theme-v1";
 const OPERATIONS_DRAWER_OPEN_STORAGE_KEY = "holaboss-operations-drawer-open-v1";
@@ -85,7 +110,7 @@ const FIXED_SPACE_ORDER: SpaceComponentId[] = ["files", "browser", "agent"];
 const DEFAULT_SPACE_VISIBILITY: SpaceVisibilityState = {
   agent: true,
   files: true,
-  browser: true
+  browser: true,
 };
 
 export type AppTheme = (typeof THEMES)[number];
@@ -100,7 +125,12 @@ function isSettingsPaneSection(value: string): value is UiSettingsPaneSection {
 
 type AgentView =
   | { type: "chat" }
-  | { type: "app"; appId: string; resourceId?: string | null; view?: string | null }
+  | {
+      type: "app";
+      appId: string;
+      resourceId?: string | null;
+      view?: string | null;
+    }
   | {
       type: "internal";
       surface: "document" | "preview" | "file" | "event";
@@ -289,26 +319,30 @@ function spaceComponentLabel(componentId: SpaceComponentId) {
 
 function spaceResizeHandleSpec(
   leftPaneId: SpaceComponentId,
-  rightPaneId: SpaceComponentId
-): { leftPaneId: SpaceComponentId; rightPaneId: SpaceComponentId; label: string } {
+  rightPaneId: SpaceComponentId,
+): {
+  leftPaneId: SpaceComponentId;
+  rightPaneId: SpaceComponentId;
+  label: string;
+} {
   if (leftPaneId === "agent") {
     return {
       leftPaneId,
       rightPaneId,
-      label: `Resize ${spaceComponentLabel(rightPaneId).toLowerCase()} pane`
+      label: `Resize ${spaceComponentLabel(rightPaneId).toLowerCase()} pane`,
     };
   }
   if (rightPaneId === "agent") {
     return {
       leftPaneId,
       rightPaneId,
-      label: `Resize ${spaceComponentLabel(leftPaneId).toLowerCase()} pane`
+      label: `Resize ${spaceComponentLabel(leftPaneId).toLowerCase()} pane`,
     };
   }
   return {
     leftPaneId,
     rightPaneId,
-    label: `Resize ${spaceComponentLabel(leftPaneId).toLowerCase()} and ${spaceComponentLabel(rightPaneId).toLowerCase()} panes`
+    label: `Resize ${spaceComponentLabel(leftPaneId).toLowerCase()} and ${spaceComponentLabel(rightPaneId).toLowerCase()} panes`,
   };
 }
 
@@ -322,7 +356,9 @@ function normalizeErrorMessage(error: unknown) {
   return message;
 }
 
-function inferInternalSurfaceFromOutputType(outputType: string): "document" | "preview" | "file" | "event" {
+function inferInternalSurfaceFromOutputType(
+  outputType: string,
+): "document" | "preview" | "file" | "event" {
   const normalized = outputType.trim().toLowerCase();
   if (normalized === "document") {
     return "document";
@@ -341,7 +377,11 @@ function runtimeOutputTone(status: string): OperationsOutputEntry["tone"] {
   if (normalized === "failed" || normalized === "error") {
     return "error";
   }
-  if (normalized === "completed" || normalized === "ready" || normalized === "active") {
+  if (
+    normalized === "completed" ||
+    normalized === "ready" ||
+    normalized === "active"
+  ) {
     return "success";
   }
   return "info";
@@ -349,20 +389,22 @@ function runtimeOutputTone(status: string): OperationsOutputEntry["tone"] {
 
 function runtimeOutputToEntry(
   output: WorkspaceOutputRecordPayload,
-  installedAppIds: Set<string>
+  installedAppIds: Set<string>,
 ): OperationsOutputEntry {
   const moduleId = (output.module_id || "").trim().toLowerCase();
-  const title = output.title.trim() || output.output_type.trim() || "Workspace output";
+  const title =
+    output.title.trim() || output.output_type.trim() || "Workspace output";
   const detailParts = [
     output.status ? `Status: ${output.status}` : "",
     output.file_path ? `File: ${output.file_path}` : "",
-    output.platform ? `Platform: ${output.platform}` : ""
+    output.platform ? `Platform: ${output.platform}` : "",
   ].filter(Boolean);
 
   return {
     id: `runtime-output:${output.id}`,
     title,
-    detail: detailParts.join(" | ") || "Runtime output generated for this workspace.",
+    detail:
+      detailParts.join(" | ") || "Runtime output generated for this workspace.",
     createdAt: output.created_at,
     tone: runtimeOutputTone(output.status),
     sessionId: output.session_id,
@@ -371,20 +413,44 @@ function runtimeOutputToEntry(
         ? {
             type: "app",
             appId: moduleId,
-            resourceId: output.module_resource_id || output.artifact_id || output.id,
-            view: output.output_type || "home"
+            resourceId:
+              output.module_resource_id || output.artifact_id || output.id,
+            view: output.output_type || "home",
           }
         : {
             type: "internal",
             surface: inferInternalSurfaceFromOutputType(output.output_type),
             resourceId: output.file_path || output.artifact_id || output.id,
-            htmlContent: output.html_content
-          }
+            htmlContent: output.html_content,
+          },
   };
 }
 
+function OnboardingUserButton() {
+  const ref = useRef<HTMLButtonElement | null>(null);
+  return (
+    <button
+      ref={ref}
+      type="button"
+      aria-label="Open account menu"
+      onClick={() => {
+        if (!ref.current) return;
+        const rect = ref.current.getBoundingClientRect();
+        void window.electronAPI.auth.togglePopup({
+          x: rect.left,
+          y: rect.top,
+          width: rect.width,
+          height: rect.height,
+        });
+      }}
+      className="grid h-9 w-9 shrink-0 place-items-center rounded-[14px] border border-panel-border/45 text-text-muted transition-colors hover:bg-[var(--theme-hover-bg)] hover:text-text-main"
+    >
+      <User2 size={14} />
+    </button>
+  );
+}
+
 function FirstWorkspacePane() {
-  const authButtonRef = useRef<HTMLButtonElement | null>(null);
   const {
     templateSourceMode,
     setTemplateSourceMode,
@@ -401,70 +467,82 @@ function FirstWorkspacePane() {
     isLoadingMarketplaceTemplates,
     canUseMarketplaceTemplates,
     marketplaceTemplatesError,
+    retryMarketplaceTemplates,
     workspaceErrorMessage,
     chooseTemplateFolder,
-    createWorkspace
+    createWorkspace,
+    pendingIntegrations,
+    isResolvingIntegrations,
+    resolveIntegrationsBeforeCreate,
+    clearPendingIntegrations,
   } = useWorkspaceDesktop();
+  const [onboardingStep, setOnboardingStep] = useState<
+    "gallery" | "detail" | "configure" | "connect_integrations"
+  >("gallery");
+  const [connectingProvider, setConnectingProvider] = useState<string | null>(null);
+  const [connectStatus, setConnectStatus] = useState("");
+  const [detailKit, setDetailKit] = useState<TemplateMetadataPayload | null>(
+    null,
+  );
   const selectedCreateHarnessOption =
-    createHarnessOptions.find((option) => option.id === selectedCreateHarness) ?? createHarnessOptions[0];
-  const sourceLabel =
-    templateSourceMode === "marketplace"
-      ? "Marketplace template"
-      : templateSourceMode === "empty_onboarding"
-        ? "Empty onboarding workspace"
-      : templateSourceMode === "empty"
-        ? "Empty workspace"
-        : "Local template";
-  const sourceDescription =
-    templateSourceMode === "marketplace"
-      ? marketplaceTemplatesError ||
-        selectedMarketplaceTemplate?.description ||
-        (canUseMarketplaceTemplates
-          ? "Choose a curated starter."
-          : "Sign in to use curated starters.")
-      : templateSourceMode === "empty_onboarding"
-        ? "Create a minimal workspace shell plus a starter ONBOARD.md for onboarding flow testing."
-      : templateSourceMode === "empty"
-        ? "Create the smallest valid workspace shell."
-        : selectedTemplateFolder?.description ||
-          "Use an existing folder on disk.";
-  const sourceChoiceDetail =
-    templateSourceMode === "marketplace"
-      ? canUseMarketplaceTemplates
-        ? selectedMarketplaceTemplate?.name || `${marketplaceTemplates.length} templates available`
-        : "Sign in required"
-      : templateSourceMode === "empty_onboarding"
-        ? "Blank scaffold + onboarding guide"
-      : templateSourceMode === "empty"
-        ? "Blank scaffold"
-        : selectedTemplateFolder?.templateName || selectedTemplateFolder?.rootPath || "Choose local folder";
+    createHarnessOptions.find(
+      (option) => option.id === selectedCreateHarness,
+    ) ?? createHarnessOptions[0];
 
-  const openAuthPopup = () => {
-    if (!authButtonRef.current) {
-      return;
+  const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+    google: "Google", github: "GitHub", reddit: "Reddit",
+    twitter: "Twitter / X", linkedin: "LinkedIn"
+  };
+
+  // Auto-resolve integrations when entering configure step
+  const configureStepActive = onboardingStep === "configure";
+  const prevConfigureRef = useRef(false);
+  useEffect(() => {
+    if (configureStepActive && !prevConfigureRef.current) {
+      void resolveIntegrationsBeforeCreate();
     }
-    const rect = authButtonRef.current.getBoundingClientRect();
-    void window.electronAPI.auth.showPopup({
-      x: rect.left,
-      y: rect.top,
-      width: rect.width,
-      height: rect.height
-    });
-  };
+    prevConfigureRef.current = configureStepActive;
+  }, [configureStepActive]);
 
-  const createDisabled =
-    isCreatingWorkspace ||
-    !newWorkspaceName.trim() ||
-    (templateSourceMode === "marketplace"
-      ? !canUseMarketplaceTemplates || !selectedMarketplaceTemplate || selectedMarketplaceTemplate.is_coming_soon
-      : templateSourceMode === "local"
-        ? !selectedTemplateFolder?.rootPath
-        : false);
+  const hasUnconnectedIntegrations = pendingIntegrations
+    ? pendingIntegrations.missing_providers.length > 0
+    : false;
 
-  const handleCreateWorkspace = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    void createWorkspace();
-  };
+  async function handleConnectProvider(provider: string) {
+    setConnectingProvider(provider);
+    setConnectStatus("Complete authorization in your browser...");
+    try {
+      const runtimeConfig = await window.electronAPI.runtime.getConfig();
+      const userId = runtimeConfig.userId ?? "local";
+      const link = await window.electronAPI.workspace.composioConnect({
+        provider, owner_user_id: userId
+      });
+      await window.electronAPI.ui.openExternalUrl(link.redirect_url);
+      for (let i = 0; i < 100; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        const status = await window.electronAPI.workspace.composioAccountStatus(link.connected_account_id);
+        if (status.status === "ACTIVE") {
+          await window.electronAPI.workspace.composioFinalize({
+            connected_account_id: link.connected_account_id,
+            provider, owner_user_id: userId,
+            account_label: `${PROVIDER_DISPLAY_NAMES[provider] ?? provider} (Managed)`
+          });
+          setConnectStatus("");
+          setConnectingProvider(null);
+          // Re-resolve to update the list
+          void resolveIntegrationsBeforeCreate();
+          return;
+        }
+      }
+      setConnectStatus("Connection timed out. Please try again.");
+    } catch (error) {
+      setConnectStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setConnectingProvider(null);
+    }
+  }
+
+  const sectionClassName = firstWorkspacePaneSectionClassName(onboardingStep);
 
   const creatingViaMarketplaceSandbox =
     templateSourceMode === "marketplace" && canUseMarketplaceTemplates;
@@ -479,348 +557,333 @@ function FirstWorkspacePane() {
     : ["Preparing local runtime", "Importing template", "Opening workspace"];
   if (isCreatingWorkspace) {
     return (
-      <section className="theme-shell relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--theme-radius-card)] border border-panel-border/45 px-6 py-10 shadow-card">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(247,90,84,0.08),transparent_36%),radial-gradient(circle_at_82%_14%,rgba(233,117,109,0.1),transparent_34%)]" />
-        <div className="theme-subtle-surface relative w-full max-w-xl rounded-[26px] border border-panel-border/45 px-6 py-8 text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-neon-green/30 bg-neon-green/10 text-neon-green">
-            <Loader2 size={22} className="animate-spin" />
-          </div>
-          <h2 className="mt-5 text-[30px] font-semibold tracking-[-0.04em] text-text-main">{createTitle}</h2>
-          <p className="mt-3 text-[14px] leading-7 text-text-muted/84">
-            {createDetail}
-          </p>
-          <div className="theme-control-surface mt-7 overflow-hidden rounded-full border border-panel-border/45 p-1">
-            <div className="h-2 rounded-full bg-[linear-gradient(90deg,rgba(247,90,84,0.56),rgba(233,117,109,0.72),rgba(247,170,126,0.78))] animate-pulse" />
-          </div>
-          <div className="mt-4 flex items-center justify-center gap-2 text-[11px] uppercase tracking-[0.24em] text-text-dim/80">
-            <span className="h-1.5 w-1.5 rounded-full bg-neon-green/70" />
-            <span>{createSteps[0]}</span>
-            <span className="h-1.5 w-1.5 rounded-full bg-neon-green/55" />
-            <span>{createSteps[1]}</span>
-            <span className="h-1.5 w-1.5 rounded-full bg-neon-green/40" />
-            <span>{createSteps[2]}</span>
+      <section className={sectionClassName}>
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_12%,rgba(247,90,84,0.08),transparent_28%),radial-gradient(circle_at_86%_14%,rgba(233,117,109,0.08),transparent_30%)]" />
+        <div className="absolute right-4 top-4 z-10">
+          <OnboardingUserButton />
+        </div>
+        <div className="w-full max-w-[1080px]">
+          <div className="theme-shell flex w-full flex-col items-center rounded-[var(--theme-radius-card)] border border-panel-border/45 px-6 py-12 shadow-card sm:px-8 lg:px-10">
+            <Loader2 size={20} className="animate-spin text-text-dim/60" />
+            <h2 className="mt-5 text-[17px] font-medium tracking-[-0.01em] text-text-main">
+              {createTitle}
+            </h2>
+            <p className="mt-2 max-w-sm text-center text-[13px] leading-6 text-text-muted/70">
+              {createDetail}
+            </p>
+            <div className="mt-6 flex items-center gap-6 text-[11px] text-text-dim/60">
+              {createSteps.map((step, i) => (
+                <div key={step} className="flex items-center gap-2">
+                  <span className={`inline-block h-1 w-1 rounded-full ${i === 0 ? "bg-text-main/50" : "bg-text-dim/30"}`} />
+                  <span>{step}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </section>
     );
   }
 
+  const openAuthPopup = () => {
+    void window.electronAPI.auth.requestAuth();
+  };
+
+  function handleSelectKitFromGallery(template: TemplateMetadataPayload) {
+    setDetailKit(template);
+    setOnboardingStep("detail");
+  }
+
+  function handleUseKit(template: TemplateMetadataPayload) {
+    selectMarketplaceTemplate(template.name);
+    setTemplateSourceMode("marketplace");
+    if (!newWorkspaceName.trim()) {
+      setNewWorkspaceName(template.name);
+    }
+    setOnboardingStep("configure");
+  }
+
+  function handleStartFromScratch() {
+    setTemplateSourceMode("empty");
+    setOnboardingStep("configure");
+  }
+
+  function handleUseLocalTemplate() {
+    void chooseTemplateFolder().then(() => {
+      setOnboardingStep("configure");
+    });
+  }
+
+  const configureCreateDisabled =
+    !newWorkspaceName.trim() ||
+    (templateSourceMode === "marketplace" &&
+      (!canUseMarketplaceTemplates || !selectedMarketplaceTemplate));
   return (
-    <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden px-3 py-3 sm:px-4 sm:py-4">
+    <section className={sectionClassName}>
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_12%,rgba(247,90,84,0.08),transparent_28%),radial-gradient(circle_at_86%_14%,rgba(233,117,109,0.08),transparent_30%)]" />
-      <div className="relative flex w-full max-w-[1080px] flex-1 items-center justify-center">
-        <div className="theme-shell mx-auto w-full rounded-[var(--theme-radius-card)] border border-panel-border/45 px-6 py-8 shadow-card sm:px-8 sm:py-9 lg:px-12 lg:py-10">
-          <div className="max-w-3xl">
-            <div className="text-[11px] uppercase tracking-[0.24em] text-text-dim/78">New workspace</div>
-            <h1 className="mt-3 text-[34px] font-semibold tracking-[-0.05em] text-text-main sm:text-[42px]">
-              Create a workspace
-            </h1>
-            <p className="mt-3 text-[14px] leading-7 text-text-muted/82 sm:text-[15px]">
-              Pick a source, name it, and open it directly in the desktop.
-            </p>
-          </div>
-
-          <form
-            onSubmit={handleCreateWorkspace}
-            className="theme-subtle-surface mt-8 rounded-[28px] border border-panel-border/45 p-5 sm:p-6"
-          >
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)]">
-              <div>
-                <div className="text-[11px] uppercase tracking-[0.22em] text-text-dim/76">Source</div>
-                <div className="mt-2 text-[22px] font-medium tracking-[-0.03em] text-text-main">
-                  Choose how it starts
+      <div className="absolute right-4 top-4 z-10">
+        <OnboardingUserButton />
+      </div>
+      <div className="w-full max-w-[1080px]">
+        <div className="theme-shell w-full rounded-[var(--theme-radius-card)] border border-panel-border/45 px-6 py-6 shadow-card sm:px-8 sm:py-7 lg:px-10 lg:py-8">
+          {onboardingStep === "gallery" ? (
+            <MarketplaceGallery
+              mode="pick"
+              templates={marketplaceTemplates}
+              isLoading={isLoadingMarketplaceTemplates}
+              authenticated={canUseMarketplaceTemplates}
+              error={marketplaceTemplatesError || undefined}
+              onSelectKit={handleSelectKitFromGallery}
+              onRetry={retryMarketplaceTemplates}
+              onSignIn={openAuthPopup}
+              onStartFromScratch={handleStartFromScratch}
+              onUseLocalTemplate={handleUseLocalTemplate}
+            />
+          ) : onboardingStep === "detail" && detailKit ? (
+            <KitDetail
+              template={detailKit}
+              onBack={() => setOnboardingStep("gallery")}
+              onSelect={handleUseKit}
+              selectDisabled={!canUseMarketplaceTemplates}
+              selectDisabledReason="Sign in required"
+              onSignIn={openAuthPopup}
+            />
+          ) : onboardingStep === "configure" ? (
+            <div>
+              <div className="max-w-3xl">
+                <div className="text-[11px] uppercase tracking-[0.24em] text-text-dim/78">
+                  New workspace
                 </div>
-                <div className="mt-4 grid gap-3 md:grid-cols-3 xl:grid-cols-1">
-                  <FirstWorkspaceChoiceCard
-                    title="Local Template"
-                    description="Use a folder already on this machine."
-                    detail={selectedTemplateFolder?.templateName || selectedTemplateFolder?.rootPath || "Choose local folder"}
-                    icon={<FolderOpen size={18} />}
-                    active={templateSourceMode === "local"}
-                    onClick={() => {
-                      setTemplateSourceMode("local");
-                    }}
-                  />
-                  <FirstWorkspaceChoiceCard
-                    title="Marketplace Template"
-                    description="Start from a curated Holaboss starter."
-                    detail={
-                      canUseMarketplaceTemplates
-                        ? selectedMarketplaceTemplate?.name || `${marketplaceTemplates.length} templates available`
-                        : "Sign in required"
-                    }
-                    icon={<Sparkles size={18} />}
-                    active={templateSourceMode === "marketplace"}
-                    badge={!canUseMarketplaceTemplates ? "Login Required" : undefined}
-                    onClick={() => {
-                      setTemplateSourceMode("marketplace");
-                    }}
-                  />
-                  <FirstWorkspaceChoiceCard
-                    title="Empty Workspace"
-                    description="Create the smallest valid scaffold."
-                    detail="workspace.yaml + AGENTS.md + skills/"
-                    icon={<span className="text-[18px] leading-none">+</span>}
-                    active={templateSourceMode === "empty"}
-                    onClick={() => {
-                      setTemplateSourceMode("empty");
-                    }}
-                  />
-                  <FirstWorkspaceChoiceCard
-                    title="Empty + Onboarding"
-                    description="Create a blank workspace with ONBOARD.md included."
-                    detail="workspace.yaml + AGENTS.md + skills/ + ONBOARD.md"
-                    icon={<Sparkles size={18} />}
-                    active={templateSourceMode === "empty_onboarding"}
-                    onClick={() => {
-                      setTemplateSourceMode("empty_onboarding");
-                    }}
-                  />
-                </div>
+                <h1 className="mt-3 text-[28px] font-semibold tracking-[-0.04em] text-text-main sm:text-[34px]">
+                  Configure &amp; launch
+                </h1>
               </div>
 
-              <div className="rounded-[24px] border border-panel-border/40 bg-black/8 p-4 sm:p-5">
-                <div className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">Workspace</div>
-                <div className="mt-2 text-[22px] font-medium tracking-[-0.03em] text-text-main">
-                  Name and harness
+              {templateSourceMode === "marketplace" &&
+              selectedMarketplaceTemplate ? (
+                <div className="mt-5 flex items-center gap-3 rounded-[18px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-3">
+                  <KitEmoji
+                    emoji={selectedMarketplaceTemplate.emoji}
+                    size={32}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[14px] font-medium text-text-main">
+                      {selectedMarketplaceTemplate.name}
+                    </div>
+                    <div className="truncate text-[12px] text-text-muted/72">
+                      {selectedMarketplaceTemplate.description ||
+                        selectedMarketplaceTemplate.apps.join(", ")}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setOnboardingStep("gallery")}
+                    className="shrink-0 text-[12px] text-text-muted/72 underline transition-colors hover:text-text-main"
+                  >
+                    Change
+                  </button>
                 </div>
-                <div className="mt-4 grid gap-4">
-                  <label className="grid gap-2">
-                    <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">Workspace name</span>
-                    <input
-                      value={newWorkspaceName}
-                      onChange={(event) => setNewWorkspaceName(event.target.value)}
-                      placeholder="My first workspace"
-                      className="theme-control-surface h-12 rounded-[18px] border border-panel-border/45 px-4 text-[14px] text-text-main outline-none placeholder:text-text-dim/50"
-                    />
-                  </label>
+              ) : templateSourceMode === "empty" ||
+                templateSourceMode === "empty_onboarding" ? (
+                <div className="mt-5 flex items-center gap-3 rounded-[18px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-3">
+                  <span className="text-[28px] leading-none">+</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[14px] font-medium text-text-main">
+                      Starting from scratch
+                    </div>
+                    <div className="text-[12px] text-text-muted/72">
+                      Empty workspace scaffold
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setOnboardingStep("gallery")}
+                    className="shrink-0 text-[12px] text-text-muted/72 underline transition-colors hover:text-text-main"
+                  >
+                    Change
+                  </button>
+                </div>
+              ) : templateSourceMode === "local" ? (
+                <div className="mt-5 flex items-center gap-3 rounded-[18px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-3">
+                  <FolderOpen size={24} className="shrink-0 text-text-dim/72" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[14px] font-medium text-text-main">
+                      {selectedTemplateFolder?.templateName || "Local template"}
+                    </div>
+                    <div className="truncate text-[12px] text-text-muted/72">
+                      {selectedTemplateFolder?.rootPath || "No folder selected"}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void chooseTemplateFolder()}
+                    className="shrink-0 text-[12px] text-text-muted/72 underline transition-colors hover:text-text-main"
+                  >
+                    Change folder
+                  </button>
+                </div>
+              ) : null}
 
-                  <label className="grid gap-2">
-                    <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">Harness</span>
-                    <select
-                      value={selectedCreateHarness}
-                      onChange={(event) => setSelectedCreateHarness(event.target.value)}
-                      className="theme-control-surface h-12 rounded-[18px] border border-panel-border/45 px-4 text-[14px] text-text-main outline-none"
+              <div className="mt-6 grid gap-4" style={{ maxWidth: 480 }}>
+                <label className="grid gap-2">
+                  <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
+                    Workspace name
+                  </span>
+                  <input
+                    value={newWorkspaceName}
+                    onChange={(e) => setNewWorkspaceName(e.target.value)}
+                    placeholder="My first workspace"
+                    className="theme-control-surface h-12 rounded-[18px] border border-panel-border/45 px-4 text-[14px] text-text-main outline-none placeholder:text-text-dim/50"
+                  />
+                </label>
+
+                <label className="grid gap-2">
+                  <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
+                    Harness
+                  </span>
+                  <select
+                    value={selectedCreateHarness}
+                    onChange={(e) => setSelectedCreateHarness(e.target.value)}
+                    className="theme-control-surface h-12 rounded-[18px] border border-panel-border/45 px-4 text-[14px] text-text-main outline-none"
+                  >
+                    {createHarnessOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-[12px] leading-6 text-text-muted/74">
+                    {selectedCreateHarnessOption?.description || ""}
+                  </span>
+                </label>
+              </div>
+
+              {pendingIntegrations && pendingIntegrations.requirements.length > 0 ? (
+                <div className="mt-6" style={{ maxWidth: 480 }}>
+                  <div className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">
+                    Integrations
+                  </div>
+                  <div className="mt-2 grid gap-2">
+                    {pendingIntegrations.connected_providers.map(provider => (
+                      <div key={provider} className="flex items-center justify-between rounded-[14px] border border-neon-green/25 bg-neon-green/6 px-4 py-3">
+                        <span className="text-[13px] font-medium text-text-main">
+                          {PROVIDER_DISPLAY_NAMES[provider] ?? provider}
+                        </span>
+                        <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-neon-green">
+                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-neon-green" />
+                          Connected
+                        </span>
+                      </div>
+                    ))}
+                    {pendingIntegrations.missing_providers.map(provider => (
+                      <div key={provider} className="flex items-center justify-between rounded-[14px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-3">
+                        <span className="text-[13px] font-medium text-text-main">
+                          {PROVIDER_DISPLAY_NAMES[provider] ?? provider}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={connectingProvider !== null}
+                          onClick={() => void handleConnectProvider(provider)}
+                          className="rounded-[10px] border border-neon-green/35 bg-neon-green/8 px-3 py-1 text-[11px] font-medium text-neon-green transition-colors hover:bg-neon-green/14 disabled:opacity-50"
+                        >
+                          {connectingProvider === provider ? "Connecting..." : "Connect"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  {connectStatus ? (
+                    <div className="mt-2 text-[12px] text-text-muted">{connectStatus}</div>
+                  ) : null}
+                </div>
+              ) : isResolvingIntegrations ? (
+                <div className="mt-6 text-[12px] text-text-muted" style={{ maxWidth: 480 }}>
+                  Checking integrations...
+                </div>
+              ) : null}
+
+              {workspaceErrorMessage ? (
+                <div className="mt-4 rounded-[14px] border border-[rgba(255,153,102,0.24)] bg-[rgba(255,153,102,0.06)] px-4 py-3 text-[13px] leading-6 text-[rgba(255,153,102,0.92)]">
+                  {workspaceErrorMessage}
+                </div>
+              ) : null}
+
+              <div className="mt-5 flex items-center gap-3">
+                <button
+                  type="button"
+                  disabled={configureCreateDisabled || hasUnconnectedIntegrations || isResolvingIntegrations}
+                  onClick={() => void createWorkspace()}
+                  className="inline-flex h-12 items-center justify-center gap-3 rounded-[18px] border border-[rgba(247,90,84,0.38)] bg-[rgba(247,90,84,0.9)] px-5 text-[14px] font-medium text-white transition-colors hover:bg-[rgba(226,79,74,0.94)] disabled:cursor-not-allowed disabled:border-panel-border disabled:bg-panel-border/20 disabled:text-text-muted/60"
+                >
+                  <span>Create Workspace</span>
+                  <ArrowRight size={16} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOnboardingStep("gallery")}
+                  className="text-[12px] text-text-muted/72 underline transition-colors hover:text-text-main"
+                >
+                  Back to kits
+                </button>
+              </div>
+            </div>
+          ) : onboardingStep === "connect_integrations" && pendingIntegrations ? (
+            <div>
+              <div className="max-w-3xl">
+                <div className="text-[11px] uppercase tracking-[0.24em] text-text-dim/78">
+                  Connect integrations
+                </div>
+                <h1 className="mt-3 text-[28px] font-semibold tracking-[-0.04em] text-text-main sm:text-[34px]">
+                  This workspace needs access
+                </h1>
+                <p className="mt-2 text-[14px] leading-7 text-text-muted/84">
+                  Connect the following accounts to continue.
+                </p>
+              </div>
+
+              <div className="mt-6 grid gap-3" style={{ maxWidth: 480 }}>
+                {pendingIntegrations.missing_providers.map(provider => (
+                  <div key={provider} className="flex items-center justify-between rounded-[18px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-5 py-4">
+                    <div className="text-[14px] font-medium text-text-main">
+                      {PROVIDER_DISPLAY_NAMES[provider] ?? provider}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={connectingProvider !== null}
+                      onClick={() => void handleConnectProvider(provider)}
+                      className="inline-flex h-9 items-center rounded-[12px] border border-neon-green/35 bg-neon-green/8 px-4 text-[12px] font-medium text-neon-green transition-colors hover:bg-neon-green/14 disabled:opacity-50"
                     >
-                      {createHarnessOptions.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                    <span className="text-[12px] leading-6 text-text-muted/74">
-                      {selectedCreateHarnessOption?.description || "Default harness with backend bootstrapping and structured output support."}
-                    </span>
-                  </label>
-
-                  <div className="rounded-[18px] border border-panel-border/35 bg-panel-bg/18 px-4 py-3">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">Selection</div>
-                    <div className="mt-2 text-[14px] font-medium text-text-main">{sourceLabel}</div>
-                    <div className="mt-1 text-[12px] leading-6 text-text-muted/76">{sourceChoiceDetail}</div>
+                      {connectingProvider === provider ? "Connecting..." : "Connect"}
+                    </button>
                   </div>
-                </div>
+                ))}
+                {pendingIntegrations.connected_providers.map(provider => (
+                  <div key={provider} className="flex items-center justify-between rounded-[18px] border border-neon-green/20 bg-neon-green/4 px-5 py-4">
+                    <div className="text-[14px] font-medium text-text-main">
+                      {PROVIDER_DISPLAY_NAMES[provider] ?? provider}
+                    </div>
+                    <span className="text-[12px] font-medium text-neon-green">Connected</span>
+                  </div>
+                ))}
+              </div>
+
+              {connectStatus ? (
+                <div className="mt-4 text-[13px] text-text-muted">{connectStatus}</div>
+              ) : null}
+
+              <div className="mt-5">
+                <button
+                  type="button"
+                  onClick={() => { clearPendingIntegrations(); setOnboardingStep("configure"); }}
+                  className="text-[12px] text-text-muted/72 underline transition-colors hover:text-text-main"
+                >
+                  &larr; Back to configure
+                </button>
               </div>
             </div>
-
-            <div className="mt-6 rounded-[24px] border border-panel-border/40 bg-black/10 p-4 sm:p-5">
-              <div className="border-b border-panel-border/30 pb-4">
-                <div>
-                  <div className="text-[11px] uppercase tracking-[0.22em] text-text-dim/76">Source details</div>
-                  <div className="mt-2 flex items-center gap-2 text-[18px] font-medium tracking-[-0.03em] text-text-main">
-                    {templateSourceMode === "marketplace" ? (
-                      <Sparkles size={16} className="text-[rgba(206,92,84,0.9)]" />
-                    ) : templateSourceMode === "empty_onboarding" ? (
-                      <Sparkles size={16} className="text-[rgba(206,92,84,0.9)]" />
-                    ) : templateSourceMode === "empty" ? (
-                      <span className="text-[18px] leading-none text-[rgba(206,92,84,0.9)]">+</span>
-                    ) : (
-                      <FolderOpen size={16} className="text-[rgba(206,92,84,0.9)]" />
-                    )}
-                    <span>{sourceLabel}</span>
-                  </div>
-                  <div className="mt-2 max-w-3xl text-[12px] leading-6 text-text-muted/76">{sourceDescription}</div>
-                </div>
-              </div>
-
-              <div className="mt-4">
-                {templateSourceMode === "marketplace" ? (
-                  canUseMarketplaceTemplates ? (
-                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.9fr)]">
-                      <label className="grid gap-2">
-                        <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">Marketplace template</span>
-                        <select
-                          value={selectedMarketplaceTemplate?.name || ""}
-                          onChange={(event) => selectMarketplaceTemplate(event.target.value)}
-                          disabled={isLoadingMarketplaceTemplates || marketplaceTemplates.length === 0}
-                          className="theme-control-surface h-12 rounded-[18px] border border-panel-border/45 px-4 text-[14px] text-text-main outline-none disabled:text-text-dim/50"
-                        >
-                          {isLoadingMarketplaceTemplates ? (
-                            <option value="">Loading templates...</option>
-                          ) : marketplaceTemplates.length ? (
-                            marketplaceTemplates.map((template) => (
-                              <option key={template.name} value={template.name} disabled={template.is_coming_soon}>
-                                {template.is_coming_soon ? `${template.name} (Coming soon)` : template.name}
-                              </option>
-                            ))
-                          ) : (
-                            <option value="">No marketplace templates available</option>
-                          )}
-                        </select>
-                      </label>
-
-                      <div className="rounded-[18px] border border-[rgba(247,90,84,0.16)] bg-[rgba(247,90,84,0.04)] px-4 py-3">
-                        <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">Preview</div>
-                        <div className="mt-2 text-[13px] font-medium text-text-main">
-                          {selectedMarketplaceTemplate?.name || "Choose a marketplace template"}
-                        </div>
-                        <div className="mt-2 text-[12px] leading-6 text-text-muted/78">
-                          {marketplaceTemplatesError ||
-                            selectedMarketplaceTemplate?.description ||
-                            "Curated starter kits are ready to use."}
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="rounded-[20px] border border-[rgba(247,90,84,0.22)] bg-[rgba(247,90,84,0.05)] p-4">
-                      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                        <div className="max-w-2xl">
-                          <div className="text-[13px] font-medium text-text-main">Sign in to use marketplace templates</div>
-                          <div className="mt-1 text-[12px] leading-6 text-text-muted/78">
-                            Local folders and empty workspaces still work without an account.
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            ref={authButtonRef}
-                            type="button"
-                            onClick={openAuthPopup}
-                            className="inline-flex h-10 items-center justify-center rounded-[14px] border border-[rgba(247,90,84,0.34)] bg-[rgba(247,90,84,0.9)] px-4 text-[12px] font-medium text-white transition hover:bg-[rgba(226,79,74,0.94)]"
-                          >
-                            Sign in
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                ) : templateSourceMode === "empty" || templateSourceMode === "empty_onboarding" ? (
-                  <div className="rounded-[18px] border border-panel-border/35 bg-panel-bg/18 px-4 py-3">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">Scaffold</div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {[
-                        "workspace.yaml",
-                        "AGENTS.md",
-                        "skills/",
-                        ...(templateSourceMode === "empty_onboarding" ? ["ONBOARD.md"] : [])
-                      ].map((item) => (
-                        <span
-                          key={item}
-                          className="rounded-full border border-panel-border/35 bg-black/10 px-3 py-1.5 text-[11px] uppercase tracking-[0.14em] text-text-dim/74"
-                        >
-                          {item}
-                        </span>
-                      ))}
-                    </div>
-                    {templateSourceMode === "empty_onboarding" ? (
-                      <div className="mt-3 text-[12px] leading-6 text-text-muted/78">
-                        Includes a starter onboarding guide so the workspace enters onboarding immediately after creation.
-                      </div>
-                    ) : null}
-                  </div>
-                ) : (
-                  <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.9fr)]">
-                    <div className="grid gap-2">
-                      <span className="text-[11px] uppercase tracking-[0.22em] text-text-dim/78">Local template folder</span>
-                      <button
-                        type="button"
-                        onClick={() => void chooseTemplateFolder()}
-                        className="theme-control-surface flex h-12 items-center justify-between rounded-[18px] border border-panel-border/45 px-4 text-left text-[14px] text-text-main transition hover:border-[rgba(247,90,84,0.3)]"
-                      >
-                        <span className="truncate">
-                          {selectedTemplateFolder?.templateName || selectedTemplateFolder?.rootPath || "Choose local folder"}
-                        </span>
-                        <ArrowRight size={16} className="shrink-0 text-text-dim/75" />
-                      </button>
-                    </div>
-
-                    <div className="rounded-[18px] border border-panel-border/35 bg-panel-bg/18 px-4 py-3">
-                      <div className="text-[10px] uppercase tracking-[0.16em] text-text-dim/72">Path</div>
-                      <div className="mt-2 text-[12px] leading-6 text-text-muted/78">
-                        {selectedTemplateFolder?.rootPath || "Choose a folder and Holaboss will use it as the source template for the new workspace."}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {workspaceErrorMessage ? (
-              <div className="theme-chat-system-bubble mt-5 rounded-[18px] border px-4 py-3 text-[13px] leading-6">
-                {workspaceErrorMessage}
-              </div>
-            ) : null}
-
-            <div className="mt-6 flex flex-col gap-4 border-t border-panel-border/35 pt-5 md:flex-row md:items-center md:justify-end">
-              <button
-                type="submit"
-                disabled={createDisabled}
-                className="inline-flex h-12 items-center justify-center gap-3 rounded-[18px] border border-[rgba(247,90,84,0.38)] bg-[rgba(247,90,84,0.9)] px-5 text-[14px] font-medium text-white transition hover:bg-[rgba(226,79,74,0.94)] disabled:cursor-not-allowed disabled:border-panel-border/40 disabled:bg-transparent disabled:text-text-dim/50"
-              >
-                <span>Create Workspace</span>
-                <ArrowRight size={16} />
-              </button>
-            </div>
-          </form>
+          ) : null}
         </div>
       </div>
     </section>
-  );
-}
-
-function FirstWorkspaceChoiceCard({
-  title,
-  description,
-  detail,
-  icon,
-  active,
-  badge,
-  onClick
-}: {
-  title: string;
-  description: string;
-  detail: string;
-  icon: ReactNode;
-  active: boolean;
-  badge?: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`group relative overflow-hidden rounded-[22px] border p-4 text-left transition-all duration-200 ${
-        active
-          ? "border-[rgba(247,90,84,0.32)] bg-[linear-gradient(145deg,rgba(247,90,84,0.1),rgba(255,255,255,0.03))] shadow-[0_10px_28px_rgba(25,33,53,0.08)]"
-          : "border-panel-border/45 theme-control-surface hover:border-[rgba(247,90,84,0.24)] hover:bg-[var(--theme-hover-bg)]"
-      }`}
-    >
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(247,90,84,0.12),transparent_36%)] opacity-70" />
-      <div className="relative">
-        <div className="flex items-start justify-between gap-3">
-          <div className="theme-subtle-surface flex h-10 w-10 items-center justify-center rounded-[14px] border border-panel-border/45 text-text-main/88">
-            {icon}
-          </div>
-          {badge ? (
-            <span className="theme-subtle-surface inline-flex items-center gap-1 rounded-full border border-panel-border/45 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-text-dim/78">
-              <LockKeyhole size={11} />
-              <span>{badge}</span>
-            </span>
-          ) : null}
-        </div>
-        <div className="mt-4 text-[16px] font-medium tracking-[-0.02em] text-text-main">{title}</div>
-        <div className="mt-1.5 text-[13px] leading-6 text-text-muted/82">{description}</div>
-        <div className="mt-3 text-[11px] uppercase tracking-[0.14em] text-text-dim/72">{detail}</div>
-      </div>
-    </button>
   );
 }
 
@@ -835,57 +898,88 @@ function EmptyWorkspacePane() {
 }
 
 function WorkspaceBootstrapPane() {
-  const startupStages = ["Loading workspace records", "Restoring recent context", "Attaching desktop surfaces"] as const;
+  return (
+    <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden px-6">
+      <div className="flex flex-col items-center text-center">
+        <Loader2 size={20} className="animate-spin text-text-dim/60" />
+        <h2 className="mt-5 text-[17px] font-medium tracking-[-0.01em] text-text-main">
+          Preparing desktop...
+        </h2>
+        <p className="mt-2 max-w-sm text-[13px] leading-6 text-text-muted/70">
+          Restoring workspace state and attaching surfaces.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function WorkspaceInitializingGate({
+  apps,
+}: {
+  apps: Array<{
+    id: string;
+    label: string;
+    ready: boolean;
+    error: string | null;
+  }>;
+}) {
+  const hasErrors = apps.some((app) => app.error);
+  const readyCount = apps.filter((app) => app.ready).length;
 
   return (
-    <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_28%,rgba(247,90,84,0.12),transparent_18%),radial-gradient(circle_at_50%_56%,rgba(247,170,126,0.08),transparent_24%)]" />
-      <div className="pointer-events-none absolute left-1/2 top-1/2 h-[420px] w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(247,90,84,0.08),transparent_62%)] blur-3xl" />
+    <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden px-6">
+      <div className="flex w-full max-w-md flex-col items-center text-center">
+        {hasErrors ? (
+          <TriangleAlert size={20} className="text-rose-400" />
+        ) : (
+          <Loader2 size={20} className="animate-spin text-text-dim/60" />
+        )}
 
-      <div className="relative flex w-full max-w-[560px] flex-col items-center px-6 text-center">
-        <div className="inline-flex items-center gap-2 rounded-full border border-panel-border/35 bg-white/45 px-3 py-1.5 text-[10px] uppercase tracking-[0.22em] text-text-dim/74 backdrop-blur">
-          <Sparkles size={12} className="text-[rgba(206,92,84,0.88)]" />
-          <span>Desktop startup</span>
-        </div>
+        <h2 className="mt-5 text-[17px] font-medium tracking-[-0.01em] text-text-main">
+          {hasErrors ? "Some apps need attention" : "Setting up workspace"}
+        </h2>
+        <p className="mt-2 max-w-sm text-[13px] leading-6 text-text-muted/70">
+          {hasErrors
+            ? "Some workspace apps encountered errors."
+            : "Starting workspace apps. This may take a moment on first setup."}
+        </p>
 
-        <div className="mt-6 flex h-14 w-14 items-center justify-center rounded-full border border-[rgba(247,90,84,0.22)] bg-[rgba(247,90,84,0.08)] text-[rgba(206,92,84,0.94)]">
-          <Loader2 size={20} className="animate-spin" />
-        </div>
-
-        <div className="mt-6 text-[34px] font-semibold tracking-[-0.05em] text-text-main sm:text-[40px]">Preparing the desktop shell</div>
-        <div className="mt-3 max-w-[520px] text-[14px] leading-7 text-text-muted/82 sm:text-[15px]">
-          Restoring workspace state so the desktop opens in the last ready-to-work context.
-        </div>
-
-        <div className="mt-8 w-full">
-          <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.16em] text-text-dim/74">
-            <span>Loading workspace records</span>
-            <span className="text-[rgba(206,92,84,0.92)]">In progress</span>
-          </div>
-
-          <div className="mt-3 overflow-hidden rounded-full bg-black/8 p-1">
-            <div className="h-2 rounded-full bg-[linear-gradient(90deg,rgba(247,90,84,0.7),rgba(233,117,109,0.86),rgba(247,170,126,0.78))] animate-pulse" />
-          </div>
-
-          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-            {startupStages.map((stage, index) => (
+        <div className="mt-6 w-full space-y-2">
+          {apps.map((app) => (
+            <div
+              key={app.id}
+              className="flex items-center gap-3 rounded-[14px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-2.5"
+            >
+              {app.ready ? (
+                <CircleCheck size={14} className="shrink-0 text-neon-green" />
+              ) : app.error ? (
+                <XCircle size={14} className="shrink-0 text-rose-400" />
+              ) : (
+                <Loader2 size={14} className="shrink-0 animate-spin text-text-dim/50" />
+              )}
+              <span className="min-w-0 flex-1 text-left text-[13px] text-text-main">
+                {app.label}
+              </span>
               <span
-                key={stage}
-                className={`rounded-full border px-3 py-1.5 text-[11px] uppercase tracking-[0.16em] ${
-                  index === 0
-                    ? "border-[rgba(247,90,84,0.24)] bg-[rgba(247,90,84,0.08)] text-[rgba(206,92,84,0.94)]"
-                    : "border-panel-border/35 bg-white/28 text-text-dim/72 backdrop-blur"
+                className={`text-[11px] ${
+                  app.ready
+                    ? "text-neon-green"
+                    : app.error
+                      ? "text-rose-400"
+                      : "text-text-dim/60"
                 }`}
               >
-                {stage}
+                {app.ready ? "Ready" : app.error ? "Failed" : "Setting up..."}
               </span>
-            ))}
-          </div>
-
-          <div className="mt-6 text-[12px] leading-6 text-text-muted/74">
-            This usually completes in a moment.
-          </div>
+            </div>
+          ))}
         </div>
+
+        {!hasErrors ? (
+          <div className="mt-3 text-[12px] text-text-muted/60">
+            {readyCount} of {apps.length} ready
+          </div>
+        ) : null}
       </div>
     </section>
   );
@@ -894,7 +988,7 @@ function WorkspaceBootstrapPane() {
 function FocusPlaceholder({
   eyebrow,
   title,
-  description
+  description,
 }: {
   eyebrow: string;
   title: string;
@@ -904,9 +998,15 @@ function FocusPlaceholder({
     <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(87,255,173,0.08),transparent_45%)]" />
       <div className="relative max-w-[520px] px-8 text-center">
-        <div className="text-[10px] uppercase tracking-[0.18em] text-neon-green/78">{eyebrow}</div>
-        <div className="mt-3 text-[28px] font-semibold tracking-[-0.03em] text-text-main">{title}</div>
-        <div className="mt-3 text-[13px] leading-7 text-text-muted/84">{description}</div>
+        <div className="text-[10px] uppercase tracking-[0.18em] text-neon-green/78">
+          {eyebrow}
+        </div>
+        <div className="mt-3 text-[28px] font-semibold tracking-[-0.03em] text-text-main">
+          {title}
+        </div>
+        <div className="mt-3 text-[13px] leading-7 text-text-muted/84">
+          {description}
+        </div>
       </div>
     </section>
   );
@@ -922,15 +1022,19 @@ function WorkspaceStartupErrorPane({ message }: { message: string }) {
             <TriangleAlert size={12} />
             <span>Desktop startup blocked</span>
           </div>
-          <div className="mt-6 text-[30px] font-semibold tracking-[-0.04em] text-text-main">The local runtime failed to start</div>
+          <div className="mt-6 text-[30px] font-semibold tracking-[-0.04em] text-text-main">
+            The local runtime failed to start
+          </div>
           <div className="mt-3 text-[14px] leading-7 text-text-muted/84">
-            The desktop shell cannot finish restoring workspaces until the embedded runtime comes online.
+            The desktop shell cannot finish restoring workspaces until the
+            embedded runtime comes online.
           </div>
           <div className="mt-6 rounded-[20px] border border-[rgba(247,90,84,0.22)] bg-[rgba(247,90,84,0.06)] px-4 py-4 text-[13px] leading-7 text-text-main">
             {message}
           </div>
           <div className="mt-5 text-[12px] leading-6 text-text-muted/76">
-            Check `runtime.log` in the Electron userData directory and confirm the required desktop runtime configuration is present.
+            Check `runtime.log` in the Electron userData directory and confirm
+            the required desktop runtime configuration is present.
           </div>
         </div>
       </div>
@@ -940,7 +1044,7 @@ function WorkspaceStartupErrorPane({ message }: { message: string }) {
 
 function WorkspaceOnboardingTakeover({
   onOutputsChanged,
-  focusRequestKey
+  focusRequestKey,
 }: {
   onOutputsChanged: () => void;
   focusRequestKey: number;
@@ -949,7 +1053,10 @@ function WorkspaceOnboardingTakeover({
     <section className="relative flex h-full min-h-0 min-w-0 overflow-hidden">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_16%,rgba(247,90,84,0.1),transparent_28%),radial-gradient(circle_at_88%_10%,rgba(247,170,126,0.08),transparent_24%),radial-gradient(circle_at_50%_100%,rgba(247,90,84,0.06),transparent_34%)]" />
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-        <OnboardingPane onOutputsChanged={onOutputsChanged} focusRequestKey={focusRequestKey} />
+        <OnboardingPane
+          onOutputsChanged={onOutputsChanged}
+          focusRequestKey={focusRequestKey}
+        />
       </div>
     </section>
   );
@@ -968,12 +1075,13 @@ function AppShellContent() {
     workspaceAppsReady,
     workspaceBlockingReason,
     workspaceErrorMessage,
-    onboardingModeActive
-  } =
-    useWorkspaceDesktop();
+    onboardingModeActive,
+  } = useWorkspaceDesktop();
   const [theme, setTheme] = useState<AppTheme>(loadTheme);
-  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatusPayload | null>(null);
-  const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatusPayload | null>(null);
+  const [runtimeStatus, setRuntimeStatus] =
+    useState<RuntimeStatusPayload | null>(null);
+  const [appUpdateStatus, setAppUpdateStatus] =
+    useState<AppUpdateStatusPayload | null>(null);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [settingsDialogSection, setSettingsDialogSection] = useState<UiSettingsPaneSection>("models");
   const [activeLeftRailItem, setActiveLeftRailItem] = useState<LeftRailItem>("space");
@@ -985,9 +1093,11 @@ function AppShellContent() {
     key: number;
   } | null>(null);
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = useState(false);
-  const [spaceVisibility, setSpaceVisibility] = useState<SpaceVisibilityState>(loadSpaceVisibility);
+  const [spaceVisibility, setSpaceVisibility] =
+    useState<SpaceVisibilityState>(loadSpaceVisibility);
   const [filesPaneWidth, setFilesPaneWidth] = useState(loadFilesPaneWidth);
-  const [browserPaneWidth, setBrowserPaneWidth] = useState(loadBrowserPaneWidth);
+  const [browserPaneWidth, setBrowserPaneWidth] =
+    useState(loadBrowserPaneWidth);
   const [isUtilityPaneResizing, setIsUtilityPaneResizing] = useState(false);
   const [operationsDrawerOpen, setOperationsDrawerOpen] = useState(loadOperationsDrawerOpen);
   const [activeOperationsTab, setActiveOperationsTab] = useState<OperationsDrawerTab>(loadOperationsDrawerTab);
@@ -1005,8 +1115,12 @@ function AppShellContent() {
     proposalId: string;
     action: "accept" | "dismiss";
   } | null>(null);
-  const [outputEntries, setOutputEntries] = useState<OperationsOutputEntry[]>([]);
-  const [runtimeOutputEntries, setRuntimeOutputEntries] = useState<OperationsOutputEntry[]>([]);
+  const [outputEntries, setOutputEntries] = useState<OperationsOutputEntry[]>(
+    [],
+  );
+  const [runtimeOutputEntries, setRuntimeOutputEntries] = useState<
+    OperationsOutputEntry[]
+  >([]);
   const [selectedOutputId, setSelectedOutputId] = useState<string | null>(null);
   const outputRefreshTimerRef = useRef<number | null>(null);
   const utilityPaneHostRef = useRef<HTMLDivElement | null>(null);
@@ -1033,10 +1147,19 @@ function AppShellContent() {
       const flexPaneId = visiblePaneIds.includes("agent") ? "agent" : visiblePaneIds[visiblePaneIds.length - 1] ?? null;
       const resizerCount = Math.max(0, visiblePaneIds.length - 1);
       const fixedOtherWidths = visiblePaneIds.reduce((total, visiblePaneId) => {
-        if (visiblePaneId === paneId || visiblePaneId === flexPaneId || visiblePaneId === "agent") {
+        if (
+          visiblePaneId === paneId ||
+          visiblePaneId === flexPaneId ||
+          visiblePaneId === "agent"
+        ) {
           return total;
         }
-        return total + (visiblePaneId === "files" ? effectiveFilesWidth : effectiveBrowserWidth);
+        return (
+          total +
+          (visiblePaneId === "files"
+            ? effectiveFilesWidth
+            : effectiveBrowserWidth)
+        );
       }, 0);
       const minFlexibleWidth =
         flexPaneId === "agent" ? MIN_AGENT_CONTENT_WIDTH : minUtilityPaneWidth(flexPaneId as UtilityPaneId);
@@ -1052,7 +1175,7 @@ function AppShellContent() {
           : MAX_UTILITY_PANE_WIDTH;
       return Math.max(minPaneWidth, Math.min(width, maxWidth));
     },
-    []
+    [],
   );
 
   const clampPairedUtilityPaneWidths = useCallback(
@@ -1068,16 +1191,35 @@ function AppShellContent() {
       }
 
       const effectiveFilesWidth =
-        leftPaneId === "files" ? leftWidth : rightPaneId === "files" ? rightWidth : filesPaneWidthRef.current;
+        leftPaneId === "files"
+          ? leftWidth
+          : rightPaneId === "files"
+            ? rightWidth
+            : filesPaneWidthRef.current;
       const effectiveBrowserWidth =
-        leftPaneId === "browser" ? leftWidth : rightPaneId === "browser" ? rightWidth : browserPaneWidthRef.current;
-      const visiblePaneIds = FIXED_SPACE_ORDER.filter((pane) => spaceVisibilityRef.current[pane]);
+        leftPaneId === "browser"
+          ? leftWidth
+          : rightPaneId === "browser"
+            ? rightWidth
+            : browserPaneWidthRef.current;
+      const visiblePaneIds = FIXED_SPACE_ORDER.filter(
+        (pane) => spaceVisibilityRef.current[pane],
+      );
       const resizerCount = Math.max(0, visiblePaneIds.length - 1);
       const fixedOtherWidths = visiblePaneIds.reduce((total, visiblePaneId) => {
-        if (visiblePaneId === "agent" || visiblePaneId === leftPaneId || visiblePaneId === rightPaneId) {
+        if (
+          visiblePaneId === "agent" ||
+          visiblePaneId === leftPaneId ||
+          visiblePaneId === rightPaneId
+        ) {
           return total;
         }
-        return total + (visiblePaneId === "files" ? effectiveFilesWidth : effectiveBrowserWidth);
+        return (
+          total +
+          (visiblePaneId === "files"
+            ? effectiveFilesWidth
+            : effectiveBrowserWidth)
+        );
       }, 0);
       const maxCombinedWidth = Math.min(
         MAX_UTILITY_PANE_WIDTH * 2,
@@ -1093,10 +1235,10 @@ function AppShellContent() {
       );
       return {
         leftWidth: nextLeftWidth,
-        rightWidth: combinedWidth - nextLeftWidth
+        rightWidth: combinedWidth - nextLeftWidth,
       };
     },
-    []
+    [],
   );
 
   const refreshRuntimeOutputs = useCallback(async () => {
@@ -1105,9 +1247,14 @@ function AppShellContent() {
       return;
     }
     try {
-      const response = await window.electronAPI.workspace.listOutputs(selectedWorkspaceId);
+      const response =
+        await window.electronAPI.workspace.listOutputs(selectedWorkspaceId);
       const installedAppIds = new Set(installedApps.map((app) => app.id));
-      setRuntimeOutputEntries(response.items.map((item) => runtimeOutputToEntry(item, installedAppIds)));
+      setRuntimeOutputEntries(
+        response.items.map((item) =>
+          runtimeOutputToEntry(item, installedAppIds),
+        ),
+      );
     } catch {
       setRuntimeOutputEntries([]);
     }
@@ -1123,29 +1270,36 @@ function AppShellContent() {
   }, [refreshRuntimeOutputs, runtimeStatus?.status, selectedWorkspaceId]);
 
   useEffect(() => {
-    const unsubscribe = window.electronAPI.workspace.onSessionStreamEvent((payload) => {
-      if (payload.type !== "event") {
-        return;
-      }
-      const data =
-        payload.event?.data && typeof payload.event.data === "object" && !Array.isArray(payload.event.data)
-          ? (payload.event.data as {
-              event_type?: string;
-              session_id?: string;
-            })
-          : null;
-      const eventType = typeof data?.event_type === "string" ? data.event_type : payload.event?.event || "";
-      if (eventType === "output_delta" || eventType === "thinking_delta") {
-        return;
-      }
-      if (outputRefreshTimerRef.current !== null) {
-        window.clearTimeout(outputRefreshTimerRef.current);
-      }
-      outputRefreshTimerRef.current = window.setTimeout(() => {
-        outputRefreshTimerRef.current = null;
-        void refreshRuntimeOutputs();
-      }, 250);
-    });
+    const unsubscribe = window.electronAPI.workspace.onSessionStreamEvent(
+      (payload) => {
+        if (payload.type !== "event") {
+          return;
+        }
+        const data =
+          payload.event?.data &&
+          typeof payload.event.data === "object" &&
+          !Array.isArray(payload.event.data)
+            ? (payload.event.data as {
+                event_type?: string;
+                session_id?: string;
+              })
+            : null;
+        const eventType =
+          typeof data?.event_type === "string"
+            ? data.event_type
+            : payload.event?.event || "";
+        if (eventType === "output_delta" || eventType === "thinking_delta") {
+          return;
+        }
+        if (outputRefreshTimerRef.current !== null) {
+          window.clearTimeout(outputRefreshTimerRef.current);
+        }
+        outputRefreshTimerRef.current = window.setTimeout(() => {
+          outputRefreshTimerRef.current = null;
+          void refreshRuntimeOutputs();
+        }, 250);
+      },
+    );
 
     return () => {
       if (outputRefreshTimerRef.current !== null) {
@@ -1199,16 +1353,21 @@ function AppShellContent() {
       return;
     }
 
-    const unsubscribe = window.electronAPI.workbench.onOpenBrowser((payload) => {
-      if (payload.workspaceId && payload.workspaceId !== selectedWorkspaceId) {
-        return;
-      }
-      setActiveLeftRailItem("space");
-      setSpaceVisibility((previous) => ({
-        ...previous,
-        browser: true
-      }));
-    });
+    const unsubscribe = window.electronAPI.workbench.onOpenBrowser(
+      (payload) => {
+        if (
+          payload.workspaceId &&
+          payload.workspaceId !== selectedWorkspaceId
+        ) {
+          return;
+        }
+        setActiveLeftRailItem("space");
+        setSpaceVisibility((previous) => ({
+          ...previous,
+          browser: true,
+        }));
+      },
+    );
 
     return unsubscribe;
   }, [selectedWorkspaceId]);
@@ -1278,11 +1437,17 @@ function AppShellContent() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(OPERATIONS_DRAWER_OPEN_STORAGE_KEY, operationsDrawerOpen ? "1" : "0");
+    localStorage.setItem(
+      OPERATIONS_DRAWER_OPEN_STORAGE_KEY,
+      operationsDrawerOpen ? "1" : "0",
+    );
   }, [operationsDrawerOpen]);
 
   useEffect(() => {
-    localStorage.setItem(OPERATIONS_DRAWER_TAB_STORAGE_KEY, activeOperationsTab);
+    localStorage.setItem(
+      OPERATIONS_DRAWER_TAB_STORAGE_KEY,
+      activeOperationsTab,
+    );
   }, [activeOperationsTab]);
 
   useEffect(() => {
@@ -1290,11 +1455,17 @@ function AppShellContent() {
   }, [filesPaneWidth]);
 
   useEffect(() => {
-    localStorage.setItem(BROWSER_PANE_WIDTH_STORAGE_KEY, String(browserPaneWidth));
+    localStorage.setItem(
+      BROWSER_PANE_WIDTH_STORAGE_KEY,
+      String(browserPaneWidth),
+    );
   }, [browserPaneWidth]);
 
   useEffect(() => {
-    localStorage.setItem(SPACE_VISIBILITY_STORAGE_KEY, JSON.stringify(spaceVisibility));
+    localStorage.setItem(
+      SPACE_VISIBILITY_STORAGE_KEY,
+      JSON.stringify(spaceVisibility),
+    );
   }, [spaceVisibility]);
 
   useEffect(() => {
@@ -1303,15 +1474,17 @@ function AppShellContent() {
     }
     setSpaceVisibility((previous) => ({
       ...previous,
-      agent: true
+      agent: true,
     }));
   }, [spaceVisibility.agent]);
 
-  const appendOutputEntry = (entry: Omit<OperationsOutputEntry, "id" | "createdAt">) => {
+  const appendOutputEntry = (
+    entry: Omit<OperationsOutputEntry, "id" | "createdAt">,
+  ) => {
     const nextEntry: OperationsOutputEntry = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       createdAt: new Date().toISOString(),
-      ...entry
+      ...entry,
     };
     setOutputEntries((previous) => [nextEntry, ...previous].slice(0, 16));
     setSelectedOutputId(nextEntry.id);
@@ -1591,8 +1764,8 @@ function AppShellContent() {
           tone: "error",
           renderer: {
             type: "internal",
-            surface: "event"
-          }
+            surface: "event",
+          },
         });
       }
     } finally {
@@ -1608,9 +1781,10 @@ function AppShellContent() {
     setIsTriggeringTaskProposal(true);
     setTaskProposalStatusMessage("");
     try {
-      const response = await window.electronAPI.workspace.enqueueRemoteDemoTaskProposal({
-        workspace_id: selectedWorkspaceId
-      });
+      const response =
+        await window.electronAPI.workspace.enqueueRemoteDemoTaskProposal({
+          workspace_id: selectedWorkspaceId,
+        });
       const detail = `Remote proactive job queued. Pending cloud jobs: ${response.pending_count}.`;
       setTaskProposalStatusMessage(detail);
       appendOutputEntry({
@@ -1619,8 +1793,8 @@ function AppShellContent() {
         tone: "success",
         renderer: {
           type: "internal",
-          surface: "event"
-        }
+          surface: "event",
+        },
       });
       void refreshRuntimeOutputs();
       window.setTimeout(() => {
@@ -1635,8 +1809,8 @@ function AppShellContent() {
         tone: "error",
         renderer: {
           type: "internal",
-          surface: "event"
-        }
+          surface: "event",
+        },
       });
       void refreshRuntimeOutputs();
     } finally {
@@ -1654,6 +1828,9 @@ function AppShellContent() {
     try {
       const runtimeStatesResponse = await window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId);
       const parentSessionId = preferredSessionId(selectedWorkspace, runtimeStatesResponse.items);
+      if (!parentSessionId) {
+        throw new Error("No active session found for this workspace.");
+      }
 
       const accepted = await window.electronAPI.workspace.acceptTaskProposal({
         proposal_id: proposal.proposal_id,
@@ -1661,7 +1838,7 @@ function AppShellContent() {
         task_name: proposal.task_name,
         task_prompt: proposal.task_prompt,
         priority: 0,
-        model: runtimeConfig?.defaultModel ?? null
+        model: runtimeConfig?.defaultModel ?? null,
       });
 
       const targetSessionId = accepted.session.session_id;
@@ -1684,12 +1861,12 @@ function AppShellContent() {
               type: "app",
               appId: inferredAppId,
               resourceId: proposal.proposal_id,
-              view: "editor"
+              view: "editor",
             }
           : {
               type: "internal",
-              surface: "event"
-            }
+              surface: "event",
+            },
       });
       await refreshRunningEntries();
       void refreshRuntimeOutputs();
@@ -1703,8 +1880,8 @@ function AppShellContent() {
         tone: "error",
         renderer: {
           type: "internal",
-          surface: "event"
-        }
+          surface: "event",
+        },
       });
       void refreshRuntimeOutputs();
     } finally {
@@ -1716,7 +1893,10 @@ function AppShellContent() {
     setProposalAction({ proposalId: proposal.proposal_id, action: "dismiss" });
     setTaskProposalStatusMessage("");
     try {
-      await window.electronAPI.workspace.updateTaskProposalState(proposal.proposal_id, "dismissed");
+      await window.electronAPI.workspace.updateTaskProposalState(
+        proposal.proposal_id,
+        "dismissed",
+      );
       const detail = `Dismissed "${proposal.task_name}" and persisted the update back to the backend.`;
       setTaskProposalStatusMessage(detail);
       appendOutputEntry({
@@ -1725,8 +1905,8 @@ function AppShellContent() {
         tone: "info",
         renderer: {
           type: "internal",
-          surface: "event"
-        }
+          surface: "event",
+        },
       });
       void refreshRuntimeOutputs();
       await refreshTaskProposals();
@@ -1739,8 +1919,8 @@ function AppShellContent() {
         tone: "error",
         renderer: {
           type: "internal",
-          surface: "event"
-        }
+          surface: "event",
+        },
       });
       void refreshRuntimeOutputs();
     } finally {
@@ -1975,7 +2155,9 @@ function AppShellContent() {
   }, [closeManagedSessionStream]);
 
   const handleDismissUpdate = () => {
-    void window.electronAPI.appUpdate.dismiss(appUpdateStatus?.releaseTag ?? null);
+    void window.electronAPI.appUpdate.dismiss(
+      appUpdateStatus?.releaseTag ?? null,
+    );
   };
 
   const handleDownloadUpdate = () => {
@@ -2040,9 +2222,13 @@ function AppShellContent() {
       }
       if (agentView.type === "app") {
         setAgentView({ type: "chat" });
+        void window.electronAPI.appSurface.hide();
       }
       setChatFocusRequestKey((current) => current + 1);
       return;
+    }
+    if (activeLeftRailItem === "app" && item !== "app") {
+      void window.electronAPI.appSurface.hide();
     }
     setActiveLeftRailItem(item);
   };
@@ -2051,7 +2237,7 @@ function AppShellContent() {
     setActiveLeftRailItem("app");
     setAgentView({
       type: "app",
-      appId
+      appId,
     });
   };
 
@@ -2062,7 +2248,7 @@ function AppShellContent() {
         type: "app",
         appId: entry.renderer.appId,
         resourceId: entry.renderer.resourceId,
-        view: entry.renderer.view
+        view: entry.renderer.view,
       });
       return;
     }
@@ -2070,22 +2256,39 @@ function AppShellContent() {
     setActiveLeftRailItem("space");
     setSpaceVisibility((previous) => ({
       ...previous,
-      agent: true
+      agent: true,
     }));
     setAgentView({
       type: "internal",
       surface: entry.renderer.surface,
       resourceId: entry.renderer.resourceId ?? entry.id,
-      htmlContent: entry.renderer.htmlContent
+      htmlContent: entry.renderer.htmlContent,
     });
   };
 
   const spaceMode = activeLeftRailItem === "space";
   const appMode = activeLeftRailItem === "app";
-  const activeAppId = appMode && agentView.type === "app" ? agentView.appId : null;
+  const activeAppId =
+    appMode && agentView.type === "app" ? agentView.appId : null;
   const activeApp = getWorkspaceAppDefinition(activeAppId, installedApps);
   const hasWorkspaces = workspaces.length > 0;
   const hasSelectedWorkspace = Boolean(selectedWorkspace);
+  const allAppsReady =
+    installedApps.length === 0 || installedApps.every((app) => app.ready);
+  const showInitializingGate =
+    hasSelectedWorkspace && installedApps.length > 0 && !allAppsReady;
+
+  // Hide app surface BrowserView when initializing gate is shown or when not in app mode.
+  useEffect(() => {
+    if (showInitializingGate || !appMode) {
+      void window.electronAPI.appSurface.hide();
+    }
+  }, [showInitializingGate, appMode]);
+
+  const visibleSpacePaneIds =
+    hasWorkspaces && spaceMode
+      ? FIXED_SPACE_ORDER.filter((paneId) => spaceVisibility[paneId])
+      : [];
   const proactiveWorkspaceSetupStatus = useMemo<ProactiveStatusSnapshotPayload | null>(() => {
     if (!selectedWorkspace) {
       return null;
@@ -2129,18 +2332,27 @@ function AppShellContent() {
     workspaceAppsReady,
     workspaceBlockingReason
   ]);
-  const visibleSpacePaneIds = hasWorkspaces && spaceMode ? FIXED_SPACE_ORDER.filter((paneId) => spaceVisibility[paneId]) : [];
   const flexSpacePaneId = visibleSpacePaneIds.includes("agent")
     ? "agent"
-    : visibleSpacePaneIds[visibleSpacePaneIds.length - 1] ?? null;
-  const showOperationsDrawer = spaceMode && spaceVisibility.agent && operationsDrawerOpen;
+    : (visibleSpacePaneIds[visibleSpacePaneIds.length - 1] ?? null);
+  const showOperationsDrawer =
+    spaceMode && spaceVisibility.agent && operationsDrawerOpen;
   const bootstrapErrorMessage =
     !hasHydratedWorkspaceList && runtimeStatus?.status === "error"
-      ? runtimeStatus.lastError.trim() || workspaceErrorMessage || "Embedded runtime failed to start."
+      ? runtimeStatus.lastError.trim() ||
+        workspaceErrorMessage ||
+        "Embedded runtime failed to start."
       : "";
   const isMacDesktop = window.electronAPI?.platform === "darwin";
+  const mainGridClassName = appShellMainGridClassName({
+    hasWorkspaces,
+    isMacDesktop,
+  });
   const showOnboardingTakeover =
-    hasHydratedWorkspaceList && hasWorkspaces && hasSelectedWorkspace && onboardingModeActive;
+    hasHydratedWorkspaceList &&
+    hasWorkspaces &&
+    hasSelectedWorkspace &&
+    onboardingModeActive;
   const combinedOutputEntries = useMemo(() => {
     const merged = [...runtimeOutputEntries, ...outputEntries];
     const seen = new Set<string>();
@@ -2206,49 +2418,56 @@ function AppShellContent() {
     }
 
     if (agentView.type === "chat") {
-      return onboardingModeActive
-        ? <OnboardingPane onOutputsChanged={() => void refreshRuntimeOutputs()} focusRequestKey={chatFocusRequestKey} />
-        : <div className="flex h-full min-h-0 min-w-0 flex-col gap-3">
-            {showChildSessionBanner ? (
-              <div className="theme-subtle-surface relative z-10 shrink-0 rounded-[20px] border border-neon-green/24 px-4 py-3">
-                <div className="flex min-w-0 flex-col gap-3">
-                  <div className="min-w-0 pr-20 lg:pr-28">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-neon-green/76">Child session</div>
-                    <div className="mt-1 truncate text-[13px] font-medium text-text-main">{activeSessionBannerTitle}</div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={handleReturnToMainSession}
-                      className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-neon-green/40 bg-neon-green/10 px-3 text-[11px] text-neon-green transition hover:bg-neon-green/14"
-                    >
-                      <ArrowRight size={12} />
-                      <span>Back to main session</span>
-                    </button>
-                  </div>
+      if (onboardingModeActive) {
+        return <OnboardingPane onOutputsChanged={() => void refreshRuntimeOutputs()} focusRequestKey={chatFocusRequestKey} />;
+      }
+      return (
+        <div className="flex h-full min-h-0 min-w-0 flex-col gap-3">
+          {showChildSessionBanner ? (
+            <div className="theme-subtle-surface relative z-10 shrink-0 rounded-[20px] border border-neon-green/24 px-4 py-3">
+              <div className="flex min-w-0 flex-col gap-3">
+                <div className="min-w-0 pr-20 lg:pr-28">
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-neon-green/76">Child session</div>
+                  <div className="mt-1 truncate text-[13px] font-medium text-text-main">{activeSessionBannerTitle}</div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleReturnToMainSession}
+                    className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-neon-green/40 bg-neon-green/10 px-3 text-[11px] text-neon-green transition hover:bg-neon-green/14"
+                  >
+                    <ArrowRight size={12} />
+                    <span>Back to main session</span>
+                  </button>
                 </div>
               </div>
-            ) : null}
-            <div className="min-h-0 flex-1 overflow-hidden">
-              <ChatPane
-                onOutputsChanged={() => void refreshRuntimeOutputs()}
-                focusRequestKey={chatFocusRequestKey}
-                sessionRequest={chatSessionRequest}
-                onActiveSessionChange={setActiveChatSessionId}
-                managedSessionRuntime={managedChatSessionRuntime}
-                onManagedSessionObserved={observeManagedSession}
-                onManagedHistoryHydrated={acknowledgeManagedHistoryHydration}
-                onManagedQueueSessionInput={queueManagedSessionInput}
-              />
             </div>
-          </div>;
+          ) : null}
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <ChatPane
+              onOutputsChanged={() => void refreshRuntimeOutputs()}
+              focusRequestKey={chatFocusRequestKey}
+              sessionRequest={chatSessionRequest}
+              onActiveSessionChange={setActiveChatSessionId}
+              managedSessionRuntime={managedChatSessionRuntime}
+              onManagedSessionObserved={observeManagedSession}
+              onManagedHistoryHydrated={acknowledgeManagedHistoryHydration}
+              onManagedQueueSessionInput={queueManagedSessionInput}
+            />
+          </div>
+        </div>
+      );
     }
 
     if (agentView.type === "app") {
       return (
         <AppSurfacePane
           appId={agentView.appId}
-          app={activeAppId === agentView.appId ? activeApp : getWorkspaceAppDefinition(agentView.appId, installedApps)}
+          app={
+            activeAppId === agentView.appId
+              ? activeApp
+              : getWorkspaceAppDefinition(agentView.appId, installedApps)
+          }
           resourceId={agentView.resourceId}
           view={agentView.view}
         />
@@ -2289,26 +2508,44 @@ function AppShellContent() {
         id: paneId,
         flex: paneId === flexSpacePaneId,
         width:
-          paneId === "files" ? filesPaneWidth : paneId === "browser" ? browserPaneWidth : 0,
+          paneId === "files"
+            ? filesPaneWidth
+            : paneId === "browser"
+              ? browserPaneWidth
+              : 0,
         content:
-          paneId === "agent"
-            ? agentContent
-            : paneId === "files"
-              ? <FileExplorerPane />
-              : (
-                  <BrowserPane
-                    suspendNativeView={
-                      isUtilityPaneResizing || workspaceSwitcherOpen || settingsDialogOpen
-                    }
-                    layoutSyncKey={`${visibleSpacePaneIds.join("|")}:${filesPaneWidth}:${browserPaneWidth}:${showOperationsDrawer ? 1 : 0}`}
-                  />
-                )
+          paneId === "agent" ? (
+            agentContent
+          ) : paneId === "files" ? (
+            <FileExplorerPane />
+          ) : (
+            <BrowserPane
+              suspendNativeView={
+                isUtilityPaneResizing ||
+                workspaceSwitcherOpen ||
+                settingsDialogOpen
+              }
+              layoutSyncKey={`${visibleSpacePaneIds.join("|")}:${filesPaneWidth}:${browserPaneWidth}:${showOperationsDrawer ? 1 : 0}`}
+            />
+          ),
       })),
-    [agentContent, browserPaneWidth, filesPaneWidth, flexSpacePaneId, isUtilityPaneResizing, showOperationsDrawer, visibleSpacePaneIds]
+    [
+      agentContent,
+      browserPaneWidth,
+      filesPaneWidth,
+      flexSpacePaneId,
+      isUtilityPaneResizing,
+      showOperationsDrawer,
+      visibleSpacePaneIds,
+    ],
   );
 
   const startUtilityPaneResize = useCallback(
-    (leftPaneId: SpaceComponentId, rightPaneId: SpaceComponentId, event: ReactPointerEvent<HTMLDivElement>) => {
+    (
+      leftPaneId: SpaceComponentId,
+      rightPaneId: SpaceComponentId,
+      event: ReactPointerEvent<HTMLDivElement>,
+    ) => {
       if (leftPaneId !== "agent" && rightPaneId !== "agent") {
         if (!spaceVisibility[leftPaneId] || !spaceVisibility[rightPaneId]) {
           return;
@@ -2317,9 +2554,11 @@ function AppShellContent() {
           mode: "pair",
           leftPaneId,
           rightPaneId,
-          startLeftWidth: leftPaneId === "files" ? filesPaneWidth : browserPaneWidth,
-          startRightWidth: rightPaneId === "files" ? filesPaneWidth : browserPaneWidth,
-          startX: event.clientX
+          startLeftWidth:
+            leftPaneId === "files" ? filesPaneWidth : browserPaneWidth,
+          startRightWidth:
+            rightPaneId === "files" ? filesPaneWidth : browserPaneWidth,
+          startX: event.clientX,
         };
       } else {
         const paneId = leftPaneId === "agent" ? rightPaneId : leftPaneId;
@@ -2331,7 +2570,7 @@ function AppShellContent() {
           paneId,
           startWidth: paneId === "files" ? filesPaneWidth : browserPaneWidth,
           startX: event.clientX,
-          direction: leftPaneId === "agent" ? -1 : 1
+          direction: leftPaneId === "agent" ? -1 : 1,
         };
       }
 
@@ -2341,14 +2580,19 @@ function AppShellContent() {
         // BrowserView resizing falls back to the window listeners below.
       }
       if (spaceVisibility.browser) {
-        void window.electronAPI.browser.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+        void window.electronAPI.browser.setBounds({
+          x: 0,
+          y: 0,
+          width: 0,
+          height: 0,
+        });
       }
       setIsUtilityPaneResizing(true);
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
       event.preventDefault();
     },
-    [browserPaneWidth, filesPaneWidth, spaceVisibility]
+    [browserPaneWidth, filesPaneWidth, spaceVisibility],
   );
 
   useEffect(() => {
@@ -2361,7 +2605,9 @@ function AppShellContent() {
         setFilesPaneWidth((current) => clampUtilityPaneWidth("files", current));
       }
       if (spaceVisibility.browser && flexSpacePaneId !== "browser") {
-        setBrowserPaneWidth((current) => clampUtilityPaneWidth("browser", current));
+        setBrowserPaneWidth((current) =>
+          clampUtilityPaneWidth("browser", current),
+        );
       }
     };
 
@@ -2370,7 +2616,12 @@ function AppShellContent() {
     return () => {
       window.removeEventListener("resize", syncWidth);
     };
-  }, [clampUtilityPaneWidth, flexSpacePaneId, spaceVisibility, visibleSpacePaneIds.length]);
+  }, [
+    clampUtilityPaneWidth,
+    flexSpacePaneId,
+    spaceVisibility,
+    visibleSpacePaneIds.length,
+  ]);
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
@@ -2385,7 +2636,7 @@ function AppShellContent() {
           resizeState.leftPaneId,
           resizeState.rightPaneId,
           resizeState.startLeftWidth + delta,
-          resizeState.startRightWidth - delta
+          resizeState.startRightWidth - delta,
         );
         if (resizeState.leftPaneId === "files") {
           setFilesPaneWidth(leftWidth);
@@ -2402,7 +2653,8 @@ function AppShellContent() {
 
       const nextWidth = clampUtilityPaneWidth(
         resizeState.paneId,
-        resizeState.startWidth + resizeState.direction * (event.clientX - resizeState.startX)
+        resizeState.startWidth +
+          resizeState.direction * (event.clientX - resizeState.startX),
       );
       if (resizeState.paneId === "files") {
         setFilesPaneWidth(nextWidth);
@@ -2434,19 +2686,21 @@ function AppShellContent() {
   }, [clampPairedUtilityPaneWidths, clampUtilityPaneWidth]);
 
   return (
-    <main className="fixed inset-0 overflow-hidden text-[13px] text-text-main/90">
+    <main className="fixed inset-0 h-screen overflow-hidden text-text-main/90">
       <div className="theme-grid pointer-events-none absolute inset-0 bg-noise-grid bg-[size:22px_22px]" />
       <div className="theme-orb-primary pointer-events-none absolute -left-32 -top-32 h-80 w-80 rounded-full blur-3xl" />
       <div className="theme-orb-secondary pointer-events-none absolute -bottom-40 right-12 h-96 w-96 rounded-full blur-3xl" />
 
-      <div
-        className={`relative z-10 grid h-full w-full grid-rows-[auto_minmax(0,1fr)] gap-2 p-2 ${
-          isMacDesktop ? "sm:gap-2.5 sm:px-3 sm:pb-3 sm:pt-2.5" : "sm:gap-3 sm:p-3"
-        }`}
-      >
-        {isUtilityPaneResizing ? <div className="absolute inset-0 z-30 cursor-col-resize" /> : null}
+      <div className={mainGridClassName}>
+        {isUtilityPaneResizing ? (
+          <div className="absolute inset-0 z-30 cursor-col-resize" />
+        ) : null}
         {appUpdateStatus?.available ? (
-          <UpdateReminder status={appUpdateStatus} onDismiss={handleDismissUpdate} onDownload={handleDownloadUpdate} />
+          <UpdateReminder
+            status={appUpdateStatus}
+            onDismiss={handleDismissUpdate}
+            onDownload={handleDownloadUpdate}
+          />
         ) : null}
 
         {hasWorkspaces ? (
@@ -2454,12 +2708,18 @@ function AppShellContent() {
             <TopTabsBar
               integratedTitleBar={isMacDesktop}
               onWorkspaceSwitcherVisibilityChange={setWorkspaceSwitcherOpen}
+              onOpenMarketplace={() => handleLeftRailSelect("marketplace")}
+              isMarketplaceActive={activeLeftRailItem === "marketplace"}
             />
           </div>
         ) : null}
 
         {!hasHydratedWorkspaceList ? (
-          bootstrapErrorMessage ? <WorkspaceStartupErrorPane message={bootstrapErrorMessage} /> : <WorkspaceBootstrapPane />
+          bootstrapErrorMessage ? (
+            <WorkspaceStartupErrorPane message={bootstrapErrorMessage} />
+          ) : (
+            <WorkspaceBootstrapPane />
+          )
         ) : !hasWorkspaces ? (
           <FirstWorkspacePane />
         ) : showOnboardingTakeover ? (
@@ -2488,18 +2748,27 @@ function AppShellContent() {
               <div className="min-h-0 flex-1 overflow-hidden">
                 {spaceMode ? (
                   <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
-                    <div ref={utilityPaneHostRef} className="min-h-0 flex-1 overflow-hidden">
+                    <div
+                      ref={utilityPaneHostRef}
+                      className="min-h-0 flex-1 overflow-hidden"
+                    >
                       {spacePanes.length > 0 ? (
                         <div className="flex h-full min-h-0 min-w-0 items-stretch overflow-hidden">
                           {spacePanes.map((pane, index) => {
                             const nextPane = spacePanes[index + 1] ?? null;
-                            const resizeHandle = nextPane ? spaceResizeHandleSpec(pane.id, nextPane.id) : null;
+                            const resizeHandle = nextPane
+                              ? spaceResizeHandleSpec(pane.id, nextPane.id)
+                              : null;
 
                             return (
                               <div key={pane.id} className="contents">
                                 <div
                                   className={`relative min-h-0 min-w-0 overflow-hidden ${pane.flex ? "flex-1" : "shrink-0"}`}
-                                  style={pane.flex ? undefined : { width: `${pane.width}px` }}
+                                  style={
+                                    pane.flex
+                                      ? undefined
+                                      : { width: `${pane.width}px` }
+                                  }
                                 >
                                   {pane.content}
                                 </div>
@@ -2509,7 +2778,13 @@ function AppShellContent() {
                                     role="separator"
                                     aria-label={resizeHandle.label}
                                     aria-orientation="vertical"
-                                    onPointerDown={(event) => startUtilityPaneResize(resizeHandle.leftPaneId, resizeHandle.rightPaneId, event)}
+                                    onPointerDown={(event) =>
+                                      startUtilityPaneResize(
+                                        resizeHandle.leftPaneId,
+                                        resizeHandle.rightPaneId,
+                                        event,
+                                      )
+                                    }
                                     className="group relative z-10 flex w-4 shrink-0 cursor-col-resize touch-none items-center justify-center"
                                   >
                                     <div className="pointer-events-none absolute inset-y-2 left-1/2 w-px -translate-x-1/2 rounded-full bg-panel-border/55 transition-all duration-150 group-hover:w-[2px] group-hover:bg-[rgba(247,90,84,0.5)]" />
@@ -2523,9 +2798,12 @@ function AppShellContent() {
                       ) : (
                         <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-[var(--theme-radius-card)] border border-panel-border/45 shadow-card">
                           <div className="max-w-[360px] px-6 text-center">
-                            <div className="text-[22px] font-medium tracking-[-0.03em] text-text-main">Turn on a space surface</div>
+                            <div className="text-[22px] font-medium tracking-[-0.03em] text-text-main">
+                              Turn on a space surface
+                            </div>
                             <div className="mt-3 text-[13px] leading-6 text-text-muted/78">
-                              Space keeps your files, browser, and agent panes available together.
+                              Space keeps your files, browser, and agent panes
+                              available together.
                             </div>
                           </div>
                         </section>
@@ -2537,16 +2815,26 @@ function AppShellContent() {
                     {agentView.type === "app" ? (
                       <AppSurfacePane
                         appId={agentView.appId}
-                        app={activeAppId === agentView.appId ? activeApp : getWorkspaceAppDefinition(agentView.appId, installedApps)}
+                        app={
+                          activeAppId === agentView.appId
+                            ? activeApp
+                            : getWorkspaceAppDefinition(
+                                agentView.appId,
+                                installedApps,
+                              )
+                        }
                         resourceId={agentView.resourceId}
                         view={agentView.view}
                       />
                     ) : (
                       <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-[var(--theme-radius-card)] border border-panel-border/45 shadow-card">
                         <div className="max-w-[360px] px-6 text-center">
-                          <div className="text-[22px] font-medium tracking-[-0.03em] text-text-main">Choose an app</div>
+                          <div className="text-[22px] font-medium tracking-[-0.03em] text-text-main">
+                            Choose an app
+                          </div>
                           <div className="mt-3 text-[13px] leading-6 text-text-muted/78">
-                            Select a workspace app from the left rail to open its dedicated screen.
+                            Select a workspace app from the left rail to open
+                            its dedicated screen.
                           </div>
                         </div>
                       </section>
@@ -2643,8 +2931,12 @@ function AppShellContent() {
                   onOpenRunningSession={handleOpenRunningSession}
                   onOpenOutput={handleOpenOutput}
                   onTriggerProposal={() => void triggerRemoteTaskProposal()}
-                  onAcceptProposal={(proposal) => void acceptTaskProposal(proposal)}
-                  onDismissProposal={(proposal) => void dismissTaskProposal(proposal)}
+                  onAcceptProposal={(proposal) =>
+                    void acceptTaskProposal(proposal)
+                  }
+                  onDismissProposal={(proposal) =>
+                    void dismissTaskProposal(proposal)
+                  }
                   hasWorkspace={hasSelectedWorkspace}
                   proactiveStatus={proactiveStatus}
                   isLoadingProactiveStatus={isLoadingTaskProposals}

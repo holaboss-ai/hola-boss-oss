@@ -375,3 +375,103 @@ test("POST /api/v1/integrations/broker/token returns provider token via HTTP", a
   await app.close();
   store.close();
 });
+
+test("exchangeToken rejects composio connections (must use /broker/proxy)", async () => {
+  const root = makeTempDir("hb-broker-composio-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "ws-composio",
+    name: "Composio Workspace",
+    harness: "opencode",
+    status: "active"
+  });
+  store.upsertIntegrationConnection({
+    connectionId: "conn-composio-gmail",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "composio@holaboss.ai",
+    authMode: "composio",
+    grantedScopes: ["gmail.send"],
+    status: "active",
+    secretRef: null,
+    accountExternalId: "ca_composio_123"
+  });
+  store.upsertIntegrationBinding({
+    bindingId: "bind-composio-gmail",
+    workspaceId: "ws-composio",
+    targetType: "app",
+    targetId: "gmail-app",
+    integrationKey: "google",
+    connectionId: "conn-composio-gmail",
+    isDefault: false
+  });
+
+  const broker = new IntegrationBrokerService(store);
+
+  await assert.rejects(
+    async () =>
+      broker.exchangeToken({
+        grant: "grant:ws-composio:gmail-app:test-nonce",
+        provider: "google"
+      }),
+    (error: unknown) =>
+      error instanceof BrokerError &&
+      error.code === "token_unavailable" &&
+      error.message.includes("/broker/proxy")
+  );
+
+  store.close();
+});
+
+test("exchangeToken throws for composio connection even without accountExternalId", async () => {
+  const root = makeTempDir("hb-broker-composio-no-ext-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "ws-composio-2",
+    name: "Composio Workspace 2",
+    harness: "opencode",
+    status: "active"
+  });
+  store.upsertIntegrationConnection({
+    connectionId: "conn-composio-no-ext",
+    providerId: "google",
+    ownerUserId: "user-1",
+    accountLabel: "composio-noext@holaboss.ai",
+    authMode: "composio",
+    grantedScopes: ["gmail.send"],
+    status: "active",
+    secretRef: null,
+    accountExternalId: null
+  });
+  store.upsertIntegrationBinding({
+    bindingId: "bind-composio-no-ext",
+    workspaceId: "ws-composio-2",
+    targetType: "app",
+    targetId: "gmail-app",
+    integrationKey: "google",
+    connectionId: "conn-composio-no-ext",
+    isDefault: false
+  });
+
+  const broker = new IntegrationBrokerService(store);
+
+  await assert.rejects(
+    async () =>
+      broker.exchangeToken({
+        grant: "grant:ws-composio-2:gmail-app:test-nonce",
+        provider: "google"
+      }),
+    (error: unknown) =>
+      error instanceof BrokerError &&
+      error.code === "token_unavailable" &&
+      error.message.includes("/broker/proxy")
+  );
+
+  store.close();
+});

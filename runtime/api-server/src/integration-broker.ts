@@ -47,11 +47,29 @@ export function parseAppGrant(grant: string): ParsedAppGrant | null {
   return { workspaceId, appId, nonce };
 }
 
+export interface ComposioProxyRequest {
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  endpoint: string;
+  body?: unknown;
+}
+
+export interface ComposioProxyResponse {
+  data: unknown;
+  status: number;
+  headers: Record<string, string>;
+}
+
+export interface ComposioTokenResolver {
+  proxyRequest(params: { connectedAccountId: string } & ComposioProxyRequest): Promise<ComposioProxyResponse>;
+}
+
 export class IntegrationBrokerService {
   readonly store: RuntimeStateStore;
+  private readonly composio: ComposioTokenResolver | null;
 
-  constructor(store: RuntimeStateStore) {
+  constructor(store: RuntimeStateStore, composio?: ComposioTokenResolver | null) {
     this.store = store;
+    this.composio = composio ?? null;
   }
 
   async exchangeToken(params: {
@@ -112,6 +130,14 @@ export class IntegrationBrokerService {
       );
     }
 
+    if (connection.authMode === "composio") {
+      throw new BrokerError(
+        "token_unavailable",
+        400,
+        `${provider} uses managed auth — use /broker/proxy instead of /broker/token`
+      );
+    }
+
     if (!connection.secretRef) {
       throw new BrokerError(
         "token_unavailable",
@@ -122,6 +148,67 @@ export class IntegrationBrokerService {
 
     const token = await this.resolveTokenWithRefresh(connection);
     return { token, provider, connection_id: connection.connectionId };
+  }
+
+  async proxyProviderRequest(params: {
+    grant: string;
+    provider: string;
+    request: ComposioProxyRequest;
+  }): Promise<ComposioProxyResponse> {
+    const validated = validateSignedGrant(params.grant);
+    const parsed = validated
+      ? { workspaceId: validated.workspaceId, appId: validated.appId, nonce: validated.nonce }
+      : parseAppGrant(params.grant);
+    if (!parsed) {
+      throw new BrokerError("grant_invalid", 401, "app grant is malformed");
+    }
+
+    const provider = params.provider.trim();
+    if (!provider) {
+      throw new BrokerError("grant_invalid", 401, "provider is required");
+    }
+
+    const binding =
+      this.store.getIntegrationBindingByTarget({
+        workspaceId: parsed.workspaceId,
+        targetType: "app",
+        targetId: parsed.appId,
+        integrationKey: provider
+      }) ??
+      this.store.getIntegrationBindingByTarget({
+        workspaceId: parsed.workspaceId,
+        targetType: "workspace",
+        targetId: "default",
+        integrationKey: provider
+      });
+
+    if (!binding) {
+      throw new BrokerError("integration_not_bound", 404, `no ${provider} binding for workspace ${parsed.workspaceId}`);
+    }
+
+    const connection = this.store.getIntegrationConnection(binding.connectionId);
+    if (!connection) {
+      throw new BrokerError("integration_not_bound", 404, `connection ${binding.connectionId} not found`);
+    }
+
+    if (connection.status.trim().toLowerCase() !== "active") {
+      throw new BrokerError("connection_inactive", 403, `${provider} connection is ${connection.status}`);
+    }
+
+    if (connection.authMode === "composio") {
+      if (!connection.accountExternalId) {
+        throw new BrokerError("token_unavailable", 503, `${provider} composio connection has no linked account`);
+      }
+      if (!this.composio) {
+        throw new BrokerError("token_unavailable", 503, "composio resolver is not configured");
+      }
+      return this.composio.proxyRequest({
+        connectedAccountId: connection.accountExternalId,
+        ...params.request
+      });
+    }
+
+    throw new BrokerError("token_unavailable", 503, `proxy is only supported for composio connections, got auth_mode: ${connection.authMode}`);
   }
 
   private async resolveTokenWithRefresh(connection: {

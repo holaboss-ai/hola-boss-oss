@@ -1,17 +1,21 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
-import { Search, User2, Loader2, Plus, ChevronDown, FolderKanban, Trash2 } from "lucide-react";
+import { Search, User2, Loader2, Plus, ChevronDown, FolderKanban, Trash2, LayoutGrid } from "lucide-react";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 interface TopTabsBarProps {
   integratedTitleBar?: boolean;
   onWorkspaceSwitcherVisibilityChange?: (open: boolean) => void;
+  onOpenMarketplace?: () => void;
+  isMarketplaceActive?: boolean;
 }
 
 export function TopTabsBar({
   integratedTitleBar = false,
-  onWorkspaceSwitcherVisibilityChange
+  onWorkspaceSwitcherVisibilityChange,
+  onOpenMarketplace,
+  isMarketplaceActive = false,
 }: TopTabsBarProps) {
   const userButtonRef = useRef<HTMLButtonElement | null>(null);
   const workspaceSwitcherRef = useRef<HTMLDivElement | null>(null);
@@ -259,12 +263,27 @@ export function TopTabsBar({
         <div className="hidden lg:block" />
 
         <div className={`${integratedTitleBar ? "window-no-drag " : ""}flex items-center justify-self-end gap-2`}>
+          {onOpenMarketplace ? (
+            <button
+              type="button"
+              aria-label="Marketplace"
+              onClick={onOpenMarketplace}
+              className={`inline-flex h-11 items-center gap-2 rounded-[18px] border px-3.5 text-[12px] font-medium transition-colors duration-200 ${
+                isMarketplaceActive
+                  ? "border-neon-green/35 bg-neon-green/10 text-neon-green"
+                  : "border-panel-border/45 text-text-muted hover:border-neon-green/35 hover:text-text-main"
+              }`}
+            >
+              <LayoutGrid size={14} />
+              <span className="hidden sm:inline">Marketplace</span>
+            </button>
+          ) : null}
           <button
             ref={userButtonRef}
             type="button"
             aria-label="Open account menu"
             onClick={showUserMenu}
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-[18px] border border-panel-border/45 text-text-muted transition-all duration-200 hover:border-neon-green/45 hover:bg-neon-green/10 hover:text-neon-green active:scale-95"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-[18px] border border-panel-border/45 text-text-muted transition-colors duration-200 hover:border-neon-green/45 hover:bg-neon-green/10 hover:text-neon-green"
           >
             <User2 size={15} />
           </button>

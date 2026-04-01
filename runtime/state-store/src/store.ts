@@ -2959,7 +2959,6 @@ export class RuntimeStateStore {
       archivedAt: row.archived_at == null ? null : String(row.archived_at)
     };
   }
-
   private parseJsonDict(raw: unknown): Record<string, unknown> {
     if (raw == null) {
       return {};
