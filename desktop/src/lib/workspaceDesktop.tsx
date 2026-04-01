@@ -92,6 +92,10 @@ interface WorkspaceDesktopContextValue {
   createWorkspace: () => Promise<void>;
   deleteWorkspace: (workspaceId: string) => Promise<void>;
   removeInstalledApp: (appId: string) => Promise<void>;
+  pendingIntegrations: ResolveTemplateIntegrationsResult | null;
+  isResolvingIntegrations: boolean;
+  resolveIntegrationsBeforeCreate: () => Promise<ResolveTemplateIntegrationsResult | null>;
+  clearPendingIntegrations: () => void;
 }
 
 const WorkspaceDesktopContext = createContext<WorkspaceDesktopContextValue | null>(null);
@@ -176,6 +180,8 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [workspaceAppsReady, setWorkspaceAppsReady] = useState(false);
   const [workspaceBlockingReason, setWorkspaceBlockingReason] = useState("");
   const [recentAuthCompletedAt, setRecentAuthCompletedAt] = useState<number | null>(null);
+  const [pendingIntegrations, setPendingIntegrations] = useState<ResolveTemplateIntegrationsResult | null>(null);
+  const [isResolvingIntegrations, setIsResolvingIntegrations] = useState(false);
 
   const isSignedIn = Boolean(sessionUserId(session));
   const resolvedUserId = runtimeConfig?.userId?.trim() || sessionUserId(session);
@@ -462,6 +468,51 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     } catch (error) {
       setWorkspaceErrorMessage(normalizeErrorMessage(error));
     }
+  }
+
+  async function resolveIntegrationsBeforeCreate(): Promise<ResolveTemplateIntegrationsResult | null> {
+    if (templateSourceMode === "empty" || templateSourceMode === "empty_onboarding") {
+      return null;
+    }
+    setIsResolvingIntegrations(true);
+    try {
+      const trimmedName = newWorkspaceName.trim() || "Desktop Workspace";
+      let payload: HolabossCreateWorkspacePayload;
+      if (templateSourceMode === "marketplace" && selectedMarketplaceTemplate) {
+        payload = {
+          holaboss_user_id: resolvedUserId,
+          harness: selectedCreateHarness,
+          name: trimmedName,
+          template_mode: "template",
+          template_name: selectedMarketplaceTemplate.name
+        };
+      } else if (selectedTemplateFolder?.rootPath) {
+        payload = {
+          holaboss_user_id: resolvedUserId || "local-oss",
+          harness: selectedCreateHarness,
+          name: trimmedName,
+          template_mode: "template",
+          template_root_path: selectedTemplateFolder.rootPath
+        };
+      } else {
+        return null;
+      }
+      const result = await window.electronAPI.workspace.resolveTemplateIntegrations(payload);
+      if (result.missing_providers.length > 0) {
+        setPendingIntegrations(result);
+        return result;
+      }
+      return null;
+    } catch (error) {
+      setWorkspaceErrorMessage(normalizeErrorMessage(error));
+      return null;
+    } finally {
+      setIsResolvingIntegrations(false);
+    }
+  }
+
+  function clearPendingIntegrations() {
+    setPendingIntegrations(null);
   }
 
   useEffect(() => {
@@ -847,7 +898,11 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       chooseTemplateFolder,
       createWorkspace,
       deleteWorkspace,
-      removeInstalledApp
+      removeInstalledApp,
+      pendingIntegrations,
+      isResolvingIntegrations,
+      resolveIntegrationsBeforeCreate,
+      clearPendingIntegrations
     }),
     [
       runtimeConfig,
@@ -884,7 +939,9 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       sessionModeLabel,
       sessionTargetId,
       workspaceAppsReady,
-      workspaceBlockingReason
+      workspaceBlockingReason,
+      pendingIntegrations,
+      isResolvingIntegrations
     ]
   );
 
