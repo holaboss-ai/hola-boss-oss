@@ -60,7 +60,6 @@ export interface ComposioProxyResponse {
 }
 
 export interface ComposioTokenResolver {
-  getAccessToken(connectedAccountId: string, provider: string): Promise<string>;
   proxyRequest(params: { connectedAccountId: string } & ComposioProxyRequest): Promise<ComposioProxyResponse>;
 }
 
@@ -132,33 +131,11 @@ export class IntegrationBrokerService {
     }
 
     if (connection.authMode === "composio") {
-      if (!connection.accountExternalId) {
-        throw new BrokerError(
-          "token_unavailable",
-          503,
-          `${provider} composio connection has no linked account`
-        );
-      }
-      if (!this.composio) {
-        throw new BrokerError(
-          "token_unavailable",
-          503,
-          `composio token resolver is not configured`
-        );
-      }
-      try {
-        const token = await this.composio.getAccessToken(
-          connection.accountExternalId,
-          provider
-        );
-        return { token, provider, connection_id: connection.connectionId };
-      } catch (error) {
-        throw new BrokerError(
-          "token_unavailable",
-          503,
-          `composio token resolution failed: ${error instanceof Error ? error.message : String(error)}`
-        );
-      }
+      throw new BrokerError(
+        "token_unavailable",
+        400,
+        `${provider} uses managed auth — use /broker/proxy instead of /broker/token`
+      );
     }
 
     if (!connection.secretRef) {

@@ -1158,9 +1158,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const runtimeConfigService = options.runtimeConfigService ?? new FileRuntimeConfigService();
   const browserToolService = options.browserToolService ?? new DesktopBrowserToolService();
   const integrationService = new RuntimeIntegrationService(store);
-  const composioApiKey = process.env.COMPOSIO_API_KEY ?? "";
-  const composioService = composioApiKey
-    ? new ComposioService({ apiKey: composioApiKey })
+  const honoBaseUrl = process.env.HOLABOSS_AUTH_BASE_URL ?? "";
+  const serviceApiKey = process.env.AGENT_SERVICE_API_KEY ?? "";
+  const composioService = honoBaseUrl && serviceApiKey
+    ? new ComposioService({ honoBaseUrl, serviceApiKey })
     : null;
   const brokerService = new IntegrationBrokerService(store, composioService);
   const oauthService = new OAuthService(store);
@@ -1457,13 +1458,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
-  const PROVIDER_TO_COMPOSIO_TOOLKIT: Record<string, string> = {
-    google: "gmail",
-    github: "github",
-    reddit: "reddit",
-    twitter: "twitter",
-    linkedin: "linkedin"
-  };
 
   app.get("/healthz", async () => ({ ok: true }));
 
@@ -1812,55 +1806,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
-  // ---- Composio Managed Connect ----
-
-  app.post("/api/v1/integrations/composio/connect", async (request, reply) => {
-    if (!composioService) {
-      return sendError(reply, 503, "Composio is not configured (COMPOSIO_API_KEY missing)");
-    }
-    if (!isRecord(request.body)) {
-      return sendError(reply, 400, "request body must be an object");
-    }
-    const provider = typeof request.body.provider === "string" ? request.body.provider : "";
-    const ownerUserId = typeof request.body.owner_user_id === "string" ? request.body.owner_user_id : "local";
-    const callbackUrl = typeof request.body.callback_url === "string" ? request.body.callback_url : undefined;
-    if (!provider) {
-      return sendError(reply, 400, "provider is required");
-    }
-    const toolkitSlug = PROVIDER_TO_COMPOSIO_TOOLKIT[provider] ?? provider;
-    try {
-      const link = await composioService.createConnectLink({
-        toolkitSlug,
-        userId: ownerUserId,
-        callbackUrl
-      });
-      return {
-        redirect_url: link.redirectUrl,
-        connected_account_id: link.connectedAccountId,
-        auth_config_id: link.authConfigId,
-        expires_at: link.expiresAt
-      };
-    } catch (error) {
-      return sendError(reply, 502, error instanceof Error ? error.message : "composio connect failed");
-    }
-  });
-
-  app.get("/api/v1/integrations/composio/account/:connectedAccountId", async (request, reply) => {
-    if (!composioService) {
-      return sendError(reply, 503, "Composio is not configured");
-    }
-    const params = request.params as { connectedAccountId: string };
-    try {
-      return await composioService.getConnectedAccount(params.connectedAccountId);
-    } catch (error) {
-      return sendError(reply, 502, error instanceof Error ? error.message : "composio account check failed");
-    }
-  });
+  // ---- Composio local connection creation (connect + account status handled by Hono server) ----
 
   app.post("/api/v1/integrations/composio/finalize", async (request, reply) => {
-    if (!composioService) {
-      return sendError(reply, 503, "Composio is not configured");
-    }
     if (!isRecord(request.body)) {
       return sendError(reply, 400, "request body must be an object");
     }
@@ -1872,11 +1820,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "connected_account_id and provider are required");
     }
     try {
-      const account = await composioService.getConnectedAccount(connectedAccountId);
-      if (account.status !== "ACTIVE") {
-        return sendError(reply, 409, `account is not ACTIVE (status: ${account.status})`);
-      }
-      const label = accountLabel || `${provider} (Composio)`;
+      const label = accountLabel || `${provider} (Managed)`;
       const connection = integrationService.createConnection({
         providerId: provider,
         ownerUserId,

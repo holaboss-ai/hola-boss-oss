@@ -376,7 +376,7 @@ test("POST /api/v1/integrations/broker/token returns provider token via HTTP", a
   store.close();
 });
 
-test("exchangeToken resolves token from composio connection via ComposioService", async () => {
+test("exchangeToken rejects composio connections (must use /broker/proxy)", async () => {
   const root = makeTempDir("hb-broker-composio-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
@@ -409,27 +409,24 @@ test("exchangeToken resolves token from composio connection via ComposioService"
     isDefault: false
   });
 
-  const mockComposioService = {
-    async getAccessToken(connectedAccountId: string, provider: string) {
-      assert.equal(connectedAccountId, "ca_composio_123");
-      assert.equal(provider, "google");
-      return "ya29.composio-resolved-token";
-    }
-  };
+  const broker = new IntegrationBrokerService(store);
 
-  const broker = new IntegrationBrokerService(store, mockComposioService);
-  const result = await broker.exchangeToken({
-    grant: "grant:ws-composio:gmail-app:test-nonce",
-    provider: "google"
-  });
-
-  assert.equal(result.token, "ya29.composio-resolved-token");
-  assert.equal(result.connection_id, "conn-composio-gmail");
+  await assert.rejects(
+    async () =>
+      broker.exchangeToken({
+        grant: "grant:ws-composio:gmail-app:test-nonce",
+        provider: "google"
+      }),
+    (error: unknown) =>
+      error instanceof BrokerError &&
+      error.code === "token_unavailable" &&
+      error.message.includes("/broker/proxy")
+  );
 
   store.close();
 });
 
-test("exchangeToken throws when composio connection has no accountExternalId", async () => {
+test("exchangeToken throws for composio connection even without accountExternalId", async () => {
   const root = makeTempDir("hb-broker-composio-no-ext-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
@@ -473,7 +470,7 @@ test("exchangeToken throws when composio connection has no accountExternalId", a
     (error: unknown) =>
       error instanceof BrokerError &&
       error.code === "token_unavailable" &&
-      error.statusCode === 503
+      error.message.includes("/broker/proxy")
   );
 
   store.close();
