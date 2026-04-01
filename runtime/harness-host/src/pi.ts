@@ -21,7 +21,7 @@ import {
   type Skill,
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
-import type { ImageContent, TextContent } from "@mariozechner/pi-ai";
+import type { Api, ImageContent, Model, TextContent } from "@mariozechner/pi-ai";
 import type { ResourceDiagnostic } from "@mariozechner/pi-coding-agent";
 import * as XLSX from "xlsx";
 import { createCallResult, createRuntime, type Runtime as McporterRuntime, type ServerDefinition, type ServerToolInfo } from "mcporter";
@@ -892,16 +892,28 @@ function resolvePiModel(request: HarnessHostPiRequest, modelRegistry: ModelRegis
   throw new Error(`Pi model not found for provider=${request.provider_id} model=${request.model_id}`);
 }
 
-async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSessionHandle> {
-  const stateDir = resolvePiStateDir(request.workspace_dir);
-  const sessionDir = resolvePiSessionDir(request.workspace_dir);
-  fs.mkdirSync(stateDir, { recursive: true });
-  fs.mkdirSync(sessionDir, { recursive: true });
+function piApiForRequest(request: HarnessHostPiRequest): Api {
+  const normalizedProvider = request.model_client.model_proxy_provider.trim().toLowerCase();
+  if (normalizedProvider === "anthropic_native") {
+    return "anthropic-messages";
+  }
+  return "openai-completions";
+}
 
-  const authStorage = AuthStorage.create(path.join(stateDir, "auth.json"));
-  authStorage.setRuntimeApiKey(request.provider_id, request.model_client.api_key);
+function piOpenAiCompatForRequest(request: HarnessHostPiRequest): Model<"openai-completions">["compat"] | undefined {
+  const providerId = request.provider_id.trim().toLowerCase();
+  const baseUrl = firstNonEmptyString(request.model_client.base_url)?.toLowerCase() ?? "";
+  if (providerId.includes("ollama") || baseUrl.includes("localhost:11434") || baseUrl.includes("ollama")) {
+    return {
+      supportsStore: false,
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+    };
+  }
+  return undefined;
+}
 
-  const modelRegistry = new ModelRegistry(authStorage, path.join(stateDir, "models.json"));
+export function buildPiProviderConfig(request: HarnessHostPiRequest) {
   const providerHeaders = isRecord(request.model_client.default_headers)
     ? Object.fromEntries(
         Object.entries(request.model_client.default_headers).filter(
@@ -913,12 +925,53 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     const normalizedHeaderName = headerName.trim().toLowerCase();
     return normalizedHeaderName === "x-api-key" || normalizedHeaderName === "authorization";
   });
-  modelRegistry.registerProvider(request.provider_id, {
-    baseUrl: firstNonEmptyString(request.model_client.base_url),
+  const baseUrl = firstNonEmptyString(request.model_client.base_url);
+  if (!baseUrl) {
+    throw new Error(`Pi provider ${request.provider_id} is missing a model client base URL`);
+  }
+
+  const api = piApiForRequest(request);
+  const compat = api === "openai-completions" ? piOpenAiCompatForRequest(request) : undefined;
+
+  return {
+    baseUrl,
+    apiKey: request.model_client.api_key,
+    api,
     headers: providerHeaders,
     // Prefer runtime-managed auth headers when provided by the server, otherwise let Pi attach auth from api_key.
     authHeader: !hasExplicitAuthHeader,
-  });
+    models: [
+      {
+        id: request.model_id,
+        name: request.model_id,
+        api,
+        reasoning: false,
+        input: ["text", "image"] as Array<"text" | "image">,
+        cost: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+        },
+        contextWindow: 65536,
+        maxTokens: 8192,
+        ...(compat ? { compat } : {}),
+      },
+    ],
+  };
+}
+
+async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSessionHandle> {
+  const stateDir = resolvePiStateDir(request.workspace_dir);
+  const sessionDir = resolvePiSessionDir(request.workspace_dir);
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.mkdirSync(sessionDir, { recursive: true });
+
+  const authStorage = AuthStorage.create(path.join(stateDir, "auth.json"));
+  authStorage.setRuntimeApiKey(request.provider_id, request.model_client.api_key);
+
+  const modelRegistry = new ModelRegistry(authStorage, path.join(stateDir, "models.json"));
+  modelRegistry.registerProvider(request.provider_id, buildPiProviderConfig(request));
 
   const model = resolvePiModel(request, modelRegistry);
   const settingsManager = SettingsManager.inMemory({

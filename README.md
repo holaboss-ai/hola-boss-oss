@@ -179,6 +179,11 @@ If a model id is unprefixed and does not start with `claude`, the runtime treats
       "kind": "openrouter",
       "base_url": "https://openrouter.ai/api/v1",
       "api_key": "sk-or-your-openrouter-key"
+    },
+    "ollama_direct": {
+      "kind": "openai_compatible",
+      "base_url": "http://localhost:11434/v1",
+      "api_key": "ollama"
     }
   },
   "models": {
@@ -205,6 +210,10 @@ If a model id is unprefixed and does not start with `claude`, the runtime treats
     "openrouter_direct/anthropic/claude-sonnet-4-5": {
       "provider": "openrouter_direct",
       "model": "anthropic/claude-sonnet-4-5"
+    },
+    "ollama_direct/qwen2.5:0.5b": {
+      "provider": "ollama_direct",
+      "model": "qwen2.5:0.5b"
     }
   }
 }
@@ -216,6 +225,45 @@ Provider `kind` values supported by the runtime resolver:
 - `openai_compatible`
 - `anthropic_native`
 - `openrouter`
+
+### Verify Ollama Through The Desktop UI
+
+This is the simplest end-to-end check for the local `ollama_direct` path.
+
+1. Install and start Ollama on your machine.
+2. Pull a minimal local model:
+
+```bash
+ollama pull qwen2.5:0.5b
+```
+
+3. Launch the desktop app.
+4. Open `Settings -> Models`.
+5. Connect `Ollama` with:
+   - base URL: `http://localhost:11434/v1`
+   - API key: `ollama`
+   - models: `qwen2.5:0.5b`
+6. Open a workspace chat and select `ollama_direct/qwen2.5:0.5b`.
+7. Send this prompt:
+
+```text
+Reply with exactly: OK
+```
+
+Expected result:
+
+- the run starts with provider `ollama_direct`
+- the model resolves to `qwen2.5:0.5b`
+- the assistant replies with `OK`
+
+If the model does not show up or the request fails, verify Ollama directly first:
+
+```bash
+curl http://localhost:11434/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer ollama' \
+  -d '{"model":"qwen2.5:0.5b","messages":[{"role":"user","content":"Reply with exactly: OK"}],"temperature":0}'
+```
 
 ### Environment Overrides
 

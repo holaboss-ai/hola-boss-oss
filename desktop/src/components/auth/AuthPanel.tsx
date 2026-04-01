@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import anthropicLogo from "@/assets/providers/anthropic.svg";
 import geminiLogo from "@/assets/providers/gemini.svg";
 import ollamaLogo from "@/assets/providers/ollama.svg";
@@ -50,7 +50,7 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
   },
   openai_direct: {
     id: "openai_direct",
-    label: "OpenAI Direct",
+    label: "OpenAI",
     description: "Direct OpenAI-compatible endpoint with your own API key.",
     kind: "openai_compatible",
     defaultBaseUrl: "https://api.openai.com/v1",
@@ -59,7 +59,7 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
   },
   anthropic_direct: {
     id: "anthropic_direct",
-    label: "Anthropic Direct",
+    label: "Anthropic",
     description: "Direct Anthropic native endpoint with your own API key.",
     kind: "anthropic_native",
     defaultBaseUrl: "https://api.anthropic.com/v1",
@@ -77,7 +77,7 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
   },
   gemini_direct: {
     id: "gemini_direct",
-    label: "Gemini Direct",
+    label: "Gemini",
     description: "Google Gemini OpenAI-compatible endpoint with your own API key.",
     kind: "openai_compatible",
     defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
@@ -196,6 +196,9 @@ function enabledProviderIdsForDrafts(providerDrafts: ProviderDraftMap, isSignedI
 }
 
 function ProviderBrandIcon({ providerId }: { providerId: KnownProviderId }) {
+  if (providerId === "holaboss") {
+    return <img src="/logo.svg" alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
+  }
   if (providerId === "openai_direct") {
     return <img src={openaiLogo} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
   }
@@ -211,11 +214,7 @@ function ProviderBrandIcon({ providerId }: { providerId: KnownProviderId }) {
   if (providerId === "ollama_direct") {
     return <img src={ollamaLogo} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
   }
-  return (
-    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true">
-      <path d="M5 6h4v5h6V6h4v12h-4v-5H9v5H5V6Z" fill="currentColor" />
-    </svg>
-  );
+  return null;
 }
 
 function deriveProviderDraftsFromDocument(
@@ -361,6 +360,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigPayload | null>(null);
   const [runtimeConfigDocument, setRuntimeConfigDocument] = useState("");
   const [providerDrafts, setProviderDrafts] = useState<ProviderDraftMap>(() => createDefaultProviderDrafts());
+  const [expandedProviderId, setExpandedProviderId] = useState<KnownProviderId | null>(null);
   const [sandboxId, setSandboxId] = useState("");
   const [authError, setAuthError] = useState("");
   const [authMessage, setAuthMessage] = useState("");
@@ -461,6 +461,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const isSignedIn = Boolean(sessionUserId(session));
   const providerEnabled = (providerId: KnownProviderId) =>
     providerId === "holaboss" ? isSignedIn : providerDrafts[providerId].enabled;
+  const connectedProviderIds = KNOWN_PROVIDER_ORDER.filter((providerId) => providerEnabled(providerId));
+  const availableProviderIds = KNOWN_PROVIDER_ORDER.filter((providerId) => !providerEnabled(providerId));
 
   const showAccountSection = view !== "runtime";
   const showRuntimeSection = view !== "account";
@@ -752,6 +754,161 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     }
   }
 
+  function renderProviderDrawerContent(providerId: KnownProviderId): ReactNode {
+    if (providerId === "holaboss") {
+      return null;
+    }
+
+    if (!providerEnabled(providerId)) {
+      return (
+        <div className="rounded-[12px] border border-panel-border/25 bg-black/10 px-3 py-2 text-[11px] leading-5 text-text-dim/76">
+          Connect this provider to edit its base URL, API key, and model list here.
+        </div>
+      );
+    }
+
+    const template = KNOWN_PROVIDER_TEMPLATES[providerId];
+    const draft = providerDrafts[providerId];
+    return (
+      <div className="grid gap-2">
+        <label className="grid gap-1">
+          <span className="text-[10px] uppercase tracking-[0.14em] text-text-dim/72">Base URL</span>
+          <input
+            className="theme-control-surface h-9 rounded-[10px] border border-panel-border/45 px-2.5 text-[11px] text-text-main outline-none transition focus:border-neon-green/55"
+            value={draft.baseUrl}
+            onChange={(event) => updateProviderDraft(providerId, { baseUrl: event.target.value })}
+            placeholder={template.defaultBaseUrl}
+            spellCheck={false}
+          />
+        </label>
+        <label className="grid gap-1">
+          <span className="text-[10px] uppercase tracking-[0.14em] text-text-dim/72">API Key</span>
+          <input
+            className="theme-control-surface h-9 rounded-[10px] border border-panel-border/45 px-2.5 text-[11px] text-text-main outline-none transition focus:border-neon-green/55"
+            type="password"
+            value={draft.apiKey}
+            onChange={(event) => updateProviderDraft(providerId, { apiKey: event.target.value })}
+            placeholder={template.apiKeyPlaceholder}
+            spellCheck={false}
+          />
+        </label>
+        <label className="grid gap-1">
+          <span className="text-[10px] uppercase tracking-[0.14em] text-text-dim/72">Models</span>
+          <textarea
+            className="theme-control-surface min-h-[60px] rounded-[10px] border border-panel-border/45 px-2.5 py-2 text-[11px] leading-5 text-text-main outline-none transition focus:border-neon-green/55"
+            value={draft.modelsText}
+            onChange={(event) => updateProviderDraft(providerId, { modelsText: event.target.value })}
+            placeholder={template.defaultModels.join(", ")}
+            spellCheck={false}
+          />
+          <span className="text-[10px] text-text-dim/68">Comma or newline separated model IDs.</span>
+        </label>
+      </div>
+    );
+  }
+
+  function renderProviderCard(providerId: KnownProviderId) {
+    const template = KNOWN_PROVIDER_TEMPLATES[providerId];
+    const isHolabossProvider = providerId === "holaboss";
+    const isEnabled = providerEnabled(providerId);
+    const isExpandable = !isHolabossProvider;
+    const isExpanded = isExpandable && expandedProviderId === providerId;
+    const sublabel = isHolabossProvider ? (isEnabled ? "Managed" : "Sign in required") : isEnabled ? "Connected" : template.description;
+    const actionButtonClassName =
+      "inline-flex h-9 min-w-[96px] shrink-0 items-center justify-center rounded-[10px] px-3 text-[11px] transition disabled:cursor-not-allowed disabled:opacity-50";
+
+    return (
+      <div
+        key={providerId}
+        className={`theme-control-surface overflow-hidden rounded-[14px] border transition ${
+          isExpanded ? "border-neon-green/35 bg-black/10" : "border-panel-border/30"
+        }`}
+      >
+        <div className="flex items-center justify-between gap-3 px-3 py-3">
+          {isExpandable ? (
+            <button
+              type="button"
+              onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
+              className="flex min-w-0 flex-1 items-center gap-3 rounded-[10px] text-left outline-none transition hover:text-text-main focus-visible:ring-2 focus-visible:ring-neon-green/45"
+              aria-expanded={isExpanded}
+            >
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[12px] border border-panel-border/35 bg-black/14 text-text-main/86">
+                <ProviderBrandIcon providerId={providerId} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-medium text-text-main">{template.label}</span>
+                <span className="mt-0.5 block text-[11px] text-text-muted/72">{sublabel}</span>
+              </span>
+              <span
+                className={`shrink-0 text-text-dim/72 transition ${isExpanded ? "rotate-180 text-neon-green" : ""}`}
+                aria-hidden="true"
+              >
+                <svg viewBox="0 0 16 16" className="h-4 w-4">
+                  <path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
+                </svg>
+              </span>
+            </button>
+          ) : (
+            <div className="flex min-w-0 flex-1 items-center gap-3">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[12px] border border-panel-border/35 bg-black/14 text-text-main/86">
+                <ProviderBrandIcon providerId={providerId} />
+              </span>
+              <div className="min-w-0">
+                <div className="text-[13px] font-medium text-text-main">{template.label}</div>
+                <div className="mt-0.5 text-[11px] text-text-muted/72">{sublabel}</div>
+              </div>
+            </div>
+          )}
+
+          {isHolabossProvider ? (
+            isEnabled ? (
+              <div className="rounded-full border border-neon-green/30 bg-neon-green/8 px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-neon-green">
+                Enabled
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void handleStartSignIn()}
+                disabled={isStartingSignIn}
+                className={`${actionButtonClassName} border border-neon-green/40 bg-neon-green/10 text-neon-green hover:bg-neon-green/16`}
+              >
+                {isStartingSignIn ? "Opening..." : "Sign in"}
+              </button>
+            )
+          ) : isEnabled ? (
+            <button
+              type="button"
+              onClick={() => {
+                updateProviderDraft(providerId, { enabled: false });
+                setExpandedProviderId((current) => (current === providerId ? null : current));
+              }}
+              className={`${actionButtonClassName} border border-panel-border/45 text-text-main hover:border-[rgba(247,90,84,0.4)] hover:text-[rgba(206,92,84,0.92)]`}
+            >
+              Disconnect
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                updateProviderDraft(providerId, { enabled: true });
+                setExpandedProviderId(providerId);
+              }}
+              className={`${actionButtonClassName} border border-panel-border/45 text-text-main hover:border-neon-green/35 hover:text-neon-green`}
+            >
+              Connect
+            </button>
+          )}
+        </div>
+
+        {isExpanded && (
+          <div className="border-t border-panel-border/25 px-3 pb-3 pt-3">
+            {renderProviderDrawerContent(providerId)}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   const runtimeProviderSettings = (
     <div className="theme-subtle-surface mt-3 grid gap-4 rounded-[20px] border border-panel-border/35 p-4">
       <div>
@@ -764,43 +921,12 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       <div className="rounded-[18px] border border-panel-border/35 bg-black/8 p-4">
         <div className="text-[11px] font-medium text-text-main/92">Connected providers</div>
         <div className="mt-3 grid gap-2">
-          {KNOWN_PROVIDER_ORDER.filter((providerId) => providerEnabled(providerId)).length === 0 ? (
+          {connectedProviderIds.length === 0 ? (
             <div className="rounded-[12px] border border-panel-border/30 bg-black/6 px-3 py-2 text-[11px] text-text-dim/78">
               No connected providers.
             </div>
           ) : (
-            KNOWN_PROVIDER_ORDER.filter((providerId) => providerEnabled(providerId)).map((providerId) => {
-              const template = KNOWN_PROVIDER_TEMPLATES[providerId];
-              const isHolabossProvider = providerId === "holaboss";
-              return (
-                <div key={providerId} className="theme-control-surface flex items-center justify-between gap-3 rounded-[14px] border border-panel-border/30 px-3 py-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[12px] border border-panel-border/35 bg-black/14 text-text-main/86">
-                      <ProviderBrandIcon providerId={providerId} />
-                    </span>
-                    <div className="min-w-0">
-                      <div className="text-[13px] font-medium text-text-main">{template.label}</div>
-                      <div className="mt-0.5 text-[11px] text-text-muted/72">
-                        {isHolabossProvider ? "Managed" : "Custom"}
-                      </div>
-                    </div>
-                  </div>
-                  {isHolabossProvider ? (
-                    <div className="rounded-full border border-neon-green/30 bg-neon-green/8 px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-neon-green">
-                      Enabled
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => updateProviderDraft(providerId, { enabled: false })}
-                      className="rounded-[10px] border border-panel-border/45 px-3 py-1.5 text-[11px] text-text-main transition hover:border-[rgba(247,90,84,0.4)] hover:text-[rgba(206,92,84,0.92)]"
-                    >
-                      Disconnect
-                    </button>
-                  )}
-                </div>
-              );
-            })
+            connectedProviderIds.map((providerId) => renderProviderCard(providerId))
           )}
         </div>
       </div>
@@ -808,102 +934,12 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       <div className="rounded-[18px] border border-panel-border/35 bg-black/8 p-4">
         <div className="text-[11px] font-medium text-text-main/92">Popular providers</div>
         <div className="mt-3 grid gap-2">
-          {KNOWN_PROVIDER_ORDER.filter((providerId) => !providerEnabled(providerId)).map((providerId) => {
-            const template = KNOWN_PROVIDER_TEMPLATES[providerId];
-            const isHolabossProvider = providerId === "holaboss";
-            return (
-              <div key={providerId} className="theme-control-surface flex items-center justify-between gap-3 rounded-[14px] border border-panel-border/30 px-3 py-3">
-                <div className="flex min-w-0 items-center gap-3">
-                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[12px] border border-panel-border/35 bg-black/14 text-text-main/86">
-                    <ProviderBrandIcon providerId={providerId} />
-                  </span>
-                <div className="min-w-0">
-                  <div className="text-[13px] font-medium text-text-main">{template.label}</div>
-                  <div className="mt-0.5 text-[11px] text-text-muted/72">
-                    {isHolabossProvider ? "Sign in required" : template.description}
-                  </div>
-                </div>
-              </div>
-              {isHolabossProvider ? (
-                <button
-                  type="button"
-                  onClick={() => void handleStartSignIn()}
-                  disabled={isStartingSignIn}
-                  className="rounded-[10px] border border-neon-green/40 bg-neon-green/10 px-3 py-1.5 text-[11px] text-neon-green transition hover:bg-neon-green/16 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {isStartingSignIn ? "Opening..." : "Sign in"}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => updateProviderDraft(providerId, { enabled: true })}
-                    className="rounded-[10px] border border-panel-border/45 px-3 py-1.5 text-[11px] text-text-main transition hover:border-neon-green/35 hover:text-neon-green"
-                  >
-                    Connect
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="rounded-[18px] border border-panel-border/35 bg-black/8 p-4">
-        <div className="text-[11px] font-medium text-text-main/92">Connected provider settings</div>
-        <div className="mt-3 grid gap-3">
-          {KNOWN_PROVIDER_ORDER.filter((providerId) => providerEnabled(providerId) && providerId !== "holaboss").length === 0 ? (
+          {availableProviderIds.length === 0 ? (
             <div className="rounded-[12px] border border-panel-border/30 bg-black/6 px-3 py-2 text-[11px] text-text-dim/78">
-              Connect OpenAI, Anthropic, or OpenRouter to configure credentials and models.
+              All known providers are already connected.
             </div>
           ) : (
-            KNOWN_PROVIDER_ORDER.filter((providerId) => providerEnabled(providerId) && providerId !== "holaboss").map((providerId) => {
-              const template = KNOWN_PROVIDER_TEMPLATES[providerId];
-              const draft = providerDrafts[providerId];
-              return (
-                <div key={`${providerId}:settings`} className="rounded-[14px] border border-panel-border/30 bg-black/6 p-3">
-                  <div className="flex items-center gap-2 text-[12px] font-medium text-text-main">
-                    <span className="grid h-7 w-7 place-items-center rounded-[9px] border border-panel-border/35 bg-black/14 text-text-main/84">
-                      <ProviderBrandIcon providerId={providerId} />
-                    </span>
-                    <span>{template.label}</span>
-                  </div>
-                  <div className="mt-3 grid gap-2">
-                    <label className="grid gap-1">
-                      <span className="text-[10px] uppercase tracking-[0.14em] text-text-dim/72">Base URL</span>
-                      <input
-                        className="theme-control-surface h-9 rounded-[10px] border border-panel-border/45 px-2.5 text-[11px] text-text-main outline-none transition focus:border-neon-green/55"
-                        value={draft.baseUrl}
-                        onChange={(event) => updateProviderDraft(providerId, { baseUrl: event.target.value })}
-                        placeholder={template.defaultBaseUrl}
-                        spellCheck={false}
-                      />
-                    </label>
-                    <label className="grid gap-1">
-                      <span className="text-[10px] uppercase tracking-[0.14em] text-text-dim/72">API Key</span>
-                      <input
-                        className="theme-control-surface h-9 rounded-[10px] border border-panel-border/45 px-2.5 text-[11px] text-text-main outline-none transition focus:border-neon-green/55"
-                        type="password"
-                        value={draft.apiKey}
-                        onChange={(event) => updateProviderDraft(providerId, { apiKey: event.target.value })}
-                        placeholder={template.apiKeyPlaceholder}
-                        spellCheck={false}
-                      />
-                    </label>
-                    <label className="grid gap-1">
-                      <span className="text-[10px] uppercase tracking-[0.14em] text-text-dim/72">Models</span>
-                      <textarea
-                        className="theme-control-surface min-h-[60px] rounded-[10px] border border-panel-border/45 px-2.5 py-2 text-[11px] leading-5 text-text-main outline-none transition focus:border-neon-green/55"
-                        value={draft.modelsText}
-                        onChange={(event) => updateProviderDraft(providerId, { modelsText: event.target.value })}
-                        placeholder={template.defaultModels.join(", ")}
-                        spellCheck={false}
-                      />
-                      <span className="text-[10px] text-text-dim/68">Comma or newline separated model IDs.</span>
-                    </label>
-                  </div>
-                </div>
-              );
-            })
+            availableProviderIds.map((providerId) => renderProviderCard(providerId))
           )}
         </div>
       </div>

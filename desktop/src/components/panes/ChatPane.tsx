@@ -862,7 +862,6 @@ export function ChatPane({
     runtimeConfig,
     runtimeStatus,
     selectedWorkspace,
-    resolvedUserId,
     isLoadingBootstrap,
     isActivatingWorkspace,
     workspaceAppsReady,
@@ -2134,10 +2133,6 @@ export function ChatPane({
       setChatErrorMessage("Create or select a workspace first.");
       return;
     }
-    if (!resolvedUserId) {
-      setChatErrorMessage("Sign in or set a runtime user id first.");
-      return;
-    }
     if ((runtimeStatus?.status || "").trim().toLowerCase() !== "running") {
       setChatErrorMessage("App is still starting up. Try again in a moment.");
       return;
@@ -2580,8 +2575,6 @@ export function ChatPane({
           : workspaceBlockingReason || (isActivatingWorkspace ? "Preparing workspace apps..." : "Workspace apps are still starting.");
   const composerDisabledReason = !selectedWorkspace
     ? "Select a workspace to start chatting."
-    : !resolvedUserId
-      ? "Sign in or set a runtime user id first."
     : runtimeNotReadyReason
       ? runtimeNotReadyReason
       : !isOnboardingVariant && !workspaceAppsReady
@@ -2599,7 +2592,6 @@ export function ChatPane({
   const rawShowStartupOverlay =
     !isOnboardingVariant &&
     Boolean(selectedWorkspace) &&
-    Boolean(resolvedUserId) &&
     (runtimeStartupBlocked || workspaceAppsStartupBlocked);
   const [showStartupOverlay, setShowStartupOverlay] = useState(false);
   const startupOverlayTone: StartupPhaseTone =

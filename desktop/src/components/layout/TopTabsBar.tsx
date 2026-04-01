@@ -200,6 +200,20 @@ export function TopTabsBar({
     };
   }, [createPanelOpen, updateWorkspaceSwitcherPosition, workspaceSwitcherOpen]);
 
+  const workspaceErrorOverlay =
+    workspaceErrorMessage && typeof document !== "undefined"
+      ? createPortal(
+          <div className="pointer-events-none fixed inset-x-0 top-[72px] z-[90] flex justify-center px-4">
+            <div
+              className={`${integratedTitleBar ? "window-no-drag " : ""}theme-chat-system-bubble pointer-events-auto w-full max-w-[720px] rounded-[16px] border px-4 py-3 text-[12px] leading-6 shadow-card`}
+            >
+              {workspaceErrorMessage}
+            </div>
+          </div>,
+          document.body
+        )
+      : null;
+
   return (
     <header
       onDoubleClick={handleTitleBarDoubleClick}
@@ -256,12 +270,6 @@ export function TopTabsBar({
           </button>
         </div>
       </div>
-
-      {workspaceErrorMessage ? (
-        <div className={`${integratedTitleBar ? "window-no-drag " : ""}theme-chat-system-bubble mt-2 rounded-[14px] border px-3 py-2 text-[11px] leading-6`}>
-          {workspaceErrorMessage}
-        </div>
-      ) : null}
 
       {workspaceSwitcherOpen && workspaceSwitcherPosition && typeof document !== "undefined"
         ? createPortal(
@@ -513,6 +521,7 @@ export function TopTabsBar({
             document.body
           )
         : null}
+      {workspaceErrorOverlay}
     </header>
   );
 }
