@@ -4197,6 +4197,19 @@ async function composioConnect(payload: {
   return composioFetch<ComposioConnectResult>("/api/composio/connect", "POST", payload);
 }
 
+interface ComposioToolkit {
+  slug: string;
+  name: string;
+  description: string;
+  logo: string | null;
+  auth_schemes: string[];
+  categories: string[];
+}
+
+async function composioListToolkits(): Promise<{ toolkits: ComposioToolkit[] }> {
+  return composioFetch<{ toolkits: ComposioToolkit[] }>("/api/composio/toolkits", "GET");
+}
+
 async function composioAccountStatus(
   connectedAccountId: string,
 ): Promise<ComposioAccountStatus> {
@@ -11027,6 +11040,11 @@ app.whenReady().then(async () => {
     "workspace:startOAuthFlow",
     ["main"],
     async (_event, provider: string) => startOAuthFlow(provider),
+  );
+  handleTrustedIpc(
+    "workspace:composioListToolkits",
+    ["main"],
+    async () => composioListToolkits(),
   );
   handleTrustedIpc(
     "workspace:composioConnect",

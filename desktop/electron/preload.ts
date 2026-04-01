@@ -789,6 +789,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:deleteOAuthConfig", providerId) as Promise<{ deleted: boolean }>,
     startOAuthFlow: (provider: string) =>
       ipcRenderer.invoke("workspace:startOAuthFlow", provider) as Promise<OAuthAuthorizeResponsePayload>,
+    composioListToolkits: () =>
+      ipcRenderer.invoke("workspace:composioListToolkits") as Promise<{ toolkits: Array<{ slug: string; name: string; description: string; logo: string | null; auth_schemes: string[]; categories: string[] }> }>,
     composioConnect: (payload: { provider: string; owner_user_id: string; callback_url?: string }) =>
       ipcRenderer.invoke("workspace:composioConnect", payload) as Promise<ComposioConnectResult>,
     composioAccountStatus: (connectedAccountId: string) =>
