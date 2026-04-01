@@ -379,10 +379,16 @@ function FirstWorkspacePane() {
     workspaceErrorMessage,
     chooseTemplateFolder,
     createWorkspace,
+    pendingIntegrations,
+    isResolvingIntegrations,
+    resolveIntegrationsBeforeCreate,
+    clearPendingIntegrations,
   } = useWorkspaceDesktop();
   const [onboardingStep, setOnboardingStep] = useState<
-    "gallery" | "detail" | "configure"
+    "gallery" | "detail" | "configure" | "connect_integrations"
   >("gallery");
+  const [connectingProvider, setConnectingProvider] = useState<string | null>(null);
+  const [connectStatus, setConnectStatus] = useState("");
   const [detailKit, setDetailKit] = useState<TemplateMetadataPayload | null>(
     null,
   );
@@ -390,6 +396,57 @@ function FirstWorkspacePane() {
     createHarnessOptions.find(
       (option) => option.id === selectedCreateHarness,
     ) ?? createHarnessOptions[0];
+
+  const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+    google: "Google", github: "GitHub", reddit: "Reddit",
+    twitter: "Twitter / X", linkedin: "LinkedIn"
+  };
+
+  async function handleCreateWithIntegrationCheck() {
+    const pending = await resolveIntegrationsBeforeCreate();
+    if (pending && pending.missing_providers.length > 0) {
+      setOnboardingStep("connect_integrations");
+      return;
+    }
+    void createWorkspace();
+  }
+
+  async function handleConnectProvider(provider: string) {
+    setConnectingProvider(provider);
+    setConnectStatus("Complete authorization in your browser...");
+    try {
+      const runtimeConfig = await window.electronAPI.runtime.getConfig();
+      const userId = runtimeConfig.userId ?? "local";
+      const link = await window.electronAPI.workspace.composioConnect({
+        provider, owner_user_id: userId
+      });
+      await window.electronAPI.ui.openExternalUrl(link.redirect_url);
+      for (let i = 0; i < 100; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        const status = await window.electronAPI.workspace.composioAccountStatus(link.connected_account_id);
+        if (status.status === "ACTIVE") {
+          await window.electronAPI.workspace.composioFinalize({
+            connected_account_id: link.connected_account_id,
+            provider, owner_user_id: userId,
+            account_label: `${PROVIDER_DISPLAY_NAMES[provider] ?? provider} (Managed)`
+          });
+          setConnectStatus("");
+          setConnectingProvider(null);
+          const updated = await resolveIntegrationsBeforeCreate();
+          if (!updated || updated.missing_providers.length === 0) {
+            clearPendingIntegrations();
+            void createWorkspace();
+          }
+          return;
+        }
+      }
+      setConnectStatus("Connection timed out. Please try again.");
+    } catch (error) {
+      setConnectStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setConnectingProvider(null);
+    }
+  }
 
   const sectionClassName = firstWorkspacePaneSectionClassName(onboardingStep);
 
@@ -616,12 +673,12 @@ function FirstWorkspacePane() {
               <div className="mt-5 flex items-center gap-3">
                 <button
                   type="button"
-                  disabled={configureCreateDisabled}
-                  onClick={() => void createWorkspace()}
+                  disabled={configureCreateDisabled || isResolvingIntegrations}
+                  onClick={() => void handleCreateWithIntegrationCheck()}
                   className="inline-flex h-12 items-center justify-center gap-3 rounded-[18px] border border-[rgba(247,90,84,0.38)] bg-[rgba(247,90,84,0.9)] px-5 text-[14px] font-medium text-white transition-colors hover:bg-[rgba(226,79,74,0.94)] disabled:cursor-not-allowed disabled:border-panel-border disabled:bg-panel-border/20 disabled:text-text-muted/60"
                 >
-                  <span>Create Workspace</span>
-                  <ArrowRight size={16} />
+                  <span>{isResolvingIntegrations ? "Checking integrations..." : "Create Workspace"}</span>
+                  {isResolvingIntegrations ? null : <ArrowRight size={16} />}
                 </button>
                 <button
                   type="button"
@@ -629,6 +686,60 @@ function FirstWorkspacePane() {
                   className="text-[12px] text-text-muted/72 underline transition-colors hover:text-text-main"
                 >
                   Back to kits
+                </button>
+              </div>
+            </div>
+          ) : onboardingStep === "connect_integrations" && pendingIntegrations ? (
+            <div>
+              <div className="max-w-3xl">
+                <div className="text-[11px] uppercase tracking-[0.24em] text-text-dim/78">
+                  Connect integrations
+                </div>
+                <h1 className="mt-3 text-[28px] font-semibold tracking-[-0.04em] text-text-main sm:text-[34px]">
+                  This workspace needs access
+                </h1>
+                <p className="mt-2 text-[14px] leading-7 text-text-muted/84">
+                  Connect the following accounts to continue.
+                </p>
+              </div>
+
+              <div className="mt-6 grid gap-3" style={{ maxWidth: 480 }}>
+                {pendingIntegrations.missing_providers.map(provider => (
+                  <div key={provider} className="flex items-center justify-between rounded-[18px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-5 py-4">
+                    <div className="text-[14px] font-medium text-text-main">
+                      {PROVIDER_DISPLAY_NAMES[provider] ?? provider}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={connectingProvider !== null}
+                      onClick={() => void handleConnectProvider(provider)}
+                      className="inline-flex h-9 items-center rounded-[12px] border border-neon-green/35 bg-neon-green/8 px-4 text-[12px] font-medium text-neon-green transition-colors hover:bg-neon-green/14 disabled:opacity-50"
+                    >
+                      {connectingProvider === provider ? "Connecting..." : "Connect"}
+                    </button>
+                  </div>
+                ))}
+                {pendingIntegrations.connected_providers.map(provider => (
+                  <div key={provider} className="flex items-center justify-between rounded-[18px] border border-neon-green/20 bg-neon-green/4 px-5 py-4">
+                    <div className="text-[14px] font-medium text-text-main">
+                      {PROVIDER_DISPLAY_NAMES[provider] ?? provider}
+                    </div>
+                    <span className="text-[12px] font-medium text-neon-green">Connected</span>
+                  </div>
+                ))}
+              </div>
+
+              {connectStatus ? (
+                <div className="mt-4 text-[13px] text-text-muted">{connectStatus}</div>
+              ) : null}
+
+              <div className="mt-5">
+                <button
+                  type="button"
+                  onClick={() => { clearPendingIntegrations(); setOnboardingStep("configure"); }}
+                  className="text-[12px] text-text-muted/72 underline transition-colors hover:text-text-main"
+                >
+                  &larr; Back to configure
                 </button>
               </div>
             </div>

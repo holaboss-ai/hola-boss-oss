@@ -1,4 +1,4 @@
-type FirstWorkspacePaneStep = "gallery" | "detail" | "configure";
+type FirstWorkspacePaneStep = "gallery" | "detail" | "configure" | "connect_integrations";
 
 export function firstWorkspacePaneSectionClassName(
   step: FirstWorkspacePaneStep,
