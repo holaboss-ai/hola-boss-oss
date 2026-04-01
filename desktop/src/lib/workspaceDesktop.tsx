@@ -179,8 +179,10 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [workspaceBlockingReasonState, setWorkspaceBlockingReasonState] = useState("");
   const [recentAuthCompletedAt, setRecentAuthCompletedAt] = useState<number | null>(null);
 
-  const isSignedIn = Boolean(sessionUserId(session));
-  const resolvedUserId = runtimeConfig?.userId?.trim() || sessionUserId(session);
+  const signedInUserId = sessionUserId(session);
+  const isSignedIn = Boolean(signedInUserId);
+  const runtimeBoundUserId = runtimeConfig?.authTokenPresent ? runtimeConfig?.userId?.trim() || "" : "";
+  const resolvedUserId = runtimeBoundUserId || signedInUserId;
   const canUseMarketplaceTemplates = Boolean(runtimeConfig?.authTokenPresent) && Boolean((resolvedUserId || "").trim());
   const selectedWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,

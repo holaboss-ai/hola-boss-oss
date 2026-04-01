@@ -3959,6 +3959,8 @@ async function clearRuntimeBindingSecrets(reason: string): Promise<void> {
   const nextConfig = await writeRuntimeConfigFile({
     authToken: null,
     modelProxyApiKey: null,
+    userId: null,
+    sandboxId: null,
     modelProxyBaseUrl: null,
     controlPlaneBaseUrl: null
   });
@@ -6878,12 +6880,15 @@ function renderEmptyOnboardingGuide() {
 }
 
 async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise<WorkspaceResponsePayload> {
-  await ensureRuntimeBindingReadyForWorkspaceFlow("workspace_create");
   const mainSessionId = crypto.randomUUID();
   const harness = normalizeRequestedWorkspaceHarness(payload.harness);
   const templateMode = requestedWorkspaceTemplateMode(payload);
   const templateRootPath = payload.template_root_path?.trim() || "";
   const templateName = payload.template_name?.trim() || "";
+  const requiresRuntimeBinding = templateMode !== "empty" && !templateRootPath && Boolean(templateName);
+  if (requiresRuntimeBinding) {
+    await ensureRuntimeBindingReadyForWorkspaceFlow("workspace_create");
+  }
   if (templateMode !== "empty" && !templateRootPath && templateName) {
     const holabossUserId = (payload.holaboss_user_id || "").trim();
     if (controlPlaneApiKey() && holabossUserId && holabossUserId !== LOCAL_OSS_TEMPLATE_USER_ID) {
@@ -7028,15 +7033,36 @@ async function createWorkspace(payload: HolabossCreateWorkspacePayload): Promise
         }).catch(() => updated);
       }
     }
-    try {
-      await emitWorkspaceReadyHeartbeat({
-        workspaceId,
-        holabossUserId: payload.holaboss_user_id
+    const runtimeConfigForHeartbeat = await readRuntimeConfigFile();
+    const runtimeHeartbeatToken = runtimeModelProxyApiKeyFromConfig(runtimeConfigForHeartbeat);
+    const runtimeHeartbeatUserId = (runtimeConfigForHeartbeat.user_id || "").trim();
+    const requestedHeartbeatUserId = (payload.holaboss_user_id || "").trim();
+    const shouldEmitWorkspaceReadyHeartbeat =
+      Boolean(runtimeHeartbeatToken) &&
+      Boolean(requestedHeartbeatUserId) &&
+      requestedHeartbeatUserId !== LOCAL_OSS_TEMPLATE_USER_ID &&
+      runtimeHeartbeatUserId === requestedHeartbeatUserId;
+
+    if (shouldEmitWorkspaceReadyHeartbeat) {
+      try {
+        await emitWorkspaceReadyHeartbeat({
+          workspaceId,
+          holabossUserId: requestedHeartbeatUserId
+        });
+      } catch (error) {
+        throw new Error(
+          contextualWorkspaceCreateError("Workspace created locally, but the workspace-ready heartbeat was not confirmed", error)
+        );
+      }
+    } else {
+      appendRuntimeEventLog({
+        category: "workspace",
+        event: "workspace.heartbeat.emit",
+        outcome: "skipped",
+        detail:
+          `workspace_id=${workspaceId} skipped=no_active_runtime_binding ` +
+          `requested_user_id=${requestedHeartbeatUserId || "missing"} runtime_user_id=${runtimeHeartbeatUserId || "missing"}`
       });
-    } catch (error) {
-      throw new Error(
-        contextualWorkspaceCreateError("Workspace created locally, but the workspace-ready heartbeat was not confirmed", error)
-      );
     }
     return updated;
   } catch (error) {

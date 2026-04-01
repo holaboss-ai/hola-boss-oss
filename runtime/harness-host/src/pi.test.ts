@@ -6,9 +6,11 @@ import test from "node:test";
 
 import JSZip from "jszip";
 import * as XLSX from "xlsx";
+import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 
 import type { HarnessHostPiRequest } from "./contracts.js";
 import {
+  buildPiProviderConfig,
   buildPiPromptPayload,
   buildPiMcpServerBindings,
   buildPiMcpToolName,
@@ -348,6 +350,43 @@ test("resolvePiSkillDirs returns existing source skill directories in order", ()
     assert.deepEqual(resolvePiSkillDirs(request), [skillAlphaDir, skillBetaDir]);
   } finally {
     fs.rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("buildPiProviderConfig registers runtime-configured ollama models for the Pi harness", () => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-model-registry-"));
+  try {
+    const request: HarnessHostPiRequest = {
+      ...baseRequest(),
+      provider_id: "ollama_direct",
+      model_id: "qwen2.5:0.5b",
+      model_client: {
+        model_proxy_provider: "openai_compatible",
+        api_key: "ollama",
+        base_url: "http://localhost:11434/v1",
+        default_headers: {
+          Authorization: "Bearer ollama",
+        },
+      },
+    };
+
+    const authStorage = AuthStorage.create(path.join(stateDir, "auth.json"));
+    const modelRegistry = new ModelRegistry(authStorage, path.join(stateDir, "models.json"));
+    modelRegistry.registerProvider(request.provider_id, buildPiProviderConfig(request));
+
+    const model = modelRegistry.find("ollama_direct", "qwen2.5:0.5b");
+    assert.ok(model);
+    assert.equal(model.provider, "ollama_direct");
+    assert.equal(model.id, "qwen2.5:0.5b");
+    assert.equal(model.api, "openai-completions");
+    assert.equal(model.baseUrl, "http://localhost:11434/v1");
+    assert.deepEqual(model.compat, {
+      supportsStore: false,
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+    });
+  } finally {
+    fs.rmSync(stateDir, { recursive: true, force: true });
   }
 });
 
