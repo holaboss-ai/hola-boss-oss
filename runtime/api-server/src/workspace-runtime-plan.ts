@@ -52,13 +52,7 @@ export type WorkspaceGeneralSingleConfig = {
   agent: WorkspaceGeneralMemberConfig;
 };
 
-export type WorkspaceGeneralTeamConfig = {
-  type: "team";
-  coordinator: WorkspaceGeneralMemberConfig;
-  members: WorkspaceGeneralMemberConfig[];
-};
-
-export type WorkspaceGeneralConfig = WorkspaceGeneralSingleConfig | WorkspaceGeneralTeamConfig;
+export type WorkspaceGeneralConfig = WorkspaceGeneralSingleConfig;
 
 export type ResolvedMcpServerConfig = {
   server_id: string;
@@ -108,7 +102,7 @@ export type ResolvedApplication = {
 
 export type CompiledWorkspaceRuntimePlan = {
   workspace_id: string;
-  mode: "single" | "team";
+  mode: "single";
   general_config: WorkspaceGeneralConfig;
   schema_aliases: Record<string, string>;
   resolved_prompts: Record<string, string>;
@@ -320,94 +314,39 @@ function parseMember(
   };
 }
 
-function buildGeneralConfigFromMembers(members: WorkspaceGeneralMemberConfig[]): WorkspaceGeneralConfig {
-  if (members.length === 1) {
-    return {
-      type: "single",
-      agent: members[0]
-    };
-  }
-  return {
-    type: "team",
-    coordinator: members[0],
-    members: members.slice(1)
-  };
-}
-
 function loadLegacyGeneralConfig(
   generalValue: JsonRecord,
   prompt: string
 ): WorkspaceGeneralConfig {
   const modeValue = generalValue.type;
-  if (modeValue !== "single" && modeValue !== "team") {
+  if (modeValue !== "single") {
+    if (modeValue === "team") {
+      err({
+        code: "workspace_team_unsupported",
+        path: "agents.general.type",
+        message: "team mode is no longer supported",
+        hint: "configure exactly one agent"
+      });
+    }
     err({
       code: "workspace_general_type_invalid",
       path: "agents.general.type",
-      message: "expected 'single' or 'team'",
-      hint: "set agents.general.type to either 'single' or 'team'"
+      message: "expected 'single'",
+      hint: "set agents.general.type to 'single'"
     });
   }
 
-  if (modeValue === "single") {
-    const agentValue = generalValue.agent;
-    if (!isRecord(agentValue)) {
-      err({
-        code: "workspace_general_missing",
-        path: "agents.general.agent",
-        message: "single mode requires object field 'agent'"
-      });
-    }
-    return {
-      type: "single",
-      agent: parseMember(agentValue, "agents.general.agent", prompt)
-    };
-  }
-
-  const coordinatorValue = generalValue.coordinator;
-  const membersValue = generalValue.members;
-  if (!isRecord(coordinatorValue)) {
+  const agentValue = generalValue.agent;
+  if (!isRecord(agentValue)) {
     err({
       code: "workspace_general_missing",
-      path: "agents.general.coordinator",
-      message: "team mode requires object field 'coordinator'"
+      path: "agents.general.agent",
+      message: "single mode requires object field 'agent'"
     });
   }
-  if (!Array.isArray(membersValue) || membersValue.length === 0) {
-    err({
-      code: "workspace_general_missing",
-      path: "agents.general.members",
-      message: "team mode requires at least one member in 'members'"
-    });
-  }
-
-  const coordinator = parseMember(coordinatorValue, "agents.general.coordinator", prompt);
-  const seenIds = new Set<string>([coordinator.id]);
-  const members: WorkspaceGeneralMemberConfig[] = [];
-  for (const [index, entry] of membersValue.entries()) {
-    if (!isRecord(entry)) {
-      err({
-        code: "workspace_general_missing",
-        path: `agents.general.members[${index}]`,
-        message: "member entry must be an object"
-      });
-    }
-    const member = parseMember(entry, `agents.general.members[${index}]`, prompt);
-    if (seenIds.has(member.id)) {
-      err({
-        code: "workspace_team_member_id_duplicate",
-        path: `agents.general.members[${index}].id`,
-        message: `duplicate member id '${member.id}'`,
-        hint: "all coordinator/member ids must be unique"
-      });
-    }
-    seenIds.add(member.id);
-    members.push(member);
-  }
-
   return {
-    type: "team",
-    coordinator,
-    members
+    type: "single",
+    agent: parseMember(agentValue, "agents.general.agent", prompt)
   };
 }
 
@@ -421,6 +360,14 @@ function loadGeneralConfig(config: JsonRecord, references: Record<string, string
         code: "workspace_general_missing",
         path: "agents",
         message: "'agents' must include at least one agent"
+      });
+    }
+    if (agentsValue.length > 1) {
+      err({
+        code: "workspace_team_unsupported",
+        path: "agents",
+        message: "multiple agents are no longer supported",
+        hint: "configure exactly one agent"
       });
     }
     const members: WorkspaceGeneralMemberConfig[] = [];
@@ -445,7 +392,10 @@ function loadGeneralConfig(config: JsonRecord, references: Record<string, string
       seenIds.add(member.id);
       members.push(member);
     }
-    return buildGeneralConfigFromMembers(members);
+    return {
+      type: "single",
+      agent: members[0]
+    };
   }
 
   if (isRecord(agentsValue)) {
@@ -466,7 +416,7 @@ function loadGeneralConfig(config: JsonRecord, references: Record<string, string
     path: "agents",
     message: "missing field 'agents'",
     hint:
-      "set 'agents' to a non-empty list (or object) of members with at least id/model; " +
+      "set 'agents' to exactly one agent (list or object) with at least id/model; " +
       "workspace instructions come from root 'AGENTS.md' when present"
   });
 }
@@ -1008,18 +958,9 @@ function loadApplications(config: JsonRecord, references: Record<string, string>
 }
 
 function promptsByMemberId(generalConfig: WorkspaceGeneralConfig): Record<string, string> {
-  if (generalConfig.type === "single") {
-    return {
-      [generalConfig.agent.id]: generalConfig.agent.prompt
-    };
-  }
-  const prompts: Record<string, string> = {
-    [generalConfig.coordinator.id]: generalConfig.coordinator.prompt
+  return {
+    [generalConfig.agent.id]: generalConfig.agent.prompt
   };
-  for (const member of generalConfig.members) {
-    prompts[member.id] = member.prompt;
-  }
-  return prompts;
 }
 
 export function collectWorkspaceRuntimePlanReferences(request: WorkspaceRuntimePlanReferenceRequest): string[] {

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
-import { CircleHelp, ExternalLink, Globe, Info, Palette, User2, X } from "lucide-react";
+import { CircleHelp, Globe, Info, Palette, User2, X } from "lucide-react";
 import { AuthPanel } from "@/components/auth/AuthPanel";
+import { ProactiveStatusCard } from "@/components/layout/ProactiveStatusCard";
 
 const THEME_SWATCHES: Record<string, [string, string, string]> = {
   holaboss: ["#fff7f2", "#f75a54", "#d7dde8"],
@@ -24,6 +25,12 @@ interface SettingsDialogProps {
   themes: readonly string[];
   onThemeChange: (theme: string) => void;
   onOpenExternalUrl: (url: string) => void;
+  hasWorkspace: boolean;
+  selectedWorkspaceName?: string | null;
+  selectedWorkspaceId?: string | null;
+  proactiveStatus: ProactiveAgentStatusPayload | null;
+  isLoadingProactiveStatus: boolean;
+  workspaceSetupStatus: ProactiveStatusSnapshotPayload | null;
 }
 
 const SETTINGS_SECTIONS: Array<{
@@ -35,13 +42,19 @@ const SETTINGS_SECTIONS: Array<{
   {
     id: "account",
     label: "Account",
-    description: "Session and runtime connection",
+    description: "Session and sign-in state",
     icon: User2
   },
   {
-    id: "settings",
-    label: "Settings",
-    description: "Appearance and desktop defaults",
+    id: "models",
+    label: "Models",
+    description: "Provider and model routing",
+    icon: Globe
+  },
+  {
+    id: "appearance",
+    label: "Appearance",
+    description: "Desktop themes and visuals",
     icon: Palette
   },
   {
@@ -56,23 +69,29 @@ function titleForSection(section: UiSettingsPaneSection): string {
   switch (section) {
     case "account":
       return "Account";
+    case "models":
+      return "Models";
+    case "appearance":
+      return "Appearance";
     case "about":
       return "About";
-    case "settings":
     default:
-      return "Settings";
+      return "Models";
   }
 }
 
 function subtitleForSection(section: UiSettingsPaneSection): string {
   switch (section) {
     case "account":
-      return "Manage your desktop session and runtime binding.";
+      return "Manage your desktop session and proactive delivery.";
+    case "models":
+      return "Configure model providers and model routing.";
+    case "appearance":
+      return "Choose the desktop visual theme.";
     case "about":
       return "Open product resources and support channels.";
-    case "settings":
     default:
-      return "Tune desktop appearance and shared preferences.";
+      return "Configure model providers and model routing.";
   }
 }
 
@@ -88,7 +107,13 @@ export function SettingsDialog({
   theme,
   themes,
   onThemeChange,
-  onOpenExternalUrl
+  onOpenExternalUrl,
+  hasWorkspace,
+  selectedWorkspaceName,
+  selectedWorkspaceId,
+  proactiveStatus,
+  isLoadingProactiveStatus,
+  workspaceSetupStatus
 }: SettingsDialogProps) {
   useEffect(() => {
     if (!open) {
@@ -124,7 +149,7 @@ export function SettingsDialog({
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        className="theme-shell soft-vignette neon-border pointer-events-auto relative z-10 grid max-h-[min(760px,calc(100vh-40px))] w-[min(980px,calc(100vw-32px))] min-w-0 overflow-hidden rounded-[28px] shadow-card lg:grid-cols-[240px_minmax(0,1fr)]"
+        className="theme-shell neon-border pointer-events-auto relative z-10 grid h-[min(760px,calc(100vh-40px))] w-[min(980px,calc(100vw-32px))] min-w-0 overflow-hidden rounded-[28px] shadow-card lg:grid-cols-[240px_minmax(0,1fr)]"
       >
         <aside className="theme-header-surface border-b border-panel-border/35 p-4 lg:border-b-0 lg:border-r">
           <div className="flex items-center gap-3">
@@ -145,14 +170,14 @@ export function SettingsDialog({
                   key={id}
                   type="button"
                   onClick={() => onSectionChange(id)}
-                  className={`flex items-start gap-3 rounded-[18px] border px-3.5 py-3 text-left transition ${
+                  className={`grid min-h-[92px] w-full grid-cols-[32px_minmax(0,1fr)] items-center gap-3 rounded-[18px] border px-3.5 py-3 text-left transition ${
                     active
                       ? "border-neon-green/40 bg-neon-green/10 text-text-main shadow-[0_12px_36px_rgba(0,0,0,0.16)]"
                       : "border-transparent text-text-muted hover:border-panel-border/45 hover:bg-[var(--theme-hover-bg)] hover:text-text-main"
                   }`}
                 >
                   <span
-                    className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-[12px] border ${
+                    className={`grid h-8 w-8 shrink-0 place-items-center self-start rounded-[12px] border ${
                       active
                         ? "border-neon-green/35 bg-neon-green/12 text-neon-green"
                         : "border-panel-border/35 text-text-dim/80"
@@ -160,7 +185,7 @@ export function SettingsDialog({
                   >
                     <Icon size={15} />
                   </span>
-                  <span className="min-w-0">
+                  <span className="flex min-h-[52px] min-w-0 flex-col justify-center">
                     <span className="block text-[13px] font-medium">{label}</span>
                     <span className="mt-1 block text-[11px] leading-5 text-text-dim/72">{description}</span>
                   </span>
@@ -168,10 +193,9 @@ export function SettingsDialog({
               );
             })}
           </nav>
-
         </aside>
 
-        <section className="min-h-0 min-w-0 overflow-hidden">
+        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
           <header className="theme-header-surface flex items-start justify-between gap-4 border-b border-panel-border/35 px-5 py-4">
             <div>
               <div className="text-[20px] font-semibold text-text-main">{titleForSection(activeSection)}</div>
@@ -188,14 +212,28 @@ export function SettingsDialog({
             </button>
           </header>
 
-          <div className="min-h-0 overflow-y-auto px-5 py-5">
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
             {activeSection === "account" ? (
-              <div className="max-w-[560px]">
-                <AuthPanel />
+              <div className="grid w-full max-w-none gap-6">
+                <AuthPanel view="account" />
+                <ProactiveStatusCard
+                  hasWorkspace={hasWorkspace}
+                  workspaceName={selectedWorkspaceName}
+                  workspaceId={selectedWorkspaceId}
+                  proactiveStatus={proactiveStatus}
+                  isLoading={isLoadingProactiveStatus}
+                  workspaceSetup={workspaceSetupStatus}
+                />
               </div>
             ) : null}
 
-            {activeSection === "settings" ? (
+            {activeSection === "models" ? (
+              <div className="grid gap-6">
+                <AuthPanel view="runtime" />
+              </div>
+            ) : null}
+
+            {activeSection === "appearance" ? (
               <div className="grid gap-6">
                 <section className="theme-subtle-surface rounded-[24px] border border-panel-border/40 p-5">
                   <div className="text-[11px] uppercase tracking-[0.18em] text-text-dim/68">Appearance</div>
@@ -292,18 +330,18 @@ export function SettingsDialog({
                         key={id}
                         type="button"
                         onClick={() => onOpenExternalUrl(href)}
-                        className="flex items-center justify-between gap-3 rounded-[18px] border border-panel-border/40 bg-black/10 px-4 py-3 text-left transition hover:border-neon-green/30 hover:bg-[var(--theme-hover-bg)]"
+                        className="group relative overflow-hidden rounded-[20px] border border-[rgba(247,90,84,0.14)] bg-[linear-gradient(145deg,rgba(247,90,84,0.06),rgba(255,255,255,0.02))] px-4 py-3 text-left transition hover:border-[rgba(247,90,84,0.28)] hover:bg-[linear-gradient(145deg,rgba(247,90,84,0.1),rgba(255,255,255,0.04))]"
                       >
+                        <span className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(247,90,84,0.12),transparent_34%)] opacity-80" />
                         <span className="flex min-w-0 items-center gap-3">
-                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-panel-border/35 text-text-muted/82">
+                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-neon-green/30 bg-neon-green/10 text-neon-green shadow-[0_10px_24px_rgba(247,90,84,0.08)]">
                             <Icon size={16} />
                           </span>
-                          <span className="min-w-0">
+                          <span className="relative min-w-0">
                             <span className="block text-[13px] font-medium text-text-main">{label}</span>
-                            <span className="mt-1 block text-[11px] leading-5 text-text-dim/72">{detail}</span>
+                            <span className="mt-1 block text-[11px] leading-5 text-text-muted/78">{detail}</span>
                           </span>
                         </span>
-                        <ExternalLink size={15} className="shrink-0 text-text-dim/70" />
                       </button>
                     ))}
                   </div>

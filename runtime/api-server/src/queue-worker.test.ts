@@ -69,6 +69,61 @@ test("runtime queue worker claims queued inputs and executes them in claim order
   store.close();
 });
 
+test("runtime queue worker executes different sessions concurrently while preserving one active input per session", async () => {
+  const root = makeTempDir("hb-runtime-queue-worker-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-a",
+    priority: 5,
+    payload: { text: "a-1" }
+  });
+  store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-a",
+    priority: 4,
+    payload: { text: "a-2" }
+  });
+  store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-b",
+    priority: 3,
+    payload: { text: "b-1" }
+  });
+
+  let active = 0;
+  let maxActive = 0;
+  const seenSessions: string[] = [];
+  const worker = new RuntimeQueueWorker({
+    store,
+    maxConcurrency: 2,
+    executeClaimedInput: async (record) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      seenSessions.push(record.sessionId);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      active -= 1;
+    }
+  });
+
+  const processed = await worker.processAvailableInputsOnce();
+
+  assert.equal(processed, 2);
+  assert.equal(maxActive, 2);
+  assert.deepEqual(seenSessions.sort(), ["session-a", "session-b"]);
+  store.close();
+});
+
 test("runtime queue worker marks claimed input failed when delegated execution raises", async () => {
   const root = makeTempDir("hb-runtime-queue-worker-");
   const store = new RuntimeStateStore({

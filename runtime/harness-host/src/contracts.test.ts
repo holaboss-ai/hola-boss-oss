@@ -101,6 +101,7 @@ test("decodeRunnerRequestBase64 applies defaults for optional fields", () => {
     holaboss_user_id: undefined,
     workspace_id: "workspace-1",
     session_id: "session-1",
+    session_kind: undefined,
     input_id: "input-1",
     instruction: "Ship it",
     attachments: [],
@@ -127,6 +128,7 @@ test("decodeOpencodeHarnessHostRequestBase64 validates and normalizes request pa
       workspace_id: "workspace-1",
       workspace_dir: "/tmp/workspace-1",
       session_id: "session-1",
+      browser_tools_enabled: true,
       input_id: "input-1",
       instruction: "Do the thing",
       provider_id: "openai",
@@ -191,6 +193,7 @@ test("decodeOpencodeHarnessHostRequestBase64 allows empty or missing system_prom
       workspace_id: "workspace-1",
       workspace_dir: "/tmp/workspace-1",
       session_id: "session-1",
+      browser_tools_enabled: true,
       input_id: "input-1",
       instruction: "Do the thing",
       provider_id: "openai",
@@ -216,6 +219,7 @@ test("decodeOpencodeHarnessHostRequestBase64 allows empty or missing system_prom
       workspace_id: "workspace-1",
       workspace_dir: "/tmp/workspace-1",
       session_id: "session-1",
+      browser_tools_enabled: true,
       input_id: "input-1",
       instruction: "Do the thing",
       provider_id: "openai",
@@ -275,6 +279,7 @@ test("decodeHarnessHostPiRequestBase64 validates and normalizes request payloads
       workspace_id: "workspace-1",
       workspace_dir: "/tmp/workspace-1",
       session_id: "session-1",
+      browser_tools_enabled: true,
       input_id: "input-1",
       instruction: "Do the thing",
       provider_id: "openai",
@@ -302,6 +307,7 @@ test("decodeHarnessHostPiRequestBase64 validates and normalizes request payloads
     workspace_id: "workspace-1",
     workspace_dir: "/tmp/workspace-1",
     session_id: "session-1",
+    browser_tools_enabled: true,
     input_id: "input-1",
     instruction: "Do the thing",
     attachments: [],
@@ -385,12 +391,11 @@ test("decodeOpencodeRuntimeConfigCliRequestBase64 defaults optional arrays and o
       default_provider_id: "openai",
       session_mode: "code",
       workspace_config_checksum: "checksum-1",
-      general_type: "single",
-      single_agent: {
+      agent: {
         id: "agent-1",
         model: "openai/gpt-5.1",
         prompt: "system",
-      },
+      }
     })
   );
 
@@ -411,16 +416,30 @@ test("decodeOpencodeRuntimeConfigCliRequestBase64 defaults optional arrays and o
     tool_server_id_map: null,
     resolved_mcp_tool_refs: [],
     resolved_output_schemas: {},
-    general_type: "single",
-    single_agent: {
+    agent: {
       id: "agent-1",
       model: "openai/gpt-5.1",
       prompt: "system",
       role: undefined,
-    },
-    coordinator: undefined,
-    members: [],
+    }
   });
+});
+
+test("decodeOpencodeRuntimeConfigCliRequestBase64 requires a single agent payload", () => {
+  assert.throws(
+    () =>
+      decodeOpencodeRuntimeConfigCliRequestBase64(
+        encode({
+          session_id: "session-1",
+          workspace_id: "workspace-1",
+          input_id: "input-1",
+          default_provider_id: "openai",
+          session_mode: "code",
+          workspace_config_checksum: "checksum-1"
+        })
+      ),
+    /agent is required/
+  );
 });
 
 test("decodeHarnessHostOpencodeRequestBase64 preserves the legacy request shape", () => {

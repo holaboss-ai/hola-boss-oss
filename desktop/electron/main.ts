@@ -74,6 +74,11 @@ const HOLABOSS_HOME_URL = "https://holaboss.ai";
 const HOLABOSS_DOCS_URL = `https://github.com/${GITHUB_RELEASES_OWNER}/${GITHUB_RELEASES_REPO}`;
 const HOLABOSS_HELP_URL = `${HOLABOSS_DOCS_URL}/issues`;
 const APP_DISPLAY_NAME = "Holaboss";
+const RUNTIME_HOLABOSS_PROVIDER_ID = "holaboss_model_proxy";
+const RUNTIME_HOLABOSS_PROVIDER_ALIASES = [
+  "holaboss",
+  RUNTIME_HOLABOSS_PROVIDER_ID,
+] as const;
 
 interface DirectoryEntryPayload {
   name: string;
@@ -2987,6 +2992,15 @@ function runtimeConfigField(value: string | undefined): string {
   return (value || "").trim();
 }
 
+function normalizeLegacyRuntimeModelToken(token: string): string {
+  return token.trim();
+}
+
+function isHolabossProviderAlias(providerId: string): boolean {
+  const normalized = providerId.trim().toLowerCase();
+  return RUNTIME_HOLABOSS_PROVIDER_ALIASES.some((alias) => alias === normalized);
+}
+
 function runtimeConfigRestartRequired(
   current: Record<string, string>,
   next: Record<string, string>,
@@ -3353,6 +3367,45 @@ function runtimeConfigIsControlPlaneManaged(
   return modelProxyBaseUrl.includes("/api/v1/model-proxy");
 }
 
+function configuredProviderIdForRuntimeModelToken(
+  modelToken: string | null | undefined,
+): string {
+  const normalizedModelToken = normalizeLegacyRuntimeModelToken(
+    runtimeConfigField(modelToken ?? ""),
+  );
+  if (!normalizedModelToken.includes("/")) {
+    return "";
+  }
+  const [providerId] = normalizedModelToken.split("/");
+  return providerId.trim();
+}
+
+function sessionQueueRequiresRuntimeBinding(
+  config: Record<string, string>,
+  selectedModelToken: string | null | undefined,
+): boolean {
+  const explicitProviderId = configuredProviderIdForRuntimeModelToken(
+    selectedModelToken,
+  );
+  if (explicitProviderId) {
+    return isHolabossProviderAlias(explicitProviderId);
+  }
+
+  const defaultProviderId = runtimeConfigField(config.default_provider);
+  if (defaultProviderId) {
+    return isHolabossProviderAlias(defaultProviderId);
+  }
+
+  const defaultModelProviderId = configuredProviderIdForRuntimeModelToken(
+    config.default_model,
+  );
+  if (defaultModelProviderId) {
+    return isHolabossProviderAlias(defaultModelProviderId);
+  }
+
+  return runtimeConfigIsControlPlaneManaged(config);
+}
+
 function shouldForceRuntimeBindingRefresh(userId: string): boolean {
   if (!userId) {
     return false;
@@ -3377,6 +3430,10 @@ async function clearRuntimeBindingSecrets(reason: string): Promise<void> {
   const nextConfig = await writeRuntimeConfigFile({
     authToken: null,
     modelProxyApiKey: null,
+    userId: null,
+    sandboxId: null,
+    modelProxyBaseUrl: null,
+    controlPlaneBaseUrl: null,
   });
   lastRuntimeBindingRefreshAtMs = 0;
   lastRuntimeBindingRefreshUserId = "";
@@ -6300,12 +6357,16 @@ function renderEmptyOnboardingGuide() {
 async function createWorkspace(
   payload: HolabossCreateWorkspacePayload,
 ): Promise<WorkspaceResponsePayload> {
-  await ensureRuntimeBindingReadyForWorkspaceFlow("workspace_create");
   const mainSessionId = crypto.randomUUID();
   const harness = normalizeRequestedWorkspaceHarness(payload.harness);
   const templateMode = requestedWorkspaceTemplateMode(payload);
   const templateRootPath = payload.template_root_path?.trim() || "";
   const templateName = payload.template_name?.trim() || "";
+  const requiresRuntimeBinding =
+    templateMode !== "empty" && !templateRootPath && Boolean(templateName);
+  if (requiresRuntimeBinding) {
+    await ensureRuntimeBindingReadyForWorkspaceFlow("workspace_create");
+  }
   if (templateMode !== "empty" && !templateRootPath && templateName) {
     const holabossUserId = (payload.holaboss_user_id || "").trim();
     if (
@@ -6544,10 +6605,42 @@ async function createWorkspace(
         }).catch(() => updated);
       }
     }
-    await emitWorkspaceReadyHeartbeat({
-      workspaceId,
-      holabossUserId: payload.holaboss_user_id,
-    });
+    const runtimeConfigForHeartbeat = await readRuntimeConfigFile();
+    const runtimeHeartbeatToken = runtimeModelProxyApiKeyFromConfig(
+      runtimeConfigForHeartbeat,
+    );
+    const runtimeHeartbeatUserId = (runtimeConfigForHeartbeat.user_id || "").trim();
+    const requestedHeartbeatUserId = (payload.holaboss_user_id || "").trim();
+    const shouldEmitWorkspaceReadyHeartbeat =
+      Boolean(runtimeHeartbeatToken) &&
+      Boolean(requestedHeartbeatUserId) &&
+      requestedHeartbeatUserId !== LOCAL_OSS_TEMPLATE_USER_ID &&
+      runtimeHeartbeatUserId === requestedHeartbeatUserId;
+
+    if (shouldEmitWorkspaceReadyHeartbeat) {
+      try {
+        await emitWorkspaceReadyHeartbeat({
+          workspaceId,
+          holabossUserId: requestedHeartbeatUserId,
+        });
+      } catch (error) {
+        throw new Error(
+          contextualWorkspaceCreateError(
+            "Workspace created locally, but the workspace-ready heartbeat was not confirmed",
+            error,
+          ),
+        );
+      }
+    } else {
+      appendRuntimeEventLog({
+        category: "workspace",
+        event: "workspace.heartbeat.emit",
+        outcome: "skipped",
+        detail:
+          `workspace_id=${workspaceId} skipped=no_active_runtime_binding ` +
+          `requested_user_id=${requestedHeartbeatUserId || "missing"} runtime_user_id=${runtimeHeartbeatUserId || "missing"}`,
+      });
+    }
     return updated;
   } catch (error) {
     await requestRuntimeJson<WorkspaceResponsePayload>({
@@ -6658,7 +6751,10 @@ function contextualWorkspaceCreateError(stage: string, error: unknown) {
 async function queueSessionInput(
   payload: HolabossQueueSessionInputPayload,
 ): Promise<EnqueueSessionInputResponsePayload> {
-  await ensureRuntimeBindingReadyForWorkspaceFlow("session_queue");
+  const currentConfig = await readRuntimeConfigFile();
+  if (sessionQueueRequiresRuntimeBinding(currentConfig, payload.model)) {
+    await ensureRuntimeBindingReadyForWorkspaceFlow("session_queue");
+  }
   return requestRuntimeJson<EnqueueSessionInputResponsePayload>({
     method: "POST",
     path: "/api/v1/agent-sessions/queue",

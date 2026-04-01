@@ -1,3 +1,4 @@
+import { useRef, useState } from "react";
 import { Cable, LayoutGrid, MessageSquareText, Sparkles, Workflow } from "lucide-react";
 import type { WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 
@@ -39,12 +40,27 @@ export function LeftNavigationRail({
   activeAppId = null,
   onSelectApp
 }: LeftNavigationRailProps) {
+  const railRef = useRef<HTMLElement | null>(null);
+  const [appTooltip, setAppTooltip] = useState<{ label: string; top: number } | null>(null);
   const tooltipClassName =
     "pointer-events-none absolute left-[calc(100%+10px)] top-1/2 z-30 -translate-y-1/2 whitespace-nowrap rounded-[12px] border border-panel-border/70 bg-[rgb(var(--color-panel-bg))] px-2.5 py-1.5 text-[11px] font-medium text-text-main shadow-[0_10px_26px_rgba(25,33,53,0.12)] opacity-0 transition duration-150 group-hover:opacity-100 group-focus-visible:opacity-100";
 
+  const showAppTooltip = (target: HTMLElement, label: string) => {
+    const railRect = railRef.current?.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    if (!railRect) {
+      return;
+    }
+    const centeredTop = targetRect.top - railRect.top + targetRect.height / 2;
+    const clampedTop = Math.max(20, Math.min(centeredTop, railRect.height - 20));
+    setAppTooltip({ label, top: clampedTop });
+  };
+
   return (
     <aside
+      ref={railRef}
       className="theme-shell soft-vignette neon-border relative hidden h-full min-h-0 min-w-[60px] max-w-[60px] flex-col overflow-visible rounded-[var(--theme-radius-card)] px-2 py-3 shadow-card lg:flex"
+      onMouseLeave={() => setAppTooltip(null)}
     >
       <div className="flex min-h-0 flex-1 flex-col items-center gap-3 overflow-visible">
         <nav className="grid justify-items-center gap-1">
@@ -74,13 +90,23 @@ export function LeftNavigationRail({
         {installedApps.length > 0 ? (
           <>
             <div className="h-px w-8 rounded-full bg-panel-border/45" />
-            <nav className="chat-scrollbar-hidden flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-x-hidden overflow-y-auto pb-1">
+            <nav
+              className="chat-scrollbar-hidden flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-x-hidden overflow-y-auto pb-1"
+              onScroll={() => setAppTooltip(null)}
+            >
               {installedApps.map((app) => {
                 const isActive = activeAppId === app.id;
                 const isReady = "ready" in app && app.ready;
                 const hasError = "error" in app && typeof app.error === "string" && app.error;
                 return (
-                  <div key={app.id} className="group relative">
+                  <div
+                    key={app.id}
+                    className="group relative"
+                    onMouseEnter={(event) => showAppTooltip(event.currentTarget, app.label)}
+                    onMouseLeave={() => setAppTooltip(null)}
+                    onFocus={(event) => showAppTooltip(event.currentTarget, app.label)}
+                    onBlur={() => setAppTooltip(null)}
+                  >
                     <button
                       type="button"
                       aria-label={app.label}
@@ -107,7 +133,6 @@ export function LeftNavigationRail({
                         }`}
                       />
                     </button>
-                    <div className={tooltipClassName}>{app.label}</div>
                   </div>
                 );
               })}
@@ -115,6 +140,14 @@ export function LeftNavigationRail({
           </>
         ) : null}
       </div>
+      {appTooltip ? (
+        <div
+          className="pointer-events-none absolute left-[calc(100%+10px)] z-30 whitespace-nowrap rounded-[12px] border border-panel-border/70 bg-[rgb(var(--color-panel-bg))] px-2.5 py-1.5 text-[11px] font-medium text-text-main shadow-[0_10px_26px_rgba(25,33,53,0.12)]"
+          style={{ top: `${appTooltip.top}px`, transform: "translateY(-50%)" }}
+        >
+          {appTooltip.label}
+        </div>
+      ) : null}
     </aside>
   );
 }

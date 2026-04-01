@@ -2,14 +2,47 @@ import {
   bindHarnessHostPlugin,
   type HarnessDefinition,
   type HarnessPrepareRunParams,
+  type HarnessRuntimeConfigPayload,
   type HarnessRuntimeStatus,
   type HarnessRuntimeStatusContext,
 } from "./types.js";
+import { appendOpencodeMcpToolAliasGuidance } from "./opencode-prompt.js";
+
+function opencodeProviderAliasForRuntimeConfig(runtimeConfig: HarnessRuntimeConfigPayload): string {
+  const providerId = runtimeConfig.provider_id.trim();
+  const normalizedProviderId = providerId.toLowerCase();
+  const normalizedModelProxyProvider = runtimeConfig.model_client.model_proxy_provider.trim().toLowerCase();
+
+  if (normalizedProviderId === "holaboss_model_proxy") {
+    return normalizedModelProxyProvider === "anthropic_native" || normalizedModelProxyProvider === "anthropic"
+      ? "hb_anthropic"
+      : "hb_openai";
+  }
+
+  if (
+    normalizedProviderId === "anthropic" ||
+    normalizedProviderId === "anthropic_native" ||
+    normalizedProviderId === "hb_anthropic"
+  ) {
+    return "hb_anthropic";
+  }
+
+  if (
+    normalizedProviderId === "openai" ||
+    normalizedProviderId === "openai_compatible" ||
+    normalizedProviderId === "hb_openai"
+  ) {
+    return "hb_openai";
+  }
+
+  return providerId;
+}
 
 async function prepareOpencodeHarnessRun(params: HarnessPrepareRunParams): Promise<void> {
+  const providerId = opencodeProviderAliasForRuntimeConfig(params.runtimeConfig);
   const configUpdate = params.syncModelConfig({
     workspace_root: params.bootstrap.workspaceDir,
-    provider_id: params.runtimeConfig.provider_id,
+    provider_id: providerId,
     model_id: params.runtimeConfig.model_id,
     model_client: params.runtimeConfig.model_client,
   });
@@ -65,6 +98,7 @@ export const opencodeHarnessDefinition: HarnessDefinition = {
       };
     },
     buildHarnessHostRequest(params) {
+      const providerId = opencodeProviderAliasForRuntimeConfig(params.runtimeConfig);
       return {
         workspace_id: params.request.workspace_id,
         workspace_dir: params.bootstrap.workspaceDir,
@@ -75,12 +109,12 @@ export const opencodeHarnessDefinition: HarnessDefinition = {
         debug: Boolean(params.request.debug),
         harness_session_id: params.bootstrap.requestedHarnessSessionId,
         persisted_harness_session_id: params.bootstrap.persistedHarnessSessionId,
-        provider_id: params.runtimeConfig.provider_id,
+        provider_id: providerId,
         model_id: params.runtimeConfig.model_id,
         mode: params.runtimeConfig.mode,
         opencode_base_url: params.backendBaseUrl,
         timeout_seconds: params.timeoutSeconds,
-        system_prompt: params.runtimeConfig.system_prompt,
+        system_prompt: appendOpencodeMcpToolAliasGuidance(params.runtimeConfig.system_prompt, params.mcpToolRefs),
         tools: { ...params.runtimeConfig.tools },
         workspace_tool_ids: [...params.runtimeConfig.workspace_tool_ids],
         workspace_skill_ids: [...params.runtimeConfig.workspace_skill_ids],
@@ -91,7 +125,10 @@ export const opencodeHarnessDefinition: HarnessDefinition = {
         })),
         output_format: params.runtimeConfig.output_format,
         workspace_config_checksum: params.runtimeConfig.workspace_config_checksum,
-        run_started_payload: params.runStartedPayload,
+        run_started_payload: {
+          ...params.runStartedPayload,
+          provider_id: providerId,
+        },
         model_client: {
           model_proxy_provider: params.runtimeConfig.model_client.model_proxy_provider,
           api_key: params.runtimeConfig.model_client.api_key,

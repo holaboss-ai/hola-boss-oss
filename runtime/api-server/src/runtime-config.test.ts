@@ -61,7 +61,7 @@ test("file runtime config service updates runtime config and writes opencode boo
     user_id: "user-1",
     sandbox_id: "sandbox-1",
     model_proxy_base_url: "https://runtime.example/api/v1/model-proxy",
-    default_model: "openai/gpt-5.1",
+    default_model: "openai/gpt-5.4",
     desktop_browser_enabled: true,
     desktop_browser_url: "http://127.0.0.1:8787/api/v1/browser",
     desktop_browser_auth_token: "browser-token"
@@ -74,7 +74,7 @@ test("file runtime config service updates runtime config and writes opencode boo
     user_id: "user-1",
     sandbox_id: "sandbox-1",
     model_proxy_base_url: "https://runtime.example/api/v1/model-proxy",
-    default_model: "openai/gpt-5.1",
+    default_model: "openai/gpt-5.4",
     runtime_mode: "oss",
     default_provider: "holaboss_model_proxy",
     holaboss_enabled: true,
@@ -84,14 +84,15 @@ test("file runtime config service updates runtime config and writes opencode boo
   assert.equal(ensureCalls, 0);
 
   const configDocument = JSON.parse(fs.readFileSync(path.join(root, "state", "runtime-config.json"), "utf8"));
-  assert.equal(configDocument.runtime.default_model, "openai/gpt-5.1");
+  assert.equal(configDocument.runtime.default_model, "openai/gpt-5.4");
   assert.equal(configDocument.providers.holaboss_model_proxy.base_url, "https://runtime.example/api/v1/model-proxy");
   assert.equal(configDocument.integrations.holaboss.user_id, "user-1");
   assert.equal(configDocument.capabilities.desktop_browser.url, "http://127.0.0.1:8787/api/v1/browser");
   assert.equal(configDocument.capabilities.desktop_browser.auth_token, "browser-token");
 
   const opencodeDocument = JSON.parse(fs.readFileSync(path.join(root, "workspace", "opencode.json"), "utf8"));
-  assert.equal(opencodeDocument.model, "openai/gpt-5.1");
+  assert.equal(opencodeDocument.model, "openai/gpt-5.4");
+  assert.equal(opencodeDocument.provider.openai.npm, "@ai-sdk/openai");
   assert.equal(
     opencodeDocument.provider.openai.options.baseURL,
     "https://runtime.example/api/v1/model-proxy/openai/v1"
@@ -109,7 +110,7 @@ test("file runtime config service returns harness and browser readiness state", 
     path.join(root, "state", "runtime-config.json"),
     `${JSON.stringify({
       runtime: {
-        default_model: "openai/gpt-5.1",
+        default_model: "openai/gpt-5.4",
         sandbox_id: "sandbox-1",
         default_provider: "holaboss_model_proxy"
       },
@@ -174,7 +175,7 @@ test("file runtime config service treats pi harness as ready without opencode bo
     path.join(root, "state", "runtime-config.json"),
     `${JSON.stringify({
       runtime: {
-        default_model: "openai/gpt-5.1",
+        default_model: "openai/gpt-5.4",
         sandbox_id: "sandbox-1",
         default_provider: "holaboss_model_proxy"
       },

@@ -39,14 +39,15 @@ export function MarketplaceGallery({
     let available = effectiveTemplates.filter((t) => !t.is_hidden);
     const trimmed = query.trim().toLowerCase();
     if (trimmed) {
-      available = available.filter((t) =>
+      available = available.filter((t: TemplateMetadataPayload) =>
         [t.name, t.description ?? "", ...t.tags, t.category].some((v) =>
           v.toLowerCase().includes(trimmed),
         ),
       );
     }
-    return available.toSorted(
-      (a, b) => Number(a.is_coming_soon) - Number(b.is_coming_soon),
+    return [...available].sort(
+      (a: TemplateMetadataPayload, b: TemplateMetadataPayload) =>
+        Number(a.is_coming_soon) - Number(b.is_coming_soon),
     );
   }, [effectiveTemplates, query]);
 
@@ -142,7 +143,7 @@ export function MarketplaceGallery({
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {visibleTemplates.map((t) => (
+            {visibleTemplates.map((t: TemplateMetadataPayload) => (
               <KitCard key={t.name} template={t} onClick={onSelectKit} />
             ))}
           </div>

@@ -38,7 +38,9 @@ function buildTestRuntimeApiServer(options: BuildRuntimeApiServerOptions) {
     ...options,
     queueWorker: null,
     cronWorker: null,
-    bridgeWorker: null
+    bridgeWorker: null,
+    enableAppHealthMonitor: false,
+    startAppsOnReady: false
   });
 }
 
@@ -349,7 +351,7 @@ test("runtime config routes delegate to the runtime config executor", async () =
         user_id: null,
         sandbox_id: null,
         model_proxy_base_url: null,
-        default_model: "openai/gpt-5.1",
+        default_model: "openai/gpt-5.4",
         runtime_mode: "oss",
         default_provider: null,
         holaboss_enabled: false,
@@ -381,7 +383,7 @@ test("runtime config routes delegate to the runtime config executor", async () =
         user_id: "user-1",
         sandbox_id: "sandbox-1",
         model_proxy_base_url: "https://runtime.example/api/v1/model-proxy",
-        default_model: "openai/gpt-5.1",
+        default_model: "openai/gpt-5.4",
         runtime_mode: "oss",
         default_provider: "holaboss_model_proxy",
         holaboss_enabled: true,
@@ -408,7 +410,7 @@ test("runtime config routes delegate to the runtime config executor", async () =
       user_id: "user-1",
       sandbox_id: "sandbox-1",
       model_proxy_base_url: "https://runtime.example/api/v1/model-proxy",
-      default_model: "openai/gpt-5.1"
+      default_model: "openai/gpt-5.4"
     }
   });
 
@@ -418,7 +420,7 @@ test("runtime config routes delegate to the runtime config executor", async () =
   assert.deepEqual(calls, [
     "get-config",
     "get-status",
-    "put-config:{\"auth_token\":\"token-1\",\"user_id\":\"user-1\",\"sandbox_id\":\"sandbox-1\",\"model_proxy_base_url\":\"https://runtime.example/api/v1/model-proxy\",\"default_model\":\"openai/gpt-5.1\"}"
+    "put-config:{\"auth_token\":\"token-1\",\"user_id\":\"user-1\",\"sandbox_id\":\"sandbox-1\",\"model_proxy_base_url\":\"https://runtime.example/api/v1/model-proxy\",\"default_model\":\"openai/gpt-5.4\"}"
   ]);
 
   await app.close();
@@ -567,6 +569,10 @@ test("memory routes delegate to the memory service and preserve payloads", async
     async sync(payload) {
       calls.push({ operation: "sync", payload });
       return { workspace_id: payload.workspace_id, queued: true, reason: payload.reason };
+    },
+    async capture(payload) {
+      calls.push({ operation: "capture", payload });
+      return { workspace_id: payload.workspace_id, files: {} };
     }
   };
   const app = buildTestRuntimeApiServer({ store, memoryService });
@@ -782,7 +788,20 @@ test("runtime states and history endpoints read TS state store", async () => {
     text: "hi",
     messageId: "m-2"
   });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "proposal-session-1",
+    kind: "task_proposal",
+    title: "Follow up",
+    parentSessionId: "session-main",
+    sourceProposalId: "proposal-1",
+    createdBy: "workspace_user"
+  });
 
+  const sessions = await app.inject({
+    method: "GET",
+    url: `/api/v1/agent-sessions?workspace_id=${workspace.id}`
+  });
   const states = await app.inject({
     method: "GET",
     url: `/api/v1/agent-sessions/by-workspace/${workspace.id}/runtime-states`
@@ -792,6 +811,14 @@ test("runtime states and history endpoints read TS state store", async () => {
     url: `/api/v1/agent-sessions/session-main/history?workspace_id=${workspace.id}`
   });
 
+  assert.equal(sessions.statusCode, 200);
+  assert.equal(sessions.json().count, 2);
+  const proposalSession = sessions
+    .json()
+    .items.find((item: { session_id: string }) => item.session_id === "proposal-session-1");
+  assert.ok(proposalSession);
+  assert.equal(proposalSession.kind, "task_proposal");
+  assert.equal(proposalSession.parent_session_id, "session-main");
   assert.equal(states.statusCode, 200);
   assert.deepEqual(states.json().items, []);
   assert.equal(history.statusCode, 200);
@@ -1530,6 +1557,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
         healthCheck: { path: "/health", timeoutS: 60, intervalS: 5 },
         envContract: [],
+        integrations: undefined,
         startCommand: "",
         baseDir: "apps/app-b",
         lifecycle: { setup: "", start: "", stop: "" }
@@ -1544,6 +1572,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
         healthCheck: { path: "/health", timeoutS: 60, intervalS: 5 },
         envContract: [],
+        integrations: undefined,
         startCommand: "",
         baseDir: "apps/app-b",
         lifecycle: { setup: "", start: "", stop: "" }
@@ -1558,6 +1587,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
         healthCheck: { path: "/health", timeoutS: 60, intervalS: 5 },
         envContract: [],
+        integrations: undefined,
         startCommand: "",
         baseDir: "apps/app-b",
         lifecycle: { setup: "", start: "", stop: "" }
@@ -2422,7 +2452,27 @@ test("app install, list, build-status, and setup routes preserve local payload s
     dbPath: path.join(root, "runtime.db"),
     workspaceRoot
   });
-  const app = buildTestRuntimeApiServer({ store });
+  const lifecycleCalls: Array<Record<string, unknown>> = [];
+  const app = buildTestRuntimeApiServer({
+    store,
+    appLifecycleExecutor: {
+      async startApp(params) {
+        lifecycleCalls.push({ action: "start", ...params });
+        return {
+          app_id: params.appId,
+          status: "started",
+          detail: "app started with lifecycle manager",
+          ports: { http: params.httpPort ?? 18081, mcp: params.mcpPort ?? 13101 }
+        };
+      },
+      async stopApp() {
+        throw new Error("not used");
+      },
+      async shutdownAll() {
+        throw new Error("not used");
+      }
+    }
+  });
 
   const created = await app.inject({
     method: "POST",
@@ -2461,9 +2511,12 @@ test("app install, list, build-status, and setup routes preserve local payload s
   assert.equal(install.statusCode, 200);
   assert.deepEqual(install.json(), {
     app_id: "demo-app",
-    status: "installed",
-    detail: "Files written, no setup command defined"
+    status: "enabled",
+    detail: "App installed and running",
+    ready: true,
+    error: null
   });
+  assert.equal(lifecycleCalls.length, 1);
 
   const listed = await app.inject({
     method: "GET",
@@ -2476,7 +2529,9 @@ test("app install, list, build-status, and setup routes preserve local payload s
         app_id: "demo-app",
         config_path: "apps/demo-app/app.runtime.yaml",
         lifecycle: { start: "npm run dev" },
-        build_status: "stopped"
+        build_status: "running",
+        ready: true,
+        error: null
       }
     ],
     count: 1
@@ -2487,7 +2542,7 @@ test("app install, list, build-status, and setup routes preserve local payload s
     url: `/api/v1/apps/demo-app/build-status?workspace_id=${workspace.id}`
   });
   assert.equal(buildStatus.statusCode, 200);
-  assert.equal(buildStatus.json().status, "stopped");
+  assert.equal(buildStatus.json().status, "running");
 
   const setup = await app.inject({
     method: "POST",
@@ -2556,7 +2611,9 @@ test("app list and build-status infer pending when installed app has setup but n
         app_id: "demo-app",
         config_path: "apps/demo-app/app.runtime.yaml",
         lifecycle: { setup: "npm install" },
-        build_status: "pending"
+        build_status: "pending",
+        ready: false,
+        error: null
       }
     ],
     count: 1
@@ -2611,10 +2668,131 @@ test("queue route persists input, user message, and runtime state", async () => 
   assert.equal(runtimeStates[0].status, "QUEUED");
   assert.equal(runtimeStates[0].currentInputId, response.json().input_id);
 
+  const session = store.getSession({ workspaceId: workspace.id, sessionId: "session-main" });
+  assert.ok(session);
+  assert.equal(session.kind, "main");
+
+  const binding = store.getBinding({ workspaceId: workspace.id, sessionId: "session-main" });
+  assert.ok(binding);
+  assert.equal(binding.harnessSessionId, "session-main");
+
   const history = store.listSessionMessages({ workspaceId: workspace.id, sessionId: "session-main" });
   assert.equal(history.length, 1);
   assert.equal(history[0].role, "user");
   assert.equal(history[0].text, "hello world");
+
+  await app.close();
+  store.close();
+});
+
+test("accept task proposal creates a child session with queued work", async () => {
+  const root = makeTempDir("hb-runtime-api-task-proposal-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  let wakeCount = 0;
+  const app = buildRuntimeApiServer({
+    store,
+    queueWorker: {
+      async start() {},
+      async close() {},
+      wake() {
+        wakeCount += 1;
+      }
+    },
+    cronWorker: null,
+    bridgeWorker: null
+  });
+
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "opencode",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    harness: "opencode",
+    harnessSessionId: "session-main"
+  });
+  store.createTaskProposal({
+    proposalId: "proposal-1",
+    workspaceId: workspace.id,
+    taskName: "Follow up",
+    taskPrompt: "Write a follow-up message",
+    taskGenerationRationale: "User has not replied",
+    sourceEventIds: ["evt-1"],
+    createdAt: "2026-01-01T00:00:00+00:00"
+  });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/task-proposals/proposal-1/accept",
+    payload: {
+      parent_session_id: "session-main",
+      task_name: "Follow up",
+      task_prompt: "Write the follow-up and send a reminder",
+      model: "openai/gpt-5.2",
+      priority: 2,
+      created_by: "workspace_user"
+    }
+  });
+
+  assert.equal(response.statusCode, 200);
+  const body = response.json();
+  assert.equal(body.proposal.state, "accepted");
+  assert.equal(body.proposal.accepted_input_id, body.input.input_id);
+  assert.equal(body.proposal.accepted_session_id, body.session.session_id);
+  assert.equal(body.session.kind, "task_proposal");
+  assert.equal(body.session.parent_session_id, "session-main");
+  assert.equal(body.session.source_proposal_id, "proposal-1");
+  assert.equal(body.session.title, "Follow up");
+  assert.equal(body.input.session_id, body.session.session_id);
+  assert.equal(body.input.status, "QUEUED");
+  assert.equal(wakeCount, 1);
+
+  const childBinding = store.getBinding({ workspaceId: workspace.id, sessionId: body.session.session_id });
+  assert.ok(childBinding);
+  assert.equal(childBinding.harness, "opencode");
+  assert.equal(childBinding.harnessSessionId, body.session.session_id);
+
+  const childRuntimeState = store.getRuntimeState({
+    workspaceId: workspace.id,
+    sessionId: body.session.session_id
+  });
+  assert.ok(childRuntimeState);
+  assert.equal(childRuntimeState.status, "QUEUED");
+  assert.equal(childRuntimeState.currentInputId, body.input.input_id);
+
+  const childInput = store.getInput(body.input.input_id);
+  assert.ok(childInput);
+  assert.equal(childInput.sessionId, body.session.session_id);
+  assert.equal(childInput.priority, 2);
+  assert.equal(childInput.payload.text, "Write the follow-up and send a reminder");
+  assert.equal(childInput.payload.model, "openai/gpt-5.2");
+  assert.deepEqual(childInput.payload.context, {
+    source: "task_proposal",
+    proposal_id: "proposal-1",
+    parent_session_id: "session-main"
+  });
+
+  const childHistory = store.listSessionMessages({
+    workspaceId: workspace.id,
+    sessionId: body.session.session_id
+  });
+  assert.equal(childHistory.length, 1);
+  assert.equal(childHistory[0].role, "user");
+  assert.equal(childHistory[0].text, "Write the follow-up and send a reminder");
+
+  const secondAccept = await app.inject({
+    method: "POST",
+    url: "/api/v1/task-proposals/proposal-1/accept",
+    payload: {}
+  });
+  assert.equal(secondAccept.statusCode, 409);
 
   await app.close();
   store.close();
