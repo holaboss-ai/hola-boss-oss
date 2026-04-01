@@ -150,7 +150,7 @@ export function IntegrationsPane() {
   return (
     <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--theme-radius-card)] shadow-card">
       <div className="relative min-h-0 flex-1 overflow-auto">
-        <div className="mx-auto max-w-[960px] px-6 py-6">
+        <div className="mx-auto max-w-5xl px-6 py-6">
           {/* Header */}
           <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-text-main">
             Integrations

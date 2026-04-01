@@ -57,7 +57,7 @@ export function LeftNavigationRail({
                   aria-label={item.label}
                   title={item.label}
                   onClick={() => onSelectItem(item.id)}
-                  className={`flex w-10 items-center justify-center rounded-[14px] py-2.5 text-left text-[12px] transition-all duration-200 ${
+                  className={`flex h-10 w-10 items-center justify-center rounded-[10px] text-[12px] transition-colors duration-200 ${
                     isActive
                       ? "border border-neon-green/35 bg-neon-green/10 text-text-main"
                       : "border border-transparent text-text-muted hover:border-panel-border/40 hover:bg-[var(--theme-hover-bg)] hover:text-text-main"
@@ -86,9 +86,9 @@ export function LeftNavigationRail({
                       aria-label={app.label}
                       title={app.label}
                       onClick={() => onSelectApp?.(app.id)}
-                      className={`relative flex h-10 w-10 items-center justify-center rounded-[14px] border text-[10px] font-semibold uppercase tracking-[0.08em] transition-all duration-200 ${
+                      className={`relative flex h-10 w-10 items-center justify-center rounded-[10px] border text-[10px] font-semibold uppercase tracking-[0.08em] transition-colors duration-200 ${
                         isActive
-                          ? "border-neon-green/45 bg-neon-green/10 text-text-main shadow-[0_10px_18px_rgba(64,201,162,0.16)]"
+                          ? "border-neon-green/45 bg-neon-green/10 text-text-main"
                           : "border-panel-border/35 bg-panel-bg/55 text-text-muted hover:border-panel-border/55 hover:bg-[var(--theme-hover-bg)] hover:text-text-main"
                       }`}
                     >

@@ -87,7 +87,7 @@ export function AutomationsPane() {
 
   return (
     <PaneCard className="shadow-glow">
-      <div className="flex h-full min-h-0 flex-col">
+      <div className="mx-auto flex h-full min-h-0 max-w-5xl flex-col">
         {statusMessage ? (
           <div className="shrink-0 border-b border-panel-border/35 px-4 py-3">
             <div
