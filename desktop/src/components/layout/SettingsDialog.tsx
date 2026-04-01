@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { CircleHelp, ExternalLink, Globe, Info, Palette, User2, X } from "lucide-react";
+import { CircleHelp, ExternalLink, Globe, Info, Palette, User2, Waypoints, X } from "lucide-react";
 import { AuthPanel } from "@/components/auth/AuthPanel";
 
 const THEME_SWATCHES: Record<string, [string, string, string]> = {
@@ -43,6 +43,12 @@ const SETTINGS_SECTIONS: Array<{
     icon: User2
   },
   {
+    id: "providers",
+    label: "Model Providers",
+    description: "Runtime providers and model catalogs",
+    icon: Waypoints
+  },
+  {
     id: "settings",
     label: "Settings",
     description: "Appearance and desktop defaults",
@@ -60,6 +66,8 @@ function titleForSection(section: UiSettingsPaneSection): string {
   switch (section) {
     case "account":
       return "Account";
+    case "providers":
+      return "Model Providers";
     case "about":
       return "About";
     case "settings":
@@ -72,6 +80,8 @@ function subtitleForSection(section: UiSettingsPaneSection): string {
   switch (section) {
     case "account":
       return "Manage your desktop session and runtime binding.";
+    case "providers":
+      return "Configure runtime providers, credentials, and model catalogs.";
     case "about":
       return "Open product resources and support channels.";
     case "settings":
@@ -206,7 +216,15 @@ export function SettingsDialog({
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
             {activeSection === "account" ? (
               <div className="max-w-[560px]">
-                <AuthPanel />
+                <AuthPanel view="account" />
+              </div>
+            ) : null}
+
+            {activeSection === "providers" ? (
+              <div className="grid gap-6">
+                <section className="max-w-[920px]">
+                  <AuthPanel view="runtime" />
+                </section>
               </div>
             ) : null}
 

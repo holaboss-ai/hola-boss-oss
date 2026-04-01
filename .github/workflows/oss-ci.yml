@@ -40,7 +40,6 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: |
-            runtime/api-server/package-lock.json
             runtime/harness-host/package-lock.json
             runtime/state-store/package-lock.json
 
@@ -56,14 +55,11 @@ jobs:
       - name: Build runtime harness host
         run: npm --prefix runtime/harness-host run build
 
-      - name: Install runtime API server dependencies
-        run: npm --prefix runtime/api-server ci
+      - name: Runtime state store tests
+        run: npm run runtime:state-store:test
 
-      - name: Build runtime API server
-        run: npm --prefix runtime/api-server run build
-
-      - name: Runtime tests
-        run: npm run runtime:test
+      - name: Runtime harness host tests
+        run: npm run runtime:harness-host:test
 
   runtime-api-server:
     runs-on: ubuntu-latest

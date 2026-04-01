@@ -86,6 +86,23 @@ export function queueLocalCronjobRun(
   const priority = Number.isInteger(metadata.priority) ? (metadata.priority as number) : 0;
   const idempotencyKey = typeof metadata.idempotency_key === "string" ? metadata.idempotency_key : null;
 
+  store.ensureSession({
+    workspaceId: job.workspaceId,
+    sessionId: resolvedSessionId,
+    kind: "cronjob",
+    title: job.name.trim() || job.description.trim() || "Cronjob run",
+    createdBy: job.initiatedBy
+  });
+  if (!store.getBinding({ workspaceId: job.workspaceId, sessionId: resolvedSessionId })) {
+    const harness = (workspace.harness ?? process.env.SANDBOX_AGENT_HARNESS ?? "opencode").trim() || "opencode";
+    store.upsertBinding({
+      workspaceId: job.workspaceId,
+      sessionId: resolvedSessionId,
+      harness,
+      harnessSessionId: resolvedSessionId
+    });
+  }
+
   store.ensureRuntimeState({
     workspaceId: job.workspaceId,
     sessionId: resolvedSessionId,

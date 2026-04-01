@@ -27,6 +27,19 @@ export interface WorkspaceRecord {
   deletedAtUtc: string | null;
 }
 
+export interface AgentSessionRecord {
+  workspaceId: string;
+  sessionId: string;
+  kind: string;
+  title: string | null;
+  parentSessionId: string | null;
+  sourceProposalId: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
+}
+
 export interface SessionBindingRecord {
   workspaceId: string;
   sessionId: string;
@@ -209,6 +222,9 @@ export interface TaskProposalRecord {
   sourceEventIds: string[];
   createdAt: string;
   state: string;
+  acceptedSessionId: string | null;
+  acceptedInputId: string | null;
+  acceptedAt: string | null;
 }
 
 export interface CreateWorkspaceParams {
@@ -242,6 +258,15 @@ type WorkspaceUpdateFields = Partial<{
   onboardingRequestedBy: string | null;
 }>;
 
+type AgentSessionUpdateFields = Partial<{
+  kind: string | null;
+  title: string | null;
+  parentSessionId: string | null;
+  sourceProposalId: string | null;
+  createdBy: string | null;
+  archivedAt: string | null;
+}>;
+
 type InputUpdateFields = Partial<{
   sessionId: string;
   workspaceId: string;
@@ -253,6 +278,16 @@ type InputUpdateFields = Partial<{
   idempotencyKey: string | null;
   claimedBy: string | null;
   claimedUntil: string | null;
+}>;
+
+type TaskProposalUpdateFields = Partial<{
+  taskName: string;
+  taskPrompt: string;
+  taskGenerationRationale: string;
+  state: string;
+  acceptedSessionId: string | null;
+  acceptedInputId: string | null;
+  acceptedAt: string | null;
 }>;
 
 type WorkspaceRow = {
@@ -474,12 +509,186 @@ export class RuntimeStateStore {
     });
   }
 
+  ensureSession(
+    params: {
+      workspaceId: string;
+      sessionId: string;
+      kind?: string | null;
+      title?: string | null;
+      parentSessionId?: string | null;
+      sourceProposalId?: string | null;
+      createdBy?: string | null;
+      archivedAt?: string | null;
+    },
+    options: { touchExisting?: boolean } = {}
+  ): AgentSessionRecord {
+    const existing = this.getSession({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId
+    });
+    const now = utcNowIso();
+
+    if (!existing) {
+      this.db()
+        .prepare(`
+          INSERT INTO agent_sessions (
+              workspace_id,
+              session_id,
+              kind,
+              title,
+              parent_session_id,
+              source_proposal_id,
+              created_by,
+              created_at,
+              updated_at,
+              archived_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          params.workspaceId,
+          params.sessionId,
+          this.normalizedSessionKind(params.kind),
+          this.normalizedNullableText(params.title),
+          this.normalizedNullableText(params.parentSessionId),
+          this.normalizedNullableText(params.sourceProposalId),
+          this.normalizedNullableText(params.createdBy),
+          now,
+          now,
+          this.normalizedNullableText(params.archivedAt)
+        );
+      return this.requireSession({
+        workspaceId: params.workspaceId,
+        sessionId: params.sessionId
+      });
+    }
+
+    const updates: AgentSessionUpdateFields = {};
+    if (params.kind !== undefined) {
+      updates.kind = this.normalizedSessionKind(params.kind);
+    }
+    if (params.title !== undefined) {
+      updates.title = this.normalizedNullableText(params.title);
+    }
+    if (params.parentSessionId !== undefined) {
+      updates.parentSessionId = this.normalizedNullableText(params.parentSessionId);
+    }
+    if (params.sourceProposalId !== undefined) {
+      updates.sourceProposalId = this.normalizedNullableText(params.sourceProposalId);
+    }
+    if (params.createdBy !== undefined) {
+      updates.createdBy = this.normalizedNullableText(params.createdBy);
+    }
+    if (params.archivedAt !== undefined) {
+      updates.archivedAt = this.normalizedNullableText(params.archivedAt);
+    }
+
+    if (Object.keys(updates).length > 0) {
+      return this.requireUpdatedSession({
+        workspaceId: params.workspaceId,
+        sessionId: params.sessionId,
+        fields: updates
+      });
+    }
+
+    if (options.touchExisting === false) {
+      return existing;
+    }
+
+    this.db()
+      .prepare("UPDATE agent_sessions SET updated_at = ? WHERE workspace_id = ? AND session_id = ?")
+      .run(now, params.workspaceId, params.sessionId);
+    return this.requireSession({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId
+    });
+  }
+
+  getSession(params: { workspaceId: string; sessionId: string }): AgentSessionRecord | null {
+    const row = this.db()
+      .prepare<[string, string], Record<string, unknown>>(`
+        SELECT *
+        FROM agent_sessions
+        WHERE workspace_id = ? AND session_id = ?
+        LIMIT 1
+      `)
+      .get(params.workspaceId, params.sessionId);
+    return row ? this.rowToAgentSession(row) : null;
+  }
+
+  listSessions(params: {
+    workspaceId: string;
+    includeArchived?: boolean;
+    limit?: number;
+    offset?: number;
+  }): AgentSessionRecord[] {
+    const rows = this.db()
+      .prepare<[string, number, number, number], Record<string, unknown>>(`
+        SELECT *
+        FROM agent_sessions
+        WHERE workspace_id = ?
+          AND (? = 1 OR archived_at IS NULL)
+        ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC, session_id DESC
+        LIMIT ? OFFSET ?
+      `)
+      .all(
+        params.workspaceId,
+        params.includeArchived ? 1 : 0,
+        params.limit ?? 100,
+        params.offset ?? 0
+      );
+    return rows.map((row) => this.rowToAgentSession(row));
+  }
+
+  updateTaskProposal(params: { proposalId: string; fields: TaskProposalUpdateFields }): TaskProposalRecord | null {
+    const entries = Object.entries(params.fields);
+    if (entries.length === 0) {
+      return this.getTaskProposal(params.proposalId);
+    }
+
+    const columnMap: Record<keyof TaskProposalUpdateFields, string> = {
+      taskName: "task_name",
+      taskPrompt: "task_prompt",
+      taskGenerationRationale: "task_generation_rationale",
+      state: "state",
+      acceptedSessionId: "accepted_session_id",
+      acceptedInputId: "accepted_input_id",
+      acceptedAt: "accepted_at"
+    };
+
+    const assignments: string[] = [];
+    const values: Array<string | null> = [];
+    for (const [key, value] of entries) {
+      const column = columnMap[key as keyof TaskProposalUpdateFields];
+      if (!column) {
+        throw new Error(`unsupported task proposal update field: ${key}`);
+      }
+      assignments.push(`${column} = ?`);
+      values.push(value == null ? null : String(value));
+    }
+    values.push(params.proposalId);
+
+    const result = this.db()
+      .prepare(`UPDATE task_proposals SET ${assignments.join(", ")} WHERE proposal_id = ?`)
+      .run(...values);
+    if (result.changes <= 0) {
+      return null;
+    }
+    return this.getTaskProposal(params.proposalId);
+  }
+
   upsertBinding(params: {
     workspaceId: string;
     sessionId: string;
     harness: string;
     harnessSessionId: string;
   }): SessionBindingRecord {
+    this.ensureSession(
+      {
+        workspaceId: params.workspaceId,
+        sessionId: params.sessionId
+      },
+      { touchExisting: false }
+    );
     const now = utcNowIso();
     this.db()
       .prepare(`
@@ -905,23 +1114,37 @@ export class RuntimeStateStore {
     return this.getInput(inputId);
   }
 
-  claimInputs(params: { limit: number; claimedBy: string; leaseSeconds: number }): SessionInputRecord[] {
+  claimInputs(params: { limit: number; claimedBy: string; leaseSeconds: number; distinctSessions?: boolean }): SessionInputRecord[] {
     const now = new Date();
     const nowIso = now.toISOString();
     const claimedUntilIso =
       params.leaseSeconds > 0 ? new Date(now.getTime() + params.leaseSeconds * 1000).toISOString() : nowIso;
 
     const rows = this.db()
-      .prepare<[string, string, number], { input_id: string }>(`
-        SELECT input_id
+      .prepare<[string, string], { input_id: string; session_id: string }>(`
+        SELECT input_id, session_id
         FROM agent_session_inputs
         WHERE status = 'QUEUED'
           AND datetime(available_at) <= datetime(?)
           AND (claimed_until IS NULL OR datetime(claimed_until) <= datetime(?))
         ORDER BY priority DESC, datetime(created_at) ASC
-        LIMIT ?
       `)
-      .all(nowIso, nowIso, Math.max(1, params.limit));
+      .all(nowIso, nowIso);
+
+    const selectedInputIds: string[] = [];
+    const seenSessionIds = new Set<string>();
+    for (const row of rows) {
+      if (params.distinctSessions && seenSessionIds.has(row.session_id)) {
+        continue;
+      }
+      selectedInputIds.push(row.input_id);
+      if (params.distinctSessions) {
+        seenSessionIds.add(row.session_id);
+      }
+      if (selectedInputIds.length >= Math.max(1, params.limit)) {
+        break;
+      }
+    }
 
     const update = this.db().prepare(`
       UPDATE agent_session_inputs
@@ -942,7 +1165,7 @@ export class RuntimeStateStore {
         }
       }
     });
-    transaction(rows.map((row) => row.input_id));
+    transaction(selectedInputIds);
     return records;
   }
 
@@ -987,6 +1210,13 @@ export class RuntimeStateStore {
     status?: string;
     currentInputId?: string | null;
   }): SessionRuntimeStateRecord {
+    this.ensureSession(
+      {
+        workspaceId: params.workspaceId,
+        sessionId: params.sessionId
+      },
+      { touchExisting: false }
+    );
     const now = utcNowIso();
     this.db()
       .prepare(`
@@ -1018,6 +1248,13 @@ export class RuntimeStateStore {
     heartbeatAt?: string | null;
     lastError?: Record<string, unknown> | string | null;
   }): SessionRuntimeStateRecord {
+    this.ensureSession(
+      {
+        workspaceId: params.workspaceId,
+        sessionId: params.sessionId
+      },
+      { touchExisting: false }
+    );
     const heartbeatAt = params.heartbeatAt ?? utcNowIso();
     const serializedLastError =
       params.lastError == null
@@ -1829,8 +2066,11 @@ export class RuntimeStateStore {
             task_generation_rationale,
             source_event_ids,
             created_at,
-            state
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            state,
+            accepted_session_id,
+            accepted_input_id,
+            accepted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
       `)
       .run(
         params.proposalId,
@@ -1881,11 +2121,12 @@ export class RuntimeStateStore {
   }
 
   updateTaskProposalState(params: { proposalId: string; state: string }): TaskProposalRecord | null {
-    const result = this.db().prepare("UPDATE task_proposals SET state = ? WHERE proposal_id = ?").run(params.state, params.proposalId);
-    if (result.changes <= 0) {
-      return null;
-    }
-    return this.getTaskProposal(params.proposalId);
+    return this.updateTaskProposal({
+      proposalId: params.proposalId,
+      fields: {
+        state: params.state
+      }
+    });
   }
 
   private db(): Database.Database {
@@ -1908,6 +2149,7 @@ export class RuntimeStateStore {
 
   private ensureRuntimeDbSchema(db: Database.Database): void {
     this.ensureWorkspacesTableSchema(db);
+    this.ensureTaskProposalsTableSchema(db);
     this.migrateSandboxRunTokensTable(db);
     db.exec(`
       CREATE TABLE IF NOT EXISTS workspaces (
@@ -1931,6 +2173,24 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_workspaces_updated
           ON workspaces (updated_at DESC, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS agent_sessions (
+          workspace_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          kind TEXT NOT NULL DEFAULT 'workspace_session',
+          title TEXT,
+          parent_session_id TEXT,
+          source_proposal_id TEXT,
+          created_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          archived_at TEXT,
+          PRIMARY KEY (workspace_id, session_id),
+          UNIQUE (workspace_id, source_proposal_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_agent_sessions_workspace_updated
+          ON agent_sessions (workspace_id, updated_at DESC, created_at DESC);
 
       CREATE TABLE IF NOT EXISTS agent_runtime_sessions (
           workspace_id TEXT NOT NULL,
@@ -2087,7 +2347,10 @@ export class RuntimeStateStore {
           task_generation_rationale TEXT NOT NULL,
           source_event_ids TEXT NOT NULL DEFAULT '[]',
           created_at TEXT NOT NULL,
-          state TEXT NOT NULL DEFAULT 'not_reviewed'
+          state TEXT NOT NULL DEFAULT 'not_reviewed',
+          accepted_session_id TEXT,
+          accepted_input_id TEXT,
+          accepted_at TEXT
       );
 
       CREATE INDEX IF NOT EXISTS idx_task_proposals_workspace_created
@@ -2259,6 +2522,31 @@ export class RuntimeStateStore {
 
       DROP TABLE sandbox_run_tokens_legacy_with_user;
     `);
+  }
+
+  private ensureTaskProposalsTableSchema(db: Database.Database): void {
+    const tableNames = new Set<string>(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
+        (row) => row.name
+      )
+    );
+    if (!tableNames.has("task_proposals")) {
+      return;
+    }
+
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(task_proposals)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+
+    if (!columns.has("accepted_session_id")) {
+      db.exec("ALTER TABLE task_proposals ADD COLUMN accepted_session_id TEXT;");
+    }
+    if (!columns.has("accepted_input_id")) {
+      db.exec("ALTER TABLE task_proposals ADD COLUMN accepted_input_id TEXT;");
+    }
+    if (!columns.has("accepted_at")) {
+      db.exec("ALTER TABLE task_proposals ADD COLUMN accepted_at TEXT;");
+    }
   }
 
   private ensureWorkspacesTableSchema(db: Database.Database): void {
@@ -2657,6 +2945,20 @@ export class RuntimeStateStore {
     };
   }
 
+  private rowToAgentSession(row: Record<string, unknown>): AgentSessionRecord {
+    return {
+      workspaceId: String(row.workspace_id),
+      sessionId: String(row.session_id),
+      kind: String(row.kind),
+      title: row.title == null ? null : String(row.title),
+      parentSessionId: row.parent_session_id == null ? null : String(row.parent_session_id),
+      sourceProposalId: row.source_proposal_id == null ? null : String(row.source_proposal_id),
+      createdBy: row.created_by == null ? null : String(row.created_by),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      archivedAt: row.archived_at == null ? null : String(row.archived_at)
+    };
+  }
   private parseJsonDict(raw: unknown): Record<string, unknown> {
     if (raw == null) {
       return {};
@@ -2778,7 +3080,10 @@ export class RuntimeStateStore {
       taskGenerationRationale: String(row.task_generation_rationale),
       sourceEventIds,
       createdAt: String(row.created_at),
-      state: String(row.state)
+      state: String(row.state),
+      acceptedSessionId: row.accepted_session_id == null ? null : String(row.accepted_session_id),
+      acceptedInputId: row.accepted_input_id == null ? null : String(row.accepted_input_id),
+      acceptedAt: row.accepted_at == null ? null : String(row.accepted_at)
     };
   }
 
@@ -2795,5 +3100,83 @@ export class RuntimeStateStore {
     } catch {
       return [];
     }
+  }
+
+  private normalizedNullableText(value: string | null | undefined): string | null {
+    if (value == null) {
+      return null;
+    }
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+
+  private normalizedSessionKind(value: string | null | undefined): string {
+    return this.normalizedNullableText(value) ?? "workspace_session";
+  }
+
+  private requireSession(params: { workspaceId: string; sessionId: string }): AgentSessionRecord {
+    const record = this.getSession(params);
+    if (!record) {
+      throw new Error("agent session row not found");
+    }
+    return record;
+  }
+
+  private requireUpdatedSession(params: {
+    workspaceId: string;
+    sessionId: string;
+    fields: AgentSessionUpdateFields;
+  }): AgentSessionRecord {
+    const existing = this.requireSession({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId
+    });
+    const next: AgentSessionRecord = {
+      ...existing,
+      kind: params.fields.kind == null ? existing.kind : this.normalizedSessionKind(params.fields.kind),
+      title: params.fields.title === undefined ? existing.title : this.normalizedNullableText(params.fields.title),
+      parentSessionId:
+        params.fields.parentSessionId === undefined
+          ? existing.parentSessionId
+          : this.normalizedNullableText(params.fields.parentSessionId),
+      sourceProposalId:
+        params.fields.sourceProposalId === undefined
+          ? existing.sourceProposalId
+          : this.normalizedNullableText(params.fields.sourceProposalId),
+      createdBy:
+        params.fields.createdBy === undefined ? existing.createdBy : this.normalizedNullableText(params.fields.createdBy),
+      archivedAt:
+        params.fields.archivedAt === undefined ? existing.archivedAt : this.normalizedNullableText(params.fields.archivedAt),
+      updatedAt: utcNowIso()
+    };
+
+    this.db()
+      .prepare(`
+        UPDATE agent_sessions
+        SET kind = ?,
+            title = ?,
+            parent_session_id = ?,
+            source_proposal_id = ?,
+            created_by = ?,
+            updated_at = ?,
+            archived_at = ?
+        WHERE workspace_id = ? AND session_id = ?
+      `)
+      .run(
+        next.kind,
+        next.title,
+        next.parentSessionId,
+        next.sourceProposalId,
+        next.createdBy,
+        next.updatedAt,
+        next.archivedAt,
+        params.workspaceId,
+        params.sessionId
+      );
+
+    return this.requireSession({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId
+    });
   }
 }

@@ -468,3 +468,74 @@ webview {
   border-top: 1px solid var(--border);
   margin: 20px 0;
 }
+
+/* ---- Simple Markdown (marketplace kit README) ---- */
+.simple-markdown {
+  color: rgb(var(--color-text-main) / 0.88);
+  font-size: 13px;
+  line-height: 1.75;
+}
+.simple-markdown .md-h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.03em; margin-top: 28px; margin-bottom: 12px; color: rgb(var(--color-text-main)); }
+.simple-markdown .md-h2 { font-size: 17px; font-weight: 600; letter-spacing: -0.02em; margin-top: 24px; margin-bottom: 10px; color: rgb(var(--color-text-main)); }
+.simple-markdown .md-h3 { font-size: 14px; font-weight: 600; margin-top: 20px; margin-bottom: 8px; color: rgb(var(--color-text-main)); }
+.simple-markdown .md-h1:first-child,
+.simple-markdown .md-h2:first-child,
+.simple-markdown .md-h3:first-child { margin-top: 0; }
+.simple-markdown .md-p { margin-top: 8px; margin-bottom: 8px; }
+.simple-markdown .md-img { max-width: 100%; border-radius: 12px; margin-top: 12px; margin-bottom: 12px; }
+.simple-markdown .md-code-block {
+  background: rgba(0, 0, 0, 0.12);
+  border: 1px solid rgb(var(--color-panel-border) / 0.3);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin: 12px 0;
+  overflow-x: auto;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+.simple-markdown .md-inline-code {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 5px;
+  padding: 2px 6px;
+  font-size: 11.5px;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+.simple-markdown .md-blockquote {
+  border-left: 3px solid rgb(var(--color-panel-border) / 0.5);
+  padding-left: 14px;
+  margin: 12px 0;
+  color: rgb(var(--color-text-muted) / 0.82);
+  font-style: italic;
+}
+.simple-markdown .md-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 12px;
+}
+.simple-markdown .md-table th,
+.simple-markdown .md-table td {
+  border: 1px solid rgb(var(--color-panel-border) / 0.3);
+  padding: 8px 12px;
+  text-align: left;
+}
+.simple-markdown .md-table th {
+  font-weight: 600;
+  background: rgba(0, 0, 0, 0.06);
+}
+.simple-markdown .md-ul,
+.simple-markdown .md-ol { padding-left: 20px; margin: 8px 0; }
+.simple-markdown .md-li,
+.simple-markdown .md-oli { margin: 4px 0; }
+.simple-markdown .md-link {
+  color: rgb(var(--color-text-main));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.simple-markdown .md-hr {
+  border: none;
+  border-top: 1px solid rgb(var(--color-panel-border) / 0.3);
+  margin: 20px 0;
+}

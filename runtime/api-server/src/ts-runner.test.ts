@@ -57,6 +57,7 @@ function baseRequest(): TsRunnerRequest {
   return {
     workspace_id: "workspace-1",
     session_id: "session-1",
+    session_kind: "main",
     input_id: "input-1",
     instruction: "hello world",
     context: {},
@@ -73,7 +74,7 @@ function baseCompiledPlan() {
       type: "single",
       agent: {
         id: "main",
-        model: "openai/gpt-5.1",
+        model: "openai/gpt-5.4",
         prompt: "You are concise.",
         role: null
       }
@@ -119,7 +120,7 @@ function testDeps(params: {
     bootstrapApplications: async () => [],
     projectAgentRuntimeConfig: () => ({
       provider_id: "openai",
-      model_id: "gpt-5.1",
+      model_id: "gpt-5.4",
       mode: "code",
       system_prompt: "You are concise.",
       model_client: {
@@ -161,7 +162,7 @@ test("decodeTsRunnerRequest decodes a valid runner request", () => {
       input_id: "input-1",
       instruction: "hello",
       context: { k: "v" },
-      model: "openai/gpt-5.1",
+      model: "openai/gpt-5.4",
       debug: true
     })
   );
@@ -170,11 +171,12 @@ test("decodeTsRunnerRequest decodes a valid runner request", () => {
     holaboss_user_id: "user-1",
     workspace_id: "workspace-1",
     session_id: "session-1",
+    session_kind: null,
     input_id: "input-1",
     instruction: "hello",
     attachments: [],
     context: { k: "v" },
-    model: "openai/gpt-5.1",
+    model: "openai/gpt-5.4",
     debug: true
   });
 });
@@ -569,7 +571,7 @@ test("runTsRunnerCli only advertises structured output when the selected harness
         ...testDeps(),
         projectAgentRuntimeConfig: () => ({
           provider_id: "openai",
-          model_id: "gpt-5.1",
+          model_id: "gpt-5.4",
           mode: "code",
           system_prompt: "You are concise.",
           model_client: {
@@ -609,10 +611,22 @@ test("runTsRunnerCli only advertises structured output when the selected harness
     (capturedRequestPayload as { runtime_api_base_url?: string | null }).runtime_api_base_url,
     "http://127.0.0.1:5060"
   );
-  assert.deepEqual((capturedRequestPayload as { run_started_payload: Record<string, unknown> }).run_started_payload, {
+  const runStartedPayload = (capturedRequestPayload as { run_started_payload: Record<string, unknown> }).run_started_payload;
+  assert.deepEqual({
+    instruction_preview: runStartedPayload.instruction_preview,
+    provider_id: runStartedPayload.provider_id,
+    model_id: runStartedPayload.model_id,
+    workspace_tool_ids: runStartedPayload.workspace_tool_ids,
+    workspace_skill_ids: runStartedPayload.workspace_skill_ids,
+    mcp_server_ids: runStartedPayload.mcp_server_ids,
+    mcp_server_mappings: runStartedPayload.mcp_server_mappings,
+    workspace_mcp_sidecar_reused: runStartedPayload.workspace_mcp_sidecar_reused,
+    structured_output_enabled: runStartedPayload.structured_output_enabled,
+    workspace_config_checksum: runStartedPayload.workspace_config_checksum
+  }, {
     instruction_preview: "hello world",
     provider_id: "openai",
-    model_id: "gpt-5.1",
+    model_id: "gpt-5.4",
     workspace_tool_ids: [],
     workspace_skill_ids: [],
     mcp_server_ids: [],
@@ -621,6 +635,23 @@ test("runTsRunnerCli only advertises structured output when the selected harness
     structured_output_enabled: false,
     workspace_config_checksum: "checksum-1"
   });
+  assert.equal(typeof runStartedPayload.bootstrap_started_at, "string");
+  assert.equal(typeof runStartedPayload.bootstrap_ready_at, "string");
+  assert.equal(typeof runStartedPayload.bootstrap_total_ms, "number");
+  assert.ok((runStartedPayload.bootstrap_total_ms as number) >= 0);
+  const bootstrapStageTimingKeys = Object.keys((runStartedPayload.bootstrap_stage_timings_ms as Record<string, unknown>) ?? {}).sort();
+  assert.deepEqual(
+    bootstrapStageTimingKeys,
+    [
+      "build_harness_host_request",
+      "compile_runtime_plan",
+      "prepare_harness_run",
+      "project_runtime_config",
+      "resolve_workspace_skills",
+      "stage_browser_tools",
+      "stage_runtime_tools"
+    ]
+  );
 });
 
 test("runTsRunnerCli includes staged runtime tool ids in the projected extra tool set", async () => {
@@ -640,7 +671,7 @@ test("runTsRunnerCli includes staged runtime tool ids in the projected extra too
           capturedProjectRequest = request as unknown as Record<string, unknown>;
           return {
             provider_id: "openai",
-            model_id: "gpt-5.1",
+            model_id: "gpt-5.4",
             mode: "code",
             system_prompt: "You are concise.",
             model_client: {
@@ -670,6 +701,67 @@ test("runTsRunnerCli includes staged runtime tool ids in the projected extra too
   assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
     ["browser_get_state", "holaboss_onboarding_complete"]
+  );
+});
+
+test("runTsRunnerCli only stages browser tools for the main session", async () => {
+  const seenSessionKinds: Array<string | null | undefined> = [];
+  let capturedProjectRequest: Record<string, unknown> | null = null;
+
+  const exitCode = await runTsRunnerCli(
+    [
+      "--request-base64",
+      encodeRequest({
+        ...baseRequest(),
+        session_kind: "task_proposal"
+      })
+    ],
+    {
+      deps: {
+        ...testDeps({
+          pluginOverrides: {
+            stageBrowserTools: ({ sessionKind }) => {
+              seenSessionKinds.push(sessionKind);
+              return { changed: false, toolIds: sessionKind === "main" ? ["browser_get_state"] : [] };
+            },
+            stageRuntimeTools: () => ({ changed: false, toolIds: ["holaboss_onboarding_complete"] })
+          }
+        }),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" }
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1"
+          };
+        }
+      },
+      io: {
+        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
+        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
+      }
+    }
+  );
+
+  assert.equal(exitCode, 0);
+  assert.deepEqual(seenSessionKinds, ["task_proposal"]);
+  assert.ok(capturedProjectRequest);
+  assert.deepEqual(
+    (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
+    ["holaboss_onboarding_complete"]
   );
 });
 
@@ -708,7 +800,7 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
           capturedProjectRequest = request as unknown as Record<string, unknown>;
           return {
             provider_id: "openai",
-            model_id: "gpt-5.1",
+            model_id: "gpt-5.4",
             mode: "code",
             system_prompt: "You are concise.",
             model_client: {
@@ -934,7 +1026,7 @@ test("runTsRunnerCli skips MCP prep when the harness prep plan disables it", { c
             capturedProjectRequest = request as unknown as Record<string, unknown>;
             return {
               provider_id: "openai",
-              model_id: "gpt-5.1",
+              model_id: "gpt-5.4",
               mode: "code",
               system_prompt: "You are concise.",
               model_client: {

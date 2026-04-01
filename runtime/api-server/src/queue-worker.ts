@@ -8,6 +8,7 @@ import { buildRunFailedEvent } from "./runner-worker.js";
 const DEFAULT_CLAIMED_BY = "sandbox-agent-ts-worker";
 const DEFAULT_LEASE_SECONDS = 300;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
+const DEFAULT_MAX_CONCURRENCY = 2;
 const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
 
 export interface QueueWorkerLike {
@@ -26,6 +27,16 @@ export interface RuntimeQueueWorkerOptions {
   claimedBy?: string;
   leaseSeconds?: number;
   pollIntervalMs?: number;
+  maxConcurrency?: number;
+}
+
+function queueWorkerMaxConcurrency(): number {
+  const raw = (process.env.HB_QUEUE_WORKER_CONCURRENCY ?? "").trim();
+  const parsed = raw ? Number.parseInt(raw, 10) : DEFAULT_MAX_CONCURRENCY;
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_MAX_CONCURRENCY;
+  }
+  return Math.max(1, parsed);
 }
 
 export class RuntimeQueueWorker implements QueueWorkerLike {
@@ -35,6 +46,7 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
   readonly #claimedBy: string;
   readonly #leaseSeconds: number;
   readonly #pollIntervalMs: number;
+  readonly #maxConcurrency: number;
   #stopped = false;
   #task: Promise<void> | null = null;
   #wakeResolver: (() => void) | null = null;
@@ -53,6 +65,7 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
         }));
     this.#leaseSeconds = options.leaseSeconds ?? DEFAULT_LEASE_SECONDS;
     this.#pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    this.#maxConcurrency = options.maxConcurrency ?? queueWorkerMaxConcurrency();
   }
 
   async start(): Promise<void> {
@@ -80,41 +93,44 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
   async processAvailableInputsOnce(): Promise<number> {
     const recovered = this.#recoverExpiredClaims();
     const claimed = this.#store.claimInputs({
-      limit: 1,
+      limit: this.#maxConcurrency,
       claimedBy: this.#claimedBy,
-      leaseSeconds: this.#leaseSeconds
+      leaseSeconds: this.#leaseSeconds,
+      distinctSessions: true
     });
     if (claimed.length === 0) {
       return recovered;
     }
-    for (const record of claimed) {
-      try {
-        await this.#executeClaimedInput(record);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.#logger?.error?.("TS queue worker failed to process claimed input", {
-          inputId: record.inputId,
-          workspaceId: record.workspaceId,
-          sessionId: record.sessionId,
-          error: message
-        });
-        this.#store.updateInput(record.inputId, {
-          status: "FAILED",
-          claimedBy: null,
-          claimedUntil: null
-        });
-        this.#store.updateRuntimeState({
-          workspaceId: record.workspaceId,
-          sessionId: record.sessionId,
-          status: "ERROR",
-          currentInputId: null,
-          currentWorkerId: null,
-          leaseUntil: null,
-          heartbeatAt: null,
-          lastError: { message }
-        });
-      }
-    }
+    await Promise.all(
+      claimed.map(async (record) => {
+        try {
+          await this.#executeClaimedInput(record);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.#logger?.error?.("TS queue worker failed to process claimed input", {
+            inputId: record.inputId,
+            workspaceId: record.workspaceId,
+            sessionId: record.sessionId,
+            error: message
+          });
+          this.#store.updateInput(record.inputId, {
+            status: "FAILED",
+            claimedBy: null,
+            claimedUntil: null
+          });
+          this.#store.updateRuntimeState({
+            workspaceId: record.workspaceId,
+            sessionId: record.sessionId,
+            status: "ERROR",
+            currentInputId: null,
+            currentWorkerId: null,
+            leaseUntil: null,
+            heartbeatAt: null,
+            lastError: { message }
+          });
+        }
+      })
+    );
     return recovered + claimed.length;
   }
 

@@ -291,3 +291,102 @@ test("executeBridgeJobNatively supports memory operations", async () => {
   assert.equal(refresh.output?.alias, "workspace.memory.sync");
   store.close();
 });
+
+test("executeBridgeJobNatively captures bundled proactive workspace context", async () => {
+  const previousUser = process.env.HOLABOSS_USER_ID;
+  process.env.HOLABOSS_USER_ID = "user-1";
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hb-bridge-context-"));
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace One",
+    harness: "opencode",
+    status: "active"
+  });
+  const workspaceDir = store.workspaceDir("workspace-1");
+  fs.mkdirSync(path.join(workspaceDir, "apps", "twitter"), { recursive: true });
+  fs.writeFileSync(
+    path.join(workspaceDir, "workspace.yaml"),
+    `
+agents:
+  id: workspace.general
+  model: openai/gpt-5
+applications:
+  - app_id: twitter
+    config_path: apps/twitter/app.runtime.yaml
+mcp_registry:
+  allowlist:
+    tool_ids:
+      - twitter.performance
+  servers:
+    twitter:
+      type: remote
+      url: "http://localhost:3099/mcp"
+      enabled: true
+`.trim(),
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(workspaceDir, "apps", "twitter", "app.runtime.yaml"),
+    `
+app_id: twitter
+healthchecks:
+  mcp:
+    path: /health
+    timeout_s: 30
+    interval_s: 5
+mcp:
+  transport: http-sse
+  port: 3099
+  path: /mcp
+env_contract:
+  - HOLABOSS_USER_ID
+`.trim(),
+    "utf8"
+  );
+  const memoryService = new FilesystemMemoryService({ workspaceRoot });
+  await memoryService.upsert({
+    workspace_id: "workspace-1",
+    path: "workspace/workspace-1/state.md",
+    content: "Past tweet performance favors concise growth hooks.",
+    append: false
+  });
+
+  const result = await executeBridgeJobNatively({
+    job: {
+      job_id: "job-context",
+      job_type: "workspace.context.capture",
+      workspace_id: "workspace-1",
+      payload: {
+        workspace_id: "workspace-1",
+        reason: "remote_proactive_analysis"
+      }
+    },
+    store,
+    memoryService
+  });
+
+  assert.equal(result.status, "succeeded");
+  const context = result.output?.context as Record<string, unknown>;
+  const snapshot = context.snapshot as Record<string, unknown>;
+  const memory = context.memory as Record<string, unknown>;
+  const toolManifest = context.tool_manifest as Record<string, unknown>;
+  assert.equal((context.workspace as Record<string, unknown>).holaboss_user_id, "user-1");
+  assert.deepEqual(snapshot.applications, ["twitter"]);
+  assert.deepEqual(snapshot.mcp_tool_ids, ["twitter.performance"]);
+  assert.equal((memory.files as Record<string, unknown>)["workspace/workspace-1/state.md"], "Past tweet performance favors concise growth hooks.");
+  assert.ok(Array.isArray(toolManifest.tools));
+  assert.equal((toolManifest.tools as Array<Record<string, unknown>>)[0]?.tool_id, "twitter.performance");
+
+  store.close();
+  if (previousUser === undefined) {
+    delete process.env.HOLABOSS_USER_ID;
+  } else {
+    process.env.HOLABOSS_USER_ID = previousUser;
+  }
+});

@@ -12,6 +12,7 @@ export interface MemoryServiceLike {
   upsert(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
   status(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
   sync(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
+  capture(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
 export class MemoryServiceError extends Error {
@@ -308,6 +309,33 @@ function statusPayload(params: {
   return payload;
 }
 
+function capturePayload(params: {
+  workspaceDir: string;
+  workspaceId: string;
+  memoryRootDir: string;
+}): Record<string, unknown> {
+  const status = statusPayload(params);
+  const files: Record<string, string> = {};
+  let totalChars = 0;
+  for (const filePath of memoryFiles(params.memoryRootDir, params.workspaceId)) {
+    const relativePath = relativePosixPath(params.memoryRootDir, filePath);
+    try {
+      const text = fs.readFileSync(filePath, "utf8");
+      files[relativePath] = text;
+      totalChars += text.length;
+    } catch {
+      // Ignore unreadable files in bundle capture.
+    }
+  }
+  return {
+    status,
+    files,
+    file_paths: Object.keys(files),
+    total_files: Object.keys(files).length,
+    total_chars: totalChars
+  };
+}
+
 export interface FilesystemMemoryServiceOptions {
   workspaceRoot: string;
 }
@@ -447,5 +475,12 @@ export class FilesystemMemoryService implements MemoryServiceLike {
       success: true,
       status: statusPayload({ workspaceDir, workspaceId, memoryRootDir })
     };
+  }
+
+  async capture(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const workspaceId = requiredString(payload.workspace_id, "workspace_id");
+    const workspaceDir = workspaceDirForWorkspaceId(this.#workspaceRoot, workspaceId);
+    const memoryRootDir = resolveMemoryRootDir(workspaceDir);
+    return capturePayload({ workspaceDir, workspaceId, memoryRootDir });
   }
 }

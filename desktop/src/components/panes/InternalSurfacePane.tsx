@@ -55,7 +55,7 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
           }
           targetPath = resolveWorkspaceTargetPath(workspaceRoot, targetResource);
         }
-        const nextPreview = await window.electronAPI.fs.readFilePreview(targetPath);
+        const nextPreview = await window.electronAPI.fs.readFilePreview(targetPath, selectedWorkspaceId ?? null);
         if (!cancelled) {
           setPreview(nextPreview);
         }

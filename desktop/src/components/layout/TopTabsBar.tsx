@@ -533,11 +533,7 @@ export function TopTabsBar({
                             type="button"
                             variant="outline"
                             size="default"
-                            onClick={(event) =>
-                              openAuthPopup(
-                                event.currentTarget.getBoundingClientRect(),
-                              )
-                            }
+                            onClick={() => void window.electronAPI.auth.requestAuth()}
                             className="w-full"
                           >
                             Sign in to use Marketplace

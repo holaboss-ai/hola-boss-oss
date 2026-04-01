@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { Buffer } from "node:buffer";
+import fs from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 
@@ -69,9 +70,23 @@ function runtimeRoot(): string {
   return configured || "/runtime";
 }
 
+function runtimeBundleRoot(): string {
+  return path.resolve(runtimeRoot(), "..");
+}
+
 function runtimeNode(): string {
   const configured = (process.env.HOLABOSS_RUNTIME_NODE_BIN ?? "").trim();
   return configured || "node";
+}
+
+export function bundledRuntimeNodeBinDir(): string {
+  return path.join(runtimeBundleRoot(), "node-runtime", "bin");
+}
+
+export function resolveOpencodeExecutable(): string {
+  const executableName = process.platform === "win32" ? "opencode.cmd" : "opencode";
+  const bundledPath = path.join(bundledRuntimeNodeBinDir(), executableName);
+  return fs.existsSync(bundledPath) ? bundledPath : "opencode";
 }
 
 function pathDelimiter(): string {
@@ -146,7 +161,10 @@ export function buildRunnerEnv(): NodeJS.ProcessEnv {
   if (currentApiUrl && !(env.SANDBOX_RUNTIME_API_URL ?? "").trim()) {
     env.SANDBOX_RUNTIME_API_URL = currentApiUrl;
   }
-  env.PATH = prependPathEntries(env.PATH, [path.join(runtimeAppRoot(), "api-server", "node_modules", ".bin")]);
+  env.PATH = prependPathEntries(env.PATH, [
+    bundledRuntimeNodeBinDir(),
+    path.join(runtimeAppRoot(), "api-server", "node_modules", ".bin")
+  ]);
   return env;
 }
 

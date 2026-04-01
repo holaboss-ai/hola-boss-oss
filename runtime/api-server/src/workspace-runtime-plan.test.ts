@@ -299,6 +299,54 @@ integrations:
   );
 });
 
+test("compileWorkspaceRuntimePlan rejects multiple agents", () => {
+  assert.throws(
+    () =>
+      compileWorkspaceRuntimePlan({
+        workspace_id: "workspace-1",
+        workspace_yaml: `
+agents:
+  - id: agent-1
+    model: gpt-5.2
+  - id: agent-2
+    model: gpt-5.2
+mcp_registry:
+  allowlist:
+    tool_ids: []
+  servers: {}
+`,
+        references: {}
+      }),
+    /multiple agents are no longer supported/
+  );
+});
+
+test("compileWorkspaceRuntimePlan rejects legacy team mode", () => {
+  assert.throws(
+    () =>
+      compileWorkspaceRuntimePlan({
+        workspace_id: "workspace-1",
+        workspace_yaml: `
+agents:
+  general:
+    type: team
+    coordinator:
+      id: coordinator
+      model: gpt-5.2
+    members:
+      - id: writer
+        model: gpt-5.2-mini
+mcp_registry:
+  allowlist:
+    tool_ids: []
+  servers: {}
+`,
+        references: {}
+      }),
+    /team mode is no longer supported/
+  );
+});
+
 test("runWorkspaceRuntimePlanCli collects structured references", async () => {
   const stdout: string[] = [];
   const stderr: string[] = [];
