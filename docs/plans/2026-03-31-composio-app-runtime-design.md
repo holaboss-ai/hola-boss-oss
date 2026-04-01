@@ -500,8 +500,11 @@ These questions still need explicit product and engineering decisions:
 - should `proxy` be available to every app by default, or only to trusted apps
 - should `execute` operations be globally named like `gmail.send_email` or namespaced per provider client
 - should v1 support multipart uploads
-- should the bridge return raw upstream payloads for `proxy`, or a normalized envelope with headers and status
-- should readiness validate declared scopes immediately or only at call time
+
+### Resolved
+
+- **`proxy` response format**: Composio returns a normalized envelope `{ data, status, headers }` — the bridge should pass this through rather than unwrapping. Verified 2026-03-31.
+- **scope validation timing**: call-time validation is sufficient for V1. Readiness checks validate connection existence and status, not scopes. Scope enforcement can be added to the bridge layer later.
 
 ## Recommendation
 

@@ -225,72 +225,36 @@ test("proxyRequest includes body for POST requests", async () => {
   assert.deepEqual(body.body, { raw: "base64encodedmessage" });
 });
 
-test("getAccessToken extracts token from proxy response for google provider", async () => {
+test("getAccessToken reads token from connected account data.access_token", async () => {
   const fetchImpl: typeof fetch = async (input) => {
     const url = String(input);
-    // First call: getConnectedAccount
-    if (url.includes("/api/v3/connected_accounts/ca_token")) {
-      return jsonResponse({
-        id: "ca_token",
-        status: "ACTIVE",
-        auth_config: { id: "authcfg_1" },
-        toolkit: { slug: "google" },
-        user_id: "user-1"
-      });
-    }
-    // Second call: proxy request to tokeninfo
-    if (url.includes("/api/v3/tools/execute/proxy")) {
-      return jsonResponse({
-        data: { access_token: "ya29.actual-google-token", expires_in: 3600 },
-        status: 200,
-        headers: {}
-      });
-    }
-    throw new Error(`unexpected fetch to ${url}`);
+    assert.match(url, /\/api\/v3\/connected_accounts\/ca_token$/);
+    return jsonResponse({
+      id: "ca_token",
+      status: "ACTIVE",
+      data: { access_token: "ya29.actual-google-token", expires_in: 3600 }
+    });
   };
 
   const service = createService(fetchImpl);
-  const result = await service.getAccessToken({
-    connectedAccountId: "ca_token",
-    provider: "google"
-  });
+  const result = await service.getAccessToken("ca_token", "google");
 
-  assert.equal(result.accessToken, "ya29.actual-google-token");
-  assert.equal(result.provider, "google");
-  assert.equal(result.connectedAccountId, "ca_token");
+  assert.equal(result, "ya29.actual-google-token");
 });
 
-test("getAccessToken extracts token from proxy response for github provider", async () => {
-  const fetchImpl: typeof fetch = async (input) => {
-    const url = String(input);
-    if (url.includes("/api/v3/connected_accounts/ca_gh")) {
-      return jsonResponse({
-        id: "ca_gh",
-        status: "ACTIVE",
-        auth_config: { id: "authcfg_2" },
-        toolkit: { slug: "github" },
-        user_id: "user-2"
-      });
-    }
-    if (url.includes("/api/v3/tools/execute/proxy")) {
-      return jsonResponse({
-        data: { login: "octocat", id: 1 },
-        status: 200,
-        headers: { authorization: "token ghp_real-github-token" }
-      });
-    }
-    throw new Error(`unexpected fetch to ${url}`);
+test("getAccessToken works for any provider", async () => {
+  const fetchImpl: typeof fetch = async () => {
+    return jsonResponse({
+      id: "ca_gh",
+      status: "ACTIVE",
+      data: { access_token: "ghp_real-github-token" }
+    });
   };
 
   const service = createService(fetchImpl);
-  const result = await service.getAccessToken({
-    connectedAccountId: "ca_gh",
-    provider: "github"
-  });
+  const result = await service.getAccessToken("ca_gh", "github");
 
-  assert.equal(result.accessToken, "ghp_real-github-token");
-  assert.equal(result.provider, "github");
-  assert.equal(result.connectedAccountId, "ca_gh");
+  assert.equal(result, "ghp_real-github-token");
 });
 
 test("getAccessToken throws when account is not ACTIVE", async () => {
@@ -298,19 +262,13 @@ test("getAccessToken throws when account is not ACTIVE", async () => {
     return jsonResponse({
       id: "ca_inactive",
       status: "INITIATED",
-      auth_config: { id: "authcfg_3" },
-      toolkit: { slug: "google" },
-      user_id: "user-3"
+      data: { access_token: "some-token" }
     });
   };
 
   const service = createService(fetchImpl);
   await assert.rejects(
-    () =>
-      service.getAccessToken({
-        connectedAccountId: "ca_inactive",
-        provider: "google"
-      }),
+    () => service.getAccessToken("ca_inactive", "google"),
     (error: Error) => {
       assert.match(error.message, /not ACTIVE/i);
       return true;
@@ -318,26 +276,20 @@ test("getAccessToken throws when account is not ACTIVE", async () => {
   );
 });
 
-test("getAccessToken throws for unsupported provider", async () => {
+test("getAccessToken throws when no access_token in response", async () => {
   const fetchImpl: typeof fetch = async () => {
     return jsonResponse({
-      id: "ca_unknown",
+      id: "ca_notoken",
       status: "ACTIVE",
-      auth_config: { id: "authcfg_4" },
-      toolkit: { slug: "unknown" },
-      user_id: "user-4"
+      data: {}
     });
   };
 
   const service = createService(fetchImpl);
   await assert.rejects(
-    () =>
-      service.getAccessToken({
-        connectedAccountId: "ca_unknown",
-        provider: "unsupported_provider"
-      }),
+    () => service.getAccessToken("ca_notoken", "google"),
     (error: Error) => {
-      assert.match(error.message, /unsupported provider/i);
+      assert.match(error.message, /no access_token/i);
       return true;
     }
   );

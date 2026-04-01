@@ -122,7 +122,7 @@ test("injects workspace api url and legacy token for a single active binding", (
   assert.equal(result.env.HOLABOSS_INTEGRATION_BROKER_URL, "http://127.0.0.1:8080/api/v1/integrations");
   assert.equal(result.env.WORKSPACE_API_URL, "http://127.0.0.1:8080/api/v1");
   assert.match(result.env.HOLABOSS_APP_GRANT ?? "", /^grant:workspace-1:gmail:/);
-  assert.equal(result.env.PLATFORM_INTEGRATION_TOKEN, "token-google-1");
+  assert.equal(result.env.PLATFORM_INTEGRATION_TOKEN, undefined);
   assert.equal(result.env.WORKSPACE_GOOGLE_INTEGRATION_ID, googleConnection.connectionId);
   assert.equal(result.env.WORKSPACE_GITHUB_INTEGRATION_ID, undefined);
   assert.equal(result.bindings.length, 1);
@@ -307,7 +307,7 @@ test("prefers an app-specific binding override over a workspace default binding"
     resolvedApp: createResolvedApp()
   });
 
-  assert.equal(result.env.PLATFORM_INTEGRATION_TOKEN, "token-google-app");
+  assert.equal(result.env.PLATFORM_INTEGRATION_TOKEN, undefined);
   assert.equal(result.env.WORKSPACE_GOOGLE_INTEGRATION_ID, appConnection.connectionId);
   assert.equal(result.bindings[0]?.bindingId, "bind-google-app");
 

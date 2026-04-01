@@ -41,6 +41,7 @@ export function IntegrationsPane() {
   const [query, setQuery] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [composioConnecting, setComposioConnecting] = useState(false);
+  const [composioStatus, setComposioStatus] = useState("");
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [importLabel, setImportLabel] = useState("");
   const [importToken, setImportToken] = useState("");
@@ -212,6 +213,7 @@ export function IntegrationsPane() {
   const handleManagedConnect = async () => {
     if (!selectedProvider) return;
     setComposioConnecting(true);
+    setComposioStatus("Preparing…");
     setErrorMessage("");
     try {
       const runtimeConfig = await window.electronAPI.runtime.getConfig();
@@ -222,7 +224,8 @@ export function IntegrationsPane() {
         owner_user_id: userId,
       });
 
-      window.open(link.redirect_url, "composio-oauth", "width=600,height=700");
+      setComposioStatus("Complete authorization in your browser…");
+      await window.electronAPI.ui.openExternalUrl(link.redirect_url);
 
       let account: ComposioAccountStatus | null = null;
       for (let i = 0; i < 100; i++) {
@@ -241,6 +244,7 @@ export function IntegrationsPane() {
         return;
       }
 
+      setComposioStatus("Saving connection…");
       const connection = await window.electronAPI.workspace.composioFinalize({
         connected_account_id: link.connected_account_id,
         provider: selectedProvider.provider_id,
@@ -253,6 +257,7 @@ export function IntegrationsPane() {
       setErrorMessage(normalizeErrorMessage(error));
     } finally {
       setComposioConnecting(false);
+      setComposioStatus("");
     }
   };
 
@@ -385,14 +390,19 @@ export function IntegrationsPane() {
                         </div>
                         <div className="flex items-center gap-2">
                           {selectedProvider.auth_modes.includes("managed") ? (
-                            <button
-                              type="button"
-                              disabled={composioConnecting}
-                              onClick={handleManagedConnect}
-                              className="rounded-[12px] border border-neon-green/35 bg-neon-green/8 px-3 py-1.5 text-[11px] font-medium text-neon-green transition-colors duration-200 hover:bg-neon-green/14 disabled:opacity-50"
-                            >
-                              {composioConnecting ? "Connecting\u2026" : "Connect"}
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={composioConnecting}
+                                onClick={handleManagedConnect}
+                                className="rounded-[12px] border border-neon-green/35 bg-neon-green/8 px-3 py-1.5 text-[11px] font-medium text-neon-green transition-colors duration-200 hover:bg-neon-green/14 disabled:opacity-50"
+                              >
+                                {composioConnecting ? "Connecting\u2026" : "Connect"}
+                              </button>
+                              {composioStatus ? (
+                                <span className="text-[11px] text-text-muted">{composioStatus}</span>
+                              ) : null}
+                            </div>
                           ) : (
                             <button
                               type="button"

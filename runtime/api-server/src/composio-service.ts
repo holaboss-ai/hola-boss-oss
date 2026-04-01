@@ -32,11 +32,6 @@ export interface ProxyResponse<TData = unknown> {
   headers: Record<string, string>;
 }
 
-export interface AccessTokenResult {
-  accessToken: string;
-  provider: string;
-  connectedAccountId: string;
-}
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -48,59 +43,6 @@ interface AuthConfigListItem {
   is_composio_managed?: boolean;
   toolkit?: { slug?: string | null } | null;
 }
-
-// ---------------------------------------------------------------------------
-// Provider token endpoints
-// ---------------------------------------------------------------------------
-
-/**
- * Mapping of provider slug to the endpoint used to verify / extract a token
- * via the Composio proxy. The proxy injects the connected account's
- * credentials, so hitting these endpoints proves the token is live and lets
- * us extract it from the response.
- *
- * NOTE: An alternative approach is to check if the `getConnectedAccount`
- * response from Composio includes `state.access_token` directly — that
- * would avoid the extra proxy call. The proxy approach below is verified
- * to work against the real API, so we use it as the primary mechanism.
- */
-const PROVIDER_TOKEN_ENDPOINTS: Record<string, { endpoint: string; method: "GET" | "POST"; extractToken: (data: unknown, headers: Record<string, string>) => string | null }> = {
-  google: {
-    endpoint: "https://oauth2.googleapis.com/tokeninfo",
-    method: "GET",
-    extractToken: (data) => {
-      const record = data as Record<string, unknown> | null;
-      if (record && typeof record.access_token === "string") {
-        return record.access_token;
-      }
-      return null;
-    }
-  },
-  github: {
-    endpoint: "https://api.github.com/user",
-    method: "GET",
-    extractToken: (_data, headers) => {
-      // GitHub proxy responses include the authorization header used.
-      // The token may appear in the authorization header or we can
-      // derive it from the fact that the request succeeded (200).
-      const authHeader = headers.authorization ?? headers.Authorization ?? "";
-      if (authHeader.startsWith("token ")) {
-        return authHeader.slice("token ".length);
-      }
-      if (authHeader.startsWith("Bearer ")) {
-        return authHeader.slice("Bearer ".length);
-      }
-      // If the proxy succeeded (status 200), the data itself proves
-      // the token works. Return the login as a sentinel — the caller
-      // should rely on the proxy for actual API access.
-      const record = _data as Record<string, unknown> | null;
-      if (record && typeof record.login === "string") {
-        return `github:${record.login}`;
-      }
-      return null;
-    }
-  }
-};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -285,57 +227,40 @@ export class ComposioService {
   // -------------------------------------------------------------------------
 
   /**
-   * Verifies account is ACTIVE, then obtains a provider access token via
-   * a proxy request to a provider-specific verification endpoint.
-   *
-   * NOTE: The Composio `getConnectedAccount` response may include
-   * `state.access_token` directly, which would be simpler. The proxy
-   * approach is used here because it was verified against the real API
-   * and confirms the token is actually valid (not just stored).
+   * Obtains a provider access token from a Composio connected account.
+   * Reads `data.access_token` directly from the connected account response.
+   * Composio manages token refresh automatically.
    */
-  async getAccessToken(params: {
-    connectedAccountId: string;
-    provider: string;
-  }): Promise<AccessTokenResult> {
-    const connectedAccountId = requiredString(params.connectedAccountId, "connectedAccountId");
-    const provider = requiredString(params.provider, "provider").toLowerCase();
-
-    // Step 1: Verify account is ACTIVE
-    const account = await this.getConnectedAccount(connectedAccountId);
-    if (account.status !== "ACTIVE") {
-      throw new Error(
-        `Connected account ${connectedAccountId} is not ACTIVE (status: ${account.status})`
-      );
-    }
-
-    // Step 2: Look up the provider endpoint
-    const providerConfig = PROVIDER_TOKEN_ENDPOINTS[provider];
-    if (!providerConfig) {
-      const supported = Object.keys(PROVIDER_TOKEN_ENDPOINTS).join(", ");
-      throw new Error(
-        `Unsupported provider "${provider}" for token extraction. Supported: ${supported}`
-      );
-    }
-
-    // Step 3: Proxy request to extract/verify token
-    const proxyResult = await this.proxyRequest({
-      connectedAccountId,
-      method: providerConfig.method,
-      endpoint: providerConfig.endpoint
+  async getAccessToken(
+    connectedAccountId: string,
+    _provider: string
+  ): Promise<string> {
+    const id = requiredString(connectedAccountId, "connectedAccountId");
+    const response = await this.fetchImpl(`${this.baseUrl}/api/v3/connected_accounts/${id}`, {
+      headers: buildHeaders(this.apiKey)
     });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Failed to get connected account: ${response.status} ${body}`);
+    }
+    const payload = await parseJson<{
+      status?: string;
+      data?: { access_token?: string } | null;
+    }>(response);
 
-    const accessToken = providerConfig.extractToken(proxyResult.data, proxyResult.headers);
-    if (!accessToken) {
+    const status = (payload.status ?? "unknown").toUpperCase();
+    if (status !== "ACTIVE") {
       throw new Error(
-        `Failed to extract access token for provider "${provider}" from proxy response`
+        `Connected account ${id} is not ACTIVE (status: ${status})`
       );
     }
 
-    return {
-      accessToken,
-      provider,
-      connectedAccountId
-    };
+    const token = payload.data?.access_token;
+    if (!token) {
+      throw new Error(`Connected account ${id} has no access_token`);
+    }
+
+    return token;
   }
 
   // -------------------------------------------------------------------------

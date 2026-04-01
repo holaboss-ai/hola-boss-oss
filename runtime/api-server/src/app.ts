@@ -1726,6 +1726,39 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  app.post("/api/v1/integrations/broker/proxy", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const grant = typeof request.body.grant === "string" ? request.body.grant : "";
+    const provider = typeof request.body.provider === "string" ? request.body.provider : "";
+    const req = isRecord(request.body.request) ? request.body.request : null;
+    if (!grant || !provider || !req) {
+      return sendError(reply, 400, "grant, provider, and request are required");
+    }
+    const method = typeof req.method === "string" ? req.method : "GET";
+    const endpoint = typeof req.endpoint === "string" ? req.endpoint : "";
+    if (!endpoint) {
+      return sendError(reply, 400, "request.endpoint is required");
+    }
+    try {
+      return await brokerService.proxyProviderRequest({
+        grant,
+        provider,
+        request: {
+          method: method as "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+          endpoint,
+          body: req.body
+        }
+      });
+    } catch (error) {
+      if (error instanceof BrokerError) {
+        return reply.status(error.statusCode).send({ error: error.code, message: error.message });
+      }
+      return sendError(reply, 500, error instanceof Error ? error.message : "broker proxy failed");
+    }
+  });
+
   app.get("/api/v1/integrations/oauth/configs", async () => {
     return { configs: store.listOAuthAppConfigs().map((c) => ({
       provider_id: c.providerId, client_id: c.clientId,

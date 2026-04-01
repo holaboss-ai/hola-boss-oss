@@ -289,9 +289,56 @@ The exact provider proxy routes can evolve, but the important decision is that a
 - broker-side token refresh only
 - provider tokens never written to plain-text process logs
 
+## Composio As Managed Auth Backend
+
+Composio provides hosted OAuth lifecycle management as an alternative to self-managed OAuth apps. See `2026-03-31-composio-app-runtime-design.md` for the full design.
+
+### Auth mode: `composio`
+
+When a connection uses `auth_mode: "composio"`:
+
+- `accountExternalId` stores the Composio `connected_account_id`
+- `secretRef` is `null` — Holaboss does not store raw provider tokens
+- the broker resolves tokens at request time by calling Composio's API
+- token refresh is handled entirely by Composio
+
+This is the third auth mode alongside `manual_token` and `oauth_app`.
+
+### Connection flow
+
+1. runtime calls Composio to create a managed connect link
+2. user completes OAuth in a popup
+3. runtime polls Composio until the connected account becomes `ACTIVE`
+4. runtime stores a local `IntegrationConnection` with `auth_mode: "composio"` and `accountExternalId` set to the Composio connected account ID
+
+### Broker token resolution
+
+When the broker encounters a `composio` connection during `exchangeToken`:
+
+- it calls `GET /api/v3/connected_accounts/{id}` to verify the account is still active
+- it calls `POST /api/v3/tools/execute/proxy` or a dedicated token endpoint to obtain a short-lived provider access token
+- it returns that token to the app, same as any other auth mode
+
+This keeps the app-facing contract unchanged — modules still call `POST /api/v1/integrations/broker/token` regardless of the auth backend.
+
+### Future: HB Bridge (`execute` / `proxy`)
+
+The long-term model replaces raw token delivery with a bridge layer where apps never receive provider tokens. See the Composio design doc for the `@holaboss/bridge` SDK and the `execute`/`proxy` primitives. This is a future phase, not part of the initial Composio integration.
+
+### Feasibility verification
+
+The Composio API integration has been verified end-to-end:
+
+- `POST /api/v3/auth_configs` — create managed auth config
+- `POST /api/v3/connected_accounts/link` — create OAuth redirect link
+- `GET /api/v3/connected_accounts/{id}` — poll account status
+- `POST /api/v3/tools/execute/proxy` — proxy provider API calls
+
+Test code: `runtime/api-server/src/composio-minimal-example.ts` and `composio-test-server.ts`.
+
 ## Migration Strategy
 
-### Phase 1: Compatibility bridge
+### Phase 1: Compatibility bridge (done)
 
 - parse integration metadata
 - add connection and binding models
@@ -299,19 +346,24 @@ The exact provider proxy routes can evolve, but the important decision is that a
 - continue supporting `PLATFORM_INTEGRATION_TOKEN`
 - inject token and integration metadata from the resolved binding
 
-This gets Gmail/GitHub/Twitter working with minimal module rewrites.
-
-### Phase 2: Broker-first modules
+### Phase 2: Broker-first modules (done)
 
 - add local broker endpoints
 - migrate Gmail/GitHub/Sheets modules to call broker clients
 - stop requiring direct provider token envs for those modules
 
-### Phase 3: Remove legacy token contract
+### Phase 3: Connection lifecycle and remaining modules (done)
 
+- add connection CRUD endpoints
 - deprecate `PLATFORM_INTEGRATION_TOKEN`
 - move remaining modules to broker-based access
-- keep compatibility only behind a runtime flag if needed
+
+### Phase 4: Composio managed auth
+
+- add Composio service for managed OAuth connect flow
+- extend broker to resolve tokens from Composio connections
+- add managed connect UI in desktop
+- wire connect flow into existing Integrations pane
 
 ## Recommended First Provider Set
 

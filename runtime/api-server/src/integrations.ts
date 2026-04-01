@@ -370,10 +370,21 @@ export class RuntimeIntegrationService {
     const bindings = this.store.listIntegrationBindings({}).filter(
       (b) => b.connectionId === normalizedId
     );
-    if (bindings.length > 0) {
+
+    // Auto-remove orphaned bindings whose workspace no longer exists
+    const liveBindings: typeof bindings = [];
+    for (const binding of bindings) {
+      if (!this.store.getWorkspace(binding.workspaceId)) {
+        this.store.deleteIntegrationBinding(binding.bindingId);
+      } else {
+        liveBindings.push(binding);
+      }
+    }
+
+    if (liveBindings.length > 0) {
       throw new IntegrationServiceError(
         409,
-        `connection is bound to ${bindings.length} workspace(s) — remove bindings first`
+        `connection is bound to ${liveBindings.length} workspace(s) — remove bindings first`
       );
     }
 

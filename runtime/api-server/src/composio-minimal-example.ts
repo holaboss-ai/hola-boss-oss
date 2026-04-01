@@ -20,6 +20,44 @@ export interface ManagedConnectLinkResult {
   userId: string;
 }
 
+export interface ConnectedAccount {
+  id: string;
+  status: string;
+  authConfigId: string | null;
+  toolkitSlug: string | null;
+  userId: string | null;
+}
+
+export interface GetConnectedAccountParams {
+  apiKey: string;
+  connectedAccountId: string;
+  baseUrl?: string;
+  fetchImpl?: typeof fetch;
+}
+
+export interface WaitForConnectedAccountParams extends GetConnectedAccountParams {
+  /** Max time to wait in ms. Default 120_000 (2 min). */
+  timeoutMs?: number;
+  /** Poll interval in ms. Default 3_000 (3s). */
+  intervalMs?: number;
+}
+
+export interface ProxyProviderRequestParams {
+  apiKey: string;
+  connectedAccountId: string;
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  endpoint: string;
+  body?: unknown;
+  baseUrl?: string;
+  fetchImpl?: typeof fetch;
+}
+
+export interface ProxyProviderResponse<TData = unknown> {
+  data: TData | null;
+  status: number;
+  headers: Record<string, string>;
+}
+
 interface AuthConfigListItem {
   id?: string;
   status?: string;
@@ -179,6 +217,85 @@ export async function createManagedConnectLink(
   };
 }
 
+export async function getConnectedAccount(
+  params: GetConnectedAccountParams
+): Promise<ConnectedAccount> {
+  const fetchImpl = params.fetchImpl ?? fetch;
+  const id = requiredString(params.connectedAccountId, "connectedAccountId");
+  const response = await fetchImpl(`${baseUrl(params.baseUrl)}/api/v3/connected_accounts/${id}`, {
+    headers: buildHeaders(params.apiKey)
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Failed to get connected account: ${response.status} ${body}`);
+  }
+  const payload = await parseJson<{
+    id?: string;
+    status?: string;
+    auth_config?: { id?: string } | null;
+    toolkit?: { slug?: string } | null;
+    user_id?: string;
+  }>(response);
+  return {
+    id: payload.id ?? id,
+    status: (payload.status ?? "unknown").toUpperCase(),
+    authConfigId: payload.auth_config?.id ?? null,
+    toolkitSlug: payload.toolkit?.slug ?? null,
+    userId: payload.user_id ?? null
+  };
+}
+
+export async function waitForConnectedAccount(
+  params: WaitForConnectedAccountParams
+): Promise<ConnectedAccount> {
+  const timeoutMs = params.timeoutMs ?? 120_000;
+  const intervalMs = params.intervalMs ?? 3_000;
+  const deadline = Date.now() + timeoutMs;
+
+  while (true) {
+    const account = await getConnectedAccount(params);
+    if (account.status === "ACTIVE") {
+      return account;
+    }
+    if (Date.now() + intervalMs > deadline) {
+      throw new Error(
+        `Connected account ${params.connectedAccountId} did not become ACTIVE within ${timeoutMs}ms (last status: ${account.status})`
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+export async function proxyProviderRequest<TData = unknown>(
+  params: ProxyProviderRequestParams
+): Promise<ProxyProviderResponse<TData>> {
+  const fetchImpl = params.fetchImpl ?? fetch;
+  const response = await fetchImpl(`${baseUrl(params.baseUrl)}/api/v3/tools/execute/proxy`, {
+    method: "POST",
+    headers: buildHeaders(params.apiKey),
+    body: JSON.stringify({
+      connected_account_id: requiredString(params.connectedAccountId, "connectedAccountId"),
+      endpoint: requiredString(params.endpoint, "endpoint"),
+      method: params.method,
+      ...(params.body !== undefined ? { body: params.body } : {})
+    })
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Proxy request failed: ${response.status} ${body}`);
+  }
+  const payload = await parseJson<{
+    data?: TData | null;
+    status?: number;
+    headers?: Record<string, string>;
+  }>(response);
+  return {
+    data: payload.data ?? null,
+    status: payload.status ?? response.status,
+    headers: payload.headers ?? {}
+  };
+}
+
 function parseCliArgs(argv: string[]): {
   toolkitSlug: string;
   userId: string;
@@ -223,14 +340,56 @@ async function main(argv: string[]): Promise<void> {
   }
 
   const args = parseCliArgs(argv);
-  const result = await createManagedConnectLink({
+
+  // Step 1: Create managed connect link (get OAuth redirect URL)
+  const link = await createManagedConnectLink({
     apiKey,
     toolkitSlug: args.toolkitSlug,
     userId: args.userId,
     callbackUrl: args.callbackUrl,
     baseUrl: args.baseUrl
   });
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  process.stdout.write(`\n--- Step 1: Connect link created ---\n`);
+  process.stdout.write(`${JSON.stringify(link, null, 2)}\n`);
+  process.stdout.write(`\nOpen this URL to complete OAuth:\n  ${link.redirectUrl}\n`);
+
+  // Step 2: Wait for connected account to become ACTIVE
+  process.stdout.write(`\n--- Step 2: Waiting for OAuth completion ---\n`);
+  process.stdout.write(`Polling connected account ${link.connectedAccountId}...\n`);
+  const account = await waitForConnectedAccount({
+    apiKey,
+    connectedAccountId: link.connectedAccountId,
+    baseUrl: args.baseUrl,
+    timeoutMs: 300_000,
+    intervalMs: 5_000
+  });
+  process.stdout.write(`Connected account is ACTIVE!\n`);
+  process.stdout.write(`${JSON.stringify(account, null, 2)}\n`);
+
+  // Step 3: Make a proxy request to verify the token works
+  process.stdout.write(`\n--- Step 3: Proxy test request ---\n`);
+  const proxyEndpoint =
+    args.toolkitSlug === "gmail" || args.toolkitSlug === "google"
+      ? "https://gmail.googleapis.com/gmail/v1/users/me/profile"
+      : args.toolkitSlug === "github"
+        ? "https://api.github.com/user"
+        : null;
+
+  if (proxyEndpoint) {
+    const proxyResult = await proxyProviderRequest({
+      apiKey,
+      connectedAccountId: link.connectedAccountId,
+      method: "GET",
+      endpoint: proxyEndpoint,
+      baseUrl: args.baseUrl
+    });
+    process.stdout.write(`Proxy status: ${proxyResult.status}\n`);
+    process.stdout.write(`Proxy data:\n${JSON.stringify(proxyResult.data, null, 2)}\n`);
+  } else {
+    process.stdout.write(`Skipping proxy test (no default endpoint for toolkit '${args.toolkitSlug}')\n`);
+  }
+
+  process.stdout.write(`\n--- Done: OAuth feasibility verified ---\n`);
 }
 
 const entryPath = process.argv[1] ? fileURLToPath(new URL(`file://${process.argv[1]}`)) : "";

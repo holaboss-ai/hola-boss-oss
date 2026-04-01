@@ -1,13 +1,14 @@
-import "dotenv/config";
 import { electronClient } from "@better-auth/electron/client";
 import { storage as electronAuthStorage } from "@better-auth/electron/storage";
 import { createAuthClient } from "better-auth/client";
+import Database from "better-sqlite3";
+import "dotenv/config";
 import {
   app,
   BrowserView,
   BrowserWindow,
-  DownloadItem,
   dialog,
+  DownloadItem,
   ipcMain,
   nativeImage,
   screen,
@@ -17,7 +18,6 @@ import {
   type OpenDialogOptions,
   type Session,
 } from "electron";
-import Database from "better-sqlite3";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -25,8 +25,8 @@ import fs from "node:fs/promises";
 import {
   createServer,
   request as httpRequest,
-  type IncomingMessage,
   type Server as HttpServer,
+  type IncomingMessage,
   type ServerResponse,
 } from "node:http";
 import { request as httpsRequest } from "node:https";
@@ -385,7 +385,8 @@ let appUpdateStatus: AppUpdateStatusPayload = {
   error: "",
 };
 
-const RUNTIME_API_PORT = 5060;
+// Port 5060 is SIP — blocked by Node.js fetch (undici "bad port").
+const RUNTIME_API_PORT = 5160;
 const DEV_RUNTIME_ROOT = "/tmp/holaboss-runtime-macos-full";
 const STAGED_RUNTIME_ROOT = path.join("out", "runtime-macos");
 const DESKTOP_USER_DATA_DIR = (
@@ -4162,9 +4163,11 @@ async function startOAuthFlow(
   return result;
 }
 
-async function composioConnect(
-  payload: { provider: string; owner_user_id: string; callback_url?: string },
-): Promise<ComposioConnectResult> {
+async function composioConnect(payload: {
+  provider: string;
+  owner_user_id: string;
+  callback_url?: string;
+}): Promise<ComposioConnectResult> {
   return requestRuntimeJson<ComposioConnectResult>({
     method: "POST",
     path: "/api/v1/integrations/composio/connect",
@@ -4181,9 +4184,12 @@ async function composioAccountStatus(
   });
 }
 
-async function composioFinalize(
-  payload: { connected_account_id: string; provider: string; owner_user_id: string; account_label?: string },
-): Promise<IntegrationConnectionPayload> {
+async function composioFinalize(payload: {
+  connected_account_id: string;
+  provider: string;
+  owner_user_id: string;
+  account_label?: string;
+}): Promise<IntegrationConnectionPayload> {
   return requestRuntimeJson<IntegrationConnectionPayload>({
     method: "POST",
     path: "/api/v1/integrations/composio/finalize",
@@ -7169,6 +7175,9 @@ async function startEmbeddedRuntime() {
       PROACTIVE_ENABLE_REMOTE_BRIDGE: "1",
       PROACTIVE_BRIDGE_BASE_URL: proactiveBaseUrl(),
       PYTHONDONTWRITEBYTECODE: "1",
+      ...(process.env.COMPOSIO_API_KEY
+        ? { COMPOSIO_API_KEY: process.env.COMPOSIO_API_KEY }
+        : {}),
     },
     stdio: "pipe",
   });
@@ -10810,8 +10819,14 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "workspace:composioConnect",
     ["main"],
-    async (_event, payload: { provider: string; owner_user_id: string; callback_url?: string }) =>
-      composioConnect(payload),
+    async (
+      _event,
+      payload: {
+        provider: string;
+        owner_user_id: string;
+        callback_url?: string;
+      },
+    ) => composioConnect(payload),
   );
   handleTrustedIpc(
     "workspace:composioAccountStatus",
@@ -10822,8 +10837,15 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "workspace:composioFinalize",
     ["main"],
-    async (_event, payload: { connected_account_id: string; provider: string; owner_user_id: string; account_label?: string }) =>
-      composioFinalize(payload),
+    async (
+      _event,
+      payload: {
+        connected_account_id: string;
+        provider: string;
+        owner_user_id: string;
+        account_label?: string;
+      },
+    ) => composioFinalize(payload),
   );
   ipcMain.handle(
     "browser:setActiveWorkspace",
