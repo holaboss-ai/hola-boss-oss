@@ -569,6 +569,10 @@ test("memory routes delegate to the memory service and preserve payloads", async
     async sync(payload) {
       calls.push({ operation: "sync", payload });
       return { workspace_id: payload.workspace_id, queued: true, reason: payload.reason };
+    },
+    async capture(payload) {
+      calls.push({ operation: "capture", payload });
+      return { workspace_id: payload.workspace_id, files: {} };
     }
   };
   const app = buildTestRuntimeApiServer({ store, memoryService });

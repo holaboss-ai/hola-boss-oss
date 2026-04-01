@@ -3,6 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import type { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import { MemoryServiceError, type MemoryServiceLike } from "./memory.js";
+import { captureWorkspaceContext } from "./proactive-context.js";
 import { runtimeConfigHeaders } from "./runtime-config.js";
 
 const TS_BRIDGE_WORKER_FLAG_ENV = "HOLABOSS_RUNTIME_USE_TS_BRIDGE_WORKER";
@@ -276,6 +277,16 @@ export async function executeBridgeJobNatively(params: {
         state: "not_reviewed"
       });
       return succeededJobResult(job, { proposal_id: proposal.proposalId });
+    }
+
+    if (job.job_type === "workspace.context.capture") {
+      return succeededJobResult(job, {
+        context: await captureWorkspaceContext({
+          store,
+          memoryService,
+          workspaceId: requiredStringField(job.payload, "workspace_id")
+        })
+      });
     }
 
     if (job.job_type === "workspace.memory.status") {

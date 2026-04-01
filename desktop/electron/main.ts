@@ -4300,6 +4300,8 @@ function proactiveBaseUrl() {
   return DEFAULT_PROACTIVE_URL.replace(/\/+$/, "");
 }
 
+const pendingWorkspaceHeartbeatPromises = new Map<string, Promise<void>>();
+
 function embeddedRuntimeStartupConfigError() {
   if (proactiveBaseUrl()) {
     return "";
@@ -4377,9 +4379,14 @@ async function requestControlPlaneJson<T>({
 async function emitWorkspaceReadyHeartbeat(params: {
   workspaceId: string;
   holabossUserId: string;
+  sourceRef?: string;
+  correlationPrefix?: string;
+  eventId?: string;
 }): Promise<void> {
   const workspaceId = params.workspaceId.trim();
   const holabossUserId = params.holabossUserId.trim();
+  const sourceRef = params.sourceRef?.trim() || "workspace-created:ready";
+  const correlationPrefix = params.correlationPrefix?.trim() || "workspace-ready";
   if (!workspaceId) {
     throw new Error("workspaceId is required");
   }
@@ -4388,13 +4395,15 @@ async function emitWorkspaceReadyHeartbeat(params: {
       category: "workspace",
       event: "workspace.heartbeat.emit",
       outcome: "skipped",
-      detail: !holabossUserId ? "missing_holaboss_user_id" : "local_oss_user"
+      detail:
+        `${!holabossUserId ? "missing_holaboss_user_id" : "local_oss_user"} ` +
+        `workspace_id=${workspaceId}${sourceRef ? ` source_ref=${sourceRef}` : ""}`
     });
     return;
   }
 
-  const correlationId = `workspace-ready-${workspaceId}`;
-  const eventId = `evt-heartbeat-${crypto.randomUUID().replace(/-/g, "")}`;
+  const correlationId = `${correlationPrefix}-${workspaceId}`;
+  const eventId = params.eventId?.trim() || `evt-heartbeat-${crypto.randomUUID().replace(/-/g, "")}`;
   const payload = {
     events: [
       {
@@ -4408,7 +4417,7 @@ async function emitWorkspaceReadyHeartbeat(params: {
         correlation_id: correlationId,
         origin: "system",
         timestamp: utcNowIso(),
-        source_refs: ["workspace-created:ready"],
+        source_refs: [sourceRef],
         window: "24h",
         proposal_scope: "window"
       }
@@ -4418,7 +4427,7 @@ async function emitWorkspaceReadyHeartbeat(params: {
     category: "workspace",
     event: "workspace.heartbeat.emit",
     outcome: "start",
-    detail: `${correlationId} event_id=${eventId}`
+    detail: `${correlationId} event_id=${eventId}${sourceRef ? ` source_ref=${sourceRef}` : ""}`
   });
 
   const maxAttempts = 3;
@@ -4447,7 +4456,9 @@ async function emitWorkspaceReadyHeartbeat(params: {
         outcome: "success",
         detail:
           `workspace_id=${workspaceId} event_id=${eventId} attempt=${attempt} ` +
-          `status=${status} publish_status=${publishStatus}${result?.stream_id ? ` stream_id=${result.stream_id}` : ""}`
+          `status=${status} publish_status=${publishStatus}` +
+          `${sourceRef ? ` source_ref=${sourceRef}` : ""}` +
+          `${result?.stream_id ? ` stream_id=${result.stream_id}` : ""}`
       });
       return;
     } catch (error) {
@@ -4472,6 +4483,7 @@ async function emitWorkspaceReadyHeartbeat(params: {
         outcome: retryable ? "retry" : "error",
         detail:
           `workspace_id=${workspaceId} event_id=${eventId} attempt=${attempt} ` +
+          `${sourceRef ? ` source_ref=${sourceRef} ` : ""}` +
           `${error instanceof Error ? error.message : String(error)}`
       });
       if (retryable) {
@@ -5455,6 +5467,83 @@ async function copyLocalTemplateAppNodeModulesToWorkspace(templateRoot: string, 
   }
 }
 
+function workspaceHeartbeatEventId(suffix: string, workspaceId: string) {
+  const normalizedSuffix = suffix.trim().replace(/[^a-z0-9]+/gi, "").toLowerCase();
+  const normalizedWorkspaceId = workspaceId.trim().replace(/[^a-z0-9]+/gi, "").toLowerCase();
+  return `evt-heartbeat-${normalizedSuffix}-${normalizedWorkspaceId}`;
+}
+
+function hasSuccessfulWorkspaceHeartbeat(params: {
+  workspaceId: string;
+  sourceRef: string;
+}): boolean {
+  const workspaceId = params.workspaceId.trim();
+  const sourceRef = params.sourceRef.trim();
+  if (!workspaceId || !sourceRef) {
+    return false;
+  }
+
+  const database = openRuntimeDatabase();
+  try {
+    const row = database
+      .prepare(`
+        SELECT 1
+        FROM event_log
+        WHERE category = 'workspace'
+          AND event = 'workspace.heartbeat.emit'
+          AND outcome = 'success'
+          AND detail LIKE @workspaceDetail
+          AND detail LIKE @sourceDetail
+        LIMIT 1
+      `)
+      .get({
+        workspaceDetail: `%workspace_id=${workspaceId}%`,
+        sourceDetail: `%source_ref=${sourceRef}%`
+      }) as { 1?: number } | undefined;
+    return Boolean(row);
+  } finally {
+    database.close();
+  }
+}
+
+function maybeEmitWorkspaceAppsReadyHeartbeat(workspaceId: string) {
+  const trimmedWorkspaceId = workspaceId.trim();
+  const sourceRef = "workspace-apps:ready";
+  if (!trimmedWorkspaceId || hasSuccessfulWorkspaceHeartbeat({ workspaceId: trimmedWorkspaceId, sourceRef })) {
+    return;
+  }
+
+  const pendingKey = `${trimmedWorkspaceId}:${sourceRef}`;
+  if (pendingWorkspaceHeartbeatPromises.has(pendingKey)) {
+    return;
+  }
+
+  const promise = (async () => {
+    const runtimeConfig = await readRuntimeConfigFile().catch(() => ({} as Record<string, string>));
+    const targetHolabossUserId =
+      (runtimeConfig.user_id || "").trim() || (await controlPlaneWorkspaceUserId()) || "";
+    await emitWorkspaceReadyHeartbeat({
+      workspaceId: trimmedWorkspaceId,
+      holabossUserId: targetHolabossUserId,
+      sourceRef,
+      correlationPrefix: "workspace-apps-ready",
+      eventId: workspaceHeartbeatEventId("appsready", trimmedWorkspaceId)
+    });
+  })()
+    .catch((error) => {
+      void appendRuntimeLog(
+        `[workspace-heartbeat] apps-ready emit failed for ${trimmedWorkspaceId}: ${
+          error instanceof Error ? error.message : String(error)
+        }\n`
+      );
+    })
+    .finally(() => {
+      pendingWorkspaceHeartbeatPromises.delete(pendingKey);
+    });
+
+  pendingWorkspaceHeartbeatPromises.set(pendingKey, promise);
+}
+
 async function materializeLocalTemplate(payload: {
   template_root_path: string;
 }): Promise<MaterializeTemplateResponsePayload> {
@@ -6391,6 +6480,9 @@ async function getWorkspaceLifecycleViaRuntime(workspaceId: string): Promise<Wor
   const installedApps = await listInstalledAppsViaRuntime(workspaceId);
   const readiness = workspaceReadinessFromApps(installedApps.apps);
   const phaseState = workspaceLifecyclePhaseFromState(workspace, readiness);
+  if (readiness.ready) {
+    maybeEmitWorkspaceAppsReadyHeartbeat(workspaceId);
+  }
 
   return {
     workspace,

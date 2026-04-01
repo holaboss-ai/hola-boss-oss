@@ -30,6 +30,7 @@ interface SettingsDialogProps {
   selectedWorkspaceId?: string | null;
   proactiveStatus: ProactiveAgentStatusPayload | null;
   isLoadingProactiveStatus: boolean;
+  workspaceSetupStatus: ProactiveStatusSnapshotPayload | null;
 }
 
 const SETTINGS_SECTIONS: Array<{
@@ -111,7 +112,8 @@ export function SettingsDialog({
   selectedWorkspaceName,
   selectedWorkspaceId,
   proactiveStatus,
-  isLoadingProactiveStatus
+  isLoadingProactiveStatus,
+  workspaceSetupStatus
 }: SettingsDialogProps) {
   useEffect(() => {
     if (!open) {
@@ -220,6 +222,7 @@ export function SettingsDialog({
                   workspaceId={selectedWorkspaceId}
                   proactiveStatus={proactiveStatus}
                   isLoading={isLoadingProactiveStatus}
+                  workspaceSetup={workspaceSetupStatus}
                 />
               </div>
             ) : null}
