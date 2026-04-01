@@ -10,6 +10,7 @@ const sourcePath = path.join(__dirname, "ChatPane.tsx");
 test("chat pane shows provider setup CTA when no chat models are available", async () => {
   const source = await readFile(sourcePath, "utf8");
 
+  assert.doesNotMatch(source, /Sign in or set a runtime user id first\./);
   assert.match(source, /No models available\. Configure a provider to start chatting\./);
   assert.match(source, /const requiresModelProviderSetup = !hasConfiguredProviderCatalog && !holabossProxyModelsAvailable;/);
   assert.match(source, /const availableChatModelOptions = hasConfiguredProviderCatalog[\s\S]*: requiresModelProviderSetup[\s\S]*\? \[]/);
@@ -24,4 +25,5 @@ test("chat pane shows provider setup CTA when no chat models are available", asy
     source,
     /disabled=\{isResponding \|\| noAvailableModels\}[\s\S]*<option value=\{CHAT_MODEL_USE_RUNTIME_DEFAULT\}>\{modelSelectionUnavailableReason\}<\/option>/,
   );
+  assert.doesNotMatch(source, /if \(!resolvedUserId\) \{/);
 });

@@ -617,7 +617,6 @@ export function ChatPane({
   const {
     runtimeConfig,
     selectedWorkspace,
-    resolvedUserId,
     isLoadingBootstrap,
     isActivatingWorkspace,
     workspaceAppsReady,
@@ -1562,10 +1561,6 @@ export function ChatPane({
       setChatErrorMessage("Create or select a workspace first.");
       return;
     }
-    if (!resolvedUserId) {
-      setChatErrorMessage("Sign in or set a runtime user id first.");
-      return;
-    }
     if (!isOnboardingVariant && !workspaceAppsReady) {
       setChatErrorMessage(workspaceBlockingReason || "Workspace apps are still starting.");
       return;
@@ -1854,8 +1849,6 @@ export function ChatPane({
       : workspaceBlockingReason || (isActivatingWorkspace ? "Preparing workspace apps..." : "Workspace apps are still starting.");
   const baseComposerDisabledReason = !selectedWorkspace
     ? "Select a workspace to start chatting."
-    : !resolvedUserId
-      ? "Sign in or set a runtime user id first."
     : isLoadingBootstrap || isLoadingHistory
       ? "Loading workspace context..."
       : !isOnboardingVariant && !workspaceAppsReady
