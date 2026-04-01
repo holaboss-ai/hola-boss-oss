@@ -673,11 +673,14 @@ function FirstWorkspacePane() {
                   </div>
                   <div className="mt-2 grid gap-2">
                     {pendingIntegrations.connected_providers.map(provider => (
-                      <div key={provider} className="flex items-center justify-between rounded-[14px] border border-neon-green/20 bg-neon-green/4 px-4 py-3">
+                      <div key={provider} className="flex items-center justify-between rounded-[14px] border border-neon-green/25 bg-neon-green/6 px-4 py-3">
                         <span className="text-[13px] font-medium text-text-main">
                           {PROVIDER_DISPLAY_NAMES[provider] ?? provider}
                         </span>
-                        <span className="text-[11px] font-medium text-neon-green">Connected</span>
+                        <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-neon-green">
+                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-neon-green" />
+                          Connected
+                        </span>
                       </div>
                     ))}
                     {pendingIntegrations.missing_providers.map(provider => (
