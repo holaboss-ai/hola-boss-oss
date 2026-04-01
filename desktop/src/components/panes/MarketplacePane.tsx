@@ -7,6 +7,18 @@ import { KitEmoji } from "@/components/marketplace/KitEmoji";
 
 type View = "gallery" | "detail" | "creating" | "connect_integrations";
 
+const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  google: "Google",
+  github: "GitHub",
+  reddit: "Reddit",
+  twitter: "Twitter / X",
+  linkedin: "LinkedIn"
+};
+
+function providerDisplayName(provider: string): string {
+  return PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+}
+
 export function MarketplacePane() {
   const {
     marketplaceTemplates,
@@ -241,7 +253,7 @@ export function MarketplacePane() {
               <div className="mt-4 grid gap-3">
                 {pendingIntegrations.missing_providers.map((provider) => (
                   <div key={provider} className="flex items-center justify-between rounded-[14px] border border-panel-border/35 bg-[var(--theme-subtle-bg)] px-4 py-3">
-                    <div className="text-[13px] font-medium capitalize text-text-main">{provider}</div>
+                    <div className="text-[13px] font-medium text-text-main">{providerDisplayName(provider)}</div>
                     <button
                       type="button"
                       disabled={connectingProvider !== null}
@@ -254,7 +266,7 @@ export function MarketplacePane() {
                 ))}
                 {pendingIntegrations.connected_providers.map((provider) => (
                   <div key={provider} className="flex items-center justify-between rounded-[14px] border border-neon-green/20 bg-neon-green/4 px-4 py-3">
-                    <div className="text-[13px] font-medium capitalize text-text-main">{provider}</div>
+                    <div className="text-[13px] font-medium text-text-main">{providerDisplayName(provider)}</div>
                     <span className="text-[11px] text-neon-green">Connected</span>
                   </div>
                 ))}
