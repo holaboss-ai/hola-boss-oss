@@ -2141,6 +2141,10 @@ export function ChatPane({
       setChatErrorMessage(workspaceBlockingReason || "Workspace apps are still starting.");
       return;
     }
+    if (!isOnboardingVariant && !resolvedChatModelToken) {
+      setChatErrorMessage(modelSelectionUnavailableReason || "No models available.");
+      return;
+    }
     const targetSessionId = activeSessionIdRef.current || preferredSessionId(selectedWorkspace, []);
     if (!targetSessionId) {
       setChatErrorMessage("No active session found for this workspace.");
@@ -2573,14 +2577,13 @@ export function ChatPane({
         : isOnboardingVariant || workspaceAppsReady
           ? ""
           : workspaceBlockingReason || (isActivatingWorkspace ? "Preparing workspace apps..." : "Workspace apps are still starting.");
-  const composerDisabledReason = !selectedWorkspace
+  const baseComposerDisabledReason = !selectedWorkspace
     ? "Select a workspace to start chatting."
     : runtimeNotReadyReason
       ? runtimeNotReadyReason
       : !isOnboardingVariant && !workspaceAppsReady
         ? readinessMessage || "Workspace apps are still starting."
         : "";
-  const composerDisabled = Boolean(composerDisabledReason);
   const runtimeStartupBlocked =
     isLoadingBootstrap ||
     !runtimeLifecycleStatus ||
@@ -2719,6 +2722,12 @@ export function ChatPane({
     availableChatModelOptions.length > 0
       ? ""
       : "No models available. Sign in to use Holaboss or add a provider.";
+  const composerDisabledReason =
+    baseComposerDisabledReason ||
+    (!isOnboardingVariant && !effectiveChatModelPreference
+      ? modelSelectionUnavailableReason
+      : "");
+  const composerDisabled = Boolean(composerDisabledReason);
 
   useEffect(() => {
     if (!effectiveChatModelPreference) {
