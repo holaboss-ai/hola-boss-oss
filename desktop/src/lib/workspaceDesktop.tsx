@@ -499,11 +499,8 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
         return null;
       }
       const result = await window.electronAPI.workspace.resolveTemplateIntegrations(payload);
-      if (result.missing_providers.length > 0) {
-        setPendingIntegrations(result);
-        return result;
-      }
-      return null;
+      setPendingIntegrations(result);
+      return result.missing_providers.length > 0 ? result : null;
     } catch (error) {
       setWorkspaceErrorMessage(normalizeErrorMessage(error));
       return null;
