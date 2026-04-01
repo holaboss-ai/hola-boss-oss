@@ -2034,6 +2034,8 @@ function AppShellContent() {
             <TopTabsBar
               integratedTitleBar={isMacDesktop}
               onWorkspaceSwitcherVisibilityChange={setWorkspaceSwitcherOpen}
+              onOpenMarketplace={() => handleLeftRailSelect("marketplace")}
+              isMarketplaceActive={activeLeftRailItem === "marketplace"}
             />
           </div>
         ) : null}

@@ -16,7 +16,6 @@ const PRIMARY_ITEMS: Array<{ id: LeftRailItem; label: string; icon: React.ReactN
   { id: "automations", label: "Automations", icon: <Workflow size={14} /> },
   { id: "skills", label: "Skills", icon: <Sparkles size={14} /> },
   { id: "integrations", label: "Integrations", icon: <Cable size={14} /> },
-  { id: "marketplace", label: "Marketplace", icon: <LayoutGrid size={14} /> }
 ];
 
 function appInitials(label: string): string {
