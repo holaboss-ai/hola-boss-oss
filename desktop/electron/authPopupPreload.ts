@@ -76,7 +76,7 @@ interface WorkspaceListResponsePayload {
   offset: number;
 }
 
-type UiSettingsPaneSection = "account" | "providers" | "settings" | "about";
+type UiSettingsPaneSection = "account" | "billing" | "providers" | "settings" | "about";
 
 const INTERNAL_DEV_BACKEND_OVERRIDES_ENABLED =
   Boolean(process.env.VITE_DEV_SERVER_URL) || process.env.HOLABOSS_INTERNAL_DEV?.trim() === "1";

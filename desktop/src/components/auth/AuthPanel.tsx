@@ -484,22 +484,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           ? "Finishing setup"
           : "Signed out";
 
-  const statusTitle = !isSignedIn
-    ? "Sign in to connect this desktop runtime"
-    : runtimeBindingReady
-      ? "Desktop runtime is connected"
-      : authError
-        ? "We couldn't finish desktop setup"
-        : "Finishing desktop setup";
-
-  const statusDescription = !isSignedIn
-    ? "Use your Holaboss account to connect this desktop app and enable synced product features."
-    : runtimeBindingReady
-      ? "Your desktop runtime is bound to your Holaboss account and ready to use product features."
-      : authError
-        ? "Your account session is active, but the desktop runtime binding needs to be refreshed."
-        : "Sign-in succeeded. Holaboss is finishing the local runtime setup in the background.";
-
   const badgeClassName =
     statusTone === "error"
       ? "border-rose-400/35 bg-rose-500/10 text-rose-400"
@@ -507,7 +491,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         ? "border-neon-green/35 bg-neon-green/10 text-neon-green"
         : statusTone === "syncing"
           ? "border-amber-300/35 bg-amber-400/10 text-amber-300"
-          : "border-panel-border/45 bg-black/10 text-text-dim/78";
+          : "border-border/45 bg-muted/40 text-muted-foreground";
 
   const infoRows = [
     {
@@ -761,8 +745,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
     if (!providerEnabled(providerId)) {
       return (
-        <div className="rounded-[12px] border border-panel-border/25 bg-black/10 px-3 py-2 text-[11px] leading-5 text-text-dim/76">
-          Connect this provider to edit its base URL, API key, and model list here.
+        <div className="rounded-[12px] border border-border/40 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+          Connect to edit settings.
         </div>
       );
     }
@@ -772,9 +756,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     return (
       <div className="grid gap-2">
         <label className="grid gap-1">
-          <span className="text-[10px] uppercase tracking-[0.14em] text-text-dim/72">Base URL</span>
+          <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Base URL</span>
           <input
-            className="theme-control-surface h-9 rounded-[10px] border border-panel-border/45 px-2.5 text-[11px] text-text-main outline-none transition focus:border-neon-green/55"
+            className="theme-control-surface h-9 rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground outline-none transition focus:border-primary/55"
             value={draft.baseUrl}
             onChange={(event) => updateProviderDraft(providerId, { baseUrl: event.target.value })}
             placeholder={template.defaultBaseUrl}
@@ -782,9 +766,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           />
         </label>
         <label className="grid gap-1">
-          <span className="text-[10px] uppercase tracking-[0.14em] text-text-dim/72">API Key</span>
+          <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">API Key</span>
           <input
-            className="theme-control-surface h-9 rounded-[10px] border border-panel-border/45 px-2.5 text-[11px] text-text-main outline-none transition focus:border-neon-green/55"
+            className="theme-control-surface h-9 rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground outline-none transition focus:border-primary/55"
             type="password"
             value={draft.apiKey}
             onChange={(event) => updateProviderDraft(providerId, { apiKey: event.target.value })}
@@ -793,15 +777,14 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           />
         </label>
         <label className="grid gap-1">
-          <span className="text-[10px] uppercase tracking-[0.14em] text-text-dim/72">Models</span>
+          <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Models</span>
           <textarea
-            className="theme-control-surface min-h-[60px] rounded-[10px] border border-panel-border/45 px-2.5 py-2 text-[11px] leading-5 text-text-main outline-none transition focus:border-neon-green/55"
+            className="theme-control-surface min-h-[60px] rounded-[10px] border border-border/45 px-2.5 py-2 text-sm leading-5 text-foreground outline-none transition focus:border-primary/55"
             value={draft.modelsText}
             onChange={(event) => updateProviderDraft(providerId, { modelsText: event.target.value })}
             placeholder={template.defaultModels.join(", ")}
             spellCheck={false}
           />
-          <span className="text-[10px] text-text-dim/68">Comma or newline separated model IDs.</span>
         </label>
       </div>
     );
@@ -813,15 +796,15 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     const isEnabled = providerEnabled(providerId);
     const isExpandable = !isHolabossProvider;
     const isExpanded = isExpandable && expandedProviderId === providerId;
-    const sublabel = isHolabossProvider ? (isEnabled ? "Managed" : "Sign in required") : isEnabled ? "Connected" : template.description;
+    const sublabel = isHolabossProvider ? (isEnabled ? "Managed" : "Sign in required") : isEnabled ? "Connected" : "Available";
     const actionButtonClassName =
-      "inline-flex h-9 min-w-[96px] shrink-0 items-center justify-center rounded-[10px] px-3 text-[11px] transition disabled:cursor-not-allowed disabled:opacity-50";
+      "inline-flex h-9 min-w-[96px] shrink-0 items-center justify-center rounded-[10px] px-3 text-sm transition disabled:cursor-not-allowed disabled:opacity-50";
 
     return (
       <div
         key={providerId}
         className={`theme-control-surface overflow-hidden rounded-[14px] border transition ${
-          isExpanded ? "border-neon-green/35 bg-black/10" : "border-panel-border/30"
+          isExpanded ? "border-primary/35 bg-card/90" : "border-border/40"
         }`}
       >
         <div className="flex items-center justify-between gap-3 px-3 py-3">
@@ -832,17 +815,14 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               className="flex min-w-0 flex-1 items-center gap-3 rounded-[10px] text-left outline-none transition hover:text-text-main focus-visible:ring-2 focus-visible:ring-neon-green/45"
               aria-expanded={isExpanded}
             >
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[12px] border border-panel-border/35 bg-black/14 text-text-main/86">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[12px] border border-border/35 bg-muted/40 text-foreground/86">
                 <ProviderBrandIcon providerId={providerId} />
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block text-[13px] font-medium text-text-main">{template.label}</span>
-                <span className="mt-0.5 block text-[11px] text-text-muted/72">{sublabel}</span>
+                <span className="block text-sm font-medium text-foreground">{template.label}</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">{sublabel}</span>
               </span>
-              <span
-                className={`shrink-0 text-text-dim/72 transition ${isExpanded ? "rotate-180 text-neon-green" : ""}`}
-                aria-hidden="true"
-              >
+              <span className={`shrink-0 text-muted-foreground transition ${isExpanded ? "rotate-180 text-primary" : ""}`} aria-hidden="true">
                 <svg viewBox="0 0 16 16" className="h-4 w-4">
                   <path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
                 </svg>
@@ -850,19 +830,19 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             </button>
           ) : (
             <div className="flex min-w-0 flex-1 items-center gap-3">
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[12px] border border-panel-border/35 bg-black/14 text-text-main/86">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[12px] border border-border/35 bg-muted/40 text-foreground/86">
                 <ProviderBrandIcon providerId={providerId} />
               </span>
               <div className="min-w-0">
-                <div className="text-[13px] font-medium text-text-main">{template.label}</div>
-                <div className="mt-0.5 text-[11px] text-text-muted/72">{sublabel}</div>
+                <div className="text-sm font-medium text-foreground">{template.label}</div>
+                <div className="mt-0.5 text-xs text-muted-foreground">{sublabel}</div>
               </div>
             </div>
           )}
 
           {isHolabossProvider ? (
             isEnabled ? (
-              <div className="rounded-full border border-neon-green/30 bg-neon-green/8 px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-neon-green">
+              <div className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs uppercase tracking-[0.14em] text-primary">
                 Enabled
               </div>
             ) : (
@@ -882,7 +862,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 updateProviderDraft(providerId, { enabled: false });
                 setExpandedProviderId((current) => (current === providerId ? null : current));
               }}
-              className={`${actionButtonClassName} border border-panel-border/45 text-text-main hover:border-[rgba(247,90,84,0.4)] hover:text-[rgba(206,92,84,0.92)]`}
+              className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-destructive/40 hover:text-destructive`}
             >
               Disconnect
             </button>
@@ -910,19 +890,12 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   }
 
   const runtimeProviderSettings = (
-    <div className="theme-subtle-surface mt-3 grid gap-4 rounded-[20px] border border-panel-border/35 p-4">
-      <div>
-        <div className="text-[10px] tracking-[0.16em] text-text-dim/76">MODEL PROVIDERS</div>
-        <div className="mt-1 text-[12px] leading-6 text-text-muted/84">
-          Configure known providers instead of editing raw runtime JSON. Changes autosave to runtime-config.json.
-        </div>
-      </div>
-
-      <div className="rounded-[18px] border border-panel-border/35 bg-black/8 p-4">
-        <div className="text-[11px] font-medium text-text-main/92">Connected providers</div>
+    <div className="theme-subtle-surface mt-3 grid gap-4 rounded-[20px] border border-border/40 p-4">
+      <div className="rounded-[18px] border border-border/40 bg-card/80 p-4">
+        <div className="text-sm font-medium text-foreground">Connected providers</div>
         <div className="mt-3 grid gap-2">
           {connectedProviderIds.length === 0 ? (
-            <div className="rounded-[12px] border border-panel-border/30 bg-black/6 px-3 py-2 text-[11px] text-text-dim/78">
+            <div className="rounded-[12px] border border-border/35 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
               No connected providers.
             </div>
           ) : (
@@ -931,12 +904,12 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         </div>
       </div>
 
-      <div className="rounded-[18px] border border-panel-border/35 bg-black/8 p-4">
-        <div className="text-[11px] font-medium text-text-main/92">Popular providers</div>
+      <div className="rounded-[18px] border border-border/40 bg-card/80 p-4">
+        <div className="text-sm font-medium text-foreground">Available providers</div>
         <div className="mt-3 grid gap-2">
           {availableProviderIds.length === 0 ? (
-            <div className="rounded-[12px] border border-panel-border/30 bg-black/6 px-3 py-2 text-[11px] text-text-dim/78">
-              All known providers are already connected.
+            <div className="rounded-[12px] border border-border/35 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+              All providers are connected.
             </div>
           ) : (
             availableProviderIds.map((providerId) => renderProviderCard(providerId))
@@ -946,14 +919,14 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
       <div className="mt-1 flex flex-wrap gap-2">
         <button
-          className="theme-control-surface rounded-[14px] border border-panel-border/45 px-3 py-2 text-[11px] text-text-main transition hover:border-neon-green/35 disabled:cursor-not-allowed disabled:opacity-50"
+          className="theme-control-surface rounded-[14px] border border-border/45 px-3 py-2 text-sm text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
           type="button"
           onClick={() => void handleReloadRuntimeSettings()}
         >
           Reload settings
         </button>
         <button
-          className="theme-control-surface rounded-[14px] border border-panel-border/45 px-3 py-2 text-[11px] text-text-main transition hover:border-neon-green/35 disabled:cursor-not-allowed disabled:opacity-50"
+          className="theme-control-surface rounded-[14px] border border-border/45 px-3 py-2 text-sm text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
           type="button"
           onClick={() => void handleExchangeRuntimeBinding()}
           disabled={isExchangingRuntimeBinding || !isSignedIn}
@@ -961,12 +934,12 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           {isExchangingRuntimeBinding ? "Refreshing..." : "Refresh runtime binding"}
         </button>
         <div
-          className={`inline-flex min-h-[40px] items-center rounded-[14px] border px-3 py-2 text-[11px] ${
+          className={`inline-flex min-h-[40px] items-center rounded-[14px] border px-3 py-2 text-sm ${
             providerSaveStatus === "error"
               ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
               : providerSaveStatus === "saved"
                 ? "border-neon-green/35 bg-neon-green/8 text-neon-green"
-                : "border-panel-border/35 bg-black/8 text-text-dim/76"
+                : "border-border/35 bg-muted/40 text-muted-foreground"
           }`}
         >
           {providerSaveStatus === "saving"
@@ -987,7 +960,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         {runtimeProviderSettings}
         {(authMessage || authError) && (
           <div
-            className={`mt-3 rounded-[16px] border px-4 py-3 text-[11px] ${
+            className={`mt-3 rounded-[16px] border px-4 py-3 text-sm ${
               authError
                 ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
                 : "border-neon-green/35 bg-neon-green/8 text-neon-green"
@@ -1001,30 +974,25 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   }
 
   return (
-    <section className="theme-shell w-full max-w-none overflow-hidden rounded-[24px] border border-panel-border/40 text-[11px] text-text-main/88 shadow-card">
+    <section className="theme-shell w-full max-w-none overflow-hidden rounded-[24px] border border-border/40 text-sm text-foreground shadow-card">
       {showAccountSection && (
         <>
           <div className="border-b border-panel-border/40 px-4 py-4">
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-start gap-3">
-                <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-neon-green/30 bg-neon-green/10 text-[16px] font-semibold text-neon-green">
+                <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-primary/30 bg-primary/10 text-lg font-semibold text-primary">
                   {sessionInitials(session)}
                 </div>
                 <div className="min-w-0">
-                  <div className="text-[15px] font-medium text-text-main">
+                  <div className="text-base font-medium text-foreground">
                     {isSignedIn ? sessionDisplayName(session) || "Holaboss account" : "Holaboss account"}
                   </div>
-                  <div className="mt-0.5 truncate text-[12px] text-text-muted/80">
+                  <div className="mt-0.5 truncate text-sm text-muted-foreground">
                     {isSignedIn ? sessionEmail(session) || "Signed in" : "Not connected"}
                   </div>
                 </div>
               </div>
-              <div className={`shrink-0 rounded-full border px-3 py-1 text-[10px] tracking-[0.14em] ${badgeClassName}`}>{statusBadgeLabel}</div>
-            </div>
-
-            <div className="theme-subtle-surface mt-4 rounded-[18px] border border-panel-border/35 px-4 py-3">
-              <div className="text-[13px] text-text-main">{statusTitle}</div>
-              <div className="mt-1 text-[11px] leading-5 text-text-muted/82">{statusDescription}</div>
+              <div className={`shrink-0 rounded-full border px-3 py-1 text-xs tracking-[0.14em] ${badgeClassName}`}>{statusBadgeLabel}</div>
             </div>
           </div>
 
@@ -1035,8 +1003,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   key={row.label}
                   className="theme-subtle-surface flex items-center justify-between gap-3 rounded-[16px] border border-panel-border/35 px-4 py-3"
                 >
-                  <div className="text-[11px] text-text-main/92">{row.label}</div>
-                  <div className="max-w-[58%] truncate text-right text-[11px] text-text-muted/82">{row.value}</div>
+                  <div className="text-sm text-foreground">{row.label}</div>
+                  <div className="max-w-[58%] truncate text-right text-sm text-muted-foreground">{row.value}</div>
                 </div>
               ))}
             </div>
@@ -1044,7 +1012,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             <div className="mt-4 flex flex-wrap gap-2">
               {!isSignedIn && (
                 <button
-                  className="inline-flex h-[42px] items-center justify-center rounded-[16px] border border-neon-green/40 bg-neon-green/10 px-4 text-[12px] text-neon-green transition hover:bg-neon-green/16 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-10 items-center justify-center rounded-[16px] border border-primary/40 bg-primary/10 px-4 text-sm text-primary transition hover:bg-primary/16 disabled:cursor-not-allowed disabled:opacity-50"
                   type="button"
                   onClick={() => void handleStartSignIn()}
                   disabled={isStartingSignIn}
@@ -1055,7 +1023,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
               {isSignedIn && !runtimeBindingReady && (
                 <button
-                  className="inline-flex h-[42px] items-center justify-center rounded-[16px] border border-neon-green/40 bg-neon-green/10 px-4 text-[12px] text-neon-green transition hover:bg-neon-green/16 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-10 items-center justify-center rounded-[16px] border border-primary/40 bg-primary/10 px-4 text-sm text-primary transition hover:bg-primary/16 disabled:cursor-not-allowed disabled:opacity-50"
                   type="button"
                   onClick={() => void handleExchangeRuntimeBinding()}
                   disabled={isExchangingRuntimeBinding}
@@ -1065,7 +1033,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               )}
 
               <button
-                className="theme-control-surface inline-flex h-[42px] items-center justify-center rounded-[16px] border border-panel-border/45 px-4 text-[12px] text-text-main transition hover:border-neon-green/35 disabled:cursor-not-allowed disabled:opacity-50"
+                className="theme-control-surface inline-flex h-10 items-center justify-center rounded-[16px] border border-border/45 px-4 text-sm text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
                 type="button"
                 onClick={() => void handleRefreshSession()}
                 disabled={sessionState.isPending}
@@ -1074,7 +1042,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               </button>
 
               <button
-                className="inline-flex h-[42px] items-center justify-center rounded-[16px] border border-[rgba(247,90,84,0.28)] bg-[rgba(247,90,84,0.08)] px-4 text-[12px] text-[rgba(206,92,84,0.96)] transition hover:border-[rgba(247,90,84,0.4)] hover:bg-[rgba(247,90,84,0.12)] disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-10 items-center justify-center rounded-[16px] border border-destructive/30 bg-destructive/10 px-4 text-sm text-destructive transition hover:border-destructive/45 hover:bg-destructive/15 disabled:cursor-not-allowed disabled:opacity-50"
                 type="button"
                 onClick={() => void handleSignOut()}
                 disabled={!isSignedIn}
@@ -1084,14 +1052,14 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             </div>
 
             {isFinishingSetup && !isExchangingRuntimeBinding && (
-              <div className="mt-3 rounded-[16px] border border-amber-300/25 bg-amber-400/10 px-4 py-3 text-[11px] text-amber-300">
+              <div className="mt-3 rounded-[16px] border border-amber-300/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-300">
                 Sign-in completed. Holaboss is finishing local runtime setup.
               </div>
             )}
 
             {(authMessage || authError) && (
               <div
-                className={`mt-3 rounded-[16px] border px-4 py-3 text-[11px] ${
+                className={`mt-3 rounded-[16px] border px-4 py-3 text-sm ${
                   authError
                     ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
                     : "border-neon-green/35 bg-neon-green/8 text-neon-green"
@@ -1106,14 +1074,10 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
       {!showAccountSection && showRuntimeSection && (
         <div className="px-4 py-4">
-          <div className="text-[12px] uppercase tracking-[0.16em] text-text-dim/72">Runtime</div>
-          <div className="mt-1 text-[12px] leading-5 text-text-muted/84">
-            Configure model providers and defaults for this desktop runtime.
-          </div>
           {runtimeProviderSettings}
           {(authMessage || authError) && (
             <div
-              className={`mt-3 rounded-[16px] border px-4 py-3 text-[11px] ${
+              className={`mt-3 rounded-[16px] border px-4 py-3 text-sm ${
                 authError
                   ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
                   : "border-neon-green/35 bg-neon-green/8 text-neon-green"

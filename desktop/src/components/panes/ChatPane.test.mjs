@@ -37,3 +37,17 @@ test("chat pane exposes a return path from sub-sessions back to the main session
   assert.match(source, /await loadSessionConversation\(mainSessionId, selectedWorkspaceId, runtimeStates\.items\);/);
   assert.match(source, /const targetSessionId = activeSessionIdRef\.current \|\| preferredSessionId\(selectedWorkspace, \[\]\);/);
 });
+
+test("chat pane shows hosted billing warnings and blocks managed sends when credits are exhausted", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /useDesktopBilling/);
+  assert.match(source, /selectedManagedProviderGroup\?\.kind === "holaboss_proxy"/);
+  assert.match(source, /hasHostedBillingAccount/);
+  assert.match(source, /Credits are running low\. Add more on web to avoid interruptions\./);
+  assert.match(source, /You're out of credits for managed usage\./);
+  assert.match(source, /Add credits/);
+  assert.match(source, /Manage on web/);
+  assert.match(source, /await window\.electronAPI\.billing\.getOverview\(\)/);
+  assert.match(source, /latestBillingOverview\.creditsBalance <= 0/);
+});

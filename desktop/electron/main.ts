@@ -234,7 +234,7 @@ interface BrowserAnchorBoundsPayload {
   height: number;
 }
 
-type UiSettingsPaneSection = "account" | "providers" | "settings" | "about";
+type UiSettingsPaneSection = "account" | "billing" | "providers" | "settings" | "about";
 
 interface AddressSuggestionPayload {
   id: string;
@@ -1690,6 +1690,79 @@ interface HolabossClientConfigPayload {
   projectsUrl: string;
   marketplaceUrl: string;
   hasApiKey: boolean;
+}
+
+interface DesktopBillingOverviewPayload {
+  hasHostedBillingAccount: boolean;
+  planId: string;
+  planName: string | null;
+  planStatus: string;
+  renewsAt: string | null;
+  expiresAt: string | null;
+  creditsBalance: number;
+  totalAllocated: number;
+  totalUsed: number;
+  monthlyCreditsIncluded: number | null;
+  monthlyCreditsUsed: number | null;
+  dailyRefreshCredits: number | null;
+  dailyRefreshTarget: number | null;
+  lowBalanceThreshold: number;
+  isLowBalance: boolean;
+}
+
+interface DesktopBillingUsageItemPayload {
+  id: string;
+  type: string;
+  sourceType: string | null;
+  reason: string | null;
+  amount: number;
+  absoluteAmount: number;
+  createdAt: string;
+}
+
+interface DesktopBillingUsagePayload {
+  items: DesktopBillingUsageItemPayload[];
+  count: number;
+}
+
+interface DesktopBillingLinksPayload {
+  billingPageUrl: string;
+  addCreditsUrl: string;
+  upgradeUrl: string;
+  usageUrl: string;
+}
+
+interface DesktopBillingRpcEnvelope<T> {
+  json: T;
+  meta?: unknown;
+}
+
+interface DesktopBillingQuotaRpcPayload {
+  balance: number;
+  totalAllocated: number;
+  totalUsed: number;
+}
+
+interface DesktopBillingTransactionRpcPayload {
+  id: string;
+  type: string;
+  sourceType: string | null;
+  reason: string | null;
+  amount: number;
+  createdAt: string;
+}
+
+interface DesktopBillingSubscriptionRpcPayload {
+  status: string;
+  plan: string;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+}
+
+interface DesktopBillingInfoRpcPayload {
+  hasActiveSubscription: boolean;
+  subscription: DesktopBillingSubscriptionRpcPayload | null;
+  stripeCustomerId: string | null;
 }
 
 interface InstalledWorkspaceAppPayload {
@@ -3744,6 +3817,188 @@ async function getAuthenticatedUser(): Promise<AuthUserPayload | null> {
 
   const payload = (await response.json()) as { user?: AuthUserPayload } | null;
   return payload?.user ?? null;
+}
+
+const DESKTOP_BILLING_TOKENS_PER_CREDIT = 2000;
+const DESKTOP_BILLING_LOW_BALANCE_THRESHOLD = 10;
+const DESKTOP_BILLING_PLAN_META = {
+  basic: {
+    planId: "basic",
+    planName: "Holaboss",
+    monthlyCreditsIncluded: 200,
+  },
+  pro: {
+    planId: "pro",
+    planName: "Holaboss Pro",
+    monthlyCreditsIncluded: 2000,
+  },
+  customize: {
+    planId: "customize",
+    planName: "Holaboss Custom",
+    monthlyCreditsIncluded: null,
+  },
+} as const;
+
+type DesktopBillingPlanMeta =
+  (typeof DESKTOP_BILLING_PLAN_META)[keyof typeof DESKTOP_BILLING_PLAN_META];
+
+function desktopBillingTokensToCredits(tokens: number): number {
+  return Math.floor(tokens / DESKTOP_BILLING_TOKENS_PER_CREDIT);
+}
+
+function desktopBillingPlanMeta(
+  plan: string | null | undefined,
+): DesktopBillingPlanMeta {
+  if (plan === "pro" || plan === "customize") {
+    return DESKTOP_BILLING_PLAN_META[plan];
+  }
+  return DESKTOP_BILLING_PLAN_META.basic;
+}
+
+async function billingFetch<T>(path: string, input?: unknown): Promise<T> {
+  if (!AUTH_BASE_URL) {
+    throw new Error(
+      "Remote billing is not configured. Set HOLABOSS_AUTH_BASE_URL outside the public repo.",
+    );
+  }
+
+  const cookieHeader = authCookieHeader();
+  if (!cookieHeader) {
+    throw new Error("Not authenticated — sign in first.");
+  }
+
+  const response = await fetch(
+    `${AUTH_BASE_URL}${path}`,
+    {
+      method: "POST",
+      headers: {
+        Cookie: cookieHeader,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(
+        input === undefined ? {} : { json: input },
+      ),
+    },
+  );
+
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      clearPersistedAuthCookie();
+      throw new Error("Not authenticated — sign in first.");
+    }
+    const detail = await response.text();
+    throw new Error(
+      detail || `Desktop billing request failed with status ${response.status}`,
+    );
+  }
+
+  const payload =
+    (await response.json()) as DesktopBillingRpcEnvelope<T> | null;
+  if (!payload || !("json" in payload)) {
+    throw new Error("Desktop billing received a malformed RPC response.");
+  }
+
+  return payload.json;
+}
+
+function desktopAppBaseUrl(): string {
+  if (!AUTH_BASE_URL) {
+    return HOLABOSS_HOME_URL;
+  }
+
+  try {
+    const parsed = new URL(AUTH_BASE_URL);
+    if (parsed.hostname === "localhost" && parsed.port === "4000") {
+      parsed.port = "4321";
+      return parsed.origin;
+    }
+    if (parsed.hostname.startsWith("api-preview.")) {
+      parsed.hostname = parsed.hostname.replace(/^api-preview\./, "preview.");
+      return parsed.origin;
+    }
+    if (parsed.hostname.startsWith("api.")) {
+      parsed.hostname = parsed.hostname.replace(/^api\./, "app.");
+      return parsed.origin;
+    }
+    return parsed.origin;
+  } catch {
+    return HOLABOSS_HOME_URL;
+  }
+}
+
+function buildDesktopBillingLinks(
+  appBaseUrl = desktopAppBaseUrl(),
+): DesktopBillingLinksPayload {
+  const normalizedBaseUrl = normalizeBaseUrl(appBaseUrl) || HOLABOSS_HOME_URL;
+  return {
+    billingPageUrl: `${normalizedBaseUrl}/app/settings?tab=billing`,
+    addCreditsUrl: `${normalizedBaseUrl}/app/settings?tab=billing&intent=add-credits`,
+    upgradeUrl: `${normalizedBaseUrl}/app/settings?tab=billing&intent=upgrade`,
+    usageUrl: `${normalizedBaseUrl}/app/settings?tab=billing&intent=usage`,
+  };
+}
+
+async function getDesktopBillingOverview(): Promise<DesktopBillingOverviewPayload> {
+  const [quota, billingInfo] = await Promise.all([
+    billingFetch<DesktopBillingQuotaRpcPayload>("/rpc/quota/myQuota"),
+    billingFetch<DesktopBillingInfoRpcPayload>("/rpc/billing/myBillingInfo"),
+  ]);
+  const subscription = billingInfo.subscription;
+  const planMeta = desktopBillingPlanMeta(subscription?.plan);
+  const renewsAt =
+    subscription && !subscription.cancelAtPeriodEnd
+      ? subscription.currentPeriodEnd
+      : null;
+  const expiresAt =
+    subscription?.cancelAtPeriodEnd ? subscription.currentPeriodEnd : null;
+  const creditsBalance = quota.balance;
+
+  return {
+    hasHostedBillingAccount: true,
+    planId: planMeta.planId,
+    planName: planMeta.planName,
+    planStatus: subscription?.status ?? "inactive",
+    renewsAt,
+    expiresAt,
+    creditsBalance,
+    totalAllocated: quota.totalAllocated,
+    totalUsed: quota.totalUsed,
+    monthlyCreditsIncluded: planMeta.monthlyCreditsIncluded,
+    monthlyCreditsUsed: null,
+    dailyRefreshCredits: null,
+    dailyRefreshTarget: null,
+    lowBalanceThreshold: DESKTOP_BILLING_LOW_BALANCE_THRESHOLD,
+    isLowBalance:
+      creditsBalance > 0 &&
+      creditsBalance < DESKTOP_BILLING_LOW_BALANCE_THRESHOLD,
+  };
+}
+
+async function getDesktopBillingUsage(
+  limit = 10,
+): Promise<DesktopBillingUsagePayload> {
+  const normalizedLimit = Math.max(1, Math.min(limit, 50));
+  const items = await billingFetch<DesktopBillingTransactionRpcPayload[]>(
+    "/rpc/quota/myTransactions",
+    { limit: normalizedLimit },
+  );
+
+  return {
+    items: items.map((transaction) => {
+      const amount = desktopBillingTokensToCredits(transaction.amount);
+      return {
+        id: transaction.id,
+        type: transaction.type,
+        sourceType: transaction.sourceType,
+        reason: transaction.reason,
+        amount,
+        absoluteAmount: Math.abs(amount),
+        createdAt: transaction.createdAt,
+      };
+    }),
+    count: items.length,
+  };
 }
 
 function authUserId(user: AuthUserPayload | null | undefined): string {
@@ -11398,6 +11653,15 @@ app.whenReady().then(async () => {
   handleTrustedIpc("auth:getUser", ["main", "auth-popup"], async () =>
     getAuthenticatedUser(),
   );
+  handleTrustedIpc("billing:getOverview", ["main"], async () =>
+    getDesktopBillingOverview(),
+  );
+  handleTrustedIpc("billing:getUsage", ["main"], async (_event, limit?: number) =>
+    getDesktopBillingUsage(typeof limit === "number" ? limit : 10),
+  );
+  handleTrustedIpc("billing:getLinks", ["main"], async () =>
+    buildDesktopBillingLinks(),
+  );
   handleTrustedIpc("auth:requestAuth", ["main", "auth-popup"], async () => {
     await requireAuthClient().requestAuth();
   });
@@ -11888,6 +12152,110 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, payload: HolabossCreateWorkspacePayload) =>
       resolveTemplateIntegrations(payload),
+  );
+  handleTrustedIpc(
+    "workspace:createSubmission",
+    ["main"],
+    async (
+      _event,
+      payload: {
+        workspaceId: string;
+        name: string;
+        description: string;
+        category: string;
+        tags: string[];
+        apps: string[];
+        onboardingMd: string | null;
+        readmeMd: string | null;
+      },
+    ) => {
+      const holabossUserId = await controlPlaneWorkspaceUserId();
+      return requestControlPlaneJson<{
+        submission_id: string;
+        template_id: string;
+        upload_url: string;
+        upload_expires_at: string;
+      }>({
+        service: "marketplace",
+        method: "POST",
+        path: "/api/v1/marketplace/submissions/create",
+        payload: {
+          ...payload,
+          holaboss_user_id: holabossUserId,
+        },
+      });
+    },
+  );
+  handleTrustedIpc(
+    "workspace:packageAndUploadWorkspace",
+    ["main"],
+    async (
+      _event,
+      params: {
+        workspaceId: string;
+        apps: string[];
+        manifest: Record<string, unknown>;
+        uploadUrl: string;
+      },
+    ) => {
+      const { packageWorkspace, uploadToPresignedUrl } = await import("./workspace-packager.js");
+      const workspaceDir = workspaceDirectoryPath(params.workspaceId);
+      const result = await packageWorkspace({
+        workspaceDir,
+        apps: params.apps,
+        manifest: params.manifest,
+      });
+      await uploadToPresignedUrl(params.uploadUrl, result.archiveBuffer);
+      return { archiveSizeBytes: result.archiveSizeBytes };
+    },
+  );
+  handleTrustedIpc(
+    "workspace:finalizeSubmission",
+    ["main"],
+    async (_event, submissionId: string) => {
+      const holabossUserId = await controlPlaneWorkspaceUserId();
+      return requestControlPlaneJson<{
+        submission_id: string;
+        status: string;
+        template_name: string;
+      }>({
+        service: "marketplace",
+        method: "POST",
+        path: `/api/v1/marketplace/submissions/${encodeURIComponent(submissionId)}/finalize`,
+        payload: {
+          holaboss_user_id: holabossUserId,
+        },
+      });
+    },
+  );
+  handleTrustedIpc(
+    "workspace:generateTemplateContent",
+    ["main"],
+    async (
+      _event,
+      params: {
+        contentType: "onboarding" | "readme";
+        name: string;
+        description: string;
+        category: string;
+        tags: string[];
+        apps: string[];
+      },
+    ) => {
+      return requestControlPlaneJson<{ content: string }>({
+        service: "marketplace",
+        method: "POST",
+        path: "/api/v1/marketplace/generate-template-content",
+        payload: {
+          content_type: params.contentType,
+          name: params.name,
+          description: params.description,
+          category: params.category,
+          tags: params.tags,
+          apps: params.apps,
+        },
+      });
+    },
   );
   ipcMain.handle(
     "browser:setActiveWorkspace",

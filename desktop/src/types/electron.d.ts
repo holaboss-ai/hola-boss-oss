@@ -53,7 +53,7 @@ declare global {
     height: number;
   }
 
-  type UiSettingsPaneSection = "account" | "providers" | "settings" | "about";
+  type UiSettingsPaneSection = "account" | "billing" | "providers" | "settings" | "about";
 
   interface BrowserStatePayload {
     id: string;
@@ -498,6 +498,46 @@ declare global {
     hasApiKey: boolean;
   }
 
+  interface DesktopBillingOverviewPayload {
+    hasHostedBillingAccount: boolean;
+    planId: string;
+    planName: string | null;
+    planStatus: string;
+    renewsAt: string | null;
+    expiresAt: string | null;
+    creditsBalance: number;
+    totalAllocated: number;
+    totalUsed: number;
+    monthlyCreditsIncluded: number | null;
+    monthlyCreditsUsed: number | null;
+    dailyRefreshCredits: number | null;
+    dailyRefreshTarget: number | null;
+    lowBalanceThreshold: number;
+    isLowBalance: boolean;
+  }
+
+  interface DesktopBillingUsageItemPayload {
+    id: string;
+    type: string;
+    sourceType: string | null;
+    reason: string | null;
+    amount: number;
+    absoluteAmount: number;
+    createdAt: string;
+  }
+
+  interface DesktopBillingUsagePayload {
+    items: DesktopBillingUsageItemPayload[];
+    count: number;
+  }
+
+  interface DesktopBillingLinksPayload {
+    billingPageUrl: string;
+    addCreditsUrl: string;
+    upgradeUrl: string;
+    usageUrl: string;
+  }
+
   interface InstalledWorkspaceAppPayload {
     app_id: string;
     config_path: string;
@@ -778,6 +818,35 @@ declare global {
     connected_providers: string[];
     missing_providers: string[];
   }
+
+  interface CreateSubmissionPayload {
+    workspaceId: string;
+    name: string;
+    description: string;
+    category: string;
+    tags: string[];
+    apps: string[];
+    onboardingMd: string | null;
+    readmeMd: string | null;
+  }
+
+  interface CreateSubmissionResponse {
+    submission_id: string;
+    template_id: string;
+    upload_url: string;
+    upload_expires_at: string;
+  }
+
+  interface FinalizeSubmissionResponse {
+    submission_id: string;
+    status: string;
+    template_name: string;
+  }
+
+  interface PackageAndUploadResult {
+    archiveSizeBytes: number;
+  }
+
   interface ElectronAPI {
     platform: string;
     versions: {
@@ -813,6 +882,11 @@ declare global {
       openExternalUrl: (url: string) => Promise<void>;
       onThemeChange: (listener: (theme: string) => void) => () => void;
       onOpenSettingsPane: (listener: (section: UiSettingsPaneSection) => void) => () => void;
+    };
+    billing: {
+      getOverview: () => Promise<DesktopBillingOverviewPayload>;
+      getUsage: (limit?: number) => Promise<DesktopBillingUsagePayload>;
+      getLinks: () => Promise<DesktopBillingLinksPayload>;
     };
     appUpdate: {
       getStatus: () => Promise<AppUpdateStatusPayload>;
@@ -886,6 +960,22 @@ declare global {
       composioAccountStatus: (connectedAccountId: string) => Promise<ComposioAccountStatus>;
       composioFinalize: (payload: { connected_account_id: string; provider: string; owner_user_id: string; account_label?: string }) => Promise<IntegrationConnectionPayload>;
       resolveTemplateIntegrations: (payload: HolabossCreateWorkspacePayload) => Promise<ResolveTemplateIntegrationsResult>;
+      generateTemplateContent(params: {
+        contentType: "onboarding" | "readme";
+        name: string;
+        description: string;
+        category: string;
+        tags: string[];
+        apps: string[];
+      }): Promise<{ content: string }>;
+      createSubmission(payload: CreateSubmissionPayload): Promise<CreateSubmissionResponse>;
+      packageAndUploadWorkspace(params: {
+        workspaceId: string;
+        apps: string[];
+        manifest: Record<string, unknown>;
+        uploadUrl: string;
+      }): Promise<PackageAndUploadResult>;
+      finalizeSubmission(submissionId: string): Promise<FinalizeSubmissionResponse>;
       onSessionStreamEvent: (listener: (payload: HolabossSessionStreamEventPayload) => void) => () => void;
     };
     auth: {

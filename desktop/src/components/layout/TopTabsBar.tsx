@@ -9,6 +9,7 @@ import {
   Search,
   Settings,
   Trash2,
+  Upload,
   User2,
 } from "lucide-react";
 import {
@@ -21,6 +22,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { CreditsPill } from "@/components/billing/CreditsPill";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -32,6 +34,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { useDesktopBilling } from "@/lib/billing/useDesktopBilling";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
@@ -42,7 +45,9 @@ interface TopTabsBarProps {
   isMarketplaceActive?: boolean;
   onOpenSettings?: () => void;
   onOpenAccount?: () => void;
+  onOpenBilling?: () => void;
   onOpenExternalUrl?: (url: string) => void;
+  onPublish?: () => void;
 }
 
 export function TopTabsBar({
@@ -52,8 +57,12 @@ export function TopTabsBar({
   isMarketplaceActive = false,
   onOpenSettings,
   onOpenAccount,
+  onOpenBilling,
   onOpenExternalUrl,
+  onPublish,
 }: TopTabsBarProps) {
+  const { overview, isLoading: isBillingLoading, isLowBalance } =
+    useDesktopBilling();
   const userButtonRef = useRef<HTMLButtonElement | null>(null);
   const workspaceSwitcherRef = useRef<HTMLDivElement | null>(null);
   const workspaceSwitcherButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -303,6 +312,12 @@ export function TopTabsBar({
               <span className="hidden sm:inline">Marketplace</span>
             </Button>
           ) : null}
+          <CreditsPill
+            balance={overview?.creditsBalance ?? 0}
+            isLoading={isBillingLoading}
+            isLowBalance={isLowBalance}
+            onClick={() => onOpenBilling?.()}
+          />
           <DropdownMenu>
             <DropdownMenuTrigger
               ref={userButtonRef}
@@ -444,6 +459,20 @@ export function TopTabsBar({
               </div>
 
               <div className="mt-3 border-t border-border pt-3">
+                {selectedWorkspaceId && onPublish ? (
+                  <Button
+                    variant="outline"
+                    size="default"
+                    onClick={() => {
+                      closeWorkspaceSwitcher();
+                      onPublish();
+                    }}
+                    className="mb-2 w-full justify-start gap-2"
+                  >
+                    <Upload size={14} />
+                    <span>Publish to Store</span>
+                  </Button>
+                ) : null}
                 <Button
                   variant="outline"
                   size="default"

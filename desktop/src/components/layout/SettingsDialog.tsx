@@ -1,6 +1,7 @@
 import { useEffect } from "react";
-import { CircleHelp, ExternalLink, Globe, Info, Palette, User2, Waypoints, X } from "lucide-react";
+import { CircleHelp, CreditCard, ExternalLink, Globe, Info, Palette, User2, Waypoints, X } from "lucide-react";
 import { AuthPanel } from "@/components/auth/AuthPanel";
+import { BillingSettingsPanel } from "@/components/billing/BillingSettingsPanel";
 
 const THEME_SWATCHES: Record<string, [string, string, string]> = {
   "amber-minimal-dark": ["#1a1814", "#e8853a", "#2e2920"],
@@ -33,31 +34,31 @@ interface SettingsDialogProps {
 const SETTINGS_SECTIONS: Array<{
   id: UiSettingsPaneSection;
   label: string;
-  description: string;
   icon: typeof User2;
 }> = [
   {
     id: "account",
     label: "Account",
-    description: "Session and runtime connection",
     icon: User2
+  },
+  {
+    id: "billing",
+    label: "Billing",
+    icon: CreditCard
   },
   {
     id: "providers",
     label: "Model Providers",
-    description: "Runtime providers and model catalogs",
     icon: Waypoints
   },
   {
     id: "settings",
     label: "Settings",
-    description: "Appearance and desktop defaults",
     icon: Palette
   },
   {
     id: "about",
     label: "About",
-    description: "Links and product references",
     icon: Info
   }
 ];
@@ -66,6 +67,8 @@ function titleForSection(section: UiSettingsPaneSection): string {
   switch (section) {
     case "account":
       return "Account";
+    case "billing":
+      return "Billing";
     case "providers":
       return "Model Providers";
     case "about":
@@ -73,20 +76,6 @@ function titleForSection(section: UiSettingsPaneSection): string {
     case "settings":
     default:
       return "Settings";
-  }
-}
-
-function subtitleForSection(section: UiSettingsPaneSection): string {
-  switch (section) {
-    case "account":
-      return "Manage your desktop session and runtime binding.";
-    case "providers":
-      return "Configure runtime providers, credentials, and model catalogs.";
-    case "about":
-      return "Open product resources and support channels.";
-    case "settings":
-    default:
-      return "Tune desktop appearance and shared preferences.";
   }
 }
 
@@ -142,53 +131,46 @@ export function SettingsDialog({
         type="button"
         aria-label="Close settings"
         onClick={onClose}
-        className="pointer-events-auto absolute inset-0 bg-[rgba(7,10,14,0.46)] backdrop-blur-sm"
+        className="pointer-events-auto absolute inset-0 bg-background/70 backdrop-blur-sm"
       />
 
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        className="theme-shell soft-vignette neon-border pointer-events-auto relative z-10 grid max-h-[min(760px,calc(100vh-40px))] w-[min(980px,calc(100vw-32px))] min-w-0 overflow-hidden rounded-[28px] shadow-lg grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[240px_minmax(0,1fr)] lg:grid-rows-1"
+        className="pointer-events-auto relative z-10 grid h-[min(780px,calc(100vh-32px))] w-[min(1080px,calc(100vw-24px))] min-w-0 overflow-hidden rounded-[28px] border border-border bg-background shadow-lg grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[248px_minmax(0,1fr)] lg:grid-rows-1"
       >
-        <aside className="theme-header-surface border-b border-border/35 p-4 lg:border-b-0 lg:border-r">
+        <aside className="border-b border-sidebar-border bg-sidebar p-4 text-sidebar-foreground lg:border-b-0 lg:border-r">
           <div className="flex items-center gap-3">
-            <div className="grid h-11 w-11 place-items-center rounded-[16px] border border-primary/30 bg-primary/10 text-primary">
-              <Palette size={18} />
-            </div>
             <div>
-              <div className="text-[12px] uppercase tracking-[0.18em] text-muted-foreground/72">Holaboss</div>
-              <div className="mt-1 text-[18px] font-semibold text-foreground">Desktop Settings</div>
+              <div className="text-sm font-semibold tracking-[0.01em] text-sidebar-foreground">holaboss</div>
             </div>
           </div>
 
-          <nav className="mt-6 grid gap-2">
-            {SETTINGS_SECTIONS.map(({ id, label, description, icon: Icon }) => {
+          <nav className="mt-6 grid gap-1.5">
+            {SETTINGS_SECTIONS.map(({ id, label, icon: Icon }) => {
               const active = id === activeSection;
               return (
                 <button
                   key={id}
                   type="button"
                   onClick={() => onSectionChange(id)}
-                  className={`flex items-start gap-3 rounded-[18px] border px-3.5 py-3 text-left transition ${
+                  className={`flex items-center gap-3 rounded-[14px] px-3 py-2.5 text-left transition ${
                     active
-                      ? "border-primary/40 bg-primary/10 text-foreground shadow-[0_12px_36px_rgba(0,0,0,0.16)]"
-                      : "border-transparent text-muted-foreground hover:border-border/45 hover:bg-accent hover:text-foreground"
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                      : "text-sidebar-foreground/72 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                   }`}
                 >
                   <span
-                    className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-[12px] border ${
+                    className={`grid h-8 w-8 shrink-0 place-items-center rounded-[10px] ${
                       active
-                        ? "border-primary/35 bg-primary/12 text-primary"
-                        : "border-border/35 text-muted-foreground/80"
+                        ? "bg-sidebar-primary/12 text-sidebar-primary"
+                        : "text-sidebar-foreground/60"
                     }`}
                   >
                     <Icon size={15} />
                   </span>
-                  <span className="min-w-0">
-                    <span className="block text-[13px] font-medium">{label}</span>
-                    <span className="mt-1 block text-[11px] leading-5 text-muted-foreground/72">{description}</span>
-                  </span>
+                  <span className="min-w-0 text-sm font-medium">{label}</span>
                 </button>
               );
             })}
@@ -197,11 +179,8 @@ export function SettingsDialog({
         </aside>
 
         <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
-          <header className="theme-header-surface flex items-start justify-between gap-4 border-b border-border/35 px-5 py-4">
-            <div>
-              <div className="text-[20px] font-semibold text-foreground">{titleForSection(activeSection)}</div>
-              <div className="mt-1 text-[12px] text-muted-foreground/72">{subtitleForSection(activeSection)}</div>
-            </div>
+          <header className="theme-header-surface flex items-center justify-between gap-4 border-b border-border/35 px-6 py-5">
+            <div className="text-xl font-semibold text-foreground">{titleForSection(activeSection)}</div>
 
             <button
               type="button"
@@ -213,11 +192,15 @@ export function SettingsDialog({
             </button>
           </header>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
             {activeSection === "account" ? (
-              <div className="max-w-[560px]">
+              <div className="max-w-[620px]">
                 <AuthPanel view="account" />
               </div>
+            ) : null}
+
+            {activeSection === "billing" ? (
+              <BillingSettingsPanel />
             ) : null}
 
             {activeSection === "providers" ? (
@@ -231,11 +214,6 @@ export function SettingsDialog({
             {activeSection === "settings" ? (
               <div className="grid gap-6">
                 <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
-                  <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground/68">Appearance</div>
-                  <div className="mt-2 max-w-[640px] text-[13px] leading-6 text-muted-foreground/86">
-                    Choose the global desktop theme for shell surfaces, overlays, controls, and the account menu.
-                  </div>
-
                   <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {themes.map((themeOption) => {
                       const selected = themeOption === theme;
@@ -247,8 +225,8 @@ export function SettingsDialog({
                           onClick={() => onThemeChange(themeOption)}
                           className={`rounded-[20px] border p-3 text-left transition ${
                             selected
-                              ? "border-primary/45 bg-primary/10 shadow-[0_14px_38px_rgba(0,0,0,0.18)]"
-                              : "border-border/40 bg-black/10 hover:border-primary/28 hover:bg-accent"
+                              ? "border-primary/45 bg-primary/10 shadow-sm"
+                              : "border-border/40 bg-card/80 hover:border-primary/28 hover:bg-accent"
                           }`}
                         >
                           <div className="rounded-[16px] border border-border/30 bg-card/80 p-3">
@@ -270,9 +248,9 @@ export function SettingsDialog({
                             </div>
                           </div>
                           <div className="mt-3 flex items-center justify-between gap-3">
-                            <span className="text-[13px] font-medium text-foreground">{prettifyThemeLabel(themeOption)}</span>
+                            <span className="text-sm font-medium text-foreground">{prettifyThemeLabel(themeOption)}</span>
                             <span
-                              className={`rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] ${
+                              className={`rounded-full border px-2.5 py-1 text-xs uppercase tracking-[0.14em] ${
                                 selected
                                   ? "border-primary/40 bg-primary/12 text-primary"
                                   : "border-border/35 text-muted-foreground/68"
@@ -292,49 +270,38 @@ export function SettingsDialog({
             {activeSection === "about" ? (
               <div className="grid max-w-[720px] gap-4">
                 <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
-                  <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground/68">Links</div>
-                  <div className="mt-2 text-[13px] leading-6 text-muted-foreground/84">
-                    Open the main product site, OSS docs, or support issue tracker in your default browser.
-                  </div>
-
                   <div className="mt-5 grid gap-3">
                     {[
                       {
                         id: "home",
                         label: "Homepage",
-                        detail: "Product homepage and company landing page.",
                         icon: Globe,
                         href: "https://holaboss.ai"
                       },
                       {
                         id: "docs",
                         label: "Docs",
-                        detail: "Open-source repository, releases, and setup notes.",
                         icon: Info,
                         href: "https://github.com/holaboss-ai/hola-boss-oss"
                       },
                       {
                         id: "help",
                         label: "Get help",
-                        detail: "Open the issue tracker for support and bug reports.",
                         icon: CircleHelp,
                         href: "https://github.com/holaboss-ai/hola-boss-oss/issues"
                       }
-                    ].map(({ id, label, detail, icon: Icon, href }) => (
+                    ].map(({ id, label, icon: Icon, href }) => (
                       <button
                         key={id}
                         type="button"
                         onClick={() => onOpenExternalUrl(href)}
-                        className="flex items-center justify-between gap-3 rounded-[18px] border border-border/40 bg-black/10 px-4 py-3 text-left transition hover:border-primary/30 hover:bg-accent"
+                        className="flex items-center justify-between gap-3 rounded-[18px] border border-border/40 bg-card/80 px-4 py-3 text-left transition hover:border-primary/30 hover:bg-accent"
                       >
                         <span className="flex min-w-0 items-center gap-3">
                           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-border/35 text-muted-foreground/82">
                             <Icon size={16} />
                           </span>
-                          <span className="min-w-0">
-                            <span className="block text-[13px] font-medium text-foreground">{label}</span>
-                            <span className="mt-1 block text-[11px] leading-5 text-muted-foreground/72">{detail}</span>
-                          </span>
+                          <span className="min-w-0 text-sm font-medium text-foreground">{label}</span>
                         </span>
                         <ExternalLink size={15} className="shrink-0 text-muted-foreground/70" />
                       </button>
