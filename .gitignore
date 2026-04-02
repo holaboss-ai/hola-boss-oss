@@ -21,3 +21,4 @@ runtime/state-store/dist/
 
 node_modules/
 .superpowers
+.worktrees/
