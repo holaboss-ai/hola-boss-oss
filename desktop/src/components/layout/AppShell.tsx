@@ -1176,10 +1176,12 @@ function AppShellContent() {
     setProposalAction({ proposalId: proposal.proposal_id, action: "accept" });
     setTaskProposalStatusMessage("");
     try {
+      const proposalSessionId = `proposal-${crypto.randomUUID()}`;
       const accepted = await window.electronAPI.workspace.acceptTaskProposal({
         proposal_id: proposal.proposal_id,
         task_name: proposal.task_name,
         task_prompt: proposal.task_prompt,
+        session_id: proposalSessionId,
         parent_session_id:
           (selectedWorkspace.main_session_id || "").trim() || null,
         priority: 0,
