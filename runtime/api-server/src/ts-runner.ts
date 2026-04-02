@@ -30,6 +30,7 @@ import {
   type AgentRuntimeConfigCliResponse
 } from "./agent-runtime-config.js";
 import type {
+  AgentCurrentUserContext,
   AgentRecalledMemoryContext,
   AgentRecentRuntimeContext,
   AgentSessionResumeContext
@@ -474,6 +475,43 @@ function loadRecalledMemoryContext(params: {
   }
 }
 
+function loadCurrentUserContext(params: {
+  workspaceRoot: string;
+  logger?: LoggerLike;
+}): AgentCurrentUserContext | null {
+  const sandboxRoot = path.dirname(params.workspaceRoot);
+  const dbPath = path.join(sandboxRoot, "state", "runtime.db");
+  const defaultContext: AgentCurrentUserContext = {
+    profile_id: "default",
+    name: null,
+    name_source: null,
+  };
+  if (!fs.existsSync(dbPath)) {
+    return defaultContext;
+  }
+  const store = new RuntimeStateStore({
+    workspaceRoot: params.workspaceRoot,
+    sandboxRoot,
+    dbPath,
+  });
+  try {
+    const profile = store.getRuntimeUserProfile({ profileId: "default" });
+    if (!profile) {
+      return defaultContext;
+    }
+    return {
+      profile_id: profile.profileId,
+      name: profile.name,
+      name_source: profile.nameSource,
+    };
+  } catch (error) {
+    params.logger?.warn?.(`Failed to load current user context: ${errorMessage(error)}`);
+    return defaultContext;
+  } finally {
+    store.close();
+  }
+}
+
 function normalizeRuntimeApiHost(value: string): string {
   const trimmed = value.trim();
   if (!trimmed || trimmed === "0.0.0.0" || trimmed === "::") {
@@ -630,6 +668,7 @@ function buildAgentRuntimeConfigRequest(params: {
   recentRuntimeContext?: AgentRecentRuntimeContext | null;
   sessionResumeContext?: AgentSessionResumeContext | null;
   recalledMemoryContext?: AgentRecalledMemoryContext | null;
+  currentUserContext?: AgentCurrentUserContext | null;
 }): AgentRuntimeConfigCliRequest {
   const extraTools = Array.from(new Set([...defaultExtraTools(), ...params.extraToolIds]));
   const common = {
@@ -647,6 +686,7 @@ function buildAgentRuntimeConfigRequest(params: {
     recent_runtime_context: params.recentRuntimeContext ?? undefined,
     session_resume_context: params.sessionResumeContext ?? undefined,
     recalled_memory_context: params.recalledMemoryContext ?? undefined,
+    current_user_context: params.currentUserContext ?? undefined,
     selected_model: firstNonEmptyString(params.request.model) ?? undefined,
     default_provider_id: defaultProviderId(),
     session_mode: defaultSessionMode(),
@@ -1121,6 +1161,12 @@ export async function executeTsRunnerRequest(
         logger,
       })
     );
+    const currentUserContext = measureBootstrapStage(bootstrapStageTimingsMs, "load_current_user_context", () =>
+      loadCurrentUserContext({
+        workspaceRoot: bootstrap.workspaceRoot,
+        logger,
+      })
+    );
 
     const runtimeConfig = measureBootstrapStage(bootstrapStageTimingsMs, "project_runtime_config", () =>
       deps.projectAgentRuntimeConfig(
@@ -1139,6 +1185,7 @@ export async function executeTsRunnerRequest(
           recentRuntimeContext,
           sessionResumeContext,
           recalledMemoryContext,
+          currentUserContext,
         })
       )
     );

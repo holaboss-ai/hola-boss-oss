@@ -426,6 +426,63 @@ test("runtime config routes delegate to the runtime config executor", async () =
   store.close();
 });
 
+test("runtime profile routes persist canonical name and apply auth fallback only when empty", async () => {
+  const root = makeTempDir("hb-runtime-api-profile-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const initial = await app.inject({
+    method: "GET",
+    url: "/api/v1/runtime/profile"
+  });
+  const fallback = await app.inject({
+    method: "POST",
+    url: "/api/v1/runtime/profile/auth-fallback",
+    payload: {
+      name: "Jeffrey"
+    }
+  });
+  const manual = await app.inject({
+    method: "PUT",
+    url: "/api/v1/runtime/profile",
+    payload: {
+      name: "Jeff",
+      name_source: "manual"
+    }
+  });
+  const preserved = await app.inject({
+    method: "POST",
+    url: "/api/v1/runtime/profile/auth-fallback",
+    payload: {
+      name: "Ignored Auth Name"
+    }
+  });
+
+  assert.equal(initial.statusCode, 200);
+  assert.deepEqual(initial.json(), {
+    profile_id: "default",
+    name: null,
+    name_source: null,
+    created_at: null,
+    updated_at: null,
+  });
+  assert.equal(fallback.statusCode, 200);
+  assert.equal(fallback.json().name, "Jeffrey");
+  assert.equal(fallback.json().name_source, "auth_fallback");
+  assert.equal(manual.statusCode, 200);
+  assert.equal(manual.json().name, "Jeff");
+  assert.equal(manual.json().name_source, "manual");
+  assert.equal(preserved.statusCode, 200);
+  assert.equal(preserved.json().name, "Jeff");
+  assert.equal(preserved.json().name_source, "manual");
+
+  await app.close();
+  store.close();
+});
+
 test("runner routes delegate to the runner executor", async () => {
   const root = makeTempDir("hb-runtime-api-");
   const store = new RuntimeStateStore({

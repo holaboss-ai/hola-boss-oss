@@ -22,6 +22,8 @@ export {
   type OutputEventRecord,
   type OutputFolderRecord,
   type OutputRecord,
+  type RuntimeUserProfileNameSource,
+  type RuntimeUserProfileRecord,
   type SessionBindingRecord,
   type SessionArtifactRecord,
   type SessionInputRecord,

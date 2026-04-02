@@ -725,6 +725,7 @@ test("runTsRunnerCli only advertises structured output when the selected harness
     [
       "build_harness_host_request",
       "compile_runtime_plan",
+      "load_current_user_context",
       "load_recalled_memory_context",
       "load_recent_runtime_context",
       "load_session_resume_context",
@@ -735,6 +736,74 @@ test("runTsRunnerCli only advertises structured output when the selected harness
       "stage_browser_tools",
       "stage_runtime_tools"
     ]
+  );
+});
+
+test("runTsRunnerCli loads current user context from the runtime profile", async () => {
+  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-current-user-"));
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  const workspaceRoot = path.join(sandboxRoot, "workspace");
+  const store = new RuntimeStateStore({
+    workspaceRoot,
+    sandboxRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-1",
+  });
+  store.upsertRuntimeUserProfile({
+    name: "Jeffrey",
+    nameSource: "manual",
+  });
+  store.close();
+
+  let capturedProjectRequest: Record<string, unknown> | null = null;
+  const exitCode = await runTsRunnerCli(
+    ["--request-base64", encodeRequest({ ...baseRequest(), instruction: "Draft the email and sign with my name." })],
+    {
+      deps: {
+        ...testDeps(),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" }
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1"
+          };
+        }
+      },
+      io: {
+        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
+        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
+      }
+    }
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  assert.deepEqual(
+    (capturedProjectRequest as { current_user_context: Record<string, unknown> }).current_user_context,
+    {
+      profile_id: "default",
+      name: "Jeffrey",
+      name_source: "manual",
+    }
   );
 });
 

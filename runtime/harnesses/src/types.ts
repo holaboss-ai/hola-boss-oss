@@ -44,6 +44,7 @@ export type HarnessPromptLayerId =
   | "execution_policy"
   | "session_policy"
   | "capability_policy"
+  | "current_user_context"
   | "memory_recall"
   | "workspace_policy"
   | "resume_context"

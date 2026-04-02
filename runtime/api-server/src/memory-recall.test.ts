@@ -171,3 +171,68 @@ test("recalledMemoryContextFromEntries prefers procedures and facts when the que
   assert.equal(context.selection_trace?.[0]?.memory_id, "workspace-procedure:release");
   assert.match(String(context.selection_trace?.[0]?.reasons?.join(" ")), /query_intent_boost/);
 });
+
+test("recalledMemoryContextFromEntries prefers durable business facts for schedule and approval queries", () => {
+  const context = recalledMemoryContextFromEntries({
+    query: "Who approves invoices over $5000 and when is the weekly sales review?",
+    nowIso: "2026-04-15T00:00:00.000Z",
+    entries: [
+      makeMemoryEntry({
+        memoryId: "workspace-fact:sales-review-cadence",
+        scope: "workspace",
+        memoryType: "fact",
+        subjectKey: "fact:sales-review-cadence",
+        path: "workspace/workspace-1/knowledge/facts/sales-review-cadence.md",
+        title: "Sales review cadence",
+        summary: "Weekly sales review is every Monday at 9am.",
+        tags: ["cadence", "weekly", "sales", "review"],
+        verificationPolicy: "check_before_use",
+        stalenessPolicy: "workspace_sensitive",
+        staleAfterSeconds: 30 * 24 * 60 * 60,
+        updatedAt: "2026-04-12T00:00:00.000Z",
+      }),
+      makeMemoryEntry({
+        memoryId: "workspace-fact:invoice-approval",
+        scope: "workspace",
+        memoryType: "fact",
+        subjectKey: "fact:invoices-over-5000-approval-rule",
+        path: "workspace/workspace-1/knowledge/facts/invoices-over-5000-approval-rule.md",
+        title: "Finance approval rule",
+        summary: "Invoices over $5000 require finance approval in this workspace.",
+        tags: ["approval", "finance", "invoice", "invoices"],
+        verificationPolicy: "check_before_use",
+        stalenessPolicy: "workspace_sensitive",
+        staleAfterSeconds: 30 * 24 * 60 * 60,
+        updatedAt: "2026-04-13T00:00:00.000Z",
+      }),
+      makeMemoryEntry({
+        memoryId: "workspace-procedure:follow-up",
+        scope: "workspace",
+        memoryType: "procedure",
+        subjectKey: "procedure:follow-up",
+        path: "workspace/workspace-1/knowledge/procedures/follow-up-procedure.md",
+        title: "Follow-up procedure",
+        summary: "Follow-up procedure for this workspace.",
+        tags: ["procedure", "follow-up"],
+        verificationPolicy: "check_before_use",
+        stalenessPolicy: "workspace_sensitive",
+        staleAfterSeconds: 14 * 24 * 60 * 60,
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      }),
+    ],
+    maxEntries: 3,
+  });
+
+  assert.ok(context);
+  assert.deepEqual(context.entries?.map((entry) => entry.title), [
+    "Sales review cadence",
+    "Finance approval rule",
+    "Follow-up procedure",
+  ]);
+  assert.equal(context.entries?.[0]?.memory_type, "fact");
+  assert.equal(context.entries?.[1]?.memory_type, "fact");
+  assert.equal(context.selection_trace?.some((entry) => entry.memory_id === "workspace-fact:invoice-approval"), true);
+  assert.equal(context.selection_trace?.some((entry) => entry.memory_id === "workspace-fact:sales-review-cadence"), true);
+  assert.match(String(context.selection_trace?.[0]?.reasons?.join(" ")), /query_intent_boost/);
+  assert.match(String(context.selection_trace?.[1]?.reasons?.join(" ")), /query_intent_boost/);
+});

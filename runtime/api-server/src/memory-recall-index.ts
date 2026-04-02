@@ -32,9 +32,44 @@ function queryIntentBoost(tokens: string[], entry: MemoryEntryRecord): number {
   if (tokens.length === 0) {
     return 0;
   }
+  const loweredTags = entry.tags.map((tag) => tag.toLowerCase());
+  const loweredTitle = entry.title.toLowerCase();
+  const loweredSummary = entry.summary.toLowerCase();
   const hasProcedureCue = tokens.some((token) => ["how", "steps", "procedure", "process", "workflow"].includes(token));
   const hasBlockerCue = tokens.some((token) => ["blocked", "blocker", "denied", "permission", "policy", "fix"].includes(token));
   const hasCommandCue = tokens.some((token) => ["command", "commands", "run", "verify", "verification", "test", "build", "deploy", "release"].includes(token));
+  const hasBusinessFactCue = tokens.some((token) =>
+    [
+      "what",
+      "when",
+      "who",
+      "owner",
+      "approval",
+      "approves",
+      "approver",
+      "schedule",
+      "cadence",
+      "review",
+      "meeting",
+      "report",
+      "reporting",
+      "invoice",
+      "invoices",
+      "finance",
+      "legal",
+      "follow",
+      "followup",
+      "follow-up",
+      "handoff",
+      "handover",
+      "escalation",
+      "sla",
+      "deadline",
+      "email",
+    ].includes(token)
+  );
+  const hasApprovalCue = tokens.some((token) => ["approve", "approves", "approval", "approver"].includes(token));
+  const hasScheduleCue = tokens.some((token) => ["when", "schedule", "cadence", "weekly", "daily", "monthly", "quarterly"].includes(token));
   const hasReferenceCue = tokens.some((token) => ["reference", "references", "docs", "dashboard", "url", "link"].includes(token));
 
   if (entry.memoryType === "procedure" && hasProcedureCue) {
@@ -42,6 +77,29 @@ function queryIntentBoost(tokens: string[], entry: MemoryEntryRecord): number {
   }
   if (entry.memoryType === "fact" && hasCommandCue) {
     return 2;
+  }
+  if (entry.memoryType === "fact" && hasBusinessFactCue) {
+    let boost = 3;
+    const approvalLike =
+      loweredTags.includes("approval") ||
+      loweredTags.includes("approver") ||
+      loweredTitle.includes("approval") ||
+      loweredSummary.includes("approval");
+    const scheduleLike =
+      loweredTags.includes("cadence") ||
+      loweredTags.includes("schedule") ||
+      loweredTitle.includes("cadence") ||
+      loweredSummary.includes("weekly") ||
+      loweredSummary.includes("daily") ||
+      loweredSummary.includes("monthly") ||
+      loweredSummary.includes("quarterly");
+    if (hasApprovalCue && approvalLike) {
+      boost += 2;
+    }
+    if (hasScheduleCue && scheduleLike) {
+      boost += 2;
+    }
+    return boost;
   }
   if (entry.memoryType === "blocker" && hasBlockerCue) {
     return 3;
@@ -59,6 +117,36 @@ function scopePriority(entry: MemoryEntryRecord): number {
 function queryTypePriority(tokens: string[], entry: MemoryEntryRecord): number {
   const hasProcedureCue = tokens.some((token) => ["how", "steps", "procedure", "process", "workflow"].includes(token));
   const hasCommandCue = tokens.some((token) => ["command", "commands", "run", "verify", "verification", "test", "build", "deploy", "release"].includes(token));
+  const hasBusinessFactCue = tokens.some((token) =>
+    [
+      "what",
+      "when",
+      "who",
+      "owner",
+      "approval",
+      "approves",
+      "approver",
+      "schedule",
+      "cadence",
+      "review",
+      "meeting",
+      "report",
+      "reporting",
+      "invoice",
+      "invoices",
+      "finance",
+      "legal",
+      "follow",
+      "followup",
+      "follow-up",
+      "handoff",
+      "handover",
+      "escalation",
+      "sla",
+      "deadline",
+      "email",
+    ].includes(token)
+  );
   const hasBlockerCue = tokens.some((token) => ["blocked", "blocker", "denied", "permission", "policy", "fix"].includes(token));
   const hasReferenceCue = tokens.some((token) => ["reference", "references", "docs", "dashboard", "url", "link"].includes(token));
 
@@ -66,6 +154,9 @@ function queryTypePriority(tokens: string[], entry: MemoryEntryRecord): number {
     return entry.memoryType === "procedure" ? 0 : 1;
   }
   if (hasCommandCue) {
+    return entry.memoryType === "fact" ? 0 : 1;
+  }
+  if (hasBusinessFactCue) {
     return entry.memoryType === "fact" ? 0 : 1;
   }
   if (hasBlockerCue) {

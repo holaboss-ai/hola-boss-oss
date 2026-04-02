@@ -24,6 +24,7 @@ import {
   type OutputEventRecord,
   type TurnRequestSnapshotRecord,
   type TurnResultRecord,
+  type RuntimeUserProfileRecord,
   RuntimeStateStore,
   utcNowIso,
   type WorkspaceRecord
@@ -526,6 +527,16 @@ function compactionBoundaryPayload(record: CompactionBoundaryRecord): Record<str
     request_snapshot_fingerprint: record.requestSnapshotFingerprint,
     created_at: record.createdAt,
     updated_at: record.updatedAt,
+  };
+}
+
+function runtimeUserProfilePayload(record: RuntimeUserProfileRecord | null, profileId = "default"): Record<string, unknown> {
+  return {
+    profile_id: record?.profileId ?? profileId,
+    name: record?.name ?? null,
+    name_source: record?.nameSource ?? null,
+    created_at: record?.createdAt ?? null,
+    updated_at: record?.updatedAt ?? null,
   };
 }
 
@@ -1621,6 +1632,46 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "runtime config update failed");
     }
+  });
+
+  app.get("/api/v1/runtime/profile", async (request, reply) => {
+    void reply;
+    const query = request.query as Record<string, unknown>;
+    const profileId = optionalString(query.profile_id)?.trim() || "default";
+    return runtimeUserProfilePayload(store.getRuntimeUserProfile({ profileId }), profileId);
+  });
+
+  app.put("/api/v1/runtime/profile", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const body = requiredDict(request.body, "body");
+    const profileId = optionalString(body.profile_id)?.trim() || "default";
+    const name = nullableString(body.name);
+    const nameSource = nullableString(body.name_source);
+    if (nameSource != null && !["manual", "agent", "auth_fallback"].includes(nameSource)) {
+      return sendError(reply, 400, "name_source must be one of manual, agent, or auth_fallback");
+    }
+    const record = store.upsertRuntimeUserProfile({
+      profileId,
+      name: name ?? null,
+      nameSource: (nameSource ?? null) as "manual" | "agent" | "auth_fallback" | null,
+    });
+    return runtimeUserProfilePayload(record);
+  });
+
+  app.post("/api/v1/runtime/profile/auth-fallback", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const body = requiredDict(request.body, "body");
+    const profileId = optionalString(body.profile_id)?.trim() || "default";
+    const name = requiredString(body.name, "name").trim();
+    const record = store.applyRuntimeUserProfileAuthFallback({
+      profileId,
+      name,
+    });
+    return runtimeUserProfilePayload(record, profileId);
   });
 
   app.get("/api/v1/capabilities/browser", async (request, reply) => {

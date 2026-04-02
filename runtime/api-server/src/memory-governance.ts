@@ -30,6 +30,13 @@ const MEMORY_GOVERNANCE_RULES: Record<MemoryEntryType, MemoryGovernanceRule> = {
     staleAfterSeconds: null,
     recallBoost: 4,
   },
+  identity: {
+    memoryType: "identity",
+    verificationPolicy: "none",
+    stalenessPolicy: "stable",
+    staleAfterSeconds: null,
+    recallBoost: 3,
+  },
   fact: {
     memoryType: "fact",
     verificationPolicy: "check_before_use",

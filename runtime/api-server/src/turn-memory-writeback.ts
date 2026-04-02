@@ -122,6 +122,10 @@ function workspaceCommandFactPath(turnResult: TurnResultRecord, purpose: Workspa
   return `workspace/${turnResult.workspaceId}/knowledge/facts/${safePathSegment(purpose, "command")}-command.md`;
 }
 
+function workspaceBusinessFactPath(turnResult: TurnResultRecord, slug: string): string {
+  return `workspace/${turnResult.workspaceId}/knowledge/facts/${safePathSegment(slug, "fact")}.md`;
+}
+
 function workspaceProcedurePath(turnResult: TurnResultRecord, subject: WorkspaceProcedureSubject): string {
   return `workspace/${turnResult.workspaceId}/knowledge/procedures/${safePathSegment(subject, "procedure")}-procedure.md`;
 }
@@ -264,13 +268,32 @@ type MemorySourceEvidence = {
 
 type WorkspaceCommandPurpose = "verification" | "build" | "development" | "deploy" | "release";
 
-type WorkspaceProcedureSubject = "verification" | "build" | "deploy" | "release" | "onboarding";
+type WorkspaceProcedureSubject =
+  | "verification"
+  | "build"
+  | "deploy"
+  | "release"
+  | "onboarding"
+  | "approval"
+  | "reporting"
+  | "follow-up"
+  | "handoff"
+  | "escalation"
+  | "review";
 
 type WorkspaceCommandFact = {
   purpose: WorkspaceCommandPurpose;
   label: string;
   command: string;
   evidence: string;
+};
+
+type WorkspaceBusinessFact = {
+  slug: string;
+  title: string;
+  summary: string;
+  evidence: string;
+  tags: string[];
 };
 
 type WorkspaceProcedure = {
@@ -429,6 +452,63 @@ function detectWorkspaceCommandFacts(messageText: string): WorkspaceCommandFact[
   });
 }
 
+function detectWorkspaceBusinessFacts(messageText: string): WorkspaceBusinessFact[] {
+  const normalized = compactWhitespace(messageText);
+  if (!normalized) {
+    return [];
+  }
+  const facts: WorkspaceBusinessFact[] = [];
+  const seen = new Set<string>();
+
+  const cadenceMatch = normalized.match(
+    /\b(weekly|daily|monthly|quarterly)\s+([a-z][a-z0-9 /-]+?)\s+(?:is|happens|runs|occurs)\s+([^.!?\n]+)\.?/i
+  );
+  if (cadenceMatch) {
+    const cadence = compactWhitespace(cadenceMatch[1] ?? "");
+    const subject = compactWhitespace(cadenceMatch[2] ?? "");
+    const schedule = compactWhitespace(cadenceMatch[3] ?? "");
+    if (cadence && subject && schedule) {
+      const slug = `${safePathSegment(subject.toLowerCase(), "cadence")}-cadence`;
+      const summary = `${clippedText(cadenceMatch[0].replace(/[.]+$/, ""), 220)}.`;
+      seen.add(slug);
+      facts.push({
+        slug,
+        title: `${titleCase(subject)} cadence`,
+        summary,
+        evidence: clippedText(cadenceMatch[0], 240),
+        tags: ["cadence", cadence, ...subject.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)],
+      });
+    }
+  }
+
+  const approvalMatch = normalized.match(
+    /\b([a-z0-9$][a-z0-9$,% /-]{2,}?)\s+require(?:s)?\s+([a-z][a-z0-9 /-]+?)\s+approval\b/i
+  );
+  if (approvalMatch) {
+    const subject = compactWhitespace(approvalMatch[1] ?? "");
+    const approver = compactWhitespace(approvalMatch[2] ?? "");
+    if (subject && approver) {
+      const slug = `${safePathSegment(subject.toLowerCase(), "approval")}-approval-rule`;
+      if (!seen.has(slug)) {
+        const summary = `${clippedText(approvalMatch[0].replace(/[.]+$/, ""), 220)} in this workspace.`;
+        facts.push({
+          slug,
+          title: `${titleCase(approver)} approval rule`,
+          summary: titleCase(summary),
+          evidence: clippedText(approvalMatch[0], 240),
+          tags: [
+            "approval",
+            approver.toLowerCase(),
+            ...subject.toLowerCase().split(/[^a-z0-9$]+/).filter(Boolean),
+          ],
+        });
+      }
+    }
+  }
+
+  return facts;
+}
+
 function detectWorkspaceProcedure(messageText: string): WorkspaceProcedure[] {
   if (!messageText.trim()) {
     return [];
@@ -451,6 +531,12 @@ function detectWorkspaceProcedure(messageText: string): WorkspaceProcedure[] {
     { subject: "deploy", label: "deployment", pattern: /\bdeploy(?:ment)?\s+(?:procedure|process|workflow|steps)\b/i },
     { subject: "release", label: "release", pattern: /\brelease\s+(?:procedure|process|workflow|steps)\b/i },
     { subject: "onboarding", label: "onboarding", pattern: /\bonboarding\s+(?:procedure|process|workflow|steps)\b/i },
+    { subject: "approval", label: "approval", pattern: /\bapproval\s+(?:procedure|process|workflow|steps)\b/i },
+    { subject: "reporting", label: "reporting", pattern: /\breport(?:ing)?\s+(?:procedure|process|workflow|steps)\b/i },
+    { subject: "follow-up", label: "follow-up", pattern: /\bfollow[- ]?up\s+(?:procedure|process|workflow|steps)\b/i },
+    { subject: "handoff", label: "handoff", pattern: /\b(?:handoff|handover)\s+(?:procedure|process|workflow|steps)\b/i },
+    { subject: "escalation", label: "escalation", pattern: /\bescalation\s+(?:procedure|process|workflow|steps)\b/i },
+    { subject: "review", label: "review", pattern: /\b(?:review|sales review|weekly review|monthly review)\s+(?:procedure|process|workflow|steps)\b/i },
   ];
   for (const matcher of subjectMatchers) {
     if (matcher.pattern.test(fullText)) {
@@ -566,6 +652,56 @@ function workspaceCommandFactCandidates(
           observedAt: source.observedAt,
           lastVerifiedAt: source.observedAt,
           confidence: source.sourceType === "session_message" ? 0.94 : 0.88,
+        });
+      }
+    }
+  }
+  return [...deduped.values()];
+}
+
+function workspaceBusinessFactCandidates(
+  turnResult: TurnResultRecord,
+  sessionMessages: SessionMessageRecord[]
+): DurableMemoryCandidate[] {
+  const governance = governanceRuleForMemoryType("fact");
+  const deduped = new Map<string, DurableMemoryCandidate>();
+  for (const source of durableMemorySources(turnResult, sessionMessages)) {
+    for (const fact of detectWorkspaceBusinessFacts(source.text)) {
+      const lines = [
+        `# Workspace Fact: ${fact.title}`,
+        "",
+        `- Workspace ID: \`${turnResult.workspaceId}\``,
+        `- Source: ${source.sourceLabel}`,
+        `- Updated at: ${turnResult.completedAt ?? turnResult.updatedAt}`,
+        "",
+        "## Summary",
+        "",
+        fact.summary,
+        "",
+        "## Evidence",
+        "",
+        fact.evidence,
+      ];
+      const memoryId = `workspace-fact:${turnResult.workspaceId}:${fact.slug}`;
+      if (!deduped.has(memoryId)) {
+        deduped.set(memoryId, {
+          memoryId,
+          scope: "workspace",
+          memoryType: "fact",
+          subjectKey: `fact:${fact.slug}`,
+          path: workspaceBusinessFactPath(turnResult, fact.slug),
+          title: fact.title,
+          summary: fact.summary,
+          content: `${lines.join("\n").trim()}\n`,
+          tags: [...fact.tags],
+          verificationPolicy: governance.verificationPolicy,
+          stalenessPolicy: governance.stalenessPolicy,
+          staleAfterSeconds: governance.staleAfterSeconds,
+          sourceMessageId: source.sourceMessageId ?? null,
+          sourceType: source.sourceType,
+          observedAt: source.observedAt,
+          lastVerifiedAt: source.observedAt,
+          confidence: source.sourceType === "session_message" ? 0.91 : 0.85,
         });
       }
     }
@@ -769,6 +905,7 @@ function buildDurableMemoryCandidates(params: {
   return [
     ...responseStylePreferenceCandidate(params.turnResult, params.sessionMessages),
     ...workspaceCommandFactCandidates(params.turnResult, params.sessionMessages),
+    ...workspaceBusinessFactCandidates(params.turnResult, params.sessionMessages),
     ...workspaceProcedureCandidates(params.turnResult, params.sessionMessages),
     ...repeatedPermissionBlockerCandidates({
       turnResult: params.turnResult,

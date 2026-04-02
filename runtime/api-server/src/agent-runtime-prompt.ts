@@ -66,6 +66,12 @@ export interface AgentRecalledMemoryContext {
   }> | null;
 }
 
+export interface AgentCurrentUserContext {
+  profile_id?: string | null;
+  name?: string | null;
+  name_source?: string | null;
+}
+
 export interface ComposeBaseAgentPromptRequest {
   defaultTools: string[];
   extraTools: string[];
@@ -77,6 +83,7 @@ export interface ComposeBaseAgentPromptRequest {
   recentRuntimeContext?: AgentRecentRuntimeContext | null;
   sessionResumeContext?: AgentSessionResumeContext | null;
   recalledMemoryContext?: AgentRecalledMemoryContext | null;
+  currentUserContext?: AgentCurrentUserContext | null;
   capabilityManifest?: AgentCapabilityManifest | null;
 }
 
@@ -168,6 +175,28 @@ function recentRuntimeContextPromptSection(context: AgentRecentRuntimeContext | 
     lines.push(`Previous runtime error: ${lastError}.`);
   }
   return lines.length > 1 ? linesSection(lines) : "";
+}
+
+function currentUserContextPromptSection(context: AgentCurrentUserContext | null | undefined): string {
+  if (!context) {
+    return "";
+  }
+  const lines = ["Current user context:"];
+  const profileId = nonEmptyText(context.profile_id) || "default";
+  const name = nonEmptyText(context.name);
+  const nameSource = nonEmptyText(context.name_source);
+
+  if (!name) {
+    return "";
+  }
+
+  lines.push(`Runtime profile id: \`${profileId}\`.`);
+  lines.push(`The current operator name is \`${name}\`.`);
+  if (nameSource) {
+    lines.push(`Name source: \`${nameSource}\`.`);
+  }
+
+  return linesSection(lines);
 }
 
 function sessionResumeContextPromptSection(context: AgentSessionResumeContext | null | undefined): string {
@@ -332,6 +361,9 @@ export function buildBaseAgentPromptSections(
     "Start with inspection and context-gathering before mutating files, runtime state, browser state, or external systems whenever possible.",
     "After edits, shell commands, browser actions, or state-changing tool calls, verify the result with the most direct inspection capability available before claiming success.",
     "Keep plans and missing decisions explicit: use coordination capabilities such as question, todo, and skill access instead of relying on hidden state.",
+    "If a task requires the user's name or other personal identity details and current user context does not provide them, ask the user explicitly instead of guessing.",
+    "On the first strong signal that user input describes a reusable workflow, procedure, or operating pattern, proactively create or update a workspace-local skill instead of waiting for an explicit skill request.",
+    "Do not create skills for transient runtime state, one-off task details, or information that only belongs in session continuity.",
     "Tool and verification guidance:",
     "YOU MUST Use available tools, skills, and connected MCP tools whenever they can inspect, verify, retrieve, or complete the task more reliably than reasoning alone.",
     "Prefer direct tool results over assumptions, especially for code, files, workspace state, app state, or live integrations.",
@@ -376,6 +408,15 @@ export function buildBaseAgentPromptSections(
         }
       : null
   );
+
+  pushPromptLayer(promptSections, {
+    id: "current_user_context",
+    channel: "context_message",
+    apply_at: "runtime_config",
+    priority: 475,
+    volatility: "workspace",
+    content: currentUserContextPromptSection(request.currentUserContext)
+  });
 
   pushPromptLayer(promptSections, {
     id: "recent_runtime_context",

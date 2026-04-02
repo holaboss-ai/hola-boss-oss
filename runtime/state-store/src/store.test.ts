@@ -242,6 +242,35 @@ test("binding round trip upserts and reloads persisted session binding", () => {
   store.close();
 });
 
+test("runtime user profile round trip preserves manual value and auth fallback only fills when empty", () => {
+  const root = makeTempDir("hb-state-store-profile-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const fallback = store.applyRuntimeUserProfileAuthFallback({
+    name: "Jeffrey",
+  });
+  const updated = store.upsertRuntimeUserProfile({
+    name: "Jeff",
+    nameSource: "manual",
+  });
+  const preserved = store.applyRuntimeUserProfileAuthFallback({
+    name: "Ignored Auth Name",
+  });
+
+  assert.equal(fallback?.name, "Jeffrey");
+  assert.equal(fallback?.nameSource, "auth_fallback");
+  assert.equal(updated.name, "Jeff");
+  assert.equal(updated.nameSource, "manual");
+  assert.equal(preserved?.name, "Jeff");
+  assert.equal(preserved?.nameSource, "manual");
+  assert.deepEqual(store.getRuntimeUserProfile(), preserved);
+
+  store.close();
+});
+
 test("integration connections round trip create list and reload persisted records", () => {
   const root = makeTempDir("hb-state-store-integrations-");
   const store = new RuntimeStateStore({

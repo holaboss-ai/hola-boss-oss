@@ -311,3 +311,73 @@ test("writeTurnMemory extracts durable workspace facts and procedures from expli
 
   store.close();
 });
+
+test("writeTurnMemory extracts durable business facts and procedures from explicit workspace instructions", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-turn-memory-business-");
+  seedWorkspace(store);
+  store.insertSessionMessage({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    role: "user",
+    text: [
+      "Weekly sales review is every Monday at 9am.",
+      "",
+      "Invoices over $5000 require finance approval.",
+      "",
+      "Customer follow-up process:",
+      "1. Review the CRM record.",
+      "2. Draft the follow-up email.",
+      "3. Send it within 24 hours.",
+    ].join("\n"),
+    messageId: "user-1",
+    createdAt: "2026-04-02T12:00:00.000Z",
+  });
+
+  const turnResult = store.upsertTurnResult({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    startedAt: "2026-04-02T12:00:00.000Z",
+    completedAt: "2026-04-02T12:00:05.000Z",
+    status: "completed",
+    stopReason: "ok",
+    assistantText: "Captured business workflow rules for later recall.",
+  });
+
+  await writeTurnMemory({
+    store,
+    memoryService,
+    turnResult,
+  });
+
+  const captured = await memoryService.capture({ workspace_id: "workspace-1" });
+  const files = captured.files as Record<string, string>;
+  const memoryEntries = store.listMemoryEntries({ status: "active" });
+  const cadenceFact = memoryEntries.find((entry) => entry.title === "Sales review cadence");
+  const approvalFact = memoryEntries.find((entry) => entry.title === "Finance approval rule");
+  const followUpProcedure = memoryEntries.find((entry) => entry.title === "Follow-up procedure");
+
+  assert.ok(files["workspace/workspace-1/knowledge/facts/sales-review-cadence.md"]);
+  assert.ok(files["workspace/workspace-1/knowledge/facts/invoices-over-5000-approval-rule.md"]);
+  assert.ok(files["workspace/workspace-1/knowledge/procedures/follow-up-procedure.md"]);
+  assert.match(files["workspace/workspace-1/knowledge/facts/sales-review-cadence.md"], /Workspace Fact: Sales review cadence/);
+  assert.match(files["workspace/workspace-1/knowledge/facts/sales-review-cadence.md"], /Weekly sales review is every Monday at 9am\./);
+  assert.match(files["workspace/workspace-1/knowledge/facts/invoices-over-5000-approval-rule.md"], /Workspace Fact: Finance approval rule/);
+  assert.match(files["workspace/workspace-1/knowledge/facts/invoices-over-5000-approval-rule.md"], /Invoices over \$5000 require finance approval in this workspace\./);
+  assert.match(files["workspace/workspace-1/knowledge/procedures/follow-up-procedure.md"], /Workspace Procedure: Follow-up/);
+  assert.match(files["workspace/workspace-1/knowledge/procedures/follow-up-procedure.md"], /1\. Review the CRM record\./);
+  assert.match(files["workspace/workspace-1/MEMORY.md"], /Sales review cadence/);
+  assert.match(files["workspace/workspace-1/MEMORY.md"], /Finance approval rule/);
+  assert.match(files["workspace/workspace-1/MEMORY.md"], /Follow-up procedure/);
+  assert.equal(cadenceFact?.memoryType, "fact");
+  assert.equal(cadenceFact?.sourceType, "session_message");
+  assert.equal(cadenceFact?.confidence, 0.91);
+  assert.equal(approvalFact?.memoryType, "fact");
+  assert.equal(approvalFact?.sourceType, "session_message");
+  assert.equal(approvalFact?.confidence, 0.91);
+  assert.equal(followUpProcedure?.memoryType, "procedure");
+  assert.equal(followUpProcedure?.sourceType, "session_message");
+  assert.equal(followUpProcedure?.confidence, 0.93);
+
+  store.close();
+});

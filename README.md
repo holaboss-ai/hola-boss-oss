@@ -131,6 +131,7 @@ Those layers are intentionally separated by authority:
 
 - human-authored workspace policy lives in files like `AGENTS.md`, `workspace.yaml`, skills, and app manifests
 - runtime-owned execution truth lives in `state/runtime.db` plus streamed output events
+- runtime-owned operator profile data lives in `state/runtime.db`
 - durable memory bodies live under `memory/`, while their governance and recall metadata live in `state/runtime.db`
 
 At a high level, one run follows this path:
@@ -157,6 +158,8 @@ The most important runtime continuity artifacts are:
   - durable handoff artifacts that summarize a run boundary, record recent runtime context, preserve selected turn ids, and define explicit restoration ordering
 - request snapshots
   - sanitized exact request-state artifacts used for replay, debugging, and future cache diagnostics
+- runtime user profile
+  - canonical operator identity fields such as the persisted display name used by the runtime and agent prompt context
 
 This split avoids overloading transcript history with too many jobs. Raw history is still the replay truth, but resume, compaction, and memory promotion work from durable higher-level artifacts rather than repeatedly scraping prior messages.
 
@@ -236,7 +239,9 @@ Holaboss currently has three memory layers:
 - operational projections live under `memory/workspace/<workspace-id>/runtime/`
 - durable recalled memory lives under `memory/workspace/<workspace-id>/knowledge/` and `memory/preference/`
 
-That means short-horizon execution state and long-lived recalled memory are not mixed together.
+Alongside those layers, the runtime also keeps a canonical operator profile in `state/runtime.db`. That profile is not treated as markdown memory. It is runtime-owned identity state used first for things like the current user's name, with auth-provided identity only acting as a non-destructive fallback when the local profile is empty.
+
+That means short-horizon execution state, canonical operator identity, and long-lived recalled memory are not mixed together.
 
 Compaction boundaries are the durable handoff point for session continuity. Each boundary stores a compact summary, recent runtime context, preserved turn ids, and explicit restoration ordering so later runs can rebuild continuity from durable artifacts before falling back to broader transcript history.
 
@@ -255,12 +260,13 @@ Runtime files are intentionally excluded from the `MEMORY.md` indexes. The runti
 The source-of-truth boundary is deliberate:
 
 - runtime execution truth lives in `state/runtime.db`
+- canonical operator profile data lives in `state/runtime.db`
 - durable memory content lives in markdown under `memory/`
 - durable memory metadata and governance live in the runtime catalog in `state/runtime.db`
 
 In practice, that means:
 
-- `turn_results`, compaction boundaries, and request snapshots are the canonical session-continuity artifacts
+- `turn_results`, compaction boundaries, request snapshots, and the runtime user profile are runtime-owned canonical artifacts
 - markdown memory files are the canonical readable bodies for durable memory
 - the durable memory catalog controls recall, freshness, and verification policy
 
@@ -285,16 +291,18 @@ The durable memory catalog currently supports these memory classes:
 
 - `preference`
   - example: response style such as concise vs detailed
+- `identity`
+  - reserved for durable identity facts beyond the canonical runtime profile, such as role, signing identity, or other reusable identity context
 - `fact`
-  - example: workspace command facts such as which command to use for verification
+  - examples: workspace command facts such as which command to use for verification, or business facts such as meeting cadence and approval rules
 - `procedure`
-  - example: numbered release or onboarding steps
+  - examples: numbered release or onboarding steps, or business workflows such as follow-up, reporting, handoff, escalation, and review processes
 - `blocker`
   - example: recurring permission blockers that appear across multiple turns
 - `reference`
   - reserved for durable references that should usually be reconfirmed before use
 
-Current writeback is intentionally conservative. The runtime only promotes facts that are explicit enough to survive beyond a single turn.
+Current writeback is intentionally conservative. The runtime only promotes facts and procedures that are explicit enough to survive beyond a single turn, and it keeps transient runtime state out of durable knowledge.
 
 #### Recall And Governance
 
@@ -315,7 +323,7 @@ Use these rules of thumb when reasoning about the system:
 - `AGENTS.md`
   - human-authored workspace policy and operating instructions
 - `state/runtime.db`
-  - execution truth, session continuity, memory catalog metadata
+  - execution truth, session continuity, canonical runtime profile, memory catalog metadata
 - `memory/workspace/<workspace-id>/runtime/`
   - volatile runtime projections for inspection and debugging
 - `memory/workspace/<workspace-id>/knowledge/`
@@ -323,7 +331,7 @@ Use these rules of thumb when reasoning about the system:
 - `memory/preference/`
   - durable user preference memory
 
-If a piece of information is only needed to resume the latest session, it belongs in runtime continuity. If it should be recalled later without replaying the full session, it belongs in durable memory. If it is a standing workspace rule, it belongs in `AGENTS.md`.
+If a piece of information is only needed to resume the latest session, it belongs in runtime continuity. If it is the canonical current-user identity used by the runtime, it belongs in the runtime profile. If it should be recalled later without replaying the full session, it belongs in durable memory. If it is a standing workspace rule, it belongs in `AGENTS.md`.
 
 ## AI Labour Market
 

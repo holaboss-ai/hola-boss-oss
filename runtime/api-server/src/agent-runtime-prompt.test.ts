@@ -76,6 +76,14 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   ]);
   assert.match(prompt.systemPrompt, /^Base runtime instructions:/);
   assert.match(prompt.systemPrompt, /Execution doctrine:/);
+  assert.match(
+    prompt.systemPrompt,
+    /On the first strong signal that user input describes a reusable workflow, procedure, or operating pattern, proactively create or update a workspace-local skill/
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not create skills for transient runtime state, one-off task details, or information that only belongs in session continuity\./
+  );
   assert.match(prompt.systemPrompt, /Session policy:/);
   assert.match(prompt.systemPrompt, /This is the main workspace session/i);
   assert.match(prompt.systemPrompt, /Capability policy for this run:/);
@@ -123,6 +131,33 @@ test("composeBaseAgentPrompt includes recent runtime context only when provided"
   assert.match(prompt.contextMessages.join("\n\n"), /Previous stop reason: runner_failed\./);
   assert.match(prompt.contextMessages.join("\n\n"), /waiting for user input/i);
   assert.match(prompt.contextMessages.join("\n\n"), /Previous runtime error: config parse error\./);
+});
+
+test("composeBaseAgentPrompt includes current user context when provided", () => {
+  const prompt = composeBaseAgentPrompt("", {
+    defaultTools: ["read"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    currentUserContext: {
+      profile_id: "default",
+      name: "Jeffrey",
+      name_source: "manual",
+    },
+  });
+
+  assert.ok(prompt.promptSections.some((section) => section.id === "current_user_context"));
+  assert.equal(
+    prompt.promptSections.find((section) => section.id === "current_user_context")?.channel,
+    "context_message"
+  );
+  assert.equal(prompt.promptLayers.some((layer) => layer.id === "current_user_context"), false);
+  assert.doesNotMatch(prompt.systemPrompt, /Current user context:/);
+  assert.match(prompt.contextMessages.join("\n\n"), /Current user context:/);
+  assert.match(prompt.contextMessages.join("\n\n"), /The current operator name is `Jeffrey`\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Name source: `manual`\./);
 });
 
 test("composeBaseAgentPrompt includes session resume context only when provided", () => {

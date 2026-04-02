@@ -171,8 +171,18 @@ export interface CompactionBoundaryRecord {
   updatedAt: string;
 }
 
+export type RuntimeUserProfileNameSource = "manual" | "agent" | "auth_fallback";
+
+export interface RuntimeUserProfileRecord {
+  profileId: string;
+  name: string | null;
+  nameSource: RuntimeUserProfileNameSource | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type MemoryEntryScope = "workspace" | "session" | "user" | "ephemeral";
-export type MemoryEntryType = "preference" | "fact" | "procedure" | "blocker" | "reference";
+export type MemoryEntryType = "preference" | "identity" | "fact" | "procedure" | "blocker" | "reference";
 export type MemoryVerificationPolicy = "none" | "check_before_use" | "must_reconfirm";
 export type MemoryStalenessPolicy = "stable" | "time_sensitive" | "workspace_sensitive";
 export type MemoryEntrySourceType = "session_message" | "assistant_turn" | "turn_result" | "permission_denial" | "manual";
@@ -1682,6 +1692,77 @@ export class RuntimeStateStore {
     return rows.map((row) => this.rowToTurnResult(row));
   }
 
+  getRuntimeUserProfile(params: { profileId?: string } = {}): RuntimeUserProfileRecord | null {
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>(
+        "SELECT * FROM runtime_user_profiles WHERE profile_id = ? LIMIT 1"
+      )
+      .get(params.profileId ?? "default");
+    return row ? this.rowToRuntimeUserProfile(row) : null;
+  }
+
+  upsertRuntimeUserProfile(params: {
+    profileId?: string;
+    name?: string | null;
+    nameSource?: RuntimeUserProfileNameSource | null;
+    createdAt?: string;
+    updatedAt?: string;
+  }): RuntimeUserProfileRecord {
+    const profileId = (params.profileId ?? "default").trim() || "default";
+    const existing = this.getRuntimeUserProfile({ profileId });
+    const now = params.updatedAt ?? utcNowIso();
+    const createdAt = existing?.createdAt ?? params.createdAt ?? now;
+    const normalizedName = typeof params.name === "string" ? params.name.trim() : "";
+    const resolvedName = normalizedName || null;
+    const resolvedNameSource = resolvedName
+      ? (params.nameSource ?? existing?.nameSource ?? "manual")
+      : null;
+
+    this.db()
+      .prepare(`
+        INSERT INTO runtime_user_profiles (
+            profile_id,
+            name,
+            name_source,
+            created_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(profile_id) DO UPDATE SET
+            name = excluded.name,
+            name_source = excluded.name_source,
+            updated_at = excluded.updated_at
+      `)
+      .run(profileId, resolvedName, resolvedNameSource, createdAt, now);
+
+    const record = this.getRuntimeUserProfile({ profileId });
+    if (!record) {
+      throw new Error("runtime user profile row not found after upsert");
+    }
+    return record;
+  }
+
+  applyRuntimeUserProfileAuthFallback(params: {
+    profileId?: string;
+    name: string;
+    updatedAt?: string;
+  }): RuntimeUserProfileRecord | null {
+    const profileId = (params.profileId ?? "default").trim() || "default";
+    const normalizedName = params.name.trim();
+    if (!normalizedName) {
+      return this.getRuntimeUserProfile({ profileId });
+    }
+    const existing = this.getRuntimeUserProfile({ profileId });
+    if (existing?.name?.trim()) {
+      return existing;
+    }
+    return this.upsertRuntimeUserProfile({
+      profileId,
+      name: normalizedName,
+      nameSource: "auth_fallback",
+      updatedAt: params.updatedAt,
+    });
+  }
+
   upsertMemoryEntry(params: {
     memoryId: string;
     workspaceId?: string | null;
@@ -3001,6 +3082,14 @@ export class RuntimeStateStore {
       CREATE INDEX IF NOT EXISTS idx_compaction_boundaries_workspace_session_updated
           ON compaction_boundaries (workspace_id, session_id, updated_at DESC, created_at DESC);
 
+      CREATE TABLE IF NOT EXISTS runtime_user_profiles (
+          profile_id TEXT PRIMARY KEY,
+          name TEXT,
+          name_source TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS memory_entries (
           memory_id TEXT PRIMARY KEY,
           workspace_id TEXT,
@@ -3764,6 +3853,16 @@ export class RuntimeStateStore {
       ),
       requestSnapshotFingerprint:
         row.request_snapshot_fingerprint == null ? null : String(row.request_snapshot_fingerprint),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private rowToRuntimeUserProfile(row: Record<string, unknown>): RuntimeUserProfileRecord {
+    return {
+      profileId: String(row.profile_id),
+      name: row.name == null ? null : String(row.name),
+      nameSource: row.name_source == null ? null : String(row.name_source) as RuntimeUserProfileNameSource,
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     };

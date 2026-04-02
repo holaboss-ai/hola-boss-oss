@@ -8,6 +8,7 @@ import {
 } from "./agent-capability-registry.js";
 import {
   composeBaseAgentPrompt,
+  type AgentCurrentUserContext,
   type AgentRecalledMemoryContext,
   type AgentRecentRuntimeContext,
   type AgentSessionResumeContext,
@@ -38,6 +39,7 @@ export interface AgentRuntimeConfigCliRequest {
   recent_runtime_context?: AgentRecentRuntimeContext | null;
   session_resume_context?: AgentSessionResumeContext | null;
   recalled_memory_context?: AgentRecalledMemoryContext | null;
+  current_user_context?: AgentCurrentUserContext | null;
   selected_model?: string | null;
   default_provider_id: string;
   session_mode: string;
@@ -935,6 +937,7 @@ export function projectAgentRuntimeConfig(
     recentRuntimeContext: request.recent_runtime_context ?? null,
     sessionResumeContext: request.session_resume_context ?? null,
     recalledMemoryContext: request.recalled_memory_context ?? null,
+    currentUserContext: request.current_user_context ?? null,
     capabilityManifest,
   });
 
