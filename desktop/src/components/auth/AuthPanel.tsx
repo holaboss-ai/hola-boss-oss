@@ -761,7 +761,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
     if (!providerEnabled(providerId)) {
       return (
-        <div className="rounded-[12px] border border-panel-border/25 bg-black/10 px-3 py-2 text-[11px] leading-5 text-text-dim/76">
+        <div className="rounded-[12px] border border-border/35 bg-card px-3 py-2 text-[11px] leading-5 text-text-dim/76">
           Connect this provider to edit its base URL, API key, and model list here.
         </div>
       );
@@ -774,7 +774,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         <label className="grid gap-1">
           <span className="text-[10px] uppercase tracking-[0.14em] text-text-dim/72">Base URL</span>
           <input
-            className="theme-control-surface h-9 rounded-[10px] border border-panel-border/45 px-2.5 text-[11px] text-text-main outline-none transition focus:border-neon-green/55"
+            className="h-9 rounded-[10px] border border-border/45 bg-card px-2.5 text-[11px] text-text-main outline-none transition focus:border-neon-green/55"
             value={draft.baseUrl}
             onChange={(event) => updateProviderDraft(providerId, { baseUrl: event.target.value })}
             placeholder={template.defaultBaseUrl}
@@ -784,7 +784,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         <label className="grid gap-1">
           <span className="text-[10px] uppercase tracking-[0.14em] text-text-dim/72">API Key</span>
           <input
-            className="theme-control-surface h-9 rounded-[10px] border border-panel-border/45 px-2.5 text-[11px] text-text-main outline-none transition focus:border-neon-green/55"
+            className="h-9 rounded-[10px] border border-border/45 bg-card px-2.5 text-[11px] text-text-main outline-none transition focus:border-neon-green/55"
             type="password"
             value={draft.apiKey}
             onChange={(event) => updateProviderDraft(providerId, { apiKey: event.target.value })}
@@ -795,7 +795,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         <label className="grid gap-1">
           <span className="text-[10px] uppercase tracking-[0.14em] text-text-dim/72">Models</span>
           <textarea
-            className="theme-control-surface min-h-[60px] rounded-[10px] border border-panel-border/45 px-2.5 py-2 text-[11px] leading-5 text-text-main outline-none transition focus:border-neon-green/55"
+            className="min-h-[60px] rounded-[10px] border border-border/45 bg-card px-2.5 py-2 text-[11px] leading-5 text-text-main outline-none transition focus:border-neon-green/55"
             value={draft.modelsText}
             onChange={(event) => updateProviderDraft(providerId, { modelsText: event.target.value })}
             placeholder={template.defaultModels.join(", ")}
@@ -820,8 +820,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     return (
       <div
         key={providerId}
-        className={`theme-control-surface overflow-hidden rounded-[14px] border transition ${
-          isExpanded ? "border-neon-green/35 bg-black/10" : "border-panel-border/30"
+        className={`overflow-hidden rounded-[14px] border bg-card transition ${
+          isExpanded ? "border-neon-green/35" : "border-border/35"
         }`}
       >
         <div className="flex items-center justify-between gap-3 px-3 py-3">
@@ -832,7 +832,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               className="flex min-w-0 flex-1 items-center gap-3 rounded-[10px] text-left outline-none transition hover:text-text-main focus-visible:ring-2 focus-visible:ring-neon-green/45"
               aria-expanded={isExpanded}
             >
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[12px] border border-panel-border/35 bg-black/14 text-text-main/86">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[12px] border border-border/35 bg-muted/55 text-text-main/86">
                 <ProviderBrandIcon providerId={providerId} />
               </span>
               <span className="min-w-0 flex-1">
@@ -850,7 +850,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             </button>
           ) : (
             <div className="flex min-w-0 flex-1 items-center gap-3">
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[12px] border border-panel-border/35 bg-black/14 text-text-main/86">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[12px] border border-border/35 bg-muted/55 text-text-main/86">
                 <ProviderBrandIcon providerId={providerId} />
               </span>
               <div className="min-w-0">
@@ -862,7 +862,10 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
           {isHolabossProvider ? (
             isEnabled ? (
-              <div className="rounded-full border border-neon-green/30 bg-neon-green/8 px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-neon-green">
+              <div
+                className={`${actionButtonClassName} border border-border/45 bg-card text-text-main/78`}
+                aria-label="Provider enabled"
+              >
                 Enabled
               </div>
             ) : (
@@ -882,7 +885,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 updateProviderDraft(providerId, { enabled: false });
                 setExpandedProviderId((current) => (current === providerId ? null : current));
               }}
-              className={`${actionButtonClassName} border border-panel-border/45 text-text-main hover:border-[rgba(247,90,84,0.4)] hover:text-[rgba(206,92,84,0.92)]`}
+              className={`${actionButtonClassName} border border-border/45 text-text-main hover:border-[rgba(247,90,84,0.4)] hover:text-[rgba(206,92,84,0.92)]`}
             >
               Disconnect
             </button>
@@ -893,7 +896,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 updateProviderDraft(providerId, { enabled: true });
                 setExpandedProviderId(providerId);
               }}
-              className={`${actionButtonClassName} border border-panel-border/45 text-text-main hover:border-neon-green/35 hover:text-neon-green`}
+              className={`${actionButtonClassName} border border-border/45 text-text-main hover:border-neon-green/35 hover:text-neon-green`}
             >
               Connect
             </button>
@@ -901,7 +904,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         </div>
 
         {isExpanded && (
-          <div className="border-t border-panel-border/25 px-3 pb-3 pt-3">
+          <div className="border-t border-border/35 px-3 pb-3 pt-3">
             {renderProviderDrawerContent(providerId)}
           </div>
         )}
@@ -910,19 +913,12 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   }
 
   const runtimeProviderSettings = (
-    <div className="theme-subtle-surface mt-3 grid gap-4 rounded-[20px] border border-panel-border/35 p-4">
-      <div>
-        <div className="text-[10px] tracking-[0.16em] text-text-dim/76">MODEL PROVIDERS</div>
-        <div className="mt-1 text-[12px] leading-6 text-text-muted/84">
-          Configure known providers instead of editing raw runtime JSON. Changes autosave to runtime-config.json.
-        </div>
-      </div>
-
-      <div className="rounded-[18px] border border-panel-border/35 bg-black/8 p-4">
+    <div className="mt-2 grid gap-4">
+      <div className="rounded-[18px] border border-border/35 bg-card p-4">
         <div className="text-[11px] font-medium text-text-main/92">Connected providers</div>
         <div className="mt-3 grid gap-2">
           {connectedProviderIds.length === 0 ? (
-            <div className="rounded-[12px] border border-panel-border/30 bg-black/6 px-3 py-2 text-[11px] text-text-dim/78">
+            <div className="rounded-[12px] border border-border/35 bg-muted/35 px-3 py-2 text-[11px] text-text-dim/78">
               No connected providers.
             </div>
           ) : (
@@ -931,11 +927,11 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         </div>
       </div>
 
-      <div className="rounded-[18px] border border-panel-border/35 bg-black/8 p-4">
+      <div className="rounded-[18px] border border-border/35 bg-card p-4">
         <div className="text-[11px] font-medium text-text-main/92">Popular providers</div>
         <div className="mt-3 grid gap-2">
           {availableProviderIds.length === 0 ? (
-            <div className="rounded-[12px] border border-panel-border/30 bg-black/6 px-3 py-2 text-[11px] text-text-dim/78">
+            <div className="rounded-[12px] border border-border/35 bg-muted/35 px-3 py-2 text-[11px] text-text-dim/78">
               All known providers are already connected.
             </div>
           ) : (
@@ -946,14 +942,14 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
       <div className="mt-1 flex flex-wrap gap-2">
         <button
-          className="theme-control-surface rounded-[14px] border border-panel-border/45 px-3 py-2 text-[11px] text-text-main transition hover:border-neon-green/35 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-[14px] border border-border/45 bg-card px-3 py-2 text-[11px] text-text-main transition hover:border-neon-green/35 disabled:cursor-not-allowed disabled:opacity-50"
           type="button"
           onClick={() => void handleReloadRuntimeSettings()}
         >
           Reload settings
         </button>
         <button
-          className="theme-control-surface rounded-[14px] border border-panel-border/45 px-3 py-2 text-[11px] text-text-main transition hover:border-neon-green/35 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-[14px] border border-border/45 bg-card px-3 py-2 text-[11px] text-text-main transition hover:border-neon-green/35 disabled:cursor-not-allowed disabled:opacity-50"
           type="button"
           onClick={() => void handleExchangeRuntimeBinding()}
           disabled={isExchangingRuntimeBinding || !isSignedIn}

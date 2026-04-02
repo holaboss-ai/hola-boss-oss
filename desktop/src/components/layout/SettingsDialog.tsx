@@ -167,9 +167,9 @@ export function SettingsDialog({
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        className="theme-shell soft-vignette neon-border pointer-events-auto relative z-10 grid max-h-[min(760px,calc(100vh-40px))] w-[min(980px,calc(100vw-32px))] min-w-0 overflow-hidden rounded-[28px] shadow-lg grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[240px_minmax(0,1fr)] lg:grid-rows-1"
+        className="theme-shell neon-border pointer-events-auto relative z-10 grid h-[min(760px,calc(100vh-40px))] w-[min(980px,calc(100vw-32px))] min-w-0 overflow-hidden rounded-[28px] shadow-lg grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[240px_minmax(0,1fr)] lg:grid-rows-1"
       >
-        <aside className="theme-header-surface border-b border-border/35 p-4 lg:border-b-0 lg:border-r">
+        <aside className="border-b border-border/35 bg-card p-4 lg:border-b-0 lg:border-r">
           <div className="flex items-center gap-3">
             <div className="grid h-11 w-11 place-items-center rounded-[16px] border border-primary/30 bg-primary/10 text-primary">
               <Palette size={18} />
@@ -215,7 +215,7 @@ export function SettingsDialog({
         </aside>
 
         <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
-          <header className="theme-header-surface flex items-start justify-between gap-4 border-b border-border/35 px-5 py-4">
+          <header className="flex items-start justify-between gap-4 border-b border-border/35 bg-card px-5 py-4">
             <div>
               <div className="text-[20px] font-semibold text-foreground">{titleForSection(activeSection)}</div>
               <div className="mt-1 text-[12px] text-muted-foreground/72">{subtitleForSection(activeSection)}</div>
@@ -231,7 +231,7 @@ export function SettingsDialog({
             </button>
           </header>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 [scrollbar-gutter:stable]">
             {activeSection === "account" ? (
               <div className="max-w-[560px]">
                 <AuthPanel view="account" />
@@ -248,7 +248,7 @@ export function SettingsDialog({
 
             {activeSection === "settings" ? (
               <div className="grid gap-6">
-                <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
+                <section className="rounded-[24px] border border-border/40 bg-card p-5">
                   <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground/68">Appearance</div>
                   <div className="mt-2 max-w-[640px] text-[13px] leading-6 text-muted-foreground/86">
                     Choose the global desktop theme for shell surfaces, overlays, controls, and the account menu.
@@ -266,7 +266,7 @@ export function SettingsDialog({
                           className={`rounded-[20px] border p-3 text-left transition ${
                             selected
                               ? "border-primary/45 bg-primary/10 shadow-[0_14px_38px_rgba(0,0,0,0.18)]"
-                              : "border-border/40 bg-black/10 hover:border-primary/28 hover:bg-accent"
+                              : "border-border/40 bg-card hover:border-primary/28 hover:bg-accent/60"
                           }`}
                         >
                           <div className="rounded-[16px] border border-border/30 bg-card/80 p-3">
@@ -305,14 +305,14 @@ export function SettingsDialog({
                   </div>
                 </section>
 
-                <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
+                <section className="rounded-[24px] border border-border/40 bg-card p-5">
                   <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground/68">Proactive</div>
                   <div className="mt-2 max-w-[640px] text-[13px] leading-6 text-muted-foreground/86">
                     Control whether automatic proactive task proposal polling runs in the inbox. Manual proposal triggers
                     stay available even when polling is paused.
                   </div>
 
-                  <div className="mt-5 flex items-center justify-between gap-4 rounded-[18px] border border-border/35 bg-black/10 px-4 py-3">
+                  <div className="mt-5 flex items-center justify-between gap-4 rounded-[18px] border border-border/35 bg-card px-4 py-3">
                     <div className="min-w-0">
                       <div className="text-[13px] font-medium text-foreground">Proactive task proposals</div>
                       <div className="mt-1 text-[12px] text-muted-foreground/78">
@@ -362,7 +362,7 @@ export function SettingsDialog({
 
             {activeSection === "about" ? (
               <div className="grid max-w-[720px] gap-4">
-                <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
+                <section className="rounded-[24px] border border-border/40 bg-card p-5">
                   <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground/68">Links</div>
                   <div className="mt-2 text-[13px] leading-6 text-muted-foreground/84">
                     Open the main product site, OSS docs, or support issue tracker in your default browser.
@@ -396,7 +396,7 @@ export function SettingsDialog({
                         key={id}
                         type="button"
                         onClick={() => onOpenExternalUrl(href)}
-                        className="flex items-center justify-between gap-3 rounded-[18px] border border-border/40 bg-black/10 px-4 py-3 text-left transition hover:border-primary/30 hover:bg-accent"
+                        className="flex items-center justify-between gap-3 rounded-[18px] border border-border/40 bg-card px-4 py-3 text-left transition hover:border-primary/30 hover:bg-accent/60"
                       >
                         <span className="flex min-w-0 items-center gap-3">
                           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-border/35 text-muted-foreground/82">

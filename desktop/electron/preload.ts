@@ -302,11 +302,14 @@ interface DemoTaskProposalEnqueueResponsePayload {
 
 interface ProactiveTaskProposalPreferenceUpdatePayload {
   enabled: boolean;
+  holaboss_user_id?: string;
+  sandbox_id?: string;
 }
 
 interface ProactiveTaskProposalPreferencePayload {
   enabled: boolean;
   holaboss_user_id: string;
+  sandbox_id: string;
 }
 
 interface TaskProposalStateUpdatePayload {
@@ -828,6 +831,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:acceptTaskProposal", payload) as Promise<TaskProposalAcceptResponsePayload>,
     getProactiveStatus: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:getProactiveStatus", workspaceId) as Promise<ProactiveAgentStatusPayload>,
+    getProactiveTaskProposalPreference: () =>
+      ipcRenderer.invoke(
+        "workspace:getProactiveTaskProposalPreference",
+      ) as Promise<ProactiveTaskProposalPreferencePayload>,
     setProactiveTaskProposalPreference: (
       payload: ProactiveTaskProposalPreferenceUpdatePayload,
     ) =>
