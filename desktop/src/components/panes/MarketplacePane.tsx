@@ -28,9 +28,6 @@ export function MarketplacePane() {
     retryMarketplaceTemplates,
     selectMarketplaceTemplate,
     setTemplateSourceMode,
-    createHarnessOptions,
-    selectedCreateHarness,
-    setSelectedCreateHarness,
     newWorkspaceName,
     setNewWorkspaceName,
     isCreatingWorkspace,
@@ -114,9 +111,6 @@ export function MarketplacePane() {
     }
   }
 
-  const selectedHarnessOption =
-    createHarnessOptions.find((o) => o.id === selectedCreateHarness) ?? createHarnessOptions[0];
-
   return (
     <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.03),transparent_24%)]" />
@@ -198,26 +192,6 @@ export function MarketplacePane() {
                       placeholder="My workspace"
                       className="theme-control-surface h-12 rounded-[18px] border border-border/45 px-4 text-[14px] text-foreground outline-none placeholder:text-muted-foreground/50"
                     />
-                  </label>
-
-                  <label className="grid gap-2">
-                    <span className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground/78">
-                      Harness
-                    </span>
-                    <select
-                      value={selectedCreateHarness}
-                      onChange={(e) => setSelectedCreateHarness(e.target.value)}
-                      className="theme-control-surface h-12 rounded-[18px] border border-border/45 px-4 text-[14px] text-foreground outline-none"
-                    >
-                      {createHarnessOptions.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                    <span className="text-[12px] leading-6 text-muted-foreground/74">
-                      {selectedHarnessOption?.description || ""}
-                    </span>
                   </label>
                 </div>
 

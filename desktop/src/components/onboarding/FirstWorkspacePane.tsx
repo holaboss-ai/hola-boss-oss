@@ -15,9 +15,6 @@ export function FirstWorkspacePane() {
   const {
     templateSourceMode,
     setTemplateSourceMode,
-    createHarnessOptions,
-    selectedCreateHarness,
-    setSelectedCreateHarness,
     selectedTemplateFolder,
     marketplaceTemplates,
     selectedMarketplaceTemplate,
@@ -183,9 +180,6 @@ export function FirstWorkspacePane() {
               selectedTemplateFolder={selectedTemplateFolder}
               newWorkspaceName={newWorkspaceName}
               setNewWorkspaceName={setNewWorkspaceName}
-              createHarnessOptions={createHarnessOptions}
-              selectedCreateHarness={selectedCreateHarness}
-              setSelectedCreateHarness={setSelectedCreateHarness}
               pendingIntegrations={pendingIntegrations}
               isResolvingIntegrations={isResolvingIntegrations}
               connectingProvider={connectingProvider}
