@@ -65,17 +65,7 @@ function workspaceSkillsPathToken(payload: Record<string, unknown>): string | nu
       return raw.trim();
     }
   }
-
-  const agents = payload.agents;
-  if (!agents || typeof agents !== "object" || Array.isArray(agents)) {
-    return null;
-  }
-  const proactive = (agents as Record<string, unknown>).proactive;
-  if (!proactive || typeof proactive !== "object" || Array.isArray(proactive)) {
-    return null;
-  }
-  const raw = (proactive as Record<string, unknown>).skills_path;
-  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+  return null;
 }
 
 function workspaceEnabledSkillIds(payload: Record<string, unknown>): string[] {

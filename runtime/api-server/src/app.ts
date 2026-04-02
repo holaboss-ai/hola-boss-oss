@@ -1118,6 +1118,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   });
   const backgroundTasks = new Set<Promise<void>>();
   const appSetupTasks = new Map<string, Promise<void>>();
+  const appEnsureRunningTasks = new Map<string, Promise<void>>();
   const appLifecycleExecutor = options.appLifecycleExecutor ?? new RuntimeAppLifecycleExecutor({ store });
   const memoryService = options.memoryService ?? new FilesystemMemoryService({ workspaceRoot: store.workspaceRoot });
   const runtimeConfigService = options.runtimeConfigService ?? new FileRuntimeConfigService();
@@ -1146,58 +1147,76 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   let healthMonitorTimer: ReturnType<typeof setInterval> | null = null;
 
   async function ensureAppRunning(workspaceId: string, appId: string): Promise<void> {
-    const workspaceDir = store.workspaceDir(workspaceId);
-    const resolved = resolveWorkspaceAppRuntime(workspaceDir, appId, {
-      store,
-      workspaceId,
-      allocatePorts: true
-    });
-
-    // Already healthy — sync DB and return.
-    if (
-      await isAppHealthy({
-        resolvedApp: resolved.resolvedApp,
-        httpPort: resolved.ports.http,
-        mcpPort: resolved.ports.mcp
-      })
-    ) {
-      store.upsertAppBuild({ workspaceId, appId, status: "running" });
+    const taskKey = `${workspaceId}:${appId}`;
+    const inFlight = appEnsureRunningTasks.get(taskKey);
+    if (inFlight) {
+      await inFlight;
       return;
     }
 
-    // Setup needed?
-    const build = store.getAppBuild({ workspaceId, appId });
-    if (
-      !appBuildHasCompletedSetup(build?.status) &&
-      resolved.resolvedApp.lifecycle.setup.trim().length > 0
-    ) {
-      await runAppSetup({
+    const task = (async () => {
+      const workspaceDir = store.workspaceDir(workspaceId);
+      const resolved = resolveWorkspaceAppRuntime(workspaceDir, appId, {
         store,
-        workspaceDir,
+        workspaceId,
+        allocatePorts: true
+      });
+
+      // Already healthy — sync DB and return.
+      if (
+        await isAppHealthy({
+          resolvedApp: resolved.resolvedApp,
+          httpPort: resolved.ports.http,
+          mcpPort: resolved.ports.mcp
+        })
+      ) {
+        store.upsertAppBuild({ workspaceId, appId, status: "running" });
+        return;
+      }
+
+      // Setup needed?
+      const build = store.getAppBuild({ workspaceId, appId });
+      if (
+        !appBuildHasCompletedSetup(build?.status) &&
+        resolved.resolvedApp.lifecycle.setup.trim().length > 0
+      ) {
+        await runAppSetup({
+          store,
+          workspaceDir,
+          workspaceId,
+          appId,
+          setupCommand: resolved.resolvedApp.lifecycle.setup
+        });
+        const afterSetup = store.getAppBuild({ workspaceId, appId });
+        if (afterSetup?.status === "failed") {
+          throw new Error(afterSetup.error ?? "setup failed");
+        }
+      }
+
+      // Start app process.
+      const result = await appLifecycleExecutor.startApp({
+        appId,
+        appDir: resolved.appDir,
+        httpPort: resolved.ports.http,
+        mcpPort: resolved.ports.mcp,
+        resolvedApp: resolved.resolvedApp,
+        skipSetup: true
+      });
+      store.upsertAppBuild({
         workspaceId,
         appId,
-        setupCommand: resolved.resolvedApp.lifecycle.setup
+        status: result.status === "started" ? "running" : result.status
       });
-      const afterSetup = store.getAppBuild({ workspaceId, appId });
-      if (afterSetup?.status === "failed") {
-        throw new Error(afterSetup.error ?? "setup failed");
+    })();
+
+    appEnsureRunningTasks.set(taskKey, task);
+    try {
+      await task;
+    } finally {
+      if (appEnsureRunningTasks.get(taskKey) === task) {
+        appEnsureRunningTasks.delete(taskKey);
       }
     }
-
-    // Start app process.
-    const result = await appLifecycleExecutor.startApp({
-      appId,
-      appDir: resolved.appDir,
-      httpPort: resolved.ports.http,
-      mcpPort: resolved.ports.mcp,
-      resolvedApp: resolved.resolvedApp,
-      skipSetup: true
-    });
-    store.upsertAppBuild({
-      workspaceId,
-      appId,
-      status: result.status === "started" ? "running" : result.status
-    });
   }
 
   async function ensureAllAppsRunning(
@@ -1302,6 +1321,72 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       });
       store.upsertAppBuild({ workspaceId: params.workspaceId, appId, status: "stopped" });
       await ensureAppRunning(params.workspaceId, appId);
+    }
+  }
+
+  async function stopWorkspaceApplicationsForDeletion(params: {
+    workspaceId: string;
+    workspaceDir: string;
+  }): Promise<void> {
+    let entries: Array<Record<string, unknown>> = [];
+    try {
+      entries = listWorkspaceApplications(params.workspaceDir);
+    } catch (error) {
+      app.log.debug(
+        {
+          workspaceId: params.workspaceId,
+          error: error instanceof Error ? error.message : String(error)
+        },
+        "best-effort app listing failed during workspace delete"
+      );
+    }
+
+    for (const entry of entries) {
+      const appId = typeof entry.app_id === "string" ? entry.app_id.trim() : "";
+      if (!appId) {
+        continue;
+      }
+      const configPath = typeof entry.config_path === "string" ? entry.config_path.trim() : "";
+      const fallbackAppDir = path.join(
+        params.workspaceDir,
+        configPath ? path.dirname(configPath) : path.join("apps", appId)
+      );
+
+      try {
+        const resolved = resolveWorkspaceAppRuntime(params.workspaceDir, appId, {
+          store,
+          workspaceId: params.workspaceId
+        });
+        await appLifecycleExecutor.stopApp({
+          appId,
+          appDir: resolved.appDir,
+          resolvedApp: resolved.resolvedApp
+        });
+      } catch (error) {
+        try {
+          await appLifecycleExecutor.stopApp({
+            appId,
+            appDir: fallbackAppDir
+          });
+        } catch (fallbackError) {
+          app.log.debug(
+            {
+              workspaceId: params.workspaceId,
+              appId,
+              error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+              original_error: error instanceof Error ? error.message : String(error)
+            },
+            "best-effort app stop failed during workspace delete"
+          );
+        }
+      } finally {
+        releaseWorkspaceAppPorts({ store, workspaceId: params.workspaceId, appId });
+        store.deleteAppBuild({ workspaceId: params.workspaceId, appId });
+      }
+    }
+
+    for (const appPort of store.listAppPorts({ workspaceId: params.workspaceId })) {
+      store.deleteAppPort({ workspaceId: params.workspaceId, appId: appPort.appId });
     }
   }
 
@@ -2280,11 +2365,21 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
   app.delete("/api/v1/workspaces/:workspaceId", async (request, reply) => {
     const params = request.params as { workspaceId: string };
-    try {
-      const workspace = store.deleteWorkspace(params.workspaceId);
-      return { workspace: workspaceRecordPayload(workspace) };
-    } catch {
+    const workspace = store.getWorkspace(params.workspaceId, { includeDeleted: true });
+    if (!workspace || workspace.deletedAtUtc) {
       return sendError(reply, 404, "workspace not found");
+    }
+    const workspaceDir = store.workspaceDir(params.workspaceId);
+    try {
+      await stopWorkspaceApplicationsForDeletion({
+        workspaceId: params.workspaceId,
+        workspaceDir
+      });
+      const deletedWorkspace = store.deleteWorkspace(params.workspaceId);
+      fs.rmSync(workspaceDir, { recursive: true, force: true });
+      return { workspace: workspaceRecordPayload(deletedWorkspace) };
+    } catch (error) {
+      return sendError(reply, 500, error instanceof Error ? error.message : "workspace delete failed");
     }
   });
 

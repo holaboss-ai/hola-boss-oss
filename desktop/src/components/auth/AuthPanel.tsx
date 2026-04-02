@@ -960,23 +960,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         >
           {isExchangingRuntimeBinding ? "Refreshing..." : "Refresh runtime binding"}
         </button>
-        <div
-          className={`inline-flex min-h-[40px] items-center rounded-[14px] border px-3 py-2 text-[11px] ${
-            providerSaveStatus === "error"
-              ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
-              : providerSaveStatus === "saved"
-                ? "border-neon-green/35 bg-neon-green/8 text-neon-green"
-                : "border-panel-border/35 bg-black/8 text-text-dim/76"
-          }`}
-        >
-          {providerSaveStatus === "saving"
-            ? "Saving changes..."
-            : providerSaveStatus === "saved"
-              ? "Changes saved automatically"
-              : providerSaveStatus === "error"
-                ? "Autosave failed. Edit again to retry."
-                : "Changes save automatically"}
-        </div>
       </div>
     </div>
   );
