@@ -159,7 +159,7 @@ export function SkillsPane() {
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Registry</div>
-                    <div className="mt-1 text-sm font-medium text-foreground">Skill catalog</div>
+                    <div className="mt-1 text-sm font-medium text-foreground">Workspace skill catalog</div>
                   </div>
                   <div className="rounded-full border border-border bg-muted px-2.5 py-1 text-[10px] uppercase tracking-widest text-muted-foreground">
                     {filteredSkills.length} shown
