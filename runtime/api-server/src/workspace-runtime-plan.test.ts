@@ -30,8 +30,8 @@ test("compileWorkspaceRuntimePlan resolves workspace catalog tools", () => {
 template_id: demo
 name: Demo
 agents:
-  - id: workspace.general
-    model: gpt-5.2
+  id: workspace.general
+  model: gpt-5.2
 mcp_registry:
   allowlist:
     tool_ids:
@@ -86,11 +86,8 @@ test("compileWorkspaceRuntimePlan loads prompt and applications", () => {
 template_id: social_operator
 name: Social Operator
 agents:
-  general:
-    type: single
-    agent:
-      id: workspace.general
-      model: gpt-4o
+  id: workspace.general
+  model: gpt-4o
 applications:
   - app_id: holaposter-ts-lite
     config_path: apps/holaposter-ts-lite/app.runtime.yaml
@@ -299,7 +296,7 @@ integrations:
   );
 });
 
-test("compileWorkspaceRuntimePlan rejects multiple agents", () => {
+test("compileWorkspaceRuntimePlan rejects list-based agents definitions", () => {
   assert.throws(
     () =>
       compileWorkspaceRuntimePlan({
@@ -317,11 +314,11 @@ mcp_registry:
 `,
         references: {}
       }),
-    /multiple agents are no longer supported/
+    /missing object field 'agents'/
   );
 });
 
-test("compileWorkspaceRuntimePlan rejects legacy team mode", () => {
+test("compileWorkspaceRuntimePlan rejects legacy agents.general definitions", () => {
   assert.throws(
     () =>
       compileWorkspaceRuntimePlan({
@@ -343,7 +340,7 @@ mcp_registry:
 `,
         references: {}
       }),
-    /team mode is no longer supported/
+    /missing required fields 'agents.id' and 'agents.model'/
   );
 });
 
@@ -405,8 +402,8 @@ test("runWorkspaceRuntimePlanCli returns structured compiler errors", async () =
           workspace_yaml: `
 template_id: demo
 agents:
-  - id: workspace.general
-    model: gpt-5.2
+  id: workspace.general
+  model: gpt-5.2
 mcp_registry:
   allowlist:
     tool_ids:

@@ -74,9 +74,6 @@ export function TopTabsBar({
     selectedWorkspace,
     templateSourceMode,
     setTemplateSourceMode,
-    createHarnessOptions,
-    selectedCreateHarness,
-    setSelectedCreateHarness,
     selectedTemplateFolder,
     marketplaceTemplates,
     selectedMarketplaceTemplate,
@@ -585,25 +582,6 @@ export function TopTabsBar({
                         placeholder="New workspace name"
                         className="h-8 text-xs"
                       />
-
-                      <div className="flex min-w-0 items-center gap-2 rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-xs">
-                        <span className="shrink-0 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-                          Harness
-                        </span>
-                        <select
-                          value={selectedCreateHarness}
-                          onChange={(event) =>
-                            setSelectedCreateHarness(event.target.value)
-                          }
-                          className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none"
-                        >
-                          {createHarnessOptions.map((option) => (
-                            <option key={option.id} value={option.id}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
 
                       <Button
                         type="submit"

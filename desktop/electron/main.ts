@@ -358,9 +358,7 @@ let authPopupCloseTimer: ReturnType<typeof setTimeout> | null = null;
 let downloadsPopupWindow: BrowserWindow | null = null;
 let historyPopupWindow: BrowserWindow | null = null;
 let overflowPopupWindow: BrowserWindow | null = null;
-let browserPopupWindow: BrowserWindow | null = null;
 let addressSuggestionsPopupWindow: BrowserWindow | null = null;
-const browserPopupCleanupBound = new WeakSet<BrowserWindow>();
 let currentTheme = "holaboss";
 let browserBounds: BrowserBoundsPayload = { x: 0, y: 0, width: 0, height: 0 };
 let overflowAnchorBounds: BrowserAnchorBoundsPayload | null = null;
@@ -2771,6 +2769,42 @@ async function handleDesktopBrowserServiceRequest(
         targetUrl,
       );
       writeBrowserServiceJson(response, 200, snapshot);
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/v1/browser/tabs") {
+      const payload = await readBrowserServiceJsonBody(request);
+      const targetUrl =
+        typeof payload.url === "string" && payload.url.trim()
+          ? payload.url.trim()
+          : HOME_URL;
+      const background = payload.background === true;
+      const workspace = await ensureBrowserWorkspace(targetWorkspaceId);
+      if (!workspace) {
+        writeBrowserServiceJson(response, 409, {
+          error: "No active browser workspace is available.",
+        });
+        return;
+      }
+
+      const nextTabId = createBrowserTab(targetWorkspaceId, { url: targetUrl });
+      if (!nextTabId) {
+        writeBrowserServiceJson(response, 500, {
+          error: "Failed to create browser tab.",
+        });
+        return;
+      }
+
+      if (!background) {
+        workspace.activeTabId = nextTabId;
+        if (targetWorkspaceId === activeBrowserWorkspaceId) {
+          updateAttachedBrowserView();
+        }
+      }
+
+      emitBrowserState(targetWorkspaceId);
+      await persistBrowserWorkspace(targetWorkspaceId);
+      writeBrowserServiceJson(response, 200, browserWorkspaceSnapshot(targetWorkspaceId));
       return;
     }
 
@@ -6684,8 +6718,6 @@ function parseWorkspaceSkillsConfig(workspaceYaml: string | null): {
   }
 
   const stack: Array<{ key: string; indent: number }> = [];
-  let resolvedPrimaryPath = false;
-
   for (const rawLine of workspaceYaml.replace(/\t/g, "  ").split(/\r?\n/)) {
     const trimmed = rawLine.trim();
     if (!trimmed || trimmed.startsWith("#")) {
@@ -6723,16 +6755,6 @@ function parseWorkspaceSkillsConfig(workspaceYaml: string | null): {
       const nextPath = sanitizeYamlScalar(rawValue);
       if (nextPath) {
         result.relativePath = nextPath;
-        resolvedPrimaryPath = true;
-      }
-    } else if (
-      scope === "agents.proactive.skills_path" &&
-      rawValue &&
-      !resolvedPrimaryPath
-    ) {
-      const legacyPath = sanitizeYamlScalar(rawValue);
-      if (legacyPath) {
-        result.relativePath = legacyPath;
       }
     } else if (scope === "skills.enabled" && rawValue) {
       for (const skillId of parseInlineYamlStringArray(rawValue)) {
@@ -6961,8 +6983,8 @@ function renderMinimalWorkspaceYaml(
     `name: ${JSON.stringify(workspace.name)}`,
     `created_at: ${JSON.stringify(createdAt)}`,
     "agents:",
-    '  - id: "workspace.general"',
-    '    model: "openai/gpt-5"',
+    '  id: "workspace.general"',
+    '  model: "openai/gpt-5"',
     "mcp_registry:",
     "  allowlist:",
     "    tool_ids: []",
@@ -9687,73 +9709,13 @@ function createBrowserTab(
     }
 
     const shouldOpenAsTab =
-      disposition === "foreground-tab" || disposition === "background-tab";
+      disposition === "foreground-tab" ||
+      disposition === "background-tab" ||
+      disposition === "new-window";
     if (shouldOpenAsTab) {
       handleBrowserWindowOpenAsTab(workspaceId, normalizedUrl, disposition);
-      return { action: "deny" };
     }
-
-    return {
-      action: "allow",
-      overrideBrowserWindowOptions: {
-        parent: mainWindow ?? undefined,
-        width: 520,
-        height: 760,
-        minWidth: 420,
-        minHeight: 560,
-        show: false,
-        autoHideMenuBar: true,
-        backgroundColor: "#111214",
-        webPreferences: {
-          session: workspace.session,
-          contextIsolation: true,
-          nodeIntegration: false,
-          sandbox: false,
-        },
-      },
-    };
-  });
-  view.webContents.on("did-create-window", (window) => {
-    if (
-      browserPopupWindow &&
-      !browserPopupWindow.isDestroyed() &&
-      browserPopupWindow !== window
-    ) {
-      browserPopupWindow.close();
-    }
-
-    browserPopupWindow = window;
-    window.webContents.setWindowOpenHandler(({ url, disposition }) => {
-      const normalizedUrl = url.trim();
-      if (!normalizedUrl) {
-        return { action: "deny" };
-      }
-
-      try {
-        const parsed = new URL(normalizedUrl);
-        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-          void shell.openExternal(normalizedUrl);
-          return { action: "deny" };
-        }
-      } catch {
-        return { action: "deny" };
-      }
-
-      handleBrowserWindowOpenAsTab(workspaceId, normalizedUrl, disposition);
-      return { action: "deny" };
-    });
-    window.once("ready-to-show", () => {
-      window.show();
-    });
-    if (!browserPopupCleanupBound.has(window)) {
-      browserPopupCleanupBound.add(window);
-      window.once("closed", () => {
-        browserPopupCleanupBound.delete(window);
-        if (browserPopupWindow === window) {
-          browserPopupWindow = null;
-        }
-      });
-    }
+    return { action: "deny" };
   });
   view.webContents.setZoomFactor(1);
   view.webContents.setVisualZoomLevelLimits(1, 1).catch(() => undefined);
@@ -11235,8 +11197,6 @@ function createMainWindow() {
     authPopupWindow = null;
     addressSuggestionsPopupWindow?.close();
     addressSuggestionsPopupWindow = null;
-    browserPopupWindow?.close();
-    browserPopupWindow = null;
     downloadsPopupWindow?.close();
     downloadsPopupWindow = null;
     historyPopupWindow?.close();

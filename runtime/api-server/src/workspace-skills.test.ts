@@ -104,3 +104,18 @@ test("resolveWorkspaceSkills follows explicit enabled ordering across embedded a
     ]
   );
 });
+
+test("resolveWorkspaceSkills ignores legacy agents.proactive.skills_path fallback", () => {
+  const embeddedRoot = makeTempDir("hb-embedded-skills-empty-");
+  process.env.HOLABOSS_EMBEDDED_SKILLS_DIR = embeddedRoot;
+  const workspaceDir = makeTempDir("hb-workspace-legacy-skills-path-");
+  const legacySkillsRoot = path.join(workspaceDir, "legacy-skills");
+  writeSkill(legacySkillsRoot, "legacy-only");
+  fs.writeFileSync(
+    path.join(workspaceDir, "workspace.yaml"),
+    ['agents:', '  proactive:', '    skills_path: "legacy-skills"'].join("\n"),
+    "utf8"
+  );
+
+  assert.deepEqual(resolveWorkspaceSkills(workspaceDir), []);
+});
