@@ -5,11 +5,13 @@ import { OnboardingUserButton } from "./OnboardingUserButton";
 interface CreatingViewProps {
   sectionClassName: string;
   creatingViaMarketplace: boolean;
+  showUserButton?: boolean;
 }
 
 export function CreatingView({
   sectionClassName,
   creatingViaMarketplace,
+  showUserButton = true,
 }: CreatingViewProps) {
   const title = creatingViaMarketplace
     ? "Launching sandbox"
@@ -37,9 +39,11 @@ export function CreatingView({
         <div className="absolute left-1/2 top-1/3 size-[600px] -translate-x-1/2 -translate-y-1/2 animate-pulse rounded-full bg-primary/[0.04] blur-[120px]" />
       </div>
 
-      <div className="absolute right-4 top-4 z-10">
-        <OnboardingUserButton />
-      </div>
+      {showUserButton ? (
+        <div className="absolute right-4 top-4 z-10">
+          <OnboardingUserButton />
+        </div>
+      ) : null}
 
       <div className="w-full max-w-[540px]">
         <div className="flex flex-col items-center">

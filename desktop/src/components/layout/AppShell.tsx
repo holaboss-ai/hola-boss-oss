@@ -528,6 +528,10 @@ function AppShellContent() {
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [settingsDialogSection, setSettingsDialogSection] =
     useState<UiSettingsPaneSection>("settings");
+  const [createWorkspacePanelOpen, setCreateWorkspacePanelOpen] =
+    useState(false);
+  const [createWorkspacePanelAnchorWorkspaceId, setCreateWorkspacePanelAnchorWorkspaceId] =
+    useState("");
   const [activeLeftRailItem, setActiveLeftRailItem] =
     useState<LeftRailItem>("space");
   const [agentView, setAgentView] = useState<AgentView>({ type: "chat" });
@@ -902,6 +906,33 @@ function AppShellContent() {
   const handleOpenExternalUrl = useCallback((url: string) => {
     void window.electronAPI.ui.openExternalUrl(url);
   }, []);
+
+  const handleOpenCreateWorkspacePanel = useCallback(() => {
+    setCreateWorkspacePanelAnchorWorkspaceId(selectedWorkspaceId || "");
+    setCreateWorkspacePanelOpen(true);
+  }, [selectedWorkspaceId]);
+
+  const handleCloseCreateWorkspacePanel = useCallback(() => {
+    setCreateWorkspacePanelOpen(false);
+    setCreateWorkspacePanelAnchorWorkspaceId("");
+  }, []);
+
+  useEffect(() => {
+    if (!createWorkspacePanelOpen) {
+      return;
+    }
+    if (!selectedWorkspaceId || !createWorkspacePanelAnchorWorkspaceId) {
+      return;
+    }
+    if (selectedWorkspaceId !== createWorkspacePanelAnchorWorkspaceId) {
+      setCreateWorkspacePanelOpen(false);
+      setCreateWorkspacePanelAnchorWorkspaceId("");
+    }
+  }, [
+    createWorkspacePanelAnchorWorkspaceId,
+    createWorkspacePanelOpen,
+    selectedWorkspaceId,
+  ]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -1377,7 +1408,8 @@ function AppShellContent() {
               suspendNativeView={
                 isUtilityPaneResizing ||
                 workspaceSwitcherOpen ||
-                settingsDialogOpen
+                settingsDialogOpen ||
+                createWorkspacePanelOpen
               }
               layoutSyncKey={`${visibleSpacePaneIds.join("|")}:${filesPaneWidth}:${browserPaneWidth}:${showOperationsDrawer ? 1 : 0}`}
             />
@@ -1389,8 +1421,11 @@ function AppShellContent() {
       filesPaneWidth,
       flexSpacePaneId,
       isUtilityPaneResizing,
+      createWorkspacePanelOpen,
+      settingsDialogOpen,
       showOperationsDrawer,
       visibleSpacePaneIds,
+      workspaceSwitcherOpen,
     ],
   );
 
@@ -1564,6 +1599,7 @@ function AppShellContent() {
               onWorkspaceSwitcherVisibilityChange={setWorkspaceSwitcherOpen}
               onOpenMarketplace={() => handleLeftRailSelect("marketplace")}
               isMarketplaceActive={activeLeftRailItem === "marketplace"}
+              onOpenWorkspaceCreatePanel={handleOpenCreateWorkspacePanel}
               onOpenSettings={() => {
                 setSettingsDialogSection("settings");
                 setSettingsDialogOpen(true);
@@ -1808,6 +1844,13 @@ function AppShellContent() {
           </div>
         )}
       </div>
+
+      {createWorkspacePanelOpen ? (
+        <FirstWorkspacePane
+          variant="panel"
+          onClose={handleCloseCreateWorkspacePanel}
+        />
+      ) : null}
 
       <SettingsDialog
         open={settingsDialogOpen}

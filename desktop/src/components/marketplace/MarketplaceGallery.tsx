@@ -58,9 +58,7 @@ export function MarketplaceGallery({
   const showError = authenticated && error;
 
   return (
-    <div
-      className={`flex min-h-0 flex-col ${mode === "browse" ? "h-full" : ""}`}
-    >
+    <div className="flex h-full min-h-0 flex-col">
       <div>
         {branding.showLogo ? (
           <div className="mb-3 flex items-center gap-3">
@@ -100,9 +98,7 @@ export function MarketplaceGallery({
         />
       </div>
 
-      <div
-        className={`mt-4 min-h-0 overflow-auto ${mode === "browse" ? "flex-1" : ""}`}
-      >
+      <div className="mt-4 min-h-0 flex-1 overflow-auto">
         {showLoading ? (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {Array.from({ length: 4 }).map((_, i) => (
