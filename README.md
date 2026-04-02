@@ -67,6 +67,7 @@ Holaboss enables you to build AI workers that go beyond one-off task executionâ€
   - [macOS](#macos)
   - [Notes](#notes)
 - [OSS Release Notes](#oss-release-notes)
+- [macOS DMG Bundling](#macos-dmg-bundling)
 
 ## Getting Started
 
@@ -779,3 +780,72 @@ holaboss-runtime
 
 - License: MIT. See `LICENSE`.
 - Security issues: report privately to `security@holaboss.ai`. See `SECURITY.md`.
+
+## macOS DMG Bundling
+
+This section is the canonical flow for producing Holaboss macOS DMG installers.
+
+### Local DMG For Testing (Ad-Hoc Signed, Not Notarized)
+
+Run from the repository root:
+
+```bash
+npm run desktop:install
+GITHUB_TOKEN="$(gh auth token)" npm --prefix desktop run dist:mac:dmg
+```
+
+If you want to package an unreleased runtime built from your local source tree instead of downloading the latest released runtime:
+
+```bash
+npm run desktop:install
+npm --prefix desktop run dist:mac:dmg:local
+```
+
+Output location:
+
+- `desktop/out/release/*.dmg`
+
+Notes:
+
+- Local DMG commands force ad-hoc signing via `--config.mac.identity=-`.
+- Local artifacts are intended for smoke tests and are not notarized for distribution.
+
+### Signed And Notarized Product DMG (GitHub Actions)
+
+Use the manual workflow `.github/workflows/release-macos-desktop.yml` (`Release macOS Desktop`).
+
+Required GitHub repository secrets:
+
+- `MAC_CERTIFICATE` (base64-encoded Developer ID Application `.p12`)
+- `MAC_CERTIFICATE_PASSWORD`
+- `APPLE_ID`
+- `APPLE_APP_SPECIFIC_PASSWORD`
+- `APPLE_TEAM_ID`
+
+Trigger the release from the GitHub UI or with GitHub CLI:
+
+```bash
+gh workflow run "Release macOS Desktop" \
+  --ref main \
+  -f ref=main \
+  -f release_tag=holaboss-desktop-v0.1.0 \
+  -f release_title="Holaboss Desktop v0.1.0" \
+  -f prerelease=false
+```
+
+What this workflow does:
+
+- creates or updates the specified GitHub release and tag
+- builds the matching macOS runtime bundle from the selected ref
+- builds, signs, and notarizes the desktop DMG
+- uploads `Holaboss-macos-arm64.dmg` to the release
+
+### Validate A Signed Build
+
+After downloading the built app, run:
+
+```bash
+codesign --verify --deep --strict --verbose=2 /path/to/Holaboss.app
+spctl -a -vv -t exec /path/to/Holaboss.app
+xcrun stapler validate /path/to/Holaboss.app
+```
