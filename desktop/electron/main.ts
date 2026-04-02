@@ -34,6 +34,8 @@ import path from "node:path";
 import { URL } from "node:url";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+import { ensureWorkspaceGitRepo } from "./workspace-git.js";
+
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 const verboseTelemetryEnabled =
   process.env.HOLABOSS_VERBOSE_TELEMETRY?.trim() === "1";
@@ -7518,6 +7520,8 @@ async function createWorkspace(
       }
     }
 
+    await ensureWorkspaceGitRepo(workspaceDir);
+
     let onboardingStatus = "NOT_REQUIRED";
     let onboardingSessionId: string | null = null;
     try {
@@ -9042,6 +9046,9 @@ async function listDirectory(
   const entries: DirectoryEntryPayload[] = [];
 
   for (const dirEntry of dirEntries) {
+    if (dirEntry.name === ".git") {
+      continue;
+    }
     const absolutePath = path.join(resolvedPath, dirEntry.name);
     try {
       const meta = await fs.stat(absolutePath);

@@ -439,6 +439,12 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       setNewWorkspaceName("");
       await loadWorkspaceData({ preserveSelection: false, allowEmpty: true });
       setSelectedWorkspaceId(response.workspace.id);
+      // Keep the creating view alive for one more task so panel-based creation
+      // can hand off cleanly to the newly selected workspace without flashing
+      // the configuration screen again before the panel closes.
+      await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, 0);
+      });
     } catch (error) {
       setWorkspaceErrorMessage(normalizeErrorMessage(error));
     } finally {
