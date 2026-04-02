@@ -662,15 +662,26 @@ function isNearChatBottom(container: HTMLDivElement) {
   return remaining <= CHAT_AUTO_SCROLL_THRESHOLD_PX;
 }
 
-export function ChatPane({
-  onOutputsChanged,
-  focusRequestKey = 0,
-  variant = "default"
-}: {
+interface ChatPaneSessionOpenRequest {
+  sessionId: string;
+  requestKey: number;
+}
+
+interface ChatPaneProps {
   onOutputsChanged?: () => void;
   focusRequestKey?: number;
   variant?: ChatPaneVariant;
-}) {
+  sessionOpenRequest?: ChatPaneSessionOpenRequest | null;
+  onActiveSessionIdChange?: (sessionId: string | null) => void;
+}
+
+export function ChatPane({
+  onOutputsChanged,
+  focusRequestKey = 0,
+  variant = "default",
+  sessionOpenRequest = null,
+  onActiveSessionIdChange
+}: ChatPaneProps) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const authSessionState = useDesktopAuthSession();
   const {
@@ -768,6 +779,7 @@ export function ChatPane({
   function setActiveSession(sessionId: string | null) {
     activeSessionIdRef.current = sessionId;
     setActiveSessionId(sessionId ?? "");
+    onActiveSessionIdChange?.(sessionId);
   }
 
   function resetLiveTurn() {
@@ -1153,7 +1165,10 @@ export function ChatPane({
           return;
         }
 
-        const nextSessionId = preferredSessionId(selectedWorkspaceRef.current, runtimeStates.items);
+        const requestedSessionId = (sessionOpenRequest?.sessionId || "").trim();
+        const nextSessionId =
+          requestedSessionId ||
+          preferredSessionId(selectedWorkspaceRef.current, runtimeStates.items);
         await loadSessionConversation(nextSessionId, selectedWorkspaceId, runtimeStates.items, {
           cancelled: () => cancelled
         });
@@ -1174,11 +1189,59 @@ export function ChatPane({
     };
   }, [
     isOnboardingVariant,
+    sessionOpenRequest?.sessionId,
     selectedWorkspaceId,
     selectedWorkspace?.main_session_id,
     selectedWorkspace?.onboarding_session_id,
     selectedWorkspace?.onboarding_status
   ]);
+
+  useEffect(() => {
+    const requestedSessionId = (sessionOpenRequest?.sessionId || "").trim();
+    if (!selectedWorkspaceId || !requestedSessionId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function openRequestedSession() {
+      if (activeSessionIdRef.current === requestedSessionId) {
+        return;
+      }
+
+      setIsLoadingHistory(true);
+      setChatErrorMessage("");
+      pendingInputIdRef.current = null;
+      activeAssistantMessageIdRef.current = null;
+      setIsResponding(false);
+
+      const activeStreamId = activeStreamIdRef.current;
+      activeStreamIdRef.current = null;
+      if (activeStreamId) {
+        await closeStreamWithReason(activeStreamId, "chatpane_open_requested_session").catch(() => undefined);
+      }
+
+      try {
+        const runtimeStates = await window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId);
+        await loadSessionConversation(requestedSessionId, selectedWorkspaceId, runtimeStates.items, {
+          cancelled: () => cancelled
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setChatErrorMessage(normalizeErrorMessage(error));
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingHistory(false);
+        }
+      }
+    }
+
+    void openRequestedSession();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedWorkspaceId, sessionOpenRequest?.requestKey, sessionOpenRequest?.sessionId]);
 
   useEffect(() => {
     let cancelled = false;

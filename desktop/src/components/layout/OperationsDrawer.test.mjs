@@ -31,3 +31,14 @@ test("operations drawer inbox hosts the proactive proposals toggle", async () =>
   assert.match(source, /text-amber-200/);
   assert.doesNotMatch(source, /Refresh<\/span>/);
 });
+
+test("operations drawer running panel opens selected sessions", async () => {
+  const source = await readFile(OPERATIONS_DRAWER_PATH, "utf8");
+
+  assert.match(source, /onOpenRunningSession/);
+  assert.match(source, /activeRunningSessionId/);
+  assert.match(source, /onOpenSession=\{onOpenRunningSession\}/);
+  assert.match(source, /activeSessionId=\{activeRunningSessionId\}/);
+  assert.match(source, /onClick=\{\(\) => onOpenSession\(session\.sessionId\)\}/);
+  assert.match(source, /aria-label=\{`Open session \$\{session\.title\}`\}/);
+});

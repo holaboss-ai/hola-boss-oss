@@ -141,6 +141,11 @@ type AgentView =
       htmlContent?: string | null;
     };
 
+type ChatSessionOpenRequest = {
+  sessionId: string;
+  requestKey: number;
+};
+
 function loadSpaceVisibility(): SpaceVisibilityState {
   return DEFAULT_SPACE_VISIBILITY;
 }
@@ -539,6 +544,11 @@ function AppShellContent() {
     useState<LeftRailItem>("space");
   const [agentView, setAgentView] = useState<AgentView>({ type: "chat" });
   const [chatFocusRequestKey, setChatFocusRequestKey] = useState(1);
+  const [chatSessionOpenRequest, setChatSessionOpenRequest] =
+    useState<ChatSessionOpenRequest | null>(null);
+  const [activeChatSessionId, setActiveChatSessionId] = useState<
+    string | null
+  >(null);
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = useState(false);
   const [spaceVisibility, setSpaceVisibility] =
     useState<SpaceVisibilityState>(loadSpaceVisibility);
@@ -995,6 +1005,11 @@ function AppShellContent() {
     }));
   }, [spaceVisibility.agent]);
 
+  useEffect(() => {
+    setChatSessionOpenRequest(null);
+    setActiveChatSessionId(null);
+  }, [selectedWorkspaceId]);
+
   const appendOutputEntry = (
     entry: Omit<OperationsOutputEntry, "id" | "createdAt">,
   ) => {
@@ -1390,6 +1405,24 @@ function AppShellContent() {
     });
   };
 
+  const handleOpenRunningSession = (sessionId: string) => {
+    const normalizedSessionId = sessionId.trim();
+    if (!normalizedSessionId) {
+      return;
+    }
+
+    setActiveLeftRailItem("space");
+    setSpaceVisibility((previous) => ({
+      ...previous,
+      agent: true,
+    }));
+    setAgentView({ type: "chat" });
+    setChatSessionOpenRequest((previous) => ({
+      sessionId: normalizedSessionId,
+      requestKey: (previous?.requestKey ?? 0) + 1,
+    }));
+  };
+
   const spaceMode = activeLeftRailItem === "space";
   const appMode = activeLeftRailItem === "app";
   const activeAppId =
@@ -1454,6 +1487,8 @@ function AppShellContent() {
         <ChatPane
           onOutputsChanged={() => void refreshRuntimeOutputs()}
           focusRequestKey={chatFocusRequestKey}
+          sessionOpenRequest={chatSessionOpenRequest}
+          onActiveSessionIdChange={setActiveChatSessionId}
         />
       );
     }
@@ -1947,19 +1982,21 @@ function AppShellContent() {
                   selectedOutputId={selectedOutputId}
                   onSelectOutput={setSelectedOutputId}
                   onOpenOutput={handleOpenOutput}
-                onRefreshProposals={() =>
-                  void refreshTaskProposals({ logErrors: true })
-                }
-                onTriggerProposal={() => void triggerRemoteTaskProposal()}
-                onProactiveTaskProposalsEnabledChange={(enabled) =>
-                  void handleProactiveTaskProposalsEnabledChange(enabled)
-                }
-                onAcceptProposal={(proposal) =>
-                  void acceptTaskProposal(proposal)
-                }
+                  onRefreshProposals={() =>
+                    void refreshTaskProposals({ logErrors: true })
+                  }
+                  onTriggerProposal={() => void triggerRemoteTaskProposal()}
+                  onProactiveTaskProposalsEnabledChange={(enabled) =>
+                    void handleProactiveTaskProposalsEnabledChange(enabled)
+                  }
+                  onAcceptProposal={(proposal) =>
+                    void acceptTaskProposal(proposal)
+                  }
                   onDismissProposal={(proposal) =>
                     void dismissTaskProposal(proposal)
                   }
+                  onOpenRunningSession={handleOpenRunningSession}
+                  activeRunningSessionId={activeChatSessionId}
                   hasWorkspace={hasSelectedWorkspace}
                   selectedWorkspaceId={selectedWorkspaceId}
                 />

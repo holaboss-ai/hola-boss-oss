@@ -70,6 +70,8 @@ interface OperationsDrawerProps {
   onProactiveTaskProposalsEnabledChange: (enabled: boolean) => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
+  onOpenRunningSession: (sessionId: string) => void;
+  activeRunningSessionId: string | null;
   hasWorkspace: boolean;
   selectedWorkspaceId: string | null;
 }
@@ -104,6 +106,8 @@ export function OperationsDrawer({
   onProactiveTaskProposalsEnabledChange,
   onAcceptProposal,
   onDismissProposal,
+  onOpenRunningSession,
+  activeRunningSessionId,
   hasWorkspace,
   selectedWorkspaceId,
 }: OperationsDrawerProps) {
@@ -245,6 +249,8 @@ export function OperationsDrawer({
             isLoading={isLoadingRunningSessions}
             sessions={runningSessions}
             errorMessage={runningSessionsError}
+            onOpenSession={onOpenRunningSession}
+            activeSessionId={activeRunningSessionId}
           />
         ) : null}
 
@@ -590,11 +596,15 @@ function RunningPanel({
   isLoading,
   sessions,
   errorMessage,
+  onOpenSession,
+  activeSessionId,
 }: {
   hasWorkspace: boolean;
   isLoading: boolean;
   sessions: RunningSessionEntry[];
   errorMessage: string;
+  onOpenSession: (sessionId: string) => void;
+  activeSessionId: string | null;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -620,9 +630,16 @@ function RunningPanel({
         ) : (
           <div className="grid gap-3">
             {sessions.map((session) => (
-              <article
+              <button
                 key={session.sessionId}
-                className="theme-subtle-surface rounded-[18px] border border-border/35 px-4 py-4"
+                type="button"
+                onClick={() => onOpenSession(session.sessionId)}
+                aria-label={`Open session ${session.title}`}
+                className={`theme-subtle-surface w-full rounded-[18px] border px-4 py-4 text-left transition ${
+                  activeSessionId === session.sessionId
+                    ? "border-primary/45"
+                    : "border-border/35 hover:border-primary/30"
+                }`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
@@ -649,7 +666,7 @@ function RunningPanel({
                     {session.lastError}
                   </div>
                 ) : null}
-              </article>
+              </button>
             ))}
           </div>
         )}
