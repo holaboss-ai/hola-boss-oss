@@ -303,6 +303,15 @@ declare global {
     pending_count: number;
   }
 
+  interface ProactiveTaskProposalPreferenceUpdatePayload {
+    enabled: boolean;
+  }
+
+  interface ProactiveTaskProposalPreferencePayload {
+    enabled: boolean;
+    holaboss_user_id: string;
+  }
+
   interface TaskProposalStateUpdatePayload {
     proposal: TaskProposalRecordPayload;
   }
@@ -852,6 +861,9 @@ declare global {
       listTaskProposals: (workspaceId: string) => Promise<TaskProposalListResponsePayload>;
       acceptTaskProposal: (payload: TaskProposalAcceptPayload) => Promise<TaskProposalAcceptResponsePayload>;
       getProactiveStatus: (workspaceId: string) => Promise<ProactiveAgentStatusPayload>;
+      setProactiveTaskProposalPreference: (
+        payload: ProactiveTaskProposalPreferenceUpdatePayload
+      ) => Promise<ProactiveTaskProposalPreferencePayload>;
       updateTaskProposalState: (proposalId: string, state: string) => Promise<TaskProposalStateUpdatePayload>;
       enqueueRemoteDemoTaskProposal: (
         payload: DemoTaskProposalRequestPayload

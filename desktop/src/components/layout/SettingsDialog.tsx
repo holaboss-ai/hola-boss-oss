@@ -1,5 +1,15 @@
 import { useEffect } from "react";
-import { CircleHelp, ExternalLink, Globe, Info, Palette, User2, Waypoints, X } from "lucide-react";
+import {
+  CircleHelp,
+  ExternalLink,
+  Globe,
+  Info,
+  Loader2,
+  Palette,
+  User2,
+  Waypoints,
+  X,
+} from "lucide-react";
 import { AuthPanel } from "@/components/auth/AuthPanel";
 
 const THEME_SWATCHES: Record<string, [string, string, string]> = {
@@ -27,6 +37,10 @@ interface SettingsDialogProps {
   theme: string;
   themes: readonly string[];
   onThemeChange: (theme: string) => void;
+  proactiveTaskProposalsEnabled: boolean;
+  isUpdatingProactiveTaskProposalsEnabled: boolean;
+  proactiveTaskProposalsError: string;
+  onProactiveTaskProposalsEnabledChange: (enabled: boolean) => void;
   onOpenExternalUrl: (url: string) => void;
 }
 
@@ -113,6 +127,10 @@ export function SettingsDialog({
   theme,
   themes,
   onThemeChange,
+  proactiveTaskProposalsEnabled,
+  isUpdatingProactiveTaskProposalsEnabled,
+  proactiveTaskProposalsError,
+  onProactiveTaskProposalsEnabledChange,
   onOpenExternalUrl
 }: SettingsDialogProps) {
   useEffect(() => {
@@ -285,6 +303,59 @@ export function SettingsDialog({
                       );
                     })}
                   </div>
+                </section>
+
+                <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground/68">Proactive</div>
+                  <div className="mt-2 max-w-[640px] text-[13px] leading-6 text-muted-foreground/86">
+                    Control whether automatic proactive task proposal polling runs in the inbox. Manual proposal triggers
+                    stay available even when polling is paused.
+                  </div>
+
+                  <div className="mt-5 flex items-center justify-between gap-4 rounded-[18px] border border-border/35 bg-black/10 px-4 py-3">
+                    <div className="min-w-0">
+                      <div className="text-[13px] font-medium text-foreground">Proactive task proposals</div>
+                      <div className="mt-1 text-[12px] text-muted-foreground/78">
+                        {proactiveTaskProposalsEnabled
+                          ? "Automatic proposal polling is active."
+                          : "Automatic proposal polling is paused."}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      aria-label="Toggle proactive task proposals"
+                      aria-pressed={proactiveTaskProposalsEnabled}
+                      disabled={isUpdatingProactiveTaskProposalsEnabled}
+                      onClick={() =>
+                        onProactiveTaskProposalsEnabledChange(
+                          !proactiveTaskProposalsEnabled,
+                        )
+                      }
+                      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] uppercase tracking-[0.14em] transition ${
+                        proactiveTaskProposalsEnabled
+                          ? "border-primary/40 bg-primary/12 text-primary"
+                          : "border-border/45 bg-card/70 text-muted-foreground"
+                      } ${
+                        isUpdatingProactiveTaskProposalsEnabled
+                          ? "cursor-wait opacity-75"
+                          : "hover:border-primary/40"
+                      }`}
+                    >
+                      {isUpdatingProactiveTaskProposalsEnabled ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : null}
+                      <span>
+                        {proactiveTaskProposalsEnabled ? "On" : "Off"}
+                      </span>
+                    </button>
+                  </div>
+
+                  {proactiveTaskProposalsError ? (
+                    <div className="mt-3 text-[12px] text-destructive">
+                      {proactiveTaskProposalsError}
+                    </div>
+                  ) : null}
                 </section>
               </div>
             ) : null}
