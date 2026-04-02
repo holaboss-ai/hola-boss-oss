@@ -611,6 +611,7 @@ test("runTsRunnerCli only advertises structured output when the selected harness
               id: "runtime_core",
               channel: "system_prompt",
               apply_at: "runtime_config",
+              precedence: "base_runtime",
               priority: 100,
               volatility: "stable",
               content: "You are concise."
@@ -619,6 +620,7 @@ test("runTsRunnerCli only advertises structured output when the selected harness
               id: "execution_policy",
               channel: "system_prompt",
               apply_at: "runtime_config",
+              precedence: "base_runtime",
               priority: 200,
               volatility: "stable",
               content: "Inspect before mutating."
@@ -627,6 +629,7 @@ test("runTsRunnerCli only advertises structured output when the selected harness
               id: "session_policy",
               channel: "system_prompt",
               apply_at: "runtime_config",
+              precedence: "session_policy",
               priority: 300,
               volatility: "run",
               content: "This is the main session."
@@ -635,6 +638,7 @@ test("runTsRunnerCli only advertises structured output when the selected harness
               id: "capability_policy",
               channel: "system_prompt",
               apply_at: "runtime_config",
+              precedence: "capability_policy",
               priority: 400,
               volatility: "run",
               content: "Use available tools."

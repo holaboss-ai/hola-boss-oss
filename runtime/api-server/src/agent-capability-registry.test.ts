@@ -62,6 +62,10 @@ test("buildAgentCapabilityManifest classifies tools, skills, and MCP aliases", (
     commands_resolved_at: "run_start",
     supports_live_deltas: false,
   });
+  assert.deepEqual(
+    manifest.reserved_surfaces.map((surface) => surface.kind),
+    ["mcp_resource", "mcp_prompt", "mcp_command", "plugin_capability", "local_capability"]
+  );
   assert.match(manifest.fingerprint, /^[a-f0-9]{64}$/);
 
   const toolMap = buildEnabledToolMapFromManifest(manifest);
@@ -190,6 +194,10 @@ test("evaluateAgentCapabilities keeps command and skill surfaces while excluding
     requires_browser: false,
     requires_user_confirmation: false,
   });
+  assert.deepEqual(
+    evaluation.reserved_surfaces.map((surface) => surface.kind),
+    ["mcp_resource", "mcp_prompt", "mcp_command", "plugin_capability", "local_capability"]
+  );
 });
 
 test("evaluateAgentCapabilities includes richer execution and authority metadata", () => {
