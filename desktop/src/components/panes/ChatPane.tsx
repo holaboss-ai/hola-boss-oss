@@ -890,18 +890,28 @@ export function ChatPane({
 
     const onboardingSessionId = (selectedWorkspaceRef.current?.onboarding_session_id || "").trim();
     const currentRuntimeState = runtimeStates.find((item) => item.session_id === nextSessionId);
+    const currentRuntimeStatus = runtimeStateStatus(currentRuntimeState?.status);
     const hasAssistantMessage = nextMessages.some((message) => message.role === "assistant");
+    const shouldAttachLiveRunStream =
+      !activeStreamIdRef.current &&
+      !pendingInputIdRef.current &&
+      ["BUSY", "QUEUED"].includes(currentRuntimeStatus);
     const shouldAttachOnboardingBootstrapStream =
+      shouldAttachLiveRunStream &&
       isOnboardingVariant &&
       nextSessionId === onboardingSessionId &&
       !hasAssistantMessage &&
-      !activeStreamIdRef.current &&
-      !pendingInputIdRef.current &&
-      ["BUSY", "QUEUED"].includes(runtimeStateStatus(currentRuntimeState?.status));
+      currentRuntimeStatus === "BUSY";
 
-    if (shouldAttachOnboardingBootstrapStream) {
+    if (shouldAttachLiveRunStream) {
       setIsResponding(true);
-      setLiveAgentStatus("Preparing first question...");
+      setLiveAgentStatus(
+        shouldAttachOnboardingBootstrapStream
+          ? "Preparing first question..."
+          : currentRuntimeStatus === "QUEUED"
+            ? "Queued..."
+            : "Working..."
+      );
       setChatErrorMessage("");
       const stream = await window.electronAPI.workspace.openSessionOutputStream({
         sessionId: nextSessionId,
@@ -918,11 +928,17 @@ export function ChatPane({
         streamId: stream.streamId,
         transportType: "client",
         eventName: "openSessionOutputStream",
-        eventType: "stream_open_onboarding_bootstrap",
+        eventType: shouldAttachOnboardingBootstrapStream
+          ? "stream_open_onboarding_bootstrap"
+          : "stream_open_existing_run",
         inputId: "",
         sessionId: nextSessionId,
-        action: "stream_requested_onboarding_bootstrap",
-        detail: "attached to in-flight onboarding opener"
+        action: shouldAttachOnboardingBootstrapStream
+          ? "stream_requested_onboarding_bootstrap"
+          : "stream_requested_existing_run",
+        detail: shouldAttachOnboardingBootstrapStream
+          ? "attached to in-flight onboarding opener"
+          : "attached to in-flight session run"
       });
     } else if (!activeStreamIdRef.current && !pendingInputIdRef.current) {
       setIsResponding(false);
@@ -2169,12 +2185,15 @@ export function ChatPane({
     availableChatModelOptions.length > 0
       ? ""
       : "No models available. Configure a provider to start chatting.";
-  const composerDisabledReason =
+  const composerBaseDisabledReason =
     baseComposerDisabledReason ||
     (usesHostedManagedCredits && isOutOfCredits
       ? "You're out of credits for managed usage."
       : "") ||
     (!isOnboardingVariant && !resolvedChatModel ? modelSelectionUnavailableReason : "");
+  const composerDisabledReason =
+    composerBaseDisabledReason ||
+    (isResponding ? "Current run is still in progress." : "");
   const composerDisabled = Boolean(composerDisabledReason);
   const showLowBalanceWarning = usesHostedManagedCredits && isLowBalance && !isOutOfCredits;
   const showOutOfCreditsWarning = usesHostedManagedCredits && isOutOfCredits;
@@ -2922,6 +2941,7 @@ function Composer({
 }: ComposerProps) {
   const [isDragActive, setIsDragActive] = useState(false);
   const noAvailableModels = !runtimeDefaultModelAvailable && modelOptions.length === 0;
+  const inputDisabled = disabled || isResponding;
   const selectedModelOptionLabel =
     modelOptions.find((option) => option.value === selectedModel)?.label ?? resolvedModelLabel;
 
@@ -3009,8 +3029,8 @@ function Composer({
           onCompositionStart={onCompositionStart}
           onCompositionEnd={onCompositionEnd}
           rows={1}
-          disabled={disabled}
-          placeholder={disabled ? disabledReason || "Chat unavailable right now" : placeholder}
+          disabled={inputDisabled}
+          placeholder={inputDisabled ? disabledReason || "Chat unavailable right now" : placeholder}
           className="composer-input block max-h-[220px] min-h-[76px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-7 text-foreground outline-none placeholder:text-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-55"
         />
       </div>
