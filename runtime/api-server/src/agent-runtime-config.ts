@@ -13,7 +13,11 @@ import {
   type AgentRecentRuntimeContext,
   type AgentSessionResumeContext,
 } from "./agent-runtime-prompt.js";
-import type { AgentPromptCacheProfile, AgentPromptSection } from "./agent-prompt-sections.js";
+import type {
+  AgentPromptCacheProfile,
+  AgentPromptChannelContents,
+  AgentPromptSection,
+} from "./agent-prompt-sections.js";
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
 
 export type AgentRuntimeConfigGeneralMemberPayload = {
@@ -59,6 +63,7 @@ export interface AgentRuntimeConfigCliResponse {
   mode: string;
   system_prompt: string;
   context_messages?: string[];
+  prompt_channel_contents?: AgentPromptChannelContents;
   prompt_sections?: AgentPromptSection[];
   prompt_layers?: HarnessPromptLayerPayload[];
   prompt_cache_profile?: AgentPromptCacheProfile;
@@ -954,6 +959,7 @@ export function projectAgentRuntimeConfig(
     mode: request.session_mode,
     system_prompt: promptComposition.systemPrompt,
     context_messages: promptComposition.contextMessages,
+    prompt_channel_contents: promptComposition.promptChannelContents,
     prompt_sections: promptComposition.promptSections,
     prompt_layers: promptComposition.promptLayers,
     prompt_cache_profile: promptComposition.promptCacheProfile,

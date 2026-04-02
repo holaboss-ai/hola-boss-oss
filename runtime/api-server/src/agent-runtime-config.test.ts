@@ -25,6 +25,16 @@ function renderedPromptSections(
     .trim();
 }
 
+function promptChannelContents(
+  promptSections: Array<{ channel: string; content: string }>
+): Record<string, string[]> {
+  return promptSections.reduce<Record<string, string[]>>((result, section) => {
+    result[section.channel] ??= [];
+    result[section.channel]?.push(section.content.trim());
+    return result;
+  }, {});
+}
+
 test("projectAgentRuntimeConfig returns ordered prompt layers and renders system prompt from runtime_config layers", () => {
   process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
   try {
@@ -73,6 +83,7 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
     assert.equal(result.system_prompt, renderedRuntimeConfigPrompt(result.prompt_layers ?? []));
     assert.equal(result.system_prompt, renderedPromptSections(result.prompt_sections ?? []));
     assert.deepEqual(result.context_messages, []);
+    assert.deepEqual(result.prompt_channel_contents, promptChannelContents(result.prompt_sections ?? []));
     assert.ok(result.prompt_cache_profile);
     assert.deepEqual(result.prompt_cache_profile?.cacheable_section_ids, [
       "runtime_core",
@@ -83,6 +94,19 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
       "session_policy",
       "capability_policy",
     ]);
+    assert.deepEqual(result.prompt_cache_profile?.compatibility_context_ids, []);
+    assert.deepEqual(result.prompt_cache_profile?.resume_context_ids, []);
+    assert.deepEqual(result.prompt_cache_profile?.attachment_ids, []);
+    assert.deepEqual(result.prompt_cache_profile?.delta_section_ids, []);
+    assert.deepEqual(result.prompt_cache_profile?.channel_section_ids, {
+      system_prompt: [
+        "runtime_core",
+        "execution_policy",
+        "session_policy",
+        "capability_policy",
+        "workspace_policy",
+      ],
+    });
     assert.match(result.system_prompt, /Session policy:/);
     assert.match(result.system_prompt, /task proposal session/i);
     assert.doesNotMatch(result.system_prompt, /OpenCode MCP tool naming:/);
@@ -110,6 +134,10 @@ test("projectAgentRuntimeConfig returns ordered prompt layers and renders system
       commands_resolved_at: "run_start",
       supports_live_deltas: false,
     });
+    assert.deepEqual(
+      result.capability_manifest?.reserved_surfaces.map((surface) => surface.kind),
+      ["mcp_resource", "mcp_prompt", "mcp_command", "plugin_capability", "local_capability"]
+    );
     assert.match(result.capability_manifest?.fingerprint ?? "", /^[a-f0-9]{64}$/);
   } finally {
     delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
@@ -183,8 +211,13 @@ test("projectAgentRuntimeConfig includes resume context sections when provided",
 
     assert.ok(result.prompt_sections?.some((section) => section.id === "resume_context"));
     assert.equal(result.prompt_layers?.some((layer) => layer.id === "resume_context"), false);
-    assert.equal(result.prompt_sections?.find((section) => section.id === "resume_context")?.channel, "context_message");
+    assert.equal(result.prompt_sections?.find((section) => section.id === "resume_context")?.channel, "resume_context");
     assert.equal(result.prompt_sections?.find((section) => section.id === "recent_runtime_context")?.channel, "context_message");
+    assert.deepEqual(result.prompt_cache_profile?.resume_context_ids, ["resume_context"]);
+    assert.deepEqual(result.prompt_cache_profile?.compatibility_context_ids, [
+      "recent_runtime_context",
+      "resume_context",
+    ]);
     assert.deepEqual(result.context_messages, [
       [
         "Recent runtime context:",
@@ -207,6 +240,7 @@ test("projectAgentRuntimeConfig includes resume context sections when provided",
         "- Continue after confirmation once deploy policy is updated.",
       ].join("\n"),
     ]);
+    assert.deepEqual(result.prompt_channel_contents, promptChannelContents(result.prompt_sections ?? []));
     assert.doesNotMatch(result.system_prompt, /Session resume context:/);
   } finally {
     delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
@@ -253,6 +287,9 @@ test("projectAgentRuntimeConfig includes current user context as a context messa
     assert.ok(result.prompt_sections?.some((section) => section.id === "current_user_context"));
     assert.equal(result.prompt_layers?.some((layer) => layer.id === "current_user_context"), false);
     assert.equal(result.prompt_sections?.find((section) => section.id === "current_user_context")?.channel, "context_message");
+    assert.deepEqual(result.prompt_cache_profile?.context_message_ids, ["current_user_context"]);
+    assert.deepEqual(result.prompt_cache_profile?.compatibility_context_ids, ["current_user_context"]);
+    assert.deepEqual(result.prompt_channel_contents, promptChannelContents(result.prompt_sections ?? []));
     assert.match(result.context_messages?.join("\n\n") ?? "", /Current user context:/);
     assert.match(result.context_messages?.join("\n\n") ?? "", /The current operator name is `Jeffrey`\./);
   } finally {
@@ -357,6 +394,9 @@ test("projectAgentRuntimeConfig includes recalled durable memory in context mess
 
     assert.ok(result.prompt_sections?.some((section) => section.id === "memory_recall"));
     assert.equal(result.prompt_layers?.some((layer) => layer.id === "memory_recall"), false);
+    assert.deepEqual(result.prompt_cache_profile?.context_message_ids, ["memory_recall"]);
+    assert.deepEqual(result.prompt_cache_profile?.compatibility_context_ids, ["memory_recall"]);
+    assert.deepEqual(result.prompt_channel_contents, promptChannelContents(result.prompt_sections ?? []));
     assert.match(result.context_messages?.join("\n\n") ?? "", /Recalled durable memory:/);
     assert.match(result.context_messages?.join("\n\n") ?? "", /User response style/);
     assert.match(result.context_messages?.join("\n\n") ?? "", /Freshness: `stable` \(`stable`\)/);

@@ -18,7 +18,12 @@ export type AgentCapabilityKind =
   | "runtime_tool"
   | "browser_tool"
   | "mcp_tool"
+  | "mcp_resource"
+  | "mcp_prompt"
+  | "mcp_command"
   | "custom_tool"
+  | "plugin_capability"
+  | "local_capability"
   | "skill"
   | "workspace_command";
 
@@ -29,16 +34,29 @@ export type AgentCapabilityPermissionSurface =
   | "runtime_tool"
   | "browser_tool"
   | "mcp_tool"
+  | "mcp_resource"
+  | "mcp_prompt"
+  | "mcp_command"
   | "custom_tool"
+  | "plugin_capability"
+  | "local_capability"
   | "workspace_skill"
   | "workspace_command";
 
 export type AgentCapabilityExecutionMode =
   | "tool_call"
+  | "resource_reference"
+  | "prompt_reference"
   | "skill_reference"
   | "command_reference";
 
-export type AgentCapabilityTrustLevel = "system" | "workspace" | "external";
+export type AgentCapabilityTrustLevel = "system" | "workspace" | "external" | "plugin" | "local";
+
+export type AgentCapabilityVisibilitySurface =
+  | "tool"
+  | "metadata"
+  | "resource"
+  | "prompt";
 
 export type AgentCapabilityConcurrency = "parallel_safe" | "serial_only" | "session_exclusive";
 
@@ -98,6 +116,19 @@ export interface AgentCapabilityEvaluationMetadata {
   refresh_summary: string;
 }
 
+export interface AgentReservedCapabilitySurface {
+  id: string;
+  kind: Extract<
+    AgentCapabilityKind,
+    "mcp_resource" | "mcp_prompt" | "mcp_command" | "plugin_capability" | "local_capability"
+  >;
+  title: string;
+  description: string;
+  visibility_surface: AgentCapabilityVisibilitySurface;
+  execution_mode: AgentCapabilityExecutionMode;
+  trust_level: AgentCapabilityTrustLevel;
+}
+
 export interface AgentCapabilityManifest {
   context: AgentCapabilityPolicyContext;
   capabilities: AgentCapabilityRecord[];
@@ -113,6 +144,7 @@ export interface AgentCapabilityManifest {
   coordinate: AgentCapabilityRecord[];
   workspace_commands: string[];
   workspace_skills: string[];
+  reserved_surfaces: AgentReservedCapabilitySurface[];
   mcp_tool_aliases: Array<{
     tool_id: string;
     server_id: string;
@@ -170,7 +202,7 @@ interface StaticAgentCapabilityDescriptor {
   description: string;
   source: AgentCapabilityRecord["source"];
   callable_spec: CapabilityCallableSpec | null;
-  visibility_surface: "tool" | "metadata";
+  visibility_surface: AgentCapabilityVisibilitySurface;
   permission_surface: AgentCapabilityPermissionSurface;
   execution_mode: AgentCapabilityExecutionMode;
   trust_level: AgentCapabilityTrustLevel;
@@ -214,6 +246,7 @@ export interface EvaluatedAgentCapabilitySet {
   capabilities: EvaluatedAgentCapability[];
   workspace_commands: string[];
   workspace_skills: string[];
+  reserved_surfaces: AgentReservedCapabilitySurface[];
   evaluation: AgentCapabilityEvaluationMetadata;
   fingerprint: string;
   refresh_semantics: AgentCapabilityRefreshSemantics;
@@ -225,6 +258,54 @@ const AGENT_CAPABILITY_REFRESH_SEMANTICS: AgentCapabilityRefreshSemantics = {
   commands_resolved_at: "run_start",
   supports_live_deltas: false,
 };
+
+const RESERVED_AGENT_CAPABILITY_SURFACES: AgentReservedCapabilitySurface[] = [
+  {
+    id: "mcp_resource",
+    kind: "mcp_resource",
+    title: "MCP Resource",
+    description: "Reserved for future MCP resource surfaces that expose non-tool data handles.",
+    visibility_surface: "resource",
+    execution_mode: "resource_reference",
+    trust_level: "external",
+  },
+  {
+    id: "mcp_prompt",
+    kind: "mcp_prompt",
+    title: "MCP Prompt Surface",
+    description: "Reserved for future MCP prompt surfaces that contribute prompt content without becoming callable tools.",
+    visibility_surface: "prompt",
+    execution_mode: "prompt_reference",
+    trust_level: "external",
+  },
+  {
+    id: "mcp_command",
+    kind: "mcp_command",
+    title: "MCP Command Surface",
+    description: "Reserved for future MCP command surfaces that may behave like named command references instead of direct tools.",
+    visibility_surface: "metadata",
+    execution_mode: "command_reference",
+    trust_level: "external",
+  },
+  {
+    id: "plugin_capability",
+    kind: "plugin_capability",
+    title: "Plugin Capability",
+    description: "Reserved for future plugin-defined capabilities with trust and authority boundaries distinct from built-in tools.",
+    visibility_surface: "metadata",
+    execution_mode: "tool_call",
+    trust_level: "plugin",
+  },
+  {
+    id: "local_capability",
+    kind: "local_capability",
+    title: "Local Capability",
+    description: "Reserved for future trust-sensitive local capability surfaces that should not be conflated with workspace skills or commands.",
+    visibility_surface: "metadata",
+    execution_mode: "tool_call",
+    trust_level: "local",
+  },
+];
 
 const BUILTIN_CAPABILITY_DEFINITIONS: Record<string, ToolCapabilityDefinition> = {
   read: {
@@ -916,6 +997,7 @@ function fingerprintPayloadForEvaluatedSet(
     context: evaluatedSet.context,
     workspace_commands: evaluatedSet.workspace_commands,
     workspace_skills: evaluatedSet.workspace_skills,
+    reserved_surfaces: evaluatedSet.reserved_surfaces,
     refresh_semantics: evaluatedSet.refresh_semantics,
     capabilities: evaluatedSet.capabilities.map((capability) => ({
       id: capability.id,
@@ -1020,6 +1102,7 @@ export function evaluateAgentCapabilities(
       capabilities: evaluatedCapabilities,
       workspace_commands: registry.workspace_commands,
       workspace_skills: registry.workspace_skills,
+      reserved_surfaces: RESERVED_AGENT_CAPABILITY_SURFACES,
       refresh_semantics: AGENT_CAPABILITY_REFRESH_SEMANTICS,
     })
   );
@@ -1030,6 +1113,7 @@ export function evaluateAgentCapabilities(
     capabilities: evaluatedCapabilities,
     workspace_commands: registry.workspace_commands,
     workspace_skills: registry.workspace_skills,
+    reserved_surfaces: RESERVED_AGENT_CAPABILITY_SURFACES,
     evaluation,
     fingerprint,
     refresh_semantics: AGENT_CAPABILITY_REFRESH_SEMANTICS,
@@ -1105,6 +1189,7 @@ function projectAgentCapabilityManifest(
     coordinate: projectedCapabilities.filter((capability) => capability.policy === "coordinate"),
     workspace_commands: evaluatedSet.workspace_commands,
     workspace_skills: evaluatedSet.workspace_skills,
+    reserved_surfaces: evaluatedSet.reserved_surfaces,
     mcp_tool_aliases: mcpToolAliases,
     evaluation: evaluatedSet.evaluation,
     fingerprint: evaluatedSet.fingerprint,

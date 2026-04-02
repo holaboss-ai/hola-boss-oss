@@ -4,10 +4,12 @@ import {
 } from "./agent-capability-registry.js";
 import {
   buildPromptCacheProfileFromSections,
-  collectPromptSectionContents,
+  collectCompatibleContextMessageContents,
+  collectPromptChannelContents,
   collectAgentPromptSections,
   projectPromptLayersFromSections,
   renderAgentPromptSections,
+  type AgentPromptChannelContents,
   type AgentPromptCacheProfile,
   type AgentPromptSection,
 } from "./agent-prompt-sections.js";
@@ -90,6 +92,7 @@ export interface ComposeBaseAgentPromptRequest {
 export interface AgentPromptComposition {
   systemPrompt: string;
   contextMessages: string[];
+  promptChannelContents: AgentPromptChannelContents;
   promptSections: AgentPromptSection[];
   promptLayers: HarnessPromptLayerPayload[];
   promptCacheProfile: AgentPromptCacheProfile;
@@ -347,6 +350,7 @@ export function buildBaseAgentPromptSections(
     id: "runtime_core",
     channel: "system_prompt",
     apply_at: "runtime_config",
+    precedence: "base_runtime",
     priority: 100,
     volatility: "stable",
     content: linesSection([
@@ -381,6 +385,7 @@ export function buildBaseAgentPromptSections(
     id: "execution_policy",
     channel: "system_prompt",
     apply_at: "runtime_config",
+    precedence: "base_runtime",
     priority: 200,
     volatility: "stable",
     content: linesSection(executionLines)
@@ -390,6 +395,7 @@ export function buildBaseAgentPromptSections(
     id: "session_policy",
     channel: "system_prompt",
     apply_at: "runtime_config",
+    precedence: "session_policy",
     priority: 300,
     volatility: "run",
     content: sessionPolicyPromptSection(request)
@@ -402,6 +408,7 @@ export function buildBaseAgentPromptSections(
           id: "capability_policy",
           channel: "system_prompt",
           apply_at: "runtime_config",
+          precedence: "capability_policy",
           priority: 400,
           volatility: "run",
           content: renderCapabilityPolicyPromptSection(capabilityManifest)
@@ -413,6 +420,7 @@ export function buildBaseAgentPromptSections(
     id: "current_user_context",
     channel: "context_message",
     apply_at: "runtime_config",
+    precedence: "runtime_context",
     priority: 475,
     volatility: "workspace",
     content: currentUserContextPromptSection(request.currentUserContext)
@@ -422,6 +430,7 @@ export function buildBaseAgentPromptSections(
     id: "recent_runtime_context",
     channel: "context_message",
     apply_at: "runtime_config",
+    precedence: "runtime_context",
     priority: 500,
     volatility: "run",
     content: recentRuntimeContextPromptSection(request.recentRuntimeContext)
@@ -429,8 +438,9 @@ export function buildBaseAgentPromptSections(
 
   pushPromptLayer(promptSections, {
     id: "resume_context",
-    channel: "context_message",
+    channel: "resume_context",
     apply_at: "runtime_config",
+    precedence: "runtime_context",
     priority: 550,
     volatility: "run",
     content: sessionResumeContextPromptSection(request.sessionResumeContext)
@@ -440,6 +450,7 @@ export function buildBaseAgentPromptSections(
     id: "memory_recall",
     channel: "context_message",
     apply_at: "runtime_config",
+    precedence: "runtime_context",
     priority: 575,
     volatility: "run",
     content: recalledMemoryPromptSection(request.recalledMemoryContext)
@@ -452,6 +463,7 @@ export function buildBaseAgentPromptSections(
           id: "workspace_policy",
           channel: "system_prompt",
           apply_at: "runtime_config",
+          precedence: "workspace_policy",
           priority: 600,
           volatility: "workspace",
           content: linesSection([
@@ -473,11 +485,13 @@ export function composeBaseAgentPrompt(
   const promptSections = buildBaseAgentPromptSections(workspacePrompt, request);
   const promptLayers = projectPromptLayersFromSections(promptSections);
   const systemPrompt = renderAgentPromptSections(promptSections, "system_prompt");
-  const contextMessages = collectPromptSectionContents(promptSections, "context_message");
+  const promptChannelContents = collectPromptChannelContents(promptSections);
+  const contextMessages = collectCompatibleContextMessageContents(promptSections);
 
   return {
     systemPrompt,
     contextMessages,
+    promptChannelContents,
     promptSections,
     promptLayers,
     promptCacheProfile: buildPromptCacheProfileFromSections(promptSections),

@@ -134,20 +134,27 @@ Those layers are intentionally separated by authority:
 - runtime-owned operator profile data lives in `state/runtime.db`
 - durable memory bodies live under `memory/`, while their governance and recall metadata live in `state/runtime.db`
 
+Two runtime control surfaces also stay explicit rather than being flattened away:
+
+- capability evaluation is a pipeline from static registry, to model-visible projection, to permission, to execution readiness; the current runtime only exposes callable tools today, but the typed registry already reserves future non-tool surfaces such as MCP resources, MCP prompt or command surfaces, and trust-sensitive plugin or local capabilities
+- prompt assembly is section-based and channel-aware; the runtime keeps explicit section ids, precedence bands, volatility, and channel metadata, then renders compatibility outputs back to `system_prompt` and ordered `context_messages` for the active harness
+
 At a high level, one run follows this path:
 
 1. the desktop or API queues work for a workspace session
 2. the runtime resolves the workspace plan, capability surface, prompt sections, and request snapshot
+   - prompt sections keep base runtime doctrine, session policy, capability policy, workspace policy, and runtime continuity context distinct even when the harness ultimately receives only `system_prompt` plus `context_messages`
 3. the selected harness executes the run and streams output events
 4. the runtime persists normalized turn artifacts, updates compaction continuity, and writes deterministic memory projections
 5. future runs restore continuity from durable runtime artifacts first, then add a small recalled durable-memory context
 
 ### Execution And Continuity
 
-The runtime keeps three different kinds of state on purpose:
+The runtime keeps four different kinds of state on purpose:
 
 - raw streamed events for replay and live UI updates
 - normalized turn artifacts for querying, debugging, and continuity
+- runtime-owned operator profile state for canonical user identity
 - markdown memory projections for human-readable runtime state and durable recalled knowledge
 
 The most important runtime continuity artifacts are:
@@ -213,6 +220,7 @@ Holaboss workspaces live under the runtime sandbox root. In the desktop app, tha
           facts/
           procedures/
           blockers/
+          references/
     preference/
       MEMORY.md
       *.md
@@ -220,7 +228,7 @@ Holaboss workspaces live under the runtime sandbox root. In the desktop app, tha
 
 - `workspace.yaml` is the root runtime plan for the workspace. It defines the single active agent, local skills path, MCP registry, and any installed workspace apps.
 - `AGENTS.md` is the root prompt file. Workspace instructions are expected there rather than inline in `workspace.yaml`.
-- `skills/` contains workspace-local skills, with one folder per skill and a required `SKILL.md` file in each skill directory.
+- `skills/` is the conventional workspace-local skill directory shown here, but the runtime actually resolves workspace skills from the path configured in `workspace.yaml` under `skills.path`. Each skill directory must contain `SKILL.md`.
 - `apps/` contains workspace-local apps. Each installed app lives under `apps/<app-id>/` and must provide `app.runtime.yaml`.
 - `<workspace-id>/.holaboss/` stores runtime-managed workspace state such as the identity marker, persisted harness session mapping, staged input attachments, and Pi harness state.
 - `workspace/.holaboss/` is separate from the per-workspace `.holaboss/` directory. It stores shared workspace-root state for MCP sidecars and their logs.

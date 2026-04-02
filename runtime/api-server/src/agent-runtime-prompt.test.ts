@@ -67,6 +67,13 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "run",
     "workspace",
   ]);
+  assert.deepEqual(prompt.promptSections.map((section) => section.precedence), [
+    "base_runtime",
+    "base_runtime",
+    "session_policy",
+    "capability_policy",
+    "workspace_policy",
+  ]);
   assert.deepEqual(prompt.promptLayers.map((layer) => layer.apply_at), [
     "runtime_config",
     "runtime_config",
@@ -99,6 +106,17 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "session_policy",
     "capability_policy",
   ]);
+  assert.deepEqual(prompt.promptCacheProfile.compatibility_context_ids, []);
+  assert.deepEqual(prompt.promptCacheProfile.precedence_order, [
+    "base_runtime",
+    "session_policy",
+    "capability_policy",
+    "runtime_context",
+    "workspace_policy",
+    "harness_addendum",
+    "agent_override",
+    "emergency_override",
+  ]);
   assert.match(prompt.promptCacheProfile.cacheable_fingerprint, /^[a-f0-9]{64}$/);
   assert.match(prompt.promptCacheProfile.full_system_prompt_fingerprint, /^[a-f0-9]{64}$/);
 });
@@ -123,6 +141,10 @@ test("composeBaseAgentPrompt includes recent runtime context only when provided"
   assert.equal(
     prompt.promptSections.find((section) => section.id === "recent_runtime_context")?.channel,
     "context_message"
+  );
+  assert.equal(
+    prompt.promptSections.find((section) => section.id === "recent_runtime_context")?.precedence,
+    "runtime_context"
   );
   assert.equal(prompt.promptLayers.some((layer) => layer.id === "recent_runtime_context"), false);
   assert.doesNotMatch(prompt.systemPrompt, /Recent runtime context:/);
@@ -152,6 +174,10 @@ test("composeBaseAgentPrompt includes current user context when provided", () =>
   assert.equal(
     prompt.promptSections.find((section) => section.id === "current_user_context")?.channel,
     "context_message"
+  );
+  assert.equal(
+    prompt.promptSections.find((section) => section.id === "current_user_context")?.precedence,
+    "runtime_context"
   );
   assert.equal(prompt.promptLayers.some((layer) => layer.id === "current_user_context"), false);
   assert.doesNotMatch(prompt.systemPrompt, /Current user context:/);
@@ -201,7 +227,11 @@ test("composeBaseAgentPrompt includes session resume context only when provided"
   assert.ok(prompt.promptSections.some((section) => section.id === "resume_context"));
   assert.equal(
     prompt.promptSections.find((section) => section.id === "resume_context")?.channel,
-    "context_message"
+    "resume_context"
+  );
+  assert.equal(
+    prompt.promptSections.find((section) => section.id === "resume_context")?.precedence,
+    "runtime_context"
   );
   assert.equal(prompt.promptLayers.some((layer) => layer.id === "resume_context"), false);
   assert.doesNotMatch(prompt.systemPrompt, /Session resume context:/);
@@ -260,6 +290,10 @@ test("composeBaseAgentPrompt includes recalled durable memory as context message
   assert.equal(
     prompt.promptSections.find((section) => section.id === "memory_recall")?.channel,
     "context_message"
+  );
+  assert.equal(
+    prompt.promptSections.find((section) => section.id === "memory_recall")?.precedence,
+    "runtime_context"
   );
   assert.equal(prompt.promptLayers.some((layer) => layer.id === "memory_recall"), false);
   assert.doesNotMatch(prompt.systemPrompt, /Recalled durable memory:/);
