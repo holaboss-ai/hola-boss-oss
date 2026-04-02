@@ -1,0 +1,238 @@
+name: Release macOS Desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to release
+        required: true
+        default: main
+        type: string
+      release_tag:
+        description: GitHub release tag to create or update
+        required: true
+        type: string
+      release_title:
+        description: Optional GitHub release title (defaults to the tag)
+        required: false
+        type: string
+      prerelease:
+        description: Mark the GitHub release as a prerelease when first created
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-macos-desktop-${{ inputs.release_tag }}
+  cancel-in-progress: true
+
+jobs:
+  ensure-release:
+    name: Ensure desktop release exists
+    runs-on: ubuntu-latest
+    outputs:
+      release_ref: ${{ steps.release_meta.outputs.release_ref }}
+      release_sha: ${{ steps.release_meta.outputs.release_sha }}
+      release_tag: ${{ steps.release_meta.outputs.release_tag }}
+      release_title: ${{ steps.release_meta.outputs.release_title }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref }}
+
+      - name: Compute release metadata
+        id: release_meta
+        run: |
+          release_title="${{ inputs.release_title }}"
+          if [ -z "${release_title}" ]; then
+            release_title="${{ inputs.release_tag }}"
+          fi
+
+          {
+            echo "release_ref=${{ inputs.ref }}"
+            echo "release_sha=$(git rev-parse HEAD)"
+            echo "release_tag=${{ inputs.release_tag }}"
+            echo "release_title=${release_title}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Ensure desktop release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.release_meta.outputs.release_sha }}
+          RELEASE_TAG: ${{ steps.release_meta.outputs.release_tag }}
+          RELEASE_TITLE: ${{ steps.release_meta.outputs.release_title }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          notes_path="$(mktemp)"
+          trap 'rm -f "${notes_path}"' EXIT
+
+          existing_tag_sha="$(git rev-list -n1 "${RELEASE_TAG}" 2>/dev/null || true)"
+          if [ -n "${existing_tag_sha}" ] && [ "${existing_tag_sha}" != "${RELEASE_SHA}" ]; then
+            echo "release tag ${RELEASE_TAG} already points to ${existing_tag_sha}, not ${RELEASE_SHA}" >&2
+            exit 1
+          fi
+
+          generate_notes_args=(
+            "repos/${GITHUB_REPOSITORY}/releases/generate-notes"
+            --method POST
+            -f "tag_name=${RELEASE_TAG}"
+            -f "target_commitish=${RELEASE_SHA}"
+          )
+
+          if ! git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+              --method POST \
+              -f "ref=refs/tags/${RELEASE_TAG}" \
+              -f "sha=${RELEASE_SHA}" >/dev/null
+          fi
+
+          gh api "${generate_notes_args[@]}" --jq '.body' > "${notes_path}"
+
+          if ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            prerelease_flag=()
+            if [ "${PRERELEASE}" = "true" ]; then
+              prerelease_flag+=(--prerelease)
+            fi
+
+            gh release create "${RELEASE_TAG}" \
+              --title "${RELEASE_TITLE}" \
+              --notes-file "${notes_path}" \
+              "${prerelease_flag[@]}"
+          else
+            gh release edit "${RELEASE_TAG}" \
+              --title "${RELEASE_TITLE}" \
+              --notes-file "${notes_path}"
+          fi
+
+  release-macos-desktop:
+    name: Build signed macOS desktop DMG
+    needs: ensure-release
+    runs-on: macos-latest
+    env:
+      RELEASE_TAG: ${{ needs.ensure-release.outputs.release_tag }}
+      DESKTOP_ASSET_PREFIX: holaboss-desktop-macos
+      DESKTOP_RELEASE_ASSET_NAME: Holaboss-macos-arm64.dmg
+      MAC_CERTIFICATE: ${{ secrets.MAC_CERTIFICATE }}
+      MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.ensure-release.outputs.release_ref }}
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+
+      - name: Build macOS runtime bundle
+        run: |
+          bash runtime/deploy/package_macos_runtime.sh out/runtime-macos
+          tar -C out -czf out/holaboss-runtime-macos.tar.gz runtime-macos
+
+      - name: Upload macOS runtime bundle artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: holaboss-runtime-macos-release-${{ github.run_id }}
+          path: |
+            out/holaboss-runtime-macos.tar.gz
+            out/runtime-macos/package-metadata.json
+            out/runtime-macos/runtime/metadata.json
+          if-no-files-found: error
+
+      - name: Install desktop dependencies
+        run: npm run desktop:install
+
+      - name: Require mac signing credentials
+        run: |
+          missing=()
+          [ -n "${MAC_CERTIFICATE}" ] || missing+=("MAC_CERTIFICATE")
+          [ -n "${MAC_CERTIFICATE_PASSWORD}" ] || missing+=("MAC_CERTIFICATE_PASSWORD")
+          [ -n "${APPLE_ID}" ] || missing+=("APPLE_ID")
+          [ -n "${APPLE_APP_SPECIFIC_PASSWORD}" ] || missing+=("APPLE_APP_SPECIFIC_PASSWORD")
+          [ -n "${APPLE_TEAM_ID}" ] || missing+=("APPLE_TEAM_ID")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "missing required mac signing/notarization secrets: ${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Build signed and notarized macOS desktop DMG
+        working-directory: desktop
+        env:
+          HOLABOSS_RELEASE_TAG: ${{ env.RELEASE_TAG }}
+          HOLABOSS_RUNTIME_TARBALL: ${{ github.workspace }}/out/holaboss-runtime-macos.tar.gz
+          HOLABOSS_AUTH_BASE_URL: ${{ vars.HOLABOSS_AUTH_BASE_URL }}
+          HOLABOSS_AUTH_SIGN_IN_URL: ${{ vars.HOLABOSS_AUTH_SIGN_IN_URL }}
+          HOLABOSS_BACKEND_BASE_URL: ${{ vars.HOLABOSS_BACKEND_BASE_URL }}
+          HOLABOSS_DESKTOP_CONTROL_PLANE_BASE_URL: ${{ vars.HOLABOSS_DESKTOP_CONTROL_PLANE_BASE_URL }}
+          HOLABOSS_PROJECTS_URL: ${{ vars.HOLABOSS_PROJECTS_URL }}
+          HOLABOSS_MARKETPLACE_URL: ${{ vars.HOLABOSS_MARKETPLACE_URL }}
+          HOLABOSS_PROACTIVE_URL: ${{ vars.HOLABOSS_PROACTIVE_URL }}
+          GITHUB_TOKEN: ${{ github.token }}
+          CSC_LINK: ${{ env.MAC_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ env.MAC_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ env.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ env.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ env.APPLE_TEAM_ID }}
+        run: |
+          soft_limit="$(ulimit -Sn)"
+          hard_limit="$(ulimit -Hn)"
+          echo "open file limits before build: soft=${soft_limit} hard=${hard_limit}"
+          target_limit=65536
+          if [ "${hard_limit}" != "unlimited" ] && [ "${hard_limit}" -lt "${target_limit}" ]; then
+            target_limit="${hard_limit}"
+          fi
+          if [ "${soft_limit}" -lt "${target_limit}" ]; then
+            ulimit -n "${target_limit}" || true
+          fi
+          echo "open file limits for build: soft=$(ulimit -Sn) hard=$(ulimit -Hn)"
+          npm run prepare:runtime
+          npm run prepare:packaged-config
+          npm run build
+          node scripts/run-electron-builder.mjs --projectDir "$PWD" --publish never --mac dmg --arm64
+
+      - name: Validate signed macOS app bundle
+        working-directory: desktop
+        run: |
+          app_path="$(find out/release -maxdepth 2 -name '*.app' -print -quit)"
+          if [ -z "${app_path}" ]; then
+            echo "no .app bundle found under desktop/out/release" >&2
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "${app_path}"
+          spctl -a -vv -t exec "${app_path}"
+          xcrun stapler validate "${app_path}"
+
+      - name: Upload macOS desktop DMG artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.DESKTOP_ASSET_PREFIX }}-${{ inputs.release_tag }}
+          path: desktop/out/release/*.dmg
+          if-no-files-found: error
+
+      - name: Upload macOS desktop DMG release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dmg_path="$(find desktop/out/release -maxdepth 1 -name '*.dmg' -print -quit)"
+          if [ -z "${dmg_path}" ]; then
+            echo "no DMG found in desktop/out/release" >&2
+            exit 1
+          fi
+          stable_path="desktop/out/release/${DESKTOP_RELEASE_ASSET_NAME}"
+          cp "${dmg_path}" "${stable_path}"
+          gh release upload "${RELEASE_TAG}" \
+            "${stable_path}" \
+            --clobber
