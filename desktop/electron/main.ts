@@ -4809,17 +4809,20 @@ async function requestControlPlaneJson<T>({
   };
 
   let response = await executeRequest();
+  let errorDetail = "";
   if (!response.ok) {
-    const detail = await readControlPlaneError(response);
-    const retried = await maybeRetryRuntimeBinding(response.status, detail).catch(
-      () => false,
-    );
+    errorDetail = await readControlPlaneError(response);
+    const retried = await maybeRetryRuntimeBinding(
+      response.status,
+      errorDetail,
+    ).catch(() => false);
     if (retried) {
       response = await executeRequest();
+      errorDetail = "";
     }
   }
   if (!response.ok) {
-    throw new Error(await readControlPlaneError(response));
+    throw new Error(errorDetail || (await readControlPlaneError(response)));
   }
   if (response.status === 204) {
     return null as T;

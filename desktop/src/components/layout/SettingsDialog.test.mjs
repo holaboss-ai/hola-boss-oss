@@ -48,3 +48,12 @@ test("settings dialog sidebar uses compact single-line navigation and theme toke
   assert.match(source, /border-sidebar-border/);
   assert.doesNotMatch(source, /<aside className="[^"]*bg-muted\/40/);
 });
+
+test("settings dialog no longer hosts proactive proposal controls", async () => {
+  const source = await readFile(SETTINGS_DIALOG_PATH, "utf8");
+
+  assert.doesNotMatch(source, /Proactive task proposals/);
+  assert.doesNotMatch(source, /onProactiveTaskProposalsEnabledChange/);
+  assert.doesNotMatch(source, /proactiveTaskProposalsEnabled/);
+  assert.doesNotMatch(source, /Loader2/);
+});

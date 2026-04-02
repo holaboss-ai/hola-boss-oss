@@ -1933,6 +1933,11 @@ function AppShellContent() {
                   onTabChange={setActiveOperationsTab}
                   proposals={taskProposals}
                   proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
+                  isUpdatingProactiveTaskProposalsEnabled={
+                    isLoadingProactiveTaskProposalsEnabled ||
+                    isUpdatingProactiveTaskProposalsEnabled
+                  }
+                  proactiveTaskProposalsError={proactiveTaskProposalsError}
                   isLoadingProposals={isLoadingTaskProposals}
                   isTriggeringProposal={isTriggeringTaskProposal}
                   proposalStatusMessage={taskProposalStatusMessage}
@@ -1942,13 +1947,16 @@ function AppShellContent() {
                   selectedOutputId={selectedOutputId}
                   onSelectOutput={setSelectedOutputId}
                   onOpenOutput={handleOpenOutput}
-                  onRefreshProposals={() =>
-                    void refreshTaskProposals({ logErrors: true })
-                  }
-                  onTriggerProposal={() => void triggerRemoteTaskProposal()}
-                  onAcceptProposal={(proposal) =>
-                    void acceptTaskProposal(proposal)
-                  }
+                onRefreshProposals={() =>
+                  void refreshTaskProposals({ logErrors: true })
+                }
+                onTriggerProposal={() => void triggerRemoteTaskProposal()}
+                onProactiveTaskProposalsEnabledChange={(enabled) =>
+                  void handleProactiveTaskProposalsEnabledChange(enabled)
+                }
+                onAcceptProposal={(proposal) =>
+                  void acceptTaskProposal(proposal)
+                }
                   onDismissProposal={(proposal) =>
                     void dismissTaskProposal(proposal)
                   }
@@ -1976,15 +1984,6 @@ function AppShellContent() {
         theme={theme}
         themes={THEMES}
         onThemeChange={handleThemeChange}
-        proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
-        isUpdatingProactiveTaskProposalsEnabled={
-          isLoadingProactiveTaskProposalsEnabled ||
-          isUpdatingProactiveTaskProposalsEnabled
-        }
-        proactiveTaskProposalsError={proactiveTaskProposalsError}
-        onProactiveTaskProposalsEnabledChange={(enabled) =>
-          void handleProactiveTaskProposalsEnabledChange(enabled)
-        }
         onOpenExternalUrl={handleOpenExternalUrl}
       />
       {selectedWorkspaceId && (
