@@ -1434,11 +1434,14 @@ interface DemoTaskProposalEnqueueResponsePayload {
 
 interface ProactiveTaskProposalPreferenceUpdatePayload {
   enabled: boolean;
+  holaboss_user_id?: string;
+  sandbox_id?: string;
 }
 
 interface ProactiveTaskProposalPreferencePayload {
   enabled: boolean;
   holaboss_user_id: string;
+  sandbox_id: string;
 }
 
 interface TaskProposalStateUpdatePayload {
@@ -5335,17 +5338,94 @@ async function enqueueRemoteDemoTaskProposal(
   });
 }
 
+async function proactivePreferenceScopeFromRuntimeConfig(): Promise<{
+  holabossUserId: string;
+  sandboxId: string;
+}> {
+  const runtimeConfig = await readRuntimeConfigFile();
+  const holabossUserId = (runtimeConfig.user_id || "").trim();
+  const sandboxId = (runtimeConfig.sandbox_id || "").trim();
+  if (!holabossUserId || !sandboxId) {
+    throw new Error(
+      "Proactive auth is missing. Sign in to provision a runtime binding token.",
+    );
+  }
+  return { holabossUserId, sandboxId };
+}
+
+function assertProactivePreferenceScopedToInstance(
+  response: ProactiveTaskProposalPreferencePayload,
+  expected: { holabossUserId: string; sandboxId: string },
+) {
+  const responseUserId = (response.holaboss_user_id || "").trim();
+  const responseSandboxId = (response.sandbox_id || "").trim();
+  if (!responseUserId || !responseSandboxId) {
+    throw new Error(
+      "Proactive preference response is missing user/instance scope.",
+    );
+  }
+  if (
+    responseUserId !== expected.holabossUserId ||
+    responseSandboxId !== expected.sandboxId
+  ) {
+    throw new Error(
+      "Proactive preference scope mismatch for current desktop instance.",
+    );
+  }
+}
+
 async function setProactiveTaskProposalPreference(
   payload: ProactiveTaskProposalPreferenceUpdatePayload,
 ): Promise<ProactiveTaskProposalPreferencePayload> {
-  return requestControlPlaneJson<ProactiveTaskProposalPreferencePayload>({
+  const scope = await proactivePreferenceScopeFromRuntimeConfig();
+  const response = await requestControlPlaneJson<ProactiveTaskProposalPreferencePayload>({
     service: "proactive",
     method: "POST",
     path: "/api/v1/proactive/preferences/task-proposals",
     payload: {
       enabled: payload.enabled !== false,
+      holaboss_user_id: payload.holaboss_user_id?.trim() || scope.holabossUserId,
+      sandbox_id: payload.sandbox_id?.trim() || scope.sandboxId,
     },
   });
+  assertProactivePreferenceScopedToInstance(response, scope);
+  return response;
+}
+
+async function getProactiveTaskProposalPreference(): Promise<ProactiveTaskProposalPreferencePayload> {
+  try {
+    const scope = await proactivePreferenceScopeFromRuntimeConfig();
+    const response = await requestControlPlaneJson<ProactiveTaskProposalPreferencePayload>({
+      service: "proactive",
+      method: "GET",
+      path: "/api/v1/proactive/preferences/task-proposals",
+      params: {
+        holaboss_user_id: scope.holabossUserId,
+        sandbox_id: scope.sandboxId,
+      },
+    });
+    assertProactivePreferenceScopedToInstance(response, scope);
+    return response;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("Proactive auth is missing")) {
+      throw error;
+    }
+    const runtimeConfig = await readRuntimeConfigFile();
+    const holabossUserId =
+      typeof (runtimeConfig as { user_id?: unknown }).user_id === "string"
+        ? ((runtimeConfig as { user_id: string }).user_id || "").trim()
+        : "";
+    const sandboxId =
+      typeof (runtimeConfig as { sandbox_id?: unknown }).sandbox_id === "string"
+        ? ((runtimeConfig as { sandbox_id: string }).sandbox_id || "").trim()
+        : "";
+    return {
+      enabled: false,
+      holaboss_user_id: holabossUserId,
+      sandbox_id: sandboxId,
+    };
+  }
 }
 
 async function updateTaskProposalState(
@@ -11927,6 +12007,11 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, payload: ProactiveTaskProposalPreferenceUpdatePayload) =>
       setProactiveTaskProposalPreference(payload),
+  );
+  handleTrustedIpc(
+    "workspace:getProactiveTaskProposalPreference",
+    ["main"],
+    async () => getProactiveTaskProposalPreference(),
   );
   handleTrustedIpc(
     "workspace:listRuntimeStates",

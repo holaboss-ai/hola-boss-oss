@@ -321,11 +321,14 @@ declare global {
 
   interface ProactiveTaskProposalPreferenceUpdatePayload {
     enabled: boolean;
+    holaboss_user_id?: string;
+    sandbox_id?: string;
   }
 
   interface ProactiveTaskProposalPreferencePayload {
     enabled: boolean;
     holaboss_user_id: string;
+    sandbox_id: string;
   }
 
   interface TaskProposalStateUpdatePayload {
@@ -879,6 +882,7 @@ declare global {
       listTaskProposals: (workspaceId: string) => Promise<TaskProposalListResponsePayload>;
       acceptTaskProposal: (payload: TaskProposalAcceptPayload) => Promise<TaskProposalAcceptResponsePayload>;
       getProactiveStatus: (workspaceId: string) => Promise<ProactiveAgentStatusPayload>;
+      getProactiveTaskProposalPreference: () => Promise<ProactiveTaskProposalPreferencePayload>;
       setProactiveTaskProposalPreference: (
         payload: ProactiveTaskProposalPreferenceUpdatePayload
       ) => Promise<ProactiveTaskProposalPreferencePayload>;

@@ -42,6 +42,7 @@ interface TopTabsBarProps {
   onOpenWorkspaceCreatePanel?: () => void;
   onOpenSettings?: () => void;
   onOpenAccount?: () => void;
+  onOpenModelProviders?: () => void;
   onOpenExternalUrl?: (url: string) => void;
 }
 
@@ -53,6 +54,7 @@ export function TopTabsBar({
   onOpenWorkspaceCreatePanel,
   onOpenSettings,
   onOpenAccount,
+  onOpenModelProviders,
   onOpenExternalUrl,
 }: TopTabsBarProps) {
   const userButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -299,6 +301,13 @@ export function TopTabsBar({
                 <DropdownMenuItem onClick={() => onOpenSettings?.()}>
                   <Settings />
                   Settings
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuItem onClick={() => onOpenModelProviders?.()}>
+                  <Settings />
+                  Model providers
                 </DropdownMenuItem>
               </DropdownMenuGroup>
               <DropdownMenuSeparator />

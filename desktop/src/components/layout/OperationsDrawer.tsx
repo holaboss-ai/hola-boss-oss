@@ -32,6 +32,7 @@ interface OperationsDrawerProps {
   activeTab: OperationsDrawerTab;
   onTabChange: (tab: OperationsDrawerTab) => void;
   proposals: TaskProposalRecordPayload[];
+  proactiveTaskProposalsEnabled: boolean;
   isLoadingProposals: boolean;
   isTriggeringProposal: boolean;
   proposalStatusMessage: string;
@@ -65,6 +66,7 @@ export function OperationsDrawer({
   activeTab,
   onTabChange,
   proposals,
+  proactiveTaskProposalsEnabled,
   isLoadingProposals,
   isTriggeringProposal,
   proposalStatusMessage,
@@ -157,8 +159,8 @@ export function OperationsDrawer({
   }, [activeTab, selectedWorkspaceId]);
 
   return (
-    <aside className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-[360px] max-w-[420px] flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
-      <header className="theme-header-surface flex shrink-0 items-center justify-between gap-3 border-b border-primary/15 px-4 py-3">
+    <aside className="theme-shell neon-border relative flex h-full min-h-0 min-w-[360px] max-w-[420px] flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
+      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-primary/15 bg-card px-4 py-3">
         <div className="flex items-center gap-2">
           <DrawerTabButton active={activeTab === "inbox"} icon={<Bell size={14} />} label="Inbox" onClick={() => onTabChange("inbox")} />
           <DrawerTabButton
@@ -180,6 +182,7 @@ export function OperationsDrawer({
         {activeTab === "inbox" ? (
           <InboxPanel
             proposals={proposals}
+            proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
             isLoadingProposals={isLoadingProposals}
             isTriggeringProposal={isTriggeringProposal}
             proposalStatusMessage={proposalStatusMessage}
@@ -311,6 +314,7 @@ function DrawerTabButton({
 
 function InboxPanel({
   proposals,
+  proactiveTaskProposalsEnabled,
   isLoadingProposals,
   isTriggeringProposal,
   proposalStatusMessage,
@@ -322,6 +326,7 @@ function InboxPanel({
   onDismissProposal
 }: {
   proposals: TaskProposalRecordPayload[];
+  proactiveTaskProposalsEnabled: boolean;
   isLoadingProposals: boolean;
   isTriggeringProposal: boolean;
   proposalStatusMessage: string;
@@ -344,6 +349,11 @@ function InboxPanel({
             <div className="mt-1 text-[12px] leading-6 text-foreground/88">
               Review backend-delivered task ideas and either queue them immediately or dismiss them at the source.
             </div>
+            {!proactiveTaskProposalsEnabled ? (
+              <div className="mt-3 rounded-[14px] border border-primary/28 bg-primary/8 px-3 py-2 text-[11px] text-primary">
+                Proactive polling is off. Use Refresh or Trigger manually, or re-enable it in Settings.
+              </div>
+            ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <button
