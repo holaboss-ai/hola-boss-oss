@@ -665,11 +665,13 @@ function isNearChatBottom(container: HTMLDivElement) {
 export function ChatPane({
   onOutputsChanged,
   focusRequestKey = 0,
-  variant = "default"
+  variant = "default",
+  onOpenLinkInBrowser
 }: {
   onOutputsChanged?: () => void;
   focusRequestKey?: number;
   variant?: ChatPaneVariant;
+  onOpenLinkInBrowser?: (url: string) => void;
 }) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const authSessionState = useDesktopAuthSession();
@@ -2353,7 +2355,12 @@ export function ChatPane({
                 >
                   {messages.map((message) =>
                     message.role === "user" ? (
-                      <UserTurn key={message.id} text={message.text} attachments={message.attachments ?? []} />
+                      <UserTurn
+                        key={message.id}
+                        text={message.text}
+                        attachments={message.attachments ?? []}
+                        onLinkClick={onOpenLinkInBrowser}
+                      />
                     ) : (
                       <AssistantTurn
                         key={message.id}
@@ -2366,6 +2373,7 @@ export function ChatPane({
                         traceSteps={message.traceSteps ?? []}
                         collapsedTraceByStepId={collapsedTraceByStepId}
                         onToggleTraceStep={toggleTraceStep}
+                        onLinkClick={onOpenLinkInBrowser}
                       />
                     )
                   )}
@@ -2385,6 +2393,7 @@ export function ChatPane({
                       traceSteps={liveTraceSteps}
                       collapsedTraceByStepId={collapsedTraceByStepId}
                       onToggleTraceStep={toggleTraceStep}
+                      onLinkClick={onOpenLinkInBrowser}
                       live
                       status={liveAgentStatus || (isResponding ? "Working..." : "")}
                     />
@@ -2540,17 +2549,19 @@ interface ThinkingPanelProps {
 
 function UserTurn({
   text,
-  attachments
+  attachments,
+  onLinkClick
 }: {
   text: string;
   attachments: ChatAttachment[];
+  onLinkClick?: (url: string) => void;
 }) {
   return (
     <div className="flex justify-end">
       <div className="flex max-w-[420px] flex-col items-end gap-2">
         {text ? (
           <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full rounded-[18px] border px-4 py-3 text-foreground/95">
-            <SimpleMarkdown className="chat-markdown chat-user-markdown max-w-full">
+            <SimpleMarkdown className="chat-markdown chat-user-markdown max-w-full" onLinkClick={onLinkClick}>
               {text}
             </SimpleMarkdown>
           </div>
@@ -2571,6 +2582,7 @@ function AssistantTurn({
   traceSteps,
   collapsedTraceByStepId,
   onToggleTraceStep,
+  onLinkClick,
   status = "",
   live = false
 }: {
@@ -2583,6 +2595,7 @@ function AssistantTurn({
   traceSteps: ChatTraceStep[];
   collapsedTraceByStepId: Record<string, boolean>;
   onToggleTraceStep: (stepId: string) => void;
+  onLinkClick?: (url: string) => void;
   status?: string;
   live?: boolean;
 }) {
@@ -2628,7 +2641,10 @@ function AssistantTurn({
             ) : null}
 
             {text ? (
-              <SimpleMarkdown className="chat-markdown chat-assistant-markdown mt-4 max-w-full text-foreground">
+              <SimpleMarkdown
+                className="chat-markdown chat-assistant-markdown mt-4 max-w-full text-foreground"
+                onLinkClick={onLinkClick}
+              >
                 {text}
               </SimpleMarkdown>
             ) : null}

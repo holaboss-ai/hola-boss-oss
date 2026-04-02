@@ -179,6 +179,7 @@ function getHighlightedHtml(preview: FilePreviewPayload | null, draft: string) {
 export function FileExplorerPane() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const dragPreviewRef = useRef<HTMLDivElement | null>(null);
+  const lastSyncedWorkspaceRootRef = useRef<{ workspaceId: string; rootPath: string } | null>(null);
   const [currentPath, setCurrentPath] = useState<string>("");
   const [parentPath, setParentPath] = useState<string | null>(null);
   const [entries, setEntries] = useState<LocalFileEntry[]>([]);
@@ -248,6 +249,7 @@ export function FileExplorerPane() {
 
   useEffect(() => {
     if (!selectedWorkspaceId) {
+      lastSyncedWorkspaceRootRef.current = null;
       return;
     }
 
@@ -256,9 +258,19 @@ export function FileExplorerPane() {
     async function loadWorkspaceDirectory() {
       try {
         const workspaceRoot = await window.electronAPI.workspace.getWorkspaceRoot(selectedWorkspaceId);
-        if (!workspaceRoot || cancelled || currentPath === workspaceRoot) {
+        const lastSyncedWorkspaceRoot = lastSyncedWorkspaceRootRef.current;
+        if (
+          !workspaceRoot ||
+          cancelled ||
+          (lastSyncedWorkspaceRoot?.workspaceId === selectedWorkspaceId &&
+            lastSyncedWorkspaceRoot.rootPath === workspaceRoot)
+        ) {
           return;
         }
+        lastSyncedWorkspaceRootRef.current = {
+          workspaceId: selectedWorkspaceId,
+          rootPath: workspaceRoot
+        };
         await loadDirectory(workspaceRoot, true);
       } catch {
         // The workspace directory may not exist yet while provisioning.
@@ -269,7 +281,48 @@ export function FileExplorerPane() {
     return () => {
       cancelled = true;
     };
-  }, [currentPath, loadDirectory, selectedWorkspaceId]);
+  }, [loadDirectory, selectedWorkspaceId]);
+
+  useEffect(() => {
+    if (!currentPath) {
+      return;
+    }
+
+    let cancelled = false;
+    let refreshInFlight = false;
+
+    const refreshCurrentDirectory = async () => {
+      if (cancelled || refreshInFlight) {
+        return;
+      }
+
+      refreshInFlight = true;
+      try {
+        const payload = await window.electronAPI.fs.listDirectory(currentPath);
+        if (cancelled || payload.currentPath !== currentPath) {
+          return;
+        }
+        setParentPath(payload.parentPath);
+        setEntries(payload.entries);
+        setSelectedPath((prev) =>
+          !prev || !payload.entries.some((entry) => entry.absolutePath === prev) ? (payload.entries[0]?.absolutePath ?? "") : prev
+        );
+      } catch {
+        // Best-effort background refresh; keep current listing on transient failures.
+      } finally {
+        refreshInFlight = false;
+      }
+    };
+
+    const timer = window.setInterval(() => {
+      void refreshCurrentDirectory();
+    }, 1200);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [currentPath]);
 
   useEffect(() => {
     let mounted = true;

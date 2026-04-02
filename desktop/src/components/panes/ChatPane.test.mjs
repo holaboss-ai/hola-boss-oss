@@ -71,7 +71,9 @@ test("chat turns render markdown and keep long content wrapped inside the bubble
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /import \{ SimpleMarkdown \} from "@\/components\/marketplace\/SimpleMarkdown";/);
-  assert.match(source, /<SimpleMarkdown className="chat-markdown chat-user-markdown max-w-full">[\s\S]*\{text\}[\s\S]*<\/SimpleMarkdown>/);
-  assert.match(source, /<SimpleMarkdown className="chat-markdown chat-assistant-markdown mt-4 max-w-full text-foreground">[\s\S]*\{text\}[\s\S]*<\/SimpleMarkdown>/);
+  assert.match(source, /onOpenLinkInBrowser\?: \(url: string\) => void;/);
+  assert.match(source, /onLinkClick=\{onOpenLinkInBrowser\}/);
+  assert.match(source, /<SimpleMarkdown className="chat-markdown chat-user-markdown max-w-full" onLinkClick=\{onLinkClick\}>[\s\S]*\{text\}[\s\S]*<\/SimpleMarkdown>/);
+  assert.match(source, /<SimpleMarkdown[\s\S]*className="chat-markdown chat-assistant-markdown mt-4 max-w-full text-foreground"[\s\S]*onLinkClick=\{onLinkClick\}[\s\S]*\{text\}[\s\S]*<\/SimpleMarkdown>/);
   assert.match(source, /theme-chat-user-bubble inline-flex min-w-0 max-w-full/);
 });
