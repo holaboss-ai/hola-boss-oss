@@ -59,7 +59,7 @@ const APP_THEMES = new Set([
   "ember",
   "glacier",
   "mono",
-  "claude",
+  "sepia",
   "slate",
   "paper",
   "graphite",
@@ -299,6 +299,22 @@ interface RuntimeConfigUpdatePayload {
   controlPlaneBaseUrl?: string | null;
 }
 
+type RuntimeUserProfileNameSource = "manual" | "agent" | "authFallback";
+
+interface RuntimeUserProfilePayload {
+  profileId: string;
+  name: string | null;
+  nameSource: RuntimeUserProfileNameSource | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+interface RuntimeUserProfileUpdatePayload {
+  profileId?: string | null;
+  name?: string | null;
+  nameSource?: RuntimeUserProfileNameSource | null;
+}
+
 interface AuthUserPayload {
   id: string;
   email?: string | null;
@@ -358,9 +374,7 @@ let authPopupCloseTimer: ReturnType<typeof setTimeout> | null = null;
 let downloadsPopupWindow: BrowserWindow | null = null;
 let historyPopupWindow: BrowserWindow | null = null;
 let overflowPopupWindow: BrowserWindow | null = null;
-let browserPopupWindow: BrowserWindow | null = null;
 let addressSuggestionsPopupWindow: BrowserWindow | null = null;
-const browserPopupCleanupBound = new WeakSet<BrowserWindow>();
 let currentTheme = "holaboss";
 let browserBounds: BrowserBoundsPayload = { x: 0, y: 0, width: 0, height: 0 };
 let overflowAnchorBounds: BrowserAnchorBoundsPayload | null = null;
@@ -975,7 +989,7 @@ function getPopupThemePalette(theme: string): PopupThemePalette {
         emptyBg: "rgba(250, 245, 244, 0.92)",
         error: "rgba(184, 67, 67, 0.94)",
       };
-    case "claude":
+    case "sepia":
       return {
         fontFamily: '"IBM Plex Sans", "Aptos", "Segoe UI Variable", sans-serif',
         text: "rgba(74, 54, 39, 0.94)",
@@ -1144,7 +1158,7 @@ function getPopupThemePalette(theme: string): PopupThemePalette {
 function popupThemeCss(theme = currentTheme) {
   const palette = getPopupThemePalette(theme);
   const isLightTheme =
-    theme === "holaboss" || theme === "claude" || theme === "paper";
+    theme === "holaboss" || theme === "sepia" || theme === "paper";
   const surfaceSoft = `color-mix(in srgb, ${palette.controlBg} 72%, ${palette.panelBgAlt} 28%)`;
   const surfaceSubtle = `color-mix(in srgb, ${palette.controlBg} 52%, ${palette.panelBgAlt} 48%)`;
   return `
@@ -1416,6 +1430,18 @@ interface DemoTaskProposalRequestPayload {
 interface DemoTaskProposalEnqueueResponsePayload {
   accepted: boolean;
   pending_count: number;
+}
+
+interface ProactiveTaskProposalPreferenceUpdatePayload {
+  enabled: boolean;
+  holaboss_user_id?: string;
+  sandbox_id?: string;
+}
+
+interface ProactiveTaskProposalPreferencePayload {
+  enabled: boolean;
+  holaboss_user_id: string;
+  sandbox_id: string;
 }
 
 interface TaskProposalStateUpdatePayload {
@@ -1923,6 +1949,7 @@ let lastRuntimeConfigSignature = "";
 let lastRuntimeBindingRefreshAtMs = 0;
 let lastRuntimeBindingRefreshUserId = "";
 let runtimeBindingRefreshPromise: Promise<void> | null = null;
+let startupAuthSyncPromise: Promise<void> | null = null;
 
 function appendSessionStreamDebug(
   streamId: string,
@@ -2847,6 +2874,42 @@ async function handleDesktopBrowserServiceRequest(
       return;
     }
 
+    if (method === "POST" && pathname === "/api/v1/browser/tabs") {
+      const payload = await readBrowserServiceJsonBody(request);
+      const targetUrl =
+        typeof payload.url === "string" && payload.url.trim()
+          ? payload.url.trim()
+          : HOME_URL;
+      const background = payload.background === true;
+      const workspace = await ensureBrowserWorkspace(targetWorkspaceId);
+      if (!workspace) {
+        writeBrowserServiceJson(response, 409, {
+          error: "No active browser workspace is available.",
+        });
+        return;
+      }
+
+      const nextTabId = createBrowserTab(targetWorkspaceId, { url: targetUrl });
+      if (!nextTabId) {
+        writeBrowserServiceJson(response, 500, {
+          error: "Failed to create browser tab.",
+        });
+        return;
+      }
+
+      if (!background) {
+        workspace.activeTabId = nextTabId;
+        if (targetWorkspaceId === activeBrowserWorkspaceId) {
+          updateAttachedBrowserView();
+        }
+      }
+
+      emitBrowserState(targetWorkspaceId);
+      await persistBrowserWorkspace(targetWorkspaceId);
+      writeBrowserServiceJson(response, 200, browserWorkspaceSnapshot(targetWorkspaceId));
+      return;
+    }
+
     if (method === "POST" && pathname === "/api/v1/browser/evaluate") {
       const payload = await readBrowserServiceJsonBody(request);
       const expression =
@@ -3576,6 +3639,145 @@ async function setRuntimeConfigDocument(
   return config;
 }
 
+function runtimeUserProfileNameSourceFromApi(value: unknown): RuntimeUserProfileNameSource | null {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (normalized === "manual" || normalized === "agent") {
+    return normalized;
+  }
+  if (normalized === "auth_fallback") {
+    return "authFallback";
+  }
+  return null;
+}
+
+function runtimeUserProfileNameSourceToApi(
+  value: RuntimeUserProfileNameSource | null | undefined,
+): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (value === "authFallback") {
+    return "auth_fallback";
+  }
+  return value;
+}
+
+function runtimeUserProfilePayloadFromApi(value: unknown): RuntimeUserProfilePayload {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  return {
+    profileId:
+      typeof record.profile_id === "string" && record.profile_id.trim()
+        ? record.profile_id
+        : "default",
+    name: typeof record.name === "string" && record.name.trim() ? record.name : null,
+    nameSource: runtimeUserProfileNameSourceFromApi(record.name_source),
+    createdAt:
+      typeof record.created_at === "string" && record.created_at.trim()
+        ? record.created_at
+        : null,
+    updatedAt:
+      typeof record.updated_at === "string" && record.updated_at.trim()
+        ? record.updated_at
+        : null,
+  };
+}
+
+async function runtimeApiRequest<T>(
+  pathname: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const status = await ensureRuntimeReady();
+  const baseUrl = status.url ?? runtimeBaseUrl();
+  const targetUrl = new URL(pathname, `${baseUrl.replace(/\/+$/, "")}/`).toString();
+  const response = await fetch(targetUrl, init);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      detail.trim() ||
+        `Runtime API request failed: ${response.status} ${response.statusText}`,
+    );
+  }
+  return (await response.json()) as T;
+}
+
+async function getRuntimeUserProfile(): Promise<RuntimeUserProfilePayload> {
+  const payload = await runtimeApiRequest<unknown>("/api/v1/runtime/profile", {
+    method: "GET",
+  });
+  return runtimeUserProfilePayloadFromApi(payload);
+}
+
+async function setRuntimeUserProfile(
+  payload: RuntimeUserProfileUpdatePayload,
+): Promise<RuntimeUserProfilePayload> {
+  const body: Record<string, unknown> = {};
+  if (typeof payload.profileId === "string" && payload.profileId.trim()) {
+    body.profile_id = payload.profileId.trim();
+  }
+  if (payload.name !== undefined) {
+    body.name = payload.name;
+  }
+  if (payload.nameSource !== undefined) {
+    body.name_source = runtimeUserProfileNameSourceToApi(payload.nameSource);
+  }
+  const response = await runtimeApiRequest<unknown>("/api/v1/runtime/profile", {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  return runtimeUserProfilePayloadFromApi(response);
+}
+
+async function applyRuntimeUserProfileAuthFallback(
+  name: string,
+  profileId = "default",
+): Promise<RuntimeUserProfilePayload> {
+  const response = await runtimeApiRequest<unknown>(
+    "/api/v1/runtime/profile/auth-fallback",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        profile_id: profileId,
+        name,
+      }),
+    },
+  );
+  return runtimeUserProfilePayloadFromApi(response);
+}
+
+async function syncRuntimeUserProfileFromAuth(
+  user: AuthUserPayload,
+): Promise<void> {
+  const name = typeof user.name === "string" ? user.name.trim() : "";
+  if (!name) {
+    return;
+  }
+  try {
+    await applyRuntimeUserProfileAuthFallback(name);
+  } catch (error) {
+    appendRuntimeEventLog({
+      category: "auth",
+      event: "runtime_profile.auth_fallback",
+      outcome: "error",
+      detail:
+        error instanceof Error
+          ? error.message
+          : "Runtime profile auth fallback failed.",
+    });
+  }
+}
+
 async function exchangeDesktopRuntimeBinding(
   sandboxId: string,
 ): Promise<RuntimeBindingExchangePayload> {
@@ -4149,6 +4351,7 @@ async function provisionRuntimeBindingForAuthenticatedUser(
       !forceRefresh &&
       !runtimeConfigNeedsBindingRefresh(currentConfig, userId)
     ) {
+      await syncRuntimeUserProfileFromAuth(user);
       return;
     }
 
@@ -4188,6 +4391,7 @@ async function provisionRuntimeBindingForAuthenticatedUser(
       });
       await restartEmbeddedRuntimeIfNeeded(currentConfig, nextConfig);
       await emitRuntimeConfig();
+      await syncRuntimeUserProfileFromAuth(user);
 
       appendRuntimeEventLog({
         category: "auth",
@@ -4214,10 +4418,25 @@ async function provisionRuntimeBindingForAuthenticatedUser(
 
 async function ensureRuntimeBindingReadyForWorkspaceFlow(
   reason: string,
-  options?: { forceRefresh?: boolean },
+  options?: {
+    forceRefresh?: boolean;
+    allowProvisionWhenUnmanaged?: boolean;
+    waitForStartupSync?: boolean;
+  },
 ): Promise<void> {
+  if (options?.waitForStartupSync !== false) {
+    const startupSync = startupAuthSyncPromise;
+    if (startupSync) {
+      await startupSync;
+    }
+  }
+
   const currentConfig = await readRuntimeConfigFile();
-  if (!runtimeConfigIsControlPlaneManaged(currentConfig)) {
+  const controlPlaneManaged = runtimeConfigIsControlPlaneManaged(currentConfig);
+  const allowProvisionWhenUnmanaged = Boolean(
+    options?.allowProvisionWhenUnmanaged,
+  );
+  if (!controlPlaneManaged && !allowProvisionWhenUnmanaged) {
     return;
   }
 
@@ -4235,6 +4454,7 @@ async function ensureRuntimeBindingReadyForWorkspaceFlow(
   const userId = authUserId(user);
   const shouldRefresh =
     Boolean(options?.forceRefresh) ||
+    (allowProvisionWhenUnmanaged && !controlPlaneManaged) ||
     runtimeConfigNeedsBindingRefresh(currentConfig, userId) ||
     shouldForceRuntimeBindingRefresh(userId);
   if (shouldRefresh) {
@@ -4551,11 +4771,53 @@ async function requestControlPlaneJson<T>({
     url.searchParams.set(key, String(value));
   }
 
-  const response = await fetch(url, {
-    method,
-    headers: await controlPlaneHeaders(service),
-    body: payload === undefined ? undefined : JSON.stringify(payload),
-  });
+  const executeRequest = async () => {
+    return fetch(url, {
+      method,
+      headers: await controlPlaneHeaders(service),
+      body: payload === undefined ? undefined : JSON.stringify(payload),
+    });
+  };
+
+  const maybeRetryRuntimeBinding = async (
+    status: number,
+    detail: string,
+  ): Promise<boolean> => {
+    if (service !== "marketplace" && service !== "proactive") {
+      return false;
+    }
+    const normalizedDetail = detail.trim().toLowerCase();
+    const looksLikeApiKeyAuthFailure =
+      status === 401 ||
+      status === 403 ||
+      normalizedDetail.includes("invalid or missing api key") ||
+      normalizedDetail.includes("api key") ||
+      normalizedDetail.includes("unauthorized") ||
+      normalizedDetail.includes("forbidden");
+    if (!looksLikeApiKeyAuthFailure) {
+      return false;
+    }
+    await ensureRuntimeBindingReadyForWorkspaceFlow(
+      `control_plane_${service}_auth_retry`,
+      {
+        forceRefresh: true,
+        allowProvisionWhenUnmanaged: true,
+        waitForStartupSync: true,
+      },
+    );
+    return true;
+  };
+
+  let response = await executeRequest();
+  if (!response.ok) {
+    const detail = await readControlPlaneError(response);
+    const retried = await maybeRetryRuntimeBinding(response.status, detail).catch(
+      () => false,
+    );
+    if (retried) {
+      response = await executeRequest();
+    }
+  }
   if (!response.ok) {
     throw new Error(await readControlPlaneError(response));
   }
@@ -4713,7 +4975,10 @@ async function parseLocalTemplateMetadata(
 }
 
 async function listMarketplaceTemplates(): Promise<TemplateListResponsePayload> {
-  await ensureRuntimeBindingReadyForWorkspaceFlow("marketplace_templates");
+  await ensureRuntimeBindingReadyForWorkspaceFlow("marketplace_templates", {
+    allowProvisionWhenUnmanaged: true,
+    waitForStartupSync: true,
+  });
   return requestControlPlaneJson<TemplateListResponsePayload>({
     service: "marketplace",
     method: "GET",
@@ -5328,6 +5593,96 @@ async function enqueueRemoteDemoTaskProposal(
   });
 }
 
+async function proactivePreferenceScopeFromRuntimeConfig(): Promise<{
+  holabossUserId: string;
+  sandboxId: string;
+}> {
+  const runtimeConfig = await readRuntimeConfigFile();
+  const holabossUserId = (runtimeConfig.user_id || "").trim();
+  const sandboxId = (runtimeConfig.sandbox_id || "").trim();
+  if (!holabossUserId || !sandboxId) {
+    throw new Error(
+      "Proactive auth is missing. Sign in to provision a runtime binding token.",
+    );
+  }
+  return { holabossUserId, sandboxId };
+}
+
+function assertProactivePreferenceScopedToInstance(
+  response: ProactiveTaskProposalPreferencePayload,
+  expected: { holabossUserId: string; sandboxId: string },
+) {
+  const responseUserId = (response.holaboss_user_id || "").trim();
+  const responseSandboxId = (response.sandbox_id || "").trim();
+  if (!responseUserId || !responseSandboxId) {
+    throw new Error(
+      "Proactive preference response is missing user/instance scope.",
+    );
+  }
+  if (
+    responseUserId !== expected.holabossUserId ||
+    responseSandboxId !== expected.sandboxId
+  ) {
+    throw new Error(
+      "Proactive preference scope mismatch for current desktop instance.",
+    );
+  }
+}
+
+async function setProactiveTaskProposalPreference(
+  payload: ProactiveTaskProposalPreferenceUpdatePayload,
+): Promise<ProactiveTaskProposalPreferencePayload> {
+  const scope = await proactivePreferenceScopeFromRuntimeConfig();
+  const response = await requestControlPlaneJson<ProactiveTaskProposalPreferencePayload>({
+    service: "proactive",
+    method: "POST",
+    path: "/api/v1/proactive/preferences/task-proposals",
+    payload: {
+      enabled: payload.enabled !== false,
+      holaboss_user_id: payload.holaboss_user_id?.trim() || scope.holabossUserId,
+      sandbox_id: payload.sandbox_id?.trim() || scope.sandboxId,
+    },
+  });
+  assertProactivePreferenceScopedToInstance(response, scope);
+  return response;
+}
+
+async function getProactiveTaskProposalPreference(): Promise<ProactiveTaskProposalPreferencePayload> {
+  try {
+    const scope = await proactivePreferenceScopeFromRuntimeConfig();
+    const response = await requestControlPlaneJson<ProactiveTaskProposalPreferencePayload>({
+      service: "proactive",
+      method: "GET",
+      path: "/api/v1/proactive/preferences/task-proposals",
+      params: {
+        holaboss_user_id: scope.holabossUserId,
+        sandbox_id: scope.sandboxId,
+      },
+    });
+    assertProactivePreferenceScopedToInstance(response, scope);
+    return response;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("Proactive auth is missing")) {
+      throw error;
+    }
+    const runtimeConfig = await readRuntimeConfigFile();
+    const holabossUserId =
+      typeof (runtimeConfig as { user_id?: unknown }).user_id === "string"
+        ? ((runtimeConfig as { user_id: string }).user_id || "").trim()
+        : "";
+    const sandboxId =
+      typeof (runtimeConfig as { sandbox_id?: unknown }).sandbox_id === "string"
+        ? ((runtimeConfig as { sandbox_id: string }).sandbox_id || "").trim()
+        : "";
+    return {
+      enabled: false,
+      holaboss_user_id: holabossUserId,
+      sandbox_id: sandboxId,
+    };
+  }
+}
+
 async function updateTaskProposalState(
   proposalId: string,
   state: string,
@@ -5931,6 +6286,10 @@ async function materializeMarketplaceTemplate(payload: {
 }): Promise<MaterializeTemplateResponsePayload> {
   await ensureRuntimeBindingReadyForWorkspaceFlow(
     "marketplace_template_materialize",
+    {
+      allowProvisionWhenUnmanaged: true,
+      waitForStartupSync: true,
+    },
   );
   return requestControlPlaneJson<MaterializeTemplateResponsePayload>({
     service: "marketplace",
@@ -6134,14 +6493,16 @@ async function requestRuntimeJson<T>({
   payload,
   params,
   timeoutMs,
+  retryTransientErrors = false,
 }: {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   payload?: unknown;
   params?: Record<string, string | number | boolean | null | undefined>;
   timeoutMs?: number;
+  retryTransientErrors?: boolean;
 }): Promise<T> {
-  const attempts = method === "GET" ? 3 : 1;
+  const attempts = method === "GET" || retryTransientErrors ? 3 : 1;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       const status = await ensureRuntimeReady();
@@ -6839,6 +7200,7 @@ async function activateWorkspace(
     path: "/api/v1/apps/ensure-running",
     payload: { workspace_id: workspaceId },
     timeoutMs: 300000,
+    retryTransientErrors: true,
   });
   return getWorkspaceLifecycleViaRuntime(workspaceId);
 }
@@ -6939,8 +7301,6 @@ function parseWorkspaceSkillsConfig(workspaceYaml: string | null): {
   }
 
   const stack: Array<{ key: string; indent: number }> = [];
-  let resolvedPrimaryPath = false;
-
   for (const rawLine of workspaceYaml.replace(/\t/g, "  ").split(/\r?\n/)) {
     const trimmed = rawLine.trim();
     if (!trimmed || trimmed.startsWith("#")) {
@@ -6978,16 +7338,6 @@ function parseWorkspaceSkillsConfig(workspaceYaml: string | null): {
       const nextPath = sanitizeYamlScalar(rawValue);
       if (nextPath) {
         result.relativePath = nextPath;
-        resolvedPrimaryPath = true;
-      }
-    } else if (
-      scope === "agents.proactive.skills_path" &&
-      rawValue &&
-      !resolvedPrimaryPath
-    ) {
-      const legacyPath = sanitizeYamlScalar(rawValue);
-      if (legacyPath) {
-        result.relativePath = legacyPath;
       }
     } else if (scope === "skills.enabled" && rawValue) {
       for (const skillId of parseInlineYamlStringArray(rawValue)) {
@@ -7216,8 +7566,8 @@ function renderMinimalWorkspaceYaml(
     `name: ${JSON.stringify(workspace.name)}`,
     `created_at: ${JSON.stringify(createdAt)}`,
     "agents:",
-    '  - id: "workspace.general"',
-    '    model: "openai/gpt-5"',
+    '  id: "workspace.general"',
+    '  model: "openai/gpt-5"',
     "mcp_registry:",
     "  allowlist:",
     "    tool_ids: []",
@@ -9942,73 +10292,13 @@ function createBrowserTab(
     }
 
     const shouldOpenAsTab =
-      disposition === "foreground-tab" || disposition === "background-tab";
+      disposition === "foreground-tab" ||
+      disposition === "background-tab" ||
+      disposition === "new-window";
     if (shouldOpenAsTab) {
       handleBrowserWindowOpenAsTab(workspaceId, normalizedUrl, disposition);
-      return { action: "deny" };
     }
-
-    return {
-      action: "allow",
-      overrideBrowserWindowOptions: {
-        parent: mainWindow ?? undefined,
-        width: 520,
-        height: 760,
-        minWidth: 420,
-        minHeight: 560,
-        show: false,
-        autoHideMenuBar: true,
-        backgroundColor: "#111214",
-        webPreferences: {
-          session: workspace.session,
-          contextIsolation: true,
-          nodeIntegration: false,
-          sandbox: false,
-        },
-      },
-    };
-  });
-  view.webContents.on("did-create-window", (window) => {
-    if (
-      browserPopupWindow &&
-      !browserPopupWindow.isDestroyed() &&
-      browserPopupWindow !== window
-    ) {
-      browserPopupWindow.close();
-    }
-
-    browserPopupWindow = window;
-    window.webContents.setWindowOpenHandler(({ url, disposition }) => {
-      const normalizedUrl = url.trim();
-      if (!normalizedUrl) {
-        return { action: "deny" };
-      }
-
-      try {
-        const parsed = new URL(normalizedUrl);
-        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-          void shell.openExternal(normalizedUrl);
-          return { action: "deny" };
-        }
-      } catch {
-        return { action: "deny" };
-      }
-
-      handleBrowserWindowOpenAsTab(workspaceId, normalizedUrl, disposition);
-      return { action: "deny" };
-    });
-    window.once("ready-to-show", () => {
-      window.show();
-    });
-    if (!browserPopupCleanupBound.has(window)) {
-      browserPopupCleanupBound.add(window);
-      window.once("closed", () => {
-        browserPopupCleanupBound.delete(window);
-        if (browserPopupWindow === window) {
-          browserPopupWindow = null;
-        }
-      });
-    }
+    return { action: "deny" };
   });
   view.webContents.setZoomFactor(1);
   view.webContents.setVisualZoomLevelLimits(1, 1).catch(() => undefined);
@@ -11490,8 +11780,6 @@ function createMainWindow() {
     authPopupWindow = null;
     addressSuggestionsPopupWindow?.close();
     addressSuggestionsPopupWindow = null;
-    browserPopupWindow?.close();
-    browserPopupWindow = null;
     downloadsPopupWindow?.close();
     downloadsPopupWindow = null;
     historyPopupWindow?.close();
@@ -11708,6 +11996,9 @@ app.whenReady().then(async () => {
   handleTrustedIpc("runtime:getConfig", ["main", "auth-popup"], () =>
     getRuntimeConfig(),
   );
+  handleTrustedIpc("runtime:getProfile", ["main", "auth-popup"], () =>
+    getRuntimeUserProfile(),
+  );
   handleTrustedIpc(
     "runtime:getConfigDocument",
     ["main", "auth-popup"],
@@ -11724,6 +12015,12 @@ app.whenReady().then(async () => {
       await emitRuntimeConfig(config);
       return config;
     },
+  );
+  handleTrustedIpc(
+    "runtime:setProfile",
+    ["main", "auth-popup"],
+    async (_event, payload: RuntimeUserProfileUpdatePayload) =>
+      setRuntimeUserProfile(payload ?? {}),
   );
   handleTrustedIpc(
     "runtime:setConfigDocument",
@@ -11971,6 +12268,17 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, payload: DemoTaskProposalRequestPayload) =>
       enqueueRemoteDemoTaskProposal(payload),
+  );
+  handleTrustedIpc(
+    "workspace:setProactiveTaskProposalPreference",
+    ["main"],
+    async (_event, payload: ProactiveTaskProposalPreferenceUpdatePayload) =>
+      setProactiveTaskProposalPreference(payload),
+  );
+  handleTrustedIpc(
+    "workspace:getProactiveTaskProposalPreference",
+    ["main"],
+    async () => getProactiveTaskProposalPreference(),
   );
   handleTrustedIpc(
     "workspace:listRuntimeStates",
@@ -12545,7 +12853,11 @@ app.whenReady().then(async () => {
   });
   emitRuntimeState();
   void startEmbeddedRuntime();
-  void syncPersistedAuthSessionOnStartup();
+  startupAuthSyncPromise = syncPersistedAuthSessionOnStartup()
+    .catch(() => undefined)
+    .finally(() => {
+      startupAuthSyncPromise = null;
+    });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

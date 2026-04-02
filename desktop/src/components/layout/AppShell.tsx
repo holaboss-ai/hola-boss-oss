@@ -68,8 +68,8 @@ const THEMES = [
   "amber-minimal-light",
   "cosmic-night-dark",
   "cosmic-night-light",
-  "claude-dark",
-  "claude-light",
+  "sepia-dark",
+  "sepia-light",
   "clean-slate-dark",
   "clean-slate-light",
   "bold-tech-dark",
@@ -521,6 +521,7 @@ function AppShellContent() {
     workspaceErrorMessage,
     onboardingModeActive,
   } = useWorkspaceDesktop();
+  const selectedWorkspaceExists = Boolean(selectedWorkspaceId && selectedWorkspace);
   const [theme, setTheme] = useState<AppTheme>(loadTheme);
   const [runtimeStatus, setRuntimeStatus] =
     useState<RuntimeStatusPayload | null>(null);
@@ -530,6 +531,10 @@ function AppShellContent() {
   const [settingsDialogSection, setSettingsDialogSection] =
     useState<UiSettingsPaneSection>("settings");
   const [publishOpen, setPublishOpen] = useState(false);
+  const [createWorkspacePanelOpen, setCreateWorkspacePanelOpen] =
+    useState(false);
+  const [createWorkspacePanelAnchorWorkspaceId, setCreateWorkspacePanelAnchorWorkspaceId] =
+    useState("");
   const [activeLeftRailItem, setActiveLeftRailItem] =
     useState<LeftRailItem>("space");
   const [agentView, setAgentView] = useState<AgentView>({ type: "chat" });
@@ -553,6 +558,22 @@ function AppShellContent() {
   const [isTriggeringTaskProposal, setIsTriggeringTaskProposal] =
     useState(false);
   const [taskProposalStatusMessage, setTaskProposalStatusMessage] =
+    useState("");
+  const [proactiveTaskProposalsEnabled, setProactiveTaskProposalsEnabled] =
+    useState(true);
+  const [
+    isLoadingProactiveTaskProposalsEnabled,
+    setIsLoadingProactiveTaskProposalsEnabled,
+  ] = useState(true);
+  const [
+    hasLoadedProactiveTaskProposalsPreference,
+    setHasLoadedProactiveTaskProposalsPreference,
+  ] = useState(false);
+  const [
+    isUpdatingProactiveTaskProposalsEnabled,
+    setIsUpdatingProactiveTaskProposalsEnabled,
+  ] = useState(false);
+  const [proactiveTaskProposalsError, setProactiveTaskProposalsError] =
     useState("");
   const [proposalAction, setProposalAction] = useState<{
     proposalId: string;
@@ -709,7 +730,7 @@ function AppShellContent() {
   );
 
   const refreshRuntimeOutputs = useCallback(async () => {
-    if (!selectedWorkspaceId || runtimeStatus?.status !== "running") {
+    if (!selectedWorkspaceId || !selectedWorkspaceExists || runtimeStatus?.status !== "running") {
       setRuntimeOutputEntries([]);
       return;
     }
@@ -725,16 +746,16 @@ function AppShellContent() {
     } catch {
       setRuntimeOutputEntries([]);
     }
-  }, [installedApps, runtimeStatus?.status, selectedWorkspaceId]);
+  }, [installedApps, runtimeStatus?.status, selectedWorkspaceExists, selectedWorkspaceId]);
 
   useEffect(() => {
-    if (!selectedWorkspaceId || runtimeStatus?.status !== "running") {
+    if (!selectedWorkspaceId || !selectedWorkspaceExists || runtimeStatus?.status !== "running") {
       setRuntimeOutputEntries([]);
       return;
     }
 
     void refreshRuntimeOutputs();
-  }, [refreshRuntimeOutputs, runtimeStatus?.status, selectedWorkspaceId]);
+  }, [refreshRuntimeOutputs, runtimeStatus?.status, selectedWorkspaceExists, selectedWorkspaceId]);
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.workspace.onSessionStreamEvent(
@@ -905,6 +926,33 @@ function AppShellContent() {
     void window.electronAPI.ui.openExternalUrl(url);
   }, []);
 
+  const handleOpenCreateWorkspacePanel = useCallback(() => {
+    setCreateWorkspacePanelAnchorWorkspaceId(selectedWorkspaceId || "");
+    setCreateWorkspacePanelOpen(true);
+  }, [selectedWorkspaceId]);
+
+  const handleCloseCreateWorkspacePanel = useCallback(() => {
+    setCreateWorkspacePanelOpen(false);
+    setCreateWorkspacePanelAnchorWorkspaceId("");
+  }, []);
+
+  useEffect(() => {
+    if (!createWorkspacePanelOpen) {
+      return;
+    }
+    if (!selectedWorkspaceId || !createWorkspacePanelAnchorWorkspaceId) {
+      return;
+    }
+    if (selectedWorkspaceId !== createWorkspacePanelAnchorWorkspaceId) {
+      setCreateWorkspacePanelOpen(false);
+      setCreateWorkspacePanelAnchorWorkspaceId("");
+    }
+  }, [
+    createWorkspacePanelAnchorWorkspaceId,
+    createWorkspacePanelOpen,
+    selectedWorkspaceId,
+  ]);
+
   useEffect(() => {
     localStorage.setItem(
       OPERATIONS_DRAWER_OPEN_STORAGE_KEY,
@@ -958,6 +1006,76 @@ function AppShellContent() {
     setOutputEntries((previous) => [nextEntry, ...previous].slice(0, 16));
     setSelectedOutputId(nextEntry.id);
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPreference = async () => {
+      setIsLoadingProactiveTaskProposalsEnabled(true);
+      try {
+        const preference =
+          await window.electronAPI.workspace.getProactiveTaskProposalPreference();
+        if (!cancelled) {
+          setProactiveTaskProposalsEnabled(preference.enabled !== false);
+          setProactiveTaskProposalsError("");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setProactiveTaskProposalsEnabled(false);
+          setProactiveTaskProposalsError(normalizeErrorMessage(error));
+        }
+      } finally {
+        if (!cancelled) {
+          setHasLoadedProactiveTaskProposalsPreference(true);
+          setIsLoadingProactiveTaskProposalsEnabled(false);
+        }
+      }
+    };
+
+    void loadPreference();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedWorkspaceId]);
+
+  async function handleProactiveTaskProposalsEnabledChange(enabled: boolean) {
+    setProactiveTaskProposalsError("");
+    setIsUpdatingProactiveTaskProposalsEnabled(true);
+    try {
+      const preference =
+        await window.electronAPI.workspace.setProactiveTaskProposalPreference({
+          enabled,
+        });
+      const nextEnabled = preference.enabled !== false;
+      setProactiveTaskProposalsEnabled(nextEnabled);
+      appendOutputEntry({
+        title: nextEnabled
+          ? "Proactive polling enabled"
+          : "Proactive polling paused",
+        detail: nextEnabled
+          ? "Automatic proactive proposal polling resumed."
+          : "Automatic proactive proposal polling paused. Manual proposal trigger remains available.",
+        tone: "info",
+        renderer: {
+          type: "internal",
+          surface: "event",
+        },
+      });
+    } catch (error) {
+      const message = normalizeErrorMessage(error);
+      setProactiveTaskProposalsError(message);
+      appendOutputEntry({
+        title: "Failed to update proactive polling setting",
+        detail: message,
+        tone: "error",
+        renderer: {
+          type: "internal",
+          surface: "event",
+        },
+      });
+    } finally {
+      setIsUpdatingProactiveTaskProposalsEnabled(false);
+    }
+  }
 
   async function refreshTaskProposals(options?: { logErrors?: boolean }) {
     if (!selectedWorkspaceId || !selectedWorkspace) {
@@ -1159,6 +1277,16 @@ function AppShellContent() {
       return;
     }
 
+    if (!hasLoadedProactiveTaskProposalsPreference) {
+      setIsLoadingTaskProposals(false);
+      return;
+    }
+
+    if (!proactiveTaskProposalsEnabled) {
+      setIsLoadingTaskProposals(false);
+      return;
+    }
+
     let cancelled = false;
 
     const load = async () => {
@@ -1191,7 +1319,12 @@ function AppShellContent() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [selectedWorkspace, selectedWorkspaceId]);
+  }, [
+    hasLoadedProactiveTaskProposalsPreference,
+    proactiveTaskProposalsEnabled,
+    selectedWorkspace,
+    selectedWorkspaceId,
+  ]);
 
   const handleDismissUpdate = () => {
     void window.electronAPI.appUpdate.dismiss(
@@ -1380,6 +1513,7 @@ function AppShellContent() {
                 isUtilityPaneResizing ||
                 workspaceSwitcherOpen ||
                 settingsDialogOpen ||
+                createWorkspacePanelOpen ||
                 publishOpen
               }
               layoutSyncKey={`${visibleSpacePaneIds.join("|")}:${filesPaneWidth}:${browserPaneWidth}:${showOperationsDrawer ? 1 : 0}`}
@@ -1391,9 +1525,13 @@ function AppShellContent() {
       browserPaneWidth,
       filesPaneWidth,
       flexSpacePaneId,
+      publishOpen,
       isUtilityPaneResizing,
+      createWorkspacePanelOpen,
+      settingsDialogOpen,
       showOperationsDrawer,
       visibleSpacePaneIds,
+      workspaceSwitcherOpen,
     ],
   );
 
@@ -1567,6 +1705,7 @@ function AppShellContent() {
               onWorkspaceSwitcherVisibilityChange={setWorkspaceSwitcherOpen}
               onOpenMarketplace={() => handleLeftRailSelect("marketplace")}
               isMarketplaceActive={activeLeftRailItem === "marketplace"}
+              onOpenWorkspaceCreatePanel={handleOpenCreateWorkspacePanel}
               onOpenSettings={() => {
                 setSettingsDialogSection("settings");
                 setSettingsDialogOpen(true);
@@ -1577,6 +1716,10 @@ function AppShellContent() {
               }}
               onOpenBilling={() => {
                 setSettingsDialogSection("billing");
+                setSettingsDialogOpen(true);
+              }}
+              onOpenModelProviders={() => {
+                setSettingsDialogSection("providers");
                 setSettingsDialogOpen(true);
               }}
               onOpenExternalUrl={handleOpenExternalUrl}
@@ -1789,6 +1932,7 @@ function AppShellContent() {
                   activeTab={activeOperationsTab}
                   onTabChange={setActiveOperationsTab}
                   proposals={taskProposals}
+                  proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
                   isLoadingProposals={isLoadingTaskProposals}
                   isTriggeringProposal={isTriggeringTaskProposal}
                   proposalStatusMessage={taskProposalStatusMessage}
@@ -1817,6 +1961,13 @@ function AppShellContent() {
         )}
       </div>
 
+      {createWorkspacePanelOpen ? (
+        <FirstWorkspacePane
+          variant="panel"
+          onClose={handleCloseCreateWorkspacePanel}
+        />
+      ) : null}
+
       <SettingsDialog
         open={settingsDialogOpen}
         activeSection={settingsDialogSection}
@@ -1825,6 +1976,15 @@ function AppShellContent() {
         theme={theme}
         themes={THEMES}
         onThemeChange={handleThemeChange}
+        proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
+        isUpdatingProactiveTaskProposalsEnabled={
+          isLoadingProactiveTaskProposalsEnabled ||
+          isUpdatingProactiveTaskProposalsEnabled
+        }
+        proactiveTaskProposalsError={proactiveTaskProposalsError}
+        onProactiveTaskProposalsEnabledChange={(enabled) =>
+          void handleProactiveTaskProposalsEnabledChange(enabled)
+        }
         onOpenExternalUrl={handleOpenExternalUrl}
       />
       {selectedWorkspaceId && (

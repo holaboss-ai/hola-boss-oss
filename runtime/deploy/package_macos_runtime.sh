@@ -42,6 +42,7 @@ OUTPUT_ROOT="$(resolve_output_root "${OUTPUT_ROOT}")"
 rm -rf "${OUTPUT_ROOT}"
 mkdir -p "${OUTPUT_ROOT}"
 cp -R "${STAGING_ROOT}/runtime-root" "${OUTPUT_ROOT}/runtime"
+"${SCRIPT_DIR}/prune_packaged_tree.sh" "${OUTPUT_ROOT}/runtime" "macos"
 
 NODE_RUNTIME_DIR="${OUTPUT_ROOT}/node-runtime"
 BIN_DIR="${OUTPUT_ROOT}/bin"
@@ -60,6 +61,7 @@ if [ "${SKIP_NODE_DEPS}" != "1" ] && [ "${#NODE_PACKAGES[@]}" -gt 0 ]; then
   require_cmd npm
   mkdir -p "${NODE_RUNTIME_DIR}"
   npm install --global --prefix "${NODE_RUNTIME_DIR}" "${NODE_PACKAGES[@]}"
+  "${SCRIPT_DIR}/prune_packaged_tree.sh" "${NODE_RUNTIME_DIR}" "macos"
 fi
 
 cat > "${BIN_DIR}/sandbox-runtime" <<'EOF'

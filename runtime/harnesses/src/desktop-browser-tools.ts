@@ -1,5 +1,6 @@
 export const DESKTOP_BROWSER_TOOL_IDS = [
   "browser_navigate",
+  "browser_open_tab",
   "browser_get_state",
   "browser_click",
   "browser_type",
@@ -34,6 +35,21 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
       required: ["url"],
       properties: {
         url: { type: "string", minLength: 1 },
+      },
+    },
+  },
+  {
+    id: "browser_open_tab",
+    description: "Open a URL in a new desktop browser tab.",
+    policy: "mutate",
+    session_scope: "main_only",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["url"],
+      properties: {
+        url: { type: "string", minLength: 1 },
+        background: { type: "boolean" },
       },
     },
   },

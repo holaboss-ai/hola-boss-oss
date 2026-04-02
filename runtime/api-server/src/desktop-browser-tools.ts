@@ -372,6 +372,19 @@ export class DesktopBrowserToolService implements DesktopBrowserToolServiceLike 
         });
         return { ok: true, navigation: result };
       }
+      case "browser_open_tab": {
+        const url = requiredString(args.url, "url");
+        const result = await this.#browserFetch(config, {
+          method: "POST",
+          path: "/tabs",
+          body: {
+            url,
+            background: optionalBoolean(args.background, false)
+          },
+          workspaceId: context.workspaceId
+        });
+        return { ok: true, tabs: result };
+      }
       case "browser_get_state": {
         const page = await this.#browserFetch(config, { method: "GET", path: "/page", workspaceId: context.workspaceId });
         const state = await this.#evaluate(config, interactiveElementsExpression(), context);

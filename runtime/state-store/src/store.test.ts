@@ -242,6 +242,35 @@ test("binding round trip upserts and reloads persisted session binding", () => {
   store.close();
 });
 
+test("runtime user profile round trip preserves manual value and auth fallback only fills when empty", () => {
+  const root = makeTempDir("hb-state-store-profile-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const fallback = store.applyRuntimeUserProfileAuthFallback({
+    name: "Jeffrey",
+  });
+  const updated = store.upsertRuntimeUserProfile({
+    name: "Jeff",
+    nameSource: "manual",
+  });
+  const preserved = store.applyRuntimeUserProfileAuthFallback({
+    name: "Ignored Auth Name",
+  });
+
+  assert.equal(fallback?.name, "Jeffrey");
+  assert.equal(fallback?.nameSource, "auth_fallback");
+  assert.equal(updated.name, "Jeff");
+  assert.equal(updated.nameSource, "manual");
+  assert.equal(preserved?.name, "Jeff");
+  assert.equal(preserved?.nameSource, "manual");
+  assert.deepEqual(store.getRuntimeUserProfile(), preserved);
+
+  store.close();
+});
+
 test("integration connections round trip create list and reload persisted records", () => {
   const root = makeTempDir("hb-state-store-integrations-");
   const store = new RuntimeStateStore({
@@ -805,6 +834,199 @@ test("output events support latest id, incremental listing, and tail mode", () =
   assert.equal(incremental[0].eventType, "output_delta");
   assert.deepEqual(incremental[0].payload, { delta: "hi" });
   assert.deepEqual(tail, []);
+  store.close();
+});
+
+test("turn results support upsert, lookup, count, and listing", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  store.upsertTurnResult({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    completedAt: "2026-01-01T00:00:05.000Z",
+    status: "completed",
+    stopReason: "ok",
+    assistantText: "done",
+    toolUsageSummary: {
+      total_calls: 1,
+      completed_calls: 1,
+      failed_calls: 0,
+      tool_names: ["read"],
+      tool_ids: []
+    },
+    permissionDenials: [],
+    promptSectionIds: ["runtime_core", "execution_policy"],
+    capabilityManifestFingerprint: "abc123",
+    requestSnapshotFingerprint: "snap-1",
+    promptCacheProfile: {
+      cacheable_section_ids: ["runtime_core"],
+      volatile_section_ids: ["execution_policy"],
+    },
+    compactedSummary: null,
+    compactionBoundaryId: null,
+    tokenUsage: { input_tokens: 10, output_tokens: 20 },
+  });
+  const updated = store.upsertTurnResult({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    completedAt: "2026-01-01T00:00:06.000Z",
+    status: "waiting_user",
+    stopReason: "waiting_user",
+    assistantText: "need confirmation",
+    toolUsageSummary: {
+      total_calls: 2,
+      completed_calls: 2,
+      failed_calls: 0,
+      tool_names: ["question", "read"],
+      tool_ids: []
+    },
+    permissionDenials: [{ tool_name: "deploy", tool_id: null, reason: "permission denied" }],
+    promptSectionIds: ["runtime_core", "session_policy"],
+    capabilityManifestFingerprint: "def456",
+    requestSnapshotFingerprint: "snap-2",
+    promptCacheProfile: {
+      cacheable_section_ids: ["runtime_core"],
+      volatile_section_ids: ["session_policy"],
+    },
+    compactedSummary: "summary",
+    compactionBoundaryId: "compaction:input-1",
+    tokenUsage: { input_tokens: 11, output_tokens: 21 },
+  });
+
+  assert.equal(updated.status, "waiting_user");
+  assert.equal(updated.stopReason, "waiting_user");
+  assert.equal(updated.assistantText, "need confirmation");
+  assert.deepEqual(updated.promptSectionIds, ["runtime_core", "session_policy"]);
+  assert.equal(updated.requestSnapshotFingerprint, "snap-2");
+  assert.deepEqual(updated.promptCacheProfile, {
+    cacheable_section_ids: ["runtime_core"],
+    volatile_section_ids: ["session_policy"],
+  });
+  assert.equal(updated.compactionBoundaryId, "compaction:input-1");
+  assert.deepEqual(updated.permissionDenials, [
+    { tool_name: "deploy", tool_id: null, reason: "permission denied" }
+  ]);
+  assert.deepEqual(store.getTurnResult({ inputId: "input-1" }), updated);
+  assert.equal(store.countTurnResults({ workspaceId: "workspace-1", sessionId: "session-main" }), 1);
+  assert.deepEqual(store.listTurnResults({ workspaceId: "workspace-1", sessionId: "session-main" }), [updated]);
+  store.close();
+});
+
+test("turn request snapshots and compaction boundaries round trip", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const snapshot = store.upsertTurnRequestSnapshot({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    snapshotKind: "harness_host_request",
+    fingerprint: "f".repeat(64),
+    payload: {
+      provider_id: "openai",
+      model_id: "gpt-5.4",
+      system_prompt: "You are concise.",
+    },
+  });
+  const boundary = store.upsertCompactionBoundary({
+    boundaryId: "compaction:input-1",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    previousBoundaryId: null,
+    summary: "Recent work summary.",
+    recentRuntimeContext: {
+      summary: "Recent work summary.",
+      last_stop_reason: "ok",
+    },
+    restorationContext: {
+      session_resume_context: {
+        recent_turns: [{ input_id: "input-1", status: "completed", summary: "Recent work summary." }],
+        recent_user_messages: ["Continue from here."],
+      },
+      restored_memory_paths: ["workspace/workspace-1/runtime/latest-turn.md"],
+    },
+    preservedTurnInputIds: ["input-1"],
+    requestSnapshotFingerprint: snapshot.fingerprint,
+  });
+
+  assert.deepEqual(store.getTurnRequestSnapshot({ inputId: "input-1" }), snapshot);
+  assert.deepEqual(store.listTurnRequestSnapshots({ workspaceId: "workspace-1", sessionId: "session-main" }), [snapshot]);
+  assert.deepEqual(store.getCompactionBoundary({ boundaryId: "compaction:input-1" }), boundary);
+  assert.deepEqual(store.listCompactionBoundaries({ workspaceId: "workspace-1", sessionId: "session-main" }), [boundary]);
+  store.close();
+});
+
+test("memory entries round trip and filter by workspace or scope", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const preference = store.upsertMemoryEntry({
+    memoryId: "user-preference:response-style",
+    workspaceId: null,
+    sessionId: "session-main",
+    scope: "user",
+    memoryType: "preference",
+    subjectKey: "response-style",
+    path: "preference/response-style.md",
+    title: "User response style",
+    summary: "User prefers concise responses.",
+    tags: ["concise", "response-style"],
+    verificationPolicy: "none",
+    stalenessPolicy: "stable",
+    staleAfterSeconds: null,
+    sourceTurnInputId: "input-1",
+    sourceMessageId: "user-1",
+    sourceType: "session_message",
+    observedAt: "2026-04-02T12:00:00.000Z",
+    lastVerifiedAt: "2026-04-02T12:00:00.000Z",
+    confidence: 0.99,
+    fingerprint: "p".repeat(64),
+  });
+  const blocker = store.upsertMemoryEntry({
+    memoryId: "workspace-blocker:workspace-1:deploy",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    scope: "workspace",
+    memoryType: "blocker",
+    subjectKey: "permission:deploy",
+    path: "workspace/workspace-1/knowledge/blockers/deploy.md",
+    title: "Deploy permission blocker",
+    summary: "Deploy calls may be denied by policy.",
+    tags: ["deploy", "permission", "blocker"],
+    verificationPolicy: "check_before_use",
+    stalenessPolicy: "workspace_sensitive",
+    staleAfterSeconds: 14 * 24 * 60 * 60,
+    sourceTurnInputId: "input-2",
+    sourceMessageId: null,
+    sourceType: "permission_denial",
+    observedAt: "2026-04-02T12:05:00.000Z",
+    lastVerifiedAt: "2026-04-02T12:05:00.000Z",
+    confidence: 0.92,
+    fingerprint: "b".repeat(64),
+  });
+
+  assert.deepEqual(store.getMemoryEntry({ memoryId: "user-preference:response-style" }), preference);
+  assert.deepEqual(store.listMemoryEntries({ scope: "user", status: "active" }), [preference]);
+  assert.deepEqual(store.listMemoryEntries({ workspaceId: "workspace-1", status: "active" }), [blocker]);
+  assert.deepEqual(
+    store.listMemoryEntries({ status: "active" }).map((entry) => entry.memoryId),
+    [preference.memoryId, blocker.memoryId]
+  );
   store.close();
 });
 

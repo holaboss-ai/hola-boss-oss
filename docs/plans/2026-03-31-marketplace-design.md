@@ -43,7 +43,7 @@ interface KitCardProps {
 - Install count (10px dim)
 - Coming-soon badge + reduced opacity when `is_coming_soon`
 
-**Styling:** Follow existing desktop patterns — `theme-subtle-surface`, `border-panel-border/40`, `rounded-[18px]`, hover: `bg-[var(--theme-hover-bg)]`. No gradient backgrounds, no hover shadows (per CLAUDE.md rules).
+**Styling:** Follow existing desktop patterns — `theme-subtle-surface`, `border-panel-border/40`, `rounded-[18px]`, hover: `bg-[var(--theme-hover-bg)]`. No gradient backgrounds and no hover shadows.
 
 ### 2. `KitDetail` — `desktop/src/components/marketplace/KitDetail.tsx`
 

@@ -1,11 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { RuntimeStateStore, SessionInputRecord, WorkspaceRecord } from "@holaboss/runtime-state-store";
+import type { RuntimeStateStore, SessionInputRecord, TurnResultRecord, WorkspaceRecord } from "@holaboss/runtime-state-store";
 
 import { buildRunFailedEvent, executeRunnerRequest, type RunnerEvent } from "./runner-worker.js";
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
 import { normalizeHarnessId, resolveRuntimeHarnessAdapter } from "./harness-registry.js";
+import type { MemoryServiceLike } from "./memory.js";
+import { writeTurnMemory } from "./turn-memory-writeback.js";
 
 const ONBOARD_PROMPT_HEADER = "[Holaboss Workspace Onboarding v1]";
 const RUNTIME_EXEC_CONTEXT_KEY = "_sandbox_runtime_exec_v1";
@@ -172,6 +174,150 @@ function payloadForEvent(event: RunnerEvent): Record<string, unknown> {
   return isRecord(event.payload) ? event.payload : {};
 }
 
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean);
+}
+
+function jsonRecord(value: unknown): Record<string, unknown> | null {
+  return isRecord(value) ? value : null;
+}
+
+function eventTimestampOrNow(event: RunnerEvent): string {
+  return createdAtForEvent(event) ?? new Date().toISOString();
+}
+
+function tokenUsageFromPayload(payload: Record<string, unknown>): Record<string, unknown> | null {
+  const direct = jsonRecord(payload.token_usage);
+  if (direct) {
+    return direct;
+  }
+  return jsonRecord(payload.usage);
+}
+
+function stopReasonForTerminalEvent(params: {
+  eventType: string;
+  payload: Record<string, unknown>;
+  terminalStatus: "IDLE" | "WAITING_USER" | "ERROR";
+}): string | null {
+  if (params.eventType === "run_completed") {
+    const status = typeof params.payload.status === "string" ? params.payload.status.trim().toLowerCase() : "";
+    if (status) {
+      return status;
+    }
+    return params.terminalStatus === "WAITING_USER" ? "waiting_user" : "completed";
+  }
+  if (params.eventType === "run_failed") {
+    if (typeof params.payload.type === "string" && params.payload.type.trim()) {
+      return params.payload.type.trim();
+    }
+    if (typeof params.payload.message === "string" && params.payload.message.trim()) {
+      return params.payload.message.trim();
+    }
+    return "run_failed";
+  }
+  return null;
+}
+
+function permissionDenialFromEventPayload(payload: Record<string, unknown>): Record<string, unknown> | null {
+  if (payload.error !== true) {
+    return null;
+  }
+
+  const candidates = [
+    typeof payload.message === "string" ? payload.message : null,
+    typeof payload.result === "string" ? payload.result : null,
+    typeof payload.error_message === "string" ? payload.error_message : null,
+  ].filter((value): value is string => Boolean(value && value.trim()));
+  const denialText = candidates.find((value) => /permission|denied|not allowed/i.test(value));
+  if (!denialText) {
+    return null;
+  }
+
+  return {
+    tool_name: typeof payload.tool_name === "string" ? payload.tool_name : "unknown",
+    tool_id: typeof payload.tool_id === "string" ? payload.tool_id : null,
+    reason: denialText,
+  };
+}
+
+function summarizeToolCalls(
+  toolCallsById: Map<string, { toolName: string; toolId: string | null; completed: boolean; error: boolean }>
+): Record<string, unknown> {
+  const calls = [...toolCallsById.values()];
+  return {
+    total_calls: calls.length,
+    completed_calls: calls.filter((call) => call.completed && !call.error).length,
+    failed_calls: calls.filter((call) => call.error).length,
+    tool_names: [...new Set(calls.map((call) => call.toolName).filter(Boolean))].sort((left, right) =>
+      left.localeCompare(right)
+    ),
+    tool_ids: [...new Set(calls.map((call) => call.toolId).filter((value): value is string => Boolean(value)))].sort(
+      (left, right) => left.localeCompare(right)
+    ),
+  };
+}
+
+function persistTurnResult(params: {
+  store: RuntimeStateStore;
+  record: SessionInputRecord;
+  startedAt: string;
+  completedAt: string | null;
+  terminalStatus: "IDLE" | "WAITING_USER" | "ERROR";
+  stopReason: string | null;
+  assistantText: string;
+  toolUsageSummary: Record<string, unknown>;
+  permissionDenials: Array<Record<string, unknown>>;
+  promptSectionIds: string[];
+  capabilityManifestFingerprint: string | null;
+  requestSnapshotFingerprint: string | null;
+  promptCacheProfile: Record<string, unknown> | null;
+  tokenUsage: Record<string, unknown> | null;
+}): TurnResultRecord {
+  return params.store.upsertTurnResult({
+    workspaceId: params.record.workspaceId,
+    sessionId: params.record.sessionId,
+    inputId: params.record.inputId,
+    startedAt: params.startedAt,
+    completedAt: params.completedAt,
+    status:
+      params.terminalStatus === "ERROR"
+        ? "failed"
+        : params.terminalStatus === "WAITING_USER"
+        ? "waiting_user"
+        : "completed",
+    stopReason: params.stopReason,
+    assistantText: params.assistantText,
+    toolUsageSummary: params.toolUsageSummary,
+    permissionDenials: params.permissionDenials,
+    promptSectionIds: params.promptSectionIds,
+    capabilityManifestFingerprint: params.capabilityManifestFingerprint,
+    requestSnapshotFingerprint: params.requestSnapshotFingerprint,
+    promptCacheProfile: params.promptCacheProfile,
+    compactedSummary: null,
+    tokenUsage: params.tokenUsage,
+  });
+}
+
+async function writeTurnMemoryIfAvailable(params: {
+  store: RuntimeStateStore;
+  memoryService?: MemoryServiceLike | null;
+  turnResult: TurnResultRecord | null;
+}): Promise<void> {
+  if (!params.memoryService || !params.turnResult) {
+    return;
+  }
+  await writeTurnMemory({
+    store: params.store,
+    memoryService: params.memoryService,
+    turnResult: params.turnResult,
+  });
+}
+
 function terminalStatusForCompletedPayload(
   payload: Record<string, unknown>,
   supportsWaitingUser: boolean
@@ -216,10 +362,12 @@ export async function processClaimedInput(params: {
   store: RuntimeStateStore;
   record: SessionInputRecord;
   claimedBy?: string;
+  memoryService?: MemoryServiceLike | null;
   executeRunnerRequestFn?: typeof executeRunnerRequest;
   resolveProductRuntimeConfigFn?: typeof resolveProductRuntimeConfig;
 }): Promise<void> {
   const { store, record } = params;
+  const turnStartedAt = new Date().toISOString();
   const workspace = store.getWorkspace(record.workspaceId);
   if (!workspace) {
     store.updateInput(record.inputId, { status: "FAILED" });
@@ -232,6 +380,22 @@ export async function processClaimedInput(params: {
       leaseUntil: null,
       heartbeatAt: null,
       lastError: { message: "workspace not found" }
+    });
+    persistTurnResult({
+      store,
+      record,
+      startedAt: turnStartedAt,
+      completedAt: new Date().toISOString(),
+      terminalStatus: "ERROR",
+      stopReason: "workspace_not_found",
+      assistantText: "",
+      toolUsageSummary: summarizeToolCalls(new Map()),
+      permissionDenials: [],
+      promptSectionIds: [],
+      capabilityManifestFingerprint: null,
+      requestSnapshotFingerprint: null,
+      promptCacheProfile: null,
+      tokenUsage: null,
     });
     return;
   }
@@ -314,6 +478,15 @@ export async function processClaimedInput(params: {
   let terminalStatus: "IDLE" | "WAITING_USER" | "ERROR" = "IDLE";
   let lastError: Record<string, unknown> | null = null;
   let lastSequence = 0;
+  let completedAt: string | null = null;
+  let stopReason: string | null = null;
+  let tokenUsage: Record<string, unknown> | null = null;
+  let promptSectionIds: string[] = [];
+  let capabilityManifestFingerprint: string | null = null;
+  let requestSnapshotFingerprint: string | null = null;
+  let promptCacheProfile: Record<string, unknown> | null = null;
+  const toolCallsById = new Map<string, { toolName: string; toolId: string | null; completed: boolean; error: boolean }>();
+  const permissionDenials: Array<Record<string, unknown>> = [];
 
   try {
     const executeRunner = params.executeRunnerRequestFn ?? executeRunnerRequest;
@@ -333,6 +506,7 @@ export async function processClaimedInput(params: {
         const sequence = typeof event.sequence === "number" ? event.sequence : 0;
         lastSequence = Math.max(lastSequence, sequence);
         const eventPayload = payloadForEvent(event);
+        const eventTimestamp = eventTimestampOrNow(event);
         store.appendOutputEvent({
           workspaceId: record.workspaceId,
           sessionId: record.sessionId,
@@ -340,7 +514,7 @@ export async function processClaimedInput(params: {
           sequence,
           eventType: typeof event.event_type === "string" ? event.event_type : "unknown",
           payload: eventPayload,
-          createdAt: createdAtForEvent(event)
+          createdAt: eventTimestamp
         });
         maybePersistHarnessSessionId({
           store,
@@ -353,12 +527,67 @@ export async function processClaimedInput(params: {
         if (event.event_type === "output_delta" && typeof eventPayload.delta === "string") {
           assistantParts.push(eventPayload.delta);
         }
+        if (event.event_type === "run_started") {
+          promptSectionIds = stringList(eventPayload.prompt_section_ids);
+          capabilityManifestFingerprint =
+            typeof eventPayload.capability_manifest_fingerprint === "string" &&
+            eventPayload.capability_manifest_fingerprint.trim()
+              ? eventPayload.capability_manifest_fingerprint.trim()
+              : capabilityManifestFingerprint;
+          requestSnapshotFingerprint =
+            typeof eventPayload.request_snapshot_fingerprint === "string" &&
+            eventPayload.request_snapshot_fingerprint.trim()
+              ? eventPayload.request_snapshot_fingerprint.trim()
+              : requestSnapshotFingerprint;
+          promptCacheProfile = jsonRecord(eventPayload.prompt_cache_profile) ?? promptCacheProfile;
+        }
+        if (event.event_type === "tool_call") {
+          const callId =
+            typeof eventPayload.call_id === "string" && eventPayload.call_id.trim()
+              ? eventPayload.call_id.trim()
+              : `sequence:${sequence}`;
+          const existingCall = toolCallsById.get(callId);
+          const toolName =
+            typeof eventPayload.tool_name === "string" && eventPayload.tool_name.trim()
+              ? eventPayload.tool_name.trim()
+              : existingCall?.toolName ?? "unknown";
+          const toolId =
+            typeof eventPayload.tool_id === "string" && eventPayload.tool_id.trim()
+              ? eventPayload.tool_id.trim()
+              : existingCall?.toolId ?? null;
+          const completed = eventPayload.phase === "completed" || existingCall?.completed === true;
+          const errored = eventPayload.error === true || existingCall?.error === true;
+          toolCallsById.set(callId, {
+            toolName,
+            toolId,
+            completed,
+            error: errored,
+          });
+          const denial = permissionDenialFromEventPayload(eventPayload);
+          if (denial) {
+            permissionDenials.push(denial);
+          }
+        }
         if (event.event_type === "run_completed") {
           terminalStatus = terminalStatusForCompletedPayload(eventPayload, harnessSupportsWaitingUser);
+          completedAt = eventTimestamp;
+          stopReason = stopReasonForTerminalEvent({
+            eventType: "run_completed",
+            payload: eventPayload,
+            terminalStatus,
+          });
+          tokenUsage = tokenUsageFromPayload(eventPayload) ?? tokenUsage;
         }
         if (event.event_type === "run_failed") {
           terminalStatus = "ERROR";
           lastError = eventPayload;
+          completedAt = eventTimestamp;
+          stopReason = stopReasonForTerminalEvent({
+            eventType: "run_failed",
+            payload: eventPayload,
+            terminalStatus,
+          });
+          tokenUsage = tokenUsageFromPayload(eventPayload) ?? tokenUsage;
         }
       }
     });
@@ -387,6 +616,12 @@ export async function processClaimedInput(params: {
       });
       terminalStatus = "ERROR";
       lastError = failurePayload;
+      completedAt = new Date().toISOString();
+      stopReason = stopReasonForTerminalEvent({
+        eventType: "run_failed",
+        payload: failurePayload,
+        terminalStatus,
+      });
     }
 
     store.updateInput(record.inputId, {
@@ -414,6 +649,27 @@ export async function processClaimedInput(params: {
         messageId: `assistant-${record.inputId}`
       });
     }
+    const turnResult = persistTurnResult({
+      store,
+      record,
+      startedAt: turnStartedAt,
+      completedAt: completedAt ?? new Date().toISOString(),
+      terminalStatus,
+      stopReason,
+      assistantText,
+      toolUsageSummary: summarizeToolCalls(toolCallsById),
+      permissionDenials,
+      promptSectionIds,
+      capabilityManifestFingerprint,
+      requestSnapshotFingerprint,
+      promptCacheProfile,
+      tokenUsage,
+    });
+    await writeTurnMemoryIfAvailable({
+      store,
+      memoryService: params.memoryService,
+      turnResult,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     store.updateInput(record.inputId, {
@@ -437,6 +693,27 @@ export async function processClaimedInput(params: {
       leaseUntil: null,
       heartbeatAt: null,
       lastError: { message }
+    });
+    const turnResult = persistTurnResult({
+      store,
+      record,
+      startedAt: turnStartedAt,
+      completedAt: new Date().toISOString(),
+      terminalStatus: "ERROR",
+      stopReason: "executor_error",
+      assistantText: "",
+      toolUsageSummary: summarizeToolCalls(new Map()),
+      permissionDenials: [],
+      promptSectionIds: [],
+      capabilityManifestFingerprint: null,
+      requestSnapshotFingerprint: null,
+      promptCacheProfile: null,
+      tokenUsage: null,
+    });
+    await writeTurnMemoryIfAvailable({
+      store,
+      memoryService: params.memoryService,
+      turnResult,
     });
   }
 }

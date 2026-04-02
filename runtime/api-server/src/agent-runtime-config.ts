@@ -8,8 +8,16 @@ import {
 } from "./agent-capability-registry.js";
 import {
   composeBaseAgentPrompt,
+  type AgentCurrentUserContext,
+  type AgentRecalledMemoryContext,
   type AgentRecentRuntimeContext,
+  type AgentSessionResumeContext,
 } from "./agent-runtime-prompt.js";
+import type {
+  AgentPromptCacheProfile,
+  AgentPromptChannelContents,
+  AgentPromptSection,
+} from "./agent-prompt-sections.js";
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
 
 export type AgentRuntimeConfigGeneralMemberPayload = {
@@ -33,6 +41,9 @@ export interface AgentRuntimeConfigCliRequest {
   runtime_exec_sandbox_id?: string | null;
   runtime_exec_run_id?: string | null;
   recent_runtime_context?: AgentRecentRuntimeContext | null;
+  session_resume_context?: AgentSessionResumeContext | null;
+  recalled_memory_context?: AgentRecalledMemoryContext | null;
+  current_user_context?: AgentCurrentUserContext | null;
   selected_model?: string | null;
   default_provider_id: string;
   session_mode: string;
@@ -51,7 +62,11 @@ export interface AgentRuntimeConfigCliResponse {
   model_id: string;
   mode: string;
   system_prompt: string;
+  context_messages?: string[];
+  prompt_channel_contents?: AgentPromptChannelContents;
+  prompt_sections?: AgentPromptSection[];
   prompt_layers?: HarnessPromptLayerPayload[];
+  prompt_cache_profile?: AgentPromptCacheProfile;
   model_client: {
     model_proxy_provider: string;
     api_key: string;
@@ -925,6 +940,9 @@ export function projectAgentRuntimeConfig(
     sessionMode: request.session_mode,
     harnessId: request.harness_id ?? null,
     recentRuntimeContext: request.recent_runtime_context ?? null,
+    sessionResumeContext: request.session_resume_context ?? null,
+    recalledMemoryContext: request.recalled_memory_context ?? null,
+    currentUserContext: request.current_user_context ?? null,
     capabilityManifest,
   });
 
@@ -940,7 +958,11 @@ export function projectAgentRuntimeConfig(
     model_id: target.modelId,
     mode: request.session_mode,
     system_prompt: promptComposition.systemPrompt,
+    context_messages: promptComposition.contextMessages,
+    prompt_channel_contents: promptComposition.promptChannelContents,
+    prompt_sections: promptComposition.promptSections,
     prompt_layers: promptComposition.promptLayers,
+    prompt_cache_profile: promptComposition.promptCacheProfile,
     model_client: resolveModelClientConfig(request, target),
     tools,
     workspace_tool_ids: workspaceToolIds,

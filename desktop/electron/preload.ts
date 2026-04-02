@@ -300,6 +300,18 @@ interface DemoTaskProposalEnqueueResponsePayload {
   pending_count: number;
 }
 
+interface ProactiveTaskProposalPreferenceUpdatePayload {
+  enabled: boolean;
+  holaboss_user_id?: string;
+  sandbox_id?: string;
+}
+
+interface ProactiveTaskProposalPreferencePayload {
+  enabled: boolean;
+  holaboss_user_id: string;
+  sandbox_id: string;
+}
+
 interface TaskProposalStateUpdatePayload {
   proposal: TaskProposalRecordPayload;
 }
@@ -753,9 +765,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getStatus: () => ipcRenderer.invoke("runtime:getStatus") as Promise<RuntimeStatusPayload>,
     restart: () => ipcRenderer.invoke("runtime:restart") as Promise<RuntimeStatusPayload>,
     getConfig: () => ipcRenderer.invoke("runtime:getConfig") as Promise<RuntimeConfigPayload>,
+    getProfile: () => ipcRenderer.invoke("runtime:getProfile") as Promise<RuntimeUserProfilePayload>,
     getConfigDocument: () => ipcRenderer.invoke("runtime:getConfigDocument") as Promise<string>,
     setConfig: (payload: RuntimeConfigUpdatePayload) =>
       ipcRenderer.invoke("runtime:setConfig", payload) as Promise<RuntimeConfigPayload>,
+    setProfile: (payload: RuntimeUserProfileUpdatePayload) =>
+      ipcRenderer.invoke("runtime:setProfile", payload) as Promise<RuntimeUserProfilePayload>,
     setConfigDocument: (rawDocument: string) =>
       ipcRenderer.invoke("runtime:setConfigDocument", rawDocument) as Promise<RuntimeConfigPayload>,
     exchangeBinding: (sandboxId: string) =>
@@ -864,6 +879,17 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:acceptTaskProposal", payload) as Promise<TaskProposalAcceptResponsePayload>,
     getProactiveStatus: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:getProactiveStatus", workspaceId) as Promise<ProactiveAgentStatusPayload>,
+    getProactiveTaskProposalPreference: () =>
+      ipcRenderer.invoke(
+        "workspace:getProactiveTaskProposalPreference",
+      ) as Promise<ProactiveTaskProposalPreferencePayload>,
+    setProactiveTaskProposalPreference: (
+      payload: ProactiveTaskProposalPreferenceUpdatePayload,
+    ) =>
+      ipcRenderer.invoke(
+        "workspace:setProactiveTaskProposalPreference",
+        payload,
+      ) as Promise<ProactiveTaskProposalPreferencePayload>,
     updateTaskProposalState: (proposalId: string, state: string) =>
       ipcRenderer.invoke("workspace:updateTaskProposalState", proposalId, state) as Promise<TaskProposalStateUpdatePayload>,
     enqueueRemoteDemoTaskProposal: (payload: DemoTaskProposalRequestPayload) =>

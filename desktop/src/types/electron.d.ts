@@ -161,6 +161,22 @@ declare global {
     controlPlaneBaseUrl?: string | null;
   }
 
+  type RuntimeUserProfileNameSource = "manual" | "agent" | "authFallback";
+
+  interface RuntimeUserProfilePayload {
+    profileId: string;
+    name: string | null;
+    nameSource: RuntimeUserProfileNameSource | null;
+    createdAt: string | null;
+    updatedAt: string | null;
+  }
+
+  interface RuntimeUserProfileUpdatePayload {
+    profileId?: string | null;
+    name?: string | null;
+    nameSource?: RuntimeUserProfileNameSource | null;
+  }
+
   interface AppUpdateStatusPayload {
     supported: boolean;
     checking: boolean;
@@ -301,6 +317,18 @@ declare global {
   interface DemoTaskProposalEnqueueResponsePayload {
     accepted: boolean;
     pending_count: number;
+  }
+
+  interface ProactiveTaskProposalPreferenceUpdatePayload {
+    enabled: boolean;
+    holaboss_user_id?: string;
+    sandbox_id?: string;
+  }
+
+  interface ProactiveTaskProposalPreferencePayload {
+    enabled: boolean;
+    holaboss_user_id: string;
+    sandbox_id: string;
   }
 
   interface TaskProposalStateUpdatePayload {
@@ -867,8 +895,10 @@ declare global {
       getStatus: () => Promise<RuntimeStatusPayload>;
       restart: () => Promise<RuntimeStatusPayload>;
       getConfig: () => Promise<RuntimeConfigPayload>;
+      getProfile: () => Promise<RuntimeUserProfilePayload>;
       getConfigDocument: () => Promise<string>;
       setConfig: (payload: RuntimeConfigUpdatePayload) => Promise<RuntimeConfigPayload>;
+      setProfile: (payload: RuntimeUserProfileUpdatePayload) => Promise<RuntimeUserProfilePayload>;
       setConfigDocument: (rawDocument: string) => Promise<RuntimeConfigPayload>;
       exchangeBinding: (sandboxId: string) => Promise<RuntimeConfigPayload>;
       onConfigChange: (listener: (config: RuntimeConfigPayload) => void) => () => void;
@@ -926,6 +956,10 @@ declare global {
       listTaskProposals: (workspaceId: string) => Promise<TaskProposalListResponsePayload>;
       acceptTaskProposal: (payload: TaskProposalAcceptPayload) => Promise<TaskProposalAcceptResponsePayload>;
       getProactiveStatus: (workspaceId: string) => Promise<ProactiveAgentStatusPayload>;
+      getProactiveTaskProposalPreference: () => Promise<ProactiveTaskProposalPreferencePayload>;
+      setProactiveTaskProposalPreference: (
+        payload: ProactiveTaskProposalPreferenceUpdatePayload
+      ) => Promise<ProactiveTaskProposalPreferencePayload>;
       updateTaskProposalState: (proposalId: string, state: string) => Promise<TaskProposalStateUpdatePayload>;
       enqueueRemoteDemoTaskProposal: (
         payload: DemoTaskProposalRequestPayload

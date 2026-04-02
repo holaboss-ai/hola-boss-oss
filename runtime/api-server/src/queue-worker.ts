@@ -3,6 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { type RuntimeStateStore, type SessionInputRecord } from "@holaboss/runtime-state-store";
 
 import { processClaimedInput } from "./claimed-input-executor.js";
+import type { MemoryServiceLike } from "./memory.js";
 import { buildRunFailedEvent } from "./runner-worker.js";
 
 const DEFAULT_CLAIMED_BY = "sandbox-agent-ts-worker";
@@ -23,6 +24,7 @@ export interface RuntimeQueueWorkerOptions {
     info: (message: string, ...args: unknown[]) => void;
     error: (message: string, ...args: unknown[]) => void;
   };
+  memoryService?: MemoryServiceLike | null;
   executeClaimedInput?: (record: SessionInputRecord) => Promise<void>;
   claimedBy?: string;
   leaseSeconds?: number;
@@ -61,7 +63,8 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
         processClaimedInput({
           store: this.#store,
           record,
-          claimedBy: this.#claimedBy
+          claimedBy: this.#claimedBy,
+          memoryService: options.memoryService ?? null,
         }));
     this.#leaseSeconds = options.leaseSeconds ?? DEFAULT_LEASE_SECONDS;
     this.#pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;

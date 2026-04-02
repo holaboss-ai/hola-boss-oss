@@ -70,6 +70,16 @@ test("filesystem memory service preserves search/get/upsert/status/sync payload 
   });
   const status = await service.status({ workspace_id: "workspace-1" });
   const synced = await service.sync({ workspace_id: "workspace-1", reason: "manual", force: true });
+  const rootIndex = await service.upsert({
+    workspace_id: "workspace-1",
+    path: "MEMORY.md",
+    content: "# Memory Index\n",
+    append: false
+  });
+  const fetchedRootIndex = await service.get({
+    workspace_id: "workspace-1",
+    path: "MEMORY.md"
+  });
 
   assert.equal(Array.isArray(searched.results), true);
   assert.equal((searched.results as Array<Record<string, unknown>>).length >= 1, true);
@@ -85,6 +95,14 @@ test("filesystem memory service preserves search/get/upsert/status/sync payload 
   assert.deepEqual(upserted, {
     path: "workspace/workspace-1/new.md",
     text: "hello"
+  });
+  assert.deepEqual(rootIndex, {
+    path: "MEMORY.md",
+    text: "# Memory Index\n"
+  });
+  assert.deepEqual(fetchedRootIndex, {
+    path: "MEMORY.md",
+    text: "# Memory Index\n"
   });
   assert.equal(status.backend, "builtin");
   assert.deepEqual(synced, {

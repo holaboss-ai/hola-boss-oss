@@ -50,15 +50,20 @@ function toSession(user: AuthUser | null): AuthSession | null {
   return user ? { user } : null;
 }
 
+let cachedAuthUser: AuthUser | null | undefined = undefined;
+
 export function useDesktopAuthSession(): DesktopAuthSessionState {
-  const [data, setData] = useState<AuthSession | null>(null);
-  const [isPending, setIsPending] = useState(true);
+  const [data, setData] = useState<AuthSession | null>(() =>
+    cachedAuthUser === undefined ? null : toSession(cachedAuthUser)
+  );
+  const [isPending, setIsPending] = useState(cachedAuthUser === undefined);
   const [error, setError] = useState<Error | null>(null);
 
   const refetch = useCallback(async () => {
     setIsPending(true);
     try {
       const user = await window.electronAPI.auth.getUser();
+      cachedAuthUser = user;
       setData(toSession(user));
       setError(null);
     } catch (nextError) {
@@ -76,6 +81,7 @@ export function useDesktopAuthSession(): DesktopAuthSessionState {
   const signOut = useCallback(async () => {
     setError(null);
     await window.electronAPI.auth.signOut();
+    cachedAuthUser = null;
     await refetch();
   }, [refetch]);
 
@@ -83,12 +89,14 @@ export function useDesktopAuthSession(): DesktopAuthSessionState {
     void refetch();
 
     const unsubscribeAuthenticated = window.electronAPI.auth.onAuthenticated((user) => {
+      cachedAuthUser = user;
       setData(toSession(user));
       setError(null);
       setIsPending(false);
     });
 
     const unsubscribeUserUpdated = window.electronAPI.auth.onUserUpdated((user) => {
+      cachedAuthUser = user;
       setData(toSession(user));
       setError(null);
       setIsPending(false);

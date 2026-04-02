@@ -10,6 +10,8 @@ export type KnownRunnerEventType =
   | "thinking_delta"
   | "output_delta"
   | "tool_call"
+  | "auto_compaction_start"
+  | "auto_compaction_end"
   | "run_completed"
   | "run_failed";
 

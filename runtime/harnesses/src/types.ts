@@ -39,12 +39,31 @@ export interface HarnessModelClientPayload {
 
 export type HarnessPromptLayerApplyAt = "runtime_config" | "harness_adapter";
 
+export type HarnessPromptSectionChannel =
+  | "system_prompt"
+  | "context_message"
+  | "resume_context"
+  | "attachment";
+
+export type HarnessPromptSectionPrecedence =
+  | "base_runtime"
+  | "session_policy"
+  | "capability_policy"
+  | "runtime_context"
+  | "workspace_policy"
+  | "harness_addendum"
+  | "agent_override"
+  | "emergency_override";
+
 export type HarnessPromptLayerId =
   | "runtime_core"
   | "execution_policy"
   | "session_policy"
   | "capability_policy"
+  | "current_user_context"
+  | "memory_recall"
   | "workspace_policy"
+  | "resume_context"
   | "harness_quirks"
   | "recent_runtime_context";
 
@@ -54,12 +73,31 @@ export interface HarnessPromptLayerPayload {
   content: string;
 }
 
+export interface HarnessPromptCacheProfilePayload {
+  cacheable_section_ids: HarnessPromptLayerId[];
+  volatile_section_ids: HarnessPromptLayerId[];
+  context_message_ids: HarnessPromptLayerId[];
+  resume_context_ids: HarnessPromptLayerId[];
+  attachment_ids: HarnessPromptLayerId[];
+  compatibility_context_ids: HarnessPromptLayerId[];
+  delta_section_ids: HarnessPromptLayerId[];
+  channel_section_ids: Partial<Record<HarnessPromptSectionChannel, HarnessPromptLayerId[]>>;
+  precedence_order: HarnessPromptSectionPrecedence[];
+  cacheable_system_prompt: string;
+  volatile_system_prompt: string;
+  cacheable_fingerprint: string;
+  volatile_fingerprint: string | null;
+  full_system_prompt_fingerprint: string;
+}
+
 export interface HarnessRuntimeConfigPayload {
   provider_id: string;
   model_id: string;
   mode: string;
   system_prompt: string;
+  context_messages?: string[];
   prompt_layers?: HarnessPromptLayerPayload[];
+  prompt_cache_profile?: HarnessPromptCacheProfilePayload;
   model_client: HarnessModelClientPayload;
   tools: Record<string, boolean>;
   workspace_tool_ids: string[];

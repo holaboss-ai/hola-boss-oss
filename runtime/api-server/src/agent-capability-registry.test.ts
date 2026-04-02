@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildAgentCapabilityManifest,
   buildEnabledToolMapFromManifest,
+  evaluateAgentCapabilities,
   renderCapabilityPolicyPromptSection,
 } from "./agent-capability-registry.js";
 
@@ -55,6 +56,17 @@ test("buildAgentCapabilityManifest classifies tools, skills, and MCP aliases", (
   assert.ok(manifest.coordinate.some((capability) => capability.callable_name === "question"));
   assert.ok(manifest.coordinate.some((capability) => capability.callable_name === "skill"));
   assert.ok(manifest.capabilities.some((capability) => capability.kind === "skill" && capability.id === "skill-creator"));
+  assert.deepEqual(manifest.refresh_semantics, {
+    evaluation_scope: "per_run",
+    skills_resolved_at: "run_start",
+    commands_resolved_at: "run_start",
+    supports_live_deltas: false,
+  });
+  assert.deepEqual(
+    manifest.reserved_surfaces.map((surface) => surface.kind),
+    ["mcp_resource", "mcp_prompt", "mcp_command", "plugin_capability", "local_capability"]
+  );
+  assert.match(manifest.fingerprint, /^[a-f0-9]{64}$/);
 
   const toolMap = buildEnabledToolMapFromManifest(manifest);
   assert.equal(toolMap.read, true);
@@ -120,6 +132,175 @@ test("buildAgentCapabilityManifest filters browser tools when policy context doe
   assert.equal(manifest.inspect.some((capability) => capability.callable_name === "browser_get_state"), false);
   assert.equal(manifest.mutate.some((capability) => capability.callable_name === "holaboss_onboarding_complete"), true);
   assert.equal(buildEnabledToolMapFromManifest(manifest).browser_get_state, undefined);
+});
+
+test("evaluateAgentCapabilities keeps command and skill surfaces while excluding non-staged browser tools", () => {
+  const evaluation = evaluateAgentCapabilities({
+    harnessId: "pi",
+    sessionKind: "main",
+    browserToolsAvailable: true,
+    browserToolIds: [],
+    runtimeToolIds: ["holaboss_onboarding_complete"],
+    workspaceCommandIds: ["hello"],
+    defaultTools: ["read"],
+    extraTools: ["browser_get_state", "holaboss_onboarding_complete"],
+    workspaceSkillIds: ["skill-creator"],
+    resolvedMcpToolRefs: [],
+  });
+
+  const browserCapability = evaluation.capabilities.find((capability) => capability.id === "browser_get_state");
+  assert.ok(browserCapability);
+  assert.equal(browserCapability.visible_to_model, false);
+  assert.equal(browserCapability.call_allowed, false);
+  assert.equal(browserCapability.can_execute, false);
+  assert.equal(browserCapability.unavailable_reason, "browser_tool_not_staged");
+
+  const commandCapability = evaluation.capabilities.find((capability) => capability.kind === "workspace_command");
+  assert.ok(commandCapability);
+  assert.equal(commandCapability.id, "hello");
+  assert.equal(commandCapability.visible_to_model, true);
+  assert.equal(commandCapability.call_allowed, false);
+  assert.equal(commandCapability.can_execute, false);
+  assert.equal(commandCapability.permission_surface, "workspace_command");
+  assert.equal(commandCapability.execution_mode, "command_reference");
+  assert.equal(commandCapability.trust_level, "workspace");
+  assert.deepEqual(commandCapability.execution_semantics, {
+    concurrency: "serial_only",
+    requires_runtime_service: false,
+    requires_browser: false,
+    requires_user_confirmation: false,
+  });
+  assert.deepEqual(commandCapability.authority_boundary, {
+    filesystem: false,
+    shell: false,
+    network: false,
+    browser: false,
+    runtime_state: false,
+  });
+  assert.equal(commandCapability.unavailable_reason, "command_reference_only");
+
+  const skillCapability = evaluation.capabilities.find(
+    (capability) => capability.kind === "skill" && capability.id === "skill-creator"
+  );
+  assert.ok(skillCapability);
+  assert.equal(skillCapability.visible_to_model, true);
+  assert.equal(skillCapability.call_allowed, false);
+  assert.equal(skillCapability.can_execute, true);
+  assert.equal(skillCapability.permission_surface, "workspace_skill");
+  assert.equal(skillCapability.execution_mode, "skill_reference");
+  assert.deepEqual(skillCapability.execution_semantics, {
+    concurrency: "parallel_safe",
+    requires_runtime_service: false,
+    requires_browser: false,
+    requires_user_confirmation: false,
+  });
+  assert.deepEqual(
+    evaluation.reserved_surfaces.map((surface) => surface.kind),
+    ["mcp_resource", "mcp_prompt", "mcp_command", "plugin_capability", "local_capability"]
+  );
+});
+
+test("evaluateAgentCapabilities includes richer execution and authority metadata", () => {
+  const evaluation = evaluateAgentCapabilities({
+    harnessId: "pi",
+    sessionKind: "main",
+    browserToolsAvailable: true,
+    browserToolIds: ["browser_get_state"],
+    runtimeToolIds: ["holaboss_onboarding_complete"],
+    defaultTools: ["bash", "question"],
+    extraTools: ["browser_get_state", "holaboss_onboarding_complete"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const browserCapability = evaluation.capabilities.find((capability) => capability.id === "browser_get_state");
+  assert.ok(browserCapability);
+  assert.deepEqual(browserCapability.execution_semantics, {
+    concurrency: "session_exclusive",
+    requires_runtime_service: false,
+    requires_browser: true,
+    requires_user_confirmation: false,
+  });
+  assert.deepEqual(browserCapability.authority_boundary, {
+    filesystem: false,
+    shell: false,
+    network: false,
+    browser: true,
+    runtime_state: false,
+  });
+
+  const runtimeCapability = evaluation.capabilities.find((capability) => capability.id === "holaboss_onboarding_complete");
+  assert.ok(runtimeCapability);
+  assert.deepEqual(runtimeCapability.execution_semantics, {
+    concurrency: "serial_only",
+    requires_runtime_service: true,
+    requires_browser: false,
+    requires_user_confirmation: true,
+  });
+  assert.deepEqual(runtimeCapability.authority_boundary, {
+    filesystem: false,
+    shell: false,
+    network: false,
+    browser: false,
+    runtime_state: true,
+  });
+
+  const bashCapability = evaluation.capabilities.find((capability) => capability.id === "bash");
+  assert.ok(bashCapability);
+  assert.deepEqual(bashCapability.authority_boundary, {
+    filesystem: true,
+    shell: true,
+    network: true,
+    browser: false,
+    runtime_state: false,
+  });
+
+  const questionCapability = evaluation.capabilities.find((capability) => capability.id === "question");
+  assert.ok(questionCapability);
+  assert.equal(questionCapability.execution_semantics.requires_user_confirmation, true);
+  assert.equal(questionCapability.execution_semantics.concurrency, "session_exclusive");
+});
+
+test("evaluateAgentCapabilities fingerprints the run snapshot", () => {
+  const base = evaluateAgentCapabilities({
+    harnessId: "pi",
+    sessionKind: "main",
+    browserToolsAvailable: true,
+    browserToolIds: ["browser_get_state"],
+    runtimeToolIds: ["holaboss_onboarding_complete"],
+    workspaceCommandIds: ["hello"],
+    defaultTools: ["read"],
+    extraTools: ["browser_get_state", "holaboss_onboarding_complete"],
+    workspaceSkillIds: ["skill-creator"],
+    resolvedMcpToolRefs: [],
+  });
+  const same = evaluateAgentCapabilities({
+    harnessId: "pi",
+    sessionKind: "main",
+    browserToolsAvailable: true,
+    browserToolIds: ["browser_get_state"],
+    runtimeToolIds: ["holaboss_onboarding_complete"],
+    workspaceCommandIds: ["hello"],
+    defaultTools: ["read"],
+    extraTools: ["browser_get_state", "holaboss_onboarding_complete"],
+    workspaceSkillIds: ["skill-creator"],
+    resolvedMcpToolRefs: [],
+  });
+  const changed = evaluateAgentCapabilities({
+    harnessId: "pi",
+    sessionKind: "main",
+    browserToolsAvailable: true,
+    browserToolIds: ["browser_get_state"],
+    runtimeToolIds: ["holaboss_onboarding_complete"],
+    workspaceCommandIds: ["hello"],
+    defaultTools: ["read"],
+    extraTools: ["browser_get_state", "holaboss_onboarding_complete"],
+    workspaceSkillIds: ["skill-creator", "extra-skill"],
+    resolvedMcpToolRefs: [],
+  });
+
+  assert.equal(base.fingerprint, same.fingerprint);
+  assert.notEqual(base.fingerprint, changed.fingerprint);
 });
 
 test("renderCapabilityPolicyPromptSection summarizes grouped capabilities", () => {

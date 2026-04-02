@@ -13,7 +13,6 @@ import {
   User2,
 } from "lucide-react";
 import {
-  type FormEvent,
   type MouseEvent,
   useCallback,
   useEffect,
@@ -43,9 +42,11 @@ interface TopTabsBarProps {
   onWorkspaceSwitcherVisibilityChange?: (open: boolean) => void;
   onOpenMarketplace?: () => void;
   isMarketplaceActive?: boolean;
+  onOpenWorkspaceCreatePanel?: () => void;
   onOpenSettings?: () => void;
   onOpenAccount?: () => void;
   onOpenBilling?: () => void;
+  onOpenModelProviders?: () => void;
   onOpenExternalUrl?: (url: string) => void;
   onPublish?: () => void;
 }
@@ -55,9 +56,11 @@ export function TopTabsBar({
   onWorkspaceSwitcherVisibilityChange,
   onOpenMarketplace,
   isMarketplaceActive = false,
+  onOpenWorkspaceCreatePanel,
   onOpenSettings,
   onOpenAccount,
   onOpenBilling,
+  onOpenModelProviders,
   onOpenExternalUrl,
   onPublish,
 }: TopTabsBarProps) {
@@ -68,7 +71,6 @@ export function TopTabsBar({
   const workspaceSwitcherButtonRef = useRef<HTMLButtonElement | null>(null);
   const workspaceSwitcherPopupRef = useRef<HTMLDivElement | null>(null);
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = useState(false);
-  const [createPanelOpen, setCreatePanelOpen] = useState(false);
   const [workspaceQuery, setWorkspaceQuery] = useState("");
   const [workspaceSwitcherPosition, setWorkspaceSwitcherPosition] = useState<{
     top: number;
@@ -81,42 +83,11 @@ export function TopTabsBar({
   const {
     workspaces,
     selectedWorkspace,
-    templateSourceMode,
-    setTemplateSourceMode,
-    createHarnessOptions,
-    selectedCreateHarness,
-    setSelectedCreateHarness,
-    selectedTemplateFolder,
-    marketplaceTemplates,
-    selectedMarketplaceTemplate,
-    selectMarketplaceTemplate,
-    newWorkspaceName,
-    setNewWorkspaceName,
-    isCreatingWorkspace,
     deletingWorkspaceId,
-    isLoadingMarketplaceTemplates,
-    canUseMarketplaceTemplates,
-    marketplaceTemplatesError,
     workspaceErrorMessage,
-    chooseTemplateFolder,
-    createWorkspace,
     deleteWorkspace,
+    runtimeStatus,
   } = useWorkspaceDesktop();
-
-  const createDisabled =
-    isCreatingWorkspace ||
-    (templateSourceMode === "marketplace"
-      ? !canUseMarketplaceTemplates ||
-        !selectedMarketplaceTemplate ||
-        selectedMarketplaceTemplate.is_coming_soon
-      : templateSourceMode === "local"
-        ? !selectedTemplateFolder?.rootPath
-        : false);
-
-  const onCreateWorkspace = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    void createWorkspace();
-  };
 
   const onDeleteWorkspace = async (workspace: WorkspaceRecordPayload) => {
     if (deletingWorkspaceId) {
@@ -135,7 +106,6 @@ export function TopTabsBar({
 
   const closeWorkspaceSwitcher = () => {
     setWorkspaceSwitcherOpen(false);
-    setCreatePanelOpen(false);
     setWorkspaceQuery("");
   };
 
@@ -145,9 +115,7 @@ export function TopTabsBar({
     }
 
     const rect = workspaceSwitcherButtonRef.current.getBoundingClientRect();
-    const width = createPanelOpen
-      ? Math.min(360, Math.max(rect.width + 88, 320))
-      : Math.min(320, Math.max(rect.width + 56, 280));
+    const width = Math.min(320, Math.max(rect.width + 56, 280));
     const left = Math.min(
       Math.max(24, rect.left),
       Math.max(24, window.innerWidth - width - 24),
@@ -156,9 +124,7 @@ export function TopTabsBar({
     const maxHeight = Math.max(220, window.innerHeight - top - 24);
 
     setWorkspaceSwitcherPosition({ top, left, width, maxHeight });
-  }, [createPanelOpen]);
-
-  const { runtimeStatus, statusSummary } = useWorkspaceDesktop();
+  }, []);
 
   const filteredWorkspaces = useMemo(() => {
     const query = workspaceQuery.trim().toLowerCase();
@@ -237,7 +203,7 @@ export function TopTabsBar({
       window.removeEventListener("resize", syncPosition);
       window.removeEventListener("scroll", syncPosition, true);
     };
-  }, [createPanelOpen, updateWorkspaceSwitcherPosition, workspaceSwitcherOpen]);
+  }, [updateWorkspaceSwitcherPosition, workspaceSwitcherOpen]);
 
   return (
     <header
@@ -271,7 +237,6 @@ export function TopTabsBar({
                 setWorkspaceSwitcherOpen((open) => {
                   const nextOpen = !open;
                   if (!nextOpen) {
-                    setCreatePanelOpen(false);
                     setWorkspaceQuery("");
                   } else {
                     requestAnimationFrame(() => {
@@ -351,6 +316,13 @@ export function TopTabsBar({
                 <DropdownMenuItem onClick={() => onOpenSettings?.()}>
                   <Settings />
                   Settings
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuItem onClick={() => onOpenModelProviders?.()}>
+                  <Settings />
+                  Model providers
                 </DropdownMenuItem>
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
@@ -476,210 +448,15 @@ export function TopTabsBar({
                 <Button
                   variant="outline"
                   size="default"
-                  onClick={() => setCreatePanelOpen((open) => !open)}
-                  className="w-full justify-between gap-2"
+                  onClick={() => {
+                    closeWorkspaceSwitcher();
+                    onOpenWorkspaceCreatePanel?.();
+                  }}
+                  className="w-full justify-start gap-2"
                 >
-                  <span className="inline-flex items-center gap-2">
-                    <Plus
-                      size={14}
-                      className={`transition-transform duration-200 ${createPanelOpen ? "rotate-45" : ""}`}
-                    />
-                    <span>Create new workspace</span>
-                  </span>
-                  <ChevronDown
-                    size={14}
-                    className={`text-muted-foreground transition-transform ${createPanelOpen ? "rotate-180" : ""}`}
-                  />
+                  <Plus size={14} />
+                  Create new workspace
                 </Button>
-
-                {createPanelOpen ? (
-                  <form
-                    onSubmit={onCreateWorkspace}
-                    className="mt-3 grid gap-2 rounded-lg border border-border bg-muted/50 p-3"
-                  >
-                    <div className="flex flex-wrap gap-1.5">
-                      {(
-                        [
-                          ["local", "Local folder"],
-                          ["marketplace", "Marketplace"],
-                          ["empty", "Empty"],
-                          ["empty_onboarding", "Empty + Onboarding"],
-                        ] as const
-                      ).map(([mode, label]) => (
-                        <Button
-                          key={mode}
-                          type="button"
-                          variant={templateSourceMode === mode ? "secondary" : "ghost"}
-                          size="xs"
-                          onClick={() => setTemplateSourceMode(mode)}
-                        >
-                          {label}
-                        </Button>
-                      ))}
-                    </div>
-
-                    <div className="grid gap-2">
-                      {templateSourceMode === "marketplace" ? (
-                        canUseMarketplaceTemplates ? (
-                          <div className="flex min-w-0 items-center gap-2 rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-xs">
-                            <span className="shrink-0 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-                              Template
-                            </span>
-                            <select
-                              value={selectedMarketplaceTemplate?.name || ""}
-                              onChange={(event) =>
-                                selectMarketplaceTemplate(event.target.value)
-                              }
-                              disabled={
-                                isLoadingMarketplaceTemplates ||
-                                marketplaceTemplates.length === 0
-                              }
-                              className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none disabled:opacity-50"
-                            >
-                              {isLoadingMarketplaceTemplates ? (
-                                <option value="">Loading templates...</option>
-                              ) : marketplaceTemplates.length ? (
-                                marketplaceTemplates.map((template) => (
-                                  <option
-                                    key={template.name}
-                                    value={template.name}
-                                    disabled={template.is_coming_soon}
-                                  >
-                                    {template.is_coming_soon
-                                      ? `${template.name} (Coming soon)`
-                                      : template.name}
-                                  </option>
-                                ))
-                              ) : (
-                                <option value="">
-                                  No marketplace templates
-                                </option>
-                              )}
-                            </select>
-                          </div>
-                        ) : (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="default"
-                            onClick={() => void window.electronAPI.auth.requestAuth()}
-                            className="w-full"
-                          >
-                            Sign in to use Marketplace
-                          </Button>
-                        )
-                      ) : templateSourceMode === "empty" ? (
-                        <div className="rounded-lg border border-input bg-transparent px-3 py-2 text-xs">
-                          <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-                            Scaffold
-                          </span>
-                          <p className="mt-1 text-foreground">
-                            workspace.yaml + AGENTS.md + empty skills folder
-                          </p>
-                        </div>
-                      ) : templateSourceMode === "empty_onboarding" ? (
-                        <div className="rounded-lg border border-input bg-transparent px-3 py-2 text-xs">
-                          <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-                            Scaffold
-                          </span>
-                          <p className="mt-1 text-foreground">
-                            workspace.yaml + AGENTS.md + empty skills folder +
-                            ONBOARD.md
-                          </p>
-                        </div>
-                      ) : (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="default"
-                          onClick={() => void chooseTemplateFolder()}
-                          className="w-full justify-start gap-2"
-                        >
-                          <span className="shrink-0 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-                            Template
-                          </span>
-                          <span className="min-w-0 flex-1 truncate text-left text-foreground">
-                            {selectedTemplateFolder?.templateName ||
-                              selectedTemplateFolder?.rootPath ||
-                              "Choose folder"}
-                          </span>
-                        </Button>
-                      )}
-
-                      <Input
-                        value={newWorkspaceName}
-                        onChange={(event) =>
-                          setNewWorkspaceName(event.target.value)
-                        }
-                        placeholder="New workspace name"
-                        className="h-8 text-xs"
-                      />
-
-                      <div className="flex min-w-0 items-center gap-2 rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-xs">
-                        <span className="shrink-0 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
-                          Harness
-                        </span>
-                        <select
-                          value={selectedCreateHarness}
-                          onChange={(event) =>
-                            setSelectedCreateHarness(event.target.value)
-                          }
-                          className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none"
-                        >
-                          {createHarnessOptions.map((option) => (
-                            <option key={option.id} value={option.id}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <Button
-                        type="submit"
-                        disabled={createDisabled}
-                        className="w-full gap-2"
-                      >
-                        {isCreatingWorkspace ? (
-                          <Loader2 size={14} className="animate-spin" />
-                        ) : (
-                          <Plus size={14} />
-                        )}
-                        Create
-                      </Button>
-                    </div>
-
-                    {templateSourceMode === "marketplace" ? (
-                      <p className="text-xs text-muted-foreground">
-                        {marketplaceTemplatesError
-                          ? marketplaceTemplatesError
-                          : selectedMarketplaceTemplate
-                            ? selectedMarketplaceTemplate.long_description ||
-                              selectedMarketplaceTemplate.description ||
-                              "Marketplace template selected."
-                            : canUseMarketplaceTemplates
-                              ? "Choose a marketplace template to bootstrap this workspace."
-                              : "Sign in and finish runtime setup to use marketplace templates."}
-                      </p>
-                    ) : templateSourceMode === "empty" ? (
-                      <p className="text-xs text-muted-foreground">
-                        Creates a minimal workspace with `workspace.yaml`, an
-                        empty `AGENTS.md`, and an empty `skills/` folder.
-                      </p>
-                    ) : templateSourceMode === "empty_onboarding" ? (
-                      <p className="text-xs text-muted-foreground">
-                        Creates the same minimal workspace shell, plus a starter
-                        `ONBOARD.md` so you can test the onboarding flow
-                        immediately.
-                      </p>
-                    ) : selectedTemplateFolder ? (
-                      <p className="text-xs text-muted-foreground">
-                        {selectedTemplateFolder.description ||
-                          selectedTemplateFolder.rootPath ||
-                          "Template folder selected."}
-                      </p>
-                    ) : null}
-                  </form>
-                ) : null}
               </div>
             </div>,
             document.body,

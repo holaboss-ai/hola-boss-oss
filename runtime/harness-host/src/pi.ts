@@ -1149,6 +1149,31 @@ function mapPiEvent(
         },
       ];
     }
+    case "auto_compaction_start":
+      return [
+        {
+          event_type: "auto_compaction_start",
+          payload: {
+            reason: event.reason,
+            event: "auto_compaction_start",
+            source: "pi",
+          },
+        },
+      ];
+    case "auto_compaction_end":
+      return [
+        {
+          event_type: "auto_compaction_end",
+          payload: {
+            result: jsonValue(event.result ?? null),
+            aborted: event.aborted,
+            will_retry: event.willRetry,
+            error_message: typeof event.errorMessage === "string" ? event.errorMessage : null,
+            event: "auto_compaction_end",
+            source: "pi",
+          },
+        },
+      ];
     case "agent_end":
       return [
         {

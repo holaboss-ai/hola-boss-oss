@@ -22,3 +22,5 @@ runtime/state-store/dist/
 node_modules/
 .superpowers
 .worktrees/
+*.p12
+*.cer

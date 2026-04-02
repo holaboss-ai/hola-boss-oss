@@ -1,5 +1,16 @@
 import { useEffect } from "react";
-import { CircleHelp, CreditCard, ExternalLink, Globe, Info, Palette, User2, Waypoints, X } from "lucide-react";
+import {
+  CircleHelp,
+  CreditCard,
+  ExternalLink,
+  Globe,
+  Info,
+  Loader2,
+  Palette,
+  User2,
+  Waypoints,
+  X,
+} from "lucide-react";
 import { AuthPanel } from "@/components/auth/AuthPanel";
 import { BillingSettingsPanel } from "@/components/billing/BillingSettingsPanel";
 
@@ -8,8 +19,8 @@ const THEME_SWATCHES: Record<string, [string, string, string]> = {
   "amber-minimal-light": ["#ffffff", "#e8853a", "#fef5ec"],
   "cosmic-night-dark": ["#1a1035", "#a78bfa", "#352a5c"],
   "cosmic-night-light": ["#f5f3ff", "#7c3aed", "#e4dff7"],
-  "claude-dark": ["#2c2520", "#c0825a", "#3d332e"],
-  "claude-light": ["#faf6ef", "#c0825a", "#ebe3d2"],
+  "sepia-dark": ["#2c2520", "#c0825a", "#3d332e"],
+  "sepia-light": ["#faf6ef", "#c0825a", "#ebe3d2"],
   "clean-slate-dark": ["#1a1d25", "#6d8cf5", "#2d3340"],
   "clean-slate-light": ["#f8f9fc", "#5b72e0", "#e4e7f0"],
   "bold-tech-dark": ["#0f0b1a", "#a855f7", "#261e3d"],
@@ -28,6 +39,10 @@ interface SettingsDialogProps {
   theme: string;
   themes: readonly string[];
   onThemeChange: (theme: string) => void;
+  proactiveTaskProposalsEnabled: boolean;
+  isUpdatingProactiveTaskProposalsEnabled: boolean;
+  proactiveTaskProposalsError: string;
+  onProactiveTaskProposalsEnabledChange: (enabled: boolean) => void;
   onOpenExternalUrl: (url: string) => void;
 }
 
@@ -36,32 +51,38 @@ const SETTINGS_SECTIONS: Array<{
   label: string;
   icon: typeof User2;
 }> = [
-  {
-    id: "account",
-    label: "Account",
-    icon: User2
-  },
-  {
-    id: "billing",
-    label: "Billing",
-    icon: CreditCard
-  },
-  {
-    id: "providers",
-    label: "Model Providers",
-    icon: Waypoints
-  },
-  {
-    id: "settings",
-    label: "Settings",
-    icon: Palette
-  },
-  {
-    id: "about",
-    label: "About",
-    icon: Info
-  }
+  { id: "account", label: "Account", icon: User2 },
+  { id: "billing", label: "Billing", icon: CreditCard },
+  { id: "providers", label: "Model Providers", icon: Waypoints },
+  { id: "settings", label: "Settings", icon: Palette },
+  { id: "about", label: "About", icon: Info },
 ];
+
+const ABOUT_LINKS = [
+  {
+    id: "home",
+    label: "Homepage",
+    icon: Globe,
+    href: "https://holaboss.ai",
+  },
+  {
+    id: "docs",
+    label: "Docs",
+    icon: Info,
+    href: "https://github.com/holaboss-ai/hola-boss-oss",
+  },
+  {
+    id: "help",
+    label: "Get help",
+    icon: CircleHelp,
+    href: "https://github.com/holaboss-ai/hola-boss-oss/issues",
+  },
+] as const;
+
+const THEME_DISPLAY_NAMES: Record<string, string> = {
+  "amber-minimal-dark": "Default Dark",
+  "amber-minimal-light": "Default Light",
+};
 
 function titleForSection(section: UiSettingsPaneSection): string {
   switch (section) {
@@ -79,18 +100,14 @@ function titleForSection(section: UiSettingsPaneSection): string {
   }
 }
 
-const THEME_DISPLAY_NAMES: Record<string, string> = {
-  "amber-minimal-dark": "Default Dark",
-  "amber-minimal-light": "Default Light",
-};
-
 function prettifyThemeLabel(theme: string): string {
   if (THEME_DISPLAY_NAMES[theme]) {
     return THEME_DISPLAY_NAMES[theme];
   }
+
   return theme
     .split("-")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
 }
 
@@ -102,7 +119,11 @@ export function SettingsDialog({
   theme,
   themes,
   onThemeChange,
-  onOpenExternalUrl
+  proactiveTaskProposalsEnabled,
+  isUpdatingProactiveTaskProposalsEnabled,
+  proactiveTaskProposalsError,
+  onProactiveTaskProposalsEnabledChange,
+  onOpenExternalUrl,
 }: SettingsDialogProps) {
   useEffect(() => {
     if (!open) {
@@ -141,15 +162,14 @@ export function SettingsDialog({
         className="pointer-events-auto relative z-10 grid h-[min(780px,calc(100vh-32px))] w-[min(1080px,calc(100vw-24px))] min-w-0 overflow-hidden rounded-[28px] border border-border bg-background shadow-lg grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[248px_minmax(0,1fr)] lg:grid-rows-1"
       >
         <aside className="border-b border-sidebar-border bg-sidebar p-4 text-sidebar-foreground lg:border-b-0 lg:border-r">
-          <div className="flex items-center gap-3">
-            <div>
-              <div className="text-sm font-semibold tracking-[0.01em] text-sidebar-foreground">holaboss</div>
-            </div>
+          <div className="text-sm font-semibold tracking-[0.01em] text-sidebar-foreground">
+            holaboss
           </div>
 
           <nav className="mt-6 grid gap-1.5">
             {SETTINGS_SECTIONS.map(({ id, label, icon: Icon }) => {
               const active = id === activeSection;
+
               return (
                 <button
                   key={id}
@@ -175,12 +195,13 @@ export function SettingsDialog({
               );
             })}
           </nav>
-
         </aside>
 
         <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
           <header className="theme-header-surface flex items-center justify-between gap-4 border-b border-border/35 px-6 py-5">
-            <div className="text-xl font-semibold text-foreground">{titleForSection(activeSection)}</div>
+            <div className="text-xl font-semibold text-foreground">
+              {titleForSection(activeSection)}
+            </div>
 
             <button
               type="button"
@@ -192,16 +213,14 @@ export function SettingsDialog({
             </button>
           </header>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 [scrollbar-gutter:stable]">
             {activeSection === "account" ? (
               <div className="max-w-[620px]">
                 <AuthPanel view="account" />
               </div>
             ) : null}
 
-            {activeSection === "billing" ? (
-              <BillingSettingsPanel />
-            ) : null}
+            {activeSection === "billing" ? <BillingSettingsPanel /> : null}
 
             {activeSection === "providers" ? (
               <div className="grid gap-6">
@@ -214,10 +233,19 @@ export function SettingsDialog({
             {activeSection === "settings" ? (
               <div className="grid gap-6">
                 <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
+                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                    Appearance
+                  </div>
+
                   <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {themes.map((themeOption) => {
                       const selected = themeOption === theme;
-                      const swatches = THEME_SWATCHES[themeOption] ?? ["#1a1a1a", "#777", "#2e2e2e"];
+                      const swatches = THEME_SWATCHES[themeOption] ?? [
+                        "#1a1a1a",
+                        "#777777",
+                        "#2e2e2e",
+                      ];
+
                       return (
                         <button
                           key={themeOption}
@@ -233,7 +261,9 @@ export function SettingsDialog({
                             <div className="grid grid-cols-[1.2fr_0.9fr] gap-2">
                               <div
                                 className="h-16 rounded-[14px] border border-white/10"
-                                style={{ background: `linear-gradient(160deg, ${swatches[0]}, ${swatches[2]})` }}
+                                style={{
+                                  background: `linear-gradient(160deg, ${swatches[0]}, ${swatches[2]})`,
+                                }}
                               />
                               <div className="grid gap-2">
                                 <div
@@ -242,13 +272,18 @@ export function SettingsDialog({
                                 />
                                 <div
                                   className="h-7 rounded-[10px] border border-white/10"
-                                  style={{ background: `color-mix(in srgb, ${swatches[1]} 42%, ${swatches[0]} 58%)` }}
+                                  style={{
+                                    background: `color-mix(in srgb, ${swatches[1]} 42%, ${swatches[0]} 58%)`,
+                                  }}
                                 />
                               </div>
                             </div>
                           </div>
+
                           <div className="mt-3 flex items-center justify-between gap-3">
-                            <span className="text-sm font-medium text-foreground">{prettifyThemeLabel(themeOption)}</span>
+                            <span className="text-sm font-medium text-foreground">
+                              {prettifyThemeLabel(themeOption)}
+                            </span>
                             <span
                               className={`rounded-full border px-2.5 py-1 text-xs uppercase tracking-[0.14em] ${
                                 selected
@@ -264,33 +299,69 @@ export function SettingsDialog({
                     })}
                   </div>
                 </section>
+
+                <section className="rounded-[24px] border border-border/40 bg-card p-5">
+                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                    Proactive
+                  </div>
+
+                  <div className="mt-5 flex items-center justify-between gap-4 rounded-[18px] border border-border/35 bg-card px-4 py-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-foreground">
+                        Proactive task proposals
+                      </div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {proactiveTaskProposalsEnabled ? "Enabled" : "Paused"}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      aria-label="Toggle proactive task proposals"
+                      aria-pressed={proactiveTaskProposalsEnabled}
+                      disabled={isUpdatingProactiveTaskProposalsEnabled}
+                      onClick={() =>
+                        onProactiveTaskProposalsEnabledChange(
+                          !proactiveTaskProposalsEnabled,
+                        )
+                      }
+                      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs uppercase tracking-[0.14em] transition ${
+                        proactiveTaskProposalsEnabled
+                          ? "border-primary/40 bg-primary/12 text-primary"
+                          : "border-border/45 bg-card/70 text-muted-foreground"
+                      } ${
+                        isUpdatingProactiveTaskProposalsEnabled
+                          ? "cursor-wait opacity-75"
+                          : "hover:border-primary/40"
+                      }`}
+                    >
+                      {isUpdatingProactiveTaskProposalsEnabled ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : null}
+                      <span>
+                        {proactiveTaskProposalsEnabled ? "On" : "Off"}
+                      </span>
+                    </button>
+                  </div>
+
+                  {proactiveTaskProposalsError ? (
+                    <div className="mt-3 text-xs text-destructive">
+                      {proactiveTaskProposalsError}
+                    </div>
+                  ) : null}
+                </section>
               </div>
             ) : null}
 
             {activeSection === "about" ? (
               <div className="grid max-w-[720px] gap-4">
                 <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
+                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                    Links
+                  </div>
+
                   <div className="mt-5 grid gap-3">
-                    {[
-                      {
-                        id: "home",
-                        label: "Homepage",
-                        icon: Globe,
-                        href: "https://holaboss.ai"
-                      },
-                      {
-                        id: "docs",
-                        label: "Docs",
-                        icon: Info,
-                        href: "https://github.com/holaboss-ai/hola-boss-oss"
-                      },
-                      {
-                        id: "help",
-                        label: "Get help",
-                        icon: CircleHelp,
-                        href: "https://github.com/holaboss-ai/hola-boss-oss/issues"
-                      }
-                    ].map(({ id, label, icon: Icon, href }) => (
+                    {ABOUT_LINKS.map(({ id, label, icon: Icon, href }) => (
                       <button
                         key={id}
                         type="button"
@@ -301,9 +372,14 @@ export function SettingsDialog({
                           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-border/35 text-muted-foreground/82">
                             <Icon size={16} />
                           </span>
-                          <span className="min-w-0 text-sm font-medium text-foreground">{label}</span>
+                          <span className="min-w-0 text-sm font-medium text-foreground">
+                            {label}
+                          </span>
                         </span>
-                        <ExternalLink size={15} className="shrink-0 text-muted-foreground/70" />
+                        <ExternalLink
+                          size={15}
+                          className="shrink-0 text-muted-foreground/70"
+                        />
                       </button>
                     ))}
                   </div>

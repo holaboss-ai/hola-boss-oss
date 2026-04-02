@@ -426,6 +426,63 @@ test("runtime config routes delegate to the runtime config executor", async () =
   store.close();
 });
 
+test("runtime profile routes persist canonical name and apply auth fallback only when empty", async () => {
+  const root = makeTempDir("hb-runtime-api-profile-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const initial = await app.inject({
+    method: "GET",
+    url: "/api/v1/runtime/profile"
+  });
+  const fallback = await app.inject({
+    method: "POST",
+    url: "/api/v1/runtime/profile/auth-fallback",
+    payload: {
+      name: "Jeffrey"
+    }
+  });
+  const manual = await app.inject({
+    method: "PUT",
+    url: "/api/v1/runtime/profile",
+    payload: {
+      name: "Jeff",
+      name_source: "manual"
+    }
+  });
+  const preserved = await app.inject({
+    method: "POST",
+    url: "/api/v1/runtime/profile/auth-fallback",
+    payload: {
+      name: "Ignored Auth Name"
+    }
+  });
+
+  assert.equal(initial.statusCode, 200);
+  assert.deepEqual(initial.json(), {
+    profile_id: "default",
+    name: null,
+    name_source: null,
+    created_at: null,
+    updated_at: null,
+  });
+  assert.equal(fallback.statusCode, 200);
+  assert.equal(fallback.json().name, "Jeffrey");
+  assert.equal(fallback.json().name_source, "auth_fallback");
+  assert.equal(manual.statusCode, 200);
+  assert.equal(manual.json().name, "Jeff");
+  assert.equal(manual.json().name_source, "manual");
+  assert.equal(preserved.statusCode, 200);
+  assert.equal(preserved.json().name, "Jeff");
+  assert.equal(preserved.json().name_source, "manual");
+
+  await app.close();
+  store.close();
+});
+
 test("runner routes delegate to the runner executor", async () => {
   const root = makeTempDir("hb-runtime-api-");
   const store = new RuntimeStateStore({
@@ -714,6 +771,8 @@ test("workspace CRUD routes preserve local payload shape", async () => {
   });
   assert.equal(created.statusCode, 200);
   const workspace = created.json().workspace as { id: string };
+  const workspaceDir = store.workspaceDir(workspace.id);
+  assert.equal(fs.existsSync(workspaceDir), true);
 
   const listed = await app.inject({ method: "GET", url: "/api/v1/workspaces" });
   const fetched = await app.inject({ method: "GET", url: `/api/v1/workspaces/${workspace.id}` });
@@ -747,6 +806,102 @@ test("workspace CRUD routes preserve local payload shape", async () => {
   assert.equal(nullPatch.json().workspace.error_message, null);
   assert.equal(deleted.statusCode, 200);
   assert.equal(deleted.json().workspace.status, "deleted");
+  assert.equal(fs.existsSync(workspaceDir), false);
+
+  await app.close();
+  store.close();
+});
+
+test("workspace delete stops installed apps and clears local workspace files", async () => {
+  const root = makeTempDir("hb-runtime-api-delete-workspace-cleanup-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  const appId = "app-a";
+  const appDir = path.join(workspaceDir, "apps", appId);
+  fs.mkdirSync(appDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(workspaceDir, "workspace.yaml"),
+    `applications:\n  - app_id: ${appId}\n    config_path: apps/${appId}/app.runtime.yaml\n`,
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(appDir, "app.runtime.yaml"),
+    [
+      `app_id: ${appId}`,
+      "mcp:",
+      "  transport: http-sse",
+      "  port: 4100",
+      "  path: /mcp",
+      "healthchecks:",
+      "  mcp:",
+      "    path: /health",
+      "    timeout_s: 60",
+      "    interval_s: 5",
+      "lifecycle:",
+      "  setup: ''",
+      "  start: npm run start",
+      "  stop: npm run stop"
+    ].join("\n"),
+    "utf8"
+  );
+  store.upsertAppBuild({ workspaceId: workspace.id, appId, status: "running" });
+  store.allocateAppPort({ workspaceId: workspace.id, appId: `${appId}__http` });
+  store.allocateAppPort({ workspaceId: workspace.id, appId: `${appId}__mcp` });
+  assert.equal(store.listAppPorts({ workspaceId: workspace.id }).length, 2);
+
+  const stopCalls: Array<{ appId: string; appDir?: string; hasResolvedApp: boolean }> = [];
+  const executor: AppLifecycleExecutorLike = {
+    async startApp() {
+      throw new Error("not used");
+    },
+    async stopApp(params) {
+      stopCalls.push({
+        appId: params.appId,
+        appDir: params.appDir,
+        hasResolvedApp: Boolean(params.resolvedApp)
+      });
+      return {
+        app_id: params.appId,
+        status: "stopped",
+        detail: "stopped",
+        ports: {}
+      };
+    },
+    async shutdownAll() {
+      throw new Error("not used");
+    }
+  };
+  const app = buildTestRuntimeApiServer({ store, appLifecycleExecutor: executor });
+
+  const deleted = await app.inject({ method: "DELETE", url: `/api/v1/workspaces/${workspace.id}` });
+
+  assert.equal(deleted.statusCode, 200);
+  assert.equal(deleted.json().workspace.status, "deleted");
+  assert.equal(stopCalls.length, 1);
+  assert.deepEqual(stopCalls[0], {
+    appId,
+    appDir,
+    hasResolvedApp: true
+  });
+  assert.equal(store.getAppBuild({ workspaceId: workspace.id, appId }), null);
+  assert.equal(store.listAppPorts({ workspaceId: workspace.id }).length, 0);
+  assert.equal(fs.existsSync(workspaceDir), false);
+  const deletedWorkspace = store.getWorkspace(workspace.id, { includeDeleted: true });
+  assert.ok(deletedWorkspace);
+  assert.equal(deletedWorkspace.status, "deleted");
+  assert.ok(deletedWorkspace.deletedAtUtc);
 
   await app.close();
   store.close();
@@ -787,6 +942,87 @@ test("runtime states and history endpoints read TS state store", async () => {
     text: "hi",
     messageId: "m-2"
   });
+  store.upsertTurnResult({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: "input-1",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    completedAt: "2026-01-01T00:00:05.000Z",
+    status: "completed",
+    stopReason: "ok",
+    assistantText: "hi",
+    toolUsageSummary: {
+      total_calls: 1,
+      completed_calls: 1,
+      failed_calls: 0,
+      tool_names: ["read_file"],
+      tool_ids: []
+    },
+    permissionDenials: [],
+    promptSectionIds: ["runtime_core", "execution_policy"],
+    capabilityManifestFingerprint: "b".repeat(64),
+    requestSnapshotFingerprint: "c".repeat(64),
+    promptCacheProfile: {
+      cacheable_section_ids: ["runtime_core"],
+      volatile_section_ids: ["execution_policy"],
+    },
+    compactedSummary: null,
+    compactionBoundaryId: "compaction:input-1",
+    tokenUsage: {
+      input_tokens: 10,
+      output_tokens: 20
+    }
+  });
+  store.upsertTurnRequestSnapshot({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: "input-1",
+    snapshotKind: "harness_host_request",
+    fingerprint: "c".repeat(64),
+    payload: {
+      provider_id: "openai",
+      model_id: "gpt-5.4",
+      system_prompt: "You are concise.",
+    },
+  });
+  store.upsertCompactionBoundary({
+    boundaryId: "compaction:input-1",
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: "input-1",
+    summary: "hi",
+    recentRuntimeContext: {
+      summary: "hi",
+      last_stop_reason: "ok",
+      last_error: null,
+      waiting_for_user: null,
+    },
+    restorationContext: {
+      compaction_source: "executor_post_turn",
+      restoration_order: [
+        "boundary_summary",
+        "recent_runtime_context",
+        "session_resume_context",
+        "preserved_turn_input_ids",
+        "restored_memory_paths",
+      ],
+      session_resume_context: {
+        recent_turns: [
+          {
+            input_id: "input-1",
+            status: "completed",
+            stop_reason: "ok",
+            summary: "hi",
+            completed_at: "2026-01-01T00:00:05.000Z",
+          },
+        ],
+        recent_user_messages: ["hello"],
+      },
+      restored_memory_paths: [`workspace/${workspace.id}/runtime/latest-turn.md`],
+    },
+    preservedTurnInputIds: ["input-1"],
+    requestSnapshotFingerprint: "c".repeat(64),
+  });
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "proposal-session-1",
@@ -809,6 +1045,22 @@ test("runtime states and history endpoints read TS state store", async () => {
     method: "GET",
     url: `/api/v1/agent-sessions/session-main/history?workspace_id=${workspace.id}`
   });
+  const turnResults = await app.inject({
+    method: "GET",
+    url: `/api/v1/agent-sessions/session-main/turn-results?workspace_id=${workspace.id}`
+  });
+  const requestSnapshots = await app.inject({
+    method: "GET",
+    url: `/api/v1/agent-sessions/session-main/request-snapshots?workspace_id=${workspace.id}`
+  });
+  const compactionBoundaries = await app.inject({
+    method: "GET",
+    url: `/api/v1/agent-sessions/session-main/compaction-boundaries?workspace_id=${workspace.id}`
+  });
+  const resumeContext = await app.inject({
+    method: "GET",
+    url: `/api/v1/agent-sessions/session-main/resume-context?workspace_id=${workspace.id}&input_id=input-2`
+  });
 
   assert.equal(sessions.statusCode, 200);
   assert.equal(sessions.json().count, 2);
@@ -827,6 +1079,125 @@ test("runtime states and history endpoints read TS state store", async () => {
     history.json().messages.map((item: { role: string }) => item.role),
     ["user", "assistant"]
   );
+  assert.equal(turnResults.statusCode, 200);
+  assert.equal(turnResults.json().count, 1);
+  assert.equal(turnResults.json().items[0].input_id, "input-1");
+  assert.equal(turnResults.json().items[0].status, "completed");
+  assert.equal(turnResults.json().items[0].stop_reason, "ok");
+  assert.equal(turnResults.json().items[0].capability_manifest_fingerprint, "b".repeat(64));
+  assert.equal(turnResults.json().items[0].request_snapshot_fingerprint, "c".repeat(64));
+  assert.deepEqual(turnResults.json().items[0].prompt_cache_profile, {
+    cacheable_section_ids: ["runtime_core"],
+    volatile_section_ids: ["execution_policy"],
+  });
+  assert.equal(turnResults.json().items[0].compaction_boundary_id, "compaction:input-1");
+  assert.deepEqual(turnResults.json().items[0].prompt_section_ids, [
+    "runtime_core",
+    "execution_policy"
+  ]);
+  assert.deepEqual(turnResults.json().items[0].token_usage, {
+    input_tokens: 10,
+    output_tokens: 20
+  });
+  assert.equal(requestSnapshots.statusCode, 200);
+  assert.equal(requestSnapshots.json().count, 1);
+  assert.equal(requestSnapshots.json().items[0].fingerprint, "c".repeat(64));
+  assert.equal(compactionBoundaries.statusCode, 200);
+  assert.equal(compactionBoundaries.json().count, 1);
+  assert.equal(compactionBoundaries.json().items[0].boundary_id, "compaction:input-1");
+  assert.deepEqual(compactionBoundaries.json().items[0].compaction_restoration_context, {
+    compaction_source: "executor_post_turn",
+    restoration_order: [
+      "boundary_summary",
+      "recent_runtime_context",
+      "session_resume_context",
+      "preserved_turn_input_ids",
+      "restored_memory_paths",
+    ],
+    boundary_summary: "hi",
+    recent_runtime_context: {
+      summary: "hi",
+      last_stop_reason: "ok",
+      last_error: null,
+      waiting_for_user: null,
+    },
+    session_resume_context: {
+      recent_turns: [
+        {
+          input_id: "input-1",
+          status: "completed",
+          stop_reason: "ok",
+          summary: "hi",
+          completed_at: "2026-01-01T00:00:05.000Z",
+        },
+      ],
+      recent_user_messages: ["hello"],
+    },
+    preserved_turn_input_ids: ["input-1"],
+    restored_memory_paths: [`workspace/${workspace.id}/runtime/latest-turn.md`],
+  });
+  assert.equal(resumeContext.statusCode, 200);
+  assert.deepEqual(resumeContext.json().compaction_restoration_context, {
+    compaction_source: "executor_post_turn",
+    restoration_order: [
+      "boundary_summary",
+      "recent_runtime_context",
+      "session_resume_context",
+      "preserved_turn_input_ids",
+      "restored_memory_paths",
+    ],
+    boundary_summary: "hi",
+    recent_runtime_context: {
+      summary: "hi",
+      last_stop_reason: "ok",
+      last_error: null,
+      waiting_for_user: null
+    },
+    session_resume_context: {
+      recent_turns: [
+        {
+          input_id: "input-1",
+          status: "completed",
+          stop_reason: "ok",
+          summary: "hi",
+          completed_at: "2026-01-01T00:00:05.000Z"
+        }
+      ],
+      recent_user_messages: ["hello"]
+    },
+    preserved_turn_input_ids: ["input-1"],
+    restored_memory_paths: [`workspace/${workspace.id}/runtime/latest-turn.md`]
+  });
+  assert.deepEqual(resumeContext.json().recent_runtime_context, {
+    summary: "hi",
+    last_stop_reason: "ok",
+    last_error: null,
+    waiting_for_user: null
+  });
+  assert.deepEqual(resumeContext.json().session_resume_context, {
+    recent_turns: [
+      {
+        input_id: "input-1",
+        status: "completed",
+        stop_reason: "ok",
+        summary: "hi",
+        completed_at: "2026-01-01T00:00:05.000Z"
+      }
+    ],
+    recent_user_messages: ["hello"],
+    compaction_source: "executor_post_turn",
+    compaction_boundary_id: "compaction:input-1",
+    compaction_boundary_summary: "hi",
+    restoration_order: [
+      "boundary_summary",
+      "recent_runtime_context",
+      "session_resume_context",
+      "preserved_turn_input_ids",
+      "restored_memory_paths"
+    ],
+    preserved_turn_input_ids: ["input-1"],
+    restored_memory_paths: [`workspace/${workspace.id}/runtime/latest-turn.md`]
+  });
 
   await app.close();
   store.close();
@@ -1747,6 +2118,119 @@ test("app setup route does not start duplicate setup for an app already building
   await new Promise((resolve) => setTimeout(resolve, 1500));
   const build = store.getAppBuild({ workspaceId: workspace.id, appId: "app-a" });
   assert.equal(build?.status, "completed");
+
+  await app.close();
+  store.close();
+});
+
+test("ensure-running dedupes concurrent setup/start for the same app", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace Apps",
+    harness: "pi",
+    status: "active"
+  });
+  const workspaceDir = path.join(workspaceRoot, workspace.id);
+  const appDir = path.join(workspaceDir, "apps", "app-a");
+  fs.mkdirSync(appDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(appDir, "app.runtime.yaml"),
+    [
+      "app_id: app-a",
+      "mcp:",
+      "  port: 4100",
+      "healthchecks:",
+      "  mcp:",
+      "    path: /health",
+      "    timeout_s: 30",
+      "lifecycle:",
+      "  setup: 'echo setup >> setup-count.txt; sleep 1'",
+      "  start: 'echo start'"
+    ].join("\n"),
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(workspaceDir, "workspace.yaml"),
+    [
+      "applications:",
+      "  - app_id: app-a",
+      "    config_path: apps/app-a/app.runtime.yaml"
+    ].join("\n"),
+    "utf8"
+  );
+
+  const lifecycleCalls: Array<Record<string, unknown>> = [];
+  const app = buildTestRuntimeApiServer({
+    store,
+    appLifecycleExecutor: {
+      async startApp(params) {
+        lifecycleCalls.push({ action: "start", ...params });
+        return {
+          app_id: params.appId,
+          status: "started",
+          detail: "app started with lifecycle manager",
+          ports: { http: params.httpPort ?? 18080, mcp: params.mcpPort ?? 13100 }
+        };
+      },
+      async stopApp() {
+        throw new Error("not used");
+      },
+      async shutdownAll() {
+        throw new Error("not used");
+      }
+    }
+  });
+
+  const payload = { workspace_id: workspace.id };
+  const [first, second] = await Promise.all([
+    app.inject({
+      method: "POST",
+      url: "/api/v1/apps/ensure-running",
+      payload
+    }),
+    app.inject({
+      method: "POST",
+      url: "/api/v1/apps/ensure-running",
+      payload
+    })
+  ]);
+
+  assert.equal(first.statusCode, 200);
+  assert.equal(second.statusCode, 200);
+  assert.deepEqual(first.json(), {
+    apps: [
+      {
+        app_id: "app-a",
+        ready: true,
+        error: null
+      }
+    ]
+  });
+  assert.deepEqual(second.json(), {
+    apps: [
+      {
+        app_id: "app-a",
+        ready: true,
+        error: null
+      }
+    ]
+  });
+  assert.equal(lifecycleCalls.length, 1);
+
+  const setupCountFile = path.join(appDir, "setup-count.txt");
+  assert.equal(fs.existsSync(setupCountFile), true);
+  const setupRuns = fs
+    .readFileSync(setupCountFile, "utf8")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0).length;
+  assert.equal(setupRuns, 1);
 
   await app.close();
   store.close();

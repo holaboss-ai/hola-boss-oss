@@ -873,7 +873,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 updateProviderDraft(providerId, { enabled: true });
                 setExpandedProviderId(providerId);
               }}
-              className={`${actionButtonClassName} border border-panel-border/45 text-text-main hover:border-neon-green/35 hover:text-neon-green`}
+              className={`${actionButtonClassName} border border-border/45 text-text-main hover:border-neon-green/35 hover:text-neon-green`}
             >
               Connect
             </button>
@@ -881,7 +881,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         </div>
 
         {isExpanded && (
-          <div className="border-t border-panel-border/25 px-3 pb-3 pt-3">
+          <div className="border-t border-border/35 px-3 pb-3 pt-3">
             {renderProviderDrawerContent(providerId)}
           </div>
         )}

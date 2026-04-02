@@ -314,110 +314,31 @@ function parseMember(
   };
 }
 
-function loadLegacyGeneralConfig(
-  generalValue: JsonRecord,
-  prompt: string
-): WorkspaceGeneralConfig {
-  const modeValue = generalValue.type;
-  if (modeValue !== "single") {
-    if (modeValue === "team") {
-      err({
-        code: "workspace_team_unsupported",
-        path: "agents.general.type",
-        message: "team mode is no longer supported",
-        hint: "configure exactly one agent"
-      });
-    }
-    err({
-      code: "workspace_general_type_invalid",
-      path: "agents.general.type",
-      message: "expected 'single'",
-      hint: "set agents.general.type to 'single'"
-    });
-  }
-
-  const agentValue = generalValue.agent;
-  if (!isRecord(agentValue)) {
-    err({
-      code: "workspace_general_missing",
-      path: "agents.general.agent",
-      message: "single mode requires object field 'agent'"
-    });
-  }
-  return {
-    type: "single",
-    agent: parseMember(agentValue, "agents.general.agent", prompt)
-  };
-}
-
 function loadGeneralConfig(config: JsonRecord, references: Record<string, string>): WorkspaceGeneralConfig {
   const agentsValue = config.agents;
   const prompt = references[DEFAULT_PROMPT_FILE] ?? "";
 
-  if (Array.isArray(agentsValue)) {
-    if (agentsValue.length === 0) {
-      err({
-        code: "workspace_general_missing",
-        path: "agents",
-        message: "'agents' must include at least one agent"
-      });
-    }
-    if (agentsValue.length > 1) {
-      err({
-        code: "workspace_team_unsupported",
-        path: "agents",
-        message: "multiple agents are no longer supported",
-        hint: "configure exactly one agent"
-      });
-    }
-    const members: WorkspaceGeneralMemberConfig[] = [];
-    const seenIds = new Set<string>();
-    for (const [index, entry] of agentsValue.entries()) {
-      if (!isRecord(entry)) {
-        err({
-          code: "workspace_general_missing",
-          path: `agents[${index}]`,
-          message: "agent entry must be an object"
-        });
-      }
-      const member = parseMember(entry, `agents[${index}]`, prompt);
-      if (seenIds.has(member.id)) {
-        err({
-          code: "workspace_team_member_id_duplicate",
-          path: `agents[${index}].id`,
-          message: `duplicate member id '${member.id}'`,
-          hint: "all agent ids must be unique"
-        });
-      }
-      seenIds.add(member.id);
-      members.push(member);
-    }
-    return {
-      type: "single",
-      agent: members[0]
-    };
-  }
-
   if (isRecord(agentsValue)) {
-    if (Object.hasOwn(agentsValue, "id") || Object.hasOwn(agentsValue, "model")) {
+    if (Object.hasOwn(agentsValue, "id") && Object.hasOwn(agentsValue, "model")) {
       return {
         type: "single",
         agent: parseMember(agentsValue, "agents", prompt)
       };
     }
-    const generalValue = agentsValue.general;
-    if (isRecord(generalValue)) {
-      return loadLegacyGeneralConfig(generalValue, prompt);
-    }
+    err({
+      code: "workspace_general_missing",
+      path: "agents",
+      message: "missing required fields 'agents.id' and 'agents.model'",
+      hint: "set 'agents' to an object with non-empty 'id' and 'model'"
+    });
   }
 
   err({
     code: "workspace_general_missing",
     path: "agents",
-    message: "missing field 'agents'",
+    message: "missing object field 'agents'",
     hint:
-      "set 'agents' to exactly one agent (list or object) with at least id/model; " +
-      "workspace instructions come from root 'AGENTS.md' when present"
+      "set 'agents' to an object with non-empty 'id' and 'model'; workspace instructions come from root 'AGENTS.md' when present"
   });
 }
 
