@@ -9,6 +9,7 @@ import {
   parseExplorerAttachmentDragPayload
 } from "@/lib/attachmentDrag";
 import { DEFAULT_RUNTIME_MODEL, useDesktopAuthSession } from "@/lib/auth/authClient";
+import { useDesktopBilling } from "@/lib/billing/useDesktopBilling";
 import { preferredSessionId } from "@/lib/sessionRouting";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
@@ -134,6 +135,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed.";
+}
+
+function openExternalUrl(url: string | null | undefined) {
+  const normalizedUrl = (url ?? "").trim();
+  if (!normalizedUrl) {
+    return;
+  }
+  void window.electronAPI.ui.openExternalUrl(normalizedUrl);
 }
 
 function normalizeStoredChatModelPreference(value: string | null | undefined) {
@@ -663,6 +672,12 @@ export function ChatPane({
 }) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const authSessionState = useDesktopAuthSession();
+  const {
+    hasHostedBillingAccount,
+    isLowBalance,
+    isOutOfCredits,
+    links: billingLinks
+  } = useDesktopBilling();
   const {
     runtimeConfig,
     selectedWorkspace,
@@ -1659,6 +1674,23 @@ export function ChatPane({
     if ((!trimmed && pendingAttachments.length === 0) || isResponding) {
       return;
     }
+    if (usesHostedManagedCredits) {
+      try {
+        const latestBillingOverview = await window.electronAPI.billing.getOverview();
+        if (
+          latestBillingOverview.hasHostedBillingAccount &&
+          latestBillingOverview.creditsBalance <= 0
+        ) {
+          setChatErrorMessage("You're out of credits for managed usage.");
+          return;
+        }
+      } catch {
+        if (isOutOfCredits) {
+          setChatErrorMessage("You're out of credits for managed usage.");
+          return;
+        }
+      }
+    }
     if (!selectedWorkspace) {
       setChatErrorMessage("Create or select a workspace first.");
       return;
@@ -2046,14 +2078,27 @@ export function ChatPane({
         ? runtimeDefaultModel
         : ""
       : effectiveChatModelPreference.trim() || (runtimeDefaultModelAvailable ? runtimeDefaultModel : "");
+  const selectedManagedProviderGroup = visibleConfiguredProviderModelGroups.find((providerGroup) =>
+    providerGroup.models.some((model) => model.token === resolvedChatModel)
+  );
+  const usesHostedManagedCredits =
+    hasHostedBillingAccount &&
+    (hasConfiguredProviderCatalog
+      ? selectedManagedProviderGroup?.kind === "holaboss_proxy"
+      : holabossProxyModelsAvailable && Boolean(resolvedChatModel));
   const modelSelectionUnavailableReason =
     availableChatModelOptions.length > 0
       ? ""
       : "No models available. Configure a provider to start chatting.";
   const composerDisabledReason =
     baseComposerDisabledReason ||
+    (usesHostedManagedCredits && isOutOfCredits
+      ? "You're out of credits for managed usage."
+      : "") ||
     (!isOnboardingVariant && !resolvedChatModel ? modelSelectionUnavailableReason : "");
   const composerDisabled = Boolean(composerDisabledReason);
+  const showLowBalanceWarning = usesHostedManagedCredits && isLowBalance && !isOutOfCredits;
+  const showOutOfCreditsWarning = usesHostedManagedCredits && isOutOfCredits;
 
   useEffect(() => {
     if (!effectiveChatModelPreference) {
@@ -2198,6 +2243,41 @@ export function ChatPane({
               >
                 Back to main session
               </button>
+            </div>
+          </div>
+        ) : null}
+
+        {showLowBalanceWarning || showOutOfCreditsWarning ? (
+          <div className="shrink-0 px-4 pt-3 sm:px-5">
+            <div className="bg-muted/72 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-border/55 px-3 py-2.5">
+              <div className="min-w-0">
+                <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                  Hosted credits
+                </div>
+                <div className="mt-1 text-[12px] leading-5 text-muted-foreground">
+                  {showOutOfCreditsWarning
+                    ? "You're out of credits for managed usage."
+                    : "Credits are running low. Add more on web to avoid interruptions."}
+                </div>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => openExternalUrl(billingLinks?.addCreditsUrl)}
+                  className="inline-flex items-center rounded-full border border-primary/35 bg-primary/10 px-3 py-1.5 text-[12px] font-medium text-primary transition hover:bg-primary/16"
+                >
+                  Add credits
+                </button>
+                {showOutOfCreditsWarning ? (
+                  <button
+                    type="button"
+                    onClick={() => openExternalUrl(billingLinks?.billingPageUrl)}
+                    className="inline-flex items-center rounded-full border border-border/60 bg-background px-3 py-1.5 text-[12px] font-medium text-foreground transition hover:border-primary/35 hover:text-primary"
+                  >
+                    Manage on web
+                  </button>
+                ) : null}
+              </div>
             </div>
           </div>
         ) : null}

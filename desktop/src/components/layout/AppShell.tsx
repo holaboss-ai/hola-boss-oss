@@ -8,6 +8,7 @@ import {
   type OperationsOutputEntry,
 } from "@/components/layout/OperationsDrawer";
 import { appShellMainGridClassName } from "@/components/layout/appShellLayout";
+import { PublishDialog } from "@/components/publish/PublishDialog";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
 import { FirstWorkspacePane } from "@/components/onboarding";
@@ -27,6 +28,7 @@ import {
   getWorkspaceAppDefinition,
   inferInstalledWorkspaceAppIdFromText,
 } from "@/lib/workspaceApps";
+import { DesktopBillingProvider } from "@/lib/billing/useDesktopBilling";
 import {
   useWorkspaceDesktop,
   WorkspaceDesktopProvider,
@@ -121,7 +123,7 @@ function isAppTheme(value: string): value is AppTheme {
 }
 
 function isSettingsPaneSection(value: string): value is UiSettingsPaneSection {
-  return value === "account" || value === "settings" || value === "about";
+  return value === "account" || value === "billing" || value === "providers" || value === "settings" || value === "about";
 }
 
 type AgentView =
@@ -528,6 +530,7 @@ function AppShellContent() {
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [settingsDialogSection, setSettingsDialogSection] =
     useState<UiSettingsPaneSection>("settings");
+  const [publishOpen, setPublishOpen] = useState(false);
   const [createWorkspacePanelOpen, setCreateWorkspacePanelOpen] =
     useState(false);
   const [createWorkspacePanelAnchorWorkspaceId, setCreateWorkspacePanelAnchorWorkspaceId] =
@@ -1510,7 +1513,8 @@ function AppShellContent() {
                 isUtilityPaneResizing ||
                 workspaceSwitcherOpen ||
                 settingsDialogOpen ||
-                createWorkspacePanelOpen
+                createWorkspacePanelOpen ||
+                publishOpen
               }
               layoutSyncKey={`${visibleSpacePaneIds.join("|")}:${filesPaneWidth}:${browserPaneWidth}:${showOperationsDrawer ? 1 : 0}`}
             />
@@ -1521,6 +1525,7 @@ function AppShellContent() {
       browserPaneWidth,
       filesPaneWidth,
       flexSpacePaneId,
+      publishOpen,
       isUtilityPaneResizing,
       createWorkspacePanelOpen,
       settingsDialogOpen,
@@ -1709,11 +1714,16 @@ function AppShellContent() {
                 setSettingsDialogSection("account");
                 setSettingsDialogOpen(true);
               }}
+              onOpenBilling={() => {
+                setSettingsDialogSection("billing");
+                setSettingsDialogOpen(true);
+              }}
               onOpenModelProviders={() => {
                 setSettingsDialogSection("providers");
                 setSettingsDialogOpen(true);
               }}
               onOpenExternalUrl={handleOpenExternalUrl}
+              onPublish={() => setPublishOpen(true)}
             />
           </div>
         ) : null}
@@ -1923,6 +1933,11 @@ function AppShellContent() {
                   onTabChange={setActiveOperationsTab}
                   proposals={taskProposals}
                   proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
+                  isUpdatingProactiveTaskProposalsEnabled={
+                    isLoadingProactiveTaskProposalsEnabled ||
+                    isUpdatingProactiveTaskProposalsEnabled
+                  }
+                  proactiveTaskProposalsError={proactiveTaskProposalsError}
                   isLoadingProposals={isLoadingTaskProposals}
                   isTriggeringProposal={isTriggeringTaskProposal}
                   proposalStatusMessage={taskProposalStatusMessage}
@@ -1932,13 +1947,16 @@ function AppShellContent() {
                   selectedOutputId={selectedOutputId}
                   onSelectOutput={setSelectedOutputId}
                   onOpenOutput={handleOpenOutput}
-                  onRefreshProposals={() =>
-                    void refreshTaskProposals({ logErrors: true })
-                  }
-                  onTriggerProposal={() => void triggerRemoteTaskProposal()}
-                  onAcceptProposal={(proposal) =>
-                    void acceptTaskProposal(proposal)
-                  }
+                onRefreshProposals={() =>
+                  void refreshTaskProposals({ logErrors: true })
+                }
+                onTriggerProposal={() => void triggerRemoteTaskProposal()}
+                onProactiveTaskProposalsEnabledChange={(enabled) =>
+                  void handleProactiveTaskProposalsEnabledChange(enabled)
+                }
+                onAcceptProposal={(proposal) =>
+                  void acceptTaskProposal(proposal)
+                }
                   onDismissProposal={(proposal) =>
                     void dismissTaskProposal(proposal)
                   }
@@ -1966,17 +1984,15 @@ function AppShellContent() {
         theme={theme}
         themes={THEMES}
         onThemeChange={handleThemeChange}
-        proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
-        isUpdatingProactiveTaskProposalsEnabled={
-          isLoadingProactiveTaskProposalsEnabled ||
-          isUpdatingProactiveTaskProposalsEnabled
-        }
-        proactiveTaskProposalsError={proactiveTaskProposalsError}
-        onProactiveTaskProposalsEnabledChange={(enabled) =>
-          void handleProactiveTaskProposalsEnabledChange(enabled)
-        }
         onOpenExternalUrl={handleOpenExternalUrl}
       />
+      {selectedWorkspaceId && (
+        <PublishDialog
+          open={publishOpen}
+          onOpenChange={setPublishOpen}
+          workspaceId={selectedWorkspaceId}
+        />
+      )}
     </main>
   );
 }
@@ -1985,7 +2001,9 @@ export function AppShell() {
   return (
     <WorkspaceSelectionProvider>
       <WorkspaceDesktopProvider>
-        <AppShellContent />
+        <DesktopBillingProvider>
+          <AppShellContent />
+        </DesktopBillingProvider>
       </WorkspaceDesktopProvider>
     </WorkspaceSelectionProvider>
   );

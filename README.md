@@ -227,10 +227,10 @@ Holaboss workspaces live under the runtime sandbox root. In the desktop app, tha
       *.md
 ```
 
-- `workspace.yaml` is the root runtime plan for the workspace. It defines the single active agent, local skills path, MCP registry, and any installed workspace apps.
+- `workspace.yaml` is the root runtime plan for the workspace. It defines the single active agent, skill enablement or order, MCP registry, and any installed workspace apps.
 - `AGENTS.md` is the root prompt file. Workspace instructions are expected there rather than inline in `workspace.yaml`.
 - each new workspace is initialized as a local git repository after its scaffold or template is materialized. That repository is intended for agent-owned local version control checkpoints rather than remote sync.
-- `skills/` is the conventional workspace-local skill directory shown here, but the runtime actually resolves workspace skills from the path configured in `workspace.yaml` under `skills.path`. Each skill directory must contain `SKILL.md`.
+- `skills/` is the fixed workspace-local skill directory. Workspace skills are always discovered from `<workspace-root>/skills`, and each skill directory must contain `SKILL.md`.
 - `apps/` contains workspace-local apps. Each installed app lives under `apps/<app-id>/` and must provide `app.runtime.yaml`.
 - `<workspace-id>/.holaboss/` stores runtime-managed workspace state such as the identity marker, persisted harness session mapping, staged input attachments, and Pi harness state.
 - `workspace/.holaboss/` is separate from the per-workspace `.holaboss/` directory. It stores shared workspace-root state for MCP sidecars and their logs.

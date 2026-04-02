@@ -1,6 +1,24 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Bell, Check, ChevronRight, Clock3, Loader2, RefreshCcw, Sparkles, X } from "lucide-react";
-import { getWorkspaceAppDefinition, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
+import {
+  Bell,
+  Check,
+  ChevronRight,
+  Clock3,
+  Loader2,
+  RefreshCcw,
+  Sparkles,
+  X,
+} from "lucide-react";
+import {
+  getWorkspaceAppDefinition,
+  type WorkspaceInstalledAppDefinition,
+} from "@/lib/workspaceApps";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 export type OperationsDrawerTab = "inbox" | "running" | "outputs";
 
@@ -33,6 +51,8 @@ interface OperationsDrawerProps {
   onTabChange: (tab: OperationsDrawerTab) => void;
   proposals: TaskProposalRecordPayload[];
   proactiveTaskProposalsEnabled: boolean;
+  isUpdatingProactiveTaskProposalsEnabled: boolean;
+  proactiveTaskProposalsError: string;
   isLoadingProposals: boolean;
   isTriggeringProposal: boolean;
   proposalStatusMessage: string;
@@ -47,6 +67,7 @@ interface OperationsDrawerProps {
   onOpenOutput: (entry: OperationsOutputEntry) => void;
   onRefreshProposals: () => void;
   onTriggerProposal: () => void;
+  onProactiveTaskProposalsEnabledChange: (enabled: boolean) => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
   hasWorkspace: boolean;
@@ -67,6 +88,8 @@ export function OperationsDrawer({
   onTabChange,
   proposals,
   proactiveTaskProposalsEnabled,
+  isUpdatingProactiveTaskProposalsEnabled,
+  proactiveTaskProposalsError,
   isLoadingProposals,
   isTriggeringProposal,
   proposalStatusMessage,
@@ -78,10 +101,11 @@ export function OperationsDrawer({
   onOpenOutput,
   onRefreshProposals,
   onTriggerProposal,
+  onProactiveTaskProposalsEnabledChange,
   onAcceptProposal,
   onDismissProposal,
   hasWorkspace,
-  selectedWorkspaceId
+  selectedWorkspaceId,
 }: OperationsDrawerProps) {
   const selectedOutput = useMemo(() => {
     if (!outputs.length) {
@@ -89,8 +113,11 @@ export function OperationsDrawer({
     }
     return outputs.find((entry) => entry.id === selectedOutputId) ?? outputs[0];
   }, [outputs, selectedOutputId]);
-  const [runningSessions, setRunningSessions] = useState<RunningSessionEntry[]>([]);
-  const [isLoadingRunningSessions, setIsLoadingRunningSessions] = useState(false);
+  const [runningSessions, setRunningSessions] = useState<RunningSessionEntry[]>(
+    [],
+  );
+  const [isLoadingRunningSessions, setIsLoadingRunningSessions] =
+    useState(false);
   const [runningSessionsError, setRunningSessionsError] = useState("");
 
   useEffect(() => {
@@ -110,14 +137,17 @@ export function OperationsDrawer({
       try {
         const [runtimeStatesResponse, sessionsResponse] = await Promise.all([
           window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId),
-          window.electronAPI.workspace.listAgentSessions(selectedWorkspaceId)
+          window.electronAPI.workspace.listAgentSessions(selectedWorkspaceId),
         ]);
         if (cancelled) {
           return;
         }
 
         const sessionById = new Map(
-          sessionsResponse.items.map((session) => [session.session_id, session])
+          sessionsResponse.items.map((session) => [
+            session.session_id,
+            session,
+          ]),
         );
         const nextEntries = runtimeStatesResponse.items
           .filter((state) => state.status !== "IDLE")
@@ -126,10 +156,12 @@ export function OperationsDrawer({
             return {
               sessionId: state.session_id,
               status: state.status,
-              title: session?.title?.trim() || defaultSessionTitle(session?.kind, state.session_id),
+              title:
+                session?.title?.trim() ||
+                defaultSessionTitle(session?.kind, state.session_id),
               kind: session?.kind?.trim() || "session",
               updatedAt: state.updated_at,
-              lastError: runtimeStateErrorMessage(state.last_error)
+              lastError: runtimeStateErrorMessage(state.last_error),
             };
           })
           .sort(compareRunningSessionEntries);
@@ -162,7 +194,12 @@ export function OperationsDrawer({
     <aside className="theme-shell neon-border relative flex h-full min-h-0 min-w-[360px] max-w-[420px] flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
       <header className="flex shrink-0 items-center justify-between gap-3 border-b border-primary/15 bg-card px-4 py-3">
         <div className="flex items-center gap-2">
-          <DrawerTabButton active={activeTab === "inbox"} icon={<Bell size={14} />} label="Inbox" onClick={() => onTabChange("inbox")} />
+          <DrawerTabButton
+            active={activeTab === "inbox"}
+            icon={<Bell size={14} />}
+            label="Inbox"
+            onClick={() => onTabChange("inbox")}
+          />
           <DrawerTabButton
             active={activeTab === "running"}
             icon={<Clock3 size={14} />}
@@ -183,6 +220,10 @@ export function OperationsDrawer({
           <InboxPanel
             proposals={proposals}
             proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
+            isUpdatingProactiveTaskProposalsEnabled={
+              isUpdatingProactiveTaskProposalsEnabled
+            }
+            proactiveTaskProposalsError={proactiveTaskProposalsError}
             isLoadingProposals={isLoadingProposals}
             isTriggeringProposal={isTriggeringProposal}
             proposalStatusMessage={proposalStatusMessage}
@@ -190,6 +231,9 @@ export function OperationsDrawer({
             hasWorkspace={hasWorkspace}
             onRefreshProposals={onRefreshProposals}
             onTriggerProposal={onTriggerProposal}
+            onProactiveTaskProposalsEnabledChange={
+              onProactiveTaskProposalsEnabledChange
+            }
             onAcceptProposal={onAcceptProposal}
             onDismissProposal={onDismissProposal}
           />
@@ -222,19 +266,30 @@ function normalizeOperationError(error: unknown): string {
   return error instanceof Error ? error.message : "Request failed.";
 }
 
-function runtimeStateErrorMessage(value: Record<string, unknown> | null): string | null {
+function runtimeStateErrorMessage(
+  value: Record<string, unknown> | null,
+): string | null {
   if (!value) {
     return null;
   }
-  const message = typeof value.message === "string" && value.message.trim() ? value.message.trim() : "";
+  const message =
+    typeof value.message === "string" && value.message.trim()
+      ? value.message.trim()
+      : "";
   if (message) {
     return message;
   }
-  const rawMessage = typeof value.raw_message === "string" && value.raw_message.trim() ? value.raw_message.trim() : "";
+  const rawMessage =
+    typeof value.raw_message === "string" && value.raw_message.trim()
+      ? value.raw_message.trim()
+      : "";
   return rawMessage || null;
 }
 
-function defaultSessionTitle(kind: string | null | undefined, sessionId: string): string {
+function defaultSessionTitle(
+  kind: string | null | undefined,
+  sessionId: string,
+): string {
   if (kind === "cronjob") {
     return "Cronjob run";
   }
@@ -262,8 +317,13 @@ function runningSessionStatusRank(status: string): number {
   }
 }
 
-function compareRunningSessionEntries(left: RunningSessionEntry, right: RunningSessionEntry): number {
-  const statusDiff = runningSessionStatusRank(left.status) - runningSessionStatusRank(right.status);
+function compareRunningSessionEntries(
+  left: RunningSessionEntry,
+  right: RunningSessionEntry,
+): number {
+  const statusDiff =
+    runningSessionStatusRank(left.status) -
+    runningSessionStatusRank(right.status);
   if (statusDiff !== 0) {
     return statusDiff;
   }
@@ -289,7 +349,7 @@ function DrawerTabButton({
   active,
   icon,
   label,
-  onClick
+  onClick,
 }: {
   active: boolean;
   icon: ReactNode;
@@ -300,7 +360,7 @@ function DrawerTabButton({
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex h-10 items-center gap-2 rounded-[16px] border px-3 text-[12px] transition ${
+      className={`inline-flex h-10 items-center gap-2 rounded-2xl border px-3 text-sm transition ${
         active
           ? "border-primary/45 bg-primary/10 text-primary"
           : "border-border/45 text-muted-foreground hover:border-primary/35 hover:text-foreground"
@@ -315,6 +375,8 @@ function DrawerTabButton({
 function InboxPanel({
   proposals,
   proactiveTaskProposalsEnabled,
+  isUpdatingProactiveTaskProposalsEnabled,
+  proactiveTaskProposalsError,
   isLoadingProposals,
   isTriggeringProposal,
   proposalStatusMessage,
@@ -322,11 +384,14 @@ function InboxPanel({
   hasWorkspace,
   onRefreshProposals,
   onTriggerProposal,
+  onProactiveTaskProposalsEnabledChange,
   onAcceptProposal,
-  onDismissProposal
+  onDismissProposal,
 }: {
   proposals: TaskProposalRecordPayload[];
   proactiveTaskProposalsEnabled: boolean;
+  isUpdatingProactiveTaskProposalsEnabled: boolean;
+  proactiveTaskProposalsError: string;
   isLoadingProposals: boolean;
   isTriggeringProposal: boolean;
   proposalStatusMessage: string;
@@ -337,93 +402,176 @@ function InboxPanel({
   hasWorkspace: boolean;
   onRefreshProposals: () => void;
   onTriggerProposal: () => void;
+  onProactiveTaskProposalsEnabledChange: (enabled: boolean) => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 border-b border-border/35 px-4 py-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-[0.16em] text-primary/76">Remote proposals</div>
-            <div className="mt-1 text-[12px] leading-6 text-foreground/88">
-              Review backend-delivered task ideas and either queue them immediately or dismiss them at the source.
+        <div className="grid gap-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex flex-wrap flex-1 items-center justify-end gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                aria-label="Toggle proactive task proposals"
+                aria-pressed={proactiveTaskProposalsEnabled}
+                disabled={isUpdatingProactiveTaskProposalsEnabled}
+                onClick={() =>
+                  onProactiveTaskProposalsEnabledChange(
+                    !proactiveTaskProposalsEnabled,
+                  )
+                }
+                className={`rounded-full text-xs uppercase tracking-[0.16em] ${
+                  proactiveTaskProposalsEnabled
+                    ? "bg-primary/12 text-primary hover:bg-primary/16 hover:text-primary"
+                    : "bg-amber-500/12 text-amber-300 hover:bg-amber-500/16 hover:text-amber-200 dark:text-amber-200"
+                } ${
+                  isUpdatingProactiveTaskProposalsEnabled
+                    ? "cursor-wait opacity-75"
+                    : ""
+                }`}
+              >
+                {isUpdatingProactiveTaskProposalsEnabled ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : null}
+                <span>
+                  {proactiveTaskProposalsEnabled ? "Enabled" : "Paused"}
+                </span>
+              </Button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label="Refresh proposals"
+                      onClick={onRefreshProposals}
+                      disabled={!hasWorkspace || isLoadingProposals}
+                      className="rounded-2xl bg-muted/55 text-muted-foreground hover:bg-accent hover:text-foreground"
+                    />
+                  }
+                >
+                  {isLoadingProposals ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <RefreshCcw size={14} />
+                  )}
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Refresh proposals</TooltipContent>
+              </Tooltip>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={onTriggerProposal}
+                disabled={!hasWorkspace || isTriggeringProposal}
+                className="rounded-2xl bg-primary/10 text-primary hover:bg-primary/14 hover:text-primary"
+              >
+                {isTriggeringProposal ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Sparkles size={12} />
+                )}
+                <span>Trigger</span>
+              </Button>
             </div>
-            {!proactiveTaskProposalsEnabled ? (
-              <div className="mt-3 rounded-[14px] border border-primary/28 bg-primary/8 px-3 py-2 text-[11px] text-primary">
-                Proactive polling is off. Use Refresh or Trigger manually, or re-enable it in Settings.
+          </div>
+          <div className="grid gap-2">
+            <div
+              className={`rounded-2xl px-3 py-2 text-sm ${
+                proactiveTaskProposalsEnabled
+                  ? "bg-muted/35 text-muted-foreground"
+                  : "bg-amber-500/10 text-amber-300 dark:text-amber-200"
+              }`}
+            >
+              {proactiveTaskProposalsEnabled
+                ? "Automatic proposals are enabled for this inbox."
+                : "Automatic proposals are paused. Use Refresh or Trigger manually."}
+            </div>
+
+            {proactiveTaskProposalsError ? (
+              <div className="rounded-2xl bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {proactiveTaskProposalsError}
+              </div>
+            ) : null}
+
+            {proposalStatusMessage ? (
+              <div className="theme-subtle-surface rounded-2xl px-3 py-2 text-sm text-muted-foreground">
+                {proposalStatusMessage}
               </div>
             ) : null}
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={onRefreshProposals}
-              disabled={!hasWorkspace || isLoadingProposals}
-              className="inline-flex h-8 items-center justify-center gap-2 rounded-[14px] border border-border/45 px-3 text-[11px] text-muted-foreground transition hover:border-primary/35 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isLoadingProposals ? <Loader2 size={12} className="animate-spin" /> : <RefreshCcw size={12} />}
-              <span>Refresh</span>
-            </button>
-            <button
-              type="button"
-              onClick={onTriggerProposal}
-              disabled={!hasWorkspace || isTriggeringProposal}
-              className="inline-flex h-8 items-center justify-center gap-2 rounded-[14px] border border-primary/40 bg-primary/10 px-3 text-[11px] text-primary transition hover:bg-primary/14 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {isTriggeringProposal ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-              <span>Trigger</span>
-            </button>
-          </div>
         </div>
-
-        {proposalStatusMessage ? (
-          <div className="theme-subtle-surface mt-3 rounded-[14px] border border-border/35 px-3 py-2 text-[11px] text-muted-foreground">
-            {proposalStatusMessage}
-          </div>
-        ) : null}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         {!hasWorkspace ? (
           <EmptyNotice message="Select a workspace to review incoming task proposals." />
         ) : proposals.length === 0 ? (
-          <EmptyNotice message={isLoadingProposals ? "Loading task proposals..." : "No unreviewed proposals for this workspace yet."} />
+          <EmptyNotice
+            message={
+              isLoadingProposals
+                ? "Loading task proposals..."
+                : "No unreviewed proposals for this workspace yet."
+            }
+          />
         ) : (
           <div className="grid gap-3">
             {proposals.map((proposal) => {
-              const isActing = proposalAction?.proposalId === proposal.proposal_id;
+              const isActing =
+                proposalAction?.proposalId === proposal.proposal_id;
               return (
-                <article key={proposal.proposal_id} className="theme-subtle-surface rounded-[18px] border border-border/35 px-4 py-4">
+                <article
+                  key={proposal.proposal_id}
+                  className="theme-subtle-surface rounded-[22px] border border-border/35 px-4 py-4 shadow-sm"
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
-                      <div className="text-[12px] font-medium text-foreground">{proposal.task_name}</div>
-                      <div className="mt-2 whitespace-pre-wrap text-[11px] leading-6 text-muted-foreground">{proposal.task_prompt}</div>
+                      <div className="text-sm font-medium text-foreground">
+                        {proposal.task_name}
+                      </div>
+                      <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
+                        {proposal.task_prompt}
+                      </div>
                     </div>
-                    <div className="shrink-0 rounded-full border border-border/45 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                    <div className="shrink-0 rounded-full border border-border/45 px-2.5 py-1 text-xs uppercase tracking-[0.12em] text-muted-foreground">
                       {proposal.state}
                     </div>
                   </div>
 
-                  <div className="mt-3 text-[10px] text-muted-foreground/78">{formatTimestamp(proposal.created_at)}</div>
+                  <div className="mt-3 text-xs text-muted-foreground/78">
+                    {formatTimestamp(proposal.created_at)}
+                  </div>
 
                   <div className="mt-4 flex flex-wrap gap-2">
                     <button
                       type="button"
                       onClick={() => onAcceptProposal(proposal)}
                       disabled={isActing}
-                      className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-primary/40 bg-primary/10 px-3 text-[11px] text-primary transition hover:bg-primary/14 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex h-9 items-center justify-center gap-2 rounded-2xl border border-primary/40 bg-primary/10 px-3 text-sm text-primary transition hover:bg-primary/14 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {isActing && proposalAction?.action === "accept" ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                      {isActing && proposalAction?.action === "accept" ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <Check size={12} />
+                      )}
                       <span>Accept</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => onDismissProposal(proposal)}
                       disabled={isActing}
-                      className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-border/45 px-3 text-[11px] text-muted-foreground transition hover:border-[rgba(255,153,102,0.3)] hover:text-[rgba(255,212,189,0.92)] disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex h-9 items-center justify-center gap-2 rounded-2xl border border-border/45 px-3 text-sm text-muted-foreground transition hover:border-primary/28 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {isActing && proposalAction?.action === "dismiss" ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
+                      {isActing && proposalAction?.action === "dismiss" ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <X size={12} />
+                      )}
                       <span>Dismiss</span>
                     </button>
                   </div>
@@ -441,7 +589,7 @@ function RunningPanel({
   hasWorkspace,
   isLoading,
   sessions,
-  errorMessage
+  errorMessage,
 }: {
   hasWorkspace: boolean;
   isLoading: boolean;
@@ -451,9 +599,12 @@ function RunningPanel({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 border-b border-border/35 px-4 py-4">
-        <div className="text-[10px] uppercase tracking-[0.16em] text-primary/76">Running</div>
+        <div className="text-[10px] uppercase tracking-[0.16em] text-primary/76">
+          Running
+        </div>
         <div className="mt-1 text-[12px] leading-6 text-foreground/88">
-          Active and failed runtime sessions for the current workspace, including cronjob runs.
+          Active and failed runtime sessions for the current workspace,
+          including cronjob runs.
         </div>
       </div>
 
@@ -469,15 +620,22 @@ function RunningPanel({
         ) : (
           <div className="grid gap-3">
             {sessions.map((session) => (
-              <article key={session.sessionId} className="theme-subtle-surface rounded-[18px] border border-border/35 px-4 py-4">
+              <article
+                key={session.sessionId}
+                className="theme-subtle-surface rounded-[18px] border border-border/35 px-4 py-4"
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13px] font-medium text-foreground">{session.title}</div>
+                    <div className="truncate text-[13px] font-medium text-foreground">
+                      {session.title}
+                    </div>
                     <div className="mt-1 text-[11px] uppercase tracking-[0.12em] text-muted-foreground/76">
                       {session.kind.replace(/_/g, " ")}
                     </div>
                   </div>
-                  <div className={`shrink-0 rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${runningStatusClasses(session.status)}`}>
+                  <div
+                    className={`shrink-0 rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${runningStatusClasses(session.status)}`}
+                  >
                     {session.status}
                   </div>
                 </div>
@@ -505,7 +663,7 @@ function OutputsPanel({
   installedApps,
   selectedOutput,
   onSelectOutput,
-  onOpenOutput
+  onOpenOutput,
 }: {
   outputs: OperationsOutputEntry[];
   installedApps: WorkspaceInstalledAppDefinition[];
@@ -516,9 +674,12 @@ function OutputsPanel({
   return (
     <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]">
       <div className="shrink-0 border-b border-border/35 px-4 py-4">
-        <div className="text-[10px] uppercase tracking-[0.16em] text-primary/76">Outputs</div>
+        <div className="text-[10px] uppercase tracking-[0.16em] text-primary/76">
+          Outputs
+        </div>
         <div className="mt-1 text-[12px] leading-6 text-foreground/88">
-          Latest operator-side events from the desktop surface, including proposal actions and workflow handoffs.
+          Latest operator-side events from the desktop surface, including
+          proposal actions and workflow handoffs.
         </div>
       </div>
 
@@ -541,8 +702,12 @@ function OutputsPanel({
                       : "theme-subtle-surface border-border/35 text-foreground/86 hover:border-primary/30"
                   }`}
                 >
-                  <div className="truncate text-[11px] font-medium">{entry.title}</div>
-                  <div className="mt-1 text-[10px] text-muted-foreground/78">{formatTimestamp(entry.createdAt)}</div>
+                  <div className="truncate text-[11px] font-medium">
+                    {entry.title}
+                  </div>
+                  <div className="mt-1 text-[10px] text-muted-foreground/78">
+                    {formatTimestamp(entry.createdAt)}
+                  </div>
                 </button>
               ))}
             </div>
@@ -550,12 +715,20 @@ function OutputsPanel({
 
           <div className="min-h-0 overflow-y-auto p-4">
             {selectedOutput ? (
-              <article className={`rounded-[20px] border px-4 py-4 ${outputToneClasses(selectedOutput.tone, false)}`}>
+              <article
+                className={`rounded-[20px] border px-4 py-4 ${outputToneClasses(selectedOutput.tone, false)}`}
+              >
                 <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/75">
-                  {selectedOutput.renderer.type === "app" ? "Workspace app output" : "Internal output"}
+                  {selectedOutput.renderer.type === "app"
+                    ? "Workspace app output"
+                    : "Internal output"}
                 </div>
-                <div className="mt-2 text-[16px] font-medium text-foreground">{selectedOutput.title}</div>
-                <div className="mt-2 whitespace-pre-wrap text-[12px] leading-6 text-foreground/86">{selectedOutput.detail}</div>
+                <div className="mt-2 text-[16px] font-medium text-foreground">
+                  {selectedOutput.title}
+                </div>
+                <div className="mt-2 whitespace-pre-wrap text-[12px] leading-6 text-foreground/86">
+                  {selectedOutput.detail}
+                </div>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <button
                     type="button"
@@ -563,10 +736,14 @@ function OutputsPanel({
                     className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-primary/40 bg-primary/10 px-3 text-[11px] text-primary transition hover:bg-primary/14"
                   >
                     <ChevronRight size={12} />
-                    <span>{openOutputLabel(selectedOutput, installedApps)}</span>
+                    <span>
+                      {openOutputLabel(selectedOutput, installedApps)}
+                    </span>
                   </button>
                 </div>
-                <div className="mt-4 text-[10px] text-muted-foreground/78">{formatTimestamp(selectedOutput.createdAt)}</div>
+                <div className="mt-4 text-[10px] text-muted-foreground/78">
+                  {formatTimestamp(selectedOutput.createdAt)}
+                </div>
               </article>
             ) : null}
           </div>
@@ -578,7 +755,7 @@ function OutputsPanel({
 
 function CenteredNotice({
   message,
-  tone = "default"
+  tone = "default",
 }: {
   message: string;
   tone?: "default" | "error";
@@ -587,7 +764,9 @@ function CenteredNotice({
     <div className="flex items-center justify-center p-6">
       <div
         className={`theme-subtle-surface max-w-[280px] rounded-[20px] border px-5 py-5 text-center ${
-          tone === "error" ? "border-destructive/25 text-destructive" : "border-border/35"
+          tone === "error"
+            ? "border-destructive/25 text-destructive"
+            : "border-border/35"
         }`}
       >
         <div className="text-[12px] leading-6">{message}</div>
@@ -596,7 +775,10 @@ function CenteredNotice({
   );
 }
 
-function openOutputLabel(entry: OperationsOutputEntry, installedApps: WorkspaceInstalledAppDefinition[]): string {
+function openOutputLabel(
+  entry: OperationsOutputEntry,
+  installedApps: WorkspaceInstalledAppDefinition[],
+): string {
   if (entry.renderer.type === "app") {
     const app = getWorkspaceAppDefinition(entry.renderer.appId, installedApps);
     return `Open in ${app?.label ?? entry.renderer.appId}`;
@@ -616,7 +798,7 @@ function openOutputLabel(entry: OperationsOutputEntry, installedApps: WorkspaceI
 
 function EmptyNotice({ message }: { message: string }) {
   return (
-    <div className="theme-subtle-surface rounded-[18px] border border-border/35 px-4 py-5 text-[12px] leading-6 text-muted-foreground/78">
+    <div className="theme-subtle-surface rounded-[22px] border border-border/35 px-4 py-5 text-sm leading-6 text-muted-foreground/78">
       {message}
     </div>
   );
@@ -630,7 +812,10 @@ function formatTimestamp(value: string): string {
   return new Date(timestamp).toLocaleString();
 }
 
-function outputToneClasses(tone: OperationsOutputEntry["tone"], compact: boolean): string {
+function outputToneClasses(
+  tone: OperationsOutputEntry["tone"],
+  compact: boolean,
+): string {
   if (tone === "success") {
     return compact
       ? "border-primary/40 bg-primary/10 text-primary"

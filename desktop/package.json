@@ -49,6 +49,7 @@
     "@better-auth/electron": "^1.5.5",
     "@fontsource-variable/inter": "^5.2.8",
     "@tailwindcss/vite": "^4.2.1",
+    "archiver": "^7.0.1",
     "better-auth": "^1.5.5",
     "better-sqlite3": "^12.8.0",
     "class-variance-authority": "^0.7.1",
@@ -68,6 +69,7 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.1",
+    "@types/archiver": "^7.0.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.3.0",
     "@types/react": "^19.1.12",
@@ -128,7 +130,9 @@
       "icon": "resources/icon.icns",
       "category": "public.app-category.developer-tools",
       "hardenedRuntime": true,
-      "gatekeeperAssess": false
+      "gatekeeperAssess": false,
+      "entitlements": "resources/entitlements.mac.plist",
+      "entitlementsInherit": "resources/entitlements.mac.plist"
     },
     "publish": [
       {

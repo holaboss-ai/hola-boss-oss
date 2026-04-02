@@ -52,7 +52,7 @@ interface BrowserAnchorBoundsPayload {
   height: number;
 }
 
-type UiSettingsPaneSection = "account" | "providers" | "settings" | "about";
+type UiSettingsPaneSection = "account" | "billing" | "providers" | "settings" | "about";
 
 interface BrowserStatePayload {
   id: string;
@@ -472,6 +472,46 @@ interface HolabossClientConfigPayload {
   hasApiKey: boolean;
 }
 
+interface DesktopBillingOverviewPayload {
+  hasHostedBillingAccount: boolean;
+  planId: string;
+  planName: string | null;
+  planStatus: string;
+  renewsAt: string | null;
+  expiresAt: string | null;
+  creditsBalance: number;
+  totalAllocated: number;
+  totalUsed: number;
+  monthlyCreditsIncluded: number | null;
+  monthlyCreditsUsed: number | null;
+  dailyRefreshCredits: number | null;
+  dailyRefreshTarget: number | null;
+  lowBalanceThreshold: number;
+  isLowBalance: boolean;
+}
+
+interface DesktopBillingUsageItemPayload {
+  id: string;
+  type: string;
+  sourceType: string | null;
+  reason: string | null;
+  amount: number;
+  absoluteAmount: number;
+  createdAt: string;
+}
+
+interface DesktopBillingUsagePayload {
+  items: DesktopBillingUsageItemPayload[];
+  count: number;
+}
+
+interface DesktopBillingLinksPayload {
+  billingPageUrl: string;
+  addCreditsUrl: string;
+  upgradeUrl: string;
+  usageUrl: string;
+}
+
 interface HolabossCreateWorkspacePayload {
   holaboss_user_id: string;
   harness?: string | null;
@@ -763,6 +803,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
       return () => ipcRenderer.removeListener("ui:openSettingsPane", wrapped);
     }
   },
+  billing: {
+    getOverview: () =>
+      ipcRenderer.invoke("billing:getOverview") as Promise<DesktopBillingOverviewPayload>,
+    getUsage: (limit?: number) =>
+      ipcRenderer.invoke("billing:getUsage", limit) as Promise<DesktopBillingUsagePayload>,
+    getLinks: () =>
+      ipcRenderer.invoke("billing:getLinks") as Promise<DesktopBillingLinksPayload>,
+  },
   appUpdate: {
     getStatus: () => ipcRenderer.invoke("appUpdate:getStatus") as Promise<AppUpdateStatusPayload>,
     checkNow: () => ipcRenderer.invoke("appUpdate:checkNow") as Promise<AppUpdateStatusPayload>,
@@ -901,6 +949,26 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:composioFinalize", payload) as Promise<IntegrationConnectionPayload>,
     resolveTemplateIntegrations: (payload: HolabossCreateWorkspacePayload) =>
       ipcRenderer.invoke("workspace:resolveTemplateIntegrations", payload) as Promise<ResolveTemplateIntegrationsResult>,
+    generateTemplateContent: (params: {
+      contentType: "onboarding" | "readme";
+      name: string;
+      description: string;
+      category: string;
+      tags: string[];
+      apps: string[];
+    }) =>
+      ipcRenderer.invoke("workspace:generateTemplateContent", params) as Promise<{ content: string }>,
+    createSubmission: (payload: CreateSubmissionPayload) =>
+      ipcRenderer.invoke("workspace:createSubmission", payload) as Promise<CreateSubmissionResponse>,
+    packageAndUploadWorkspace: (params: {
+      workspaceId: string;
+      apps: string[];
+      manifest: Record<string, unknown>;
+      uploadUrl: string;
+    }) =>
+      ipcRenderer.invoke("workspace:packageAndUploadWorkspace", params) as Promise<PackageAndUploadResult>,
+    finalizeSubmission: (submissionId: string) =>
+      ipcRenderer.invoke("workspace:finalizeSubmission", submissionId) as Promise<FinalizeSubmissionResponse>,
     onSessionStreamEvent: (listener: (payload: HolabossSessionStreamEventPayload) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, payload: HolabossSessionStreamEventPayload) => listener(payload);
       ipcRenderer.on("workspace:sessionStream", wrapped);

@@ -168,13 +168,42 @@ To build a mac installer image:
 GITHUB_TOKEN="$(gh auth token)" npm run dist:mac:dmg
 ```
 
-This produces an unsigned `.dmg` installer in `out/release/`.
+This produces a local-use `.dmg` installer in `out/release/`.
 
 Notes:
 - `dist:mac` builds an unpacked `.app`
 - `dist:mac:dmg` builds a `.dmg` installer
-- both local mac packaging commands are intentionally unsigned because they pass `--config.mac.identity=null`
-- for production distribution, signing and notarization still need to be added
+- both local mac packaging commands force ad-hoc signing for local smoke testing via `--config.mac.identity=-`
+- production signing and notarization are handled in GitHub Actions once the Apple secrets are configured
+
+### Signed Product Release
+
+Signed macOS distribution is handled by the manual `.github/workflows/release-macos-desktop.yml` workflow. Normal pushes continue to run CI and publish runtime bundles separately; the signed DMG is only built when you explicitly trigger the desktop release workflow.
+
+The desktop release workflow requires these repository secrets and fails fast when any of them are missing:
+
+- `MAC_CERTIFICATE`: base64-encoded `Developer ID Application` `.p12`
+- `MAC_CERTIFICATE_PASSWORD`: password for the `.p12`
+- `APPLE_ID`: Apple Developer account email
+- `APPLE_APP_SPECIFIC_PASSWORD`: app-specific password from Apple ID settings
+- `APPLE_TEAM_ID`: Apple Developer Team ID
+
+When triggering the workflow, provide:
+
+- `ref`: the branch, tag, or commit you want to ship
+- `release_tag`: the GitHub release tag to create or update
+- `release_title`: optional display title for the GitHub release
+- `prerelease`: whether the GitHub release should be marked as a prerelease when first created
+
+The workflow builds a matching macOS runtime bundle from that ref, maps the Apple secrets to `electron-builder`'s `CSC_LINK`, `CSC_KEY_PASSWORD`, and Apple notarization environment variables, then uploads the signed DMG to the chosen GitHub release. The desktop build config uses `hardenedRuntime` plus an explicit mac entitlements plist at `resources/entitlements.mac.plist`.
+
+After a signed build, validate the produced app locally with:
+
+```bash
+codesign --verify --deep --strict --verbose=2 /path/to/Holaboss.app
+spctl -a -vv -t exec /path/to/Holaboss.app
+xcrun stapler validate /path/to/Holaboss.app
+```
 
 ## Project Structure
 
