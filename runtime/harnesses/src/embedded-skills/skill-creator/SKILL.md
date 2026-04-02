@@ -8,9 +8,9 @@ description: Guide for creating effective skills. Use when creating or updating 
 Use this skill when defining or updating reusable Codex skills.
 
 ## Workflow
-1. Read `workspace.yaml` before creating skill files and resolve the workspace skills directory from `skills.path`.
-2. If `skills.path` is not set, fall back to `agents.proactive.skills_path`; if neither is set, default to `skills`.
-3. Treat the resolved skills directory as relative to the workspace root. Create or update the skill under `<skills-dir>/<skill-id>/` and save `SKILL.md` plus any helper files there. This embedded skill is guidance only: do not write new workspace skills into `runtime/harnesses/src/embedded-skills/`. Do not assume a hardcoded `skills/` path when `workspace.yaml` points elsewhere.
+1. Workspace-local skills always live under `skills/` at the workspace root.
+2. Create or update each workspace skill under `skills/<skill-id>/` and save `SKILL.md` plus any helper files there.
+3. This embedded skill is guidance only: do not write new workspace skills into `runtime/harnesses/src/embedded-skills/`.
 4. Clarify the task and gather concrete examples.
 5. Define minimal reusable structure and naming.
 6. Keep `SKILL.md` concise; use references/scripts only when needed.

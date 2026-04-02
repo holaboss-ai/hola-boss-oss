@@ -23,7 +23,7 @@ import { IconButton } from "@/components/ui/IconButton";
 import { PaneCard } from "@/components/ui/PaneCard";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
-const HOME_URL = "https://google.com/";
+const HOME_URL = "https://www.google.com";
 
 const EMPTY_BROWSER_STATE: BrowserStatePayload = {
   id: "",

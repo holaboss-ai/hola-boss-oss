@@ -23,14 +23,19 @@ function resolveRuntimePlatform() {
 const repoRoot = process.cwd();
 const runtimePlatform = resolveRuntimePlatform();
 const explicitRuntimeRepoRoot = process.env.HOLABOSS_OSS_ROOT || process.env.HOLABOSS_RUNTIME_REPO_ROOT;
+const localRuntimeRepoRoot = repoRoot;
 const monorepoRuntimeRepoRoot = path.resolve(repoRoot, "..");
 const legacySiblingRuntimeRepoRoot = path.resolve(repoRoot, "../hola-boss-oss");
 const packagerFileName = `package_${runtimePlatform}_runtime.sh`;
 const inferredRuntimeRepoRoot = existsSync(
-  path.join(monorepoRuntimeRepoRoot, "runtime", "deploy", packagerFileName)
+  path.join(localRuntimeRepoRoot, "runtime", "deploy", packagerFileName)
 )
-  ? monorepoRuntimeRepoRoot
-  : legacySiblingRuntimeRepoRoot;
+  ? localRuntimeRepoRoot
+  : existsSync(
+      path.join(monorepoRuntimeRepoRoot, "runtime", "deploy", packagerFileName)
+    )
+    ? monorepoRuntimeRepoRoot
+    : legacySiblingRuntimeRepoRoot;
 const runtimeRepoRoot = path.resolve(repoRoot, explicitRuntimeRepoRoot || inferredRuntimeRepoRoot);
 const runtimeOutDir = path.resolve(
   runtimeRepoRoot,

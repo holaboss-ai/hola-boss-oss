@@ -62,8 +62,6 @@ test("compileWorkspaceRuntimePlan accepts the minimal empty workspace scaffold",
 agents:
   id: workspace.general
   model: openai/gpt-5
-skills:
-  path: skills
 mcp_registry:
   allowlist:
     tool_ids: []

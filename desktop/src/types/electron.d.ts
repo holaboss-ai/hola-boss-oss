@@ -15,7 +15,17 @@ declare global {
     entries: LocalFileEntry[];
   }
 
-  type FilePreviewKind = "text" | "image" | "pdf" | "unsupported";
+  type FilePreviewKind = "text" | "image" | "pdf" | "table" | "unsupported";
+
+  interface FilePreviewTableSheetPayload {
+    name: string;
+    index: number;
+    columns: string[];
+    rows: string[][];
+    totalRows: number;
+    totalColumns: number;
+    truncated: boolean;
+  }
 
   interface FilePreviewPayload {
     absolutePath: string;
@@ -25,6 +35,7 @@ declare global {
     mimeType?: string;
     content?: string;
     dataUrl?: string;
+    tableSheets?: FilePreviewTableSheetPayload[];
     size: number;
     modifiedAt: string;
     isEditable: boolean;
@@ -634,7 +645,6 @@ declare global {
     workspace_id: string;
     workspace_root: string;
     skills_path: string;
-    configured_path: string;
     enabled_skill_ids: string[];
     missing_enabled_skill_ids: string[];
     skills: WorkspaceSkillRecordPayload[];

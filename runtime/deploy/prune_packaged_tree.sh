@@ -44,13 +44,20 @@ prune_common_runtime_files() {
       -name 'tests' -o \
       -name 'example' -o \
       -name 'examples' -o \
-      -name 'doc' -o \
-      -name 'docs' -o \
       -name 'website' -o \
       -name 'coverage' -o \
       -name 'benchmark' -o \
       -name 'benchmarks' \
     \) \
+    -exec rm -rf {} +
+
+  # Keep docs under dependencies because some packages import code from doc/ paths.
+  find "${root}" -depth -type d \
+    \( \
+      -name 'doc' -o \
+      -name 'docs' \
+    \) \
+    ! -path '*/node_modules/*' \
     -exec rm -rf {} +
 }
 

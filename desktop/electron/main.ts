@@ -32,6 +32,7 @@ import {
 import { request as httpsRequest } from "node:https";
 import path from "node:path";
 import { URL } from "node:url";
+import * as XLSX from "xlsx";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { ensureWorkspaceGitRepo } from "./workspace-git.js";
@@ -39,7 +40,9 @@ import { ensureWorkspaceGitRepo } from "./workspace-git.js";
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 const verboseTelemetryEnabled =
   process.env.HOLABOSS_VERBOSE_TELEMETRY?.trim() === "1";
-const HOME_URL = "https://google.com/";
+const chromiumStderrLoggingEnabled =
+  process.env.HOLABOSS_CHROMIUM_STDERR_LOGS?.trim() === "1";
+const HOME_URL = "https://www.google.com";
 const NEW_TAB_TITLE = "New Tab";
 const DOWNLOADS_POPUP_WIDTH = 360;
 const DOWNLOADS_POPUP_HEIGHT = 340;
@@ -99,6 +102,18 @@ const RUNTIME_DEPRECATED_MODEL_IDS = new Set([
   "gpt-5.1-codex-max",
 ]);
 
+function configureChromiumLoggingPolicy() {
+  if (verboseTelemetryEnabled || chromiumStderrLoggingEnabled) {
+    return;
+  }
+
+  delete process.env.ELECTRON_ENABLE_LOGGING;
+  app.commandLine.appendSwitch("disable-logging");
+  app.commandLine.appendSwitch("log-level", "3");
+}
+
+configureChromiumLoggingPolicy();
+
 interface DirectoryEntryPayload {
   name: string;
   absolutePath: string;
@@ -113,7 +128,17 @@ interface DirectoryPayload {
   entries: DirectoryEntryPayload[];
 }
 
-type FilePreviewKind = "text" | "image" | "pdf" | "unsupported";
+type FilePreviewKind = "text" | "image" | "pdf" | "table" | "unsupported";
+
+interface FilePreviewTableSheetPayload {
+  name: string;
+  index: number;
+  columns: string[];
+  rows: string[][];
+  totalRows: number;
+  totalColumns: number;
+  truncated: boolean;
+}
 
 interface FilePreviewPayload {
   absolutePath: string;
@@ -123,6 +148,7 @@ interface FilePreviewPayload {
   mimeType?: string;
   content?: string;
   dataUrl?: string;
+  tableSheets?: FilePreviewTableSheetPayload[];
   size: number;
   modifiedAt: string;
   isEditable: boolean;
@@ -526,6 +552,7 @@ const DESKTOP_RUNTIME_BINDING_EXCHANGE_PATH =
 const AUTH_CALLBACK_PROTOCOL = "ai.holaboss.app";
 const LOCAL_RUNTIME_SCHEMA_VERSION = 1;
 const RUNTIME_BINDING_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
+const RUNTIME_BINDING_REFRESH_FAILURE_BACKOFF_MS = 60 * 1000;
 
 type TrustedIpcSenderScope = "main" | "auth-popup";
 
@@ -1861,7 +1888,6 @@ interface WorkspaceSkillListResponsePayload {
   workspace_id: string;
   workspace_root: string;
   skills_path: string;
-  configured_path: string;
   enabled_skill_ids: string[];
   missing_enabled_skill_ids: string[];
   skills: WorkspaceSkillRecordPayload[];
@@ -1950,7 +1976,10 @@ let lastRuntimeStateSignature = "";
 let lastRuntimeConfigSignature = "";
 let lastRuntimeBindingRefreshAtMs = 0;
 let lastRuntimeBindingRefreshUserId = "";
+let lastRuntimeBindingRefreshFailureAtMs = 0;
+let lastRuntimeBindingRefreshFailureUserId = "";
 let runtimeBindingRefreshPromise: Promise<void> | null = null;
+let runtimeLifecycleChain: Promise<void> = Promise.resolve();
 let startupAuthSyncPromise: Promise<void> | null = null;
 
 function appendSessionStreamDebug(
@@ -3546,6 +3575,14 @@ async function restartEmbeddedRuntimeIfNeeded(
   return true;
 }
 
+function withRuntimeLifecycleLock<T>(work: () => Promise<T>): Promise<T> {
+  const run = runtimeLifecycleChain.then(work, work);
+  runtimeLifecycleChain = run
+    .then(() => undefined)
+    .catch(() => undefined);
+  return run;
+}
+
 async function withRuntimeBindingRefreshLock<T>(
   work: () => Promise<T>,
 ): Promise<T> {
@@ -4303,6 +4340,32 @@ function shouldForceRuntimeBindingRefresh(userId: string): boolean {
   );
 }
 
+function hasRecentTransientRuntimeBindingRefreshFailure(userId: string): boolean {
+  if (!userId) {
+    return false;
+  }
+  if (lastRuntimeBindingRefreshFailureUserId !== userId) {
+    return false;
+  }
+  return (
+    Date.now() - lastRuntimeBindingRefreshFailureAtMs <
+    RUNTIME_BINDING_REFRESH_FAILURE_BACKOFF_MS
+  );
+}
+
+function markTransientRuntimeBindingRefreshFailure(userId: string): void {
+  if (!userId) {
+    return;
+  }
+  lastRuntimeBindingRefreshFailureAtMs = Date.now();
+  lastRuntimeBindingRefreshFailureUserId = userId;
+}
+
+function clearTransientRuntimeBindingRefreshFailure(): void {
+  lastRuntimeBindingRefreshFailureAtMs = 0;
+  lastRuntimeBindingRefreshFailureUserId = "";
+}
+
 async function clearRuntimeBindingSecrets(reason: string): Promise<void> {
   appendRuntimeEventLog({
     category: "auth",
@@ -4321,6 +4384,7 @@ async function clearRuntimeBindingSecrets(reason: string): Promise<void> {
   });
   lastRuntimeBindingRefreshAtMs = 0;
   lastRuntimeBindingRefreshUserId = "";
+  clearTransientRuntimeBindingRefreshFailure();
   await restartEmbeddedRuntimeIfNeeded(currentConfig, nextConfig);
   await emitRuntimeConfig();
   appendRuntimeEventLog({
@@ -4403,6 +4467,7 @@ async function provisionRuntimeBindingForAuthenticatedUser(
       });
       lastRuntimeBindingRefreshAtMs = Date.now();
       lastRuntimeBindingRefreshUserId = userId;
+      clearTransientRuntimeBindingRefreshFailure();
     } catch (error) {
       appendRuntimeEventLog({
         category: "auth",
@@ -4454,11 +4519,36 @@ async function ensureRuntimeBindingReadyForWorkspaceFlow(
   }
 
   const userId = authUserId(user);
+  const bindingNeedsReplacement = runtimeConfigNeedsBindingRefresh(
+    currentConfig,
+    userId,
+  );
+  const hasExistingBindingMaterial = runtimeConfigHasBindingMaterial(
+    currentConfig,
+  );
+  const canUseExistingBindingOnRefreshFailure =
+    hasExistingBindingMaterial &&
+    !bindingNeedsReplacement &&
+    !Boolean(options?.forceRefresh) &&
+    !(allowProvisionWhenUnmanaged && !controlPlaneManaged);
   const shouldRefresh =
     Boolean(options?.forceRefresh) ||
     (allowProvisionWhenUnmanaged && !controlPlaneManaged) ||
-    runtimeConfigNeedsBindingRefresh(currentConfig, userId) ||
+    bindingNeedsReplacement ||
     shouldForceRuntimeBindingRefresh(userId);
+  if (
+    shouldRefresh &&
+    canUseExistingBindingOnRefreshFailure &&
+    hasRecentTransientRuntimeBindingRefreshFailure(userId)
+  ) {
+    appendRuntimeEventLog({
+      category: "auth",
+      event: "runtime_binding.provision",
+      outcome: "skipped",
+      detail: `${reason}:using_recent_binding_refresh_backoff`,
+    });
+    return;
+  }
   if (shouldRefresh) {
     try {
       await provisionRuntimeBindingForAuthenticatedUser(user, {
@@ -4467,9 +4557,22 @@ async function ensureRuntimeBindingReadyForWorkspaceFlow(
         reason,
       });
     } catch (error) {
-      await clearRuntimeBindingSecrets(`${reason}:provision_failed`);
       const detail =
         error instanceof Error ? error.message : "Binding exchange failed.";
+      if (
+        canUseExistingBindingOnRefreshFailure &&
+        isTransientRuntimeError(error)
+      ) {
+        markTransientRuntimeBindingRefreshFailure(userId);
+        appendRuntimeEventLog({
+          category: "auth",
+          event: "runtime_binding.provision",
+          outcome: "skipped",
+          detail: `${reason}:using_existing_binding_after_transient_refresh_failure:${detail}`,
+        });
+        return;
+      }
+      await clearRuntimeBindingSecrets(`${reason}:provision_failed`);
       throw new Error(`Runtime binding provisioning failed: ${detail}`);
     }
   }
@@ -7294,11 +7397,9 @@ function parseInlineYamlStringArray(rawValue: string): string[] {
 }
 
 function parseWorkspaceSkillsConfig(workspaceYaml: string | null): {
-  relativePath: string;
   enabledSkillIds: string[];
 } {
   const result = {
-    relativePath: "skills",
     enabledSkillIds: [] as string[],
   };
   if (!workspaceYaml) {
@@ -7339,12 +7440,7 @@ function parseWorkspaceSkillsConfig(workspaceYaml: string | null): {
     const rawValue = trimmed.slice(separatorIndex + 1).trim();
     const scope = [...stack.map((entry) => entry.key), key].join(".");
 
-    if (scope === "skills.path" && rawValue) {
-      const nextPath = sanitizeYamlScalar(rawValue);
-      if (nextPath) {
-        result.relativePath = nextPath;
-      }
-    } else if (scope === "skills.enabled" && rawValue) {
+    if (scope === "skills.enabled" && rawValue) {
       for (const skillId of parseInlineYamlStringArray(rawValue)) {
         if (!result.enabledSkillIds.includes(skillId)) {
           result.enabledSkillIds.push(skillId);
@@ -7424,13 +7520,9 @@ function extractSkillMetadata(
 }
 
 async function readSkillCatalogFromRoot(params: {
-  skillsRoot: string | null;
+  skillsRoot: string;
   enabledSkillIds: string[];
 }): Promise<WorkspaceSkillRecordPayload[]> {
-  if (!params.skillsRoot) {
-    return [];
-  }
-
   let directoryEntries;
   try {
     directoryEntries = await fs.readdir(params.skillsRoot, { withFileTypes: true });
@@ -7488,22 +7580,10 @@ async function listWorkspaceSkills(
   }
 
   const config = parseWorkspaceSkillsConfig(workspaceYamlContent);
-  const configuredPath = config.relativePath || "skills";
-  const relativePath = path.normalize(configuredPath);
-  const skillsPath = path.resolve(workspaceRoot, relativePath);
-  const relativeToWorkspace = path.relative(
-    path.resolve(workspaceRoot),
-    skillsPath,
-  );
-  const workspaceSkillsPath =
-    path.isAbsolute(relativePath) ||
-    relativeToWorkspace.startsWith("..") ||
-    path.isAbsolute(relativeToWorkspace)
-      ? null
-      : skillsPath;
+  const skillsPath = path.resolve(workspaceRoot, "skills");
 
   const workspaceSkills = await readSkillCatalogFromRoot({
-    skillsRoot: workspaceSkillsPath,
+    skillsRoot: skillsPath,
     enabledSkillIds: config.enabledSkillIds,
   });
 
@@ -7552,7 +7632,6 @@ async function listWorkspaceSkills(
     workspace_id: workspaceId,
     workspace_root: workspaceRoot,
     skills_path: skillsPath,
-    configured_path: configuredPath,
     enabled_skill_ids: config.enabledSkillIds,
     missing_enabled_skill_ids: missingEnabledSkillIds,
     skills,
@@ -7597,8 +7676,6 @@ function renderEmptyWorkspaceYaml() {
     "agents:",
     "  id: workspace.general",
     "  model: openai/gpt-5",
-    "skills:",
-    "  path: skills",
     "mcp_registry:",
     "  allowlist:",
     "    tool_ids: []",
@@ -8639,254 +8716,258 @@ async function refreshRuntimeStatus() {
 }
 
 async function stopEmbeddedRuntime() {
-  const running = runtimeProcess;
-  runtimeProcess = null;
-  if (!running) {
-    if (
-      runtimeStatus.status === "running" ||
-      runtimeStatus.status === "starting"
-    ) {
-      runtimeStatus = withDesktopBrowserStatus({
-        ...runtimeStatus,
-        status: "stopped",
-        pid: null,
-      });
-      persistRuntimeProcessState({
-        pid: null,
-        status: "stopped",
-        lastStoppedAt: utcNowIso(),
-        lastError: "",
-      });
-      emitRuntimeState();
+  await withRuntimeLifecycleLock(async () => {
+    const running = runtimeProcess;
+    runtimeProcess = null;
+    if (!running) {
+      if (
+        runtimeStatus.status === "running" ||
+        runtimeStatus.status === "starting"
+      ) {
+        runtimeStatus = withDesktopBrowserStatus({
+          ...runtimeStatus,
+          status: "stopped",
+          pid: null,
+        });
+        persistRuntimeProcessState({
+          pid: null,
+          status: "stopped",
+          lastStoppedAt: utcNowIso(),
+          lastError: "",
+        });
+        emitRuntimeState();
+      }
+      return;
     }
-    return;
-  }
 
-  await new Promise<void>((resolve) => {
-    let settled = false;
-    let forceSettleTimer: NodeJS.Timeout | null = null;
-    const settle = () => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      if (forceSettleTimer) {
-        clearTimeout(forceSettleTimer);
-      }
-      clearTimeout(sigkillTimer);
-      running.removeListener("exit", onExit);
-      resolve();
-    };
-    const onExit = () => settle();
-    const sigkillTimer = setTimeout(() => {
-      if (running.exitCode === null && running.signalCode === null) {
-        try {
-          running.kill("SIGKILL");
-        } catch {
-          settle();
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      let forceSettleTimer: NodeJS.Timeout | null = null;
+      const settle = () => {
+        if (settled) {
           return;
         }
-      }
-      forceSettleTimer = setTimeout(() => settle(), 1000);
-      forceSettleTimer.unref();
-    }, 3000);
-    sigkillTimer.unref();
+        settled = true;
+        if (forceSettleTimer) {
+          clearTimeout(forceSettleTimer);
+        }
+        clearTimeout(sigkillTimer);
+        running.removeListener("exit", onExit);
+        resolve();
+      };
+      const onExit = () => settle();
+      const sigkillTimer = setTimeout(() => {
+        if (running.exitCode === null && running.signalCode === null) {
+          try {
+            running.kill("SIGKILL");
+          } catch {
+            settle();
+            return;
+          }
+        }
+        forceSettleTimer = setTimeout(() => settle(), 1000);
+        forceSettleTimer.unref();
+      }, 3000);
+      sigkillTimer.unref();
 
-    running.once("exit", onExit);
-    try {
-      const signalSent = running.kill("SIGTERM");
-      if (
-        !signalSent &&
-        (running.exitCode !== null || running.signalCode !== null)
-      ) {
+      running.once("exit", onExit);
+      try {
+        const signalSent = running.kill("SIGTERM");
+        if (
+          !signalSent &&
+          (running.exitCode !== null || running.signalCode !== null)
+        ) {
+          settle();
+        }
+      } catch {
         settle();
       }
-    } catch {
-      settle();
-    }
+    });
   });
 }
 
 async function startEmbeddedRuntime() {
-  if (runtimeProcess) {
-    return refreshRuntimeStatus();
-  }
-
-  const { runtimeRoot, validationError } = await resolveRuntimeRoot();
-  const executablePath = runtimeRoot
-    ? path.join(runtimeRoot, "bin", "sandbox-runtime")
-    : null;
-  const sandboxRoot = runtimeSandboxRoot();
-  const harness = process.env.HOLABOSS_RUNTIME_HARNESS || "pi";
-  const workflowBackend =
-    process.env.HOLABOSS_RUNTIME_WORKFLOW_BACKEND || "remote_api";
-  const url = `http://127.0.0.1:${RUNTIME_API_PORT}`;
-
-  runtimeStatus = withDesktopBrowserStatus({
-    ...runtimeStatus,
-    status: runtimeRoot && executablePath ? "starting" : "missing",
-    available: Boolean(runtimeRoot && executablePath),
-    runtimeRoot,
-    sandboxRoot,
-    executablePath,
-    url,
-    pid: null,
-    harness,
-    lastError:
-      runtimeRoot && executablePath
-        ? ""
-        : validationError ||
-          "Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package runtime-macos into app resources.",
-  });
-  emitRuntimeState();
-
-  if (!runtimeRoot || !executablePath) {
-    persistRuntimeProcessState({
-      pid: null,
-      status: "missing",
-      lastError: runtimeStatus.lastError,
-    });
-    return runtimeStatus;
-  }
-
-  const startupConfigError = embeddedRuntimeStartupConfigError();
-  if (startupConfigError) {
-    runtimeStatus = withDesktopBrowserStatus({
-      ...runtimeStatus,
-      status: "error",
-      pid: null,
-      lastError: startupConfigError,
-    });
-    persistRuntimeProcessState({
-      pid: null,
-      status: "error",
-      lastError: startupConfigError,
-    });
-    appendRuntimeEventLog({
-      category: "runtime",
-      event: "embedded_runtime.config_error",
-      outcome: "error",
-      detail: startupConfigError,
-    });
-    void appendRuntimeLog(`[embedded-runtime] ${startupConfigError}\n`);
-    emitRuntimeState();
-    return runtimeStatus;
-  }
-
-  await fs.mkdir(sandboxRoot, { recursive: true });
-  await bootstrapRuntimeDatabase();
-
-  if (await isRuntimeHealthy(url)) {
-    return refreshRuntimeStatus();
-  }
-
-  const child = spawn(executablePath, [], {
-    cwd: runtimeRoot,
-    env: {
-      ...process.env,
-      HB_SANDBOX_ROOT: sandboxRoot,
-      SANDBOX_AGENT_BIND_HOST: "127.0.0.1",
-      SANDBOX_AGENT_BIND_PORT: String(RUNTIME_API_PORT),
-      HOLABOSS_EMBEDDED_RUNTIME: "1",
-      SANDBOX_AGENT_HARNESS: harness,
-      HOLABOSS_RUNTIME_WORKFLOW_BACKEND: workflowBackend,
-      HOLABOSS_RUNTIME_DB_PATH: runtimeDatabasePath(),
-      PROACTIVE_ENABLE_REMOTE_BRIDGE: "1",
-      PROACTIVE_BRIDGE_BASE_URL: proactiveBaseUrl(),
-      PYTHONDONTWRITEBYTECODE: "1",
-      HOLABOSS_AUTH_COOKIE: authCookieHeader() ?? "",
-    },
-    stdio: "pipe",
-  });
-
-  runtimeProcess = child;
-  persistRuntimeProcessState({
-    pid: child.pid ?? null,
-    status: "starting",
-    lastStartedAt: utcNowIso(),
-    lastError: "",
-  });
-  appendRuntimeEventLog({
-    category: "runtime",
-    event: "embedded_runtime.start",
-    outcome: "start",
-    detail: `pid=${child.pid ?? "null"}`,
-  });
-  runtimeStatus = withDesktopBrowserStatus({
-    ...runtimeStatus,
-    status: "starting",
-    pid: child.pid ?? null,
-  });
-  emitRuntimeState();
-
-  child.stdout.on("data", (chunk) => {
-    void appendRuntimeLog(String(chunk));
-  });
-  child.stderr.on("data", (chunk) => {
-    void appendRuntimeLog(String(chunk));
-  });
-
-  child.once("exit", (code, signal) => {
-    if (runtimeProcess === child) {
-      runtimeProcess = null;
+  return withRuntimeLifecycleLock(async () => {
+    if (runtimeProcess) {
+      return refreshRuntimeStatus();
     }
 
-    void (async () => {
-      if (await isRuntimeHealthy(url)) {
-        await refreshRuntimeStatus();
-        return;
-      }
+    const { runtimeRoot, validationError } = await resolveRuntimeRoot();
+    const executablePath = runtimeRoot
+      ? path.join(runtimeRoot, "bin", "sandbox-runtime")
+      : null;
+    const sandboxRoot = runtimeSandboxRoot();
+    const harness = process.env.HOLABOSS_RUNTIME_HARNESS || "pi";
+    const workflowBackend =
+      process.env.HOLABOSS_RUNTIME_WORKFLOW_BACKEND || "remote_api";
+    const url = `http://127.0.0.1:${RUNTIME_API_PORT}`;
 
+    runtimeStatus = withDesktopBrowserStatus({
+      ...runtimeStatus,
+      status: runtimeRoot && executablePath ? "starting" : "missing",
+      available: Boolean(runtimeRoot && executablePath),
+      runtimeRoot,
+      sandboxRoot,
+      executablePath,
+      url,
+      pid: null,
+      harness,
+      lastError:
+        runtimeRoot && executablePath
+          ? ""
+          : validationError ||
+            "Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package runtime-macos into app resources.",
+    });
+    emitRuntimeState();
+
+    if (!runtimeRoot || !executablePath) {
+      persistRuntimeProcessState({
+        pid: null,
+        status: "missing",
+        lastError: runtimeStatus.lastError,
+      });
+      return runtimeStatus;
+    }
+
+    const startupConfigError = embeddedRuntimeStartupConfigError();
+    if (startupConfigError) {
       runtimeStatus = withDesktopBrowserStatus({
         ...runtimeStatus,
-        status: code === 0 ? "stopped" : "error",
+        status: "error",
         pid: null,
-        lastError:
-          code === 0
-            ? ""
-            : `Runtime exited unexpectedly (code=${code ?? "null"}, signal=${signal ?? "null"}).`,
+        lastError: startupConfigError,
       });
       persistRuntimeProcessState({
         pid: null,
-        status: code === 0 ? "stopped" : "error",
-        lastStoppedAt: utcNowIso(),
+        status: "error",
+        lastError: startupConfigError,
+      });
+      appendRuntimeEventLog({
+        category: "runtime",
+        event: "embedded_runtime.config_error",
+        outcome: "error",
+        detail: startupConfigError,
+      });
+      void appendRuntimeLog(`[embedded-runtime] ${startupConfigError}\n`);
+      emitRuntimeState();
+      return runtimeStatus;
+    }
+
+    await fs.mkdir(sandboxRoot, { recursive: true });
+    await bootstrapRuntimeDatabase();
+
+    if (await isRuntimeHealthy(url)) {
+      return refreshRuntimeStatus();
+    }
+
+    const child = spawn(executablePath, [], {
+      cwd: runtimeRoot,
+      env: {
+        ...process.env,
+        HB_SANDBOX_ROOT: sandboxRoot,
+        SANDBOX_AGENT_BIND_HOST: "127.0.0.1",
+        SANDBOX_AGENT_BIND_PORT: String(RUNTIME_API_PORT),
+        HOLABOSS_EMBEDDED_RUNTIME: "1",
+        SANDBOX_AGENT_HARNESS: harness,
+        HOLABOSS_RUNTIME_WORKFLOW_BACKEND: workflowBackend,
+        HOLABOSS_RUNTIME_DB_PATH: runtimeDatabasePath(),
+        PROACTIVE_ENABLE_REMOTE_BRIDGE: "1",
+        PROACTIVE_BRIDGE_BASE_URL: proactiveBaseUrl(),
+        PYTHONDONTWRITEBYTECODE: "1",
+        HOLABOSS_AUTH_COOKIE: authCookieHeader() ?? "",
+      },
+      stdio: "pipe",
+    });
+
+    runtimeProcess = child;
+    persistRuntimeProcessState({
+      pid: child.pid ?? null,
+      status: "starting",
+      lastStartedAt: utcNowIso(),
+      lastError: "",
+    });
+    appendRuntimeEventLog({
+      category: "runtime",
+      event: "embedded_runtime.start",
+      outcome: "start",
+      detail: `pid=${child.pid ?? "null"}`,
+    });
+    runtimeStatus = withDesktopBrowserStatus({
+      ...runtimeStatus,
+      status: "starting",
+      pid: child.pid ?? null,
+    });
+    emitRuntimeState();
+
+    child.stdout.on("data", (chunk) => {
+      void appendRuntimeLog(String(chunk));
+    });
+    child.stderr.on("data", (chunk) => {
+      void appendRuntimeLog(String(chunk));
+    });
+
+    child.once("exit", (code, signal) => {
+      if (runtimeProcess === child) {
+        runtimeProcess = null;
+      }
+
+      void (async () => {
+        if (await isRuntimeHealthy(url)) {
+          await refreshRuntimeStatus();
+          return;
+        }
+
+        runtimeStatus = withDesktopBrowserStatus({
+          ...runtimeStatus,
+          status: code === 0 ? "stopped" : "error",
+          pid: null,
+          lastError:
+            code === 0
+              ? ""
+              : `Runtime exited unexpectedly (code=${code ?? "null"}, signal=${signal ?? "null"}).`,
+        });
+        persistRuntimeProcessState({
+          pid: null,
+          status: code === 0 ? "stopped" : "error",
+          lastStoppedAt: utcNowIso(),
+          lastError: runtimeStatus.lastError,
+        });
+        appendRuntimeEventLog({
+          category: "runtime",
+          event: "embedded_runtime.exit",
+          outcome: code === 0 ? "success" : "error",
+          detail: `code=${code ?? "null"} signal=${signal ?? "null"}`,
+        });
+        emitRuntimeState();
+      })();
+    });
+
+    const healthy = await waitForRuntimeHealth(url);
+    if (healthy) {
+      runtimeStatus = await refreshRuntimeStatus();
+    } else {
+      runtimeStatus = withDesktopBrowserStatus({
+        ...runtimeStatus,
+        status: "error",
+        pid: child.pid ?? null,
+        lastError:
+          "Runtime process started but did not pass health checks. Check runtime.log in the Electron userData directory.",
+      });
+      persistRuntimeProcessState({
+        pid: child.pid ?? null,
+        status: "error",
         lastError: runtimeStatus.lastError,
       });
       appendRuntimeEventLog({
         category: "runtime",
-        event: "embedded_runtime.exit",
-        outcome: code === 0 ? "success" : "error",
-        detail: `code=${code ?? "null"} signal=${signal ?? "null"}`,
+        event: "embedded_runtime.healthcheck",
+        outcome: "error",
+        detail: runtimeStatus.lastError,
       });
-      emitRuntimeState();
-    })();
+    }
+    emitRuntimeState();
+    return runtimeStatus;
   });
-
-  const healthy = await waitForRuntimeHealth(url);
-  if (healthy) {
-    runtimeStatus = await refreshRuntimeStatus();
-  } else {
-    runtimeStatus = withDesktopBrowserStatus({
-      ...runtimeStatus,
-      status: "error",
-      pid: child.pid ?? null,
-      lastError:
-        "Runtime process started but did not pass health checks. Check runtime.log in the Electron userData directory.",
-    });
-    persistRuntimeProcessState({
-      pid: child.pid ?? null,
-      status: "error",
-      lastError: runtimeStatus.lastError,
-    });
-    appendRuntimeEventLog({
-      category: "runtime",
-      event: "embedded_runtime.healthcheck",
-      outcome: "error",
-      detail: runtimeStatus.lastError,
-    });
-  }
-  emitRuntimeState();
-  return runtimeStatus;
 }
 
 function persistFileBookmarks() {
@@ -9166,9 +9247,10 @@ const TEXT_FILE_EXTENSIONS = new Set([
   ".swift",
   ".php",
   ".sql",
-  ".csv",
   ".log",
 ]);
+
+const TABLE_FILE_EXTENSIONS = new Set([".csv", ".xlsx", ".xls"]);
 
 const IMAGE_FILE_MIME_TYPES = new Map<string, string>([
   [".png", "image/png"],
@@ -9186,11 +9268,106 @@ const PDF_FILE_MIME_TYPES = new Map<string, string>([
 
 const MAX_TEXT_PREVIEW_BYTES = 1024 * 1024 * 2;
 const MAX_IMAGE_PREVIEW_BYTES = 1024 * 1024 * 12;
+const MAX_TABLE_PREVIEW_BYTES = 1024 * 1024 * 8;
+const MAX_TABLE_PREVIEW_ROWS = 250;
+const MAX_TABLE_PREVIEW_COLUMNS = 60;
+const MAX_TABLE_PREVIEW_SHEETS = 8;
+
+function toPreviewTableCellValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? "" : value.toISOString();
+  }
+  return String(value);
+}
+
+function buildTablePreviewSheets(buffer: Buffer): FilePreviewTableSheetPayload[] {
+  const workbook = XLSX.read(buffer, {
+    type: "buffer",
+    cellDates: true,
+    dense: true,
+  });
+
+  const sheets: FilePreviewTableSheetPayload[] = [];
+  const limitedSheetNames = workbook.SheetNames.slice(0, MAX_TABLE_PREVIEW_SHEETS);
+  for (const [sheetIndex, sheetName] of limitedSheetNames.entries()) {
+    const worksheet = workbook.Sheets[sheetName];
+    if (!worksheet) {
+      continue;
+    }
+
+    const matrix = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
+      header: 1,
+      blankrows: false,
+      defval: "",
+      raw: false,
+    });
+    const normalizedRows = matrix.map((row) =>
+      Array.isArray(row) ? row.map(toPreviewTableCellValue) : [],
+    );
+    const totalColumns = normalizedRows.reduce(
+      (max, row) => Math.max(max, row.length),
+      0,
+    );
+    const visibleColumnCount = Math.min(
+      Math.max(totalColumns, 1),
+      MAX_TABLE_PREVIEW_COLUMNS,
+    );
+    const paddedRows = normalizedRows.map((row) =>
+      Array.from({ length: visibleColumnCount }, (_unused, columnIndex) =>
+        row[columnIndex] ?? "",
+      ),
+    );
+
+    const hasHeaderRow =
+      paddedRows.length > 0 &&
+      paddedRows[0].some((cell) => cell.trim().length > 0);
+    const columns = hasHeaderRow
+      ? paddedRows[0].map(
+          (value, columnIndex) => value.trim() || `Column ${columnIndex + 1}`,
+        )
+      : Array.from(
+          { length: visibleColumnCount },
+          (_unused, columnIndex) => `Column ${columnIndex + 1}`,
+        );
+
+    const allRows = hasHeaderRow ? paddedRows.slice(1) : paddedRows;
+    const rows = allRows.slice(0, MAX_TABLE_PREVIEW_ROWS);
+    const truncated =
+      allRows.length > rows.length ||
+      totalColumns > visibleColumnCount ||
+      workbook.SheetNames.length > MAX_TABLE_PREVIEW_SHEETS;
+
+    sheets.push({
+      name: sheetName || `Sheet ${sheetIndex + 1}`,
+      index: sheetIndex,
+      columns,
+      rows,
+      totalRows: allRows.length,
+      totalColumns,
+      truncated,
+    });
+  }
+
+  return sheets;
+}
 
 function getFilePreviewKind(targetPath: string) {
   const extension = path.extname(targetPath).toLowerCase();
   if (!extension) {
     return { extension, kind: "text" as const };
+  }
+
+  if (TABLE_FILE_EXTENSIONS.has(extension)) {
+    return { extension, kind: "table" as const };
   }
 
   if (TEXT_FILE_EXTENSIONS.has(extension)) {
@@ -9231,6 +9408,44 @@ async function readFilePreview(
     modifiedAt: stat.mtime.toISOString(),
     isEditable: kind === "text",
   };
+
+  if (kind === "table") {
+    if (stat.size > MAX_TABLE_PREVIEW_BYTES) {
+      return {
+        ...basePayload,
+        kind: "unsupported",
+        isEditable: false,
+        unsupportedReason: "Spreadsheet is too large to preview inline.",
+      };
+    }
+
+    try {
+      const buffer = await fs.readFile(absolutePath);
+      const tableSheets = buildTablePreviewSheets(buffer);
+      if (tableSheets.length === 0) {
+        return {
+          ...basePayload,
+          kind: "unsupported",
+          isEditable: false,
+          unsupportedReason: "No sheet data could be extracted from this file.",
+        };
+      }
+
+      return {
+        ...basePayload,
+        kind: "table",
+        isEditable: false,
+        tableSheets,
+      };
+    } catch {
+      return {
+        ...basePayload,
+        kind: "unsupported",
+        isEditable: false,
+        unsupportedReason: "Spreadsheet could not be parsed for inline preview.",
+      };
+    }
+  }
 
   if (kind === "text") {
     if (stat.size > MAX_TEXT_PREVIEW_BYTES) {

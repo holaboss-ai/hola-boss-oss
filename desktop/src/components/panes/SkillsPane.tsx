@@ -148,7 +148,7 @@ export function SkillsPane() {
             title="No skills found"
             detail={
               catalog
-                ? `No workspace skills with SKILL.md were found under ${catalog.configured_path}.`
+                ? "No workspace skills with SKILL.md were found under skills/."
                 : "No skill folders with SKILL.md were found for the selected workspace."
             }
           />

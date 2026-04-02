@@ -13,6 +13,7 @@ export interface ResolvedWorkspaceSkill {
 }
 
 const EMBEDDED_SKILLS_DIR_ENV = "HOLABOSS_EMBEDDED_SKILLS_DIR";
+const WORKSPACE_SKILLS_RELATIVE_PATH = "skills";
 
 function normalizeSkillId(value: unknown): string | null {
   if (typeof value !== "string") {
@@ -55,17 +56,6 @@ function readWorkspaceYamlMapping(workspaceDir: string): Record<string, unknown>
   } catch {
     return {};
   }
-}
-
-function workspaceSkillsPathToken(payload: Record<string, unknown>): string | null {
-  const skills = payload.skills;
-  if (skills && typeof skills === "object" && !Array.isArray(skills)) {
-    const raw = (skills as Record<string, unknown>).path;
-    if (typeof raw === "string" && raw.trim()) {
-      return raw.trim();
-    }
-  }
-  return null;
 }
 
 function workspaceEnabledSkillIds(payload: Record<string, unknown>): string[] {
@@ -125,7 +115,7 @@ function listSkillsInRoot(skillRoot: string, origin: ResolvedSkillOrigin): Resol
     .sort((left, right) => left.skill_id.localeCompare(right.skill_id));
 }
 
-function resolveWorkspaceLocalSkills(workspaceDirInput: string, payload: Record<string, unknown>): ResolvedWorkspaceSkill[] {
+function resolveWorkspaceLocalSkills(workspaceDirInput: string): ResolvedWorkspaceSkill[] {
   const workspaceDir = path.resolve(workspaceDirInput);
   let workspaceRealRoot: string;
   try {
@@ -134,17 +124,7 @@ function resolveWorkspaceLocalSkills(workspaceDirInput: string, payload: Record<
     return [];
   }
 
-  const skillsPathToken = workspaceSkillsPathToken(payload);
-  if (!skillsPathToken) {
-    return [];
-  }
-
-  const relative = path.normalize(skillsPathToken);
-  if (path.isAbsolute(relative) || relative.split(path.sep).includes("..")) {
-    return [];
-  }
-
-  const skillsPath = path.resolve(workspaceDir, relative);
+  const skillsPath = path.resolve(workspaceDir, WORKSPACE_SKILLS_RELATIVE_PATH);
   let skillsRealPath: string;
   try {
     skillsRealPath = fs.realpathSync(skillsPath);
@@ -166,7 +146,7 @@ export function resolveWorkspaceSkills(workspaceDirInput: string): ResolvedWorks
   const payload = readWorkspaceYamlMapping(workspaceDirInput);
   const enabledSkillIds = workspaceEnabledSkillIds(payload);
   const embeddedSkills = listSkillsInRoot(embeddedSkillsRoot(), "embedded");
-  const workspaceSkills = resolveWorkspaceLocalSkills(workspaceDirInput, payload);
+  const workspaceSkills = resolveWorkspaceLocalSkills(workspaceDirInput);
 
   const resolvedById = new Map<string, ResolvedWorkspaceSkill>();
   for (const skill of workspaceSkills) {

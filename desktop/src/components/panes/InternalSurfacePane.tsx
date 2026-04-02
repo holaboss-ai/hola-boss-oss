@@ -28,12 +28,14 @@ function resolveWorkspaceTargetPath(workspaceRoot: string, resourceId: string): 
 export function InternalSurfacePane({ surface, resourceId, htmlContent }: InternalSurfacePaneProps) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const [preview, setPreview] = useState<FilePreviewPayload | null>(null);
+  const [activeTableSheetIndex, setActiveTableSheetIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
     if (typeof resourceId !== "string" || !resourceId || (surface !== "document" && surface !== "file")) {
       setPreview(null);
+      setActiveTableSheetIndex(0);
       setErrorMessage("");
       setIsLoading(false);
       return;
@@ -58,10 +60,12 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
         const nextPreview = await window.electronAPI.fs.readFilePreview(targetPath, selectedWorkspaceId ?? null);
         if (!cancelled) {
           setPreview(nextPreview);
+          setActiveTableSheetIndex(0);
         }
       } catch (error) {
         if (!cancelled) {
           setPreview(null);
+          setActiveTableSheetIndex(0);
           setErrorMessage(error instanceof Error ? error.message : "Failed to load output preview.");
         }
       } finally {
@@ -154,13 +158,89 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
       );
     }
 
+    if (preview.kind === "table" && preview.tableSheets && preview.tableSheets.length > 0) {
+      const activeSheet = preview.tableSheets[Math.min(activeTableSheetIndex, preview.tableSheets.length - 1)];
+      if (activeSheet) {
+        return (
+          <div className="grid min-h-0 gap-3">
+            <MetadataRow label="Path" value={preview.absolutePath} />
+            <div className="flex min-h-0 flex-col overflow-hidden rounded-[18px] border border-border/35 bg-black/10">
+              {preview.tableSheets.length > 1 ? (
+                <div className="flex items-center gap-1 overflow-x-auto border-b border-border/35 p-2">
+                  {preview.tableSheets.map((sheet, index) => {
+                    const isActive = index === activeTableSheetIndex;
+                    return (
+                      <button
+                        key={`${sheet.name}-${sheet.index}`}
+                        type="button"
+                        onClick={() => setActiveTableSheetIndex(index)}
+                        className={`rounded-md border px-2 py-1 text-[11px] transition-colors ${
+                          isActive
+                            ? "border-primary/35 bg-primary/12 text-primary"
+                            : "border-border/40 text-muted-foreground hover:bg-black/10 hover:text-foreground"
+                        }`}
+                      >
+                        {sheet.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+              <div className="min-h-0 overflow-auto">
+                <table className="w-max min-w-full border-collapse text-[12px]">
+                  <thead className="sticky top-0 z-[1] bg-muted">
+                    <tr>
+                      <th className="border-b border-r border-border/35 px-2 py-1 text-left text-[11px] text-muted-foreground">#</th>
+                      {activeSheet.columns.map((column, columnIndex) => (
+                        <th
+                          key={`${column}-${columnIndex}`}
+                          className="border-b border-r border-border/35 px-2 py-1 text-left text-[11px] text-muted-foreground"
+                        >
+                          {column}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeSheet.rows.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={activeSheet.columns.length + 1}
+                          className="px-3 py-4 text-center text-[12px] text-muted-foreground"
+                        >
+                          No rows in this sheet.
+                        </td>
+                      </tr>
+                    ) : (
+                      activeSheet.rows.map((row, rowIndex) => (
+                        <tr key={`row-${rowIndex}`}>
+                          <td className="border-b border-r border-border/35 px-2 py-1 text-[11px] text-muted-foreground">
+                            {rowIndex + 1}
+                          </td>
+                          {row.map((value, columnIndex) => (
+                            <td key={`cell-${rowIndex}-${columnIndex}`} className="max-w-[320px] border-b border-r border-border/35 px-2 py-1">
+                              <div className="break-words whitespace-pre-wrap">{value || "\u00a0"}</div>
+                            </td>
+                          ))}
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      }
+    }
+
     return (
       <EmptyState
         title="Preview unavailable"
         detail={preview.unsupportedReason || "This file type is not yet previewable in the desktop output viewer."}
       />
     );
-  }, [errorMessage, htmlContent, isLoading, preview, resourceId, surface]);
+  }, [activeTableSheetIndex, errorMessage, htmlContent, isLoading, preview, resourceId, surface]);
 
   return (
     <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">

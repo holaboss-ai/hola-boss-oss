@@ -190,6 +190,7 @@ export function FileExplorerPane() {
   const [error, setError] = useState<string>("");
   const [preview, setPreview] = useState<FilePreviewPayload | null>(null);
   const [previewDraft, setPreviewDraft] = useState("");
+  const [activeTableSheetIndex, setActiveTableSheetIndex] = useState(0);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -383,6 +384,7 @@ export function FileExplorerPane() {
     setPreviewLoading(true);
     setPreviewError("");
     setTextPreviewMode("preview");
+    setActiveTableSheetIndex(0);
 
     try {
       const payload = await window.electronAPI.fs.readFilePreview(targetPath);
@@ -404,6 +406,7 @@ export function FileExplorerPane() {
 
     setPreview(null);
     setPreviewDraft("");
+    setActiveTableSheetIndex(0);
     setPreviewError("");
     setSaving(false);
     setTextPreviewMode("preview");
@@ -459,6 +462,14 @@ export function FileExplorerPane() {
   };
 
   const highlightedHtml = useMemo(() => getHighlightedHtml(preview, previewDraft), [preview, previewDraft]);
+  const previewTableSheets =
+    preview?.kind === "table" && Array.isArray(preview.tableSheets)
+      ? preview.tableSheets
+      : [];
+  const activeTableSheet =
+    previewTableSheets.length > 0
+      ? previewTableSheets[Math.min(activeTableSheetIndex, previewTableSheets.length - 1)]
+      : null;
   const bookmarkTargetPath = preview?.absolutePath ?? currentPath;
   const bookmarkTargetLabel = preview?.name ?? getFolderName(currentPath);
   const activeBookmark = fileBookmarks.find((bookmark) => bookmark.targetPath === bookmarkTargetPath);
@@ -580,6 +591,84 @@ export function FileExplorerPane() {
               <div className="h-full overflow-hidden rounded-lg border border-border bg-white">
                 <iframe src={preview.dataUrl} title={preview.name} className="h-full w-full border-0" />
               </div>
+            ) : preview?.kind === "table" && activeTableSheet ? (
+              <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-muted">
+                {previewTableSheets.length > 1 ? (
+                  <div className="chat-scrollbar-hidden flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border p-2">
+                    {previewTableSheets.map((sheet, index) => {
+                      const isActive = index === activeTableSheetIndex;
+                      return (
+                        <button
+                          key={`${sheet.name}-${sheet.index}`}
+                          type="button"
+                          onClick={() => setActiveTableSheetIndex(index)}
+                          className={`rounded-md border px-2 py-1 text-[11px] transition-colors ${
+                            isActive
+                              ? "border-primary/35 bg-primary/12 text-primary"
+                              : "border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                          }`}
+                        >
+                          {sheet.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                <div className="min-h-0 flex-1 overflow-auto">
+                  <table className="w-max min-w-full border-collapse text-xs text-foreground">
+                    <thead className="sticky top-0 z-[1] bg-muted">
+                      <tr>
+                        <th className="border-b border-r border-border bg-muted px-2 py-1.5 text-left text-[11px] text-muted-foreground">
+                          #
+                        </th>
+                        {activeTableSheet.columns.map((column, columnIndex) => (
+                          <th
+                            key={`${column}-${columnIndex}`}
+                            className="border-b border-r border-border bg-muted px-2 py-1.5 text-left text-[11px] text-muted-foreground"
+                          >
+                            {column}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeTableSheet.rows.length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={activeTableSheet.columns.length + 1}
+                            className="px-3 py-4 text-center text-xs text-muted-foreground"
+                          >
+                            No rows in this sheet.
+                          </td>
+                        </tr>
+                      ) : (
+                        activeTableSheet.rows.map((row, rowIndex) => (
+                          <tr key={`row-${rowIndex}`} className="odd:bg-background/20 even:bg-transparent">
+                            <td className="border-b border-r border-border px-2 py-1.5 align-top text-[11px] text-muted-foreground">
+                              {rowIndex + 1}
+                            </td>
+                            {row.map((value, columnIndex) => (
+                              <td
+                                key={`cell-${rowIndex}-${columnIndex}`}
+                                className="max-w-[320px] border-b border-r border-border px-2 py-1.5 align-top"
+                              >
+                                <div className="break-words whitespace-pre-wrap">{value || "\u00a0"}</div>
+                              </td>
+                            ))}
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {activeTableSheet.truncated ? (
+                  <div className="shrink-0 border-t border-border px-3 py-1.5 text-[11px] text-muted-foreground">
+                    Showing {activeTableSheet.rows.length} of {activeTableSheet.totalRows} rows and{" "}
+                    {Math.min(activeTableSheet.columns.length, activeTableSheet.totalColumns)} of{" "}
+                    {Math.max(activeTableSheet.totalColumns, activeTableSheet.columns.length)} columns.
+                  </div>
+                ) : null}
+              </div>
             ) : (
               <div className="flex h-full flex-col items-center justify-center rounded-lg border border-border bg-muted px-5 text-center">
                 <FileText size={22} className="mb-3 text-muted-foreground" />
@@ -684,15 +773,16 @@ export function FileExplorerPane() {
                         key={entry.absolutePath}
                         draggable={!entry.isDirectory}
                         onClick={() => {
-                          setSelectedPath(entry.absolutePath);
-                        }}
-                        onDoubleClick={() => {
                           if (entry.isDirectory) {
                             void openPath(entry.absolutePath);
                             return;
                           }
-
-                          void openFilePreview(entry.absolutePath);
+                          setSelectedPath(entry.absolutePath);
+                        }}
+                        onDoubleClick={() => {
+                          if (!entry.isDirectory) {
+                            void openFilePreview(entry.absolutePath);
+                          }
                         }}
                         onDragStart={(event) => {
                           if (entry.isDirectory) {
@@ -723,8 +813,8 @@ export function FileExplorerPane() {
                           selected
                             ? "bg-primary/10 text-primary"
                             : "text-foreground/80 hover:bg-accent hover:text-accent-foreground"
-                        } ${entry.isDirectory ? "" : "cursor-grab active:cursor-grabbing"}`}
-                        title={entry.isDirectory ? entry.name : `${entry.name} — drag into chat to attach`}
+                        } ${entry.isDirectory ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"}`}
+                        title={entry.isDirectory ? `${entry.name} — open folder` : `${entry.name} — drag into chat to attach`}
                       >
                         {isCompact ? (
                           <span className="flex min-w-0 flex-col gap-0.5">
