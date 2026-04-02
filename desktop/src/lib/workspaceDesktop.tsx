@@ -190,6 +190,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
     [selectedWorkspaceId, workspaces]
   );
+  const selectedWorkspaceExists = Boolean(selectedWorkspaceId) && selectedWorkspace !== null;
   const selectedMarketplaceTemplate = useMemo(
     () => marketplaceTemplates.find((template) => template.name === selectedMarketplaceTemplateName) ?? null,
     [marketplaceTemplates, selectedMarketplaceTemplateName]
@@ -245,7 +246,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   }
 
   async function refreshInstalledApps() {
-    if (!selectedWorkspaceId) {
+    if (!selectedWorkspaceId || !selectedWorkspaceExists) {
       setInstalledApps([]);
       setIsLoadingInstalledApps(false);
       setWorkspaceLifecycleWorkspaceId("");
@@ -657,7 +658,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   }, [session]);
 
   useEffect(() => {
-    if (!selectedWorkspaceId || !runtimeReadyForWorkspaceData) {
+    if (!selectedWorkspaceId || !selectedWorkspaceExists || !runtimeReadyForWorkspaceData) {
       setInstalledApps([]);
       setIsLoadingInstalledApps(false);
       setWorkspaceLifecycleWorkspaceId("");
@@ -696,10 +697,10 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     return () => {
       cancelled = true;
     };
-  }, [runtimeReadyForWorkspaceData, selectedWorkspaceId]);
+  }, [runtimeReadyForWorkspaceData, selectedWorkspaceExists, selectedWorkspaceId]);
 
   useEffect(() => {
-    if (!selectedWorkspaceId || !runtimeReadyForWorkspaceData) {
+    if (!selectedWorkspaceId || !selectedWorkspaceExists || !runtimeReadyForWorkspaceData) {
       return;
     }
 
@@ -719,7 +720,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [runtimeReadyForWorkspaceData, selectedWorkspaceId]);
+  }, [runtimeReadyForWorkspaceData, selectedWorkspaceExists, selectedWorkspaceId]);
 
   useEffect(() => {
     if (!selectedWorkspaceId || !onboardingModeActive) {

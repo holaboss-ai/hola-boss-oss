@@ -519,6 +519,7 @@ function AppShellContent() {
     workspaceErrorMessage,
     onboardingModeActive,
   } = useWorkspaceDesktop();
+  const selectedWorkspaceExists = Boolean(selectedWorkspaceId && selectedWorkspace);
   const [theme, setTheme] = useState<AppTheme>(loadTheme);
   const [runtimeStatus, setRuntimeStatus] =
     useState<RuntimeStatusPayload | null>(null);
@@ -706,7 +707,7 @@ function AppShellContent() {
   );
 
   const refreshRuntimeOutputs = useCallback(async () => {
-    if (!selectedWorkspaceId || runtimeStatus?.status !== "running") {
+    if (!selectedWorkspaceId || !selectedWorkspaceExists || runtimeStatus?.status !== "running") {
       setRuntimeOutputEntries([]);
       return;
     }
@@ -722,16 +723,16 @@ function AppShellContent() {
     } catch {
       setRuntimeOutputEntries([]);
     }
-  }, [installedApps, runtimeStatus?.status, selectedWorkspaceId]);
+  }, [installedApps, runtimeStatus?.status, selectedWorkspaceExists, selectedWorkspaceId]);
 
   useEffect(() => {
-    if (!selectedWorkspaceId || runtimeStatus?.status !== "running") {
+    if (!selectedWorkspaceId || !selectedWorkspaceExists || runtimeStatus?.status !== "running") {
       setRuntimeOutputEntries([]);
       return;
     }
 
     void refreshRuntimeOutputs();
-  }, [refreshRuntimeOutputs, runtimeStatus?.status, selectedWorkspaceId]);
+  }, [refreshRuntimeOutputs, runtimeStatus?.status, selectedWorkspaceExists, selectedWorkspaceId]);
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.workspace.onSessionStreamEvent(

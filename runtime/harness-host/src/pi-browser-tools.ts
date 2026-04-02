@@ -144,6 +144,14 @@ function browserToolParameters(toolId: DesktopBrowserToolId) {
         },
         { additionalProperties: false }
       );
+    case "browser_open_tab":
+      return Type.Object(
+        {
+          url: Type.String({ description: "The URL to open in a new in-app browser tab.", minLength: 1 }),
+          background: Type.Optional(Type.Boolean({ description: "Open the tab without switching focus." })),
+        },
+        { additionalProperties: false }
+      );
     case "browser_get_state":
       return Type.Object(
         {

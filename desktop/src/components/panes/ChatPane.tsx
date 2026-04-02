@@ -2314,7 +2314,6 @@ export function ChatPane({
                     </div>
                   </div>
                   <form onSubmit={onSubmit} className="mx-auto max-w-[760px]">
-                    {readinessMessage ? <div className="mb-3 text-[12px] text-muted-foreground">{readinessMessage}</div> : null}
                     <Composer
                       input={input}
                       attachments={pendingAttachmentItems}
@@ -2363,7 +2362,6 @@ export function ChatPane({
           {hasMessages ? (
             <div ref={composerBlockRef} className="shrink-0 px-4 pb-4 pt-3 sm:px-5 sm:pb-5">
               <form onSubmit={onSubmit} className="mx-auto max-w-[760px]">
-                {readinessMessage ? <div className="mb-3 text-[12px] text-muted-foreground">{readinessMessage}</div> : null}
                 <Composer
                   input={input}
                   attachments={pendingAttachmentItems}
