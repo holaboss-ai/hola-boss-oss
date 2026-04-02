@@ -1,17 +1,26 @@
+import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { firstWorkspacePaneSectionClassName } from "@/components/layout/firstWorkspacePaneLayout";
 import { MarketplaceGallery } from "@/components/marketplace/MarketplaceGallery";
 import { KitDetail } from "@/components/marketplace/KitDetail";
-import { OnboardingUserButton } from "./OnboardingUserButton";
-import { CreatingView } from "./CreatingView";
-import { ConfigureStep } from "./ConfigureStep";
+import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { ConnectIntegrationsStep } from "./ConnectIntegrationsStep";
+import { ConfigureStep } from "./ConfigureStep";
+import { CreatingView } from "./CreatingView";
 import { PROVIDER_DISPLAY_NAMES } from "./constants";
+import { OnboardingUserButton } from "./OnboardingUserButton";
 
 type OnboardingStep = "gallery" | "detail" | "configure" | "connect_integrations";
 
-export function FirstWorkspacePane() {
+interface FirstWorkspacePaneProps {
+  variant?: "full" | "panel";
+  onClose?: () => void;
+}
+
+export function FirstWorkspacePane({
+  variant = "full",
+  onClose,
+}: FirstWorkspacePaneProps) {
   const {
     templateSourceMode,
     setTemplateSourceMode,
@@ -36,9 +45,15 @@ export function FirstWorkspacePane() {
   } = useWorkspaceDesktop();
 
   const [step, setStep] = useState<OnboardingStep>("gallery");
-  const [connectingProvider, setConnectingProvider] = useState<string | null>(null);
+  const [connectingProvider, setConnectingProvider] = useState<string | null>(
+    null,
+  );
   const [connectStatus, setConnectStatus] = useState("");
-  const [detailKit, setDetailKit] = useState<TemplateMetadataPayload | null>(null);
+  const [detailKit, setDetailKit] = useState<TemplateMetadataPayload | null>(
+    null,
+  );
+
+  const isPanelVariant = variant === "panel";
 
   // Auto-resolve integrations when entering configure step
   const configureStepActive = step === "configure";
@@ -48,7 +63,7 @@ export function FirstWorkspacePane() {
       void resolveIntegrationsBeforeCreate();
     }
     prevConfigureRef.current = configureStepActive;
-  }, [configureStepActive]);
+  }, [configureStepActive, resolveIntegrationsBeforeCreate]);
 
   const hasUnconnectedIntegrations = pendingIntegrations
     ? pendingIntegrations.missing_providers.length > 0
@@ -66,7 +81,7 @@ export function FirstWorkspacePane() {
       });
       await window.electronAPI.ui.openExternalUrl(link.redirect_url);
 
-      for (let i = 0; i < 100; i++) {
+      for (let i = 0; i < 100; i += 1) {
         await new Promise((r) => setTimeout(r, 3000));
         const status = await window.electronAPI.workspace.composioAccountStatus(
           link.connected_account_id,
@@ -92,19 +107,21 @@ export function FirstWorkspacePane() {
     }
   }
 
-  const sectionClassName = firstWorkspacePaneSectionClassName(step);
+  const sectionClassName = isPanelVariant
+    ? [
+        "relative",
+        "h-full",
+        "min-h-0",
+        "min-w-0",
+        "overflow-hidden",
+        "px-3",
+        "py-3",
+        "sm:px-4",
+        "sm:py-4",
+      ].join(" ")
+    : firstWorkspacePaneSectionClassName(step);
   const creatingViaMarketplace =
     templateSourceMode === "marketplace" && canUseMarketplaceTemplates;
-
-  // --- Creating state ---
-  if (isCreatingWorkspace) {
-    return (
-      <CreatingView
-        sectionClassName={sectionClassName}
-        creatingViaMarketplace={creatingViaMarketplace}
-      />
-    );
-  }
 
   // --- Auth helper ---
   const openAuthPopup = () => {
@@ -142,15 +159,30 @@ export function FirstWorkspacePane() {
     (templateSourceMode === "marketplace" &&
       (!canUseMarketplaceTemplates || !selectedMarketplaceTemplate));
 
-  // --- Render ---
-  return (
+  const content = isCreatingWorkspace ? (
+    <CreatingView
+      sectionClassName={sectionClassName}
+      creatingViaMarketplace={creatingViaMarketplace}
+      showUserButton={!isPanelVariant}
+    />
+  ) : (
     <section className={sectionClassName}>
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_12%,rgba(247,90,84,0.08),transparent_28%),radial-gradient(circle_at_86%_14%,rgba(233,117,109,0.08),transparent_30%)]" />
-      <div className="absolute right-4 top-4 z-10">
-        <OnboardingUserButton />
-      </div>
-      <div className="w-full max-w-[1080px]">
-        <div className="theme-shell w-full rounded-[var(--radius-xl)] border border-border/45 px-6 py-6 shadow-lg sm:px-8 sm:py-7 lg:px-10 lg:py-8">
+      {!isPanelVariant ? (
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_12%,rgba(247,90,84,0.08),transparent_28%),radial-gradient(circle_at_86%_14%,rgba(233,117,109,0.08),transparent_30%)]" />
+      ) : null}
+      {!isPanelVariant ? (
+        <div className="absolute right-4 top-4 z-10">
+          <OnboardingUserButton />
+        </div>
+      ) : null}
+      <div
+        className={`w-full ${isPanelVariant ? "h-full max-w-[1020px]" : "max-w-[1080px]"}`}
+      >
+        <div
+          className={`theme-shell w-full rounded-[var(--radius-xl)] border border-border/45 px-6 py-6 shadow-lg sm:px-8 sm:py-7 lg:px-10 lg:py-8 ${
+            isPanelVariant ? "h-full overflow-hidden" : ""
+          }`}
+        >
           {step === "gallery" ? (
             <MarketplaceGallery
               mode="pick"
@@ -190,7 +222,7 @@ export function FirstWorkspacePane() {
               onChangeKit={() => setStep("gallery")}
               onChangeFolder={() => void chooseTemplateFolder()}
               onBackToKits={() => setStep("gallery")}
-              onConnect={(p) => void handleConnectProvider(p)}
+              onConnect={(provider) => void handleConnectProvider(provider)}
               onCreate={() => void createWorkspace()}
             />
           ) : step === "connect_integrations" && pendingIntegrations ? (
@@ -198,7 +230,7 @@ export function FirstWorkspacePane() {
               pendingIntegrations={pendingIntegrations}
               connectingProvider={connectingProvider}
               connectStatus={connectStatus}
-              onConnect={(p) => void handleConnectProvider(p)}
+              onConnect={(provider) => void handleConnectProvider(provider)}
               onBack={() => {
                 clearPendingIntegrations();
                 setStep("configure");
@@ -208,5 +240,37 @@ export function FirstWorkspacePane() {
         </div>
       </div>
     </section>
+  );
+
+  if (!isPanelVariant) {
+    return content;
+  }
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-40 grid place-items-center px-4 py-6">
+      <button
+        type="button"
+        aria-label="Close create workspace"
+        onClick={onClose}
+        className="pointer-events-auto absolute inset-0 bg-[rgba(7,10,14,0.46)] backdrop-blur-sm"
+      />
+
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Create workspace"
+        className="pointer-events-auto relative z-10 h-[min(860px,calc(100vh-44px))] w-[min(1120px,calc(100vw-32px))]"
+      >
+        <button
+          type="button"
+          aria-label="Close create workspace"
+          onClick={onClose}
+          className="absolute right-6 top-6 z-30 grid h-10 w-10 place-items-center rounded-full border border-black/15 bg-white/95 text-foreground shadow-md backdrop-blur transition hover:bg-white"
+        >
+          <X size={16} />
+        </button>
+        {content}
+      </div>
+    </div>
   );
 }

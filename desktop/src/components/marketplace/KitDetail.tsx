@@ -28,7 +28,7 @@ export function KitDetail({
   const displayName = template.name.replaceAll("_", " ");
 
   return (
-    <div className="flex min-h-0 flex-col overflow-auto">
+    <div className="flex h-full min-h-0 flex-col overflow-auto">
       {/* Back */}
       <Button
         variant="ghost"

@@ -1416,6 +1416,15 @@ interface DemoTaskProposalEnqueueResponsePayload {
   pending_count: number;
 }
 
+interface ProactiveTaskProposalPreferenceUpdatePayload {
+  enabled: boolean;
+}
+
+interface ProactiveTaskProposalPreferencePayload {
+  enabled: boolean;
+  holaboss_user_id: string;
+}
+
 interface TaskProposalStateUpdatePayload {
   proposal: TaskProposalRecordPayload;
 }
@@ -5104,6 +5113,19 @@ async function enqueueRemoteDemoTaskProposal(
     method: "POST",
     path: "/api/v1/proactive/bridge/demo/task-proposal",
     payload,
+  });
+}
+
+async function setProactiveTaskProposalPreference(
+  payload: ProactiveTaskProposalPreferenceUpdatePayload,
+): Promise<ProactiveTaskProposalPreferencePayload> {
+  return requestControlPlaneJson<ProactiveTaskProposalPreferencePayload>({
+    service: "proactive",
+    method: "POST",
+    path: "/api/v1/proactive/preferences/task-proposals",
+    payload: {
+      enabled: payload.enabled !== false,
+    },
   });
 }
 
@@ -11667,6 +11689,12 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, payload: DemoTaskProposalRequestPayload) =>
       enqueueRemoteDemoTaskProposal(payload),
+  );
+  handleTrustedIpc(
+    "workspace:setProactiveTaskProposalPreference",
+    ["main"],
+    async (_event, payload: ProactiveTaskProposalPreferenceUpdatePayload) =>
+      setProactiveTaskProposalPreference(payload),
   );
   handleTrustedIpc(
     "workspace:listRuntimeStates",
