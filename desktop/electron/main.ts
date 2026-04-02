@@ -59,7 +59,7 @@ const APP_THEMES = new Set([
   "ember",
   "glacier",
   "mono",
-  "claude",
+  "sepia",
   "slate",
   "paper",
   "graphite",
@@ -297,6 +297,22 @@ interface RuntimeConfigUpdatePayload {
   modelProxyBaseUrl?: string | null;
   defaultModel?: string | null;
   controlPlaneBaseUrl?: string | null;
+}
+
+type RuntimeUserProfileNameSource = "manual" | "agent" | "authFallback";
+
+interface RuntimeUserProfilePayload {
+  profileId: string;
+  name: string | null;
+  nameSource: RuntimeUserProfileNameSource | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+interface RuntimeUserProfileUpdatePayload {
+  profileId?: string | null;
+  name?: string | null;
+  nameSource?: RuntimeUserProfileNameSource | null;
 }
 
 interface AuthUserPayload {
@@ -973,7 +989,7 @@ function getPopupThemePalette(theme: string): PopupThemePalette {
         emptyBg: "rgba(250, 245, 244, 0.92)",
         error: "rgba(184, 67, 67, 0.94)",
       };
-    case "claude":
+    case "sepia":
       return {
         fontFamily: '"IBM Plex Sans", "Aptos", "Segoe UI Variable", sans-serif',
         text: "rgba(74, 54, 39, 0.94)",
@@ -1142,7 +1158,7 @@ function getPopupThemePalette(theme: string): PopupThemePalette {
 function popupThemeCss(theme = currentTheme) {
   const palette = getPopupThemePalette(theme);
   const isLightTheme =
-    theme === "holaboss" || theme === "claude" || theme === "paper";
+    theme === "holaboss" || theme === "sepia" || theme === "paper";
   const surfaceSoft = `color-mix(in srgb, ${palette.controlBg} 72%, ${palette.panelBgAlt} 28%)`;
   const surfaceSubtle = `color-mix(in srgb, ${palette.controlBg} 52%, ${palette.panelBgAlt} 48%)`;
   return `
@@ -1860,6 +1876,7 @@ let lastRuntimeConfigSignature = "";
 let lastRuntimeBindingRefreshAtMs = 0;
 let lastRuntimeBindingRefreshUserId = "";
 let runtimeBindingRefreshPromise: Promise<void> | null = null;
+let startupAuthSyncPromise: Promise<void> | null = null;
 
 function appendSessionStreamDebug(
   streamId: string,
@@ -3549,6 +3566,145 @@ async function setRuntimeConfigDocument(
   return config;
 }
 
+function runtimeUserProfileNameSourceFromApi(value: unknown): RuntimeUserProfileNameSource | null {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (normalized === "manual" || normalized === "agent") {
+    return normalized;
+  }
+  if (normalized === "auth_fallback") {
+    return "authFallback";
+  }
+  return null;
+}
+
+function runtimeUserProfileNameSourceToApi(
+  value: RuntimeUserProfileNameSource | null | undefined,
+): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (value === "authFallback") {
+    return "auth_fallback";
+  }
+  return value;
+}
+
+function runtimeUserProfilePayloadFromApi(value: unknown): RuntimeUserProfilePayload {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  return {
+    profileId:
+      typeof record.profile_id === "string" && record.profile_id.trim()
+        ? record.profile_id
+        : "default",
+    name: typeof record.name === "string" && record.name.trim() ? record.name : null,
+    nameSource: runtimeUserProfileNameSourceFromApi(record.name_source),
+    createdAt:
+      typeof record.created_at === "string" && record.created_at.trim()
+        ? record.created_at
+        : null,
+    updatedAt:
+      typeof record.updated_at === "string" && record.updated_at.trim()
+        ? record.updated_at
+        : null,
+  };
+}
+
+async function runtimeApiRequest<T>(
+  pathname: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const status = await ensureRuntimeReady();
+  const baseUrl = status.url ?? runtimeBaseUrl();
+  const targetUrl = new URL(pathname, `${baseUrl.replace(/\/+$/, "")}/`).toString();
+  const response = await fetch(targetUrl, init);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      detail.trim() ||
+        `Runtime API request failed: ${response.status} ${response.statusText}`,
+    );
+  }
+  return (await response.json()) as T;
+}
+
+async function getRuntimeUserProfile(): Promise<RuntimeUserProfilePayload> {
+  const payload = await runtimeApiRequest<unknown>("/api/v1/runtime/profile", {
+    method: "GET",
+  });
+  return runtimeUserProfilePayloadFromApi(payload);
+}
+
+async function setRuntimeUserProfile(
+  payload: RuntimeUserProfileUpdatePayload,
+): Promise<RuntimeUserProfilePayload> {
+  const body: Record<string, unknown> = {};
+  if (typeof payload.profileId === "string" && payload.profileId.trim()) {
+    body.profile_id = payload.profileId.trim();
+  }
+  if (payload.name !== undefined) {
+    body.name = payload.name;
+  }
+  if (payload.nameSource !== undefined) {
+    body.name_source = runtimeUserProfileNameSourceToApi(payload.nameSource);
+  }
+  const response = await runtimeApiRequest<unknown>("/api/v1/runtime/profile", {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  return runtimeUserProfilePayloadFromApi(response);
+}
+
+async function applyRuntimeUserProfileAuthFallback(
+  name: string,
+  profileId = "default",
+): Promise<RuntimeUserProfilePayload> {
+  const response = await runtimeApiRequest<unknown>(
+    "/api/v1/runtime/profile/auth-fallback",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        profile_id: profileId,
+        name,
+      }),
+    },
+  );
+  return runtimeUserProfilePayloadFromApi(response);
+}
+
+async function syncRuntimeUserProfileFromAuth(
+  user: AuthUserPayload,
+): Promise<void> {
+  const name = typeof user.name === "string" ? user.name.trim() : "";
+  if (!name) {
+    return;
+  }
+  try {
+    await applyRuntimeUserProfileAuthFallback(name);
+  } catch (error) {
+    appendRuntimeEventLog({
+      category: "auth",
+      event: "runtime_profile.auth_fallback",
+      outcome: "error",
+      detail:
+        error instanceof Error
+          ? error.message
+          : "Runtime profile auth fallback failed.",
+    });
+  }
+}
+
 async function exchangeDesktopRuntimeBinding(
   sandboxId: string,
 ): Promise<RuntimeBindingExchangePayload> {
@@ -3940,6 +4096,7 @@ async function provisionRuntimeBindingForAuthenticatedUser(
       !forceRefresh &&
       !runtimeConfigNeedsBindingRefresh(currentConfig, userId)
     ) {
+      await syncRuntimeUserProfileFromAuth(user);
       return;
     }
 
@@ -3979,6 +4136,7 @@ async function provisionRuntimeBindingForAuthenticatedUser(
       });
       await restartEmbeddedRuntimeIfNeeded(currentConfig, nextConfig);
       await emitRuntimeConfig();
+      await syncRuntimeUserProfileFromAuth(user);
 
       appendRuntimeEventLog({
         category: "auth",
@@ -4005,10 +4163,25 @@ async function provisionRuntimeBindingForAuthenticatedUser(
 
 async function ensureRuntimeBindingReadyForWorkspaceFlow(
   reason: string,
-  options?: { forceRefresh?: boolean },
+  options?: {
+    forceRefresh?: boolean;
+    allowProvisionWhenUnmanaged?: boolean;
+    waitForStartupSync?: boolean;
+  },
 ): Promise<void> {
+  if (options?.waitForStartupSync !== false) {
+    const startupSync = startupAuthSyncPromise;
+    if (startupSync) {
+      await startupSync;
+    }
+  }
+
   const currentConfig = await readRuntimeConfigFile();
-  if (!runtimeConfigIsControlPlaneManaged(currentConfig)) {
+  const controlPlaneManaged = runtimeConfigIsControlPlaneManaged(currentConfig);
+  const allowProvisionWhenUnmanaged = Boolean(
+    options?.allowProvisionWhenUnmanaged,
+  );
+  if (!controlPlaneManaged && !allowProvisionWhenUnmanaged) {
     return;
   }
 
@@ -4026,6 +4199,7 @@ async function ensureRuntimeBindingReadyForWorkspaceFlow(
   const userId = authUserId(user);
   const shouldRefresh =
     Boolean(options?.forceRefresh) ||
+    (allowProvisionWhenUnmanaged && !controlPlaneManaged) ||
     runtimeConfigNeedsBindingRefresh(currentConfig, userId) ||
     shouldForceRuntimeBindingRefresh(userId);
   if (shouldRefresh) {
@@ -4342,11 +4516,53 @@ async function requestControlPlaneJson<T>({
     url.searchParams.set(key, String(value));
   }
 
-  const response = await fetch(url, {
-    method,
-    headers: await controlPlaneHeaders(service),
-    body: payload === undefined ? undefined : JSON.stringify(payload),
-  });
+  const executeRequest = async () => {
+    return fetch(url, {
+      method,
+      headers: await controlPlaneHeaders(service),
+      body: payload === undefined ? undefined : JSON.stringify(payload),
+    });
+  };
+
+  const maybeRetryRuntimeBinding = async (
+    status: number,
+    detail: string,
+  ): Promise<boolean> => {
+    if (service !== "marketplace" && service !== "proactive") {
+      return false;
+    }
+    const normalizedDetail = detail.trim().toLowerCase();
+    const looksLikeApiKeyAuthFailure =
+      status === 401 ||
+      status === 403 ||
+      normalizedDetail.includes("invalid or missing api key") ||
+      normalizedDetail.includes("api key") ||
+      normalizedDetail.includes("unauthorized") ||
+      normalizedDetail.includes("forbidden");
+    if (!looksLikeApiKeyAuthFailure) {
+      return false;
+    }
+    await ensureRuntimeBindingReadyForWorkspaceFlow(
+      `control_plane_${service}_auth_retry`,
+      {
+        forceRefresh: true,
+        allowProvisionWhenUnmanaged: true,
+        waitForStartupSync: true,
+      },
+    );
+    return true;
+  };
+
+  let response = await executeRequest();
+  if (!response.ok) {
+    const detail = await readControlPlaneError(response);
+    const retried = await maybeRetryRuntimeBinding(response.status, detail).catch(
+      () => false,
+    );
+    if (retried) {
+      response = await executeRequest();
+    }
+  }
   if (!response.ok) {
     throw new Error(await readControlPlaneError(response));
   }
@@ -4504,7 +4720,10 @@ async function parseLocalTemplateMetadata(
 }
 
 async function listMarketplaceTemplates(): Promise<TemplateListResponsePayload> {
-  await ensureRuntimeBindingReadyForWorkspaceFlow("marketplace_templates");
+  await ensureRuntimeBindingReadyForWorkspaceFlow("marketplace_templates", {
+    allowProvisionWhenUnmanaged: true,
+    waitForStartupSync: true,
+  });
   return requestControlPlaneJson<TemplateListResponsePayload>({
     service: "marketplace",
     method: "GET",
@@ -5812,6 +6031,10 @@ async function materializeMarketplaceTemplate(payload: {
 }): Promise<MaterializeTemplateResponsePayload> {
   await ensureRuntimeBindingReadyForWorkspaceFlow(
     "marketplace_template_materialize",
+    {
+      allowProvisionWhenUnmanaged: true,
+      waitForStartupSync: true,
+    },
   );
   return requestControlPlaneJson<MaterializeTemplateResponsePayload>({
     service: "marketplace",
@@ -11506,6 +11729,9 @@ app.whenReady().then(async () => {
   handleTrustedIpc("runtime:getConfig", ["main", "auth-popup"], () =>
     getRuntimeConfig(),
   );
+  handleTrustedIpc("runtime:getProfile", ["main", "auth-popup"], () =>
+    getRuntimeUserProfile(),
+  );
   handleTrustedIpc(
     "runtime:getConfigDocument",
     ["main", "auth-popup"],
@@ -11522,6 +11748,12 @@ app.whenReady().then(async () => {
       await emitRuntimeConfig(config);
       return config;
     },
+  );
+  handleTrustedIpc(
+    "runtime:setProfile",
+    ["main", "auth-popup"],
+    async (_event, payload: RuntimeUserProfileUpdatePayload) =>
+      setRuntimeUserProfile(payload ?? {}),
   );
   handleTrustedIpc(
     "runtime:setConfigDocument",
@@ -12250,7 +12482,11 @@ app.whenReady().then(async () => {
   });
   emitRuntimeState();
   void startEmbeddedRuntime();
-  void syncPersistedAuthSessionOnStartup();
+  startupAuthSyncPromise = syncPersistedAuthSessionOnStartup()
+    .catch(() => undefined)
+    .finally(() => {
+      startupAuthSyncPromise = null;
+    });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

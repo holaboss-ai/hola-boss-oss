@@ -13,6 +13,7 @@ import yauzl from "yauzl";
 import {
   type AgentSessionRecord,
   type AppBuildRecord,
+  type CompactionBoundaryRecord,
   type CronjobRecord,
   type OutputFolderRecord,
   type OutputRecord,
@@ -21,6 +22,9 @@ import {
   type SessionRuntimeStateRecord,
   type TaskProposalRecord,
   type OutputEventRecord,
+  type TurnRequestSnapshotRecord,
+  type TurnResultRecord,
+  type RuntimeUserProfileRecord,
   RuntimeStateStore,
   utcNowIso,
   type WorkspaceRecord
@@ -94,6 +98,13 @@ import {
 import { startResolvedApplications } from "./resolved-app-bootstrap.js";
 import { buildAppSetupEnv } from "./app-setup-env.js";
 import { collectWorkspaceSnapshot } from "./workspace-snapshot.js";
+import {
+  compactionRestorationContextFromCompactionBoundary,
+  recentRuntimeContextFromCompactionBoundary,
+  recentRuntimeContextFromTurnResult,
+  sessionResumeContextFromArtifacts,
+  sessionResumeContextFromCompactionBoundary,
+} from "./turn-result-summary.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 50;
 const DEFAULT_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
@@ -119,12 +130,13 @@ export interface BuildRuntimeApiServerOptions {
 function resolveQueueWorker(
   options: BuildRuntimeApiServerOptions,
   app: FastifyInstance,
-  store: RuntimeStateStore
+  store: RuntimeStateStore,
+  memoryService: MemoryServiceLike
 ): QueueWorkerLike | null {
   if (options.queueWorker !== undefined) {
     return options.queueWorker;
   }
-  return new RuntimeQueueWorker({ store, logger: app.log });
+  return new RuntimeQueueWorker({ store, logger: app.log, memoryService });
 }
 
 function resolveCronWorker(
@@ -460,6 +472,71 @@ function outputEventPayload(record: OutputEventRecord): Record<string, unknown> 
     event_type: record.eventType,
     payload: record.payload,
     created_at: record.createdAt
+  };
+}
+
+function turnResultPayload(record: TurnResultRecord): Record<string, unknown> {
+  return {
+    workspace_id: record.workspaceId,
+    session_id: record.sessionId,
+    input_id: record.inputId,
+    started_at: record.startedAt,
+    completed_at: record.completedAt,
+    status: record.status,
+    stop_reason: record.stopReason,
+    assistant_text: record.assistantText,
+    tool_usage_summary: record.toolUsageSummary,
+    permission_denials: record.permissionDenials,
+    prompt_section_ids: record.promptSectionIds,
+    capability_manifest_fingerprint: record.capabilityManifestFingerprint,
+    request_snapshot_fingerprint: record.requestSnapshotFingerprint,
+    prompt_cache_profile: record.promptCacheProfile,
+    compacted_summary: record.compactedSummary,
+    compaction_boundary_id: record.compactionBoundaryId,
+    token_usage: record.tokenUsage,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt,
+  };
+}
+
+function turnRequestSnapshotPayload(record: TurnRequestSnapshotRecord): Record<string, unknown> {
+  return {
+    workspace_id: record.workspaceId,
+    session_id: record.sessionId,
+    input_id: record.inputId,
+    snapshot_kind: record.snapshotKind,
+    fingerprint: record.fingerprint,
+    payload: record.payload,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt,
+  };
+}
+
+function compactionBoundaryPayload(record: CompactionBoundaryRecord): Record<string, unknown> {
+  return {
+    boundary_id: record.boundaryId,
+    workspace_id: record.workspaceId,
+    session_id: record.sessionId,
+    input_id: record.inputId,
+    previous_boundary_id: record.previousBoundaryId,
+    summary: record.summary,
+    recent_runtime_context: record.recentRuntimeContext,
+    restoration_context: record.restorationContext,
+    compaction_restoration_context: compactionRestorationContextFromCompactionBoundary(record),
+    preserved_turn_input_ids: record.preservedTurnInputIds,
+    request_snapshot_fingerprint: record.requestSnapshotFingerprint,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt,
+  };
+}
+
+function runtimeUserProfilePayload(record: RuntimeUserProfileRecord | null, profileId = "default"): Record<string, unknown> {
+  return {
+    profile_id: record?.profileId ?? profileId,
+    name: record?.name ?? null,
+    name_source: record?.nameSource ?? null,
+    created_at: record?.createdAt ?? null,
+    updated_at: record?.updatedAt ?? null,
   };
 }
 
@@ -1133,7 +1210,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const oauthService = new OAuthService(store);
   const runtimeAgentToolsService = new RuntimeAgentToolsService(store);
   const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
-  const queueWorker = resolveQueueWorker(options, app, store);
+  const queueWorker = resolveQueueWorker(options, app, store, memoryService);
   const cronWorker = resolveCronWorker(options, app, store, queueWorker);
   const bridgeWorker = resolveBridgeWorker(options, app, store, memoryService);
 
@@ -1555,6 +1632,46 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "runtime config update failed");
     }
+  });
+
+  app.get("/api/v1/runtime/profile", async (request, reply) => {
+    void reply;
+    const query = request.query as Record<string, unknown>;
+    const profileId = optionalString(query.profile_id)?.trim() || "default";
+    return runtimeUserProfilePayload(store.getRuntimeUserProfile({ profileId }), profileId);
+  });
+
+  app.put("/api/v1/runtime/profile", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const body = requiredDict(request.body, "body");
+    const profileId = optionalString(body.profile_id)?.trim() || "default";
+    const name = nullableString(body.name);
+    const nameSource = nullableString(body.name_source);
+    if (nameSource != null && !["manual", "agent", "auth_fallback"].includes(nameSource)) {
+      return sendError(reply, 400, "name_source must be one of manual, agent, or auth_fallback");
+    }
+    const record = store.upsertRuntimeUserProfile({
+      profileId,
+      name: name ?? null,
+      nameSource: (nameSource ?? null) as "manual" | "agent" | "auth_fallback" | null,
+    });
+    return runtimeUserProfilePayload(record);
+  });
+
+  app.post("/api/v1/runtime/profile/auth-fallback", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const body = requiredDict(request.body, "body");
+    const profileId = optionalString(body.profile_id)?.trim() || "default";
+    const name = requiredString(body.name, "name").trim();
+    const record = store.applyRuntimeUserProfileAuthFallback({
+      profileId,
+      name,
+    });
+    return runtimeUserProfilePayload(record, profileId);
   });
 
   app.get("/api/v1/capabilities/browser", async (request, reply) => {
@@ -3232,6 +3349,174 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       limit,
       offset,
       raw: null
+    };
+  });
+
+  app.get("/api/v1/agent-sessions/:sessionId/turn-results", async (request, reply) => {
+    const params = request.params as { sessionId: string };
+    const query = isRecord(request.query) ? request.query : {};
+    const workspaceId = optionalString(query.workspace_id);
+    if (!workspaceId) {
+      return sendError(reply, 400, "workspace_id is required");
+    }
+
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    const inputId = optionalString(query.input_id);
+    const limit = Math.max(1, Math.min(1000, optionalInteger(query.limit, 200)));
+    const offset = Math.max(0, optionalInteger(query.offset, 0));
+    const total = store.countTurnResults({
+      workspaceId,
+      sessionId: params.sessionId,
+      inputId: inputId ?? undefined,
+    });
+    const items = store
+      .listTurnResults({
+        workspaceId,
+        sessionId: params.sessionId,
+        inputId: inputId ?? undefined,
+        limit,
+        offset,
+      })
+      .map((item: TurnResultRecord) => turnResultPayload(item));
+
+    return {
+      workspace_id: workspaceId,
+      session_id: params.sessionId,
+      items,
+      count: items.length,
+      total,
+      limit,
+      offset,
+    };
+  });
+
+  app.get("/api/v1/agent-sessions/:sessionId/request-snapshots", async (request, reply) => {
+    const params = request.params as { sessionId: string };
+    const query = isRecord(request.query) ? request.query : {};
+    const workspaceId = optionalString(query.workspace_id);
+    if (!workspaceId) {
+      return sendError(reply, 400, "workspace_id is required");
+    }
+
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    const inputId = optionalString(query.input_id);
+    const limit = Math.max(1, Math.min(1000, optionalInteger(query.limit, 200)));
+    const offset = Math.max(0, optionalInteger(query.offset, 0));
+    const items = store
+      .listTurnRequestSnapshots({
+        workspaceId,
+        sessionId: params.sessionId,
+        inputId: inputId ?? undefined,
+        limit,
+        offset,
+      })
+      .map((item: TurnRequestSnapshotRecord) => turnRequestSnapshotPayload(item));
+
+    return {
+      workspace_id: workspaceId,
+      session_id: params.sessionId,
+      items,
+      count: items.length,
+      limit,
+      offset,
+    };
+  });
+
+  app.get("/api/v1/agent-sessions/:sessionId/compaction-boundaries", async (request, reply) => {
+    const params = request.params as { sessionId: string };
+    const query = isRecord(request.query) ? request.query : {};
+    const workspaceId = optionalString(query.workspace_id);
+    if (!workspaceId) {
+      return sendError(reply, 400, "workspace_id is required");
+    }
+
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    const inputId = optionalString(query.input_id);
+    const limit = Math.max(1, Math.min(1000, optionalInteger(query.limit, 200)));
+    const offset = Math.max(0, optionalInteger(query.offset, 0));
+    const items = store
+      .listCompactionBoundaries({
+        workspaceId,
+        sessionId: params.sessionId,
+        inputId: inputId ?? undefined,
+        limit,
+        offset,
+      })
+      .map((item: CompactionBoundaryRecord) => compactionBoundaryPayload(item));
+
+    return {
+      workspace_id: workspaceId,
+      session_id: params.sessionId,
+      items,
+      count: items.length,
+      limit,
+      offset,
+    };
+  });
+
+  app.get("/api/v1/agent-sessions/:sessionId/resume-context", async (request, reply) => {
+    const params = request.params as { sessionId: string };
+    const query = isRecord(request.query) ? request.query : {};
+    const workspaceId = optionalString(query.workspace_id);
+    if (!workspaceId) {
+      return sendError(reply, 400, "workspace_id is required");
+    }
+
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    const inputId = optionalString(query.input_id) ?? "";
+    const latestBoundary = store
+      .listCompactionBoundaries({
+        workspaceId,
+        sessionId: params.sessionId,
+        limit: 8,
+        offset: 0,
+      })
+      .find((boundary) => boundary.inputId !== inputId) ?? null;
+    const turnResults = store.listTurnResults({
+      workspaceId,
+      sessionId: params.sessionId,
+      limit: 8,
+      offset: 0,
+    });
+    const recentTurn = turnResults.find((turnResult) => turnResult.inputId !== inputId) ?? null;
+    const sessionMessages = latestBoundary
+      ? []
+      : store.listSessionMessages({
+          workspaceId,
+          sessionId: params.sessionId,
+        });
+
+    return {
+      workspace_id: workspaceId,
+      session_id: params.sessionId,
+      input_id: inputId || null,
+      compaction_restoration_context: compactionRestorationContextFromCompactionBoundary(latestBoundary),
+      recent_runtime_context:
+        recentRuntimeContextFromCompactionBoundary(latestBoundary) ??
+        (recentTurn ? recentRuntimeContextFromTurnResult(recentTurn) : null),
+      session_resume_context:
+        sessionResumeContextFromCompactionBoundary(latestBoundary) ??
+        sessionResumeContextFromArtifacts({
+          turnResults,
+          sessionMessages,
+          currentInputId: inputId,
+        }),
     };
   });
 

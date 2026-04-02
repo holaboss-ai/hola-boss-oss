@@ -1,6 +1,6 @@
 # Integrations Phase 1 Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **Execution Note:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Build the first end-to-end integrations layer for Holaboss, including runtime parsing of integration requirements, persisted connections and bindings, a compatibility broker/API, app lifecycle injection, and a desktop management surface.
 

@@ -248,6 +248,68 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
   assert.deepEqual(
     mapPiSessionEvent(
       {
+        type: "auto_compaction_start",
+        reason: "threshold",
+      },
+      sessionFile,
+      state
+    ),
+    [
+      {
+        event_type: "auto_compaction_start",
+        payload: {
+          reason: "threshold",
+          event: "auto_compaction_start",
+          source: "pi",
+        },
+      },
+    ]
+  );
+
+  assert.deepEqual(
+    mapPiSessionEvent(
+      {
+        type: "auto_compaction_end",
+        result: {
+          summary: "Kept the latest implementation details.",
+          firstKeptEntryId: "entry-1",
+          tokensBefore: 12345,
+          details: {
+            modifiedFiles: ["runtime/harness-host/src/pi.ts"],
+          },
+        },
+        aborted: false,
+        willRetry: true,
+        errorMessage: undefined,
+      },
+      sessionFile,
+      state
+    ),
+    [
+      {
+        event_type: "auto_compaction_end",
+        payload: {
+          result: {
+            summary: "Kept the latest implementation details.",
+            firstKeptEntryId: "entry-1",
+            tokensBefore: 12345,
+            details: {
+              modifiedFiles: ["runtime/harness-host/src/pi.ts"],
+            },
+          },
+          aborted: false,
+          will_retry: true,
+          error_message: null,
+          event: "auto_compaction_end",
+          source: "pi",
+        },
+      },
+    ]
+  );
+
+  assert.deepEqual(
+    mapPiSessionEvent(
+      {
         type: "agent_end",
         messages: [],
       },
@@ -562,6 +624,20 @@ test("runPi emits run_started and terminal success when the session completes", 
         },
       });
       this.listener?.({
+        type: "auto_compaction_start",
+        reason: "threshold",
+      });
+      this.listener?.({
+        type: "auto_compaction_end",
+        result: {
+          summary: "Compacted older context.",
+          firstKeptEntryId: "entry-1",
+          tokensBefore: 1234,
+        },
+        aborted: false,
+        willRetry: false,
+      });
+      this.listener?.({
         type: "agent_end",
         messages: [],
       });
@@ -594,11 +670,17 @@ test("runPi emits run_started and terminal success when the session completes", 
     assert.equal(exitCode, 0);
     assert.deepEqual(
       events.map((event) => event.event_type),
-      ["run_started", "output_delta", "run_completed"]
+      ["run_started", "output_delta", "auto_compaction_start", "auto_compaction_end", "run_completed"]
     );
     assert.deepEqual(sentContent, [{ type: "text", text: "List the files" }]);
     assert.equal(events[0]?.payload.harness_session_id, "/tmp/pi-session.jsonl");
-    assert.equal(events[2]?.payload.harness_session_id, "/tmp/pi-session.jsonl");
+    assert.equal(events[4]?.payload.harness_session_id, "/tmp/pi-session.jsonl");
+    assert.equal(events[2]?.payload.reason, "threshold");
+    assert.deepEqual(events[3]?.payload.result, {
+      summary: "Compacted older context.",
+      firstKeptEntryId: "entry-1",
+      tokensBefore: 1234,
+    });
   } finally {
     process.stdout.write = originalWrite;
   }

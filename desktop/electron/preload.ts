@@ -725,9 +725,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     getStatus: () => ipcRenderer.invoke("runtime:getStatus") as Promise<RuntimeStatusPayload>,
     restart: () => ipcRenderer.invoke("runtime:restart") as Promise<RuntimeStatusPayload>,
     getConfig: () => ipcRenderer.invoke("runtime:getConfig") as Promise<RuntimeConfigPayload>,
+    getProfile: () => ipcRenderer.invoke("runtime:getProfile") as Promise<RuntimeUserProfilePayload>,
     getConfigDocument: () => ipcRenderer.invoke("runtime:getConfigDocument") as Promise<string>,
     setConfig: (payload: RuntimeConfigUpdatePayload) =>
       ipcRenderer.invoke("runtime:setConfig", payload) as Promise<RuntimeConfigPayload>,
+    setProfile: (payload: RuntimeUserProfileUpdatePayload) =>
+      ipcRenderer.invoke("runtime:setProfile", payload) as Promise<RuntimeUserProfilePayload>,
     setConfigDocument: (rawDocument: string) =>
       ipcRenderer.invoke("runtime:setConfigDocument", rawDocument) as Promise<RuntimeConfigPayload>,
     exchangeBinding: (sandboxId: string) =>

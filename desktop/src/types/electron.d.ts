@@ -161,6 +161,22 @@ declare global {
     controlPlaneBaseUrl?: string | null;
   }
 
+  type RuntimeUserProfileNameSource = "manual" | "agent" | "authFallback";
+
+  interface RuntimeUserProfilePayload {
+    profileId: string;
+    name: string | null;
+    nameSource: RuntimeUserProfileNameSource | null;
+    createdAt: string | null;
+    updatedAt: string | null;
+  }
+
+  interface RuntimeUserProfileUpdatePayload {
+    profileId?: string | null;
+    name?: string | null;
+    nameSource?: RuntimeUserProfileNameSource | null;
+  }
+
   interface AppUpdateStatusPayload {
     supported: boolean;
     checking: boolean;
@@ -810,8 +826,10 @@ declare global {
       getStatus: () => Promise<RuntimeStatusPayload>;
       restart: () => Promise<RuntimeStatusPayload>;
       getConfig: () => Promise<RuntimeConfigPayload>;
+      getProfile: () => Promise<RuntimeUserProfilePayload>;
       getConfigDocument: () => Promise<string>;
       setConfig: (payload: RuntimeConfigUpdatePayload) => Promise<RuntimeConfigPayload>;
+      setProfile: (payload: RuntimeUserProfileUpdatePayload) => Promise<RuntimeUserProfilePayload>;
       setConfigDocument: (rawDocument: string) => Promise<RuntimeConfigPayload>;
       exchangeBinding: (sandboxId: string) => Promise<RuntimeConfigPayload>;
       onConfigChange: (listener: (config: RuntimeConfigPayload) => void) => () => void;

@@ -1,7 +1,7 @@
-/* Claude Theme - Auto-generated from tweakcn */
+/* Sepia Theme - Auto-generated from tweakcn */
 
 /* Light mode */
-[data-theme="claude-light"] {
+[data-theme="sepia-light"] {
   --background: oklch(0.98 0.01 95.1);
   --foreground: oklch(0.34 0.03 95.72);
   --card: oklch(0.98 0.01 95.1);
@@ -67,7 +67,7 @@
 }
 
 /* Dark mode */
-[data-theme="claude-dark"] {
+[data-theme="sepia-dark"] {
   --background: oklch(0.27 0 106.64);
   --foreground: oklch(0.81 0.01 93.01);
   --card: oklch(0.27 0 106.64);
@@ -129,4 +129,5 @@
   --shadow-xl:
     0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 8px 10px -1px hsl(0 0% 0% / 0.1);
   --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+  --tracking-normal: 0em;
 }

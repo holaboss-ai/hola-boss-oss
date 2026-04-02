@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -28,6 +29,12 @@ import {
   type AgentRuntimeConfigCliRequest,
   type AgentRuntimeConfigCliResponse
 } from "./agent-runtime-config.js";
+import type {
+  AgentCurrentUserContext,
+  AgentRecalledMemoryContext,
+  AgentRecentRuntimeContext,
+  AgentSessionResumeContext
+} from "./agent-runtime-prompt.js";
 import {
   decodeTsRunnerRequestPayload,
   fallbackEventIdentity,
@@ -60,6 +67,13 @@ import {
 import { buildRunnerEnv } from "./runner-worker.js";
 import { startWorkspaceMcpSidecar, type WorkspaceMcpSidecarCliRequest } from "./workspace-mcp-sidecar.js";
 import type { CompiledWorkspaceRuntimePlan } from "./workspace-runtime-plan.js";
+import {
+  recentRuntimeContextFromCompactionBoundary,
+  recentRuntimeContextFromTurnResult,
+  sessionResumeContextFromArtifacts,
+  sessionResumeContextFromCompactionBoundary,
+} from "./turn-result-summary.js";
+import { recalledMemoryContextFromEntries } from "./memory-recall.js";
 
 type LoggerLike = Pick<typeof console, "warn">;
 
@@ -156,6 +170,125 @@ function jsonObject(value: Record<string, unknown>): JsonObject {
   return JSON.parse(JSON.stringify(value)) as JsonObject;
 }
 
+function fingerprintJsonValue(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function isSensitiveSnapshotKey(key: string): boolean {
+  return /(?:api[_-]?key|auth(?:orization)?|token|secret|password)/i.test(key);
+}
+
+function sanitizeSnapshotValue(value: unknown, parentKey?: string): unknown {
+  if (parentKey === "request_snapshot_fingerprint") {
+    return "[self]";
+  }
+  if (parentKey && isSensitiveSnapshotKey(parentKey)) {
+    return "[redacted]";
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeSnapshotValue(item));
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+  const sanitizedEntries = Object.entries(value).map(([key, item]) => [
+    key,
+    sanitizeSnapshotValue(item, key),
+  ]);
+  return Object.fromEntries(sanitizedEntries);
+}
+
+function turnRequestSnapshotFingerprint(payload: Record<string, unknown>): string {
+  return fingerprintJsonValue(sanitizeSnapshotValue(payload));
+}
+
+function persistTurnRequestSnapshot(params: {
+  workspaceRoot: string;
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+  snapshotKind: string;
+  payload: Record<string, unknown>;
+  logger?: LoggerLike;
+}): string | null {
+  const sanitizedPayload = sanitizeSnapshotValue(params.payload) as Record<string, unknown>;
+  const fingerprint = fingerprintJsonValue(sanitizedPayload);
+  const sandboxRoot = path.dirname(params.workspaceRoot);
+  const dbPath = path.join(sandboxRoot, "state", "runtime.db");
+  try {
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  } catch (error) {
+    params.logger?.warn?.(
+      `Failed to create turn request snapshot state directory workspace_id=${params.workspaceId} session_id=${params.sessionId} input_id=${params.inputId}: ${errorMessage(error)}`
+    );
+    return null;
+  }
+  const store = new RuntimeStateStore({
+    workspaceRoot: params.workspaceRoot,
+    sandboxRoot,
+    dbPath,
+  });
+  try {
+    store.upsertTurnRequestSnapshot({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      inputId: params.inputId,
+      snapshotKind: params.snapshotKind,
+      fingerprint,
+      payload: sanitizedPayload,
+    });
+    return fingerprint;
+  } catch (error) {
+    params.logger?.warn?.(
+      `Failed to persist turn request snapshot workspace_id=${params.workspaceId} session_id=${params.sessionId} input_id=${params.inputId}: ${errorMessage(error)}`
+    );
+    return null;
+  } finally {
+    store.close();
+  }
+}
+
+function turnRequestSnapshotPayload(params: {
+  request: TsRunnerRequest;
+  bootstrap: TsRunnerBootstrapState;
+  runtimeConfig: AgentRuntimeConfigCliResponse;
+  harnessRequestPayload: Record<string, unknown>;
+}): Record<string, unknown> {
+  return {
+    schema_version: 1,
+    snapshot_kind: "harness_host_request",
+    workspace_id: params.request.workspace_id,
+    session_id: params.request.session_id,
+    input_id: params.request.input_id,
+    harness_id: params.bootstrap.harness,
+    raw_instruction: params.request.instruction,
+    attachments: params.request.attachments ?? [],
+    runtime_config: {
+      provider_id: params.runtimeConfig.provider_id,
+      model_id: params.runtimeConfig.model_id,
+      mode: params.runtimeConfig.mode,
+      system_prompt: params.runtimeConfig.system_prompt,
+      context_messages: params.runtimeConfig.context_messages ?? [],
+      prompt_sections: params.runtimeConfig.prompt_sections ?? [],
+      prompt_layers: params.runtimeConfig.prompt_layers ?? [],
+      prompt_cache_profile: params.runtimeConfig.prompt_cache_profile ?? null,
+      tools: params.runtimeConfig.tools,
+      workspace_tool_ids: params.runtimeConfig.workspace_tool_ids,
+      workspace_skill_ids: params.runtimeConfig.workspace_skill_ids,
+      output_schema_member_id: params.runtimeConfig.output_schema_member_id ?? null,
+      output_format: params.runtimeConfig.output_format ?? null,
+      workspace_config_checksum: params.runtimeConfig.workspace_config_checksum,
+      capability_manifest: params.runtimeConfig.capability_manifest ?? null,
+      model_client: {
+        model_proxy_provider: params.runtimeConfig.model_client.model_proxy_provider,
+        base_url: params.runtimeConfig.model_client.base_url ?? null,
+        default_headers: params.runtimeConfig.model_client.default_headers ?? null,
+      },
+    },
+    harness_request: params.harnessRequestPayload,
+  };
+}
+
 function elapsedMs(startedAtMs: number): number {
   return Math.max(0, Date.now() - startedAtMs);
 }
@@ -203,6 +336,180 @@ function runtimeRootDir(): string {
     return path.resolve(configured);
   }
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+}
+
+function loadRecentRuntimeContext(params: {
+  workspaceRoot: string;
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+  logger?: LoggerLike;
+}): AgentRecentRuntimeContext | null {
+  const sandboxRoot = path.dirname(params.workspaceRoot);
+  const dbPath = path.join(sandboxRoot, "state", "runtime.db");
+  if (!fs.existsSync(dbPath)) {
+    return null;
+  }
+  const store = new RuntimeStateStore({
+    workspaceRoot: params.workspaceRoot,
+    sandboxRoot,
+    dbPath,
+  });
+  try {
+    const latestBoundary = store.listCompactionBoundaries({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      limit: 5,
+      offset: 0,
+    }).find((boundary) => boundary.inputId !== params.inputId) ?? null;
+    const boundaryContext = recentRuntimeContextFromCompactionBoundary(latestBoundary);
+    if (boundaryContext) {
+      return boundaryContext;
+    }
+    const priorTurn = store
+      .listTurnResults({
+        workspaceId: params.workspaceId,
+        sessionId: params.sessionId,
+        limit: 10,
+      })
+      .find((turnResult) => turnResult.inputId !== params.inputId);
+    return priorTurn ? recentRuntimeContextFromTurnResult(priorTurn) : null;
+  } catch (error) {
+    params.logger?.warn?.(
+      `Failed to load recent runtime context workspace_id=${params.workspaceId} session_id=${params.sessionId}: ${errorMessage(error)}`
+    );
+    return null;
+  } finally {
+    store.close();
+  }
+}
+
+function loadSessionResumeContext(params: {
+  workspaceRoot: string;
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+  logger?: LoggerLike;
+}): AgentSessionResumeContext | null {
+  const sandboxRoot = path.dirname(params.workspaceRoot);
+  const dbPath = path.join(sandboxRoot, "state", "runtime.db");
+  if (!fs.existsSync(dbPath)) {
+    return null;
+  }
+  const store = new RuntimeStateStore({
+    workspaceRoot: params.workspaceRoot,
+    sandboxRoot,
+    dbPath,
+  });
+  try {
+    const latestBoundary = store.listCompactionBoundaries({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      limit: 5,
+      offset: 0,
+    }).find((boundary) => boundary.inputId !== params.inputId) ?? null;
+    const boundaryContext = sessionResumeContextFromCompactionBoundary(latestBoundary);
+    if (boundaryContext) {
+      return boundaryContext;
+    }
+    const turnResults = store.listTurnResults({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      limit: 8,
+    });
+    const sessionMessages = store.listSessionMessages({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+    });
+    return sessionResumeContextFromArtifacts({
+      turnResults,
+      sessionMessages,
+      currentInputId: params.inputId,
+    });
+  } catch (error) {
+    params.logger?.warn?.(
+      `Failed to load session resume context workspace_id=${params.workspaceId} session_id=${params.sessionId}: ${errorMessage(error)}`
+    );
+    return null;
+  } finally {
+    store.close();
+  }
+}
+
+function loadRecalledMemoryContext(params: {
+  workspaceRoot: string;
+  workspaceId: string;
+  instruction: string;
+  logger?: LoggerLike;
+}): AgentRecalledMemoryContext | null {
+  const sandboxRoot = path.dirname(params.workspaceRoot);
+  const dbPath = path.join(sandboxRoot, "state", "runtime.db");
+  if (!fs.existsSync(dbPath)) {
+    return null;
+  }
+  const store = new RuntimeStateStore({
+    workspaceRoot: params.workspaceRoot,
+    sandboxRoot,
+    dbPath,
+  });
+  try {
+    const entries = store
+      .listMemoryEntries({
+        status: "active",
+        limit: 200,
+        offset: 0,
+      })
+      .filter((entry) => entry.scope === "user" || entry.workspaceId === params.workspaceId);
+    return recalledMemoryContextFromEntries({
+      query: params.instruction,
+      entries,
+      maxEntries: 5,
+    });
+  } catch (error) {
+    params.logger?.warn?.(
+      `Failed to load recalled memory context workspace_id=${params.workspaceId}: ${errorMessage(error)}`
+    );
+    return null;
+  } finally {
+    store.close();
+  }
+}
+
+function loadCurrentUserContext(params: {
+  workspaceRoot: string;
+  logger?: LoggerLike;
+}): AgentCurrentUserContext | null {
+  const sandboxRoot = path.dirname(params.workspaceRoot);
+  const dbPath = path.join(sandboxRoot, "state", "runtime.db");
+  const defaultContext: AgentCurrentUserContext = {
+    profile_id: "default",
+    name: null,
+    name_source: null,
+  };
+  if (!fs.existsSync(dbPath)) {
+    return defaultContext;
+  }
+  const store = new RuntimeStateStore({
+    workspaceRoot: params.workspaceRoot,
+    sandboxRoot,
+    dbPath,
+  });
+  try {
+    const profile = store.getRuntimeUserProfile({ profileId: "default" });
+    if (!profile) {
+      return defaultContext;
+    }
+    return {
+      profile_id: profile.profileId,
+      name: profile.name,
+      name_source: profile.nameSource,
+    };
+  } catch (error) {
+    params.logger?.warn?.(`Failed to load current user context: ${errorMessage(error)}`);
+    return defaultContext;
+  } finally {
+    store.close();
+  }
 }
 
 function normalizeRuntimeApiHost(value: string): string {
@@ -288,6 +595,7 @@ function explicitHolabossUserId(request: TsRunnerRequest): string | undefined {
 function bootstrapStartedPayload(params: {
   request: TsRunnerRequest;
   runtimeConfig: AgentRuntimeConfigCliResponse;
+  requestSnapshotFingerprint: string | null;
   harnessSupportsStructuredOutput: boolean;
   mcpServerIdMap: Readonly<Record<string, string>>;
   mcpServers: PreparedMcpServerPayload[];
@@ -303,6 +611,11 @@ function bootstrapStartedPayload(params: {
     model_id: params.runtimeConfig.model_id,
     workspace_tool_ids: [...params.runtimeConfig.workspace_tool_ids],
     workspace_skill_ids: [...params.runtimeConfig.workspace_skill_ids],
+    context_message_count: params.runtimeConfig.context_messages?.length ?? 0,
+    prompt_section_ids: [...(params.runtimeConfig.prompt_sections?.map((section) => section.id) ?? [])],
+    prompt_cache_profile: params.runtimeConfig.prompt_cache_profile ?? null,
+    capability_manifest_fingerprint: params.runtimeConfig.capability_manifest?.fingerprint ?? null,
+    request_snapshot_fingerprint: params.requestSnapshotFingerprint,
     mcp_server_ids: params.mcpServers.map((server) => server.name),
     mcp_server_mappings: mcpServerMappingMetadata(params.mcpServerIdMap),
     workspace_mcp_sidecar_reused: Boolean(params.sidecar?.reused),
@@ -352,6 +665,10 @@ function buildAgentRuntimeConfigRequest(params: {
   workspaceCommandIds: string[];
   toolServerIdMap: Readonly<Record<string, string>>;
   resolvedMcpToolRefs: CompiledWorkspaceRuntimePlan["resolved_mcp_tool_refs"];
+  recentRuntimeContext?: AgentRecentRuntimeContext | null;
+  sessionResumeContext?: AgentSessionResumeContext | null;
+  recalledMemoryContext?: AgentRecalledMemoryContext | null;
+  currentUserContext?: AgentCurrentUserContext | null;
 }): AgentRuntimeConfigCliRequest {
   const extraTools = Array.from(new Set([...defaultExtraTools(), ...params.extraToolIds]));
   const common = {
@@ -366,6 +683,10 @@ function buildAgentRuntimeConfigRequest(params: {
     runtime_exec_model_proxy_api_key: runtimeExecContextString(params.request, "model_proxy_api_key") ?? undefined,
     runtime_exec_sandbox_id: runtimeExecContextString(params.request, "sandbox_id") ?? undefined,
     runtime_exec_run_id: runtimeExecContextString(params.request, "run_id") ?? undefined,
+    recent_runtime_context: params.recentRuntimeContext ?? undefined,
+    session_resume_context: params.sessionResumeContext ?? undefined,
+    recalled_memory_context: params.recalledMemoryContext ?? undefined,
+    current_user_context: params.currentUserContext ?? undefined,
     selected_model: firstNonEmptyString(params.request.model) ?? undefined,
     default_provider_id: defaultProviderId(),
     session_mode: defaultSessionMode(),
@@ -814,6 +1135,39 @@ export async function executeTsRunnerRequest(
       );
     }
 
+    const recentRuntimeContext = measureBootstrapStage(bootstrapStageTimingsMs, "load_recent_runtime_context", () =>
+      loadRecentRuntimeContext({
+        workspaceRoot: bootstrap.workspaceRoot,
+        workspaceId: request.workspace_id,
+        sessionId: request.session_id,
+        inputId: request.input_id,
+        logger,
+      })
+    );
+    const sessionResumeContext = measureBootstrapStage(bootstrapStageTimingsMs, "load_session_resume_context", () =>
+      loadSessionResumeContext({
+        workspaceRoot: bootstrap.workspaceRoot,
+        workspaceId: request.workspace_id,
+        sessionId: request.session_id,
+        inputId: request.input_id,
+        logger,
+      })
+    );
+    const recalledMemoryContext = measureBootstrapStage(bootstrapStageTimingsMs, "load_recalled_memory_context", () =>
+      loadRecalledMemoryContext({
+        workspaceRoot: bootstrap.workspaceRoot,
+        workspaceId: request.workspace_id,
+        instruction: request.instruction,
+        logger,
+      })
+    );
+    const currentUserContext = measureBootstrapStage(bootstrapStageTimingsMs, "load_current_user_context", () =>
+      loadCurrentUserContext({
+        workspaceRoot: bootstrap.workspaceRoot,
+        logger,
+      })
+    );
+
     const runtimeConfig = measureBootstrapStage(bootstrapStageTimingsMs, "project_runtime_config", () =>
       deps.projectAgentRuntimeConfig(
         buildAgentRuntimeConfigRequest({
@@ -827,7 +1181,11 @@ export async function executeTsRunnerRequest(
           workspaceSkillIds: workspaceSkills.map((skill) => skill.skill_id),
           workspaceCommandIds: stagedCommands.commandIds,
           toolServerIdMap: serverIdMap,
-          resolvedMcpToolRefs
+          resolvedMcpToolRefs,
+          recentRuntimeContext,
+          sessionResumeContext,
+          recalledMemoryContext,
+          currentUserContext,
         })
       )
     );
@@ -849,9 +1207,11 @@ export async function executeTsRunnerRequest(
       throw new Error(`backend base URL was not resolved for harness '${bootstrap.harness}'`);
     }
 
-    const runStartedPayload = bootstrapStartedPayload({
+    const buildHarnessHostRequestStartedAtMs = Date.now();
+    const provisionalRunStartedPayload = bootstrapStartedPayload({
       request,
       runtimeConfig,
+      requestSnapshotFingerprint: null,
       harnessSupportsStructuredOutput: harnessAdapter.capabilities.supportsStructuredOutput,
       mcpServerIdMap: serverIdMap,
       mcpServers: effectiveMcpServers,
@@ -861,7 +1221,42 @@ export async function executeTsRunnerRequest(
       bootstrapTotalMs: 0,
       bootstrapStageTimingsMs
     });
-    const buildHarnessHostRequestStartedAtMs = Date.now();
+    const provisionalHarnessRequestPayload = harnessAdapter.buildHarnessHostRequest({
+      request,
+      bootstrap,
+      runtimeConfig,
+      runtimeApiBaseUrl: currentRuntimeApiUrl(),
+      workspaceSkills,
+      mcpServers: effectiveMcpServers,
+      mcpToolRefs: resolvedMcpToolRefs.map((toolRef) => ({
+        tool_id: toolRef.tool_id,
+        server_id: serverIdMap[toolRef.server_id] ?? toolRef.server_id,
+        tool_name: toolRef.tool_name
+      })),
+      runStartedPayload: provisionalRunStartedPayload,
+      backendBaseUrl,
+      timeoutSeconds: harnessPlugin.timeoutSeconds({ request })
+    });
+    const provisionalSnapshotPayload = turnRequestSnapshotPayload({
+      request,
+      bootstrap,
+      runtimeConfig,
+      harnessRequestPayload: provisionalHarnessRequestPayload,
+    });
+    const requestSnapshotFingerprint = turnRequestSnapshotFingerprint(provisionalSnapshotPayload);
+    const runStartedPayload = bootstrapStartedPayload({
+      request,
+      runtimeConfig,
+      requestSnapshotFingerprint,
+      harnessSupportsStructuredOutput: harnessAdapter.capabilities.supportsStructuredOutput,
+      mcpServerIdMap: serverIdMap,
+      mcpServers: effectiveMcpServers,
+      sidecar,
+      bootstrapStartedAt,
+      bootstrapReadyAt: bootstrapStartedAt,
+      bootstrapTotalMs: 0,
+      bootstrapStageTimingsMs
+    });
     const harnessRequestPayload = harnessAdapter.buildHarnessHostRequest({
       request,
       bootstrap,
@@ -878,6 +1273,22 @@ export async function executeTsRunnerRequest(
       backendBaseUrl,
       timeoutSeconds: harnessPlugin.timeoutSeconds({ request })
     });
+    measureBootstrapStage(bootstrapStageTimingsMs, "persist_turn_request_snapshot", () =>
+      persistTurnRequestSnapshot({
+        workspaceRoot: bootstrap.workspaceRoot,
+        workspaceId: request.workspace_id,
+        sessionId: request.session_id,
+        inputId: request.input_id,
+        snapshotKind: "harness_host_request",
+        payload: turnRequestSnapshotPayload({
+          request,
+          bootstrap,
+          runtimeConfig,
+          harnessRequestPayload,
+        }),
+        logger,
+      })
+    );
     bootstrapStageTimingsMs.build_harness_host_request = elapsedMs(buildHarnessHostRequestStartedAtMs);
     runStartedPayload.bootstrap_ready_at = new Date().toISOString();
     runStartedPayload.bootstrap_total_ms = elapsedMs(bootstrapStartedAtMs);

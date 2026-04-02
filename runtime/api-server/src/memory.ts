@@ -108,6 +108,9 @@ function workspaceScopePrefix(workspaceId: string): string {
 
 function isMemoryPath(relPath: string, workspaceId: string): boolean {
   const normalized = normalizeRelPath(relPath);
+  if (normalized === "MEMORY.md") {
+    return true;
+  }
   const parts = normalized.split("/");
   if (parts.length < 2) {
     return false;
@@ -258,6 +261,10 @@ function resolveMemoryBackend(): ResolvedMemoryBackend {
 
 function memoryFiles(memoryRootDir: string, workspaceId: string): string[] {
   const files: string[] = [];
+  const rootEntrypoint = path.join(memoryRootDir, "MEMORY.md");
+  if (fs.existsSync(rootEntrypoint) && fs.statSync(rootEntrypoint).isFile()) {
+    files.push(rootEntrypoint);
+  }
   files.push(...listMarkdownFiles(path.join(memoryRootDir, workspaceScopePrefix(workspaceId).replace(/\/$/, ""))));
   if (fs.existsSync(memoryRootDir) && fs.statSync(memoryRootDir).isDirectory()) {
     const entries = fs.readdirSync(memoryRootDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));

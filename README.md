@@ -46,7 +46,10 @@ Holaboss enables you to build AI workers that go beyond one-off task executionâ€
   - [Prerequisites](#prerequisites)
   - [One-Line Agent Setup](#one-line-agent-setup)
   - [Quick start](#quick-start)
-- [Workspace Structure](#workspace-structure)
+- [Architecture Overview](#architecture-overview)
+  - [Execution And Continuity](#execution-and-continuity)
+  - [Current Workspace Structure](#current-workspace-structure)
+  - [Memory](#memory)
 - [AI Labour Market](#ai-labour-market)
 - [Capability Hub](#capability-hub)
   - [Apps and Integrations](#apps-and-integrations)
@@ -116,7 +119,51 @@ If you want to stage the latest released runtime bundle for your current host pl
 npm run desktop:prepare-runtime
 ```
 
-## Workspace Structure
+## Architecture Overview
+
+Holaboss is split into three cooperating layers:
+
+- `desktop/` provides the operator UI, workspace management, and the local packaged-runtime experience
+- `runtime/` owns agent execution, queueing, harness integration, apps, MCP orchestration, runtime APIs, and durable state
+- the sandbox root stores the live workspace tree, runtime state, request artifacts, and memory bodies used by the runtime
+
+Those layers are intentionally separated by authority:
+
+- human-authored workspace policy lives in files like `AGENTS.md`, `workspace.yaml`, skills, and app manifests
+- runtime-owned execution truth lives in `state/runtime.db` plus streamed output events
+- runtime-owned operator profile data lives in `state/runtime.db`
+- durable memory bodies live under `memory/`, while their governance and recall metadata live in `state/runtime.db`
+
+At a high level, one run follows this path:
+
+1. the desktop or API queues work for a workspace session
+2. the runtime resolves the workspace plan, capability surface, prompt sections, and request snapshot
+3. the selected harness executes the run and streams output events
+4. the runtime persists normalized turn artifacts, updates compaction continuity, and writes deterministic memory projections
+5. future runs restore continuity from durable runtime artifacts first, then add a small recalled durable-memory context
+
+### Execution And Continuity
+
+The runtime keeps three different kinds of state on purpose:
+
+- raw streamed events for replay and live UI updates
+- normalized turn artifacts for querying, debugging, and continuity
+- markdown memory projections for human-readable runtime state and durable recalled knowledge
+
+The most important runtime continuity artifacts are:
+
+- `turn_results`
+  - one normalized record per run with status, stop reason, token usage, prompt-section ids, request fingerprint, capability fingerprint, and assistant output
+- compaction boundaries
+  - durable handoff artifacts that summarize a run boundary, record recent runtime context, preserve selected turn ids, and define explicit restoration ordering
+- request snapshots
+  - sanitized exact request-state artifacts used for replay, debugging, and future cache diagnostics
+- runtime user profile
+  - canonical operator identity fields such as the persisted display name used by the runtime and agent prompt context
+
+This split avoids overloading transcript history with too many jobs. Raw history is still the replay truth, but resume, compaction, and memory promotion work from durable higher-level artifacts rather than repeatedly scraping prior messages.
+
+### Current Workspace Structure
 
 Holaboss workspaces live under the runtime sandbox root. In the desktop app, that root is the local `sandbox-host` data directory; in standalone runtime deploys it defaults to `/holaboss`.
 
@@ -152,9 +199,23 @@ Holaboss workspaces live under the runtime sandbox root. In the desktop app, tha
       ...
 
   memory/
-    workspace/<workspace-id>/*.md
-    preference/*.md
-    ...
+    MEMORY.md
+    workspace/
+      <workspace-id>/
+        MEMORY.md
+        runtime/
+          latest-turn.md
+          session-state/
+          recent-turns/
+          blockers/
+          permission-blockers/
+        knowledge/
+          facts/
+          procedures/
+          blockers/
+    preference/
+      MEMORY.md
+      *.md
 ```
 
 - `workspace.yaml` is the root runtime plan for the workspace. It defines the single active agent, local skills path, MCP registry, and any installed workspace apps.
@@ -163,8 +224,114 @@ Holaboss workspaces live under the runtime sandbox root. In the desktop app, tha
 - `apps/` contains workspace-local apps. Each installed app lives under `apps/<app-id>/` and must provide `app.runtime.yaml`.
 - `<workspace-id>/.holaboss/` stores runtime-managed workspace state such as the identity marker, persisted harness session mapping, staged input attachments, and Pi harness state.
 - `workspace/.holaboss/` is separate from the per-workspace `.holaboss/` directory. It stores shared workspace-root state for MCP sidecars and their logs.
-- `state/runtime.db` is the durable runtime registry for workspaces, sessions, bindings, and queue state. The `workspace_id` file exists mainly as an on-disk identity marker for workspace discovery and migration.
+- `state/runtime.db` is the durable runtime registry for workspaces, sessions, bindings, queue state, turn results, compaction boundaries, request snapshots, and durable memory catalog metadata. The `workspace_id` file exists mainly as an on-disk identity marker for workspace discovery and migration.
 - `memory/` is sandbox-global, not inside a single workspace directory. It stores workspace-scoped and user-scoped markdown memory files used by the runtime memory service.
+
+### Memory
+
+The memory system is intentionally split by purpose and by authority. Human-authored workspace instructions stay in `AGENTS.md`, runtime-owned continuity stays in `state/runtime.db`, and durable memory bodies stay in markdown under `memory/`.
+
+#### Memory Layers
+
+Holaboss currently has three memory layers:
+
+- session continuity lives in runtime-owned artifacts such as `turn_results` and compaction boundaries in `state/runtime.db`
+- operational projections live under `memory/workspace/<workspace-id>/runtime/`
+- durable recalled memory lives under `memory/workspace/<workspace-id>/knowledge/` and `memory/preference/`
+
+Alongside those layers, the runtime also keeps a canonical operator profile in `state/runtime.db`. That profile is not treated as markdown memory. It is runtime-owned identity state used first for things like the current user's name, with auth-provided identity only acting as a non-destructive fallback when the local profile is empty.
+
+That means short-horizon execution state, canonical operator identity, and long-lived recalled memory are not mixed together.
+
+Compaction boundaries are the durable handoff point for session continuity. Each boundary stores a compact summary, recent runtime context, preserved turn ids, and explicit restoration ordering so later runs can rebuild continuity from durable artifacts before falling back to broader transcript history.
+
+`runtime/` memory files are volatile operational snapshots. They describe the latest turn, recent turns, active blockers, and permission blockers. They are useful for inspection and debugging, but they are not treated as durable knowledge.
+
+`knowledge/` and `preference/` are the durable memory surfaces. These files are indexed by `MEMORY.md` files:
+
+- `memory/MEMORY.md` is the root durable-memory index
+- `memory/workspace/<workspace-id>/MEMORY.md` indexes durable workspace knowledge
+- `memory/preference/MEMORY.md` indexes durable user preference memory
+
+Runtime files are intentionally excluded from the `MEMORY.md` indexes. The runtime recalls durable memory from the indexed knowledge and preference files, while resume or compaction context comes from runtime-owned session artifacts instead of from markdown memory alone.
+
+#### Source Of Truth
+
+The source-of-truth boundary is deliberate:
+
+- runtime execution truth lives in `state/runtime.db`
+- canonical operator profile data lives in `state/runtime.db`
+- durable memory content lives in markdown under `memory/`
+- durable memory metadata and governance live in the runtime catalog in `state/runtime.db`
+
+In practice, that means:
+
+- `turn_results`, compaction boundaries, request snapshots, and the runtime user profile are runtime-owned canonical artifacts
+- markdown memory files are the canonical readable bodies for durable memory
+- the durable memory catalog controls recall, freshness, and verification policy
+
+Holaboss does not auto-write runtime state into `AGENTS.md`. `AGENTS.md` stays as the workspace's canonical human-authored instruction surface.
+
+#### Memory Lifecycle
+
+The current memory lifecycle is:
+
+1. A run finishes and the runtime persists `turn_results`.
+2. Post-turn writeback updates the current compaction boundary and records ordered restoration inputs for later resume.
+3. Post-turn writeback generates volatile runtime projections under `memory/workspace/<workspace-id>/runtime/`.
+4. Deterministic durable extraction promotes selected items into `knowledge/` or `preference/`.
+5. `MEMORY.md` indexes are refreshed for durable memory only.
+6. Future runs restore session continuity from the latest compaction boundary first, then recall a small relevant durable subset and inject it as prompt context.
+
+This keeps replay, inspection, and durable recall separate instead of overloading one mechanism for all three jobs.
+
+#### Current Durable Memory Types
+
+The durable memory catalog currently supports these memory classes:
+
+- `preference`
+  - example: response style such as concise vs detailed
+- `identity`
+  - reserved for durable identity facts beyond the canonical runtime profile, such as role, signing identity, or other reusable identity context
+- `fact`
+  - examples: workspace command facts such as which command to use for verification, or business facts such as meeting cadence and approval rules
+- `procedure`
+  - examples: numbered release or onboarding steps, or business workflows such as follow-up, reporting, handoff, escalation, and review processes
+- `blocker`
+  - example: recurring permission blockers that appear across multiple turns
+- `reference`
+  - reserved for durable references that should usually be reconfirmed before use
+
+Current writeback is intentionally conservative. The runtime only promotes facts and procedures that are explicit enough to survive beyond a single turn, and it keeps transient runtime state out of durable knowledge.
+
+#### Recall And Governance
+
+Durable recall is governed separately from storage:
+
+- every durable memory entry carries a scope, type, verification policy, and staleness policy
+- every durable memory entry also carries provenance metadata such as source type, observation time, verification time, and confidence
+- recall prefers user preferences first, then query-matched workspace procedures, facts, blockers, and references
+- stale references are penalized more aggressively than stable or workspace-sensitive memories
+- recalled durable memory is injected as context, not merged into the base system prompt
+
+Today, recall uses a local keyword-and-metadata ranking path backed by the durable memory catalog. The runtime also records a small recall-decision trace so it can explain why a memory surfaced during debugging. The architecture keeps retrieval separate from storage so alternate recall indexes can be added later without changing the memory model itself.
+
+#### What Lives Where
+
+Use these rules of thumb when reasoning about the system:
+
+- `AGENTS.md`
+  - human-authored workspace policy and operating instructions
+- `state/runtime.db`
+  - execution truth, session continuity, canonical runtime profile, memory catalog metadata
+- `memory/workspace/<workspace-id>/runtime/`
+  - volatile runtime projections for inspection and debugging
+- `memory/workspace/<workspace-id>/knowledge/`
+  - durable workspace memory that may be recalled in later runs
+- `memory/preference/`
+  - durable user preference memory
+
+If a piece of information is only needed to resume the latest session, it belongs in runtime continuity. If it is the canonical current-user identity used by the runtime, it belongs in the runtime profile. If it should be recalled later without replaying the full session, it belongs in durable memory. If it is a standing workspace rule, it belongs in `AGENTS.md`.
 
 ## AI Labour Market
 

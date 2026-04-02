@@ -1,6 +1,6 @@
 # App Surface Iframe Migration Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **Execution Note:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Move first-party workspace app surfaces from Electron `BrowserView` overlays to renderer-managed `iframe` embeds so desktop UI overlays are no longer blocked by native web contents.
 

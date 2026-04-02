@@ -5,6 +5,7 @@ import type { RuntimeStateStore, WorkspaceRecord } from "@holaboss/runtime-state
 import yaml from "js-yaml";
 
 import type { MemoryServiceLike } from "./memory.js";
+import { buildCapturedMemoryViews } from "./memory-capture-views.js";
 import { compileWorkspaceRuntimePlanFromWorkspace } from "./runner-prep.js";
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
 import { collectWorkspaceSnapshot } from "./workspace-snapshot.js";
@@ -191,6 +192,16 @@ export async function captureWorkspaceContext(params: {
   const memoryFiles = memory.files;
   const normalizedMemoryFiles =
     memoryFiles && typeof memoryFiles === "object" && !Array.isArray(memoryFiles) ? { ...memoryFiles } : {};
+  const durableMemoryEntries = params.store.listMemoryEntries({
+    status: "active",
+    limit: 500,
+    offset: 0,
+  });
+  const memoryViews = buildCapturedMemoryViews({
+    workspaceId: params.workspaceId,
+    files: normalizedMemoryFiles,
+    memoryEntries: durableMemoryEntries,
+  });
 
   return {
     workspace: workspacePayload(workspace, runtimeConfig.userId || null),
@@ -216,6 +227,7 @@ export async function captureWorkspaceContext(params: {
     memory: {
       ...memory,
       files: normalizedMemoryFiles,
+      ...memoryViews,
       search_results: [],
       sessions,
     },

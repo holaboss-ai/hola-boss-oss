@@ -4,6 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, test } from "node:test";
 
+import { RuntimeStateStore } from "@holaboss/runtime-state-store";
+
+import { buildAgentCapabilityManifest } from "./agent-capability-registry.js";
 import { decodeTsRunnerRequest, validateTsRunnerRequest } from "./ts-runner-contracts.js";
 import type { TsRunnerEvent, TsRunnerRequest } from "./ts-runner-contracts.js";
 import {
@@ -58,6 +61,12 @@ afterEach(() => {
 
 function encodeRequest(payload: unknown): string {
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64");
+}
+
+function setTempSandboxRoot(prefix: string): string {
+  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  return sandboxRoot;
 }
 
 function baseRequest(): TsRunnerRequest {
@@ -568,6 +577,14 @@ test("runTsRunnerCli only advertises structured output when the selected harness
   process.env.SANDBOX_RUNTIME_API_HOST = "127.0.0.1";
   process.env.SANDBOX_RUNTIME_API_PORT = "5060";
   let capturedRequestPayload: Record<string, unknown> | null = null;
+  const capabilityManifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "main",
+    defaultTools: ["read"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
 
   const exitCode = await runTsRunnerCli(
     [
@@ -589,6 +606,40 @@ test("runTsRunnerCli only advertises structured output when the selected harness
           model_id: "gpt-5.4",
           mode: "code",
           system_prompt: "You are concise.",
+          prompt_sections: [
+            {
+              id: "runtime_core",
+              channel: "system_prompt",
+              apply_at: "runtime_config",
+              priority: 100,
+              volatility: "stable",
+              content: "You are concise."
+            },
+            {
+              id: "execution_policy",
+              channel: "system_prompt",
+              apply_at: "runtime_config",
+              priority: 200,
+              volatility: "stable",
+              content: "Inspect before mutating."
+            },
+            {
+              id: "session_policy",
+              channel: "system_prompt",
+              apply_at: "runtime_config",
+              priority: 300,
+              volatility: "run",
+              content: "This is the main session."
+            },
+            {
+              id: "capability_policy",
+              channel: "system_prompt",
+              apply_at: "runtime_config",
+              priority: 400,
+              volatility: "run",
+              content: "Use available tools."
+            }
+          ],
           model_client: {
             model_proxy_provider: "openai_compatible",
             api_key: "token",
@@ -598,6 +649,7 @@ test("runTsRunnerCli only advertises structured output when the selected harness
           tools: { read: true },
           workspace_tool_ids: [],
           workspace_skill_ids: [],
+          capability_manifest: capabilityManifest,
           output_schema_member_id: "main",
           output_format: { type: "json_schema", schema: { type: "object" } },
           workspace_config_checksum: "checksum-1"
@@ -633,6 +685,9 @@ test("runTsRunnerCli only advertises structured output when the selected harness
     model_id: runStartedPayload.model_id,
     workspace_tool_ids: runStartedPayload.workspace_tool_ids,
     workspace_skill_ids: runStartedPayload.workspace_skill_ids,
+    prompt_section_ids: runStartedPayload.prompt_section_ids,
+    request_snapshot_fingerprint: runStartedPayload.request_snapshot_fingerprint,
+    capability_manifest_fingerprint: runStartedPayload.capability_manifest_fingerprint,
     mcp_server_ids: runStartedPayload.mcp_server_ids,
     mcp_server_mappings: runStartedPayload.mcp_server_mappings,
     workspace_mcp_sidecar_reused: runStartedPayload.workspace_mcp_sidecar_reused,
@@ -644,6 +699,14 @@ test("runTsRunnerCli only advertises structured output when the selected harness
     model_id: "gpt-5.4",
     workspace_tool_ids: [],
     workspace_skill_ids: [],
+    prompt_section_ids: [
+      "runtime_core",
+      "execution_policy",
+      "session_policy",
+      "capability_policy",
+    ],
+    request_snapshot_fingerprint: runStartedPayload.request_snapshot_fingerprint,
+    capability_manifest_fingerprint: runStartedPayload.capability_manifest_fingerprint,
     mcp_server_ids: [],
     mcp_server_mappings: [],
     workspace_mcp_sidecar_reused: false,
@@ -654,12 +717,19 @@ test("runTsRunnerCli only advertises structured output when the selected harness
   assert.equal(typeof runStartedPayload.bootstrap_ready_at, "string");
   assert.equal(typeof runStartedPayload.bootstrap_total_ms, "number");
   assert.ok((runStartedPayload.bootstrap_total_ms as number) >= 0);
+  assert.match(String(runStartedPayload.request_snapshot_fingerprint ?? ""), /^[a-f0-9]{64}$/);
+  assert.match(String(runStartedPayload.capability_manifest_fingerprint ?? ""), /^[a-f0-9]{64}$/);
   const bootstrapStageTimingKeys = Object.keys((runStartedPayload.bootstrap_stage_timings_ms as Record<string, unknown>) ?? {}).sort();
   assert.deepEqual(
     bootstrapStageTimingKeys,
     [
       "build_harness_host_request",
       "compile_runtime_plan",
+      "load_current_user_context",
+      "load_recalled_memory_context",
+      "load_recent_runtime_context",
+      "load_session_resume_context",
+      "persist_turn_request_snapshot",
       "prepare_harness_run",
       "project_runtime_config",
       "resolve_workspace_skills",
@@ -669,7 +739,76 @@ test("runTsRunnerCli only advertises structured output when the selected harness
   );
 });
 
+test("runTsRunnerCli loads current user context from the runtime profile", async () => {
+  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-current-user-"));
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  const workspaceRoot = path.join(sandboxRoot, "workspace");
+  const store = new RuntimeStateStore({
+    workspaceRoot,
+    sandboxRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-1",
+  });
+  store.upsertRuntimeUserProfile({
+    name: "Jeffrey",
+    nameSource: "manual",
+  });
+  store.close();
+
+  let capturedProjectRequest: Record<string, unknown> | null = null;
+  const exitCode = await runTsRunnerCli(
+    ["--request-base64", encodeRequest({ ...baseRequest(), instruction: "Draft the email and sign with my name." })],
+    {
+      deps: {
+        ...testDeps(),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" }
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1"
+          };
+        }
+      },
+      io: {
+        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
+        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
+      }
+    }
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  assert.deepEqual(
+    (capturedProjectRequest as { current_user_context: Record<string, unknown> }).current_user_context,
+    {
+      profile_id: "default",
+      name: "Jeffrey",
+      name_source: "manual",
+    }
+  );
+});
+
 test("runTsRunnerCli includes staged runtime tool ids in the projected extra tool set", async () => {
+  setTempSandboxRoot("hb-ts-runner-runtime-tools-");
   let capturedProjectRequest: Record<string, unknown> | null = null;
 
   const exitCode = await runTsRunnerCli(
@@ -728,7 +867,399 @@ test("runTsRunnerCli includes staged runtime tool ids in the projected extra too
   );
 });
 
+test("runTsRunnerCli derives recent runtime context from the latest prior turn result", async () => {
+  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-recent-context-"));
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  const workspaceRoot = path.join(sandboxRoot, "workspace");
+  const store = new RuntimeStateStore({
+    workspaceRoot,
+    sandboxRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-1",
+  });
+  store.upsertTurnResult({
+    workspaceId: "workspace-1",
+    sessionId: "session-1",
+    inputId: "input-0",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    completedAt: "2026-01-01T00:00:05.000Z",
+    status: "failed",
+    stopReason: "permission_denied",
+    assistantText: "",
+    toolUsageSummary: {
+      total_calls: 1,
+      completed_calls: 0,
+      failed_calls: 1,
+      tool_names: ["deploy"],
+      tool_ids: ["workspace.deploy"],
+    },
+    permissionDenials: [
+      {
+        tool_name: "deploy",
+        tool_id: "workspace.deploy",
+        reason: "permission denied by policy",
+      },
+    ],
+    promptSectionIds: ["runtime_core", "execution_policy"],
+    capabilityManifestFingerprint: "c".repeat(64),
+    compactedSummary: "Run failed while trying to deploy because policy denied the action.",
+    tokenUsage: { input_tokens: 3, output_tokens: 5 },
+  });
+  store.insertSessionMessage({
+    workspaceId: "workspace-1",
+    sessionId: "session-1",
+    role: "user",
+    text: "Please continue after deploy permissions are fixed.",
+    messageId: "user-input-0",
+  });
+  store.close();
+
+  let capturedProjectRequest: Record<string, unknown> | null = null;
+  const exitCode = await runTsRunnerCli(
+    ["--request-base64", encodeRequest(baseRequest())],
+    {
+      deps: {
+        ...testDeps(),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" }
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1"
+          };
+        }
+      },
+      io: {
+        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
+        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
+      }
+    }
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  assert.deepEqual(
+    (capturedProjectRequest as { recent_runtime_context: Record<string, unknown> }).recent_runtime_context,
+    {
+      summary: "Run failed while trying to deploy because policy denied the action.",
+      last_stop_reason: "permission_denied",
+      last_error: "permission_denied",
+      waiting_for_user: null,
+    }
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { session_resume_context: Record<string, unknown> }).session_resume_context,
+    {
+      recent_turns: [
+        {
+          input_id: "input-0",
+          status: "failed",
+          stop_reason: "permission_denied",
+          summary: "Run failed while trying to deploy because policy denied the action.",
+          completed_at: "2026-01-01T00:00:05.000Z",
+        },
+      ],
+      recent_user_messages: [
+        "Please continue after deploy permissions are fixed.",
+      ],
+    }
+  );
+});
+
+test("runTsRunnerCli restores resume context from the latest prior compaction boundary", async () => {
+  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-compaction-boundary-"));
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  const workspaceRoot = path.join(sandboxRoot, "workspace");
+  const store = new RuntimeStateStore({
+    workspaceRoot,
+    sandboxRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-1",
+  });
+  store.upsertCompactionBoundary({
+    boundaryId: "compaction:input-0",
+    workspaceId: "workspace-1",
+    sessionId: "session-1",
+    inputId: "input-0",
+    summary: "Resume from compacted deploy attempt.",
+    recentRuntimeContext: {
+      summary: "Resume from compacted deploy attempt.",
+      last_stop_reason: "waiting_user",
+      last_error: null,
+      waiting_for_user: true,
+    },
+    restorationContext: {
+      compaction_source: "executor_post_turn",
+      restoration_order: [
+        "boundary_summary",
+        "recent_runtime_context",
+        "session_resume_context",
+        "preserved_turn_input_ids",
+        "restored_memory_paths",
+      ],
+      session_resume_context: {
+        recent_turns: [
+          {
+            input_id: "input-0",
+            status: "waiting_user",
+            stop_reason: "waiting_user",
+            summary: "Deploy paused waiting for confirmation.",
+            completed_at: "2026-01-01T00:00:05.000Z",
+          },
+        ],
+        recent_user_messages: [
+          "Continue after confirmation once the deploy is approved.",
+        ],
+      },
+      restored_memory_paths: [
+        "workspace/workspace-1/runtime/latest-turn.md",
+      ],
+    },
+    preservedTurnInputIds: ["input-0"],
+  });
+  store.close();
+
+  let capturedProjectRequest: Record<string, unknown> | null = null;
+  const exitCode = await runTsRunnerCli(
+    ["--request-base64", encodeRequest(baseRequest())],
+    {
+      deps: {
+        ...testDeps(),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" }
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1"
+          };
+        }
+      },
+      io: {
+        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
+        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
+      }
+    }
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  assert.deepEqual(
+    (capturedProjectRequest as { recent_runtime_context: Record<string, unknown> }).recent_runtime_context,
+    {
+      summary: "Resume from compacted deploy attempt.",
+      last_stop_reason: "waiting_user",
+      last_error: null,
+      waiting_for_user: true,
+    }
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { session_resume_context: Record<string, unknown> }).session_resume_context,
+    {
+      recent_turns: [
+        {
+          input_id: "input-0",
+          status: "waiting_user",
+          stop_reason: "waiting_user",
+          summary: "Deploy paused waiting for confirmation.",
+          completed_at: "2026-01-01T00:00:05.000Z",
+        },
+      ],
+      recent_user_messages: [
+        "Continue after confirmation once the deploy is approved.",
+      ],
+      compaction_source: "executor_post_turn",
+      compaction_boundary_id: "compaction:input-0",
+      compaction_boundary_summary: "Resume from compacted deploy attempt.",
+      restoration_order: [
+        "boundary_summary",
+        "recent_runtime_context",
+        "session_resume_context",
+        "preserved_turn_input_ids",
+        "restored_memory_paths",
+      ],
+      preserved_turn_input_ids: ["input-0"],
+      restored_memory_paths: [
+        "workspace/workspace-1/runtime/latest-turn.md",
+      ],
+    }
+  );
+});
+
+test("runTsRunnerCli derives recalled durable memory from indexed memory entries", async () => {
+  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-recalled-memory-"));
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  const workspaceRoot = path.join(sandboxRoot, "workspace");
+  const store = new RuntimeStateStore({
+    workspaceRoot,
+    sandboxRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-1",
+  });
+  store.upsertMemoryEntry({
+    memoryId: "user-preference:response-style",
+    workspaceId: null,
+    sessionId: "session-1",
+    scope: "user",
+    memoryType: "preference",
+    subjectKey: "response-style",
+    path: "preference/response-style.md",
+    title: "User response style",
+    summary: "User prefers concise responses.",
+    tags: ["concise"],
+    verificationPolicy: "none",
+    stalenessPolicy: "stable",
+    staleAfterSeconds: null,
+    sourceTurnInputId: "input-0",
+    sourceMessageId: "user-0",
+    fingerprint: "p".repeat(64),
+  });
+  store.upsertMemoryEntry({
+    memoryId: "workspace-blocker:workspace-1:deploy",
+    workspaceId: "workspace-1",
+    sessionId: "session-1",
+    scope: "workspace",
+    memoryType: "blocker",
+    subjectKey: "permission:deploy",
+    path: "workspace/workspace-1/knowledge/blockers/deploy.md",
+    title: "Deploy permission blocker",
+    summary: "Deploy calls may be denied by workspace policy.",
+    tags: ["deploy", "permission", "blocker"],
+    verificationPolicy: "check_before_use",
+    stalenessPolicy: "workspace_sensitive",
+    staleAfterSeconds: 14 * 24 * 60 * 60,
+    sourceTurnInputId: "input-0",
+    sourceMessageId: null,
+    fingerprint: "d".repeat(64),
+  });
+  store.close();
+
+  let capturedProjectRequest: Record<string, unknown> | null = null;
+  const exitCode = await runTsRunnerCli(
+    ["--request-base64", encodeRequest({ ...baseRequest(), instruction: "Please deploy after fixing permissions." })],
+    {
+      deps: {
+        ...testDeps(),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" }
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1"
+          };
+        }
+      },
+      io: {
+        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
+        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
+      }
+    }
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  const recalledMemoryContext = (capturedProjectRequest as {
+    recalled_memory_context: { entries: Array<Record<string, unknown>>; selection_trace: Array<Record<string, unknown>> }
+  }).recalled_memory_context;
+  assert.equal(recalledMemoryContext.entries.length, 2);
+  assert.deepEqual(
+    recalledMemoryContext.entries.map((entry) => ({
+      scope: entry.scope,
+      memory_type: entry.memory_type,
+      title: entry.title,
+      summary: entry.summary,
+      path: entry.path,
+      verification_policy: entry.verification_policy,
+      staleness_policy: entry.staleness_policy,
+      freshness_state: entry.freshness_state,
+      source_type: entry.source_type,
+      })),
+    [
+      {
+        scope: "user",
+        memory_type: "preference",
+        title: "User response style",
+        summary: "User prefers concise responses.",
+        path: "preference/response-style.md",
+        verification_policy: "none",
+        staleness_policy: "stable",
+        freshness_state: "stable",
+        source_type: null,
+      },
+      {
+        scope: "workspace",
+        memory_type: "blocker",
+        title: "Deploy permission blocker",
+        summary: "Deploy calls may be denied by workspace policy.",
+        path: "workspace/workspace-1/knowledge/blockers/deploy.md",
+        verification_policy: "check_before_use",
+        staleness_policy: "workspace_sensitive",
+        freshness_state: "fresh",
+        source_type: null,
+      },
+    ]
+  );
+  assert.match(String(recalledMemoryContext.entries[0]?.updated_at ?? ""), /\d{4}-\d{2}-\d{2}T/);
+  assert.match(String(recalledMemoryContext.entries[1]?.updated_at ?? ""), /\d{4}-\d{2}-\d{2}T/);
+  assert.equal(recalledMemoryContext.selection_trace.length, 2);
+  assert.equal(recalledMemoryContext.selection_trace[0]?.memory_id, "user-preference:response-style");
+});
+
 test("runTsRunnerCli only stages browser tools for the main session", async () => {
+  setTempSandboxRoot("hb-ts-runner-browser-scope-");
   const seenSessionKinds: Array<string | null | undefined> = [];
   let capturedProjectRequest: Record<string, unknown> | null = null;
 
@@ -1474,6 +2005,7 @@ test("runTsRunnerCli appends bootstrapped app MCP servers into the harness-host 
 });
 
 test("runTsRunnerCli emits validation failures as run_failed JSONL", async () => {
+  setTempSandboxRoot("hb-ts-runner-validation-");
   let stdout = "";
   const exitCode = await runTsRunnerCli(
     [
