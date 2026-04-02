@@ -68,6 +68,10 @@ Holaboss enables you to build AI workers that go beyond one-off task executionâ€
   - [Notes](#notes)
 - [OSS Release Notes](#oss-release-notes)
 - [macOS DMG Bundling](#macos-dmg-bundling)
+  - [Local DMG For Testing (Ad-Hoc Signed, Not Notarized)](#local-dmg-for-testing-ad-hoc-signed-not-notarized)
+  - [Local Production Signing And Notarization (Mac)](#local-production-signing-and-notarization-mac)
+  - [Signed And Notarized Product DMG (GitHub Actions)](#signed-and-notarized-product-dmg-github-actions)
+  - [Validate A Signed Build](#validate-a-signed-build)
 
 ## Getting Started
 
@@ -809,6 +813,30 @@ Notes:
 
 - Local DMG commands force ad-hoc signing via `--config.mac.identity=-`.
 - Local artifacts are intended for smoke tests and are not notarized for distribution.
+
+### Local Production Signing And Notarization (Mac)
+
+If you want to ship a DMG built locally on your Mac with Developer ID signing and Apple notarization, run:
+
+```bash
+npm run desktop:install
+npm --prefix desktop run prepare:runtime:local
+npm --prefix desktop run prepare:packaged-config
+npm --prefix desktop run build
+
+CSC_LINK="file:///absolute/path/to/Certificates.p12" \
+CSC_KEY_PASSWORD="your_p12_password" \
+APPLE_ID="your_apple_id_email" \
+APPLE_APP_SPECIFIC_PASSWORD="your_app_specific_password" \
+APPLE_TEAM_ID="YOURTEAMID" \
+npm --prefix desktop exec -- node scripts/run-electron-builder.mjs --mac dmg --arm64
+```
+
+Behavior:
+
+- with `CSC_LINK` + `CSC_KEY_PASSWORD`, the app is signed with your Developer ID certificate
+- with `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`, electron-builder submits for notarization and staples the result
+- if you omit `APPLE_*`, signing can still happen but notarization does not
 
 ### Signed And Notarized Product DMG (GitHub Actions)
 
