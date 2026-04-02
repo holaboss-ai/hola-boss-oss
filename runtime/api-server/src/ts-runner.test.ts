@@ -915,6 +915,143 @@ test("runTsRunnerCli derives recent runtime context from the latest prior turn r
   );
 });
 
+test("runTsRunnerCli restores resume context from the latest prior compaction boundary", async () => {
+  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-compaction-boundary-"));
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  const workspaceRoot = path.join(sandboxRoot, "workspace");
+  const store = new RuntimeStateStore({
+    workspaceRoot,
+    sandboxRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-1",
+  });
+  store.upsertCompactionBoundary({
+    boundaryId: "compaction:input-0",
+    workspaceId: "workspace-1",
+    sessionId: "session-1",
+    inputId: "input-0",
+    summary: "Resume from compacted deploy attempt.",
+    recentRuntimeContext: {
+      summary: "Resume from compacted deploy attempt.",
+      last_stop_reason: "waiting_user",
+      last_error: null,
+      waiting_for_user: true,
+    },
+    restorationContext: {
+      compaction_source: "executor_post_turn",
+      restoration_order: [
+        "boundary_summary",
+        "recent_runtime_context",
+        "session_resume_context",
+        "preserved_turn_input_ids",
+        "restored_memory_paths",
+      ],
+      session_resume_context: {
+        recent_turns: [
+          {
+            input_id: "input-0",
+            status: "waiting_user",
+            stop_reason: "waiting_user",
+            summary: "Deploy paused waiting for confirmation.",
+            completed_at: "2026-01-01T00:00:05.000Z",
+          },
+        ],
+        recent_user_messages: [
+          "Continue after confirmation once the deploy is approved.",
+        ],
+      },
+      restored_memory_paths: [
+        "workspace/workspace-1/runtime/latest-turn.md",
+      ],
+    },
+    preservedTurnInputIds: ["input-0"],
+  });
+  store.close();
+
+  let capturedProjectRequest: Record<string, unknown> | null = null;
+  const exitCode = await runTsRunnerCli(
+    ["--request-base64", encodeRequest(baseRequest())],
+    {
+      deps: {
+        ...testDeps(),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" }
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1"
+          };
+        }
+      },
+      io: {
+        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
+        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
+      }
+    }
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  assert.deepEqual(
+    (capturedProjectRequest as { recent_runtime_context: Record<string, unknown> }).recent_runtime_context,
+    {
+      summary: "Resume from compacted deploy attempt.",
+      last_stop_reason: "waiting_user",
+      last_error: null,
+      waiting_for_user: true,
+    }
+  );
+  assert.deepEqual(
+    (capturedProjectRequest as { session_resume_context: Record<string, unknown> }).session_resume_context,
+    {
+      recent_turns: [
+        {
+          input_id: "input-0",
+          status: "waiting_user",
+          stop_reason: "waiting_user",
+          summary: "Deploy paused waiting for confirmation.",
+          completed_at: "2026-01-01T00:00:05.000Z",
+        },
+      ],
+      recent_user_messages: [
+        "Continue after confirmation once the deploy is approved.",
+      ],
+      compaction_source: "executor_post_turn",
+      compaction_boundary_id: "compaction:input-0",
+      compaction_boundary_summary: "Resume from compacted deploy attempt.",
+      restoration_order: [
+        "boundary_summary",
+        "recent_runtime_context",
+        "session_resume_context",
+        "preserved_turn_input_ids",
+        "restored_memory_paths",
+      ],
+      preserved_turn_input_ids: ["input-0"],
+      restored_memory_paths: [
+        "workspace/workspace-1/runtime/latest-turn.md",
+      ],
+    }
+  );
+});
+
 test("runTsRunnerCli derives recalled durable memory from indexed memory entries", async () => {
   const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-recalled-memory-"));
   process.env.HB_SANDBOX_ROOT = sandboxRoot;

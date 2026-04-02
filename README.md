@@ -47,6 +47,7 @@ Holaboss enables you to build AI workers that go beyond one-off task executionâ€
   - [One-Line Agent Setup](#one-line-agent-setup)
   - [Quick start](#quick-start)
 - [Architecture Overview](#architecture-overview)
+  - [Execution And Continuity](#execution-and-continuity)
   - [Current Workspace Structure](#current-workspace-structure)
   - [Memory](#memory)
 - [AI Labour Market](#ai-labour-market)
@@ -120,13 +121,44 @@ npm run desktop:prepare-runtime
 
 ## Architecture Overview
 
-Holaboss has three main layers:
+Holaboss is split into three cooperating layers:
 
-- the desktop app under `desktop/`
-- the runtime services under `runtime/`
-- the sandbox root, which holds workspace files, runtime state, and memory
+- `desktop/` provides the operator UI, workspace management, and the local packaged-runtime experience
+- `runtime/` owns agent execution, queueing, harness integration, apps, MCP orchestration, runtime APIs, and durable state
+- the sandbox root stores the live workspace tree, runtime state, request artifacts, and memory bodies used by the runtime
 
-The runtime owns execution truth in SQLite and streamed output events, while the workspace tree holds human-authored files such as `AGENTS.md`, `workspace.yaml`, skills, and apps.
+Those layers are intentionally separated by authority:
+
+- human-authored workspace policy lives in files like `AGENTS.md`, `workspace.yaml`, skills, and app manifests
+- runtime-owned execution truth lives in `state/runtime.db` plus streamed output events
+- durable memory bodies live under `memory/`, while their governance and recall metadata live in `state/runtime.db`
+
+At a high level, one run follows this path:
+
+1. the desktop or API queues work for a workspace session
+2. the runtime resolves the workspace plan, capability surface, prompt sections, and request snapshot
+3. the selected harness executes the run and streams output events
+4. the runtime persists normalized turn artifacts, updates compaction continuity, and writes deterministic memory projections
+5. future runs restore continuity from durable runtime artifacts first, then add a small recalled durable-memory context
+
+### Execution And Continuity
+
+The runtime keeps three different kinds of state on purpose:
+
+- raw streamed events for replay and live UI updates
+- normalized turn artifacts for querying, debugging, and continuity
+- markdown memory projections for human-readable runtime state and durable recalled knowledge
+
+The most important runtime continuity artifacts are:
+
+- `turn_results`
+  - one normalized record per run with status, stop reason, token usage, prompt-section ids, request fingerprint, capability fingerprint, and assistant output
+- compaction boundaries
+  - durable handoff artifacts that summarize a run boundary, record recent runtime context, preserve selected turn ids, and define explicit restoration ordering
+- request snapshots
+  - sanitized exact request-state artifacts used for replay, debugging, and future cache diagnostics
+
+This split avoids overloading transcript history with too many jobs. Raw history is still the replay truth, but resume, compaction, and memory promotion work from durable higher-level artifacts rather than repeatedly scraping prior messages.
 
 ### Current Workspace Structure
 
@@ -206,6 +238,8 @@ Holaboss currently has three memory layers:
 
 That means short-horizon execution state and long-lived recalled memory are not mixed together.
 
+Compaction boundaries are the durable handoff point for session continuity. Each boundary stores a compact summary, recent runtime context, preserved turn ids, and explicit restoration ordering so later runs can rebuild continuity from durable artifacts before falling back to broader transcript history.
+
 `runtime/` memory files are volatile operational snapshots. They describe the latest turn, recent turns, active blockers, and permission blockers. They are useful for inspection and debugging, but they are not treated as durable knowledge.
 
 `knowledge/` and `preference/` are the durable memory surfaces. These files are indexed by `MEMORY.md` files:
@@ -237,10 +271,11 @@ Holaboss does not auto-write runtime state into `AGENTS.md`. `AGENTS.md` stays a
 The current memory lifecycle is:
 
 1. A run finishes and the runtime persists `turn_results`.
-2. Post-turn writeback generates volatile runtime projections under `memory/workspace/<workspace-id>/runtime/`.
-3. Deterministic durable extraction promotes selected items into `knowledge/` or `preference/`.
-4. `MEMORY.md` indexes are refreshed for durable memory only.
-5. Future runs recall a small relevant durable subset and inject it as prompt context.
+2. Post-turn writeback updates the current compaction boundary and records ordered restoration inputs for later resume.
+3. Post-turn writeback generates volatile runtime projections under `memory/workspace/<workspace-id>/runtime/`.
+4. Deterministic durable extraction promotes selected items into `knowledge/` or `preference/`.
+5. `MEMORY.md` indexes are refreshed for durable memory only.
+6. Future runs restore session continuity from the latest compaction boundary first, then recall a small relevant durable subset and inject it as prompt context.
 
 This keeps replay, inspection, and durable recall separate instead of overloading one mechanism for all three jobs.
 

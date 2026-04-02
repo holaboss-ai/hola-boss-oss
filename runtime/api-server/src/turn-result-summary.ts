@@ -2,6 +2,18 @@ import type { CompactionBoundaryRecord, SessionMessageRecord, TurnResultRecord }
 
 import type { AgentRecentRuntimeContext, AgentSessionResumeContext } from "./agent-runtime-prompt.js";
 
+const DEFAULT_COMPACTION_SOURCE = "executor_post_turn";
+
+export interface AgentCompactionRestorationContext {
+  compaction_source: string;
+  restoration_order: string[];
+  boundary_summary?: string | null;
+  recent_runtime_context?: AgentRecentRuntimeContext | null;
+  session_resume_context?: AgentSessionResumeContext | null;
+  preserved_turn_input_ids?: string[] | null;
+  restored_memory_paths?: string[] | null;
+}
+
 function compactWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -117,6 +129,41 @@ function objectRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean);
+}
+
+function buildRestorationOrder(params: {
+  boundarySummary?: string | null;
+  recentRuntimeContext?: AgentRecentRuntimeContext | null;
+  sessionResumeContext?: AgentSessionResumeContext | null;
+  preservedTurnInputIds?: string[] | null;
+  restoredMemoryPaths?: string[] | null;
+}): string[] {
+  const order: string[] = [];
+  if (compactWhitespace(params.boundarySummary ?? "")) {
+    order.push("boundary_summary");
+  }
+  if (params.recentRuntimeContext) {
+    order.push("recent_runtime_context");
+  }
+  if (params.sessionResumeContext) {
+    order.push("session_resume_context");
+  }
+  if ((params.preservedTurnInputIds ?? []).length > 0) {
+    order.push("preserved_turn_input_ids");
+  }
+  if ((params.restoredMemoryPaths ?? []).length > 0) {
+    order.push("restored_memory_paths");
+  }
+  return order;
+}
+
 export function buildCompactionBoundaryArtifacts(params: {
   turnResult: TurnResultRecord;
   recentTurns: TurnResultRecord[];
@@ -133,14 +180,26 @@ export function buildCompactionBoundaryArtifacts(params: {
     sessionMessages: params.sessionMessages,
     currentInputId: "",
   });
+  const summary = params.turnResult.compactedSummary ?? compactTurnSummary(params.turnResult);
+  const recentRuntimeContext = recentRuntimeContextFromTurnResult(params.turnResult);
+  const preservedTurnInputIds = params.recentTurns.map((turnResult) => turnResult.inputId);
+  const restoredMemoryPaths = params.restoredMemoryPaths ?? [];
   return {
-    summary: params.turnResult.compactedSummary ?? compactTurnSummary(params.turnResult),
-    recentRuntimeContext: recentRuntimeContextFromTurnResult(params.turnResult),
+    summary,
+    recentRuntimeContext,
     restorationContext: {
+      compaction_source: DEFAULT_COMPACTION_SOURCE,
+      restoration_order: buildRestorationOrder({
+        boundarySummary: summary,
+        recentRuntimeContext,
+        sessionResumeContext,
+        preservedTurnInputIds,
+        restoredMemoryPaths,
+      }),
       session_resume_context: sessionResumeContext,
-      restored_memory_paths: params.restoredMemoryPaths ?? [],
+      restored_memory_paths: restoredMemoryPaths,
     },
-    preservedTurnInputIds: params.recentTurns.map((turnResult) => turnResult.inputId),
+    preservedTurnInputIds,
   };
 }
 
@@ -176,13 +235,69 @@ export function recentRuntimeContextFromCompactionBoundary(
 export function sessionResumeContextFromCompactionBoundary(
   boundary: CompactionBoundaryRecord | null | undefined
 ): AgentSessionResumeContext | null {
+  const restorationContext = compactionRestorationContextFromCompactionBoundary(boundary);
+  const sessionResumeContext = restorationContext?.session_resume_context;
+  if (!sessionResumeContext) {
+    return null;
+  }
+  return {
+    ...sessionResumeContext,
+    compaction_source: restorationContext?.compaction_source ?? null,
+    compaction_boundary_id: boundary?.boundaryId ?? null,
+    compaction_boundary_summary: restorationContext?.boundary_summary ?? null,
+    restoration_order: restorationContext?.restoration_order ?? null,
+    preserved_turn_input_ids: restorationContext?.preserved_turn_input_ids ?? null,
+    restored_memory_paths: restorationContext?.restored_memory_paths ?? null,
+  };
+}
+
+export function compactionRestorationContextFromCompactionBoundary(
+  boundary: CompactionBoundaryRecord | null | undefined
+): AgentCompactionRestorationContext | null {
   if (!boundary) {
     return null;
   }
   const restorationContext = objectRecord(boundary.restorationContext);
-  const sessionResumeContext = objectRecord(restorationContext?.session_resume_context);
-  if (!sessionResumeContext) {
+  const sessionResumeContextRecord = objectRecord(restorationContext?.session_resume_context);
+  const sessionResumeContext = sessionResumeContextRecord
+    ? (sessionResumeContextRecord as AgentSessionResumeContext)
+    : null;
+  const boundarySummary = compactWhitespace(boundary.summary ?? "") || null;
+  const recentRuntimeContext = recentRuntimeContextFromCompactionBoundary(boundary);
+  const preservedTurnInputIds = stringList(boundary.preservedTurnInputIds);
+  const restoredMemoryPaths = stringList(restorationContext?.restored_memory_paths);
+  const restorationOrder =
+    stringList(restorationContext?.restoration_order).length > 0
+      ? stringList(restorationContext?.restoration_order)
+      : buildRestorationOrder({
+          boundarySummary,
+          recentRuntimeContext,
+          sessionResumeContext,
+          preservedTurnInputIds,
+          restoredMemoryPaths,
+        });
+
+  const compactionSource =
+    typeof restorationContext?.compaction_source === "string" && restorationContext.compaction_source.trim()
+      ? restorationContext.compaction_source.trim()
+      : DEFAULT_COMPACTION_SOURCE;
+
+  if (
+    !boundarySummary &&
+    !recentRuntimeContext &&
+    !sessionResumeContext &&
+    preservedTurnInputIds.length === 0 &&
+    restoredMemoryPaths.length === 0
+  ) {
     return null;
   }
-  return sessionResumeContext as AgentSessionResumeContext;
+  return {
+    compaction_source: compactionSource,
+    restoration_order: restorationOrder,
+    boundary_summary: boundarySummary,
+    recent_runtime_context: recentRuntimeContext,
+    session_resume_context: sessionResumeContext,
+    preserved_turn_input_ids: preservedTurnInputIds.length > 0 ? preservedTurnInputIds : null,
+    restored_memory_paths: restoredMemoryPaths.length > 0 ? restoredMemoryPaths : null,
+  };
 }

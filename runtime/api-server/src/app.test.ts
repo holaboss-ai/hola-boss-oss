@@ -843,6 +843,14 @@ test("runtime states and history endpoints read TS state store", async () => {
       waiting_for_user: null,
     },
     restorationContext: {
+      compaction_source: "executor_post_turn",
+      restoration_order: [
+        "boundary_summary",
+        "recent_runtime_context",
+        "session_resume_context",
+        "preserved_turn_input_ids",
+        "restored_memory_paths",
+      ],
       session_resume_context: {
         recent_turns: [
           {
@@ -942,7 +950,69 @@ test("runtime states and history endpoints read TS state store", async () => {
   assert.equal(compactionBoundaries.statusCode, 200);
   assert.equal(compactionBoundaries.json().count, 1);
   assert.equal(compactionBoundaries.json().items[0].boundary_id, "compaction:input-1");
+  assert.deepEqual(compactionBoundaries.json().items[0].compaction_restoration_context, {
+    compaction_source: "executor_post_turn",
+    restoration_order: [
+      "boundary_summary",
+      "recent_runtime_context",
+      "session_resume_context",
+      "preserved_turn_input_ids",
+      "restored_memory_paths",
+    ],
+    boundary_summary: "hi",
+    recent_runtime_context: {
+      summary: "hi",
+      last_stop_reason: "ok",
+      last_error: null,
+      waiting_for_user: null,
+    },
+    session_resume_context: {
+      recent_turns: [
+        {
+          input_id: "input-1",
+          status: "completed",
+          stop_reason: "ok",
+          summary: "hi",
+          completed_at: "2026-01-01T00:00:05.000Z",
+        },
+      ],
+      recent_user_messages: ["hello"],
+    },
+    preserved_turn_input_ids: ["input-1"],
+    restored_memory_paths: [`workspace/${workspace.id}/runtime/latest-turn.md`],
+  });
   assert.equal(resumeContext.statusCode, 200);
+  assert.deepEqual(resumeContext.json().compaction_restoration_context, {
+    compaction_source: "executor_post_turn",
+    restoration_order: [
+      "boundary_summary",
+      "recent_runtime_context",
+      "session_resume_context",
+      "preserved_turn_input_ids",
+      "restored_memory_paths",
+    ],
+    boundary_summary: "hi",
+    recent_runtime_context: {
+      summary: "hi",
+      last_stop_reason: "ok",
+      last_error: null,
+      waiting_for_user: null
+    },
+    session_resume_context: {
+      recent_turns: [
+        {
+          input_id: "input-1",
+          status: "completed",
+          stop_reason: "ok",
+          summary: "hi",
+          completed_at: "2026-01-01T00:00:05.000Z"
+        }
+      ],
+      recent_user_messages: ["hello"]
+    },
+    preserved_turn_input_ids: ["input-1"],
+    restored_memory_paths: [`workspace/${workspace.id}/runtime/latest-turn.md`]
+  });
   assert.deepEqual(resumeContext.json().recent_runtime_context, {
     summary: "hi",
     last_stop_reason: "ok",
@@ -959,7 +1029,19 @@ test("runtime states and history endpoints read TS state store", async () => {
         completed_at: "2026-01-01T00:00:05.000Z"
       }
     ],
-    recent_user_messages: ["hello"]
+    recent_user_messages: ["hello"],
+    compaction_source: "executor_post_turn",
+    compaction_boundary_id: "compaction:input-1",
+    compaction_boundary_summary: "hi",
+    restoration_order: [
+      "boundary_summary",
+      "recent_runtime_context",
+      "session_resume_context",
+      "preserved_turn_input_ids",
+      "restored_memory_paths"
+    ],
+    preserved_turn_input_ids: ["input-1"],
+    restored_memory_paths: [`workspace/${workspace.id}/runtime/latest-turn.md`]
   });
 
   await app.close();

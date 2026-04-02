@@ -31,6 +31,12 @@ export interface AgentSessionResumeContext {
     completed_at?: string | null;
   }> | null;
   recent_user_messages?: string[] | null;
+  compaction_source?: string | null;
+  compaction_boundary_id?: string | null;
+  compaction_boundary_summary?: string | null;
+  restoration_order?: string[] | null;
+  preserved_turn_input_ids?: string[] | null;
+  restored_memory_paths?: string[] | null;
 }
 
 export interface AgentRecalledMemoryContext {
@@ -170,7 +176,27 @@ function sessionResumeContextPromptSection(context: AgentSessionResumeContext | 
   }
   const recentTurns = Array.isArray(context.recent_turns) ? context.recent_turns : [];
   const recentUserMessages = Array.isArray(context.recent_user_messages) ? context.recent_user_messages : [];
-  if (recentTurns.length === 0 && recentUserMessages.length === 0) {
+  const restorationOrder = Array.isArray(context.restoration_order)
+    ? context.restoration_order.map((value) => nonEmptyText(value)).filter(Boolean)
+    : [];
+  const preservedTurnInputIds = Array.isArray(context.preserved_turn_input_ids)
+    ? context.preserved_turn_input_ids.map((value) => nonEmptyText(value)).filter(Boolean)
+    : [];
+  const restoredMemoryPaths = Array.isArray(context.restored_memory_paths)
+    ? context.restored_memory_paths.map((value) => nonEmptyText(value)).filter(Boolean)
+    : [];
+  const compactionBoundaryId = nonEmptyText(context.compaction_boundary_id);
+  const compactionBoundarySummary = nonEmptyText(context.compaction_boundary_summary);
+
+  if (
+    recentTurns.length === 0 &&
+    recentUserMessages.length === 0 &&
+    !compactionBoundaryId &&
+    !compactionBoundarySummary &&
+    restorationOrder.length === 0 &&
+    preservedTurnInputIds.length === 0 &&
+    restoredMemoryPaths.length === 0
+  ) {
     return "";
   }
 
@@ -178,6 +204,35 @@ function sessionResumeContextPromptSection(context: AgentSessionResumeContext | 
     "Session resume context:",
     "Use this as continuity context derived from persisted turn results and selected prior session messages. Verify current workspace state before acting on details that may have changed.",
   ];
+
+  if (compactionBoundaryId || compactionBoundarySummary || restorationOrder.length > 0) {
+    lines.push(
+      "",
+      compactionBoundaryId
+        ? `This resume context was restored from compaction boundary \`${compactionBoundaryId}\`.`
+        : "This resume context was restored from a prior compaction boundary."
+    );
+    if (compactionBoundarySummary) {
+      lines.push(`Boundary summary: ${compactionBoundarySummary}`);
+    }
+    if (restorationOrder.length > 0) {
+      lines.push(`Restoration order: ${restorationOrder.map((value) => `\`${value}\``).join(" -> ")}.`);
+    }
+  }
+
+  if (preservedTurnInputIds.length > 0) {
+    lines.push("", `Preserved turn ids: ${preservedTurnInputIds.map((value) => `\`${value}\``).join(", ")}.`);
+  }
+
+  if (restoredMemoryPaths.length > 0) {
+    lines.push("", "Restored memory paths:");
+    for (const memoryPath of restoredMemoryPaths.slice(0, 5)) {
+      lines.push(`- \`${memoryPath}\``);
+    }
+    if (restoredMemoryPaths.length > 5) {
+      lines.push(`- ...and ${restoredMemoryPaths.length - 5} more restored memory paths.`);
+    }
+  }
 
   if (recentTurns.length > 0) {
     lines.push("", "Recent prior turns:");

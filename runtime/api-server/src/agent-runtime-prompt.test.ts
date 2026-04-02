@@ -146,6 +146,20 @@ test("composeBaseAgentPrompt includes session resume context only when provided"
       recent_user_messages: [
         "Finish the deploy flow after fixing policy.",
       ],
+      compaction_boundary_id: "compaction:input-1",
+      compaction_boundary_summary: "Deploy failed because policy denied the action.",
+      restoration_order: [
+        "boundary_summary",
+        "recent_runtime_context",
+        "session_resume_context",
+        "preserved_turn_input_ids",
+        "restored_memory_paths",
+      ],
+      preserved_turn_input_ids: ["input-1"],
+      restored_memory_paths: [
+        "workspace/workspace-1/runtime/latest-turn.md",
+        "workspace/workspace-1/runtime/session-state/session-1.md",
+      ],
     },
   });
 
@@ -158,6 +172,11 @@ test("composeBaseAgentPrompt includes session resume context only when provided"
   assert.doesNotMatch(prompt.systemPrompt, /Session resume context:/);
   assert.match(prompt.contextMessages.join("\n\n"), /Session resume context:/);
   assert.match(prompt.contextMessages.join("\n\n"), /persisted turn results and selected prior session messages/i);
+  assert.match(prompt.contextMessages.join("\n\n"), /compaction boundary `compaction:input-1`/i);
+  assert.match(prompt.contextMessages.join("\n\n"), /Boundary summary: Deploy failed because policy denied the action\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Restoration order: `boundary_summary` -> `recent_runtime_context` -> `session_resume_context` -> `preserved_turn_input_ids` -> `restored_memory_paths`\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Preserved turn ids: `input-1`\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /workspace\/workspace-1\/runtime\/latest-turn\.md/);
   assert.match(prompt.contextMessages.join("\n\n"), /Recent prior turns:/);
   assert.match(prompt.contextMessages.join("\n\n"), /input-1/);
   assert.match(prompt.contextMessages.join("\n\n"), /permission_denied/);

@@ -98,6 +98,7 @@ import { startResolvedApplications } from "./resolved-app-bootstrap.js";
 import { buildAppSetupEnv } from "./app-setup-env.js";
 import { collectWorkspaceSnapshot } from "./workspace-snapshot.js";
 import {
+  compactionRestorationContextFromCompactionBoundary,
   recentRuntimeContextFromCompactionBoundary,
   recentRuntimeContextFromTurnResult,
   sessionResumeContextFromArtifacts,
@@ -520,6 +521,7 @@ function compactionBoundaryPayload(record: CompactionBoundaryRecord): Record<str
     summary: record.summary,
     recent_runtime_context: record.recentRuntimeContext,
     restoration_context: record.restorationContext,
+    compaction_restoration_context: compactionRestorationContextFromCompactionBoundary(record),
     preserved_turn_input_ids: record.preservedTurnInputIds,
     request_snapshot_fingerprint: record.requestSnapshotFingerprint,
     created_at: record.createdAt,
@@ -3358,6 +3360,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       workspace_id: workspaceId,
       session_id: params.sessionId,
       input_id: inputId || null,
+      compaction_restoration_context: compactionRestorationContextFromCompactionBoundary(latestBoundary),
       recent_runtime_context:
         recentRuntimeContextFromCompactionBoundary(latestBoundary) ??
         (recentTurn ? recentRuntimeContextFromTurnResult(recentTurn) : null),
