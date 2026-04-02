@@ -14,7 +14,17 @@ interface ListDirectoryResponse {
   entries: FileSystemEntry[];
 }
 
-type FilePreviewKind = "text" | "image" | "pdf" | "unsupported";
+type FilePreviewKind = "text" | "image" | "pdf" | "table" | "unsupported";
+
+interface FilePreviewTableSheetPayload {
+  name: string;
+  index: number;
+  columns: string[];
+  rows: string[][];
+  totalRows: number;
+  totalColumns: number;
+  truncated: boolean;
+}
 
 interface FilePreviewPayload {
   absolutePath: string;
@@ -24,6 +34,7 @@ interface FilePreviewPayload {
   mimeType?: string;
   content?: string;
   dataUrl?: string;
+  tableSheets?: FilePreviewTableSheetPayload[];
   size: number;
   modifiedAt: string;
   isEditable: boolean;

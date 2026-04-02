@@ -66,7 +66,6 @@ test("resolveWorkspaceSkills keeps embedded defaults authoritative when workspac
   const workspaceSkillsRoot = path.join(workspaceDir, "skills");
   writeSkill(workspaceSkillsRoot, "alpha", "workspace alpha");
   writeSkill(workspaceSkillsRoot, "gamma", "workspace gamma");
-  fs.writeFileSync(path.join(workspaceDir, "workspace.yaml"), "skills:\n  path: skills\n", "utf8");
 
   const resolved = resolveWorkspaceSkills(workspaceDir);
   assert.deepEqual(
@@ -91,7 +90,7 @@ test("resolveWorkspaceSkills follows explicit enabled ordering across embedded a
   writeSkill(workspaceSkillsRoot, "alpha");
   fs.writeFileSync(
     path.join(workspaceDir, "workspace.yaml"),
-    ['skills:', '  path: "skills"', '  enabled:', '    - "alpha"', '    - "holaboss-runtime"', '    - "missing"'].join("\n"),
+    ['skills:', '  enabled:', '    - "alpha"', '    - "holaboss-runtime"', '    - "missing"'].join("\n"),
     "utf8"
   );
 
@@ -118,4 +117,25 @@ test("resolveWorkspaceSkills ignores legacy agents.proactive.skills_path fallbac
   );
 
   assert.deepEqual(resolveWorkspaceSkills(workspaceDir), []);
+});
+
+test("resolveWorkspaceSkills ignores skills.path and still resolves workspace skills from fixed skills directory", () => {
+  const embeddedRoot = makeTempDir("hb-embedded-skills-empty-");
+  process.env.HOLABOSS_EMBEDDED_SKILLS_DIR = embeddedRoot;
+
+  const workspaceDir = makeTempDir("hb-workspace-fixed-skills-path-");
+  const customSkillsRoot = path.join(workspaceDir, "custom-skills");
+  const fixedSkillsRoot = path.join(workspaceDir, "skills");
+  writeSkill(customSkillsRoot, "custom-only");
+  writeSkill(fixedSkillsRoot, "fixed-skill");
+  fs.writeFileSync(
+    path.join(workspaceDir, "workspace.yaml"),
+    ['skills:', '  path: "custom-skills"'].join("\n"),
+    "utf8"
+  );
+
+  assert.deepEqual(
+    resolveWorkspaceSkills(workspaceDir).map((skill) => skill.skill_id),
+    ["fixed-skill"]
+  );
 });

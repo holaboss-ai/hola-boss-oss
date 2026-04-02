@@ -48,6 +48,30 @@ test("chat pane shows hosted billing warnings and blocks managed sends when cred
   assert.match(source, /You're out of credits for managed usage\./);
   assert.match(source, /Add credits/);
   assert.match(source, /Manage on web/);
-  assert.match(source, /await window\.electronAPI\.billing\.getOverview\(\)/);
-  assert.match(source, /latestBillingOverview\.creditsBalance <= 0/);
+  assert.match(source, /if \(isOutOfCredits\) \{/);
+  assert.match(source, /void refreshBillingState\(\)\.catch\(\(\) => undefined\);/);
+  assert.doesNotMatch(source, /await window\.electronAPI\.billing\.getOverview\(\)/);
+});
+
+test("chat composer does not submit on enter while IME composition is active", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /const composerIsComposingRef = useRef\(false\);/);
+  assert.match(
+    source,
+    /if \(\s*composerIsComposingRef\.current \|\|[\s\S]*nativeEvent\.isComposing === true \|\|[\s\S]*nativeEvent\.keyCode === 229[\s\S]*\) \{\s*return;\s*\}/,
+  );
+  assert.match(source, /const onComposerCompositionStart = \([\s\S]*composerIsComposingRef\.current = true;/);
+  assert.match(source, /const onComposerCompositionEnd = \([\s\S]*composerIsComposingRef\.current = false;/);
+  assert.match(source, /<Composer[\s\S]*onCompositionStart=\{onComposerCompositionStart\}[\s\S]*onCompositionEnd=\{onComposerCompositionEnd\}/);
+  assert.match(source, /<textarea[\s\S]*onCompositionStart=\{onCompositionStart\}[\s\S]*onCompositionEnd=\{onCompositionEnd\}/);
+});
+
+test("chat turns render markdown and keep long content wrapped inside the bubble", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /import \{ SimpleMarkdown \} from "@\/components\/marketplace\/SimpleMarkdown";/);
+  assert.match(source, /<SimpleMarkdown className="chat-markdown chat-user-markdown max-w-full">[\s\S]*\{text\}[\s\S]*<\/SimpleMarkdown>/);
+  assert.match(source, /<SimpleMarkdown className="chat-markdown chat-assistant-markdown mt-4 max-w-full text-foreground">[\s\S]*\{text\}[\s\S]*<\/SimpleMarkdown>/);
+  assert.match(source, /theme-chat-user-bubble inline-flex min-w-0 max-w-full/);
 });

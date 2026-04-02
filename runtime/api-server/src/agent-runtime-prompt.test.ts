@@ -85,6 +85,18 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   assert.match(prompt.systemPrompt, /Execution doctrine:/);
   assert.match(
     prompt.systemPrompt,
+    /When the workspace is initialized as a local git repository, use git for local version control checkpoints around meaningful verified changes\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Check repository state with git before and after substantial edits, and create concise local checkpoint commits after meaningful verified changes\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not use destructive git history operations such as reset --hard, rebase, or force pushes unless the user explicitly asks for them\./
+  );
+  assert.match(
+    prompt.systemPrompt,
     /On the first strong signal that user input describes a reusable workflow, procedure, or operating pattern, proactively create or update a workspace-local skill/
   );
   assert.match(

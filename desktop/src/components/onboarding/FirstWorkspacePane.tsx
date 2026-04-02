@@ -164,6 +164,7 @@ export function FirstWorkspacePane({
       sectionClassName={sectionClassName}
       creatingViaMarketplace={creatingViaMarketplace}
       showUserButton={!isPanelVariant}
+      panelVariant={isPanelVariant}
     />
   ) : (
     <section className={sectionClassName}>

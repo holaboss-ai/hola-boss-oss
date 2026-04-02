@@ -1,7 +1,8 @@
-import { type ChangeEvent, type DragEvent, FormEvent, KeyboardEvent, type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type CompositionEvent, type DragEvent, FormEvent, KeyboardEvent, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { AlertTriangle, ArrowRight, ArrowUp, Bot, Cable, Check, ChevronDown, Clock3, FileText, Image as ImageIcon, Loader2, Paperclip, Waypoints, X } from "lucide-react";
 import { PaneCard } from "@/components/ui/PaneCard";
+import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import {
   EXPLORER_ATTACHMENT_DRAG_TYPE,
   type ExplorerAttachmentDragPayload,
@@ -676,7 +677,8 @@ export function ChatPane({
     hasHostedBillingAccount,
     isLowBalance,
     isOutOfCredits,
-    links: billingLinks
+    links: billingLinks,
+    refresh: refreshBillingState
   } = useDesktopBilling();
   const {
     runtimeConfig,
@@ -714,6 +716,7 @@ export function ChatPane({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerBlockRef = useRef<HTMLDivElement>(null);
+  const composerIsComposingRef = useRef(false);
   const shouldAutoScrollRef = useRef(true);
   const activeSessionIdRef = useRef<string | null>(null);
   const activeStreamIdRef = useRef<string | null>(null);
@@ -1675,21 +1678,11 @@ export function ChatPane({
       return;
     }
     if (usesHostedManagedCredits) {
-      try {
-        const latestBillingOverview = await window.electronAPI.billing.getOverview();
-        if (
-          latestBillingOverview.hasHostedBillingAccount &&
-          latestBillingOverview.creditsBalance <= 0
-        ) {
-          setChatErrorMessage("You're out of credits for managed usage.");
-          return;
-        }
-      } catch {
-        if (isOutOfCredits) {
-          setChatErrorMessage("You're out of credits for managed usage.");
-          return;
-        }
+      if (isOutOfCredits) {
+        setChatErrorMessage("You're out of credits for managed usage.");
+        return;
       }
+      void refreshBillingState().catch(() => undefined);
     }
     if (!selectedWorkspace) {
       setChatErrorMessage("Create or select a workspace first.");
@@ -1947,10 +1940,33 @@ export function ChatPane({
   };
 
   const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    const nativeEvent = event.nativeEvent as KeyboardEvent<HTMLTextAreaElement>["nativeEvent"] & {
+      isComposing?: boolean;
+      keyCode?: number;
+    };
+    if (
+      composerIsComposingRef.current ||
+      nativeEvent.isComposing === true ||
+      nativeEvent.keyCode === 229
+    ) {
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       void sendMessage(input);
     }
+  };
+
+  const onComposerCompositionStart = (
+    _event: CompositionEvent<HTMLTextAreaElement>,
+  ) => {
+    composerIsComposingRef.current = true;
+  };
+
+  const onComposerCompositionEnd = (
+    _event: CompositionEvent<HTMLTextAreaElement>,
+  ) => {
+    composerIsComposingRef.current = false;
   };
 
   const assistantLabel = "Holaboss";
@@ -2415,6 +2431,8 @@ export function ChatPane({
                       fileInputRef={fileInputRef}
                       onChange={setInput}
                       onKeyDown={onComposerKeyDown}
+                      onCompositionStart={onComposerCompositionStart}
+                      onCompositionEnd={onComposerCompositionEnd}
                       onAttachmentInputChange={onAttachmentInputChange}
                       onAddDroppedFiles={appendPendingLocalFiles}
                       onAddExplorerAttachments={appendPendingExplorerAttachments}
@@ -2463,6 +2481,8 @@ export function ChatPane({
                   fileInputRef={fileInputRef}
                   onChange={setInput}
                   onKeyDown={onComposerKeyDown}
+                  onCompositionStart={onComposerCompositionStart}
+                  onCompositionEnd={onComposerCompositionEnd}
                   onAttachmentInputChange={onAttachmentInputChange}
                   onAddDroppedFiles={appendPendingLocalFiles}
                   onAddExplorerAttachments={appendPendingExplorerAttachments}
@@ -2503,6 +2523,8 @@ interface ComposerProps {
   fileInputRef: RefObject<HTMLInputElement | null>;
   onChange: (value: string) => void;
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
+  onCompositionStart: (event: CompositionEvent<HTMLTextAreaElement>) => void;
+  onCompositionEnd: (event: CompositionEvent<HTMLTextAreaElement>) => void;
   onAttachmentInputChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onAddDroppedFiles: (files: File[]) => void;
   onAddExplorerAttachments: (files: ExplorerAttachmentDragPayload[]) => void;
@@ -2527,8 +2549,10 @@ function UserTurn({
     <div className="flex justify-end">
       <div className="flex max-w-[420px] flex-col items-end gap-2">
         {text ? (
-          <div className="theme-chat-user-bubble inline-flex max-w-full rounded-[18px] border px-4 py-3 text-[13px] leading-7 text-foreground/95">
-            <div className="whitespace-pre-wrap break-words">{text}</div>
+          <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full rounded-[18px] border px-4 py-3 text-foreground/95">
+            <SimpleMarkdown className="chat-markdown chat-user-markdown max-w-full">
+              {text}
+            </SimpleMarkdown>
           </div>
         ) : null}
         {attachments.length > 0 ? <AttachmentList attachments={attachments} className="justify-end" /> : null}
@@ -2603,7 +2627,11 @@ function AssistantTurn({
               <ThinkingPanel text={thinkingText} collapsed={thinkingCollapsed} onToggle={onToggleThinking} live={live} />
             ) : null}
 
-            {text ? <div className="mt-4 whitespace-pre-wrap text-[15px] leading-8 text-foreground">{text}</div> : null}
+            {text ? (
+              <SimpleMarkdown className="chat-markdown chat-assistant-markdown mt-4 max-w-full text-foreground">
+                {text}
+              </SimpleMarkdown>
+            ) : null}
           </div>
         </div>
       </article>
@@ -2822,6 +2850,8 @@ function Composer({
   fileInputRef,
   onChange,
   onKeyDown,
+  onCompositionStart,
+  onCompositionEnd,
   onAttachmentInputChange,
   onAddDroppedFiles,
   onAddExplorerAttachments,
@@ -2913,6 +2943,8 @@ function Composer({
           value={input}
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={onKeyDown}
+          onCompositionStart={onCompositionStart}
+          onCompositionEnd={onCompositionEnd}
           rows={1}
           disabled={disabled}
           placeholder={disabled ? disabledReason || "Chat unavailable right now" : placeholder}

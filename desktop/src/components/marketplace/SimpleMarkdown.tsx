@@ -12,13 +12,17 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function renderMarkdown(source: string): string {
-  let html = escapeHtml(source);
+export function renderMarkdown(source: string): string {
+  const normalizedSource = source.replace(/\r\n?/g, "\n");
+  let html = escapeHtml(normalizedSource);
+  const codeBlocks: string[] = [];
 
   // Code blocks (``` ... ```)
-  html = html.replace(/```[\w]*\n([\s\S]*?)```/g, (_match, code: string) =>
-    `<pre class="md-code-block"><code>${code.trim()}</code></pre>`
-  );
+  html = html.replace(/```[\w-]*\n([\s\S]*?)```/g, (_match, code: string) => {
+    const token = `@@MD_CODE_BLOCK_${codeBlocks.length}@@`;
+    codeBlocks.push(`<pre class="md-code-block"><code>${code.trim()}</code></pre>`);
+    return token;
+  });
 
   // Images ![alt](src)
   html = html.replace(
@@ -34,22 +38,25 @@ function renderMarkdown(source: string): string {
 
   // Tables
   html = html.replace(
-    /^(\|.+\|)\n(\|[-| :]+\|)\n((?:\|.+\|\n?)+)/gm,
+    /^( {0,3}\|[^\n]*\|[ \t]*)\n( {0,3}\|(?:[ \t]*:?-{3,}:?[ \t]*\|)+[ \t]*)\n((?: {0,3}\|[^\n]*\|[ \t]*(?:\n|$))+)/gm,
     (_match, header: string, _sep: string, body: string) => {
-      const ths = header
-        .split("|")
-        .filter(Boolean)
-        .map((c: string) => `<th>${c.trim()}</th>`)
-        .join("");
+      const parseCells = (line: string) =>
+        line
+          .trim()
+          .replace(/^\|/, "")
+          .replace(/\|$/, "")
+          .split("|")
+          .map((cell: string) => cell.trim());
+
+      const headerCells = parseCells(header);
+      const ths = headerCells.map((cell) => `<th>${cell}</th>`).join("");
       const rows = body
         .trim()
         .split("\n")
-        .map((row: string) => {
-          const tds = row
-            .split("|")
-            .filter(Boolean)
-            .map((c: string) => `<td>${c.trim()}</td>`)
-            .join("");
+        .map((row: string) => parseCells(row))
+        .filter((cells) => cells.length > 0)
+        .map((cells) => {
+          const tds = cells.map((cell) => `<td>${cell}</td>`).join("");
           return `<tr>${tds}</tr>`;
         })
         .join("");
@@ -58,9 +65,12 @@ function renderMarkdown(source: string): string {
   );
 
   // Headings
-  html = html.replace(/^### (.+)$/gm, '<h3 class="md-h3">$1</h3>');
-  html = html.replace(/^## (.+)$/gm, '<h2 class="md-h2">$1</h2>');
-  html = html.replace(/^# (.+)$/gm, '<h1 class="md-h1">$1</h1>');
+  html = html.replace(/^ {0,3}###### (.+)$/gm, '<h6 class="md-h6">$1</h6>');
+  html = html.replace(/^ {0,3}##### (.+)$/gm, '<h5 class="md-h5">$1</h5>');
+  html = html.replace(/^ {0,3}#### (.+)$/gm, '<h4 class="md-h4">$1</h4>');
+  html = html.replace(/^ {0,3}### (.+)$/gm, '<h3 class="md-h3">$1</h3>');
+  html = html.replace(/^ {0,3}## (.+)$/gm, '<h2 class="md-h2">$1</h2>');
+  html = html.replace(/^ {0,3}# (.+)$/gm, '<h1 class="md-h1">$1</h1>');
 
   // Horizontal rules
   html = html.replace(/^---$/gm, '<hr class="md-hr" />');
@@ -83,6 +93,11 @@ function renderMarkdown(source: string): string {
   html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/\*(.+?)\*/g, "<em>$1</em>");
   html = html.replace(/`([^`]+)`/g, '<code class="md-inline-code">$1</code>');
+
+  // Restore fenced code blocks after all markdown transforms.
+  codeBlocks.forEach((blockHtml, index) => {
+    html = html.replaceAll(`@@MD_CODE_BLOCK_${index}@@`, blockHtml);
+  });
 
   // Paragraphs: wrap lines that aren't already block elements
   html = html
