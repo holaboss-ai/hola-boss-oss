@@ -35,6 +35,8 @@ test("operations drawer inbox hosts the proactive proposals toggle", async () =>
 test("operations drawer running panel opens selected sessions", async () => {
   const source = await readFile(OPERATIONS_DRAWER_PATH, "utf8");
 
+  assert.match(source, /including idle and/);
+  assert.doesNotMatch(source, /\.filter\(\(state\) => state\.status !== "IDLE"\)/);
   assert.match(source, /onOpenRunningSession/);
   assert.match(source, /activeRunningSessionId/);
   assert.match(source, /onOpenSession=\{onOpenRunningSession\}/);

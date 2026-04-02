@@ -154,7 +154,6 @@ export function OperationsDrawer({
           ]),
         );
         const nextEntries = runtimeStatesResponse.items
-          .filter((state) => state.status !== "IDLE")
           .map((state) => {
             const session = sessionById.get(state.session_id);
             return {
@@ -318,8 +317,10 @@ function runningSessionStatusRank(status: string): number {
       return 2;
     case "ERROR":
       return 3;
-    default:
+    case "IDLE":
       return 4;
+    default:
+      return 5;
   }
 }
 
@@ -613,8 +614,8 @@ function RunningPanel({
           Running
         </div>
         <div className="mt-1 text-[12px] leading-6 text-foreground/88">
-          Active and failed runtime sessions for the current workspace,
-          including cronjob runs.
+          Runtime sessions for the current workspace, including idle and
+          cronjob runs.
         </div>
       </div>
 
