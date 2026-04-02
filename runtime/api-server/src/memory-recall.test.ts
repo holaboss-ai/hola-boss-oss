@@ -22,6 +22,10 @@ function makeMemoryEntry(overrides: Partial<MemoryEntryRecord> & Pick<MemoryEntr
     staleAfterSeconds: overrides.staleAfterSeconds ?? 14 * 24 * 60 * 60,
     sourceTurnInputId: overrides.sourceTurnInputId ?? null,
     sourceMessageId: overrides.sourceMessageId ?? null,
+    sourceType: overrides.sourceType ?? "turn_result",
+    observedAt: overrides.observedAt ?? overrides.updatedAt ?? "2026-04-01T00:00:00.000Z",
+    lastVerifiedAt: overrides.lastVerifiedAt ?? overrides.updatedAt ?? "2026-04-01T00:00:00.000Z",
+    confidence: overrides.confidence ?? 0.9,
     fingerprint: overrides.fingerprint ?? "f".repeat(64),
     status: overrides.status ?? "active",
     supersededAt: overrides.supersededAt ?? null,
@@ -101,6 +105,11 @@ test("recalledMemoryContextFromEntries applies freshness governance and prefers 
   );
   assert.match(String(context.entries?.[0]?.freshness_note ?? ""), /stable unless explicitly changed/i);
   assert.match(String(context.entries?.[1]?.freshness_note ?? ""), /current workspace state/i);
+  assert.equal(context.entries?.[0]?.source_type, "turn_result");
+  assert.equal(context.entries?.[1]?.source_type, "turn_result");
+  assert.ok(Array.isArray(context.selection_trace));
+  assert.equal(context.selection_trace?.[0]?.memory_id, "user-preference:response-style");
+  assert.match(String(context.selection_trace?.[0]?.reasons?.join(" ")), /user_scope_priority/);
 });
 
 test("recalledMemoryContextFromEntries prefers procedures and facts when the query asks for them", () => {
@@ -159,4 +168,6 @@ test("recalledMemoryContextFromEntries prefers procedures and facts when the que
     context.entries?.map((entry) => entry.title),
     ["Release procedure", "Verification command", "Deploy permission blocker"]
   );
+  assert.equal(context.selection_trace?.[0]?.memory_id, "workspace-procedure:release");
+  assert.match(String(context.selection_trace?.[0]?.reasons?.join(" ")), /query_intent_boost/);
 });

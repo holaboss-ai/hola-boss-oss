@@ -175,6 +175,7 @@ export type MemoryEntryScope = "workspace" | "session" | "user" | "ephemeral";
 export type MemoryEntryType = "preference" | "fact" | "procedure" | "blocker" | "reference";
 export type MemoryVerificationPolicy = "none" | "check_before_use" | "must_reconfirm";
 export type MemoryStalenessPolicy = "stable" | "time_sensitive" | "workspace_sensitive";
+export type MemoryEntrySourceType = "session_message" | "assistant_turn" | "turn_result" | "permission_denial" | "manual";
 
 export interface MemoryEntryRecord {
   memoryId: string;
@@ -192,6 +193,10 @@ export interface MemoryEntryRecord {
   staleAfterSeconds: number | null;
   sourceTurnInputId: string | null;
   sourceMessageId: string | null;
+  sourceType: MemoryEntrySourceType | null;
+  observedAt: string | null;
+  lastVerifiedAt: string | null;
+  confidence: number | null;
   fingerprint: string;
   status: string;
   supersededAt: string | null;
@@ -1693,6 +1698,10 @@ export class RuntimeStateStore {
     staleAfterSeconds?: number | null;
     sourceTurnInputId?: string | null;
     sourceMessageId?: string | null;
+    sourceType?: MemoryEntrySourceType | null;
+    observedAt?: string | null;
+    lastVerifiedAt?: string | null;
+    confidence?: number | null;
     fingerprint: string;
     status?: string;
     supersededAt?: string | null;
@@ -1720,12 +1729,16 @@ export class RuntimeStateStore {
             stale_after_seconds,
             source_turn_input_id,
             source_message_id,
+            source_type,
+            observed_at,
+            last_verified_at,
+            confidence,
             fingerprint,
             status,
             superseded_at,
             created_at,
             updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(memory_id) DO UPDATE SET
             workspace_id = excluded.workspace_id,
             session_id = excluded.session_id,
@@ -1741,6 +1754,10 @@ export class RuntimeStateStore {
             stale_after_seconds = excluded.stale_after_seconds,
             source_turn_input_id = excluded.source_turn_input_id,
             source_message_id = excluded.source_message_id,
+            source_type = excluded.source_type,
+            observed_at = excluded.observed_at,
+            last_verified_at = excluded.last_verified_at,
+            confidence = excluded.confidence,
             fingerprint = excluded.fingerprint,
             status = excluded.status,
             superseded_at = excluded.superseded_at,
@@ -1762,6 +1779,10 @@ export class RuntimeStateStore {
         params.staleAfterSeconds ?? null,
         params.sourceTurnInputId ?? null,
         params.sourceMessageId ?? null,
+        params.sourceType ?? null,
+        params.observedAt ?? null,
+        params.lastVerifiedAt ?? null,
+        params.confidence ?? null,
         params.fingerprint,
         params.status ?? "active",
         params.supersededAt ?? null,
@@ -2996,6 +3017,10 @@ export class RuntimeStateStore {
           stale_after_seconds INTEGER,
           source_turn_input_id TEXT,
           source_message_id TEXT,
+          source_type TEXT,
+          observed_at TEXT,
+          last_verified_at TEXT,
+          confidence REAL,
           fingerprint TEXT NOT NULL,
           status TEXT NOT NULL DEFAULT 'active',
           superseded_at TEXT,
@@ -3265,6 +3290,18 @@ export class RuntimeStateStore {
       }
       if (!columns.has("stale_after_seconds")) {
         db.exec("ALTER TABLE memory_entries ADD COLUMN stale_after_seconds INTEGER;");
+      }
+      if (!columns.has("source_type")) {
+        db.exec("ALTER TABLE memory_entries ADD COLUMN source_type TEXT;");
+      }
+      if (!columns.has("observed_at")) {
+        db.exec("ALTER TABLE memory_entries ADD COLUMN observed_at TEXT;");
+      }
+      if (!columns.has("last_verified_at")) {
+        db.exec("ALTER TABLE memory_entries ADD COLUMN last_verified_at TEXT;");
+      }
+      if (!columns.has("confidence")) {
+        db.exec("ALTER TABLE memory_entries ADD COLUMN confidence REAL;");
       }
     }
 
@@ -3756,6 +3793,16 @@ export class RuntimeStateStore {
       })(),
       sourceTurnInputId: row.source_turn_input_id == null ? null : String(row.source_turn_input_id),
       sourceMessageId: row.source_message_id == null ? null : String(row.source_message_id),
+      sourceType: row.source_type == null ? null : String(row.source_type) as MemoryEntrySourceType,
+      observedAt: row.observed_at == null ? null : String(row.observed_at),
+      lastVerifiedAt: row.last_verified_at == null ? null : String(row.last_verified_at),
+      confidence: (() => {
+        if (row.confidence == null) {
+          return null;
+        }
+        const parsed = typeof row.confidence === "number" ? row.confidence : Number(row.confidence);
+        return Number.isFinite(parsed) ? parsed : null;
+      })(),
       fingerprint: String(row.fingerprint),
       status: String(row.status),
       supersededAt: row.superseded_at == null ? null : String(row.superseded_at),

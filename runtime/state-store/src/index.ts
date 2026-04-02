@@ -14,6 +14,7 @@ export {
   type CreateWorkspaceParams,
   type MemoryEntryScope,
   type MemoryEntryRecord,
+  type MemoryEntrySourceType,
   type MemoryEntryType,
   type MemoryStalenessPolicy,
   type MemoryVerificationPolicy,

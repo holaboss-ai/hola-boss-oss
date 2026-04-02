@@ -3,6 +3,7 @@ import path from "node:path";
 
 import type {
   MemoryEntryScope,
+  MemoryEntrySourceType,
   MemoryEntryType,
   MemoryStalenessPolicy,
   MemoryVerificationPolicy,
@@ -38,6 +39,10 @@ interface DurableMemoryCandidate {
   stalenessPolicy: MemoryStalenessPolicy;
   staleAfterSeconds: number | null;
   sourceMessageId?: string | null;
+  sourceType: MemoryEntrySourceType;
+  observedAt: string | null;
+  lastVerifiedAt: string | null;
+  confidence: number | null;
 }
 
 const RECENT_TURNS_LIMIT = 5;
@@ -252,6 +257,8 @@ type ResponseStylePreference = {
 type MemorySourceEvidence = {
   text: string;
   sourceLabel: string;
+  sourceType: MemoryEntrySourceType;
+  observedAt: string | null;
   sourceMessageId?: string | null;
 };
 
@@ -327,6 +334,8 @@ function durableMemorySources(turnResult: TurnResultRecord, sessionMessages: Ses
     sources.push({
       text: message.text,
       sourceLabel: "latest user message",
+      sourceType: "session_message",
+      observedAt: message.createdAt,
       sourceMessageId: message.id,
     });
   }
@@ -334,6 +343,8 @@ function durableMemorySources(turnResult: TurnResultRecord, sessionMessages: Ses
     sources.push({
       text: turnResult.assistantText,
       sourceLabel: "latest assistant turn",
+      sourceType: "assistant_turn",
+      observedAt: turnResult.completedAt ?? turnResult.updatedAt,
       sourceMessageId: null,
     });
   }
@@ -501,6 +512,10 @@ function responseStylePreferenceCandidate(
       stalenessPolicy: governance.stalenessPolicy,
       staleAfterSeconds: governance.staleAfterSeconds,
       sourceMessageId: message.id,
+      sourceType: "session_message",
+      observedAt: message.createdAt,
+      lastVerifiedAt: message.createdAt,
+      confidence: 0.99,
     },
   ];
 }
@@ -547,6 +562,10 @@ function workspaceCommandFactCandidates(
           stalenessPolicy: governance.stalenessPolicy,
           staleAfterSeconds: governance.staleAfterSeconds,
           sourceMessageId: source.sourceMessageId ?? null,
+          sourceType: source.sourceType,
+          observedAt: source.observedAt,
+          lastVerifiedAt: source.observedAt,
+          confidence: source.sourceType === "session_message" ? 0.94 : 0.88,
         });
       }
     }
@@ -599,6 +618,10 @@ function workspaceProcedureCandidates(
           stalenessPolicy: governance.stalenessPolicy,
           staleAfterSeconds: governance.staleAfterSeconds,
           sourceMessageId: source.sourceMessageId ?? null,
+          sourceType: source.sourceType,
+          observedAt: source.observedAt,
+          lastVerifiedAt: source.observedAt,
+          confidence: source.sourceType === "session_message" ? 0.93 : 0.87,
         });
       }
     }
@@ -694,6 +717,10 @@ function repeatedPermissionBlockerCandidates(params: {
         verificationPolicy: governance.verificationPolicy,
         stalenessPolicy: governance.stalenessPolicy,
         staleAfterSeconds: governance.staleAfterSeconds,
+        sourceType: "permission_denial",
+        observedAt: params.turnResult.completedAt ?? params.turnResult.updatedAt,
+        lastVerifiedAt: params.turnResult.completedAt ?? params.turnResult.updatedAt,
+        confidence: 0.92,
       },
     ];
   });
@@ -850,6 +877,10 @@ async function upsertMemoryIndexes(params: {
       verificationPolicy: entry.verificationPolicy as MemoryVerificationPolicy,
       stalenessPolicy: entry.stalenessPolicy as MemoryStalenessPolicy,
       staleAfterSeconds: entry.staleAfterSeconds,
+      sourceType: entry.sourceType ?? "manual",
+      observedAt: entry.observedAt,
+      lastVerifiedAt: entry.lastVerifiedAt,
+      confidence: entry.confidence,
     })),
   });
   await params.memoryService.upsert({
@@ -874,6 +905,10 @@ async function upsertMemoryIndexes(params: {
       verificationPolicy: entry.verificationPolicy as MemoryVerificationPolicy,
       stalenessPolicy: entry.stalenessPolicy as MemoryStalenessPolicy,
       staleAfterSeconds: entry.staleAfterSeconds,
+      sourceType: entry.sourceType ?? "manual",
+      observedAt: entry.observedAt,
+      lastVerifiedAt: entry.lastVerifiedAt,
+      confidence: entry.confidence,
     }))
   );
   await params.memoryService.upsert({
@@ -1032,6 +1067,10 @@ async function upsertDurableMemoryCandidate(params: {
     staleAfterSeconds: params.candidate.staleAfterSeconds,
     sourceTurnInputId: params.inputId,
     sourceMessageId: params.candidate.sourceMessageId ?? null,
+    sourceType: params.candidate.sourceType,
+    observedAt: params.candidate.observedAt,
+    lastVerifiedAt: params.candidate.lastVerifiedAt,
+    confidence: params.candidate.confidence,
     fingerprint: fingerprintText(params.candidate.content),
   });
   return params.candidate.path;

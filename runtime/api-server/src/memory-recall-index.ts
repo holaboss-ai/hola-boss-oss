@@ -6,6 +6,10 @@ export interface RankedMemoryRecallEntry {
   entry: MemoryEntryRecord;
   score: number;
   freshness: MemoryFreshnessAssessment;
+  trace: {
+    matchedTokens: string[];
+    reasons: string[];
+  };
 }
 
 export interface MemoryRecallIndex {
@@ -99,31 +103,49 @@ export class KeywordMetadataMemoryRecallIndex implements MemoryRecallIndex {
         ].join(" ");
 
         let score = governance.recallBoost;
+        const matchedTokens = new Set<string>();
+        const reasons: string[] = [`base_recall_boost:${governance.recallBoost}`];
         if (entry.scope === "user") {
           score += 6;
+          reasons.push("user_scope_priority");
         }
-        score += queryIntentBoost(tokens, entry);
+        const intentBoost = queryIntentBoost(tokens, entry);
+        if (intentBoost > 0) {
+          score += intentBoost;
+          reasons.push(`query_intent_boost:${intentBoost}`);
+        }
 
         const normalizedQuery = params.query.trim().toLowerCase();
         if (normalizedQuery && (loweredTitle.includes(normalizedQuery) || loweredSummary.includes(normalizedQuery))) {
           score += 4;
+          reasons.push("full_query_match");
         }
 
         for (const token of tokens) {
           if (loweredTitle.includes(token)) {
             score += 3;
+            matchedTokens.add(token);
+            reasons.push(`title_match:${token}`);
           }
           if (loweredTags.includes(token)) {
             score += 3;
+            matchedTokens.add(token);
+            reasons.push(`tag_match:${token}`);
           }
           if (loweredSubjectKey.includes(token)) {
             score += 2;
+            matchedTokens.add(token);
+            reasons.push(`subject_key_match:${token}`);
           }
           if (loweredSummary.includes(token)) {
             score += 2;
+            matchedTokens.add(token);
+            reasons.push(`summary_match:${token}`);
           }
           if (loweredPath.includes(token)) {
             score += 1;
+            matchedTokens.add(token);
+            reasons.push(`path_match:${token}`);
           }
           if (haystack.includes(token)) {
             score += 0.5;
@@ -135,14 +157,20 @@ export class KeywordMetadataMemoryRecallIndex implements MemoryRecallIndex {
         }
         if (freshness.state === "stale") {
           score -= 3;
+          reasons.push("stale_penalty");
         }
         if (entry.memoryType === "reference" && freshness.state === "stale") {
           score = -1;
+          reasons.push("stale_reference_filtered");
         }
         return {
           entry,
           score,
           freshness,
+          trace: {
+            matchedTokens: [...matchedTokens],
+            reasons,
+          },
           scopePriority: scopePriority(entry),
           typePriority: queryTypePriority(tokens, entry),
         };

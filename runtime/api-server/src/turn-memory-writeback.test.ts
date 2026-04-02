@@ -59,6 +59,7 @@ test("writeTurnMemory compacts a turn and writes deterministic runtime memory fi
     role: "user",
     text: "Please keep your responses concise.",
     messageId: "user-1",
+    createdAt: "2026-04-02T12:00:00.000Z",
   });
 
   const turnResult = store.upsertTurnResult({
@@ -128,6 +129,10 @@ test("writeTurnMemory compacts a turn and writes deterministic runtime memory fi
   assert.equal(responseStyleMemory?.verificationPolicy, "none");
   assert.equal(responseStyleMemory?.stalenessPolicy, "stable");
   assert.equal(responseStyleMemory?.staleAfterSeconds, null);
+  assert.equal(responseStyleMemory?.sourceType, "session_message");
+  assert.equal(responseStyleMemory?.observedAt, "2026-04-02T12:00:00.000Z");
+  assert.equal(responseStyleMemory?.lastVerifiedAt, "2026-04-02T12:00:00.000Z");
+  assert.equal(responseStyleMemory?.confidence, 0.99);
   assert.match(files["workspace/workspace-1/runtime/session-state/session-main.md"], /Runtime Session Snapshot/);
   assert.match(files["workspace/workspace-1/runtime/session-state/session-main.md"], /execution_policy/);
   assert.match(files["workspace/workspace-1/runtime/latest-turn.md"], /Latest Runtime Turn/);
@@ -227,6 +232,8 @@ test("writeTurnMemory reuses stable blocker paths across repeated matching denia
   assert.equal(blockerEntry?.verificationPolicy, "check_before_use");
   assert.equal(blockerEntry?.stalenessPolicy, "workspace_sensitive");
   assert.equal(blockerEntry?.staleAfterSeconds, 14 * 24 * 60 * 60);
+  assert.equal(blockerEntry?.sourceType, "permission_denial");
+  assert.equal(blockerEntry?.confidence, 0.92);
   assert.match(files["workspace/workspace-1/runtime/latest-turn.md"], /input-2/);
   assert.match(files["workspace/workspace-1/runtime/recent-turns/session-main.md"], /input-2/);
   assert.match(files["workspace/workspace-1/runtime/recent-turns/session-main.md"], /input-1/);
@@ -256,6 +263,7 @@ test("writeTurnMemory extracts durable workspace facts and procedures from expli
       "3. Publish the bundle.",
     ].join("\n"),
     messageId: "user-1",
+    createdAt: "2026-04-02T12:00:00.000Z",
   });
 
   const turnResult = store.upsertTurnResult({
@@ -293,9 +301,13 @@ test("writeTurnMemory extracts durable workspace facts and procedures from expli
   assert.equal(verificationFact?.verificationPolicy, "check_before_use");
   assert.equal(verificationFact?.stalenessPolicy, "workspace_sensitive");
   assert.equal(verificationFact?.staleAfterSeconds, 30 * 24 * 60 * 60);
+  assert.equal(verificationFact?.sourceType, "session_message");
+  assert.equal(verificationFact?.confidence, 0.94);
   assert.equal(releaseProcedure?.verificationPolicy, "check_before_use");
   assert.equal(releaseProcedure?.stalenessPolicy, "workspace_sensitive");
   assert.equal(releaseProcedure?.staleAfterSeconds, 14 * 24 * 60 * 60);
+  assert.equal(releaseProcedure?.sourceType, "session_message");
+  assert.equal(releaseProcedure?.confidence, 0.93);
 
   store.close();
 });

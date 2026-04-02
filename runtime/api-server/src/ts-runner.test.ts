@@ -1006,7 +1006,7 @@ test("runTsRunnerCli derives recalled durable memory from indexed memory entries
   assert.equal(exitCode, 0);
   assert.ok(capturedProjectRequest);
   const recalledMemoryContext = (capturedProjectRequest as {
-    recalled_memory_context: { entries: Array<Record<string, unknown>> }
+    recalled_memory_context: { entries: Array<Record<string, unknown>>; selection_trace: Array<Record<string, unknown>> }
   }).recalled_memory_context;
   assert.equal(recalledMemoryContext.entries.length, 2);
   assert.deepEqual(
@@ -1019,6 +1019,7 @@ test("runTsRunnerCli derives recalled durable memory from indexed memory entries
       verification_policy: entry.verification_policy,
       staleness_policy: entry.staleness_policy,
       freshness_state: entry.freshness_state,
+      source_type: entry.source_type,
       })),
     [
       {
@@ -1030,6 +1031,7 @@ test("runTsRunnerCli derives recalled durable memory from indexed memory entries
         verification_policy: "none",
         staleness_policy: "stable",
         freshness_state: "stable",
+        source_type: null,
       },
       {
         scope: "workspace",
@@ -1040,11 +1042,14 @@ test("runTsRunnerCli derives recalled durable memory from indexed memory entries
         verification_policy: "check_before_use",
         staleness_policy: "workspace_sensitive",
         freshness_state: "fresh",
+        source_type: null,
       },
     ]
   );
   assert.match(String(recalledMemoryContext.entries[0]?.updated_at ?? ""), /\d{4}-\d{2}-\d{2}T/);
   assert.match(String(recalledMemoryContext.entries[1]?.updated_at ?? ""), /\d{4}-\d{2}-\d{2}T/);
+  assert.equal(recalledMemoryContext.selection_trace.length, 2);
+  assert.equal(recalledMemoryContext.selection_trace[0]?.memory_id, "user-preference:response-style");
 });
 
 test("runTsRunnerCli only stages browser tools for the main session", async () => {

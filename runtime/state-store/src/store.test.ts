@@ -962,6 +962,10 @@ test("memory entries round trip and filter by workspace or scope", () => {
     staleAfterSeconds: null,
     sourceTurnInputId: "input-1",
     sourceMessageId: "user-1",
+    sourceType: "session_message",
+    observedAt: "2026-04-02T12:00:00.000Z",
+    lastVerifiedAt: "2026-04-02T12:00:00.000Z",
+    confidence: 0.99,
     fingerprint: "p".repeat(64),
   });
   const blocker = store.upsertMemoryEntry({
@@ -980,6 +984,10 @@ test("memory entries round trip and filter by workspace or scope", () => {
     staleAfterSeconds: 14 * 24 * 60 * 60,
     sourceTurnInputId: "input-2",
     sourceMessageId: null,
+    sourceType: "permission_denial",
+    observedAt: "2026-04-02T12:05:00.000Z",
+    lastVerifiedAt: "2026-04-02T12:05:00.000Z",
+    confidence: 0.92,
     fingerprint: "b".repeat(64),
   });
 

@@ -21,9 +21,8 @@ export function recalledMemoryContextFromEntries(params: {
     nowIso: params.nowIso ?? null,
   });
 
-  const selectedEntries = ranked
-    .slice(0, Math.max(1, params.maxEntries ?? 5))
-    .map(({ entry, freshness }) => ({
+  const selectedRankedEntries = ranked.slice(0, Math.max(1, params.maxEntries ?? 5));
+  const selectedEntries = selectedRankedEntries.map(({ entry, freshness }) => ({
       scope: entry.scope,
       memory_type: entry.memoryType,
       title: entry.title,
@@ -33,6 +32,10 @@ export function recalledMemoryContextFromEntries(params: {
       staleness_policy: entry.stalenessPolicy,
       freshness_state: freshness.state,
       freshness_note: freshness.note,
+      source_type: entry.sourceType,
+      observed_at: entry.observedAt,
+      last_verified_at: entry.lastVerifiedAt,
+      confidence: entry.confidence,
       updated_at: entry.updatedAt,
     }));
 
@@ -42,5 +45,13 @@ export function recalledMemoryContextFromEntries(params: {
 
   return {
     entries: selectedEntries,
+    selection_trace: selectedRankedEntries.map(({ entry, score, freshness, trace }) => ({
+      memory_id: entry.memoryId,
+      score,
+      freshness_state: freshness.state,
+      matched_tokens: trace.matchedTokens,
+      reasons: trace.reasons,
+      source_type: entry.sourceType,
+    })),
   };
 }

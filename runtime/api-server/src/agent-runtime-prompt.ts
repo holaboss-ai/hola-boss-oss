@@ -44,7 +44,19 @@ export interface AgentRecalledMemoryContext {
     staleness_policy?: string | null;
     freshness_state?: string | null;
     freshness_note?: string | null;
+    source_type?: string | null;
+    observed_at?: string | null;
+    last_verified_at?: string | null;
+    confidence?: number | null;
     updated_at?: string | null;
+  }> | null;
+  selection_trace?: Array<{
+    memory_id: string;
+    score: number;
+    freshness_state: string;
+    matched_tokens: string[];
+    reasons: string[];
+    source_type?: string | null;
   }> | null;
 }
 

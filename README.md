@@ -266,11 +266,12 @@ Current writeback is intentionally conservative. The runtime only promotes facts
 Durable recall is governed separately from storage:
 
 - every durable memory entry carries a scope, type, verification policy, and staleness policy
+- every durable memory entry also carries provenance metadata such as source type, observation time, verification time, and confidence
 - recall prefers user preferences first, then query-matched workspace procedures, facts, blockers, and references
 - stale references are penalized more aggressively than stable or workspace-sensitive memories
 - recalled durable memory is injected as context, not merged into the base system prompt
 
-Today, recall uses a local keyword-and-metadata ranking path backed by the durable memory catalog. The architecture keeps retrieval separate from storage so alternate recall indexes can be added later without changing the memory model itself.
+Today, recall uses a local keyword-and-metadata ranking path backed by the durable memory catalog. The runtime also records a small recall-decision trace so it can explain why a memory surfaced during debugging. The architecture keeps retrieval separate from storage so alternate recall indexes can be added later without changing the memory model itself.
 
 #### What Lives Where
 
