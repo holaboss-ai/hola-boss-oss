@@ -61,10 +61,6 @@ const OPERATIONS_DRAWER_TAB_STORAGE_KEY = "holaboss-operations-drawer-tab-v1";
 const FILES_PANE_WIDTH_STORAGE_KEY = "holaboss-files-pane-width-v1";
 const BROWSER_PANE_WIDTH_STORAGE_KEY = "holaboss-browser-pane-width-v1";
 const SPACE_VISIBILITY_STORAGE_KEY = "holaboss-space-visibility-v1";
-const PROACTIVE_TASK_PROPOSALS_ENABLED_STORAGE_KEY =
-  "holaboss-proactive-task-proposals-enabled-v1";
-const PROACTIVE_TASK_PROPOSALS_PENDING_SYNC_STORAGE_KEY =
-  "holaboss-proactive-task-proposals-pending-sync-v1";
 const THEMES = [
   "amber-minimal-dark",
   "amber-minimal-light",
@@ -221,34 +217,6 @@ function loadTheme(): AppTheme {
   }
 
   return "amber-minimal-dark";
-}
-
-function loadProactiveTaskProposalsEnabled(): boolean {
-  try {
-    const raw = localStorage.getItem(
-      PROACTIVE_TASK_PROPOSALS_ENABLED_STORAGE_KEY,
-    );
-    if (raw === "0") {
-      return false;
-    }
-  } catch {
-    // ignore
-  }
-
-  return true;
-}
-
-function loadProactiveTaskProposalsPendingSync(): boolean {
-  try {
-    const raw = localStorage.getItem(
-      PROACTIVE_TASK_PROPOSALS_PENDING_SYNC_STORAGE_KEY,
-    );
-    return raw === "1";
-  } catch {
-    // ignore
-  }
-
-  return false;
 }
 
 function spaceComponentLabel(componentId: SpaceComponentId) {
@@ -589,13 +557,19 @@ function AppShellContent() {
   const [taskProposalStatusMessage, setTaskProposalStatusMessage] =
     useState("");
   const [proactiveTaskProposalsEnabled, setProactiveTaskProposalsEnabled] =
-    useState(loadProactiveTaskProposalsEnabled);
+    useState(true);
+  const [
+    isLoadingProactiveTaskProposalsEnabled,
+    setIsLoadingProactiveTaskProposalsEnabled,
+  ] = useState(true);
+  const [
+    hasLoadedProactiveTaskProposalsPreference,
+    setHasLoadedProactiveTaskProposalsPreference,
+  ] = useState(false);
   const [
     isUpdatingProactiveTaskProposalsEnabled,
     setIsUpdatingProactiveTaskProposalsEnabled,
   ] = useState(false);
-  const [proactiveTaskProposalsPendingSync, setProactiveTaskProposalsPendingSync] =
-    useState(loadProactiveTaskProposalsPendingSync);
   const [proactiveTaskProposalsError, setProactiveTaskProposalsError] =
     useState("");
   const [proposalAction, setProposalAction] = useState<{
@@ -615,7 +589,6 @@ function AppShellContent() {
   const filesPaneWidthRef = useRef(filesPaneWidth);
   const browserPaneWidthRef = useRef(browserPaneWidth);
   const spaceVisibilityRef = useRef(spaceVisibility);
-  const proactiveTaskProposalsSyncInFlightRef = useRef(false);
 
   filesPaneWidthRef.current = filesPaneWidth;
   browserPaneWidthRef.current = browserPaneWidth;
@@ -1010,20 +983,6 @@ function AppShellContent() {
   }, [spaceVisibility]);
 
   useEffect(() => {
-    localStorage.setItem(
-      PROACTIVE_TASK_PROPOSALS_ENABLED_STORAGE_KEY,
-      proactiveTaskProposalsEnabled ? "1" : "0",
-    );
-  }, [proactiveTaskProposalsEnabled]);
-
-  useEffect(() => {
-    localStorage.setItem(
-      PROACTIVE_TASK_PROPOSALS_PENDING_SYNC_STORAGE_KEY,
-      proactiveTaskProposalsPendingSync ? "1" : "0",
-    );
-  }, [proactiveTaskProposalsPendingSync]);
-
-  useEffect(() => {
     if (spaceVisibility.agent) {
       return;
     }
@@ -1045,66 +1004,70 @@ function AppShellContent() {
     setSelectedOutputId(nextEntry.id);
   };
 
-  async function syncProactiveTaskProposalsPreference(
-    enabled: boolean,
-    options?: { silent?: boolean; showFailure?: boolean },
-  ): Promise<boolean> {
-    if (proactiveTaskProposalsSyncInFlightRef.current) {
-      return false;
-    }
+  useEffect(() => {
+    let cancelled = false;
+    const loadPreference = async () => {
+      setIsLoadingProactiveTaskProposalsEnabled(true);
+      try {
+        const preference =
+          await window.electronAPI.workspace.getProactiveTaskProposalPreference();
+        if (!cancelled) {
+          setProactiveTaskProposalsEnabled(preference.enabled !== false);
+          setProactiveTaskProposalsError("");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setProactiveTaskProposalsEnabled(false);
+          setProactiveTaskProposalsError(normalizeErrorMessage(error));
+        }
+      } finally {
+        if (!cancelled) {
+          setHasLoadedProactiveTaskProposalsPreference(true);
+          setIsLoadingProactiveTaskProposalsEnabled(false);
+        }
+      }
+    };
 
-    proactiveTaskProposalsSyncInFlightRef.current = true;
-    try {
-      await window.electronAPI.workspace.setProactiveTaskProposalPreference({
-        enabled,
-      });
-      setProactiveTaskProposalsPendingSync(false);
-      setProactiveTaskProposalsError("");
-      if (!options?.silent) {
-        appendOutputEntry({
-          title: enabled
-            ? "Proactive polling enabled"
-            : "Proactive polling paused",
-          detail: enabled
-            ? "Automatic proactive proposal polling resumed."
-            : "Automatic proactive proposal polling paused. Manual proposal trigger remains available.",
-          tone: "info",
-          renderer: {
-            type: "internal",
-            surface: "event",
-          },
-        });
-      }
-      return true;
-    } catch (error) {
-      const message = normalizeErrorMessage(error);
-      setProactiveTaskProposalsPendingSync(true);
-      if (options?.showFailure) {
-        setProactiveTaskProposalsError(message);
-        appendOutputEntry({
-          title: "Failed to sync proactive polling setting",
-          detail: message,
-          tone: "error",
-          renderer: {
-            type: "internal",
-            surface: "event",
-          },
-        });
-      }
-      return false;
-    } finally {
-      proactiveTaskProposalsSyncInFlightRef.current = false;
-    }
-  }
+    void loadPreference();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedWorkspaceId]);
 
   async function handleProactiveTaskProposalsEnabledChange(enabled: boolean) {
-    setProactiveTaskProposalsEnabled(enabled);
     setProactiveTaskProposalsError("");
-    setProactiveTaskProposalsPendingSync(true);
     setIsUpdatingProactiveTaskProposalsEnabled(true);
     try {
-      await syncProactiveTaskProposalsPreference(enabled, {
-        showFailure: true,
+      const preference =
+        await window.electronAPI.workspace.setProactiveTaskProposalPreference({
+          enabled,
+        });
+      const nextEnabled = preference.enabled !== false;
+      setProactiveTaskProposalsEnabled(nextEnabled);
+      appendOutputEntry({
+        title: nextEnabled
+          ? "Proactive polling enabled"
+          : "Proactive polling paused",
+        detail: nextEnabled
+          ? "Automatic proactive proposal polling resumed."
+          : "Automatic proactive proposal polling paused. Manual proposal trigger remains available.",
+        tone: "info",
+        renderer: {
+          type: "internal",
+          surface: "event",
+        },
+      });
+    } catch (error) {
+      const message = normalizeErrorMessage(error);
+      setProactiveTaskProposalsError(message);
+      appendOutputEntry({
+        title: "Failed to update proactive polling setting",
+        detail: message,
+        tone: "error",
+        renderer: {
+          type: "internal",
+          surface: "event",
+        },
       });
     } finally {
       setIsUpdatingProactiveTaskProposalsEnabled(false);
@@ -1311,6 +1274,11 @@ function AppShellContent() {
       return;
     }
 
+    if (!hasLoadedProactiveTaskProposalsPreference) {
+      setIsLoadingTaskProposals(false);
+      return;
+    }
+
     if (!proactiveTaskProposalsEnabled) {
       setIsLoadingTaskProposals(false);
       return;
@@ -1348,54 +1316,11 @@ function AppShellContent() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [proactiveTaskProposalsEnabled, selectedWorkspace, selectedWorkspaceId]);
-
-  useEffect(() => {
-    if (!proactiveTaskProposalsPendingSync) {
-      return;
-    }
-
-    let cancelled = false;
-    const attemptSync = async () => {
-      if (cancelled || !navigator.onLine) {
-        return;
-      }
-      await syncProactiveTaskProposalsPreference(proactiveTaskProposalsEnabled, {
-        silent: true,
-      });
-    };
-
-    void attemptSync();
-    const timer = window.setInterval(() => {
-      void attemptSync();
-    }, 30000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
   }, [
+    hasLoadedProactiveTaskProposalsPreference,
     proactiveTaskProposalsEnabled,
-    proactiveTaskProposalsPendingSync,
-  ]);
-
-  useEffect(() => {
-    const handleOnline = () => {
-      if (!proactiveTaskProposalsPendingSync) {
-        return;
-      }
-      void syncProactiveTaskProposalsPreference(proactiveTaskProposalsEnabled, {
-        silent: true,
-      });
-    };
-
-    window.addEventListener("online", handleOnline);
-    return () => {
-      window.removeEventListener("online", handleOnline);
-    };
-  }, [
-    proactiveTaskProposalsEnabled,
-    proactiveTaskProposalsPendingSync,
+    selectedWorkspace,
+    selectedWorkspaceId,
   ]);
 
   const handleDismissUpdate = () => {
@@ -1784,6 +1709,10 @@ function AppShellContent() {
                 setSettingsDialogSection("account");
                 setSettingsDialogOpen(true);
               }}
+              onOpenModelProviders={() => {
+                setSettingsDialogSection("providers");
+                setSettingsDialogOpen(true);
+              }}
               onOpenExternalUrl={handleOpenExternalUrl}
             />
           </div>
@@ -1993,6 +1922,7 @@ function AppShellContent() {
                   activeTab={activeOperationsTab}
                   onTabChange={setActiveOperationsTab}
                   proposals={taskProposals}
+                  proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
                   isLoadingProposals={isLoadingTaskProposals}
                   isTriggeringProposal={isTriggeringTaskProposal}
                   proposalStatusMessage={taskProposalStatusMessage}
@@ -2038,6 +1968,7 @@ function AppShellContent() {
         onThemeChange={handleThemeChange}
         proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
         isUpdatingProactiveTaskProposalsEnabled={
+          isLoadingProactiveTaskProposalsEnabled ||
           isUpdatingProactiveTaskProposalsEnabled
         }
         proactiveTaskProposalsError={proactiveTaskProposalsError}
