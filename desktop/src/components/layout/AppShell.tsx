@@ -23,7 +23,6 @@ import { MarketplacePane } from "@/components/panes/MarketplacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
 import { SkillsPane } from "@/components/panes/SkillsPane";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
-import { preferredSessionId } from "@/lib/sessionRouting";
 import {
   getWorkspaceAppDefinition,
   inferInstalledWorkspaceAppIdFromText,
@@ -1177,30 +1176,16 @@ function AppShellContent() {
     setProposalAction({ proposalId: proposal.proposal_id, action: "accept" });
     setTaskProposalStatusMessage("");
     try {
-      const runtimeStatesResponse =
-        await window.electronAPI.workspace.listRuntimeStates(
-          selectedWorkspaceId,
-        );
-      const targetSessionId = preferredSessionId(
-        selectedWorkspace,
-        runtimeStatesResponse.items,
-      );
-      if (!targetSessionId) {
-        throw new Error("No active session found for this workspace.");
-      }
-
-      await window.electronAPI.workspace.queueSessionInput({
-        text: proposal.task_prompt,
-        workspace_id: selectedWorkspaceId,
-        image_urls: null,
-        session_id: targetSessionId,
+      const accepted = await window.electronAPI.workspace.acceptTaskProposal({
+        proposal_id: proposal.proposal_id,
+        task_name: proposal.task_name,
+        task_prompt: proposal.task_prompt,
+        parent_session_id:
+          (selectedWorkspace.main_session_id || "").trim() || null,
         priority: 0,
         model: runtimeConfig?.defaultModel ?? null,
       });
-      await window.electronAPI.workspace.updateTaskProposalState(
-        proposal.proposal_id,
-        "accepted",
-      );
+      const targetSessionId = accepted.session.session_id;
 
       const detail = `Queued "${proposal.task_name}" into session ${targetSessionId}.`;
       const inferredAppId = inferInstalledWorkspaceAppIdFromText(
