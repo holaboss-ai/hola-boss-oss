@@ -541,6 +541,10 @@ export function renderCapabilityPolicyPromptSection(manifest: AgentCapabilityMan
   if (manifest.runtime_tools.length > 0) {
     lines.push(`Runtime capabilities available now: ${summarizeList(namesForCapabilities(manifest.runtime_tools))}`);
   }
+  if (manifest.runtime_tools.some((capability) => capability.id === "holaboss_cronjobs_create")) {
+    lines.push("Cronjob delivery routing: use `session_run` for recurring agent work such as running instructions, tasks, analysis, browsing, or writing.");
+    lines.push("Use `system_notification` only for lightweight reminders or notifications where the primary outcome is a short message rather than agent execution.");
+  }
   if (manifest.workspace_commands.length > 0) {
     lines.push(`Workspace commands available now: ${summarizeList(manifest.workspace_commands)}`);
   }

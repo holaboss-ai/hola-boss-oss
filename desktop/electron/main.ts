@@ -234,7 +234,7 @@ interface BrowserAnchorBoundsPayload {
   height: number;
 }
 
-type UiSettingsPaneSection = "account" | "settings" | "about";
+type UiSettingsPaneSection = "account" | "providers" | "settings" | "about";
 
 interface AddressSuggestionPayload {
   id: string;

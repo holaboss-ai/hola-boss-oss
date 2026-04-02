@@ -84,3 +84,29 @@ test("composeBaseAgentPrompt includes recent runtime context only when provided"
   assert.match(prompt.systemPrompt, /waiting for user input/i);
   assert.match(prompt.systemPrompt, /Previous runtime error: config parse error\./);
 });
+
+test("composeBaseAgentPrompt includes cronjob delivery routing guidance when cronjob tools are available", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    defaultTools: ["read"],
+    extraTools: ["holaboss_cronjobs_create"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "main",
+    harnessId: "pi",
+  });
+
+  const prompt = composeBaseAgentPrompt("", {
+    defaultTools: ["read"],
+    extraTools: ["holaboss_cronjobs_create"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "main",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+  });
+
+  assert.match(prompt.systemPrompt, /Cronjob delivery routing:/);
+  assert.match(prompt.systemPrompt, /use `session_run` for recurring agent work/i);
+  assert.match(prompt.systemPrompt, /Use `system_notification` only for lightweight reminders or notifications/i);
+});

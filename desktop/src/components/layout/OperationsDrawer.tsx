@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Bell, Check, ChevronRight, Clock3, Loader2, RefreshCcw, Sparkles, X } from "lucide-react";
 import { getWorkspaceAppDefinition, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 
@@ -49,6 +49,16 @@ interface OperationsDrawerProps {
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
   hasWorkspace: boolean;
+  selectedWorkspaceId: string | null;
+}
+
+interface RunningSessionEntry {
+  sessionId: string;
+  status: string;
+  title: string;
+  kind: string;
+  updatedAt: string;
+  lastError: string | null;
 }
 
 export function OperationsDrawer({
@@ -68,7 +78,8 @@ export function OperationsDrawer({
   onTriggerProposal,
   onAcceptProposal,
   onDismissProposal,
-  hasWorkspace
+  hasWorkspace,
+  selectedWorkspaceId
 }: OperationsDrawerProps) {
   const selectedOutput = useMemo(() => {
     if (!outputs.length) {
@@ -76,6 +87,74 @@ export function OperationsDrawer({
     }
     return outputs.find((entry) => entry.id === selectedOutputId) ?? outputs[0];
   }, [outputs, selectedOutputId]);
+  const [runningSessions, setRunningSessions] = useState<RunningSessionEntry[]>([]);
+  const [isLoadingRunningSessions, setIsLoadingRunningSessions] = useState(false);
+  const [runningSessionsError, setRunningSessionsError] = useState("");
+
+  useEffect(() => {
+    if (activeTab !== "running") {
+      return;
+    }
+    if (!selectedWorkspaceId) {
+      setRunningSessions([]);
+      setRunningSessionsError("");
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadRunningSessions = async () => {
+      setIsLoadingRunningSessions(true);
+      try {
+        const [runtimeStatesResponse, sessionsResponse] = await Promise.all([
+          window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId),
+          window.electronAPI.workspace.listAgentSessions(selectedWorkspaceId)
+        ]);
+        if (cancelled) {
+          return;
+        }
+
+        const sessionById = new Map(
+          sessionsResponse.items.map((session) => [session.session_id, session])
+        );
+        const nextEntries = runtimeStatesResponse.items
+          .filter((state) => state.status !== "IDLE")
+          .map((state) => {
+            const session = sessionById.get(state.session_id);
+            return {
+              sessionId: state.session_id,
+              status: state.status,
+              title: session?.title?.trim() || defaultSessionTitle(session?.kind, state.session_id),
+              kind: session?.kind?.trim() || "session",
+              updatedAt: state.updated_at,
+              lastError: runtimeStateErrorMessage(state.last_error)
+            };
+          })
+          .sort(compareRunningSessionEntries);
+
+        setRunningSessions(nextEntries);
+        setRunningSessionsError("");
+      } catch (error) {
+        if (!cancelled) {
+          setRunningSessionsError(normalizeOperationError(error));
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingRunningSessions(false);
+        }
+      }
+    };
+
+    void loadRunningSessions();
+    const intervalId = window.setInterval(() => {
+      void loadRunningSessions();
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [activeTab, selectedWorkspaceId]);
 
   return (
     <aside className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-[360px] max-w-[420px] flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
@@ -113,7 +192,14 @@ export function OperationsDrawer({
           />
         ) : null}
 
-        {activeTab === "running" ? <RunningPanel /> : null}
+        {activeTab === "running" ? (
+          <RunningPanel
+            hasWorkspace={hasWorkspace}
+            isLoading={isLoadingRunningSessions}
+            sessions={runningSessions}
+            errorMessage={runningSessionsError}
+          />
+        ) : null}
 
         {activeTab === "outputs" ? (
           <OutputsPanel
@@ -127,6 +213,73 @@ export function OperationsDrawer({
       </div>
     </aside>
   );
+}
+
+function normalizeOperationError(error: unknown): string {
+  return error instanceof Error ? error.message : "Request failed.";
+}
+
+function runtimeStateErrorMessage(value: Record<string, unknown> | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const message = typeof value.message === "string" && value.message.trim() ? value.message.trim() : "";
+  if (message) {
+    return message;
+  }
+  const rawMessage = typeof value.raw_message === "string" && value.raw_message.trim() ? value.raw_message.trim() : "";
+  return rawMessage || null;
+}
+
+function defaultSessionTitle(kind: string | null | undefined, sessionId: string): string {
+  if (kind === "cronjob") {
+    return "Cronjob run";
+  }
+  if (kind === "task_proposal") {
+    return "Task proposal run";
+  }
+  if (kind === "main") {
+    return "Main session";
+  }
+  return `Session ${sessionId.slice(0, 8)}`;
+}
+
+function runningSessionStatusRank(status: string): number {
+  switch (status) {
+    case "BUSY":
+      return 0;
+    case "QUEUED":
+      return 1;
+    case "WAITING_USER":
+      return 2;
+    case "ERROR":
+      return 3;
+    default:
+      return 4;
+  }
+}
+
+function compareRunningSessionEntries(left: RunningSessionEntry, right: RunningSessionEntry): number {
+  const statusDiff = runningSessionStatusRank(left.status) - runningSessionStatusRank(right.status);
+  if (statusDiff !== 0) {
+    return statusDiff;
+  }
+  return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+}
+
+function runningStatusClasses(status: string): string {
+  switch (status) {
+    case "BUSY":
+      return "border-primary/45 bg-primary/10 text-primary";
+    case "QUEUED":
+      return "border-primary/35 bg-primary/8 text-primary";
+    case "WAITING_USER":
+      return "border-border/45 bg-muted text-foreground/82";
+    case "ERROR":
+      return "border-destructive/35 bg-destructive/10 text-destructive";
+    default:
+      return "border-border/45 bg-muted text-muted-foreground";
+  }
 }
 
 function DrawerTabButton({
@@ -274,15 +427,64 @@ function InboxPanel({
   );
 }
 
-function RunningPanel() {
+function RunningPanel({
+  hasWorkspace,
+  isLoading,
+  sessions,
+  errorMessage
+}: {
+  hasWorkspace: boolean;
+  isLoading: boolean;
+  sessions: RunningSessionEntry[];
+  errorMessage: string;
+}) {
   return (
-    <div className="flex h-full items-center justify-center p-6">
-      <div className="theme-subtle-surface max-w-[260px] rounded-[20px] border border-border/35 px-5 py-5 text-center">
-        <div className="text-[11px] uppercase tracking-[0.16em] text-primary/76">Running</div>
-        <div className="mt-2 text-[15px] font-medium text-foreground">Execution stream coming next</div>
-        <div className="mt-2 text-[12px] leading-6 text-muted-foreground/82">
-          This panel is reserved for active runs. For now it stays as a placeholder while Inbox and Outputs take over the right rail.
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b border-border/35 px-4 py-4">
+        <div className="text-[10px] uppercase tracking-[0.16em] text-primary/76">Running</div>
+        <div className="mt-1 text-[12px] leading-6 text-foreground/88">
+          Active and failed runtime sessions for the current workspace, including cronjob runs.
         </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        {!hasWorkspace ? (
+          <CenteredNotice message="Choose a workspace to inspect active runtime sessions." />
+        ) : errorMessage ? (
+          <CenteredNotice message={errorMessage} tone="error" />
+        ) : isLoading && sessions.length === 0 ? (
+          <CenteredNotice message="Loading runtime sessions..." />
+        ) : sessions.length === 0 ? (
+          <CenteredNotice message="No active or failed runtime sessions right now." />
+        ) : (
+          <div className="grid gap-3">
+            {sessions.map((session) => (
+              <article key={session.sessionId} className="theme-subtle-surface rounded-[18px] border border-border/35 px-4 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13px] font-medium text-foreground">{session.title}</div>
+                    <div className="mt-1 text-[11px] uppercase tracking-[0.12em] text-muted-foreground/76">
+                      {session.kind.replace(/_/g, " ")}
+                    </div>
+                  </div>
+                  <div className={`shrink-0 rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${runningStatusClasses(session.status)}`}>
+                    {session.status}
+                  </div>
+                </div>
+
+                <div className="mt-3 text-[11px] text-muted-foreground/82">
+                  Updated {formatTimestamp(session.updatedAt)}
+                </div>
+
+                {session.lastError ? (
+                  <div className="mt-3 rounded-[14px] border border-destructive/25 bg-destructive/8 px-3 py-2 text-[11px] leading-5 text-destructive">
+                    {session.lastError}
+                  </div>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -360,6 +562,26 @@ function OutputsPanel({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function CenteredNotice({
+  message,
+  tone = "default"
+}: {
+  message: string;
+  tone?: "default" | "error";
+}) {
+  return (
+    <div className="flex items-center justify-center p-6">
+      <div
+        className={`theme-subtle-surface max-w-[280px] rounded-[20px] border px-5 py-5 text-center ${
+          tone === "error" ? "border-destructive/25 text-destructive" : "border-border/35"
+        }`}
+      >
+        <div className="text-[12px] leading-6">{message}</div>
+      </div>
     </div>
   );
 }
