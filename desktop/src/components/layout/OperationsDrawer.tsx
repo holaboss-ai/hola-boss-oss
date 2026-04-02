@@ -74,6 +74,7 @@ interface OperationsDrawerProps {
   activeRunningSessionId: string | null;
   hasWorkspace: boolean;
   selectedWorkspaceId: string | null;
+  mainSessionId: string | null;
 }
 
 interface RunningSessionEntry {
@@ -110,6 +111,7 @@ export function OperationsDrawer({
   activeRunningSessionId,
   hasWorkspace,
   selectedWorkspaceId,
+  mainSessionId,
 }: OperationsDrawerProps) {
   const selectedOutput = useMemo(() => {
     if (!outputs.length) {
@@ -153,7 +155,22 @@ export function OperationsDrawer({
             session,
           ]),
         );
+        const normalizedMainSessionId = (mainSessionId || "").trim();
         const nextEntries = runtimeStatesResponse.items
+          .filter((state) => {
+            if (
+              normalizedMainSessionId &&
+              state.session_id === normalizedMainSessionId
+            ) {
+              return false;
+            }
+            const sessionKind = (
+              sessionById.get(state.session_id)?.kind || ""
+            )
+              .trim()
+              .toLowerCase();
+            return sessionKind !== "main";
+          })
           .map((state) => {
             const session = sessionById.get(state.session_id);
             return {
@@ -191,7 +208,7 @@ export function OperationsDrawer({
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [activeTab, selectedWorkspaceId]);
+  }, [activeTab, mainSessionId, selectedWorkspaceId]);
 
   return (
     <aside className="theme-shell neon-border relative flex h-full min-h-0 min-w-[360px] max-w-[420px] flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">

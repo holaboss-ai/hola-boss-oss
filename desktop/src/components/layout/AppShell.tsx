@@ -1999,6 +1999,7 @@ function AppShellContent() {
                   activeRunningSessionId={activeChatSessionId}
                   hasWorkspace={hasSelectedWorkspace}
                   selectedWorkspaceId={selectedWorkspaceId}
+                  mainSessionId={(selectedWorkspace?.main_session_id || "").trim() || null}
                 />
               </div>
             ) : null}

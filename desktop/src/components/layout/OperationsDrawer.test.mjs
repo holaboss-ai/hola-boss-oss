@@ -37,6 +37,9 @@ test("operations drawer running panel opens selected sessions", async () => {
 
   assert.match(source, /including idle and/);
   assert.doesNotMatch(source, /\.filter\(\(state\) => state\.status !== "IDLE"\)/);
+  assert.match(source, /mainSessionId/);
+  assert.match(source, /state\.session_id === normalizedMainSessionId/);
+  assert.match(source, /sessionKind !== "main"/);
   assert.match(source, /onOpenRunningSession/);
   assert.match(source, /activeRunningSessionId/);
   assert.match(source, /onOpenSession=\{onOpenRunningSession\}/);
