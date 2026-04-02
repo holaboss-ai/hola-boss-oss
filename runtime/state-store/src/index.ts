@@ -10,7 +10,13 @@ export {
   sanitizeWorkspaceId,
   utcNowIso,
   type CronjobRecord,
+  type CompactionBoundaryRecord,
   type CreateWorkspaceParams,
+  type MemoryEntryScope,
+  type MemoryEntryRecord,
+  type MemoryEntryType,
+  type MemoryStalenessPolicy,
+  type MemoryVerificationPolicy,
   type RuntimeStateStoreOptions,
   type OutputEventRecord,
   type OutputFolderRecord,
@@ -20,6 +26,8 @@ export {
   type SessionInputRecord,
   type SessionMessageRecord,
   type SessionRuntimeStateRecord,
+  type TurnRequestSnapshotRecord,
+  type TurnResultRecord,
   type TaskProposalRecord,
   type WorkspaceRecord
 } from "./store.js";

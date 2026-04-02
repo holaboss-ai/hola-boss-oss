@@ -356,6 +356,86 @@ env_contract:
     content: "Past tweet performance favors concise growth hooks.",
     append: false
   });
+  await memoryService.upsert({
+    workspace_id: "workspace-1",
+    path: "workspace/workspace-1/runtime/latest-turn.md",
+    content: "Latest runtime turn summary.",
+    append: false
+  });
+  await memoryService.upsert({
+    workspace_id: "workspace-1",
+    path: "workspace/workspace-1/runtime/recent-turns/session-main.md",
+    content: "Recent runtime turn history.",
+    append: false
+  });
+  await memoryService.upsert({
+    workspace_id: "workspace-1",
+    path: "workspace/workspace-1/runtime/permission-blockers/deploy.md",
+    content: "Deploy is blocked by policy.",
+    append: false
+  });
+  await memoryService.upsert({
+    workspace_id: "workspace-1",
+    path: "workspace/workspace-1/knowledge/blockers/permission-deploy.md",
+    content: "# Recurring Blocker\n\nDeploy is blocked by policy.",
+    append: false
+  });
+  await memoryService.upsert({
+    workspace_id: "workspace-1",
+    path: "workspace/workspace-1/MEMORY.md",
+    content: "# Workspace Memory Index\n\n- [permission-deploy.md](knowledge/blockers/permission-deploy.md)",
+    append: false
+  });
+  await memoryService.upsert({
+    workspace_id: "workspace-1",
+    path: "preference/response-style.md",
+    content: "Respond concisely.",
+    append: false
+  });
+  await memoryService.upsert({
+    workspace_id: "workspace-1",
+    path: "preference/MEMORY.md",
+    content: "# Preference Memory Index\n\n- [response-style.md](response-style.md)",
+    append: false
+  });
+  await memoryService.upsert({
+    workspace_id: "workspace-1",
+    path: "MEMORY.md",
+    content: "# Memory Index\n\n- [Workspace workspace-1](workspace/workspace-1/MEMORY.md)",
+    append: false
+  });
+  store.upsertMemoryEntry({
+    memoryId: "workspace-blocker:deploy",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    scope: "workspace",
+    memoryType: "blocker",
+    subjectKey: "deploy",
+    path: "workspace/workspace-1/knowledge/blockers/permission-deploy.md",
+    title: "Recurring deploy blocker",
+    summary: "Deploy is blocked by policy.",
+    tags: ["deploy", "policy"],
+    verificationPolicy: "check_before_use",
+    stalenessPolicy: "workspace_sensitive",
+    staleAfterSeconds: 1209600,
+    fingerprint: "fingerprint-workspace-blocker",
+  });
+  store.upsertMemoryEntry({
+    memoryId: "user-preference:response-style",
+    workspaceId: null,
+    sessionId: "session-main",
+    scope: "user",
+    memoryType: "preference",
+    subjectKey: "response-style",
+    path: "preference/response-style.md",
+    title: "Response style",
+    summary: "Respond concisely.",
+    tags: ["style"],
+    verificationPolicy: "none",
+    stalenessPolicy: "stable",
+    staleAfterSeconds: null,
+    fingerprint: "fingerprint-response-style",
+  });
 
   const result = await executeBridgeJobNatively({
     job: {
@@ -375,11 +455,67 @@ env_contract:
   const context = result.output?.context as Record<string, unknown>;
   const snapshot = context.snapshot as Record<string, unknown>;
   const memory = context.memory as Record<string, unknown>;
+  const runtimeProjections = memory.runtime_projections as Record<string, unknown>;
+  const durableIndexes = memory.durable_indexes as Record<string, unknown>;
+  const durableFiles = memory.durable_files as Record<string, unknown>;
+  const durableCatalog = memory.durable_catalog as Record<string, unknown>;
+  const debugFiles = memory.debug_files as Record<string, unknown>;
+  const derivedRuntime = memory.derived_runtime as Record<string, unknown>;
   const toolManifest = context.tool_manifest as Record<string, unknown>;
   assert.equal((context.workspace as Record<string, unknown>).holaboss_user_id, "user-1");
   assert.deepEqual(snapshot.applications, ["twitter"]);
   assert.deepEqual(snapshot.mcp_tool_ids, ["twitter.performance"]);
   assert.equal((memory.files as Record<string, unknown>)["workspace/workspace-1/state.md"], "Past tweet performance favors concise growth hooks.");
+  assert.deepEqual(derivedRuntime.priority_file_paths, [
+    "workspace/workspace-1/runtime/latest-turn.md",
+    "workspace/workspace-1/runtime/permission-blockers/deploy.md",
+    "workspace/workspace-1/runtime/recent-turns/session-main.md",
+  ]);
+  assert.deepEqual(runtimeProjections.priority_file_paths, derivedRuntime.priority_file_paths);
+  assert.equal(
+    ((derivedRuntime.latest_turn as Record<string, unknown>)?.text as string),
+    "Latest runtime turn summary."
+  );
+  assert.equal(
+    (
+      (derivedRuntime.permission_blockers as Record<string, unknown>)[
+        "workspace/workspace-1/runtime/permission-blockers/deploy.md"
+      ] as string
+    ),
+    "Deploy is blocked by policy."
+  );
+  assert.equal(
+    (
+      (derivedRuntime.recent_turns as Record<string, unknown>)[
+        "workspace/workspace-1/runtime/recent-turns/session-main.md"
+      ] as string
+    ),
+    "Recent runtime turn history."
+  );
+  assert.equal(
+    ((derivedRuntime.response_style_preference as Record<string, unknown>)?.text as string),
+    "Respond concisely."
+  );
+  assert.equal(
+    ((durableIndexes.root as Record<string, unknown>)?.text as string),
+    "# Memory Index\n\n- [Workspace workspace-1](workspace/workspace-1/MEMORY.md)"
+  );
+  assert.equal(
+    (
+      (durableFiles.workspace_knowledge as Record<string, unknown>)[
+        "workspace/workspace-1/knowledge/blockers/permission-deploy.md"
+      ] as string
+    ),
+    "# Recurring Blocker\n\nDeploy is blocked by policy."
+  );
+  assert.equal(
+    ((durableFiles.user_scopes as Record<string, unknown>)["preference/response-style.md"] as string),
+    "Respond concisely."
+  );
+  assert.equal(durableCatalog.total_entries, 2);
+  assert.deepEqual(durableCatalog.counts_by_scope, { user: 1, workspace: 1 });
+  assert.deepEqual(durableCatalog.counts_by_type, { blocker: 1, preference: 1 });
+  assert.deepEqual(debugFiles.uncategorized_paths, ["workspace/workspace-1/state.md"]);
   assert.ok(Array.isArray(toolManifest.tools));
   assert.equal((toolManifest.tools as Array<Record<string, unknown>>)[0]?.tool_id, "twitter.performance");
 

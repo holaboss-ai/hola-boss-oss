@@ -1,0 +1,162 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import type { MemoryEntryRecord } from "@holaboss/runtime-state-store";
+
+import { recalledMemoryContextFromEntries } from "./memory-recall.js";
+
+function makeMemoryEntry(overrides: Partial<MemoryEntryRecord> & Pick<MemoryEntryRecord, "memoryId" | "scope" | "memoryType" | "path" | "title" | "summary">): MemoryEntryRecord {
+  return {
+    memoryId: overrides.memoryId,
+    workspaceId: overrides.workspaceId ?? "workspace-1",
+    sessionId: overrides.sessionId ?? "session-1",
+    scope: overrides.scope,
+    memoryType: overrides.memoryType,
+    subjectKey: overrides.subjectKey ?? overrides.memoryId,
+    path: overrides.path,
+    title: overrides.title,
+    summary: overrides.summary,
+    tags: overrides.tags ?? [],
+    verificationPolicy: overrides.verificationPolicy ?? "check_before_use",
+    stalenessPolicy: overrides.stalenessPolicy ?? "workspace_sensitive",
+    staleAfterSeconds: overrides.staleAfterSeconds ?? 14 * 24 * 60 * 60,
+    sourceTurnInputId: overrides.sourceTurnInputId ?? null,
+    sourceMessageId: overrides.sourceMessageId ?? null,
+    fingerprint: overrides.fingerprint ?? "f".repeat(64),
+    status: overrides.status ?? "active",
+    supersededAt: overrides.supersededAt ?? null,
+    createdAt: overrides.createdAt ?? "2026-04-01T00:00:00.000Z",
+    updatedAt: overrides.updatedAt ?? "2026-04-01T00:00:00.000Z",
+  };
+}
+
+test("recalledMemoryContextFromEntries applies freshness governance and prefers stable or fresh entries", () => {
+  const context = recalledMemoryContextFromEntries({
+    query: "deploy after policy fix",
+    nowIso: "2026-04-15T00:00:00.000Z",
+    entries: [
+      makeMemoryEntry({
+        memoryId: "user-preference:response-style",
+        workspaceId: null,
+        scope: "user",
+        memoryType: "preference",
+        path: "preference/response-style.md",
+        title: "User response style",
+        summary: "User prefers concise responses.",
+        verificationPolicy: "none",
+        stalenessPolicy: "stable",
+        staleAfterSeconds: null,
+        updatedAt: "2026-04-01T00:00:00.000Z",
+      }),
+      makeMemoryEntry({
+        memoryId: "workspace-blocker:deploy",
+        scope: "workspace",
+        memoryType: "blocker",
+        path: "workspace/workspace-1/knowledge/blockers/deploy.md",
+        title: "Deploy permission blocker",
+        summary: "Deploy calls may be denied by workspace policy.",
+        verificationPolicy: "check_before_use",
+        stalenessPolicy: "workspace_sensitive",
+        staleAfterSeconds: 30 * 24 * 60 * 60,
+        updatedAt: "2026-04-10T00:00:00.000Z",
+      }),
+      makeMemoryEntry({
+        memoryId: "workspace-reference:deploy-dashboard",
+        scope: "workspace",
+        memoryType: "reference",
+        path: "workspace/workspace-1/knowledge/references/deploy-dashboard.md",
+        title: "Deploy dashboard",
+        summary: "Check the deploy dashboard before rolling out changes.",
+        verificationPolicy: "must_reconfirm",
+        stalenessPolicy: "time_sensitive",
+        staleAfterSeconds: 24 * 60 * 60,
+        updatedAt: "2026-04-01T00:00:00.000Z",
+      }),
+    ],
+    maxEntries: 5,
+  });
+
+  assert.ok(context);
+  assert.deepEqual(
+    context.entries?.map((entry) => ({
+      title: entry.title,
+      freshness_state: entry.freshness_state,
+      verification_policy: entry.verification_policy,
+      staleness_policy: entry.staleness_policy,
+    })),
+    [
+      {
+        title: "User response style",
+        freshness_state: "stable",
+        verification_policy: "none",
+        staleness_policy: "stable",
+      },
+      {
+        title: "Deploy permission blocker",
+        freshness_state: "fresh",
+        verification_policy: "check_before_use",
+        staleness_policy: "workspace_sensitive",
+      },
+    ]
+  );
+  assert.match(String(context.entries?.[0]?.freshness_note ?? ""), /stable unless explicitly changed/i);
+  assert.match(String(context.entries?.[1]?.freshness_note ?? ""), /current workspace state/i);
+});
+
+test("recalledMemoryContextFromEntries prefers procedures and facts when the query asks for them", () => {
+  const context = recalledMemoryContextFromEntries({
+    query: "How do I release this workspace and what command should I run to verify it first?",
+    nowIso: "2026-04-15T00:00:00.000Z",
+    entries: [
+      makeMemoryEntry({
+        memoryId: "workspace-procedure:release",
+        scope: "workspace",
+        memoryType: "procedure",
+        subjectKey: "procedure:release",
+        path: "workspace/workspace-1/knowledge/procedures/release-procedure.md",
+        title: "Release procedure",
+        summary: "Release procedure for this workspace.",
+        tags: ["procedure", "release"],
+        verificationPolicy: "check_before_use",
+        stalenessPolicy: "workspace_sensitive",
+        staleAfterSeconds: 14 * 24 * 60 * 60,
+        updatedAt: "2026-04-10T00:00:00.000Z",
+      }),
+      makeMemoryEntry({
+        memoryId: "workspace-fact:verification-command",
+        scope: "workspace",
+        memoryType: "fact",
+        subjectKey: "command:verification",
+        path: "workspace/workspace-1/knowledge/facts/verification-command.md",
+        title: "Verification command",
+        summary: "Use `npm run test` for verification in this workspace.",
+        tags: ["command", "verification", "test"],
+        verificationPolicy: "check_before_use",
+        stalenessPolicy: "workspace_sensitive",
+        staleAfterSeconds: 30 * 24 * 60 * 60,
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      }),
+      makeMemoryEntry({
+        memoryId: "workspace-blocker:deploy",
+        scope: "workspace",
+        memoryType: "blocker",
+        subjectKey: "permission:deploy",
+        path: "workspace/workspace-1/knowledge/blockers/deploy.md",
+        title: "Deploy permission blocker",
+        summary: "Deploy calls may be denied by workspace policy.",
+        tags: ["deploy", "permission", "blocker"],
+        verificationPolicy: "check_before_use",
+        stalenessPolicy: "workspace_sensitive",
+        staleAfterSeconds: 14 * 24 * 60 * 60,
+        updatedAt: "2026-04-12T00:00:00.000Z",
+      }),
+    ],
+    maxEntries: 3,
+  });
+
+  assert.ok(context);
+  assert.deepEqual(
+    context.entries?.map((entry) => entry.title),
+    ["Release procedure", "Verification command", "Deploy permission blocker"]
+  );
+});

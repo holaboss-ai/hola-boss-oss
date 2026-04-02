@@ -2,8 +2,16 @@ import {
   renderCapabilityPolicyPromptSection,
   type AgentCapabilityManifest,
 } from "./agent-capability-registry.js";
+import {
+  buildPromptCacheProfileFromSections,
+  collectPromptSectionContents,
+  collectAgentPromptSections,
+  projectPromptLayersFromSections,
+  renderAgentPromptSections,
+  type AgentPromptCacheProfile,
+  type AgentPromptSection,
+} from "./agent-prompt-sections.js";
 import type {
-  HarnessPromptLayerApplyAt,
   HarnessPromptLayerPayload,
 } from "../../harnesses/src/types.js";
 
@@ -12,6 +20,32 @@ export interface AgentRecentRuntimeContext {
   last_stop_reason?: string | null;
   last_error?: string | null;
   waiting_for_user?: boolean | null;
+}
+
+export interface AgentSessionResumeContext {
+  recent_turns?: Array<{
+    input_id: string;
+    status: string;
+    stop_reason?: string | null;
+    summary?: string | null;
+    completed_at?: string | null;
+  }> | null;
+  recent_user_messages?: string[] | null;
+}
+
+export interface AgentRecalledMemoryContext {
+  entries?: Array<{
+    scope: string;
+    memory_type: string;
+    title: string;
+    summary: string;
+    path: string;
+    verification_policy: string;
+    staleness_policy?: string | null;
+    freshness_state?: string | null;
+    freshness_note?: string | null;
+    updated_at?: string | null;
+  }> | null;
 }
 
 export interface ComposeBaseAgentPromptRequest {
@@ -23,24 +57,17 @@ export interface ComposeBaseAgentPromptRequest {
   sessionMode?: string | null;
   harnessId?: string | null;
   recentRuntimeContext?: AgentRecentRuntimeContext | null;
+  sessionResumeContext?: AgentSessionResumeContext | null;
+  recalledMemoryContext?: AgentRecalledMemoryContext | null;
   capabilityManifest?: AgentCapabilityManifest | null;
 }
 
 export interface AgentPromptComposition {
   systemPrompt: string;
+  contextMessages: string[];
+  promptSections: AgentPromptSection[];
   promptLayers: HarnessPromptLayerPayload[];
-}
-
-function renderPromptLayers(
-  promptLayers: HarnessPromptLayerPayload[],
-  applyAt: HarnessPromptLayerApplyAt
-): string {
-  return promptLayers
-    .filter((layer) => layer.apply_at === applyAt)
-    .map((layer) => layer.content.trim())
-    .filter(Boolean)
-    .join("\n\n")
-    .trim();
+  promptCacheProfile: AgentPromptCacheProfile;
 }
 
 function nonEmptyText(value: string | null | undefined): string {
@@ -125,34 +152,107 @@ function recentRuntimeContextPromptSection(context: AgentRecentRuntimeContext | 
   return lines.length > 1 ? linesSection(lines) : "";
 }
 
-function pushPromptLayer(
-  promptLayers: HarnessPromptLayerPayload[],
-  layer: HarnessPromptLayerPayload | null
-): void {
-  if (!layer) {
-    return;
+function sessionResumeContextPromptSection(context: AgentSessionResumeContext | null | undefined): string {
+  if (!context) {
+    return "";
   }
-  const trimmed = layer.content.trim();
-  if (!trimmed) {
-    return;
+  const recentTurns = Array.isArray(context.recent_turns) ? context.recent_turns : [];
+  const recentUserMessages = Array.isArray(context.recent_user_messages) ? context.recent_user_messages : [];
+  if (recentTurns.length === 0 && recentUserMessages.length === 0) {
+    return "";
   }
-  promptLayers.push({
-    ...layer,
-    content: trimmed,
-  });
+
+  const lines = [
+    "Session resume context:",
+    "Use this as continuity context derived from persisted turn results and selected prior session messages. Verify current workspace state before acting on details that may have changed.",
+  ];
+
+  if (recentTurns.length > 0) {
+    lines.push("", "Recent prior turns:");
+    for (const turn of recentTurns) {
+      const stopReason = nonEmptyText(turn.stop_reason);
+      const summary = nonEmptyText(turn.summary);
+      const completedAt = nonEmptyText(turn.completed_at);
+      const details: string[] = [`status=\`${nonEmptyText(turn.status) || "unknown"}\``];
+      if (stopReason) {
+        details.push(`stop=\`${stopReason}\``);
+      }
+      if (completedAt) {
+        details.push(`completed=${completedAt}`);
+      }
+      const detailText = details.length > 0 ? ` (${details.join(", ")})` : "";
+      lines.push(`- \`${nonEmptyText(turn.input_id) || "unknown"}\`${detailText}: ${summary || "No compact summary available."}`);
+    }
+  }
+
+  if (recentUserMessages.length > 0) {
+    lines.push("", "Recent prior user requests:");
+    for (const message of recentUserMessages) {
+      lines.push(`- ${message}`);
+    }
+  }
+
+  return linesSection(lines);
 }
 
-export function composeBaseAgentPrompt(
+function recalledMemoryPromptSection(context: AgentRecalledMemoryContext | null | undefined): string {
+  const entries = Array.isArray(context?.entries) ? context.entries : [];
+  if (entries.length === 0) {
+    return "";
+  }
+
+  const lines = [
+    "Recalled durable memory:",
+    "Use these as durable memories, not as guaranteed current truth. Verify entries marked `check_before_use` or `must_reconfirm` before acting on them, and treat stale entries as hints until reconfirmed.",
+  ];
+
+  for (const entry of entries) {
+    const scope = nonEmptyText(entry.scope) || "memory";
+    const memoryType = nonEmptyText(entry.memory_type) || "memory";
+    const title = nonEmptyText(entry.title) || "Untitled memory";
+    const summary = nonEmptyText(entry.summary) || "No summary available.";
+    const path = nonEmptyText(entry.path);
+    const verificationPolicy = nonEmptyText(entry.verification_policy) || "none";
+    const stalenessPolicy = nonEmptyText(entry.staleness_policy) || "stable";
+    const freshnessState = nonEmptyText(entry.freshness_state) || "fresh";
+    const freshnessNote = nonEmptyText(entry.freshness_note);
+    const pathSuffix = path ? ` (\`${path}\`)` : "";
+    const freshnessSuffix = freshnessNote
+      ? ` Freshness: \`${freshnessState}\` (\`${stalenessPolicy}\`) - ${freshnessNote}`
+      : ` Freshness: \`${freshnessState}\` (\`${stalenessPolicy}\`).`;
+    lines.push(
+      `- [${scope}/${memoryType}] ${title}${pathSuffix}: ${summary} Verification: \`${verificationPolicy}\`.${freshnessSuffix}`
+    );
+  }
+
+  return linesSection(lines);
+}
+
+function pushPromptLayer(
+  promptSections: AgentPromptSection[],
+  section: AgentPromptSection | null
+): void {
+  const normalized = collectAgentPromptSections([section]);
+  if (normalized.length === 0) {
+    return;
+  }
+  promptSections.push(...normalized);
+}
+
+export function buildBaseAgentPromptSections(
   workspacePrompt: string,
   request: ComposeBaseAgentPromptRequest
-): AgentPromptComposition {
+): AgentPromptSection[] {
   const trimmedWorkspacePrompt = workspacePrompt.trim();
   const capabilityManifest = request.capabilityManifest ?? null;
-  const promptLayers: HarnessPromptLayerPayload[] = [];
+  const promptSections: AgentPromptSection[] = [];
 
-  pushPromptLayer(promptLayers, {
+  pushPromptLayer(promptSections, {
     id: "runtime_core",
+    channel: "system_prompt",
     apply_at: "runtime_config",
+    priority: 100,
+    volatility: "stable",
     content: linesSection([
       "Base runtime instructions:",
       "These base runtime instructions are mandatory and MUST ALWAYS BE FOLLOWED NO MATTER WHAT.",
@@ -178,41 +278,74 @@ export function composeBaseAgentPrompt(
   if (request.resolvedMcpToolRefs.length > 0) {
     executionLines.push("When a connected MCP tool is relevant, call it directly instead of only describing what it would do.");
   }
-  pushPromptLayer(promptLayers, {
+  pushPromptLayer(promptSections, {
     id: "execution_policy",
+    channel: "system_prompt",
     apply_at: "runtime_config",
+    priority: 200,
+    volatility: "stable",
     content: linesSection(executionLines)
   });
 
-  pushPromptLayer(promptLayers, {
+  pushPromptLayer(promptSections, {
     id: "session_policy",
+    channel: "system_prompt",
     apply_at: "runtime_config",
+    priority: 300,
+    volatility: "run",
     content: sessionPolicyPromptSection(request)
   });
 
   pushPromptLayer(
-    promptLayers,
+    promptSections,
     capabilityManifest
       ? {
           id: "capability_policy",
+          channel: "system_prompt",
           apply_at: "runtime_config",
+          priority: 400,
+          volatility: "run",
           content: renderCapabilityPolicyPromptSection(capabilityManifest)
         }
       : null
   );
 
-  pushPromptLayer(promptLayers, {
+  pushPromptLayer(promptSections, {
     id: "recent_runtime_context",
+    channel: "context_message",
     apply_at: "runtime_config",
+    priority: 500,
+    volatility: "run",
     content: recentRuntimeContextPromptSection(request.recentRuntimeContext)
   });
 
+  pushPromptLayer(promptSections, {
+    id: "resume_context",
+    channel: "context_message",
+    apply_at: "runtime_config",
+    priority: 550,
+    volatility: "run",
+    content: sessionResumeContextPromptSection(request.sessionResumeContext)
+  });
+
+  pushPromptLayer(promptSections, {
+    id: "memory_recall",
+    channel: "context_message",
+    apply_at: "runtime_config",
+    priority: 575,
+    volatility: "run",
+    content: recalledMemoryPromptSection(request.recalledMemoryContext)
+  });
+
   pushPromptLayer(
-    promptLayers,
+    promptSections,
     trimmedWorkspacePrompt
       ? {
           id: "workspace_policy",
+          channel: "system_prompt",
           apply_at: "runtime_config",
+          priority: 600,
+          volatility: "workspace",
           content: linesSection([
             "Workspace instructions from AGENTS.md:",
             "Treat these workspace instructions as additional requirements. Follow them unless they conflict with the base runtime instructions above.",
@@ -222,9 +355,24 @@ export function composeBaseAgentPrompt(
       : null
   );
 
+  return collectAgentPromptSections(promptSections);
+}
+
+export function composeBaseAgentPrompt(
+  workspacePrompt: string,
+  request: ComposeBaseAgentPromptRequest
+): AgentPromptComposition {
+  const promptSections = buildBaseAgentPromptSections(workspacePrompt, request);
+  const promptLayers = projectPromptLayersFromSections(promptSections);
+  const systemPrompt = renderAgentPromptSections(promptSections, "system_prompt");
+  const contextMessages = collectPromptSectionContents(promptSections, "context_message");
+
   return {
-    systemPrompt: renderPromptLayers(promptLayers, "runtime_config"),
+    systemPrompt,
+    contextMessages,
+    promptSections,
     promptLayers,
+    promptCacheProfile: buildPromptCacheProfileFromSections(promptSections),
   };
 }
 

@@ -59,7 +59,7 @@ const APP_THEMES = new Set([
   "ember",
   "glacier",
   "mono",
-  "claude",
+  "sepia",
   "slate",
   "paper",
   "graphite",
@@ -975,7 +975,7 @@ function getPopupThemePalette(theme: string): PopupThemePalette {
         emptyBg: "rgba(250, 245, 244, 0.92)",
         error: "rgba(184, 67, 67, 0.94)",
       };
-    case "claude":
+    case "sepia":
       return {
         fontFamily: '"IBM Plex Sans", "Aptos", "Segoe UI Variable", sans-serif',
         text: "rgba(74, 54, 39, 0.94)",
@@ -1144,7 +1144,7 @@ function getPopupThemePalette(theme: string): PopupThemePalette {
 function popupThemeCss(theme = currentTheme) {
   const palette = getPopupThemePalette(theme);
   const isLightTheme =
-    theme === "holaboss" || theme === "claude" || theme === "paper";
+    theme === "holaboss" || theme === "sepia" || theme === "paper";
   const surfaceSoft = `color-mix(in srgb, ${palette.controlBg} 72%, ${palette.panelBgAlt} 28%)`;
   const surfaceSubtle = `color-mix(in srgb, ${palette.controlBg} 52%, ${palette.panelBgAlt} 48%)`;
   return `

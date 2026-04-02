@@ -1,0 +1,186 @@
+import type { MemoryEntryRecord } from "@holaboss/runtime-state-store";
+
+import { assessMemoryFreshness, governanceRuleForMemoryType, type MemoryFreshnessAssessment } from "./memory-governance.js";
+
+export interface RankedMemoryRecallEntry {
+  entry: MemoryEntryRecord;
+  score: number;
+  freshness: MemoryFreshnessAssessment;
+}
+
+export interface MemoryRecallIndex {
+  rank(params: {
+    query: string;
+    entries: MemoryEntryRecord[];
+    nowIso?: string | null;
+  }): RankedMemoryRecallEntry[];
+}
+
+function tokenize(value: string): string[] {
+  const matches = value.match(/[a-z0-9]{2,}/gi);
+  if (!matches) {
+    return [];
+  }
+  return [...new Set(matches.map((token) => token.toLowerCase()))];
+}
+
+function queryIntentBoost(tokens: string[], entry: MemoryEntryRecord): number {
+  if (tokens.length === 0) {
+    return 0;
+  }
+  const hasProcedureCue = tokens.some((token) => ["how", "steps", "procedure", "process", "workflow"].includes(token));
+  const hasBlockerCue = tokens.some((token) => ["blocked", "blocker", "denied", "permission", "policy", "fix"].includes(token));
+  const hasCommandCue = tokens.some((token) => ["command", "commands", "run", "verify", "verification", "test", "build", "deploy", "release"].includes(token));
+  const hasReferenceCue = tokens.some((token) => ["reference", "references", "docs", "dashboard", "url", "link"].includes(token));
+
+  if (entry.memoryType === "procedure" && hasProcedureCue) {
+    return 6;
+  }
+  if (entry.memoryType === "fact" && hasCommandCue) {
+    return 2;
+  }
+  if (entry.memoryType === "blocker" && hasBlockerCue) {
+    return 3;
+  }
+  if (entry.memoryType === "reference" && hasReferenceCue) {
+    return 2;
+  }
+  return 0;
+}
+
+function scopePriority(entry: MemoryEntryRecord): number {
+  return entry.scope === "user" ? 0 : 1;
+}
+
+function queryTypePriority(tokens: string[], entry: MemoryEntryRecord): number {
+  const hasProcedureCue = tokens.some((token) => ["how", "steps", "procedure", "process", "workflow"].includes(token));
+  const hasCommandCue = tokens.some((token) => ["command", "commands", "run", "verify", "verification", "test", "build", "deploy", "release"].includes(token));
+  const hasBlockerCue = tokens.some((token) => ["blocked", "blocker", "denied", "permission", "policy", "fix"].includes(token));
+  const hasReferenceCue = tokens.some((token) => ["reference", "references", "docs", "dashboard", "url", "link"].includes(token));
+
+  if (hasProcedureCue) {
+    return entry.memoryType === "procedure" ? 0 : 1;
+  }
+  if (hasCommandCue) {
+    return entry.memoryType === "fact" ? 0 : 1;
+  }
+  if (hasBlockerCue) {
+    return entry.memoryType === "blocker" ? 0 : 1;
+  }
+  if (hasReferenceCue) {
+    return entry.memoryType === "reference" ? 0 : 1;
+  }
+  return 1;
+}
+
+export class KeywordMetadataMemoryRecallIndex implements MemoryRecallIndex {
+  rank(params: {
+    query: string;
+    entries: MemoryEntryRecord[];
+    nowIso?: string | null;
+  }): RankedMemoryRecallEntry[] {
+    const tokens = tokenize(params.query);
+    return params.entries
+      .map((entry) => {
+        const freshness = assessMemoryFreshness(entry, params.nowIso);
+        const governance = governanceRuleForMemoryType(entry.memoryType);
+        const loweredTitle = entry.title.toLowerCase();
+        const loweredSummary = entry.summary.toLowerCase();
+        const loweredPath = entry.path.toLowerCase();
+        const loweredSubjectKey = entry.subjectKey.toLowerCase();
+        const loweredTags = entry.tags.map((tag) => tag.toLowerCase());
+        const haystack = [
+          loweredTitle,
+          loweredSummary,
+          entry.memoryType,
+          loweredPath,
+          loweredSubjectKey,
+          ...loweredTags,
+        ].join(" ");
+
+        let score = governance.recallBoost;
+        if (entry.scope === "user") {
+          score += 6;
+        }
+        score += queryIntentBoost(tokens, entry);
+
+        const normalizedQuery = params.query.trim().toLowerCase();
+        if (normalizedQuery && (loweredTitle.includes(normalizedQuery) || loweredSummary.includes(normalizedQuery))) {
+          score += 4;
+        }
+
+        for (const token of tokens) {
+          if (loweredTitle.includes(token)) {
+            score += 3;
+          }
+          if (loweredTags.includes(token)) {
+            score += 3;
+          }
+          if (loweredSubjectKey.includes(token)) {
+            score += 2;
+          }
+          if (loweredSummary.includes(token)) {
+            score += 2;
+          }
+          if (loweredPath.includes(token)) {
+            score += 1;
+          }
+          if (haystack.includes(token)) {
+            score += 0.5;
+          }
+        }
+
+        if (tokens.length === 0 && entry.scope !== "user") {
+          score = 0;
+        }
+        if (freshness.state === "stale") {
+          score -= 3;
+        }
+        if (entry.memoryType === "reference" && freshness.state === "stale") {
+          score = -1;
+        }
+        return {
+          entry,
+          score,
+          freshness,
+          scopePriority: scopePriority(entry),
+          typePriority: queryTypePriority(tokens, entry),
+        };
+      })
+      .filter(({ entry, score }) => entry.scope === "user" || score > 0)
+      .sort((left, right) => {
+        if (left.scopePriority !== right.scopePriority) {
+          return left.scopePriority - right.scopePriority;
+        }
+        if (left.typePriority !== right.typePriority) {
+          return left.typePriority - right.typePriority;
+        }
+        if (left.score !== right.score) {
+          return right.score - left.score;
+        }
+        if (left.freshness.state !== right.freshness.state) {
+          return freshnessRank(left.freshness.state) - freshnessRank(right.freshness.state);
+        }
+        return right.entry.updatedAt.localeCompare(left.entry.updatedAt);
+      });
+  }
+}
+
+function freshnessRank(value: MemoryFreshnessAssessment["state"]): number {
+  switch (value) {
+    case "stable":
+      return 0;
+    case "fresh":
+      return 1;
+    case "stale":
+      return 2;
+    default:
+      return 3;
+  }
+}
+
+const DEFAULT_MEMORY_RECALL_INDEX = new KeywordMetadataMemoryRecallIndex();
+
+export function defaultMemoryRecallIndex(): MemoryRecallIndex {
+  return DEFAULT_MEMORY_RECALL_INDEX;
+}

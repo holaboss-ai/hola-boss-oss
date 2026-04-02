@@ -1,0 +1,301 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, test } from "node:test";
+
+import { RuntimeStateStore } from "@holaboss/runtime-state-store";
+
+import { FilesystemMemoryService } from "./memory.js";
+import { writeTurnMemory } from "./turn-memory-writeback.js";
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function makeTempDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function makeRuntimeState(prefix: string): {
+  root: string;
+  store: RuntimeStateStore;
+  memoryService: FilesystemMemoryService;
+} {
+  const root = makeTempDir(prefix);
+  const workspaceRoot = path.join(root, "workspaces");
+  return {
+    root,
+    store: new RuntimeStateStore({
+      dbPath: path.join(root, "runtime.db"),
+      workspaceRoot,
+    }),
+    memoryService: new FilesystemMemoryService({ workspaceRoot }),
+  };
+}
+
+function seedWorkspace(store: RuntimeStateStore): void {
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-main",
+  });
+}
+
+test("writeTurnMemory compacts a turn and writes deterministic runtime memory files", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-turn-memory-");
+  seedWorkspace(store);
+  store.insertSessionMessage({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    role: "user",
+    text: "Please keep your responses concise.",
+    messageId: "user-1",
+  });
+
+  const turnResult = store.upsertTurnResult({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    startedAt: "2026-04-02T12:00:00.000Z",
+    completedAt: "2026-04-02T12:00:05.000Z",
+    status: "completed",
+    stopReason: "ok",
+    assistantText: "Implemented the runtime memory writeback path.\nVerified the affected tests.",
+    toolUsageSummary: {
+      total_calls: 2,
+      completed_calls: 1,
+      failed_calls: 1,
+      tool_names: ["read", "deploy"],
+      tool_ids: ["workspace.deploy"],
+    },
+    permissionDenials: [
+      {
+        tool_name: "deploy",
+        tool_id: "workspace.deploy",
+        reason: "permission denied by policy",
+      },
+    ],
+    promptSectionIds: ["runtime_core", "execution_policy"],
+    capabilityManifestFingerprint: "f".repeat(64),
+    tokenUsage: { input_tokens: 12, output_tokens: 34 },
+  });
+
+  const updated = await writeTurnMemory({
+    store,
+    memoryService,
+    turnResult,
+  });
+  const captured = await memoryService.capture({ workspace_id: "workspace-1" });
+  const files = captured.files as Record<string, string>;
+  const permissionBlockerPath = Object.keys(files).find((filePath) =>
+    filePath.startsWith("workspace/workspace-1/runtime/permission-blockers/")
+  );
+  const memoryEntryIds = store.listMemoryEntries({ status: "active" }).map((entry) => entry.memoryId).sort((left, right) =>
+    left.localeCompare(right)
+  );
+  const responseStyleMemory = store.getMemoryEntry({ memoryId: "user-preference:response-style" });
+
+  assert.equal(
+    updated.compactedSummary,
+    "Implemented the runtime memory writeback path. Verified the affected tests."
+  );
+  assert.equal(permissionBlockerPath != null, true);
+  assert.deepEqual(
+    Object.keys(files)
+      .filter((filePath) => !filePath.startsWith("workspace/workspace-1/runtime/permission-blockers/"))
+      .sort((left, right) => left.localeCompare(right)),
+    [
+      "MEMORY.md",
+      "preference/MEMORY.md",
+      "preference/response-style.md",
+      "workspace/workspace-1/MEMORY.md",
+      "workspace/workspace-1/runtime/blockers/session-main.md",
+      "workspace/workspace-1/runtime/latest-turn.md",
+      "workspace/workspace-1/runtime/recent-turns/session-main.md",
+      "workspace/workspace-1/runtime/session-state/session-main.md",
+    ]
+  );
+  assert.deepEqual(memoryEntryIds, ["user-preference:response-style"]);
+  assert.equal(responseStyleMemory?.verificationPolicy, "none");
+  assert.equal(responseStyleMemory?.stalenessPolicy, "stable");
+  assert.equal(responseStyleMemory?.staleAfterSeconds, null);
+  assert.match(files["workspace/workspace-1/runtime/session-state/session-main.md"], /Runtime Session Snapshot/);
+  assert.match(files["workspace/workspace-1/runtime/session-state/session-main.md"], /execution_policy/);
+  assert.match(files["workspace/workspace-1/runtime/latest-turn.md"], /Latest Runtime Turn/);
+  assert.match(files["workspace/workspace-1/runtime/recent-turns/session-main.md"], /Recent Runtime Turns/);
+  assert.match(files["workspace/workspace-1/runtime/recent-turns/session-main.md"], /input-1/);
+  assert.match(files["preference/response-style.md"], /User Response Style Preference/);
+  assert.match(files["preference/response-style.md"], /`concise`/);
+  assert.match(files["preference/MEMORY.md"], /User response style/);
+  assert.match(files["workspace/workspace-1/MEMORY.md"], /No durable workspace memories indexed yet/);
+  assert.match(files["MEMORY.md"], /Preferences/);
+  assert.match(String(permissionBlockerPath), /permission-blockers\/[a-f0-9]{16}\.md$/);
+  assert.match(files[permissionBlockerPath as string], /permission denied by policy/);
+
+  store.close();
+});
+
+test("writeTurnMemory reuses stable blocker paths across repeated matching denials", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-turn-memory-dedupe-");
+  seedWorkspace(store);
+
+  const firstTurn = store.upsertTurnResult({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    startedAt: "2026-04-02T12:00:00.000Z",
+    completedAt: "2026-04-02T12:00:05.000Z",
+    status: "failed",
+    stopReason: "policy_denied",
+    assistantText: "",
+    permissionDenials: [
+      {
+        tool_name: "deploy",
+        tool_id: "workspace.deploy",
+        reason: "permission denied by policy",
+      },
+    ],
+  });
+  await writeTurnMemory({
+    store,
+    memoryService,
+    turnResult: firstTurn,
+  });
+
+  const secondTurn = store.upsertTurnResult({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-2",
+    startedAt: "2026-04-02T12:05:00.000Z",
+    completedAt: "2026-04-02T12:05:04.000Z",
+    status: "failed",
+    stopReason: "policy_denied",
+    assistantText: "",
+    permissionDenials: [
+      {
+        tool_name: "deploy",
+        tool_id: "workspace.deploy",
+        reason: "permission denied by policy",
+      },
+    ],
+  });
+  await writeTurnMemory({
+    store,
+    memoryService,
+    turnResult: secondTurn,
+  });
+
+  const captured = await memoryService.capture({ workspace_id: "workspace-1" });
+  const filePaths = (captured.file_paths as string[]).sort((left, right) => left.localeCompare(right));
+  const files = captured.files as Record<string, string>;
+  const permissionBlockerPaths = filePaths.filter((filePath) =>
+    filePath.startsWith("workspace/workspace-1/runtime/permission-blockers/")
+  );
+  const durableBlockerPaths = filePaths.filter((filePath) =>
+    filePath.startsWith("workspace/workspace-1/knowledge/blockers/")
+  );
+  const memoryEntries = store.listMemoryEntries({ status: "active" });
+  const blockerEntry = memoryEntries.find((entry) => entry.memoryType === "blocker");
+
+  assert.deepEqual(
+    filePaths.filter((filePath) => !filePath.startsWith("workspace/workspace-1/runtime/permission-blockers/")),
+    [
+      "MEMORY.md",
+      "preference/MEMORY.md",
+      "workspace/workspace-1/MEMORY.md",
+      ...durableBlockerPaths,
+      "workspace/workspace-1/runtime/blockers/session-main.md",
+      "workspace/workspace-1/runtime/latest-turn.md",
+      "workspace/workspace-1/runtime/recent-turns/session-main.md",
+      "workspace/workspace-1/runtime/session-state/session-main.md",
+    ].sort((left, right) => left.localeCompare(right))
+  );
+  assert.equal(permissionBlockerPaths.length, 1);
+  assert.equal(durableBlockerPaths.length, 1);
+  assert.match(permissionBlockerPaths[0], /permission-blockers\/[a-f0-9]{16}\.md$/);
+  assert.match(durableBlockerPaths[0], /knowledge\/blockers\/permission-[a-f0-9]{16}\.md$/);
+  assert.equal(memoryEntries.some((entry) => entry.memoryType === "blocker"), true);
+  assert.equal(blockerEntry?.verificationPolicy, "check_before_use");
+  assert.equal(blockerEntry?.stalenessPolicy, "workspace_sensitive");
+  assert.equal(blockerEntry?.staleAfterSeconds, 14 * 24 * 60 * 60);
+  assert.match(files["workspace/workspace-1/runtime/latest-turn.md"], /input-2/);
+  assert.match(files["workspace/workspace-1/runtime/recent-turns/session-main.md"], /input-2/);
+  assert.match(files["workspace/workspace-1/runtime/recent-turns/session-main.md"], /input-1/);
+  assert.match(files["workspace/workspace-1/runtime/blockers/session-main.md"], /policy_denied/);
+  assert.match(files[durableBlockerPaths[0]], /Recurring Permission Blocker/);
+  assert.match(files["workspace/workspace-1/MEMORY.md"], /Deploy permission blocker/);
+  assert.match(files["MEMORY.md"], /Workspace workspace-1/);
+
+  store.close();
+});
+
+test("writeTurnMemory extracts durable workspace facts and procedures from explicit instructions", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-turn-memory-facts-");
+  seedWorkspace(store);
+  store.insertSessionMessage({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    role: "user",
+    text: [
+      "Please keep your responses concise.",
+      "",
+      "For verification, use `npm run test`.",
+      "",
+      "Release procedure:",
+      "1. Run `npm run test`.",
+      "2. Run `npm run build`.",
+      "3. Publish the bundle.",
+    ].join("\n"),
+    messageId: "user-1",
+  });
+
+  const turnResult = store.upsertTurnResult({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    startedAt: "2026-04-02T12:00:00.000Z",
+    completedAt: "2026-04-02T12:00:05.000Z",
+    status: "completed",
+    stopReason: "ok",
+    assistantText: "Captured workspace-specific instructions for future runs.",
+  });
+
+  await writeTurnMemory({
+    store,
+    memoryService,
+    turnResult,
+  });
+
+  const captured = await memoryService.capture({ workspace_id: "workspace-1" });
+  const files = captured.files as Record<string, string>;
+  const memoryEntries = store.listMemoryEntries({ status: "active" });
+  const verificationFact = memoryEntries.find((entry) => entry.memoryType === "fact");
+  const releaseProcedure = memoryEntries.find((entry) => entry.memoryType === "procedure");
+
+  assert.ok(files["workspace/workspace-1/knowledge/facts/verification-command.md"]);
+  assert.ok(files["workspace/workspace-1/knowledge/procedures/release-procedure.md"]);
+  assert.match(files["workspace/workspace-1/knowledge/facts/verification-command.md"], /Workspace Fact: Verification Command/);
+  assert.match(files["workspace/workspace-1/knowledge/facts/verification-command.md"], /`npm run test`/);
+  assert.match(files["workspace/workspace-1/knowledge/procedures/release-procedure.md"], /Workspace Procedure: Release/);
+  assert.match(files["workspace/workspace-1/knowledge/procedures/release-procedure.md"], /1\. Run `npm run test`\./);
+  assert.match(files["workspace/workspace-1/knowledge/procedures/release-procedure.md"], /2\. Run `npm run build`\./);
+  assert.match(files["workspace/workspace-1/MEMORY.md"], /Verification command/);
+  assert.match(files["workspace/workspace-1/MEMORY.md"], /Release procedure/);
+  assert.equal(verificationFact?.verificationPolicy, "check_before_use");
+  assert.equal(verificationFact?.stalenessPolicy, "workspace_sensitive");
+  assert.equal(verificationFact?.staleAfterSeconds, 30 * 24 * 60 * 60);
+  assert.equal(releaseProcedure?.verificationPolicy, "check_before_use");
+  assert.equal(releaseProcedure?.stalenessPolicy, "workspace_sensitive");
+  assert.equal(releaseProcedure?.staleAfterSeconds, 14 * 24 * 60 * 60);
+
+  store.close();
+});

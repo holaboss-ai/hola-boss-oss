@@ -7,6 +7,7 @@ import { afterEach, test } from "node:test";
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import { processClaimedInput } from "./claimed-input-executor.js";
+import type { MemoryServiceLike } from "./memory.js";
 
 const tempDirs: string[] = [];
 const ORIGINAL_ENV = {
@@ -100,6 +101,7 @@ test("claimed input marks missing workspace failed and runtime error", async () 
     sessionId: "session-main",
     inputId: queued.inputId
   });
+  const turnResult = store.getTurnResult({ inputId: queued.inputId });
 
   assert.ok(updated);
   assert.equal(updated.status, "FAILED");
@@ -107,12 +109,35 @@ test("claimed input marks missing workspace failed and runtime error", async () 
   assert.equal(runtimeState.status, "ERROR");
   assert.deepEqual(runtimeState.lastError, { message: "workspace not found" });
   assert.deepEqual(events, []);
+  assert.ok(turnResult);
+  assert.equal(turnResult.status, "failed");
+  assert.equal(turnResult.stopReason, "workspace_not_found");
+  assert.equal(turnResult.assistantText, "");
+  assert.deepEqual(turnResult.toolUsageSummary, {
+    total_calls: 0,
+    completed_calls: 0,
+    failed_calls: 0,
+    tool_names: [],
+    tool_ids: []
+  });
 
   store.close();
 });
 
 test("claimed input persists runner events, assistant text, and idle state on success", async () => {
   const store = makeStore("hb-claimed-input-success-");
+  const memoryUpserts: Array<Record<string, unknown>> = [];
+  const memoryService: MemoryServiceLike = {
+    async search() { return { results: [] }; },
+    async get() { return { path: "", text: "" }; },
+    async upsert(payload: Record<string, unknown>) {
+      memoryUpserts.push({ ...payload });
+      return { path: payload.path, text: payload.content };
+    },
+    async status() { return {}; },
+    async sync() { return {}; },
+    async capture() { return { files: {} }; },
+  };
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
@@ -128,9 +153,12 @@ test("claimed input persists runner events, assistant text, and idle state on su
   setNodeRunnerCommand([
     "const request = process.argv.at(-1) ?? '';",
     "void request;",
-    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');`,
-    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'output_delta', payload: { delta: 'Hello from TS' } }) + '\\n');`,
-    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 3, event_type: 'run_completed', payload: { status: 'ok' } }) + '\\n');`
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello', prompt_section_ids: ['runtime_core', 'execution_policy', 'capability_policy'], capability_manifest_fingerprint: 'a'.repeat(64), request_snapshot_fingerprint: 'b'.repeat(64), prompt_cache_profile: { cacheable_section_ids: ['runtime_core', 'execution_policy'], volatile_section_ids: ['capability_policy'] } } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'tool_call', payload: { phase: 'started', tool_name: 'read_file', call_id: 'call-1', error: false } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 3, event_type: 'tool_call', payload: { phase: 'completed', tool_name: 'read_file', call_id: 'call-1', error: false } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 4, event_type: 'tool_call', payload: { phase: 'completed', tool_name: 'deploy', tool_id: 'workspace.deploy', call_id: 'call-2', error: true, message: 'permission denied by policy' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 5, event_type: 'output_delta', payload: { delta: 'Hello from TS' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 6, event_type: 'run_completed', payload: { status: 'ok', usage: { input_tokens: 12, output_tokens: 34 } } }) + '\\n');`
   ]);
 
   const claimed = store.claimInputs({
@@ -142,7 +170,8 @@ test("claimed input persists runner events, assistant text, and idle state on su
   await processClaimedInput({
     store,
     record: claimed[0],
-    claimedBy: "sandbox-agent-ts-worker"
+    claimedBy: "sandbox-agent-ts-worker",
+    memoryService,
   });
 
   const updated = store.getInput(queued.inputId);
@@ -158,6 +187,7 @@ test("claimed input persists runner events, assistant text, and idle state on su
     workspaceId: workspace.id,
     sessionId: "session-main"
   });
+  const turnResult = store.getTurnResult({ inputId: queued.inputId });
 
   assert.ok(updated);
   assert.equal(updated.status, "DONE");
@@ -168,11 +198,93 @@ test("claimed input persists runner events, assistant text, and idle state on su
   assert.equal(runtimeState.lastError, null);
   assert.deepEqual(
     events.map((event) => event.eventType),
-    ["run_started", "output_delta", "run_completed"]
+    ["run_started", "tool_call", "tool_call", "tool_call", "output_delta", "run_completed"]
   );
   assert.equal(messages.length, 1);
   assert.equal(messages[0].role, "assistant");
   assert.equal(messages[0].text, "Hello from TS");
+  assert.ok(turnResult);
+  assert.equal(turnResult.status, "completed");
+  assert.equal(turnResult.stopReason, "ok");
+  assert.equal(turnResult.assistantText, "Hello from TS");
+  assert.equal(turnResult.compactedSummary, "Hello from TS");
+  assert.deepEqual(turnResult.promptSectionIds, [
+    "runtime_core",
+    "execution_policy",
+    "capability_policy"
+  ]);
+  assert.equal(turnResult.capabilityManifestFingerprint, "a".repeat(64));
+  assert.equal(turnResult.requestSnapshotFingerprint, "b".repeat(64));
+  assert.deepEqual(turnResult.promptCacheProfile, {
+    cacheable_section_ids: ["runtime_core", "execution_policy"],
+    volatile_section_ids: ["capability_policy"],
+  });
+  assert.equal(turnResult.compactionBoundaryId, `compaction:${queued.inputId}`);
+  assert.deepEqual(turnResult.toolUsageSummary, {
+    total_calls: 2,
+    completed_calls: 1,
+    failed_calls: 1,
+    tool_names: ["deploy", "read_file"],
+    tool_ids: ["workspace.deploy"]
+  });
+  assert.deepEqual(turnResult.permissionDenials, [
+    {
+      tool_name: "deploy",
+      tool_id: "workspace.deploy",
+      reason: "permission denied by policy"
+    }
+  ]);
+  assert.deepEqual(turnResult.tokenUsage, { input_tokens: 12, output_tokens: 34 });
+  assert.equal(memoryUpserts.length, 8);
+  assert.deepEqual(
+    memoryUpserts.slice(0, 4).map((payload) => payload.path),
+    [
+      `workspace/${workspace.id}/runtime/session-state/session-main.md`,
+      `workspace/${workspace.id}/runtime/blockers/session-main.md`,
+      `workspace/${workspace.id}/runtime/latest-turn.md`,
+      `workspace/${workspace.id}/runtime/recent-turns/session-main.md`,
+    ]
+  );
+  assert.match(String(memoryUpserts[0].content), /Runtime Session Snapshot/);
+  assert.match(String(memoryUpserts[0].content), /Hello from TS/);
+  assert.match(String(memoryUpserts[0].content), /permission denied by policy/);
+  assert.match(String(memoryUpserts[1].content), /No active blocker in the latest turn/);
+  assert.match(String(memoryUpserts[2].content), /Latest Runtime Turn/);
+  assert.match(String(memoryUpserts[2].content), /Hello from TS/);
+  assert.match(String(memoryUpserts[3].content), /Recent Runtime Turns/);
+  assert.match(String(memoryUpserts[3].content), /Hello from TS/);
+  assert.match(String(memoryUpserts[4].path), new RegExp(`workspace/${workspace.id}/runtime/permission-blockers/[a-f0-9]{16}\\.md$`));
+  assert.match(String(memoryUpserts[4].content), /Runtime Permission Blocker/);
+  assert.match(String(memoryUpserts[4].content), /workspace\.deploy/);
+  assert.deepEqual(
+    memoryUpserts
+      .slice(5)
+      .map((payload) => String(payload.path))
+      .sort((left, right) => left.localeCompare(right)),
+    [
+      "MEMORY.md",
+      "preference/MEMORY.md",
+      `workspace/${workspace.id}/MEMORY.md`,
+    ].sort((left, right) => left.localeCompare(right))
+  );
+  const rootMemoryIndex = memoryUpserts.find((payload) => payload.path === "MEMORY.md");
+  const preferenceMemoryIndex = memoryUpserts.find((payload) => payload.path === "preference/MEMORY.md");
+  const workspaceMemoryIndex = memoryUpserts.find(
+    (payload) => payload.path === `workspace/${workspace.id}/MEMORY.md`
+  );
+  assert.ok(rootMemoryIndex);
+  assert.ok(preferenceMemoryIndex);
+  assert.ok(workspaceMemoryIndex);
+  assert.match(String(rootMemoryIndex.content), /No durable memories indexed yet/);
+  assert.match(String(preferenceMemoryIndex.content), /No durable preference memories indexed yet/);
+  assert.match(String(workspaceMemoryIndex.content), /Workspace Durable Memory Index/);
+  assert.match(String(workspaceMemoryIndex.content), /Workspace ID: `workspace-1`/);
+  assert.match(String(workspaceMemoryIndex.content), /No durable workspace memories indexed yet/);
+  const snapshot = store.getTurnRequestSnapshot({ inputId: queued.inputId });
+  const boundary = store.getCompactionBoundary({ boundaryId: `compaction:${queued.inputId}` });
+  assert.equal(snapshot, null);
+  assert.ok(boundary);
+  assert.equal(boundary?.requestSnapshotFingerprint, "b".repeat(64));
 
   store.close();
 });
@@ -215,11 +327,15 @@ test("claimed input ignores waiting_user terminal status for harnesses that do n
     workspaceId: workspace.id,
     sessionId: "session-main"
   });
+  const turnResult = store.getTurnResult({ inputId: queued.inputId });
 
   assert.ok(updated);
   assert.equal(updated.status, "DONE");
   assert.ok(runtimeState);
   assert.equal(runtimeState.status, "IDLE");
+  assert.ok(turnResult);
+  assert.equal(turnResult.status, "completed");
+  assert.equal(turnResult.stopReason, "waiting_user");
 
   store.close();
 });
@@ -265,6 +381,7 @@ test("claimed input synthesizes run_failed when runner exits without terminal ev
     sessionId: "session-main",
     inputId: queued.inputId
   });
+  const turnResult = store.getTurnResult({ inputId: queued.inputId });
 
   assert.ok(updated);
   assert.equal(updated.status, "FAILED");
@@ -274,6 +391,10 @@ test("claimed input synthesizes run_failed when runner exits without terminal ev
   assert.equal(events[0].eventType, "run_started");
   assert.equal(events[1].eventType, "run_failed");
   assert.match(String(events[1].payload.message), /runner ended before terminal event/);
+  assert.ok(turnResult);
+  assert.equal(turnResult.status, "failed");
+  assert.equal(turnResult.stopReason, "RuntimeError");
+  assert.equal(turnResult.assistantText, "");
 
   store.close();
 });
@@ -322,6 +443,7 @@ test("claimed input succeeds when runner emits terminal event but keeps the proc
     sessionId: "session-main",
     inputId: queued.inputId
   });
+  const turnResult = store.getTurnResult({ inputId: queued.inputId });
 
   assert.ok(updated);
   assert.equal(updated.status, "DONE");
@@ -331,6 +453,9 @@ test("claimed input succeeds when runner emits terminal event but keeps the proc
     events.map((event) => event.eventType),
     ["run_started", "run_completed"]
   );
+  assert.ok(turnResult);
+  assert.equal(turnResult.status, "completed");
+  assert.equal(turnResult.stopReason, "ok");
 
   store.close();
 });
@@ -379,6 +504,7 @@ test("claimed input fails when runner becomes idle after run_started", async () 
     sessionId: "session-main",
     inputId: queued.inputId
   });
+  const turnResult = store.getTurnResult({ inputId: queued.inputId });
 
   assert.ok(updated);
   assert.equal(updated.status, "FAILED");
@@ -388,6 +514,9 @@ test("claimed input fails when runner becomes idle after run_started", async () 
   assert.equal(events[0].eventType, "run_started");
   assert.equal(events[1].eventType, "run_failed");
   assert.match(String(events[1].payload.message), /idle/i);
+  assert.ok(turnResult);
+  assert.equal(turnResult.status, "failed");
+  assert.equal(turnResult.stopReason, "RunnerCommandError");
 
   store.close();
 });

@@ -787,6 +787,79 @@ test("runtime states and history endpoints read TS state store", async () => {
     text: "hi",
     messageId: "m-2"
   });
+  store.upsertTurnResult({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: "input-1",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    completedAt: "2026-01-01T00:00:05.000Z",
+    status: "completed",
+    stopReason: "ok",
+    assistantText: "hi",
+    toolUsageSummary: {
+      total_calls: 1,
+      completed_calls: 1,
+      failed_calls: 0,
+      tool_names: ["read_file"],
+      tool_ids: []
+    },
+    permissionDenials: [],
+    promptSectionIds: ["runtime_core", "execution_policy"],
+    capabilityManifestFingerprint: "b".repeat(64),
+    requestSnapshotFingerprint: "c".repeat(64),
+    promptCacheProfile: {
+      cacheable_section_ids: ["runtime_core"],
+      volatile_section_ids: ["execution_policy"],
+    },
+    compactedSummary: null,
+    compactionBoundaryId: "compaction:input-1",
+    tokenUsage: {
+      input_tokens: 10,
+      output_tokens: 20
+    }
+  });
+  store.upsertTurnRequestSnapshot({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: "input-1",
+    snapshotKind: "harness_host_request",
+    fingerprint: "c".repeat(64),
+    payload: {
+      provider_id: "openai",
+      model_id: "gpt-5.4",
+      system_prompt: "You are concise.",
+    },
+  });
+  store.upsertCompactionBoundary({
+    boundaryId: "compaction:input-1",
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: "input-1",
+    summary: "hi",
+    recentRuntimeContext: {
+      summary: "hi",
+      last_stop_reason: "ok",
+      last_error: null,
+      waiting_for_user: null,
+    },
+    restorationContext: {
+      session_resume_context: {
+        recent_turns: [
+          {
+            input_id: "input-1",
+            status: "completed",
+            stop_reason: "ok",
+            summary: "hi",
+            completed_at: "2026-01-01T00:00:05.000Z",
+          },
+        ],
+        recent_user_messages: ["hello"],
+      },
+      restored_memory_paths: [`workspace/${workspace.id}/runtime/latest-turn.md`],
+    },
+    preservedTurnInputIds: ["input-1"],
+    requestSnapshotFingerprint: "c".repeat(64),
+  });
   store.ensureSession({
     workspaceId: workspace.id,
     sessionId: "proposal-session-1",
@@ -809,6 +882,22 @@ test("runtime states and history endpoints read TS state store", async () => {
     method: "GET",
     url: `/api/v1/agent-sessions/session-main/history?workspace_id=${workspace.id}`
   });
+  const turnResults = await app.inject({
+    method: "GET",
+    url: `/api/v1/agent-sessions/session-main/turn-results?workspace_id=${workspace.id}`
+  });
+  const requestSnapshots = await app.inject({
+    method: "GET",
+    url: `/api/v1/agent-sessions/session-main/request-snapshots?workspace_id=${workspace.id}`
+  });
+  const compactionBoundaries = await app.inject({
+    method: "GET",
+    url: `/api/v1/agent-sessions/session-main/compaction-boundaries?workspace_id=${workspace.id}`
+  });
+  const resumeContext = await app.inject({
+    method: "GET",
+    url: `/api/v1/agent-sessions/session-main/resume-context?workspace_id=${workspace.id}&input_id=input-2`
+  });
 
   assert.equal(sessions.statusCode, 200);
   assert.equal(sessions.json().count, 2);
@@ -827,6 +916,51 @@ test("runtime states and history endpoints read TS state store", async () => {
     history.json().messages.map((item: { role: string }) => item.role),
     ["user", "assistant"]
   );
+  assert.equal(turnResults.statusCode, 200);
+  assert.equal(turnResults.json().count, 1);
+  assert.equal(turnResults.json().items[0].input_id, "input-1");
+  assert.equal(turnResults.json().items[0].status, "completed");
+  assert.equal(turnResults.json().items[0].stop_reason, "ok");
+  assert.equal(turnResults.json().items[0].capability_manifest_fingerprint, "b".repeat(64));
+  assert.equal(turnResults.json().items[0].request_snapshot_fingerprint, "c".repeat(64));
+  assert.deepEqual(turnResults.json().items[0].prompt_cache_profile, {
+    cacheable_section_ids: ["runtime_core"],
+    volatile_section_ids: ["execution_policy"],
+  });
+  assert.equal(turnResults.json().items[0].compaction_boundary_id, "compaction:input-1");
+  assert.deepEqual(turnResults.json().items[0].prompt_section_ids, [
+    "runtime_core",
+    "execution_policy"
+  ]);
+  assert.deepEqual(turnResults.json().items[0].token_usage, {
+    input_tokens: 10,
+    output_tokens: 20
+  });
+  assert.equal(requestSnapshots.statusCode, 200);
+  assert.equal(requestSnapshots.json().count, 1);
+  assert.equal(requestSnapshots.json().items[0].fingerprint, "c".repeat(64));
+  assert.equal(compactionBoundaries.statusCode, 200);
+  assert.equal(compactionBoundaries.json().count, 1);
+  assert.equal(compactionBoundaries.json().items[0].boundary_id, "compaction:input-1");
+  assert.equal(resumeContext.statusCode, 200);
+  assert.deepEqual(resumeContext.json().recent_runtime_context, {
+    summary: "hi",
+    last_stop_reason: "ok",
+    last_error: null,
+    waiting_for_user: null
+  });
+  assert.deepEqual(resumeContext.json().session_resume_context, {
+    recent_turns: [
+      {
+        input_id: "input-1",
+        status: "completed",
+        stop_reason: "ok",
+        summary: "hi",
+        completed_at: "2026-01-01T00:00:05.000Z"
+      }
+    ],
+    recent_user_messages: ["hello"]
+  });
 
   await app.close();
   store.close();

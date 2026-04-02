@@ -1,6 +1,6 @@
 # Dynamic MCP Port Allocation Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **Execution Note:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Replace hardcoded `13100 + index` MCP port allocation with persistent dynamic allocation via the existing state-store `allocateAppPort()` infrastructure.
 

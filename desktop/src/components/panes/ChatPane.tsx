@@ -162,9 +162,9 @@ function displayModelLabel(model: string) {
   }
 
   const withoutProvider = trimmed.replace(/^(openai|anthropic)\//i, "");
-  const claudeSonnetMatch = withoutProvider.match(/^claude-sonnet-(\d+)-(\d+)$/i);
-  if (claudeSonnetMatch) {
-    return `Claude Sonnet ${claudeSonnetMatch[1]}.${claudeSonnetMatch[2]}`;
+  const sonnetModelMatch = withoutProvider.match(/^claude-sonnet-(\d+)-(\d+)$/i);
+  if (sonnetModelMatch) {
+    return `Claude Sonnet ${sonnetModelMatch[1]}.${sonnetModelMatch[2]}`;
   }
 
   if (/^gpt-/i.test(withoutProvider)) {
@@ -491,6 +491,55 @@ function phaseTraceStepFromEvent(eventType: string, payload: Record<string, unkn
   const phase = typeof payload.phase === "string" ? payload.phase.trim() : "";
   const instructionPreview = typeof payload.instruction_preview === "string" ? payload.instruction_preview.trim() : "";
   const details: string[] = [];
+
+  if (eventType === "auto_compaction_start") {
+    const reason = typeof payload.reason === "string" ? payload.reason.trim() : "";
+    if (reason) {
+      details.push(`Reason: ${reason}`);
+    }
+    return {
+      id: "phase:auto-compaction",
+      kind: "phase",
+      title: "Compacting context",
+      status: "running",
+      details: details.length > 0 ? details : ["The agent is compacting older context to continue the run."],
+      order
+    };
+  }
+
+  if (eventType === "auto_compaction_end") {
+    const result = isRecord(payload.result) ? payload.result : null;
+    const summary = result && typeof result.summary === "string" ? result.summary.trim() : "";
+    const tokensBefore = result && typeof result.tokensBefore === "number" ? result.tokensBefore : null;
+    const errorMessage = typeof payload.error_message === "string" ? payload.error_message.trim() : "";
+    const aborted = payload.aborted === true;
+    const willRetry = payload.will_retry === true;
+    if (summary) {
+      details.push(`Summary: ${summarizeUnknown(summary, 160)}`);
+    }
+    if (tokensBefore !== null) {
+      details.push(`Tokens before compaction: ${tokensBefore}`);
+    }
+    if (aborted) {
+      details.push("Compaction was aborted.");
+    } else {
+      details.push("Compaction completed.");
+    }
+    if (willRetry) {
+      details.push("The agent will retry after compaction.");
+    }
+    if (errorMessage) {
+      details.push(`Error: ${summarizeUnknown(errorMessage, 120)}`);
+    }
+    return {
+      id: "phase:auto-compaction",
+      kind: "phase",
+      title: aborted ? "Context compaction interrupted" : "Context compacted",
+      status: aborted || errorMessage ? "error" : "completed",
+      details,
+      order
+    };
+  }
 
   if (eventType === "run_waiting_user" || eventType === "awaiting_user_input") {
     return {
@@ -1396,6 +1445,10 @@ export function ChatPane({
         setLiveAgentStatus("Preparing workspace context...");
       } else if (eventType === "run_started") {
         setLiveAgentStatus("Checking workspace context...");
+      } else if (eventType === "auto_compaction_start") {
+        setLiveAgentStatus("Compacting context...");
+      } else if (eventType === "auto_compaction_end") {
+        setLiveAgentStatus(eventPayload.will_retry === true ? "Retrying after compaction..." : "Continuing after compaction...");
       } else if (eventType === "run_waiting_user" || eventType === "awaiting_user_input") {
         setLiveAgentStatus("Waiting for your input...");
       }
