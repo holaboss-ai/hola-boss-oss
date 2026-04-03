@@ -206,7 +206,7 @@ export function SettingsDialog({
 
           <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 [scrollbar-gutter:stable]">
             {activeSection === "account" ? (
-              <div className="max-w-[620px]">
+              <div className="mx-auto max-w-lg">
                 <AuthPanel view="account" />
               </div>
             ) : null}
