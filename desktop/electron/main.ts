@@ -4919,7 +4919,7 @@ async function requestControlPlaneJson<T>({
   params,
 }: {
   service: "projects" | "marketplace" | "proactive";
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "DELETE";
   path: string;
   payload?: unknown;
   params?: Record<string, string | number | boolean | null | undefined>;
@@ -7242,20 +7242,7 @@ function getWorkspaceRecord(
 }
 
 async function listWorkspaces(): Promise<WorkspaceListResponsePayload> {
-  const holabossUserId = await controlPlaneWorkspaceUserId();
-  if (holabossUserId) {
-    return requestControlPlaneJson<WorkspaceListResponsePayload>({
-      service: "projects",
-      method: "GET",
-      path: "/api/v1/projects/workspaces",
-      params: {
-        holaboss_user_id: holabossUserId,
-        include_deleted: false,
-        limit: 100,
-        offset: 0,
-      },
-    });
-  }
+  // Desktop always uses local runtime for workspace CRUD.
   return listWorkspacesViaRuntime();
 }
 
@@ -7417,35 +7404,14 @@ function workspaceLifecyclePhaseFromState(
 async function getWorkspaceLifecycle(
   workspaceId: string,
 ): Promise<WorkspaceLifecyclePayload> {
-  const holabossUserId = await controlPlaneWorkspaceUserId();
-  if (holabossUserId) {
-    return requestControlPlaneJson<WorkspaceLifecyclePayload>({
-      service: "projects",
-      method: "GET",
-      path: `/api/v1/projects/workspaces/${encodeURIComponent(workspaceId)}/lifecycle`,
-      params: {
-        holaboss_user_id: holabossUserId,
-      },
-    });
-  }
+  // Desktop always uses local runtime for workspace lifecycle.
   return getWorkspaceLifecycleViaRuntime(workspaceId);
 }
 
 async function activateWorkspace(
   workspaceId: string,
 ): Promise<WorkspaceLifecyclePayload> {
-  const holabossUserId = await controlPlaneWorkspaceUserId();
-  if (holabossUserId) {
-    return requestControlPlaneJson<WorkspaceLifecyclePayload>({
-      service: "projects",
-      method: "POST",
-      path: `/api/v1/projects/workspaces/${encodeURIComponent(workspaceId)}/activate`,
-      payload: {
-        holaboss_user_id: holabossUserId,
-      },
-    });
-  }
-
+  // Desktop always activates via local runtime.
   // Ensure all enabled apps are running in parallel via the runtime.
   await requestRuntimeJson<Record<string, unknown>>({
     method: "POST",
@@ -7879,26 +7845,8 @@ async function createWorkspace(
   if (requiresRuntimeBinding) {
     await ensureRuntimeBindingReadyForWorkspaceFlow("workspace_create");
   }
-  if (templateMode !== "empty" && !templateRootPath && templateName) {
-    const holabossUserId = (payload.holaboss_user_id || "").trim();
-    if (
-      holabossUserId &&
-      holabossUserId !== LOCAL_OSS_TEMPLATE_USER_ID
-    ) {
-      return requestControlPlaneJson<WorkspaceResponsePayload>({
-        service: "projects",
-        method: "POST",
-        path: "/api/v1/projects/workspaces",
-        payload: {
-          holaboss_user_id: holabossUserId,
-          name: payload.name,
-          template_name: templateName,
-          template_ref: payload.template_ref,
-          template_commit: payload.template_commit,
-        },
-      });
-    }
-  }
+  // Desktop always materializes templates locally — never delegate to remote
+  // projects service which would write files into a remote sandbox.
   let materializedTemplate: MaterializeTemplateResponsePayload | null = null;
   let resolvedTemplate: ResolvedTemplatePayload | null = null;
   if (templateMode === "empty") {
@@ -8171,6 +8119,44 @@ async function createWorkspace(
 async function deleteWorkspace(
   workspaceId: string,
 ): Promise<WorkspaceResponsePayload> {
+  const holabossUserId = await controlPlaneWorkspaceUserId();
+  if (holabossUserId) {
+    // Delete via control plane — soft-deletes in the backend DB.
+    // Returns 204 on success; we synthesize the expected payload shape.
+    await requestControlPlaneJson<null>({
+      service: "projects",
+      method: "DELETE",
+      path: `/api/v1/projects/workspaces/${encodeURIComponent(workspaceId)}`,
+    }).catch(() => {
+      // Ignore control-plane errors — workspace may already be gone remotely.
+    });
+    // Also try cleaning up local runtime state (best-effort).
+    await requestRuntimeJson<WorkspaceResponsePayload>({
+      method: "DELETE",
+      path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`,
+    }).catch(() => {
+      // Local runtime may not have this workspace — that's fine.
+    });
+    return {
+      workspace: {
+        id: workspaceId,
+        name: workspaceId,
+        status: "deleted",
+        harness: null,
+        main_session_id: null,
+        error_message: null,
+        onboarding_status: null,
+        onboarding_session_id: null,
+        onboarding_completed_at: null,
+        onboarding_completion_summary: null,
+        onboarding_requested_at: null,
+        onboarding_requested_by: null,
+        created_at: null,
+        updated_at: null,
+        deleted_at_utc: new Date().toISOString(),
+      } as WorkspaceRecordPayload,
+    };
+  }
   return requestRuntimeJson<WorkspaceResponsePayload>({
     method: "DELETE",
     path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`,
@@ -8215,6 +8201,13 @@ function isMissingSessionBindingError(error: unknown): boolean {
   );
 }
 
+function isWorkspaceNotFoundError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.trim().toLowerCase() === "workspace not found"
+  );
+}
+
 function emptySessionHistoryPayload(
   sessionId: string,
   workspaceId: string,
@@ -8251,7 +8244,7 @@ async function getSessionHistory(
       },
     });
   } catch (error) {
-    if (isMissingSessionBindingError(error)) {
+    if (isMissingSessionBindingError(error) || isWorkspaceNotFoundError(error)) {
       return emptySessionHistoryPayload(sessionId, workspaceId);
     }
     throw error;
@@ -12936,15 +12929,20 @@ app.whenReady().then(async () => {
         uploadUrl: string;
       },
     ) => {
-      const { packageWorkspace, uploadToPresignedUrl } = await import("./workspace-packager.js");
-      const workspaceDir = workspaceDirectoryPath(params.workspaceId);
-      const result = await packageWorkspace({
-        workspaceDir,
-        apps: params.apps,
-        manifest: params.manifest,
-      });
-      await uploadToPresignedUrl(params.uploadUrl, result.archiveBuffer);
-      return { archiveSizeBytes: result.archiveSizeBytes };
+      try {
+        const { packageWorkspace, uploadToPresignedUrl } = await import("./workspace-packager.js");
+        const workspaceDir = workspaceDirectoryPath(params.workspaceId);
+        const result = await packageWorkspace({
+          workspaceDir,
+          apps: params.apps,
+          manifest: params.manifest,
+        });
+        await uploadToPresignedUrl(params.uploadUrl, result.archiveBuffer);
+        return { archiveSizeBytes: result.archiveSizeBytes };
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        throw new Error(`packageAndUploadWorkspace failed: ${msg}`);
+      }
     },
   );
   handleTrustedIpc(
