@@ -64,3 +64,15 @@ test("file explorer disables up navigation when already at workspace root", asyn
   );
   assert.match(source, /label="Home"[\s\S]*disabled=\{isAtWorkspaceRoot\}/);
 });
+
+test("file explorer accepts one-shot focus requests for artifact files", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /export type FileExplorerFocusRequest = \{\s*path: string;\s*requestKey: number;\s*\};/);
+  assert.match(source, /interface FileExplorerPaneProps \{\s*focusRequest\?: FileExplorerFocusRequest \| null;\s*onFocusRequestConsumed\?: \(requestKey: number\) => void;\s*\}/);
+  assert.match(source, /if \(lastProcessedFocusRequestKeyRef\.current === focusRequest\.requestKey\) \{\s*return;\s*\}/);
+  assert.match(source, /const workspaceRoot =\s*workspaceRootPath \?\?\s*\(await window\.electronAPI\.workspace\.getWorkspaceRoot\(selectedWorkspaceId\)\);/);
+  assert.match(source, /targetPath = resolveWorkspaceTargetPath\(workspaceRoot, targetPath\);/);
+  assert.match(source, /await openFilePreview\(targetPath, \{ syncDirectory: true \}\);/);
+  assert.match(source, /onFocusRequestConsumed\?\.\(focusRequest\.requestKey\);/);
+});

@@ -69,16 +69,6 @@ cp desktop/.env.example desktop/.env
 
 The public OSS repository already includes default values in `desktop/.env.example`. Copy it as-is unless a human operator gives you replacement environment values.
 
-## Stage The Local Runtime Bundle
-
-Build and stage the runtime bundle from the local source tree:
-
-```bash
-npm run desktop:prepare-runtime:local
-```
-
-This prepares a platform-specific runtime bundle under `desktop/out/runtime-<platform>`.
-
 ## Verify The Desktop Setup
 
 Run the non-interactive desktop verification step before launching the app:
@@ -88,6 +78,22 @@ npm run desktop:typecheck
 ```
 
 If it fails, stop and report the failure instead of continuing.
+
+## Run The Desktop App
+
+Start the local desktop development environment with:
+
+```bash
+npm run desktop:dev
+```
+
+This launches:
+
+- the Vite renderer dev server
+- the Electron main/preload watcher
+- the Electron app
+
+You do not need to run a manual `prepare` step for the normal dev path. `npm run desktop:dev` runs the desktop `predev` hook first, and that hook automatically checks for a staged runtime bundle under `desktop/out/runtime-<platform>`. If the bundle is missing or stale relative to the local runtime sources, it automatically runs `npm run desktop:prepare-runtime:local`.
 
 ## Optional Runtime Validation
 
@@ -102,27 +108,15 @@ npm run runtime:api-server:install
 npm run runtime:test
 ```
 
-## Launch The Desktop App
+## Optional Manual Runtime Staging
 
-Start the local desktop development environment with:
+If you want to stage the runtime from local source explicitly ahead of time, run:
 
 ```bash
-npm run desktop:dev
+npm run desktop:prepare-runtime:local
 ```
 
-This launches:
-
-- the Vite renderer dev server
-- the Electron main/preload watcher
-- the Electron app
-
-Important:
-
-- `npm run desktop:dev` is an interactive long-running process.
-- It may fail in headless or GUI-less environments.
-- If the execution environment cannot open Electron windows, stop after the desktop verification step and report that installation succeeded but interactive launch was not attempted.
-
-## Optional Alternative
+This builds the runtime bundle from your local source checkout and stages it into `desktop/out/runtime-<platform>`.
 
 If local runtime staging from source is not wanted and the environment should use the latest released runtime bundle for the current host platform instead, run:
 
@@ -130,7 +124,13 @@ If local runtime staging from source is not wanted and the environment should us
 npm run desktop:prepare-runtime
 ```
 
-Use that command instead of `npm run desktop:prepare-runtime:local`.
+That command stages the latest published runtime bundle for the current platform from GitHub Releases into `desktop/out/runtime-<platform>`.
+
+Important:
+
+- `npm run desktop:dev` is an interactive long-running process.
+- It may fail in headless or GUI-less environments.
+- If the execution environment cannot open Electron windows, stop after the desktop verification step and report that installation succeeded but interactive launch was not attempted.
 
 ## Minimal Command Sequence
 
@@ -141,7 +141,6 @@ git clone https://github.com/holaboss-ai/hola-boss-oss.git
 cd hola-boss-oss
 npm run desktop:install
 cp desktop/.env.example desktop/.env
-npm run desktop:prepare-runtime:local
 npm run desktop:typecheck
 npm run desktop:dev
 ```

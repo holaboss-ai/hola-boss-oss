@@ -16,7 +16,10 @@ import { AppSurfacePane } from "@/components/panes/AppSurfacePane";
 import { AutomationsPane } from "@/components/panes/AutomationsPane";
 import { BrowserPane } from "@/components/panes/BrowserPane";
 import { ChatPane } from "@/components/panes/ChatPane";
-import { FileExplorerPane } from "@/components/panes/FileExplorerPane";
+import {
+  FileExplorerPane,
+  type FileExplorerFocusRequest,
+} from "@/components/panes/FileExplorerPane";
 import { IntegrationsPane } from "@/components/panes/IntegrationsPane";
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { MarketplacePane } from "@/components/panes/MarketplacePane";
@@ -549,6 +552,8 @@ function AppShellContent() {
   } | null>(null);
   const [chatSessionOpenRequest, setChatSessionOpenRequest] =
     useState<ChatSessionOpenRequest | null>(null);
+  const [fileExplorerFocusRequest, setFileExplorerFocusRequest] =
+    useState<FileExplorerFocusRequest | null>(null);
   const [activeChatSessionId, setActiveChatSessionId] = useState<
     string | null
   >(null);
@@ -1447,6 +1452,25 @@ function AppShellContent() {
       return;
     }
 
+    if (
+      (entry.renderer.surface === "document" ||
+        entry.renderer.surface === "file") &&
+      entry.renderer.resourceId?.trim()
+    ) {
+      setActiveLeftRailItem("space");
+      setSpaceVisibility((previous) => ({
+        ...previous,
+        agent: true,
+        files: true,
+      }));
+      setAgentView({ type: "chat" });
+      setFileExplorerFocusRequest({
+        path: entry.renderer.resourceId,
+        requestKey: Date.now(),
+      });
+      return;
+    }
+
     setActiveLeftRailItem("space");
     setSpaceVisibility((previous) => ({
       ...previous,
@@ -1607,7 +1631,14 @@ function AppShellContent() {
           paneId === "agent" ? (
             agentContent
           ) : paneId === "files" ? (
-            <FileExplorerPane />
+            <FileExplorerPane
+              focusRequest={fileExplorerFocusRequest}
+              onFocusRequestConsumed={(requestKey) => {
+                setFileExplorerFocusRequest((current) =>
+                  current?.requestKey === requestKey ? null : current,
+                );
+              }}
+            />
           ) : (
             <BrowserPane
               suspendNativeView={
