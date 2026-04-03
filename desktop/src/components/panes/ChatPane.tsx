@@ -2823,29 +2823,36 @@ function TraceStepGroup({
               <div key={step.id}>
                 <button
                   type="button"
-                  onClick={() => onToggleStep(step.id)}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted/50"
+                  onClick={() => step.details.length > 0 && onToggleStep(step.id)}
+                  className={`flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors ${step.details.length > 0 ? "hover:bg-muted/50 cursor-pointer" : "cursor-default"}`}
                 >
-                  {step.status === "completed" ? (
-                    <Check size={12} className="shrink-0 text-emerald-500" />
-                  ) : step.status === "error" ? (
-                    <AlertTriangle size={12} className="shrink-0 text-destructive" />
-                  ) : step.status === "running" ? (
-                    <Loader2 size={12} className="shrink-0 animate-spin text-muted-foreground" />
-                  ) : (
-                    <Clock3 size={12} className="shrink-0 text-muted-foreground" />
-                  )}
-                  <span className="min-w-0 flex-1 truncate font-medium text-foreground/80">{step.title}</span>
-                  {step.details.length > 0 ? (
+                  <span className="mt-0.5 shrink-0">
+                    {step.status === "completed" ? (
+                      <Check size={12} className="text-emerald-500" />
+                    ) : step.status === "error" ? (
+                      <AlertTriangle size={12} className="text-destructive" />
+                    ) : step.status === "running" ? (
+                      <Loader2 size={12} className="animate-spin text-muted-foreground" />
+                    ) : (
+                      <Clock3 size={12} className="text-muted-foreground" />
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="font-medium text-foreground/80">{step.title}</span>
+                    {step.details.length > 0 ? (
+                      <span className="ml-1.5 text-muted-foreground/70">{step.details[0]}</span>
+                    ) : null}
+                  </span>
+                  {step.details.length > 1 ? (
                     <ChevronDown
                       size={12}
-                      className={`shrink-0 text-muted-foreground/50 transition-transform ${expanded ? "rotate-180" : ""}`}
+                      className={`mt-0.5 shrink-0 text-muted-foreground/50 transition-transform ${expanded ? "rotate-180" : ""}`}
                     />
                   ) : null}
                 </button>
-                {expanded && step.details.length > 0 ? (
-                  <div className="ml-6 mt-0.5 mb-1 rounded-md border border-border/30 bg-muted/30 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
-                    {step.details.join("\n")}
+                {expanded && step.details.length > 1 ? (
+                  <div className="ml-6 mt-0.5 mb-1 rounded-md border border-border/30 bg-muted/30 px-3 py-2 text-[11px] leading-5 text-muted-foreground whitespace-pre-wrap">
+                    {step.details.slice(1).join("\n")}
                   </div>
                 ) : null}
                 {step.status === "error" ? <IntegrationErrorBanner details={step.details} /> : null}
