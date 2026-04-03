@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
   Clock,
   Loader2,
   Package,
+  Trash2,
   XCircle,
 } from "lucide-react";
 
@@ -25,7 +26,10 @@ interface SubmissionItem {
   updated_at: string;
 }
 
-const STATUS_CONFIG = {
+const STATUS_CONFIG: Record<
+  string,
+  { label: string; icon: typeof Clock; badgeClass: string }
+> = {
   pending_review: {
     label: "Pending Review",
     icon: Clock,
@@ -44,7 +48,7 @@ const STATUS_CONFIG = {
     badgeClass:
       "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400",
   },
-} as const;
+};
 
 function formatDate(dateString: string): string {
   const date = new Date(dateString);
@@ -69,38 +73,56 @@ export function SubmissionsPanel() {
   const [submissions, setSubmissions] = useState<SubmissionItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function fetchSubmissions() {
-      setLoading(true);
-      setError(null);
-      try {
-        const response =
-          await window.electronAPI.workspace.listSubmissions();
-        if (!cancelled) {
-          setSubmissions(response.submissions);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(
-            err instanceof Error ? err.message : "Failed to load submissions",
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+  const fetchSubmissions = useCallback(async (signal?: { cancelled: boolean }) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response =
+        await window.electronAPI.workspace.listSubmissions();
+      if (!signal?.cancelled) {
+        setSubmissions(response.submissions);
+      }
+    } catch (err) {
+      if (!signal?.cancelled) {
+        setError(
+          err instanceof Error ? err.message : "Failed to load submissions",
+        );
+      }
+    } finally {
+      if (!signal?.cancelled) {
+        setLoading(false);
       }
     }
-
-    void fetchSubmissions();
-
-    return () => {
-      cancelled = true;
-    };
   }, []);
+
+  useEffect(() => {
+    const signal = { cancelled: false };
+    void fetchSubmissions(signal);
+    return () => {
+      signal.cancelled = true;
+    };
+  }, [fetchSubmissions]);
+
+  async function handleDelete(submission: SubmissionItem) {
+    const confirmed = window.confirm(
+      `Delete submission "${submission.template_name}"? This cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    setDeletingId(submission.id);
+    try {
+      await window.electronAPI.workspace.deleteSubmission(submission.id);
+      setSubmissions((prev) => prev.filter((s) => s.id !== submission.id));
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to delete submission",
+      );
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   if (loading) {
     return (
@@ -138,7 +160,12 @@ export function SubmissionsPanel() {
   return (
     <div className="grid max-w-[920px] gap-3">
       {submissions.map((submission) => {
-        const config = STATUS_CONFIG[submission.status];
+        const config = STATUS_CONFIG[submission.status] ?? {
+          label: submission.status,
+          icon: Clock,
+          badgeClass:
+            "border-border/40 bg-muted/50 text-muted-foreground",
+        };
         const StatusIcon = config.icon;
         const category = categoryFromManifest(submission.manifest);
 
@@ -164,12 +191,28 @@ export function SubmissionsPanel() {
                 </p>
               </div>
 
-              <span
-                className={`flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${config.badgeClass}`}
-              >
-                <StatusIcon className="size-3" />
-                {config.label}
-              </span>
+              <div className="flex shrink-0 items-center gap-2">
+                <span
+                  className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${config.badgeClass}`}
+                >
+                  <StatusIcon className="size-3" />
+                  {config.label}
+                </span>
+                {submission.status !== "published" ? (
+                  <button
+                    type="button"
+                    disabled={deletingId === submission.id}
+                    onClick={() => void handleDelete(submission)}
+                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                  >
+                    {deletingId === submission.id ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="size-3.5" />
+                    )}
+                  </button>
+                ) : null}
+              </div>
             </div>
 
             {submission.status === "rejected" && submission.review_notes ? (

@@ -1115,6 +1115,7 @@ declare global {
       }): Promise<PackageAndUploadResult>;
       finalizeSubmission(submissionId: string): Promise<FinalizeSubmissionResponse>;
       listSubmissions(): Promise<SubmissionListResponse>;
+      deleteSubmission(submissionId: string): Promise<{ deleted: boolean }>;
       onSessionStreamEvent: (listener: (payload: HolabossSessionStreamEventPayload) => void) => () => void;
     };
     auth: {

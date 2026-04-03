@@ -8191,44 +8191,6 @@ async function createWorkspace(
 async function deleteWorkspace(
   workspaceId: string,
 ): Promise<WorkspaceResponsePayload> {
-  const holabossUserId = await controlPlaneWorkspaceUserId();
-  if (holabossUserId) {
-    // Delete via control plane — soft-deletes in the backend DB.
-    // Returns 204 on success; we synthesize the expected payload shape.
-    await requestControlPlaneJson<null>({
-      service: "projects",
-      method: "DELETE",
-      path: `/api/v1/projects/workspaces/${encodeURIComponent(workspaceId)}`,
-    }).catch(() => {
-      // Ignore control-plane errors — workspace may already be gone remotely.
-    });
-    // Also try cleaning up local runtime state (best-effort).
-    await requestRuntimeJson<WorkspaceResponsePayload>({
-      method: "DELETE",
-      path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`,
-    }).catch(() => {
-      // Local runtime may not have this workspace — that's fine.
-    });
-    return {
-      workspace: {
-        id: workspaceId,
-        name: workspaceId,
-        status: "deleted",
-        harness: null,
-        main_session_id: null,
-        error_message: null,
-        onboarding_status: "not_required",
-        onboarding_session_id: null,
-        onboarding_completed_at: null,
-        onboarding_completion_summary: null,
-        onboarding_requested_at: null,
-        onboarding_requested_by: null,
-        created_at: null,
-        updated_at: null,
-        deleted_at_utc: new Date().toISOString(),
-      } as WorkspaceRecordPayload,
-    };
-  }
   return requestRuntimeJson<WorkspaceResponsePayload>({
     method: "DELETE",
     path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`,
@@ -13092,6 +13054,21 @@ app.whenReady().then(async () => {
       },
     });
   });
+  handleTrustedIpc(
+    "workspace:deleteSubmission",
+    ["main"],
+    async (_event: unknown, params: { submissionId: string }) => {
+      const authorId = await controlPlaneWorkspaceUserId();
+      return requestControlPlaneJson<{ deleted: boolean }>({
+        service: "marketplace",
+        method: "DELETE",
+        path: `/api/v1/marketplace/submissions/${params.submissionId}`,
+        params: {
+          author_id: authorId,
+        },
+      });
+    },
+  );
   ipcMain.handle(
     "browser:setActiveWorkspace",
     async (_event, workspaceId?: string | null) => {
