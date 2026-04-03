@@ -8,6 +8,7 @@ import {
   useDesktopAuthSession,
   type AuthSession
 } from "@/lib/auth/authClient";
+import { holabossLogoUrl } from "@/lib/assetPaths";
 
 type AuthPanelView = "full" | "account" | "runtime";
 
@@ -197,7 +198,7 @@ function enabledProviderIdsForDrafts(providerDrafts: ProviderDraftMap, isSignedI
 
 function ProviderBrandIcon({ providerId }: { providerId: KnownProviderId }) {
   if (providerId === "holaboss") {
-    return <img src="/logo.svg" alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
+    return <img src={holabossLogoUrl} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
   }
   if (providerId === "openai_direct") {
     return <img src={openaiLogo} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
@@ -492,6 +493,15 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         : statusTone === "syncing"
           ? "border-amber-300/35 bg-amber-400/10 text-amber-300"
           : "border-border/45 bg-muted/40 text-muted-foreground";
+
+  const providerAutosaveMessage =
+    providerSaveStatus === "saving"
+      ? "Saving changes..."
+      : providerSaveStatus === "saved"
+        ? "Changes saved automatically"
+        : providerSaveStatus === "error"
+          ? "Autosave failed. Edit again to retry."
+          : "Changes save automatically";
 
   const infoRows = [
     {
@@ -796,7 +806,15 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     const isEnabled = providerEnabled(providerId);
     const isExpandable = !isHolabossProvider;
     const isExpanded = isExpandable && expandedProviderId === providerId;
-    const sublabel = isHolabossProvider ? (isEnabled ? "Managed" : "Sign in required") : isEnabled ? "Connected" : "Available";
+    const statusText = isHolabossProvider
+      ? runtimeBindingReady
+        ? "Managed and ready on this desktop."
+        : isSignedIn
+          ? "Signed in. Refresh runtime binding to finish setup."
+          : "Sign in to enable the managed provider."
+      : isEnabled
+        ? "Connected. Expand to edit settings."
+        : "Not connected.";
     const actionButtonClassName =
       "inline-flex h-9 min-w-[96px] shrink-0 items-center justify-center rounded-[10px] px-3 text-sm transition disabled:cursor-not-allowed disabled:opacity-50";
 
@@ -804,84 +822,74 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       <div
         key={providerId}
         className={`theme-control-surface overflow-hidden rounded-[14px] border transition ${
-          isExpanded ? "border-primary/35 bg-card/90" : "border-border/40"
+          isExpanded ? "border-primary/35 bg-card/90" : "border-border/40 bg-card/75"
         }`}
       >
-        <div className="flex items-center justify-between gap-3 px-3 py-3">
-          {isExpandable ? (
-            <button
-              type="button"
-              onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
-              className="flex min-w-0 flex-1 items-center gap-3 rounded-[10px] text-left outline-none transition hover:text-text-main focus-visible:ring-2 focus-visible:ring-neon-green/45"
-              aria-expanded={isExpanded}
-            >
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[12px] border border-border/35 bg-muted/40 text-foreground/86">
-                <ProviderBrandIcon providerId={providerId} />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-foreground">{template.label}</span>
-                <span className="mt-0.5 block text-xs text-muted-foreground">{sublabel}</span>
-              </span>
-              <span className={`shrink-0 text-muted-foreground transition ${isExpanded ? "rotate-180 text-primary" : ""}`} aria-hidden="true">
-                <svg viewBox="0 0 16 16" className="h-4 w-4">
-                  <path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
-                </svg>
-              </span>
-            </button>
-          ) : (
-            <div className="flex min-w-0 flex-1 items-center gap-3">
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[12px] border border-border/35 bg-muted/40 text-foreground/86">
-                <ProviderBrandIcon providerId={providerId} />
-              </span>
-              <div className="min-w-0">
-                <div className="text-sm font-medium text-foreground">{template.label}</div>
-                <div className="mt-0.5 text-xs text-muted-foreground">{sublabel}</div>
-              </div>
+        <div className="flex items-start justify-between gap-3 px-4 py-4">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-border/35 bg-background/45 text-foreground/86">
+              <ProviderBrandIcon providerId={providerId} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-foreground">{template.label}</div>
+              <div className="mt-1 text-sm text-muted-foreground">{template.description}</div>
+              <div className="mt-1 text-sm text-muted-foreground">{statusText}</div>
             </div>
-          )}
+          </div>
 
-          {isHolabossProvider ? (
-            isEnabled ? (
-              <div className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs uppercase tracking-[0.14em] text-primary">
-                Enabled
-              </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {isHolabossProvider ? (
+              isEnabled ? (
+                <div className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs uppercase tracking-[0.14em] text-primary">
+                  Enabled
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void handleStartSignIn()}
+                  disabled={isStartingSignIn}
+                  className={`${actionButtonClassName} border border-neon-green/40 bg-neon-green/10 text-neon-green hover:bg-neon-green/16`}
+                >
+                  {isStartingSignIn ? "Opening..." : "Sign in"}
+                </button>
+              )
+            ) : isEnabled ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
+                  className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-primary/35`}
+                >
+                  {isExpanded ? "Hide" : "Edit"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    updateProviderDraft(providerId, { enabled: false });
+                    setExpandedProviderId((current) => (current === providerId ? null : current));
+                  }}
+                  className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-destructive/40 hover:text-destructive`}
+                >
+                  Disconnect
+                </button>
+              </>
             ) : (
               <button
                 type="button"
-                onClick={() => void handleStartSignIn()}
-                disabled={isStartingSignIn}
-                className={`${actionButtonClassName} border border-neon-green/40 bg-neon-green/10 text-neon-green hover:bg-neon-green/16`}
+                onClick={() => {
+                  updateProviderDraft(providerId, { enabled: true });
+                  setExpandedProviderId(providerId);
+                }}
+                className={`${actionButtonClassName} border border-border/45 text-text-main hover:border-neon-green/35 hover:text-neon-green`}
               >
-                {isStartingSignIn ? "Opening..." : "Sign in"}
+                Connect
               </button>
-            )
-          ) : isEnabled ? (
-            <button
-              type="button"
-              onClick={() => {
-                updateProviderDraft(providerId, { enabled: false });
-                setExpandedProviderId((current) => (current === providerId ? null : current));
-              }}
-              className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-destructive/40 hover:text-destructive`}
-            >
-              Disconnect
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                updateProviderDraft(providerId, { enabled: true });
-                setExpandedProviderId(providerId);
-              }}
-              className={`${actionButtonClassName} border border-border/45 text-text-main hover:border-neon-green/35 hover:text-neon-green`}
-            >
-              Connect
-            </button>
-          )}
+            )}
+          </div>
         </div>
 
-        {isExpanded && (
-          <div className="border-t border-border/35 px-3 pb-3 pt-3">
+        {isExpanded && isEnabled && (
+          <div className="border-t border-border/35 px-4 pb-4 pt-3">
             {renderProviderDrawerContent(providerId)}
           </div>
         )}
@@ -891,6 +899,10 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
   const runtimeProviderSettings = (
     <div className="theme-subtle-surface mt-3 grid gap-4 rounded-[20px] border border-border/40 p-4">
+      <div className="rounded-[18px] border border-border/40 bg-card/80 px-4 py-3 text-sm text-muted-foreground">
+        Manage which providers this desktop runtime can use.
+      </div>
+
       <div className="rounded-[18px] border border-border/40 bg-card/80 p-4">
         <div className="text-sm font-medium text-foreground">Connected providers</div>
         <div className="mt-3 grid gap-2">
@@ -917,38 +929,25 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         </div>
       </div>
 
-      <div className="mt-1 flex flex-wrap gap-2">
-        <button
-          className="theme-control-surface rounded-[14px] border border-border/45 px-3 py-2 text-sm text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
-          type="button"
-          onClick={() => void handleReloadRuntimeSettings()}
-        >
-          Reload settings
-        </button>
-        <button
-          className="theme-control-surface rounded-[14px] border border-border/45 px-3 py-2 text-sm text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
-          type="button"
-          onClick={() => void handleExchangeRuntimeBinding()}
-          disabled={isExchangingRuntimeBinding || !isSignedIn}
-        >
-          {isExchangingRuntimeBinding ? "Refreshing..." : "Refresh runtime binding"}
-        </button>
-        <div
-          className={`inline-flex min-h-[40px] items-center rounded-[14px] border px-3 py-2 text-sm ${
-            providerSaveStatus === "error"
-              ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
-              : providerSaveStatus === "saved"
-                ? "border-neon-green/35 bg-neon-green/8 text-neon-green"
-                : "border-border/35 bg-muted/40 text-muted-foreground"
-          }`}
-        >
-          {providerSaveStatus === "saving"
-            ? "Saving changes..."
-            : providerSaveStatus === "saved"
-              ? "Changes saved automatically"
-              : providerSaveStatus === "error"
-                ? "Autosave failed. Edit again to retry."
-                : "Changes save automatically"}
+      <div className="flex flex-col gap-3 rounded-[18px] border border-border/40 bg-card/70 p-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0 text-sm text-muted-foreground">{providerAutosaveMessage}</div>
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            className="theme-control-surface rounded-[14px] border border-border/45 px-3 py-2 text-sm text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
+            type="button"
+            onClick={() => void handleReloadRuntimeSettings()}
+          >
+            Reload settings
+          </button>
+          <button
+            className="theme-control-surface rounded-[14px] border border-border/45 px-3 py-2 text-sm text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
+            type="button"
+            onClick={() => void handleExchangeRuntimeBinding()}
+            disabled={isExchangingRuntimeBinding || !isSignedIn}
+          >
+            {isExchangingRuntimeBinding ? "Refreshing..." : "Refresh runtime binding"}
+          </button>
         </div>
       </div>
     </div>

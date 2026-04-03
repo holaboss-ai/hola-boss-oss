@@ -148,7 +148,7 @@ function mergeIntegrationCards(
   return cards.sort((left, right) => left.name.localeCompare(right.name));
 }
 
-export function IntegrationsPane() {
+export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
   const authSessionState = useDesktopAuthSession();
   const isSignedIn = Boolean(authSessionState.data?.user?.id?.trim());
   const [integrations, setIntegrations] = useState<IntegrationCard[]>([]);
@@ -315,10 +315,150 @@ export function IntegrationsPane() {
   }
 
   if (isLoading) {
-    return (
+    return embedded ? (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 size={18} className="animate-spin text-muted-foreground" />
+      </div>
+    ) : (
       <section className="relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
         <Loader2 size={18} className="animate-spin text-muted-foreground" />
       </section>
+    );
+  }
+
+  const integrationContent = (
+    <>
+      {/* Auth gate */}
+      {!authSessionState.isPending && !isSignedIn ? (
+        <div className="mt-4 flex items-center justify-between gap-4 rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-destructive">
+              <ShieldAlert size={13} />
+              <span>Sign-In Required</span>
+            </div>
+            <p className="mt-1 text-sm font-medium text-foreground">
+              Managed integrations are unavailable until you sign in.
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              You can browse the catalog below, but connecting requires an authenticated session.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void authSessionState.requestAuth()}
+          >
+            <LogIn size={14} />
+            Sign in
+          </Button>
+        </div>
+      ) : null}
+
+      {/* Search + Filter */}
+      <div className="mt-5 flex items-center gap-3">
+        <div className="relative flex-1">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search integrations..."
+            className="h-9 pl-8"
+          />
+        </div>
+        <select
+          value={categoryFilter}
+          onChange={(event) => setCategoryFilter(event.target.value)}
+          className="h-9 rounded-lg border border-input bg-transparent px-3 text-sm text-foreground outline-none"
+        >
+          <option value="all">All</option>
+          {categories.map((category) => (
+            <option key={category} value={category}>
+              {category.charAt(0).toUpperCase() + category.slice(1)}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Connected */}
+      {connectedIntegrations.length > 0 ? (
+        <div className="mt-6">
+          <h2 className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+            Connected
+          </h2>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            {connectedIntegrations.map((integration) => (
+              <IntegrationRow
+                key={integration.slug}
+                integration={integration}
+                connected
+                canConnect={false}
+                connectDisabledReason=""
+                onConnect={() => void handleConnect(integration)}
+                onDisconnect={() => void handleDisconnect(integration)}
+                connecting={connectingProviderId === integration.providerId}
+                disconnecting={disconnectingProviderId === integration.providerId}
+                actionMode="connected"
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {statusMessage ? (
+        <p className="mt-4 text-xs text-muted-foreground">{statusMessage}</p>
+      ) : null}
+
+      {/* Available — grouped by category */}
+      {groupedIntegrations.map(([category, items]) => (
+        <div key={category} className="mt-6">
+          <h2 className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+            {category.charAt(0).toUpperCase() + category.slice(1)}
+          </h2>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            {items.map((integration) => (
+              <IntegrationRow
+                key={integration.slug}
+                integration={integration}
+                connected={false}
+                canConnect={isSignedIn && integration.supportsManaged}
+                connectDisabledReason={
+                  integration.supportsManaged
+                    ? "Sign in first to connect managed integrations."
+                    : "Managed sign-in is not supported for this provider."
+                }
+                onConnect={() => void handleConnect(integration)}
+                onDisconnect={() => {}}
+                connecting={connectingProviderId === integration.providerId}
+                disconnecting={false}
+                actionMode={
+                  !integration.supportsManaged
+                    ? "unavailable"
+                    : isSignedIn
+                      ? "connect"
+                      : "disabled"
+                }
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {filteredIntegrations.length === 0 && connectedIntegrations.length === 0 ? (
+        <p className="mt-12 text-center text-sm text-muted-foreground">
+          No integrations found.
+        </p>
+      ) : null}
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <div className="max-w-5xl">
+        <p className="text-sm text-muted-foreground">
+          Connect your accounts to use them in workspaces.
+        </p>
+        {integrationContent}
+      </div>
     );
   }
 
@@ -332,127 +472,7 @@ export function IntegrationsPane() {
           <p className="mt-1 text-sm text-muted-foreground">
             Connect your accounts to use them in workspaces.
           </p>
-
-          {/* Auth gate */}
-          {!authSessionState.isPending && !isSignedIn ? (
-            <div className="mt-4 flex items-center justify-between gap-4 rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-destructive">
-                  <ShieldAlert size={13} />
-                  <span>Sign-In Required</span>
-                </div>
-                <p className="mt-1 text-sm font-medium text-foreground">
-                  Managed integrations are unavailable until you sign in.
-                </p>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  You can browse the catalog below, but connecting requires an authenticated session.
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void authSessionState.requestAuth()}
-              >
-                <LogIn size={14} />
-                Sign in
-              </Button>
-            </div>
-          ) : null}
-
-          {/* Search + Filter */}
-          <div className="mt-5 flex items-center gap-3">
-            <div className="relative flex-1">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search integrations..."
-                className="h-9 pl-8"
-              />
-            </div>
-            <select
-              value={categoryFilter}
-              onChange={(event) => setCategoryFilter(event.target.value)}
-              className="h-9 rounded-lg border border-input bg-transparent px-3 text-sm text-foreground outline-none"
-            >
-              <option value="all">All</option>
-              {categories.map((category) => (
-                <option key={category} value={category}>
-                  {category.charAt(0).toUpperCase() + category.slice(1)}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Connected */}
-          {connectedIntegrations.length > 0 ? (
-            <div className="mt-6">
-              <h2 className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
-                Connected
-              </h2>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                {connectedIntegrations.map((integration) => (
-                  <IntegrationRow
-                    key={integration.slug}
-                    integration={integration}
-                    connected
-                    canConnect={false}
-                    connectDisabledReason=""
-                    onConnect={() => void handleConnect(integration)}
-                    onDisconnect={() => void handleDisconnect(integration)}
-                    connecting={connectingProviderId === integration.providerId}
-                    disconnecting={disconnectingProviderId === integration.providerId}
-                    actionMode="connected"
-                  />
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          {statusMessage ? (
-            <p className="mt-4 text-xs text-muted-foreground">{statusMessage}</p>
-          ) : null}
-
-          {/* Available — grouped by category */}
-          {groupedIntegrations.map(([category, items]) => (
-            <div key={category} className="mt-6">
-              <h2 className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
-                {category.charAt(0).toUpperCase() + category.slice(1)}
-              </h2>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                {items.map((integration) => (
-                  <IntegrationRow
-                    key={integration.slug}
-                    integration={integration}
-                    connected={false}
-                    canConnect={isSignedIn && integration.supportsManaged}
-                    connectDisabledReason={
-                      integration.supportsManaged
-                        ? "Sign in first to connect managed integrations."
-                        : "Managed sign-in is not supported for this provider."
-                    }
-                    onConnect={() => void handleConnect(integration)}
-                    onDisconnect={() => {}}
-                    connecting={connectingProviderId === integration.providerId}
-                    disconnecting={false}
-                    actionMode={
-                      !integration.supportsManaged
-                        ? "unavailable"
-                        : isSignedIn
-                          ? "connect"
-                          : "disabled"
-                    }
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
-
-          {filteredIntegrations.length === 0 && connectedIntegrations.length === 0 ? (
-            <p className="mt-12 text-center text-sm text-muted-foreground">
-              No integrations found.
-            </p>
-          ) : null}
+          {integrationContent}
         </div>
       </div>
     </section>

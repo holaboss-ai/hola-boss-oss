@@ -1,7 +1,20 @@
 import { Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { providerDisplayName } from "./constants";
+import { providerDisplayName, providerIcon } from "./constants";
+
+function ProviderLabel({ provider, logoUrl }: { provider: string; logoUrl?: string }) {
+  return (
+    <span className="flex items-center gap-2.5 text-sm font-medium text-foreground">
+      {logoUrl ? (
+        <img src={logoUrl} alt="" width={20} height={20} className="shrink-0 rounded" />
+      ) : (
+        providerIcon(provider, 20)
+      )}
+      {providerDisplayName(provider)}
+    </span>
+  );
+}
 
 interface ConnectIntegrationsStepProps {
   pendingIntegrations: ResolveTemplateIntegrationsResult;
@@ -18,6 +31,8 @@ export function ConnectIntegrationsStep({
   onConnect,
   onBack,
 }: ConnectIntegrationsStepProps) {
+  const logos = pendingIntegrations.provider_logos ?? {};
+
   return (
     <div>
       <div className="max-w-3xl">
@@ -38,9 +53,7 @@ export function ConnectIntegrationsStep({
             key={provider}
             className="flex items-center justify-between rounded-xl border border-border bg-muted/50 px-5 py-4"
           >
-            <span className="text-sm font-medium text-foreground">
-              {providerDisplayName(provider)}
-            </span>
+            <ProviderLabel provider={provider} logoUrl={logos[provider]} />
             <Button
               variant="outline"
               size="sm"
@@ -63,9 +76,7 @@ export function ConnectIntegrationsStep({
             key={provider}
             className="flex items-center justify-between rounded-xl border border-primary/20 bg-primary/5 px-5 py-4"
           >
-            <span className="text-sm font-medium text-foreground">
-              {providerDisplayName(provider)}
-            </span>
+            <ProviderLabel provider={provider} logoUrl={logos[provider]} />
             <div className="flex items-center gap-3">
               <Badge variant="outline" className="border-primary/25 text-primary">
                 Connected

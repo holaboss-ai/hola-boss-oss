@@ -64,7 +64,7 @@ declare global {
     height: number;
   }
 
-  type UiSettingsPaneSection = "account" | "billing" | "providers" | "settings" | "about";
+  type UiSettingsPaneSection = "account" | "billing" | "providers" | "integrations" | "settings" | "about";
 
   interface BrowserStatePayload {
     id: string;
@@ -919,6 +919,7 @@ declare global {
     requirements: TemplateIntegrationRequirement[];
     connected_providers: string[];
     missing_providers: string[];
+    provider_logos: Record<string, string>;
   }
 
   interface CreateSubmissionPayload {
@@ -1008,6 +1009,7 @@ declare global {
       reload(appId: string): Promise<void>;
       destroy(appId: string): Promise<void>;
       hide(): Promise<void>;
+      resolveUrl(workspaceId: string, appId: string, path?: string): Promise<string>;
     };
     workspace: {
       getClientConfig: () => Promise<HolabossClientConfigPayload>;

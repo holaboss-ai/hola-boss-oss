@@ -28,3 +28,18 @@ test("billing summary card exposes web-only billing actions", async () => {
   assert.doesNotMatch(source, /text-\[[0-9]+px\]/);
   assert.doesNotMatch(source, /bg-black\//);
 });
+
+test("runtime auth panel keeps model provider settings compact", async () => {
+  const source = await readFile(AUTH_PANEL_PATH, "utf8");
+
+  assert.match(source, /Connected providers/);
+  assert.match(source, /Available providers/);
+  assert.match(source, /Manage which providers this desktop runtime can use\./);
+  assert.match(source, /Changes save automatically/);
+  assert.match(source, /Models/);
+  assert.doesNotMatch(source, /Runtime overview/);
+  assert.doesNotMatch(source, /Connected now/);
+  assert.doesNotMatch(source, /Ready to connect/);
+  assert.doesNotMatch(source, /Connection details/);
+  assert.doesNotMatch(source, /Recommended models configured/);
+});

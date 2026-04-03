@@ -1,6 +1,6 @@
 /** Rich markdown README content for each template, keyed by template name. */
 export const templateReadmes: Record<string, string> = {
-  social_media: `## Overview
+  social_operator: `## Overview
 
 Social Operator is your always-on AI social media team. It combines multiple specialist agents — writers, analysts, and publishers — that collaborate to run your social media accounts autonomously.
 
@@ -118,7 +118,7 @@ Track how your published content performs across platforms with engagement metri
 > **Tip:** Start with a few test posts in "draft" mode. Review, edit, and approve them. The agents learn from your edits and improve over time.
 `,
 
-  build_in_public: `## Ship code. Share the journey. Let AI handle the storytelling.
+  devrel_worker: `## Ship code. Share the journey. Let AI handle the storytelling.
 
 You're already building interesting things. The problem is, nobody knows — because turning a commit into a tweet is just annoying enough that you never do it.
 
@@ -1003,7 +1003,7 @@ member_segments:
 > **Tip:** Start by identifying your top 10 community champions and give them special recognition. Engaged advocates drive organic growth better than any automation.
 `,
 
-  crm: `## Your contacts live in a spreadsheet. Your conversations live in Gmail. This workspace connects them.
+  sales_worker: `## Your contacts live in a spreadsheet. Your conversations live in Gmail. This workspace connects them.
 
 Gmail CRM isn't a traditional CRM that forces you into a rigid pipeline. It's two simple tools — **Gmail** and **Google Sheets** — orchestrated by an AI agent that understands your relationships.
 

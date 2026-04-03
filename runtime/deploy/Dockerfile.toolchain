@@ -1,8 +1,6 @@
 FROM python:3.12-slim-bookworm@sha256:883fb7fcf461dc7ab7601180568ad4afbd9d018371afa41b18c8a1124a81a66e
 
 ARG NODE_MAJOR=22
-ARG INSTALL_QMD=1
-ARG ENABLE_QMD_PREWARM=0
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
@@ -22,14 +20,5 @@ RUN apt-get update \
     && apt-get update \
     && apt-get install -y --no-install-recommends nodejs docker-ce docker-ce-cli containerd.io docker-compose-plugin fuse-overlayfs tini \
     && npm install -g pm2 \
-    && if [ "${INSTALL_QMD}" = "1" ]; then npm install -g @tobilu/qmd; fi \
-    && if [ "${INSTALL_QMD}" = "1" ] && [ "${ENABLE_QMD_PREWARM}" = "1" ]; then \
-         mkdir -p /tmp/qmd-preload-build \
-         && printf '%s\n' 'QMD build preload warmup document.' > /tmp/qmd-preload-build/preload.md \
-         && qmd --index qmd-preload-build collection add /tmp/qmd-preload-build --name preload \
-         && qmd --index qmd-preload-build update \
-         && qmd --index qmd-preload-build query "preload" --json -n 1 >/tmp/qmd-preload-build-query.json \
-         && rm -rf /tmp/qmd-preload-build /tmp/qmd-preload-build-query.json; \
-       fi \
     && apt-get purge -y --auto-remove gnupg \
     && rm -rf /var/lib/apt/lists/*

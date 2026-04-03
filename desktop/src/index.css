@@ -592,8 +592,8 @@ webview {
 }
 
 .chat-assistant-markdown {
-  font-size: 15px;
-  line-height: 2;
+  font-size: 14px;
+  line-height: 1.8;
 }
 
 .chat-markdown .md-link,
@@ -608,25 +608,26 @@ webview {
 }
 
 .chat-markdown .md-h1 {
-  font-size: 20px;
-  line-height: 1.45;
-  margin-top: 16px;
-  margin-bottom: 8px;
-}
-
-.chat-markdown .md-h2 {
   font-size: 17px;
   line-height: 1.5;
   margin-top: 14px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
+}
+
+.chat-markdown .md-h2 {
+  font-size: 15px;
+  line-height: 1.55;
+  margin-top: 12px;
+  margin-bottom: 6px;
 }
 
 .chat-markdown .md-h3,
 .chat-markdown .md-h4,
 .chat-markdown .md-h5,
 .chat-markdown .md-h6 {
-  margin-top: 12px;
-  margin-bottom: 6px;
+  font-size: 14px;
+  margin-top: 10px;
+  margin-bottom: 4px;
 }
 
 .chat-markdown .md-p:first-child,

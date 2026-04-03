@@ -28,9 +28,14 @@ function normalizeHttpUrl(rawHref: string | null | undefined): string | null {
   return null;
 }
 
+import type { ExtraProps } from "react-markdown";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type MdProps = any;
+
 function createMarkdownComponents(onLinkClick?: ((url: string) => void) | undefined): Components {
   return {
-  a({ className, ...props }) {
+  a({ className, ...props }: MdProps) {
     const normalizedHref = normalizeHttpUrl(typeof props.href === "string" ? props.href : null);
     const upstreamOnClick = props.onClick;
     return (
@@ -50,58 +55,58 @@ function createMarkdownComponents(onLinkClick?: ((url: string) => void) | undefi
       />
     );
   },
-  blockquote({ className, ...props }) {
+  blockquote({ className, ...props }: MdProps) {
     return <blockquote {...props} className={appendClassName(className, "md-blockquote")} />;
   },
-  h1({ className, ...props }) {
+  h1({ className, ...props }: MdProps) {
     return <h1 {...props} className={appendClassName(className, "md-h1")} />;
   },
-  h2({ className, ...props }) {
+  h2({ className, ...props }: MdProps) {
     return <h2 {...props} className={appendClassName(className, "md-h2")} />;
   },
-  h3({ className, ...props }) {
+  h3({ className, ...props }: MdProps) {
     return <h3 {...props} className={appendClassName(className, "md-h3")} />;
   },
-  h4({ className, ...props }) {
+  h4({ className, ...props }: MdProps) {
     return <h4 {...props} className={appendClassName(className, "md-h4")} />;
   },
-  h5({ className, ...props }) {
+  h5({ className, ...props }: MdProps) {
     return <h5 {...props} className={appendClassName(className, "md-h5")} />;
   },
-  h6({ className, ...props }) {
+  h6({ className, ...props }: MdProps) {
     return <h6 {...props} className={appendClassName(className, "md-h6")} />;
   },
-  hr({ className, ...props }) {
+  hr({ className, ...props }: MdProps) {
     return <hr {...props} className={appendClassName(className, "md-hr")} />;
   },
-  img({ className, alt, ...props }) {
+  img({ className, alt, ...props }: React.ImgHTMLAttributes<HTMLImageElement> & ExtraProps) {
     return <img {...props} alt={alt ?? ""} className={appendClassName(className, "md-img")} loading="lazy" />;
   },
-  li({ className, ...props }) {
+  li({ className, ...props }: MdProps) {
     return <li {...props} className={appendClassName(className, "md-li md-oli")} />;
   },
-  ol({ className, ...props }) {
+  ol({ className, ...props }: MdProps) {
     return <ol {...props} className={appendClassName(className, "md-ol")} />;
   },
-  p({ className, ...props }) {
+  p({ className, ...props }: MdProps) {
     return <p {...props} className={appendClassName(className, "md-p")} />;
   },
-  pre({ className, ...props }) {
+  pre({ className, ...props }: MdProps) {
     return <pre {...props} className={appendClassName(className, "md-code-block")} />;
   },
-  table({ className, ...props }) {
+  table({ className, ...props }: MdProps) {
     return <table {...props} className={appendClassName(className, "md-table")} />;
   },
-  td({ className, ...props }) {
+  td({ className, ...props }: MdProps) {
     return <td {...props} className={appendClassName(className, "md-table-cell")} />;
   },
-  th({ className, ...props }) {
+  th({ className, ...props }: MdProps) {
     return <th {...props} className={appendClassName(className, "md-table-head-cell")} />;
   },
-  ul({ className, ...props }) {
+  ul({ className, ...props }: MdProps) {
     return <ul {...props} className={appendClassName(className, "md-ul")} />;
   },
-  code({ className, ...props }) {
+  code({ className, ...props }: MdProps) {
     return <code {...props} className={appendClassName(className, "md-inline-code")} />;
   }
   };

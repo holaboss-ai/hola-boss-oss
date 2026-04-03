@@ -20,7 +20,6 @@ import {
   FileExplorerPane,
   type FileExplorerFocusRequest,
 } from "@/components/panes/FileExplorerPane";
-import { IntegrationsPane } from "@/components/panes/IntegrationsPane";
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { MarketplacePane } from "@/components/panes/MarketplacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
@@ -125,7 +124,13 @@ function isAppTheme(value: string): value is AppTheme {
 }
 
 function isSettingsPaneSection(value: string): value is UiSettingsPaneSection {
-  return value === "account" || value === "billing" || value === "providers" || value === "settings" || value === "about";
+  return (
+    value === "account" ||
+    value === "billing" ||
+    value === "providers" ||
+    value === "settings" ||
+    value === "about"
+  );
 }
 
 type AgentView =
@@ -302,6 +307,43 @@ function runtimeOutputTone(status: string): OperationsOutputEntry["tone"] {
   return "info";
 }
 
+function normalizeContactKey(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+}
+
+function normalizeContactRowRef(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value.trim() || null;
+  }
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const ref = value as {
+    spreadsheet_id?: unknown;
+    sheet_name?: unknown;
+    row_number?: unknown;
+  };
+  const spreadsheetId =
+    typeof ref.spreadsheet_id === "string" ? ref.spreadsheet_id.trim() : "";
+  const sheetName =
+    typeof ref.sheet_name === "string" ? ref.sheet_name.trim() : "";
+  const rowNumber =
+    typeof ref.row_number === "number" || typeof ref.row_number === "string"
+      ? String(ref.row_number).trim()
+      : "";
+
+  if (!spreadsheetId || !rowNumber) {
+    return null;
+  }
+
+  return `${spreadsheetId}:${sheetName}:${rowNumber}`;
+}
+
 function runtimeOutputToEntry(
   output: WorkspaceOutputRecordPayload,
   installedAppIds: Set<string>,
@@ -315,6 +357,23 @@ function runtimeOutputToEntry(
     output.platform ? `Platform: ${output.platform}` : "",
   ].filter(Boolean);
 
+  // Read presentation protocol from metadata when available
+  const metadata = (output.metadata ?? {}) as Record<string, unknown>;
+  const crm = (metadata.crm ?? null) as Record<string, unknown> | null;
+  const presentation = metadata.presentation as
+    | { kind?: string; view?: string; path?: string }
+    | undefined;
+  const hasAppPresentation =
+    presentation?.kind === "app_resource" && presentation.view;
+
+  const presentationView = hasAppPresentation
+    ? presentation!.view!
+    : output.output_type || "home";
+  const presentationResourceId =
+    hasAppPresentation && presentation!.path
+      ? presentation!.path
+      : output.module_resource_id || output.artifact_id || output.id;
+
   return {
     id: `runtime-output:${output.id}`,
     title,
@@ -323,14 +382,19 @@ function runtimeOutputToEntry(
     createdAt: output.created_at,
     tone: runtimeOutputTone(output.status),
     sessionId: output.session_id,
+    contactKey: normalizeContactKey(crm?.contact_key),
+    contactRowRef: normalizeContactRowRef(crm?.contact_row_ref),
+    primaryEmail:
+      typeof crm?.primary_email === "string" && crm.primary_email.trim()
+        ? crm.primary_email.trim()
+        : null,
     renderer:
       moduleId && installedAppIds.has(moduleId)
         ? {
             type: "app",
             appId: moduleId,
-            resourceId:
-              output.module_resource_id || output.artifact_id || output.id,
-            view: output.output_type || "home",
+            resourceId: presentationResourceId,
+            view: presentationView,
           }
         : {
             type: "internal",
@@ -340,7 +404,6 @@ function runtimeOutputToEntry(
           },
   };
 }
-
 
 function EmptyWorkspacePane() {
   return (
@@ -387,7 +450,10 @@ function WorkspaceInitializingGate({
         {hasErrors ? (
           <TriangleAlert size={20} className="text-rose-400" />
         ) : (
-          <Loader2 size={20} className="animate-spin text-muted-foreground/60" />
+          <Loader2
+            size={20}
+            className="animate-spin text-muted-foreground/60"
+          />
         )}
 
         <h2 className="mt-5 text-[17px] font-medium tracking-[-0.01em] text-foreground">
@@ -410,7 +476,10 @@ function WorkspaceInitializingGate({
               ) : app.error ? (
                 <XCircle size={14} className="shrink-0 text-rose-400" />
               ) : (
-                <Loader2 size={14} className="shrink-0 animate-spin text-muted-foreground/50" />
+                <Loader2
+                  size={14}
+                  className="shrink-0 animate-spin text-muted-foreground/50"
+                />
               )}
               <span className="min-w-0 flex-1 text-left text-[13px] text-foreground">
                 {app.label}
@@ -525,10 +594,14 @@ function AppShellContent() {
     hasHydratedWorkspaceList,
     selectedWorkspace,
     installedApps,
+    workspaceAppsReady,
+    workspaceBlockingReason,
     workspaceErrorMessage,
     onboardingModeActive,
   } = useWorkspaceDesktop();
-  const selectedWorkspaceExists = Boolean(selectedWorkspaceId && selectedWorkspace);
+  const selectedWorkspaceExists = Boolean(
+    selectedWorkspaceId && selectedWorkspace,
+  );
   const [theme, setTheme] = useState<AppTheme>(loadTheme);
   const [runtimeStatus, setRuntimeStatus] =
     useState<RuntimeStatusPayload | null>(null);
@@ -540,8 +613,10 @@ function AppShellContent() {
   const [publishOpen, setPublishOpen] = useState(false);
   const [createWorkspacePanelOpen, setCreateWorkspacePanelOpen] =
     useState(false);
-  const [createWorkspacePanelAnchorWorkspaceId, setCreateWorkspacePanelAnchorWorkspaceId] =
-    useState("");
+  const [
+    createWorkspacePanelAnchorWorkspaceId,
+    setCreateWorkspacePanelAnchorWorkspaceId,
+  ] = useState("");
   const [activeLeftRailItem, setActiveLeftRailItem] =
     useState<LeftRailItem>("space");
   const [agentView, setAgentView] = useState<AgentView>({ type: "chat" });
@@ -554,9 +629,9 @@ function AppShellContent() {
     useState<ChatSessionOpenRequest | null>(null);
   const [fileExplorerFocusRequest, setFileExplorerFocusRequest] =
     useState<FileExplorerFocusRequest | null>(null);
-  const [activeChatSessionId, setActiveChatSessionId] = useState<
-    string | null
-  >(null);
+  const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(
+    null,
+  );
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = useState(false);
   const [spaceVisibility, setSpaceVisibility] =
     useState<SpaceVisibilityState>(loadSpaceVisibility);
@@ -747,7 +822,11 @@ function AppShellContent() {
   );
 
   const refreshRuntimeOutputs = useCallback(async () => {
-    if (!selectedWorkspaceId || !selectedWorkspaceExists || runtimeStatus?.status !== "running") {
+    if (
+      !selectedWorkspaceId ||
+      !selectedWorkspaceExists ||
+      runtimeStatus?.status !== "running"
+    ) {
       setRuntimeOutputEntries([]);
       return;
     }
@@ -763,16 +842,30 @@ function AppShellContent() {
     } catch {
       setRuntimeOutputEntries([]);
     }
-  }, [installedApps, runtimeStatus?.status, selectedWorkspaceExists, selectedWorkspaceId]);
+  }, [
+    installedApps,
+    runtimeStatus?.status,
+    selectedWorkspaceExists,
+    selectedWorkspaceId,
+  ]);
 
   useEffect(() => {
-    if (!selectedWorkspaceId || !selectedWorkspaceExists || runtimeStatus?.status !== "running") {
+    if (
+      !selectedWorkspaceId ||
+      !selectedWorkspaceExists ||
+      runtimeStatus?.status !== "running"
+    ) {
       setRuntimeOutputEntries([]);
       return;
     }
 
     void refreshRuntimeOutputs();
-  }, [refreshRuntimeOutputs, runtimeStatus?.status, selectedWorkspaceExists, selectedWorkspaceId]);
+  }, [
+    refreshRuntimeOutputs,
+    runtimeStatus?.status,
+    selectedWorkspaceExists,
+    selectedWorkspaceId,
+  ]);
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.workspace.onSessionStreamEvent(
@@ -1529,6 +1622,16 @@ function AppShellContent() {
         workspaceErrorMessage ||
         "Embedded runtime failed to start."
       : "";
+  const hydratedRuntimeErrorMessage =
+    hasHydratedWorkspaceList &&
+    hasSelectedWorkspace &&
+    runtimeStatus?.status === "error" &&
+    !workspaceAppsReady
+      ? runtimeStatus.lastError.trim() ||
+        workspaceBlockingReason ||
+        workspaceErrorMessage ||
+        "Embedded runtime failed to start."
+      : "";
   const isMacDesktop = window.electronAPI?.platform === "darwin";
   const mainGridClassName = appShellMainGridClassName({
     hasWorkspaces,
@@ -1850,10 +1953,6 @@ function AppShellContent() {
                 setSettingsDialogSection("billing");
                 setSettingsDialogOpen(true);
               }}
-              onOpenModelProviders={() => {
-                setSettingsDialogSection("providers");
-                setSettingsDialogOpen(true);
-              }}
               onOpenExternalUrl={handleOpenExternalUrl}
               onPublish={() => setPublishOpen(true)}
             />
@@ -1868,6 +1967,8 @@ function AppShellContent() {
           )
         ) : !hasWorkspaces ? (
           <FirstWorkspacePane />
+        ) : hydratedRuntimeErrorMessage ? (
+          <WorkspaceStartupErrorPane message={hydratedRuntimeErrorMessage} />
         ) : showOnboardingTakeover ? (
           <WorkspaceOnboardingTakeover
             onOutputsChanged={() => void refreshRuntimeOutputs()}
@@ -1992,10 +2093,6 @@ function AppShellContent() {
                       onOpenRunSession={handleOpenAutomationRunSession}
                     />
                   </div>
-                ) : activeLeftRailItem === "integrations" ? (
-                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
-                    <IntegrationsPane />
-                  </div>
                 ) : activeLeftRailItem === "marketplace" ? (
                   <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
                     <MarketplacePane />
@@ -2096,7 +2193,9 @@ function AppShellContent() {
                   activeRunningSessionId={activeChatSessionId}
                   hasWorkspace={hasSelectedWorkspace}
                   selectedWorkspaceId={selectedWorkspaceId}
-                  mainSessionId={(selectedWorkspace?.main_session_id || "").trim() || null}
+                  mainSessionId={
+                    (selectedWorkspace?.main_session_id || "").trim() || null
+                  }
                 />
               </div>
             ) : null}

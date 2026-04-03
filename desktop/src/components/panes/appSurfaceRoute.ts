@@ -1,33 +1,36 @@
 interface AppSurfaceRouteInput {
+  path?: string | null;
   resourceId?: string | null;
   view?: string | null;
 }
 
-function normalizedViewSegment(view?: string | null): string {
-  return (view || "").trim().toLowerCase();
-}
-
-function encodedPathSegment(value: string): string {
-  return encodeURIComponent(value.trim());
+function trimSlashes(value: string): string {
+  return value.replace(/^\/+|\/+$/g, "");
 }
 
 export function resolveAppSurfacePath({
+  path,
   resourceId,
   view,
 }: AppSurfaceRouteInput): string {
-  const normalizedView = normalizedViewSegment(view);
+  const normalizedPath = (path || "").trim();
+  if (normalizedPath) {
+    return normalizedPath.startsWith("/") ? normalizedPath : `/${normalizedPath}`;
+  }
+
+  const normalizedView = trimSlashes((view || "").trim());
   const normalizedResourceId = (resourceId || "").trim();
 
   if (!normalizedResourceId) {
     if (!normalizedView || normalizedView === "home") {
       return "/";
     }
-    return `/${encodedPathSegment(normalizedView)}`;
+    return `/${normalizedView}`;
   }
 
   if (!normalizedView || normalizedView === "home") {
-    return `/posts/${encodedPathSegment(normalizedResourceId)}`;
+    return `/posts/${encodeURIComponent(normalizedResourceId)}`;
   }
 
-  return `/${encodedPathSegment(normalizedView)}/${encodedPathSegment(normalizedResourceId)}`;
+  return `/${normalizedView}/${encodeURIComponent(normalizedResourceId)}`;
 }

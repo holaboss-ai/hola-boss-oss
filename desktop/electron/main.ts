@@ -5149,6 +5149,21 @@ async function parseLocalTemplateMetadata(
 }
 
 async function listMarketplaceTemplates(): Promise<TemplateListResponsePayload> {
+  // Try unauthenticated fetch first — the templates endpoint is public.
+  const baseUrl = marketplaceBaseUrl();
+  try {
+    const res = await fetch(`${baseUrl}/api/v1/marketplace/templates`, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (res.ok) {
+      return (await res.json()) as TemplateListResponsePayload;
+    }
+  } catch {
+    // Fall through to authenticated path.
+  }
+
+  // Fallback: authenticated path (e.g. if public access is disabled).
   await ensureRuntimeBindingReadyForWorkspaceFlow("marketplace_templates", {
     allowProvisionWhenUnmanaged: true,
     waitForStartupSync: true,
@@ -5664,6 +5679,7 @@ interface ResolveTemplateIntegrationsResult {
   requirements: TemplateIntegrationRequirement[];
   connected_providers: string[];
   missing_providers: string[];
+  provider_logos: Record<string, string>;
 }
 
 function extractIntegrationRequirementsFromTemplateFiles(
@@ -5730,8 +5746,8 @@ function extractIntegrationRequirementsFromTemplateFiles(
  * from template metadata (app names) without materializing the template.
  */
 const APP_TO_PROVIDER: Record<string, string> = {
-  gmail: "google",
-  sheets: "google",
+  gmail: "gmail",
+  sheets: "googlesheets",
   github: "github",
   reddit: "reddit",
   twitter: "twitter",
@@ -5745,7 +5761,7 @@ async function resolveTemplateIntegrations(
   const appNames: string[] = payload.template_apps ?? [];
 
   if (appNames.length === 0) {
-    return { requirements: [], connected_providers: [], missing_providers: [] };
+    return { requirements: [], connected_providers: [], missing_providers: [], provider_logos: {} };
   }
 
   const requirements: TemplateIntegrationRequirement[] = [];
@@ -5765,7 +5781,7 @@ async function resolveTemplateIntegrations(
   }
 
   if (requirements.length === 0) {
-    return { requirements: [], connected_providers: [], missing_providers: [] };
+    return { requirements: [], connected_providers: [], missing_providers: [], provider_logos: {} };
   }
 
   let connections: IntegrationConnectionPayload[] = [];
@@ -5774,6 +5790,19 @@ async function resolveTemplateIntegrations(
     connections = resp.connections;
   } catch {
     // If we cannot reach the integration API, treat all as missing.
+  }
+
+  // Fetch toolkit logos from Composio
+  const providerLogos: Record<string, string> = {};
+  try {
+    const { toolkits } = await composioListToolkits();
+    for (const toolkit of toolkits) {
+      if (toolkit.logo && seenProviders.has(toolkit.slug)) {
+        providerLogos[toolkit.slug] = toolkit.logo;
+      }
+    }
+  } catch {
+    // Non-fatal — UI will fall back to built-in SVG icons
   }
 
   const connectedProviderSet = new Set(
@@ -5792,6 +5821,7 @@ async function resolveTemplateIntegrations(
     requirements,
     connected_providers: connectedProviders,
     missing_providers: missingProviders,
+    provider_logos: providerLogos,
   };
 }
 
@@ -8686,6 +8716,7 @@ async function fileExists(targetPath: string) {
 const REQUIRED_RUNTIME_BUNDLE_PATHS = [
   path.join("bin", "sandbox-runtime"),
   "package-metadata.json",
+  path.join("node-runtime", "node_modules", ".bin", "node"),
   path.join("runtime", "metadata.json"),
   path.join("runtime", "api-server", "dist", "index.mjs"),
 ] as const;
@@ -9213,6 +9244,25 @@ function updateAttachedAppSurfaceView(): void {
   }
   mainWindow.addBrowserView(view);
   view.setBounds(appSurfaceBounds);
+}
+
+async function resolveAppSurfaceUrl(
+  workspaceId: string,
+  appId: string,
+  urlPath?: string,
+): Promise<string> {
+  const baseUrl = await getAppHttpUrl(workspaceId, appId);
+  if (!baseUrl) {
+    throw new Error(`Could not resolve HTTP URL for app ${appId}`);
+  }
+  const normalizedPath = typeof urlPath === "string" ? urlPath.trim() : "";
+  if (!normalizedPath) {
+    return baseUrl;
+  }
+  const targetPath = normalizedPath.startsWith("/")
+    ? normalizedPath
+    : `/${normalizedPath}`;
+  return `${baseUrl}${targetPath}`;
 }
 
 async function navigateAppSurface(
@@ -12538,6 +12588,12 @@ app.whenReady().then(async () => {
     hideAppSurface();
   });
   handleTrustedIpc(
+    "appSurface:resolveUrl",
+    ["main"],
+    async (_event, workspaceId: string, appId: string, urlPath?: string) =>
+      resolveAppSurfaceUrl(workspaceId, appId, urlPath),
+  );
+  handleTrustedIpc(
     "workspace:listOutputs",
     ["main"],
     async (_event, payload: string | HolabossListOutputsPayload) => listOutputs(payload),
@@ -12850,7 +12906,14 @@ app.whenReady().then(async () => {
         method: "POST",
         path: "/api/v1/marketplace/submissions/create",
         payload: {
-          ...payload,
+          workspace_id: payload.workspaceId,
+          name: payload.name,
+          description: payload.description,
+          category: payload.category,
+          tags: payload.tags,
+          apps: payload.apps,
+          onboarding_md: payload.onboardingMd,
+          readme_md: payload.readmeMd,
           holaboss_user_id: holabossUserId,
         },
       });

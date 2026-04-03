@@ -1,7 +1,10 @@
 import { type ChangeEvent, type CompositionEvent, type DragEvent, FormEvent, KeyboardEvent, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { AlertTriangle, ArrowRight, ArrowUp, Bot, Cable, Check, ChevronDown, Clock3, FileText, Image as ImageIcon, Lightbulb, Loader2, Paperclip, PencilLine, Waypoints, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, ArrowUp, Cable, Check, ChevronDown, Clock3, FileText, Image as ImageIcon, Lightbulb, Loader2, Paperclip, PencilLine, Search, Waypoints, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { PaneCard } from "@/components/ui/PaneCard";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import {
   EXPLORER_ATTACHMENT_DRAG_TYPE,
@@ -545,26 +548,26 @@ function toolTraceStepFromPayload(payload: Record<string, unknown>, order: numbe
   const mcpErrorText = extractMcpErrorText(payload.result);
 
   if (phase === "started") {
-    details.push("Tool call started.");
     if (argsSummary) {
-      details.push(`Inputs: ${argsSummary}`);
+      details.push(argsSummary);
     }
   } else if (TOOL_TRACE_TERMINAL_PHASES.has(phase)) {
     if (isError && mcpErrorText) {
       details.push(mcpErrorText);
     } else if (isError) {
-      details.push("Tool call returned an error.");
       if (errorSummary && errorSummary !== "true" && errorSummary !== "false") {
-        details.push(`Error: ${errorSummary}`);
+        details.push(errorSummary);
+      } else {
+        details.push("Error");
       }
-    } else {
-      details.push("Tool call completed.");
+    } else if (argsSummary) {
+      details.push(argsSummary);
     }
     if (!isError && resultSummary) {
-      details.push(`Result: ${resultSummary}`);
+      details.push(resultSummary);
     }
   } else if (argsSummary) {
-    details.push(`Inputs: ${argsSummary}`);
+    details.push(argsSummary);
   }
 
   return {
@@ -2823,7 +2826,7 @@ export function ChatPane({
               {hasMessages ? (
                 <div
                   ref={messagesContentRef}
-                  className="mx-auto flex w-full max-w-[860px] flex-col gap-7 pb-3 pl-4 pr-10 pt-5 sm:pl-5 sm:pr-11"
+                  className="mx-auto flex w-full max-w-[800px] flex-col gap-7 px-6 pb-3 pt-5"
                 >
                   {messages.map((message) =>
                     message.role === "user" ? (
@@ -2983,8 +2986,8 @@ export function ChatPane({
           ) : null}
 
           {hasMessages ? (
-            <div ref={composerBlockRef} className="shrink-0 px-4 pb-4 pt-3 sm:px-5 sm:pb-5">
-              <form onSubmit={onSubmit} className="mx-auto max-w-[760px]">
+            <div ref={composerBlockRef} className="shrink-0 px-6 pb-5 pt-3">
+              <form onSubmit={onSubmit} className="mx-auto max-w-[800px]">
                 <Composer
                   input={input}
                   attachments={pendingAttachmentItems}
@@ -3151,76 +3154,52 @@ function AssistantTurn({
   return (
     <div className="flex justify-start">
       <article className="max-w-[760px]">
-        <div className="flex items-start gap-3">
-          <div className="bg-muted mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full border border-border/35 text-foreground/84">
-            <Bot size={15} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="text-[12px] font-medium text-foreground/94">{label}</div>
-              <div className="rounded-full border border-border/35 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/76">
-                {mode}
-              </div>
-              {live ? (
-                <div className="rounded-full border border-[rgba(247,90,84,0.18)] bg-[rgba(247,90,84,0.08)] px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-[rgba(206,92,84,0.92)]">
-                  Live
-                </div>
-              ) : null}
-            </div>
+        {status && !text ? (
+          <div className="text-[13px] leading-7 text-muted-foreground">{status}</div>
+        ) : null}
 
-            {status && !text ? (
-              <div className="mt-2 text-[13px] leading-7 text-muted-foreground">{status}</div>
-            ) : null}
+        {traceSteps.length > 0 ? (
+          <TraceStepGroup
+            steps={traceSteps}
+            collapsedByStepId={collapsedTraceByStepId}
+            onToggleStep={onToggleTraceStep}
+          />
+        ) : null}
 
-            {traceSteps.length > 0 ? (
-              <div className="mt-4 grid gap-2.5 border-l border-border/25 pl-4">
-                {traceSteps.map((step) => (
-                  <TraceStepCard
-                    key={step.id}
-                    step={step}
-                    collapsed={isTraceStepCollapsed(step, collapsedTraceByStepId)}
-                    onToggle={() => onToggleTraceStep(step.id)}
-                  />
-                ))}
-              </div>
-            ) : null}
+        {thinkingText ? (
+          <ThinkingPanel text={thinkingText} collapsed={thinkingCollapsed} onToggle={onToggleThinking} live={live} />
+        ) : null}
 
-            {thinkingText ? (
-              <ThinkingPanel text={thinkingText} collapsed={thinkingCollapsed} onToggle={onToggleThinking} live={live} />
-            ) : null}
+        {text ? (
+          <SimpleMarkdown
+            className="chat-markdown chat-assistant-markdown mt-2 max-w-full text-foreground"
+            onLinkClick={onLinkClick}
+          >
+            {text}
+          </SimpleMarkdown>
+        ) : null}
 
-            {text ? (
-              <SimpleMarkdown
-                className="chat-markdown chat-assistant-markdown mt-4 max-w-full text-foreground"
-                onLinkClick={onLinkClick}
-              >
-                {text}
-              </SimpleMarkdown>
-            ) : null}
+        {memoryProposals.length > 0 ? (
+          <AssistantTurnMemoryProposals
+            proposals={memoryProposals}
+            proposalAction={memoryProposalAction}
+            editingProposalId={editingMemoryProposalId}
+            drafts={memoryProposalDrafts}
+            onEditProposal={onEditMemoryProposal}
+            onDraftChange={onMemoryProposalDraftChange}
+            onAcceptProposal={onAcceptMemoryProposal}
+            onDismissProposal={onDismissMemoryProposal}
+          />
+        ) : null}
 
-            {memoryProposals.length > 0 ? (
-              <AssistantTurnMemoryProposals
-                proposals={memoryProposals}
-                proposalAction={memoryProposalAction}
-                editingProposalId={editingMemoryProposalId}
-                drafts={memoryProposalDrafts}
-                onEditProposal={onEditMemoryProposal}
-                onDraftChange={onMemoryProposalDraftChange}
-                onAcceptProposal={onAcceptMemoryProposal}
-                onDismissProposal={onDismissMemoryProposal}
-              />
-            ) : null}
-
-            {outputs.length > 0 ? (
-              <AssistantTurnOutputs
-                outputs={outputs}
-                sessionOutputs={sessionOutputs}
-                onOpenOutput={onOpenOutput}
-                onOpenAllArtifacts={onOpenAllArtifacts}
-              />
-            ) : null}
-          </div>
-        </div>
+        {outputs.length > 0 ? (
+          <AssistantTurnOutputs
+            outputs={outputs}
+            sessionOutputs={sessionOutputs}
+            onOpenOutput={onOpenOutput}
+            onOpenAllArtifacts={onOpenAllArtifacts}
+          />
+        ) : null}
       </article>
     </div>
   );
@@ -3544,77 +3523,93 @@ function IntegrationErrorBanner({ details }: { details: string[] }) {
   );
 }
 
-function TraceStepCard({
-  step,
-  collapsed,
-  onToggle
+function TraceStepGroup({
+  steps,
+  collapsedByStepId,
+  onToggleStep,
 }: {
-  step: ChatTraceStep;
-  collapsed: boolean;
-  onToggle: () => void;
+  steps: ChatTraceStep[];
+  collapsedByStepId: Record<string, boolean>;
+  onToggleStep: (stepId: string) => void;
 }) {
-  const statusTone =
-    step.status === "completed"
-      ? "border-[rgba(92,180,120,0.2)] bg-[rgba(92,180,120,0.08)] text-[rgba(118,196,144,0.92)]"
-      : step.status === "error"
-        ? "border-[rgba(247,90,84,0.24)] bg-[rgba(247,90,84,0.08)] text-[rgba(206,92,84,0.94)]"
-        : step.status === "waiting"
-          ? "border-border/35 bg-card/24 text-muted-foreground"
-          : "border-[rgba(247,170,126,0.18)] bg-[rgba(247,170,126,0.08)] text-[rgba(224,146,103,0.92)]";
-  const buttonClassName = collapsed
-    ? "flex w-full items-center gap-2.5 rounded-[14px] px-1 py-1 text-left transition hover:bg-card/18"
-    : "bg-muted flex w-full items-start gap-3 rounded-[18px] border border-border/35 px-3.5 py-3 text-left transition hover:border-border/55";
-  const iconClassName = collapsed
-    ? `grid h-5 w-5 shrink-0 place-items-center rounded-full border ${statusTone}`
-    : `mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full border ${statusTone}`;
-  const titleClassName = collapsed
-    ? "truncate text-[12px] font-medium leading-5 text-foreground"
-    : "text-[13px] font-medium leading-6 text-foreground";
+  const [groupExpanded, setGroupExpanded] = useState(false);
+  const completedCount = steps.filter((s) => s.status === "completed").length;
+  const errorCount = steps.filter((s) => s.status === "error").length;
+  const runningCount = steps.filter((s) => s.status === "running").length;
+  const isAllDone = runningCount === 0 && steps.length > 0;
 
   return (
-    <div className="relative">
-      <div className="absolute -left-[1.3125rem] top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full border border-border/50 bg-card/90" />
+    <div className="mt-3">
       <button
         type="button"
-        onClick={onToggle}
-        aria-expanded={!collapsed}
-        className={buttonClassName}
+        onClick={() => setGroupExpanded((v) => !v)}
+        className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 -ml-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60"
       >
-        <div className={iconClassName}>
-          {step.status === "completed" ? (
-            <Check size={collapsed ? 11 : 13} />
-          ) : step.status === "error" ? (
-            <AlertTriangle size={collapsed ? 11 : 13} />
-          ) : (
-            <Clock3 size={collapsed ? 11 : 13} />
-          )}
-        </div>
-
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className={titleClassName}>{step.title}</div>
-            {!collapsed ? (
-              <div className={`rounded-full border px-2 py-0.5 text-[9px] uppercase tracking-[0.14em] ${statusTone}`}>
-                {traceStatusLabel(step.status)}
-              </div>
-            ) : null}
-          </div>
-
-          {!collapsed && step.details.length > 0 ? (
-            <div className="mt-1 text-[12px] leading-6 text-muted-foreground">
-              {step.details.join("\n")}
-            </div>
-          ) : null}
-          {step.status === "error" ? <IntegrationErrorBanner details={step.details} /> : null}
-        </div>
-
-        {step.details.length > 0 ? (
-          <ChevronDown
-            size={collapsed ? 13 : 14}
-            className={`shrink-0 text-muted-foreground transition ${collapsed ? "" : "mt-1 rotate-180"}`}
-          />
-        ) : null}
+        {runningCount > 0 ? (
+          <Loader2 size={13} className="animate-spin text-muted-foreground" />
+        ) : errorCount > 0 ? (
+          <AlertTriangle size={13} className="text-destructive" />
+        ) : (
+          <Check size={13} className="text-emerald-500" />
+        )}
+        <span>
+          {runningCount > 0
+            ? `Running ${steps.length} tool${steps.length === 1 ? "" : "s"}...`
+            : `Used ${steps.length} tool${steps.length === 1 ? "" : "s"}`}
+          {errorCount > 0 ? ` (${errorCount} failed)` : ""}
+        </span>
+        <ChevronDown
+          size={12}
+          className={`transition-transform ${groupExpanded ? "rotate-180" : ""}`}
+        />
       </button>
+
+      {groupExpanded ? (
+        <div className="mt-1 ml-1 space-y-0.5">
+          {steps.map((step) => {
+            const expanded = !(collapsedByStepId[step.id] ?? true);
+            return (
+              <div key={step.id}>
+                <button
+                  type="button"
+                  onClick={() => step.details.length > 0 && onToggleStep(step.id)}
+                  className={`flex w-full items-start gap-2 rounded-md px-2.5 -ml-2.5 py-1 text-left text-xs transition-colors ${step.details.length > 0 ? "hover:bg-muted/50 cursor-pointer" : "cursor-default"}`}
+                >
+                  <span className="mt-0.5 shrink-0">
+                    {step.status === "completed" ? (
+                      <Check size={12} className="text-emerald-500" />
+                    ) : step.status === "error" ? (
+                      <AlertTriangle size={12} className="text-destructive" />
+                    ) : step.status === "running" ? (
+                      <Loader2 size={12} className="animate-spin text-muted-foreground" />
+                    ) : (
+                      <Clock3 size={12} className="text-muted-foreground" />
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="font-medium text-foreground/80">{step.title}</span>
+                    {step.details.length > 0 ? (
+                      <span className="ml-1.5 text-muted-foreground/70">{step.details[0]}</span>
+                    ) : null}
+                  </span>
+                  {step.details.length > 1 ? (
+                    <ChevronDown
+                      size={12}
+                      className={`mt-0.5 shrink-0 text-muted-foreground/50 transition-transform ${expanded ? "rotate-180" : ""}`}
+                    />
+                  ) : null}
+                </button>
+                {expanded && step.details.length > 1 ? (
+                  <div className="ml-6 mt-0.5 mb-1 rounded-md border border-border/30 bg-muted/30 px-3 py-2 text-[11px] leading-5 text-muted-foreground whitespace-pre-wrap">
+                    {step.details.slice(1).join("\n")}
+                  </div>
+                ) : null}
+                {step.status === "error" ? <IntegrationErrorBanner details={step.details} /> : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -3702,6 +3697,130 @@ function AttachmentList({
         </div>
       ))}
     </div>
+  );
+}
+
+function ModelCombobox({
+  selectedModel,
+  selectedModelLabel,
+  runtimeDefaultModelLabel,
+  runtimeDefaultModelAvailable,
+  modelOptions,
+  modelOptionGroups,
+  disabled,
+  onModelChange,
+}: {
+  selectedModel: string;
+  selectedModelLabel: string;
+  runtimeDefaultModelLabel: string;
+  runtimeDefaultModelAvailable: boolean;
+  modelOptions: ChatModelOption[];
+  modelOptionGroups: ChatModelOptionGroup[];
+  disabled: boolean;
+  onModelChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+
+  const allOptions = useMemo(() => {
+    const items: ChatModelOption[] = [];
+    if (runtimeDefaultModelAvailable) {
+      items.push({ value: CHAT_MODEL_USE_RUNTIME_DEFAULT, label: `Auto (${runtimeDefaultModelLabel})` });
+    }
+    if (modelOptionGroups.length > 0) {
+      for (const group of modelOptionGroups) {
+        for (const option of group.options) {
+          items.push(option);
+        }
+      }
+    } else {
+      for (const option of modelOptions) {
+        items.push(option);
+      }
+    }
+    return items;
+  }, [modelOptionGroups, modelOptions, runtimeDefaultModelAvailable, runtimeDefaultModelLabel]);
+
+  const filteredOptions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return allOptions;
+    return allOptions.filter((o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q));
+  }, [allOptions, query]);
+
+  const displayLabel =
+    selectedModel === CHAT_MODEL_USE_RUNTIME_DEFAULT
+      ? `Auto (${runtimeDefaultModelLabel})`
+      : selectedModelLabel;
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) setQuery("");
+      }}
+    >
+      <PopoverTrigger
+        disabled={disabled}
+        render={
+          <Button
+            variant="outline"
+            size="lg"
+            className="w-full justify-between text-xs font-medium"
+          >
+            <span className="truncate">{displayLabel}</span>
+            <ChevronDown size={13} className="shrink-0 text-muted-foreground" />
+          </Button>
+        }
+      />
+      <PopoverContent
+        align="start"
+        side="top"
+        sideOffset={8}
+        className="w-[280px] p-0"
+      >
+        <div className="border-b border-border/40 p-2">
+          <div className="relative">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search models..."
+              className="h-8 pl-8 text-xs"
+              autoFocus
+            />
+          </div>
+        </div>
+        <div className="max-h-[240px] overflow-y-auto py-1">
+          {filteredOptions.length === 0 ? (
+            <div className="px-3 py-4 text-center text-xs text-muted-foreground">No models found</div>
+          ) : (
+            filteredOptions.map((option) => {
+              const active = option.value === selectedModel;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => {
+                    onModelChange(option.value);
+                    setOpen(false);
+                    setQuery("");
+                  }}
+                  className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs transition-colors ${
+                    active
+                      ? "bg-accent text-accent-foreground"
+                      : "text-foreground hover:bg-accent/50"
+                  }`}
+                >
+                  <span className="truncate">{option.label}</span>
+                  {active ? <Check size={13} className="shrink-0 text-primary" /> : null}
+                </button>
+              );
+            })
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -3825,7 +3944,7 @@ function Composer({
           rows={1}
           disabled={inputDisabled}
           placeholder={inputDisabled ? disabledReason || "Chat unavailable right now" : placeholder}
-          className="composer-input block max-h-[220px] min-h-[76px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-7 text-foreground outline-none placeholder:text-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-55"
+          className="composer-input block max-h-[220px] min-h-[40px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-7 text-foreground outline-none placeholder:text-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-55"
         />
       </div>
 
@@ -3851,41 +3970,16 @@ function Composer({
                 </div>
               </>
             ) : (
-              <div className="relative">
-                <select
-                  value={selectedModel}
-                  onChange={(event) => onModelChange(event.target.value)}
-                  disabled={isResponding}
-                  aria-label="Model selection"
-                  title={
-                    selectedModel === CHAT_MODEL_USE_RUNTIME_DEFAULT
-                      ? `Auto (${runtimeDefaultModelLabel})`
-                      : selectedModelOptionLabel
-                  }
-                  className="composer-select bg-muted h-9 w-full appearance-none rounded-[11px] border border-border/28 px-3 pr-9 text-[12px] font-medium text-foreground transition hover:border-border/48 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {runtimeDefaultModelAvailable ? <option value={CHAT_MODEL_USE_RUNTIME_DEFAULT}>Auto</option> : null}
-                  {modelOptionGroups.length > 0
-                    ? modelOptionGroups.map((group, groupIndex) => (
-                        <optgroup key={`${group.label}-${groupIndex}`} label={group.label}>
-                          {group.options.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))
-                    : modelOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                </select>
-                <ChevronDown
-                  size={14}
-                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                />
-              </div>
+              <ModelCombobox
+                selectedModel={selectedModel}
+                selectedModelLabel={selectedModelOptionLabel}
+                runtimeDefaultModelLabel={runtimeDefaultModelLabel}
+                runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
+                modelOptions={modelOptions}
+                modelOptionGroups={modelOptionGroups}
+                disabled={isResponding}
+                onModelChange={onModelChange}
+              />
             )}
           </div>
         ) : (
@@ -3895,22 +3989,24 @@ function Composer({
         )}
 
         <div className="ml-auto flex items-center gap-2">
-          <button
-            type="button"
+          <Button
+            variant="outline"
+            size="icon"
             disabled={isResponding || disabled}
             onClick={() => fileInputRef.current?.click()}
-            className="grid h-9 w-9 place-items-center rounded-full border border-border/40 text-muted-foreground transition hover:border-primary/35 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
             aria-label="Attach files"
+            className="rounded-full"
           >
             <Paperclip size={15} />
-          </button>
-          <button
-            type="submit"
+          </Button>
+          <Button
+            size="icon"
             disabled={(!input.trim() && attachments.length === 0) || isResponding || disabled}
-            className="grid h-9 w-9 place-items-center rounded-full bg-foreground text-background transition hover:opacity-92 disabled:cursor-not-allowed disabled:opacity-35"
+            render={<button type="submit" />}
+            className="rounded-full"
           >
             {isResponding ? <Loader2 size={16} className="animate-spin" /> : <ArrowUp size={16} />}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

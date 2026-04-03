@@ -8,6 +8,7 @@ const runtimeRoot = path.join(desktopRoot, "out", "runtime-macos");
 const requiredRuntimePaths = [
   path.join(runtimeRoot, "bin", "sandbox-runtime"),
   path.join(runtimeRoot, "package-metadata.json"),
+  path.join(runtimeRoot, "node-runtime", "node_modules", ".bin", "node"),
   path.join(runtimeRoot, "runtime", "metadata.json"),
   path.join(runtimeRoot, "runtime", "api-server", "dist", "index.mjs")
 ];

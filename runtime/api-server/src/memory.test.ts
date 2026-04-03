@@ -111,18 +111,18 @@ test("filesystem memory service preserves search/get/upsert/status/sync payload 
   });
 });
 
-test("filesystem memory service reports qmd fallback metadata when requested", async () => {
+test("filesystem memory service reports generic fallback metadata for unsupported backends", async () => {
   const root = makeTempDir("hb-memory-");
-  process.env.MEMORY_BACKEND = "qmd";
+  process.env.MEMORY_BACKEND = "sqlite";
   const service = new MemoryService({ workspaceRoot: path.join(root, "workspace") });
 
   const status = await service.status({ workspace_id: "workspace-1" });
 
   assert.equal(status.backend, "builtin");
-  assert.equal(status.requested_provider, "qmd");
+  assert.equal(status.requested_provider, "sqlite");
   assert.deepEqual(status.fallback, {
-    from: "qmd",
-    reason: "ts runtime uses builtin filesystem memory backend"
+    from: "sqlite",
+    reason: "ts runtime only supports the builtin filesystem memory backend"
   });
 });
 
