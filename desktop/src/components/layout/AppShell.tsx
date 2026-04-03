@@ -17,7 +17,6 @@ import { AutomationsPane } from "@/components/panes/AutomationsPane";
 import { BrowserPane } from "@/components/panes/BrowserPane";
 import { ChatPane } from "@/components/panes/ChatPane";
 import { FileExplorerPane } from "@/components/panes/FileExplorerPane";
-import { IntegrationsPane } from "@/components/panes/IntegrationsPane";
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { MarketplacePane } from "@/components/panes/MarketplacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
@@ -1893,10 +1892,6 @@ function AppShellContent() {
                 ) : activeLeftRailItem === "automations" ? (
                   <div className="h-full min-h-0 overflow-hidden">
                     <AutomationsPane />
-                  </div>
-                ) : activeLeftRailItem === "integrations" ? (
-                  <div className="h-full min-h-0 overflow-hidden">
-                    <IntegrationsPane />
                   </div>
                 ) : activeLeftRailItem === "marketplace" ? (
                   <div className="h-full min-h-0 overflow-hidden">

@@ -1,5 +1,4 @@
 import {
-  Cable,
   LayoutGrid,
   MessageSquareText,
   Sparkles,
@@ -12,7 +11,6 @@ export type LeftRailItem =
   | "space"
   | "automations"
   | "skills"
-  | "integrations"
   | "marketplace"
   | "app";
 
@@ -32,7 +30,6 @@ const PRIMARY_ITEMS: Array<{
   { id: "space", label: "Space", icon: <MessageSquareText size={15} /> },
   { id: "automations", label: "Automations", icon: <Workflow size={15} /> },
   { id: "skills", label: "Skills", icon: <Sparkles size={15} /> },
-  { id: "integrations", label: "Integrations", icon: <Cable size={15} /> },
 ];
 
 function appInitials(label: string): string {
