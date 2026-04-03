@@ -671,6 +671,9 @@ interface ChatPaneProps {
   onOutputsChanged?: () => void;
   focusRequestKey?: number;
   variant?: ChatPaneVariant;
+  onOpenLinkInBrowser?: (url: string) => void;
+  sessionJumpSessionId?: string | null;
+  sessionJumpRequestKey?: number;
   sessionOpenRequest?: ChatPaneSessionOpenRequest | null;
   onActiveSessionIdChange?: (sessionId: string | null) => void;
 }
@@ -679,6 +682,9 @@ export function ChatPane({
   onOutputsChanged,
   focusRequestKey = 0,
   variant = "default",
+  onOpenLinkInBrowser,
+  sessionJumpSessionId = null,
+  sessionJumpRequestKey = 0,
   sessionOpenRequest = null,
   onActiveSessionIdChange
 }: ChatPaneProps) {
@@ -737,6 +743,7 @@ export function ChatPane({
   const selectedWorkspaceRef = useRef<WorkspaceRecordPayload | null>(null);
   const isOnboardingVariant = variant === "onboarding";
   const pendingFocusRequestKeyRef = useRef<number | null>(focusRequestKey);
+  const lastHandledSessionJumpRequestKeyRef = useRef(0);
   const liveAssistantTextRef = useRef("");
   const liveThinkingTextRef = useRef("");
   const liveThinkingExpandedRef = useRef(false);
@@ -1032,7 +1039,7 @@ export function ChatPane({
   function toggleTraceStep(stepId: string) {
     setCollapsedTraceByStepId((prev) => ({
       ...prev,
-      [stepId]: !prev[stepId]
+      [stepId]: !(prev[stepId] ?? true)
     }));
   }
 
@@ -1066,12 +1073,9 @@ export function ChatPane({
     });
   }
 
-  function upsertLiveTraceStep(step: ChatTraceStep, options?: { expand?: boolean }) {
+  function upsertLiveTraceStep(step: ChatTraceStep) {
     const next = upsertTraceStep(liveTraceStepsRef.current, step);
     setLiveTraceStepsState(next);
-    if (options?.expand) {
-      setCollapsedTraceByStepId((prev) => (step.id in prev ? prev : { ...prev, [step.id]: false }));
-    }
   }
 
   function finalizeLiveTraceSteps(status: Extract<ChatTraceStepStatus, "completed" | "error">) {
@@ -1166,6 +1170,7 @@ export function ChatPane({
       setPendingAttachments([]);
       setActiveSession(null);
       pendingInputIdRef.current = null;
+      lastHandledSessionJumpRequestKeyRef.current = 0;
       return;
     }
 
@@ -1176,14 +1181,38 @@ export function ChatPane({
       setChatErrorMessage("");
 
       try {
+        const requestedSessionId = (sessionJumpSessionId || "").trim();
+        const hasSessionJumpRequest =
+          Boolean(requestedSessionId) &&
+          sessionJumpRequestKey > 0 &&
+          sessionJumpRequestKey !== lastHandledSessionJumpRequestKeyRef.current;
+        if (hasSessionJumpRequest) {
+          lastHandledSessionJumpRequestKeyRef.current = sessionJumpRequestKey;
+          pendingInputIdRef.current = null;
+          activeAssistantMessageIdRef.current = null;
+          setIsResponding(false);
+          resetLiveTurn();
+
+          const activeStreamId = activeStreamIdRef.current;
+          activeStreamIdRef.current = null;
+          if (activeStreamId) {
+            await closeStreamWithReason(
+              activeStreamId,
+              "chatpane_session_jump_requested",
+            ).catch(() => undefined);
+          }
+        }
+
         const runtimeStates = await window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId);
         if (cancelled) {
           return;
         }
 
-        const requestedSessionId = (sessionOpenRequest?.sessionId || "").trim();
+        const requestedOpenSessionId = (sessionOpenRequest?.sessionId || "").trim();
         const nextSessionId =
-          requestedSessionId ||
+          (hasSessionJumpRequest && requestedSessionId
+            ? requestedSessionId
+            : requestedOpenSessionId) ||
           preferredSessionId(selectedWorkspaceRef.current, runtimeStates.items);
         await loadSessionConversation(nextSessionId, selectedWorkspaceId, runtimeStates.items, {
           cancelled: () => cancelled
@@ -1205,6 +1234,8 @@ export function ChatPane({
     };
   }, [
     isOnboardingVariant,
+    sessionJumpRequestKey,
+    sessionJumpSessionId,
     sessionOpenRequest?.sessionId,
     selectedWorkspaceId,
     selectedWorkspace?.main_session_id,
@@ -1552,13 +1583,13 @@ export function ChatPane({
 
       const phaseStep = phaseTraceStepFromEvent(eventType, eventPayload, eventSequence);
       if (phaseStep) {
-        upsertLiveTraceStep(phaseStep, { expand: phaseStep.status !== "completed" });
+        upsertLiveTraceStep(phaseStep);
       }
 
       const toolStep = toolTraceStepFromEvent(eventType, eventPayload, eventSequence);
       if (toolStep) {
         setLiveAgentStatus(toolStep.status === "completed" ? "Writing response..." : "Using tools...");
-        upsertLiveTraceStep(toolStep, { expand: toolStep.status !== "completed" });
+        upsertLiveTraceStep(toolStep);
       }
 
       if (eventType === "output_delta") {
@@ -2435,7 +2466,12 @@ export function ChatPane({
                 >
                   {messages.map((message) =>
                     message.role === "user" ? (
-                      <UserTurn key={message.id} text={message.text} attachments={message.attachments ?? []} />
+                      <UserTurn
+                        key={message.id}
+                        text={message.text}
+                        attachments={message.attachments ?? []}
+                        onLinkClick={onOpenLinkInBrowser}
+                      />
                     ) : (
                       <AssistantTurn
                         key={message.id}
@@ -2448,6 +2484,7 @@ export function ChatPane({
                         traceSteps={message.traceSteps ?? []}
                         collapsedTraceByStepId={collapsedTraceByStepId}
                         onToggleTraceStep={toggleTraceStep}
+                        onLinkClick={onOpenLinkInBrowser}
                       />
                     )
                   )}
@@ -2467,6 +2504,7 @@ export function ChatPane({
                       traceSteps={liveTraceSteps}
                       collapsedTraceByStepId={collapsedTraceByStepId}
                       onToggleTraceStep={toggleTraceStep}
+                      onLinkClick={onOpenLinkInBrowser}
                       live
                       status={liveAgentStatus || (isResponding ? "Working..." : "")}
                     />
@@ -2622,17 +2660,19 @@ interface ThinkingPanelProps {
 
 function UserTurn({
   text,
-  attachments
+  attachments,
+  onLinkClick
 }: {
   text: string;
   attachments: ChatAttachment[];
+  onLinkClick?: (url: string) => void;
 }) {
   return (
     <div className="flex justify-end">
       <div className="flex max-w-[420px] flex-col items-end gap-2">
         {text ? (
           <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full rounded-[18px] border px-4 py-3 text-foreground/95">
-            <SimpleMarkdown className="chat-markdown chat-user-markdown max-w-full">
+            <SimpleMarkdown className="chat-markdown chat-user-markdown max-w-full" onLinkClick={onLinkClick}>
               {text}
             </SimpleMarkdown>
           </div>
@@ -2653,6 +2693,7 @@ function AssistantTurn({
   traceSteps,
   collapsedTraceByStepId,
   onToggleTraceStep,
+  onLinkClick,
   status = "",
   live = false
 }: {
@@ -2665,6 +2706,7 @@ function AssistantTurn({
   traceSteps: ChatTraceStep[];
   collapsedTraceByStepId: Record<string, boolean>;
   onToggleTraceStep: (stepId: string) => void;
+  onLinkClick?: (url: string) => void;
   status?: string;
   live?: boolean;
 }) {
@@ -2710,7 +2752,10 @@ function AssistantTurn({
             ) : null}
 
             {text ? (
-              <SimpleMarkdown className="chat-markdown chat-assistant-markdown mt-4 max-w-full text-foreground">
+              <SimpleMarkdown
+                className="chat-markdown chat-assistant-markdown mt-4 max-w-full text-foreground"
+                onLinkClick={onLinkClick}
+              >
                 {text}
               </SimpleMarkdown>
             ) : null}

@@ -90,6 +90,22 @@ function getParentFolderPath(targetPath: string) {
   return normalized.slice(0, lastSeparatorIndex);
 }
 
+function normalizeComparablePath(targetPath: string) {
+  const trimmed = targetPath.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  let normalized = trimmed.replace(/\\/g, "/");
+  if (normalized.length > 1) {
+    normalized = normalized.replace(/\/+$/, "");
+  }
+  if (/^[a-zA-Z]:\//.test(normalized)) {
+    normalized = normalized.toLowerCase();
+  }
+  return normalized;
+}
+
 function formatFileSize(size: number) {
   if (size <= 0) return "-";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -179,10 +195,12 @@ function getHighlightedHtml(preview: FilePreviewPayload | null, draft: string) {
 export function FileExplorerPane() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const dragPreviewRef = useRef<HTMLDivElement | null>(null);
+  const lastSyncedWorkspaceRootRef = useRef<{ workspaceId: string; rootPath: string } | null>(null);
   const [currentPath, setCurrentPath] = useState<string>("");
   const [parentPath, setParentPath] = useState<string | null>(null);
   const [entries, setEntries] = useState<LocalFileEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState<string>("");
+  const [workspaceRootPath, setWorkspaceRootPath] = useState<string | null>(null);
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [query, setQuery] = useState("");
@@ -248,17 +266,33 @@ export function FileExplorerPane() {
 
   useEffect(() => {
     if (!selectedWorkspaceId) {
+      lastSyncedWorkspaceRootRef.current = null;
+      setWorkspaceRootPath(null);
       return;
     }
+    setWorkspaceRootPath(null);
 
     let cancelled = false;
 
     async function loadWorkspaceDirectory() {
       try {
         const workspaceRoot = await window.electronAPI.workspace.getWorkspaceRoot(selectedWorkspaceId);
-        if (!workspaceRoot || cancelled || currentPath === workspaceRoot) {
+        if (workspaceRoot) {
+          setWorkspaceRootPath(workspaceRoot);
+        }
+        const lastSyncedWorkspaceRoot = lastSyncedWorkspaceRootRef.current;
+        if (
+          !workspaceRoot ||
+          cancelled ||
+          (lastSyncedWorkspaceRoot?.workspaceId === selectedWorkspaceId &&
+            lastSyncedWorkspaceRoot.rootPath === workspaceRoot)
+        ) {
           return;
         }
+        lastSyncedWorkspaceRootRef.current = {
+          workspaceId: selectedWorkspaceId,
+          rootPath: workspaceRoot
+        };
         await loadDirectory(workspaceRoot, true);
       } catch {
         // The workspace directory may not exist yet while provisioning.
@@ -269,7 +303,48 @@ export function FileExplorerPane() {
     return () => {
       cancelled = true;
     };
-  }, [currentPath, loadDirectory, selectedWorkspaceId]);
+  }, [loadDirectory, selectedWorkspaceId]);
+
+  useEffect(() => {
+    if (!currentPath) {
+      return;
+    }
+
+    let cancelled = false;
+    let refreshInFlight = false;
+
+    const refreshCurrentDirectory = async () => {
+      if (cancelled || refreshInFlight) {
+        return;
+      }
+
+      refreshInFlight = true;
+      try {
+        const payload = await window.electronAPI.fs.listDirectory(currentPath);
+        if (cancelled || payload.currentPath !== currentPath) {
+          return;
+        }
+        setParentPath(payload.parentPath);
+        setEntries(payload.entries);
+        setSelectedPath((prev) =>
+          !prev || !payload.entries.some((entry) => entry.absolutePath === prev) ? (payload.entries[0]?.absolutePath ?? "") : prev
+        );
+      } catch {
+        // Best-effort background refresh; keep current listing on transient failures.
+      } finally {
+        refreshInFlight = false;
+      }
+    };
+
+    const timer = window.setInterval(() => {
+      void refreshCurrentDirectory();
+    }, 1200);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [currentPath]);
 
   useEffect(() => {
     let mounted = true;
@@ -317,6 +392,9 @@ export function FileExplorerPane() {
 
   const canGoBack = historyIndex > 0;
   const canGoForward = historyIndex >= 0 && historyIndex < history.length - 1;
+  const isAtWorkspaceRoot = workspaceRootPath
+    ? normalizeComparablePath(currentPath) === normalizeComparablePath(workspaceRootPath)
+    : false;
 
   const filteredEntries = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -365,6 +443,32 @@ export function FileExplorerPane() {
     if (targetEntry?.isDirectory) {
       await openPath(targetEntry.absolutePath);
     }
+  };
+
+  const openHomeDirectory = async () => {
+    if (!confirmDiscardIfDirty()) {
+      return;
+    }
+
+    if (selectedWorkspaceId) {
+      try {
+        const workspaceRoot = await window.electronAPI.workspace.getWorkspaceRoot(selectedWorkspaceId);
+        if (workspaceRoot) {
+          setPreview(null);
+          setPreviewDraft("");
+          setPreviewError("");
+          await loadDirectory(workspaceRoot, true);
+          return;
+        }
+      } catch {
+        // Fall through to default home root.
+      }
+    }
+
+    setPreview(null);
+    setPreviewDraft("");
+    setPreviewError("");
+    await loadDirectory(null, true);
   };
 
   const openFilePreview = async (targetPath: string, options?: { skipConfirm?: boolean; syncDirectory?: boolean }) => {
@@ -713,15 +817,20 @@ export function FileExplorerPane() {
               <div className="mb-2 flex min-w-0 items-center gap-0.5">
                 <IconButton icon={<Undo2 size={13} />} label="Back" onClick={() => void onBack()} disabled={!canGoBack} />
                 <IconButton icon={<Forward size={13} />} label="Forward" onClick={() => void onForward()} disabled={!canGoForward} />
-                <IconButton icon={<ArrowUp size={13} />} label="Up" onClick={() => parentPath && void openPath(parentPath)} disabled={!parentPath} />
+                <IconButton
+                  icon={<ArrowUp size={13} />}
+                  label="Up"
+                  onClick={() => parentPath && !isAtWorkspaceRoot && void openPath(parentPath)}
+                  disabled={!parentPath || isAtWorkspaceRoot}
+                />
                 {!isVeryCompact ? (
                   <IconButton
                     icon={<Home size={13} />}
                     label="Home"
                     onClick={() => {
-                      if (!confirmDiscardIfDirty()) return;
-                      void loadDirectory(null, true);
+                      void openHomeDirectory();
                     }}
+                    disabled={isAtWorkspaceRoot}
                   />
                 ) : null}
                 <div className="min-w-0 flex-1" />
@@ -738,7 +847,7 @@ export function FileExplorerPane() {
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  className="w-full bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/50"
+                  className="embedded-input w-full bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/50"
                   placeholder="Search files"
                 />
               </div>
@@ -773,16 +882,14 @@ export function FileExplorerPane() {
                         key={entry.absolutePath}
                         draggable={!entry.isDirectory}
                         onClick={() => {
+                          setSelectedPath(entry.absolutePath);
+                        }}
+                        onDoubleClick={() => {
                           if (entry.isDirectory) {
                             void openPath(entry.absolutePath);
                             return;
                           }
-                          setSelectedPath(entry.absolutePath);
-                        }}
-                        onDoubleClick={() => {
-                          if (!entry.isDirectory) {
-                            void openFilePreview(entry.absolutePath);
-                          }
+                          void openFilePreview(entry.absolutePath);
                         }}
                         onDragStart={(event) => {
                           if (entry.isDirectory) {
@@ -814,7 +921,11 @@ export function FileExplorerPane() {
                             ? "bg-primary/10 text-primary"
                             : "text-foreground/80 hover:bg-accent hover:text-accent-foreground"
                         } ${entry.isDirectory ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"}`}
-                        title={entry.isDirectory ? `${entry.name} — open folder` : `${entry.name} — drag into chat to attach`}
+                        title={
+                          entry.isDirectory
+                            ? `${entry.name} — double-click to open folder`
+                            : `${entry.name} — drag into chat to attach`
+                        }
                       >
                         {isCompact ? (
                           <span className="flex min-w-0 flex-col gap-0.5">

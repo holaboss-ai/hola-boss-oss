@@ -9556,7 +9556,7 @@ async function listDirectory(
   const entries: DirectoryEntryPayload[] = [];
 
   for (const dirEntry of dirEntries) {
-    if (dirEntry.name === ".git") {
+    if (dirEntry.name.startsWith(".")) {
       continue;
     }
     const absolutePath = path.join(resolvedPath, dirEntry.name);

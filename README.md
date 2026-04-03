@@ -16,9 +16,9 @@
 </p>
 
 <p align="center">
-  <a href="https://holaboss.ai">Website</a> 路
-  <a href="https://docs.holaboss.ai">Docs</a> 路
-  <a href="https://app.holaboss.ai/signin">Sign in</a> 路
+  <a href="https://holaboss.ai/?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_nav_website">Website</a> 路
+  <a href="https://docs.holaboss.ai/?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_nav_docs">Docs</a> 路
+  <a href="https://app.holaboss.ai/signin?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_nav_signin">Sign in</a> 路
   <a href="#getting-started">Getting Started</a>
 </p>
 
@@ -27,7 +27,7 @@ Holaboss enables you to build AI workers that go beyond one-off task execution鈥
 ## Marketplace Experience
 
 <p align="center">
-  <a href="https://holaboss.ai">
+  <a href="https://holaboss.ai/?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_marketplace_image">
     <img src="docs/images/marketplace.png" alt="Holaboss marketplace screenshot" width="1280" />
   </a>
 </p>
@@ -362,7 +362,7 @@ The richer labour-market and marketplace experience lives in the Holaboss produc
 <p align="center"><strong>Ready to publish your worker or explore the hosted marketplace?</strong></p>
 
 <p align="center">
-  <a href="https://app.holaboss.ai/signin"><img src="https://img.shields.io/badge/Open%20Holaboss-Sign%20in%20to%20publish%20or%20browse-e08a6b?style=for-the-badge" alt="Open Holaboss: sign in to publish or browse" /></a>
+  <a href="https://app.holaboss.ai/signin?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_publish_badge"><img src="https://img.shields.io/badge/Open%20Holaboss-Sign%20in%20to%20publish%20or%20browse-e08a6b?style=for-the-badge" alt="Open Holaboss: sign in to publish or browse" /></a>
 </p>
 
 ## Capability Hub
