@@ -8582,6 +8582,7 @@ async function fileExists(targetPath: string) {
 const REQUIRED_RUNTIME_BUNDLE_PATHS = [
   path.join("bin", "sandbox-runtime"),
   "package-metadata.json",
+  path.join("node-runtime", "node_modules", ".bin", "node"),
   path.join("runtime", "metadata.json"),
   path.join("runtime", "api-server", "dist", "index.mjs"),
 ] as const;

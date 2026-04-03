@@ -8,6 +8,7 @@ import {
   useDesktopAuthSession,
   type AuthSession
 } from "@/lib/auth/authClient";
+import { holabossLogoUrl } from "@/lib/assetPaths";
 
 type AuthPanelView = "full" | "account" | "runtime";
 
@@ -197,7 +198,7 @@ function enabledProviderIdsForDrafts(providerDrafts: ProviderDraftMap, isSignedI
 
 function ProviderBrandIcon({ providerId }: { providerId: KnownProviderId }) {
   if (providerId === "holaboss") {
-    return <img src="/logo.svg" alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
+    return <img src={holabossLogoUrl} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
   }
   if (providerId === "openai_direct") {
     return <img src={openaiLogo} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;

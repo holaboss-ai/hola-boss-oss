@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { holabossLogoUrl } from "@/lib/assetPaths";
 import { KitCard } from "./KitCard";
 import { FALLBACK_TEMPLATES } from "./fallbackTemplates";
 import { marketplaceGalleryBranding } from "./marketplaceGalleryBranding";
@@ -63,7 +64,7 @@ export function MarketplaceGallery({
         {branding.showLogo ? (
           <div className="mb-3 flex items-center gap-3">
             <div className="flex h-8 items-center gap-2 justify-center">
-              <img src="/logo.svg" alt="Holaboss" className="size-6" />
+              <img src={holabossLogoUrl} alt="Holaboss" className="size-6" />
               <h1 className="text-sm font-semibold tracking-tight">Holaboss</h1>
             </div>
             <div className="h-4 w-px bg-border" />
