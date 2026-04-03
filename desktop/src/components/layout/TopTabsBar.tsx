@@ -225,7 +225,7 @@ export function TopTabsBar({
           <img
             src={holabossLogoUrl}
             alt="Holaboss"
-            className="size-9 shrink-0 rounded-lg border border-border p-1"
+            className="size-9 shrink-0 rounded-lg border border-border overflow-hidden"
           />
           <div
             ref={workspaceSwitcherRef}
