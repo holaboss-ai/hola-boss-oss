@@ -5622,8 +5622,8 @@ function extractIntegrationRequirementsFromTemplateFiles(
  * from template metadata (app names) without materializing the template.
  */
 const APP_TO_PROVIDER: Record<string, string> = {
-  gmail: "google",
-  sheets: "google",
+  gmail: "gmail",
+  sheets: "googlesheets",
   github: "github",
   reddit: "reddit",
   twitter: "twitter",

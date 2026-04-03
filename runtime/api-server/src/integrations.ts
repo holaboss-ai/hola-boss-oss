@@ -56,13 +56,33 @@ export class IntegrationServiceError extends Error {
 
 const PHASE_1_INTEGRATION_CATALOG: IntegrationCatalogProviderRecord[] = [
   {
-    provider_id: "google",
-    display_name: "Google",
-    description: "Read and manage Gmail, Calendar, and Drive workflows.",
+    provider_id: "gmail",
+    display_name: "Gmail",
+    description: "Read, draft, and send emails through Gmail.",
     auth_modes: ["managed", "oauth_app", "manual_token"],
     supports_oss: true,
     supports_managed: true,
     default_scopes: ["gmail.send", "gmail.readonly"],
+    docs_url: null
+  },
+  {
+    provider_id: "googlesheets",
+    display_name: "Google Sheets",
+    description: "Read and manage spreadsheet data through Google Sheets.",
+    auth_modes: ["managed", "oauth_app", "manual_token"],
+    supports_oss: true,
+    supports_managed: true,
+    default_scopes: ["spreadsheets"],
+    docs_url: null
+  },
+  {
+    provider_id: "google",
+    display_name: "Google",
+    description: "Google account (legacy — prefer gmail or googlesheets).",
+    auth_modes: ["managed", "oauth_app", "manual_token"],
+    supports_oss: true,
+    supports_managed: true,
+    default_scopes: [],
     docs_url: null
   },
   {

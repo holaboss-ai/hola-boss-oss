@@ -1,7 +1,7 @@
 import { Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { providerDisplayName } from "./constants";
+import { providerDisplayName, providerIcon } from "./constants";
 
 interface IntegrationsListProps {
   pendingIntegrations: ResolveTemplateIntegrationsResult | null;
@@ -86,7 +86,8 @@ function IntegrationRow({
           : "border-border bg-muted/50"
       }`}
     >
-      <span className="text-sm font-medium text-foreground">
+      <span className="flex items-center gap-2.5 text-sm font-medium text-foreground">
+        {providerIcon(provider, 20)}
         {providerDisplayName(provider)}
       </span>
       {connected ? (

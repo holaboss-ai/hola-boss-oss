@@ -1,7 +1,7 @@
 import { Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { providerDisplayName } from "./constants";
+import { providerDisplayName, providerIcon } from "./constants";
 
 interface ConnectIntegrationsStepProps {
   pendingIntegrations: ResolveTemplateIntegrationsResult;
@@ -38,7 +38,8 @@ export function ConnectIntegrationsStep({
             key={provider}
             className="flex items-center justify-between rounded-xl border border-border bg-muted/50 px-5 py-4"
           >
-            <span className="text-sm font-medium text-foreground">
+            <span className="flex items-center gap-2.5 text-sm font-medium text-foreground">
+              {providerIcon(provider, 20)}
               {providerDisplayName(provider)}
             </span>
             <Button
@@ -63,7 +64,8 @@ export function ConnectIntegrationsStep({
             key={provider}
             className="flex items-center justify-between rounded-xl border border-primary/20 bg-primary/5 px-5 py-4"
           >
-            <span className="text-sm font-medium text-foreground">
+            <span className="flex items-center gap-2.5 text-sm font-medium text-foreground">
+              {providerIcon(provider, 20)}
               {providerDisplayName(provider)}
             </span>
             <div className="flex items-center gap-3">

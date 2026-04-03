@@ -22,7 +22,7 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
-test("returns the phase 1 integration catalog with google first", () => {
+test("returns the integration catalog with gmail and googlesheets", () => {
   const root = makeTempDir("hb-integrations-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
@@ -31,12 +31,15 @@ test("returns the phase 1 integration catalog with google first", () => {
   const service = new RuntimeIntegrationService(store);
 
   const catalog = service.getCatalog();
+  const ids = catalog.providers.map((provider) => provider.provider_id);
 
-  assert.equal(catalog.providers[0]?.provider_id, "google");
-  assert.deepEqual(
-    catalog.providers.map((provider) => provider.provider_id),
-    ["google", "github", "reddit", "twitter", "linkedin"]
-  );
+  assert.equal(ids[0], "gmail");
+  assert.equal(ids[1], "googlesheets");
+  assert.ok(ids.includes("google"), "legacy google entry should be present");
+  assert.ok(ids.includes("github"));
+  assert.ok(ids.includes("reddit"));
+  assert.ok(ids.includes("twitter"));
+  assert.ok(ids.includes("linkedin"));
 
   store.close();
 });
