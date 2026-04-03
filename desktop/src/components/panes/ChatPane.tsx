@@ -2716,54 +2716,30 @@ function AssistantTurn({
   return (
     <div className="flex justify-start">
       <article className="max-w-[760px]">
-        <div className="flex items-start gap-3">
-          <div className="bg-muted mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full border border-border/35 text-foreground/84">
-            <Bot size={15} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="text-[12px] font-medium text-foreground/94">{label}</div>
-              <div className="rounded-full border border-border/35 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/76">
-                {mode}
-              </div>
-              {live ? (
-                <div className="rounded-full border border-[rgba(247,90,84,0.18)] bg-[rgba(247,90,84,0.08)] px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-[rgba(206,92,84,0.92)]">
-                  Live
-                </div>
-              ) : null}
-            </div>
+        {status && !text ? (
+          <div className="text-[13px] leading-7 text-muted-foreground">{status}</div>
+        ) : null}
 
-            {status && !text ? (
-              <div className="mt-2 text-[13px] leading-7 text-muted-foreground">{status}</div>
-            ) : null}
+        {traceSteps.length > 0 ? (
+          <TraceStepGroup
+            steps={traceSteps}
+            collapsedByStepId={collapsedTraceByStepId}
+            onToggleStep={onToggleTraceStep}
+          />
+        ) : null}
 
-            {traceSteps.length > 0 ? (
-              <div className="mt-4 grid gap-2.5 border-l border-border/25 pl-4">
-                {traceSteps.map((step) => (
-                  <TraceStepCard
-                    key={step.id}
-                    step={step}
-                    collapsed={isTraceStepCollapsed(step, collapsedTraceByStepId)}
-                    onToggle={() => onToggleTraceStep(step.id)}
-                  />
-                ))}
-              </div>
-            ) : null}
+        {thinkingText ? (
+          <ThinkingPanel text={thinkingText} collapsed={thinkingCollapsed} onToggle={onToggleThinking} live={live} />
+        ) : null}
 
-            {thinkingText ? (
-              <ThinkingPanel text={thinkingText} collapsed={thinkingCollapsed} onToggle={onToggleThinking} live={live} />
-            ) : null}
-
-            {text ? (
-              <SimpleMarkdown
-                className="chat-markdown chat-assistant-markdown mt-4 max-w-full text-foreground"
-                onLinkClick={onLinkClick}
-              >
-                {text}
-              </SimpleMarkdown>
-            ) : null}
-          </div>
-        </div>
+        {text ? (
+          <SimpleMarkdown
+            className="chat-markdown chat-assistant-markdown mt-4 max-w-full text-foreground"
+            onLinkClick={onLinkClick}
+          >
+            {text}
+          </SimpleMarkdown>
+        ) : null}
       </article>
     </div>
   );
@@ -2798,77 +2774,86 @@ function IntegrationErrorBanner({ details }: { details: string[] }) {
   );
 }
 
-function TraceStepCard({
-  step,
-  collapsed,
-  onToggle
+function TraceStepGroup({
+  steps,
+  collapsedByStepId,
+  onToggleStep,
 }: {
-  step: ChatTraceStep;
-  collapsed: boolean;
-  onToggle: () => void;
+  steps: ChatTraceStep[];
+  collapsedByStepId: Record<string, boolean>;
+  onToggleStep: (stepId: string) => void;
 }) {
-  const statusTone =
-    step.status === "completed"
-      ? "border-[rgba(92,180,120,0.2)] bg-[rgba(92,180,120,0.08)] text-[rgba(118,196,144,0.92)]"
-      : step.status === "error"
-        ? "border-[rgba(247,90,84,0.24)] bg-[rgba(247,90,84,0.08)] text-[rgba(206,92,84,0.94)]"
-        : step.status === "waiting"
-          ? "border-border/35 bg-card/24 text-muted-foreground"
-          : "border-[rgba(247,170,126,0.18)] bg-[rgba(247,170,126,0.08)] text-[rgba(224,146,103,0.92)]";
-  const buttonClassName = collapsed
-    ? "flex w-full items-center gap-2.5 rounded-[14px] px-1 py-1 text-left transition hover:bg-card/18"
-    : "bg-muted flex w-full items-start gap-3 rounded-[18px] border border-border/35 px-3.5 py-3 text-left transition hover:border-border/55";
-  const iconClassName = collapsed
-    ? `grid h-5 w-5 shrink-0 place-items-center rounded-full border ${statusTone}`
-    : `mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full border ${statusTone}`;
-  const titleClassName = collapsed
-    ? "truncate text-[12px] font-medium leading-5 text-foreground"
-    : "text-[13px] font-medium leading-6 text-foreground";
+  const [groupExpanded, setGroupExpanded] = useState(false);
+  const completedCount = steps.filter((s) => s.status === "completed").length;
+  const errorCount = steps.filter((s) => s.status === "error").length;
+  const runningCount = steps.filter((s) => s.status === "running").length;
+  const isAllDone = runningCount === 0 && steps.length > 0;
 
   return (
-    <div className="relative">
-      <div className="absolute -left-[1.3125rem] top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full border border-border/50 bg-card/90" />
+    <div className="mt-3">
       <button
         type="button"
-        onClick={onToggle}
-        aria-expanded={!collapsed}
-        className={buttonClassName}
+        onClick={() => setGroupExpanded((v) => !v)}
+        className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60"
       >
-        <div className={iconClassName}>
-          {step.status === "completed" ? (
-            <Check size={collapsed ? 11 : 13} />
-          ) : step.status === "error" ? (
-            <AlertTriangle size={collapsed ? 11 : 13} />
-          ) : (
-            <Clock3 size={collapsed ? 11 : 13} />
-          )}
-        </div>
-
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className={titleClassName}>{step.title}</div>
-            {!collapsed ? (
-              <div className={`rounded-full border px-2 py-0.5 text-[9px] uppercase tracking-[0.14em] ${statusTone}`}>
-                {traceStatusLabel(step.status)}
-              </div>
-            ) : null}
-          </div>
-
-          {!collapsed && step.details.length > 0 ? (
-            <div className="mt-1 text-[12px] leading-6 text-muted-foreground">
-              {step.details.join("\n")}
-            </div>
-          ) : null}
-          {step.status === "error" ? <IntegrationErrorBanner details={step.details} /> : null}
-        </div>
-
-        {step.details.length > 0 ? (
-          <ChevronDown
-            size={collapsed ? 13 : 14}
-            className={`shrink-0 text-muted-foreground transition ${collapsed ? "" : "mt-1 rotate-180"}`}
-          />
-        ) : null}
+        {runningCount > 0 ? (
+          <Loader2 size={13} className="animate-spin text-muted-foreground" />
+        ) : errorCount > 0 ? (
+          <AlertTriangle size={13} className="text-destructive" />
+        ) : (
+          <Check size={13} className="text-emerald-500" />
+        )}
+        <span>
+          {runningCount > 0
+            ? `Running ${steps.length} tool${steps.length === 1 ? "" : "s"}...`
+            : `Used ${steps.length} tool${steps.length === 1 ? "" : "s"}`}
+          {errorCount > 0 ? ` (${errorCount} failed)` : ""}
+        </span>
+        <ChevronDown
+          size={12}
+          className={`transition-transform ${groupExpanded ? "rotate-180" : ""}`}
+        />
       </button>
+
+      {groupExpanded ? (
+        <div className="mt-1 ml-1 space-y-0.5">
+          {steps.map((step) => {
+            const expanded = !(collapsedByStepId[step.id] ?? true);
+            return (
+              <div key={step.id}>
+                <button
+                  type="button"
+                  onClick={() => onToggleStep(step.id)}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted/50"
+                >
+                  {step.status === "completed" ? (
+                    <Check size={12} className="shrink-0 text-emerald-500" />
+                  ) : step.status === "error" ? (
+                    <AlertTriangle size={12} className="shrink-0 text-destructive" />
+                  ) : step.status === "running" ? (
+                    <Loader2 size={12} className="shrink-0 animate-spin text-muted-foreground" />
+                  ) : (
+                    <Clock3 size={12} className="shrink-0 text-muted-foreground" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate font-medium text-foreground/80">{step.title}</span>
+                  {step.details.length > 0 ? (
+                    <ChevronDown
+                      size={12}
+                      className={`shrink-0 text-muted-foreground/50 transition-transform ${expanded ? "rotate-180" : ""}`}
+                    />
+                  ) : null}
+                </button>
+                {expanded && step.details.length > 0 ? (
+                  <div className="ml-6 mt-0.5 mb-1 rounded-md border border-border/30 bg-muted/30 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
+                    {step.details.join("\n")}
+                  </div>
+                ) : null}
+                {step.status === "error" ? <IntegrationErrorBanner details={step.details} /> : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }
