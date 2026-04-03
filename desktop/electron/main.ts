@@ -5556,6 +5556,7 @@ interface ResolveTemplateIntegrationsResult {
   requirements: TemplateIntegrationRequirement[];
   connected_providers: string[];
   missing_providers: string[];
+  provider_logos: Record<string, string>;
 }
 
 function extractIntegrationRequirementsFromTemplateFiles(
@@ -5637,7 +5638,7 @@ async function resolveTemplateIntegrations(
   const appNames: string[] = payload.template_apps ?? [];
 
   if (appNames.length === 0) {
-    return { requirements: [], connected_providers: [], missing_providers: [] };
+    return { requirements: [], connected_providers: [], missing_providers: [], provider_logos: {} };
   }
 
   const requirements: TemplateIntegrationRequirement[] = [];
@@ -5657,7 +5658,7 @@ async function resolveTemplateIntegrations(
   }
 
   if (requirements.length === 0) {
-    return { requirements: [], connected_providers: [], missing_providers: [] };
+    return { requirements: [], connected_providers: [], missing_providers: [], provider_logos: {} };
   }
 
   let connections: IntegrationConnectionPayload[] = [];
@@ -5666,6 +5667,19 @@ async function resolveTemplateIntegrations(
     connections = resp.connections;
   } catch {
     // If we cannot reach the integration API, treat all as missing.
+  }
+
+  // Fetch toolkit logos from Composio
+  const providerLogos: Record<string, string> = {};
+  try {
+    const { toolkits } = await composioListToolkits();
+    for (const toolkit of toolkits) {
+      if (toolkit.logo && seenProviders.has(toolkit.slug)) {
+        providerLogos[toolkit.slug] = toolkit.logo;
+      }
+    }
+  } catch {
+    // Non-fatal — UI will fall back to built-in SVG icons
   }
 
   const connectedProviderSet = new Set(
@@ -5684,6 +5698,7 @@ async function resolveTemplateIntegrations(
     requirements,
     connected_providers: connectedProviders,
     missing_providers: missingProviders,
+    provider_logos: providerLogos,
   };
 }
 

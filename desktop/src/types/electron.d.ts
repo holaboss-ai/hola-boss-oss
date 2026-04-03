@@ -855,6 +855,7 @@ declare global {
     requirements: TemplateIntegrationRequirement[];
     connected_providers: string[];
     missing_providers: string[];
+    provider_logos: Record<string, string>;
   }
 
   interface CreateSubmissionPayload {

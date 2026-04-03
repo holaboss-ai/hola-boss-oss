@@ -31,6 +31,8 @@ export function IntegrationsList({
     return null;
   }
 
+  const logos = pendingIntegrations.provider_logos ?? {};
+
   return (
     <div className="mt-6" style={{ maxWidth: 480 }}>
       <div className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
@@ -41,6 +43,7 @@ export function IntegrationsList({
           <IntegrationRow
             key={provider}
             provider={provider}
+            logoUrl={logos[provider]}
             connected
             connecting={connectingProvider === provider}
             disabled={connectingProvider !== null}
@@ -51,6 +54,7 @@ export function IntegrationsList({
           <IntegrationRow
             key={provider}
             provider={provider}
+            logoUrl={logos[provider]}
             connected={false}
             connecting={connectingProvider === provider}
             disabled={connectingProvider !== null}
@@ -67,12 +71,14 @@ export function IntegrationsList({
 
 function IntegrationRow({
   provider,
+  logoUrl,
   connected,
   connecting,
   disabled,
   onAction,
 }: {
   provider: string;
+  logoUrl?: string;
   connected: boolean;
   connecting: boolean;
   disabled: boolean;
@@ -87,7 +93,11 @@ function IntegrationRow({
       }`}
     >
       <span className="flex items-center gap-2.5 text-sm font-medium text-foreground">
-        {providerIcon(provider, 20)}
+        {logoUrl ? (
+          <img src={logoUrl} alt="" width={20} height={20} className="shrink-0 rounded" />
+        ) : (
+          providerIcon(provider, 20)
+        )}
         {providerDisplayName(provider)}
       </span>
       {connected ? (
