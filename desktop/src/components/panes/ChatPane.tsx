@@ -442,26 +442,26 @@ function toolTraceStepFromPayload(payload: Record<string, unknown>, order: numbe
   const mcpErrorText = extractMcpErrorText(payload.result);
 
   if (phase === "started") {
-    details.push("Tool call started.");
     if (argsSummary) {
-      details.push(`Inputs: ${argsSummary}`);
+      details.push(argsSummary);
     }
   } else if (TOOL_TRACE_TERMINAL_PHASES.has(phase)) {
     if (isError && mcpErrorText) {
       details.push(mcpErrorText);
     } else if (isError) {
-      details.push("Tool call returned an error.");
       if (errorSummary && errorSummary !== "true" && errorSummary !== "false") {
-        details.push(`Error: ${errorSummary}`);
+        details.push(errorSummary);
+      } else {
+        details.push("Error");
       }
-    } else {
-      details.push("Tool call completed.");
+    } else if (argsSummary) {
+      details.push(argsSummary);
     }
     if (!isError && resultSummary) {
-      details.push(`Result: ${resultSummary}`);
+      details.push(resultSummary);
     }
   } else if (argsSummary) {
-    details.push(`Inputs: ${argsSummary}`);
+    details.push(argsSummary);
   }
 
   return {
