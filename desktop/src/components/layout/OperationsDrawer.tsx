@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   Bell,
   Check,
   ChevronRight,
   Clock3,
   Loader2,
+  LogIn,
   RefreshCcw,
   Sparkles,
   X,
 } from "lucide-react";
+import { useDesktopAuthSession } from "@/lib/auth/authClient";
 import {
   getWorkspaceAppDefinition,
   type WorkspaceInstalledAppDefinition,
@@ -62,16 +64,17 @@ interface OperationsDrawerProps {
   } | null;
   outputs: OperationsOutputEntry[];
   installedApps: WorkspaceInstalledAppDefinition[];
-  selectedOutputId: string | null;
-  onSelectOutput: (outputId: string) => void;
   onOpenOutput: (entry: OperationsOutputEntry) => void;
   onRefreshProposals: () => void;
   onTriggerProposal: () => void;
   onProactiveTaskProposalsEnabledChange: (enabled: boolean) => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
+  onOpenRunningSession: (sessionId: string) => void;
+  activeRunningSessionId: string | null;
   hasWorkspace: boolean;
   selectedWorkspaceId: string | null;
+  mainSessionId: string | null;
 }
 
 interface RunningSessionEntry {
@@ -96,23 +99,18 @@ export function OperationsDrawer({
   proposalAction,
   outputs,
   installedApps,
-  selectedOutputId,
-  onSelectOutput,
   onOpenOutput,
   onRefreshProposals,
   onTriggerProposal,
   onProactiveTaskProposalsEnabledChange,
   onAcceptProposal,
   onDismissProposal,
+  onOpenRunningSession,
+  activeRunningSessionId,
   hasWorkspace,
   selectedWorkspaceId,
+  mainSessionId,
 }: OperationsDrawerProps) {
-  const selectedOutput = useMemo(() => {
-    if (!outputs.length) {
-      return null;
-    }
-    return outputs.find((entry) => entry.id === selectedOutputId) ?? outputs[0];
-  }, [outputs, selectedOutputId]);
   const [runningSessions, setRunningSessions] = useState<RunningSessionEntry[]>(
     [],
   );
@@ -149,8 +147,22 @@ export function OperationsDrawer({
             session,
           ]),
         );
+        const normalizedMainSessionId = (mainSessionId || "").trim();
         const nextEntries = runtimeStatesResponse.items
-          .filter((state) => state.status !== "IDLE")
+          .filter((state) => {
+            if (
+              normalizedMainSessionId &&
+              state.session_id === normalizedMainSessionId
+            ) {
+              return false;
+            }
+            const sessionKind = (
+              sessionById.get(state.session_id)?.kind || ""
+            )
+              .trim()
+              .toLowerCase();
+            return sessionKind !== "main";
+          })
           .map((state) => {
             const session = sessionById.get(state.session_id);
             return {
@@ -188,7 +200,7 @@ export function OperationsDrawer({
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [activeTab, selectedWorkspaceId]);
+  }, [activeTab, mainSessionId, selectedWorkspaceId]);
 
   return (
     <aside className="theme-shell neon-border relative flex h-full min-h-0 min-w-[360px] max-w-[420px] flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
@@ -245,6 +257,8 @@ export function OperationsDrawer({
             isLoading={isLoadingRunningSessions}
             sessions={runningSessions}
             errorMessage={runningSessionsError}
+            onOpenSession={onOpenRunningSession}
+            activeSessionId={activeRunningSessionId}
           />
         ) : null}
 
@@ -252,8 +266,6 @@ export function OperationsDrawer({
           <OutputsPanel
             outputs={outputs}
             installedApps={installedApps}
-            selectedOutput={selectedOutput}
-            onSelectOutput={onSelectOutput}
             onOpenOutput={onOpenOutput}
           />
         ) : null}
@@ -312,8 +324,10 @@ function runningSessionStatusRank(status: string): number {
       return 2;
     case "ERROR":
       return 3;
-    default:
+    case "IDLE":
       return 4;
+    default:
+      return 5;
   }
 }
 
@@ -357,18 +371,20 @@ function DrawerTabButton({
   onClick: () => void;
 }) {
   return (
-    <button
+    <Button
       type="button"
       onClick={onClick}
-      className={`inline-flex h-10 items-center gap-2 rounded-2xl border px-3 text-sm transition ${
+      size="sm"
+      variant={active ? "default" : "ghost"}
+      className={`gap-2 rounded-2xl px-3 ${
         active
-          ? "border-primary/45 bg-primary/10 text-primary"
-          : "border-border/45 text-muted-foreground hover:border-primary/35 hover:text-foreground"
+          ? "bg-primary/10 text-primary hover:bg-primary/14 hover:text-primary"
+          : "bg-muted/55 text-muted-foreground hover:bg-accent hover:text-foreground"
       }`}
     >
       {icon}
       <span>{label}</span>
-    </button>
+    </Button>
   );
 }
 
@@ -406,6 +422,13 @@ function InboxPanel({
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
 }) {
+  const { data: session, isPending: isAuthPending, requestAuth } =
+    useDesktopAuthSession();
+  const isSignedIn = Boolean(session?.user?.id);
+  const onRequestSignIn = () => {
+    void requestAuth();
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 border-b border-border/35 px-4 py-4">
@@ -415,80 +438,100 @@ function InboxPanel({
               <Button
                 type="button"
                 size="sm"
-                variant="ghost"
-                aria-label="Toggle proactive task proposals"
-                aria-pressed={proactiveTaskProposalsEnabled}
-                disabled={isUpdatingProactiveTaskProposalsEnabled}
-                onClick={() =>
-                  onProactiveTaskProposalsEnabledChange(
-                    !proactiveTaskProposalsEnabled,
-                  )
+                variant={isSignedIn ? "ghost" : "default"}
+                onClick={isSignedIn ? onTriggerProposal : onRequestSignIn}
+                disabled={
+                  isSignedIn ? !hasWorkspace || isTriggeringProposal : isAuthPending
                 }
-                className={`rounded-full text-xs uppercase tracking-[0.16em] ${
-                  proactiveTaskProposalsEnabled
-                    ? "bg-primary/12 text-primary hover:bg-primary/16 hover:text-primary"
-                    : "bg-amber-500/12 text-amber-300 hover:bg-amber-500/16 hover:text-amber-200 dark:text-amber-200"
-                } ${
-                  isUpdatingProactiveTaskProposalsEnabled
-                    ? "cursor-wait opacity-75"
-                    : ""
-                }`}
+                className={
+                  isSignedIn
+                  ? "rounded-2xl bg-primary/10 text-primary hover:bg-primary/14 hover:text-primary"
+                  : "rounded-2xl"
+                }
               >
-                {isUpdatingProactiveTaskProposalsEnabled ? (
+                {isSignedIn && isTriggeringProposal ? (
                   <Loader2 size={12} className="animate-spin" />
-                ) : null}
-                <span>
-                  {proactiveTaskProposalsEnabled ? "Enabled" : "Paused"}
-                </span>
-              </Button>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      type="button"
-                      size="icon-sm"
-                      variant="ghost"
-                      aria-label="Refresh proposals"
-                      onClick={onRefreshProposals}
-                      disabled={!hasWorkspace || isLoadingProposals}
-                      className="rounded-2xl bg-muted/55 text-muted-foreground hover:bg-accent hover:text-foreground"
-                    />
-                  }
-                >
-                  {isLoadingProposals ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <RefreshCcw size={14} />
-                  )}
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Refresh proposals</TooltipContent>
-              </Tooltip>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={onTriggerProposal}
-                disabled={!hasWorkspace || isTriggeringProposal}
-                className="rounded-2xl bg-primary/10 text-primary hover:bg-primary/14 hover:text-primary"
-              >
-                {isTriggeringProposal ? (
+                ) : !isSignedIn && isAuthPending ? (
                   <Loader2 size={12} className="animate-spin" />
+                ) : !isSignedIn ? (
+                  <LogIn size={12} />
                 ) : (
                   <Sparkles size={12} />
                 )}
-                <span>Trigger</span>
+                <span>{isSignedIn ? "Trigger" : "Sign in"}</span>
               </Button>
+              {isSignedIn ? (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    aria-label="Toggle proactive task proposals"
+                    aria-pressed={proactiveTaskProposalsEnabled}
+                    disabled={isUpdatingProactiveTaskProposalsEnabled}
+                    onClick={() =>
+                      onProactiveTaskProposalsEnabledChange(
+                        !proactiveTaskProposalsEnabled,
+                      )
+                    }
+                    className={`rounded-full text-xs uppercase tracking-widest ${
+                      proactiveTaskProposalsEnabled
+                        ? "bg-primary/12 text-primary hover:bg-primary/16 hover:text-primary"
+                        : "bg-amber-500/12 text-amber-300 hover:bg-amber-500/16 hover:text-amber-200 dark:text-amber-200"
+                    } ${
+                    isUpdatingProactiveTaskProposalsEnabled
+                        ? "cursor-wait opacity-75"
+                        : ""
+                    }`}
+                  >
+                    {isUpdatingProactiveTaskProposalsEnabled ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : null}
+                    <span>
+                      {proactiveTaskProposalsEnabled ? "Enabled" : "Paused"}
+                    </span>
+                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          type="button"
+                          size="icon-sm"
+                          variant="ghost"
+                          aria-label="Refresh proposals"
+                          onClick={onRefreshProposals}
+                          disabled={!hasWorkspace || isLoadingProposals}
+                          className="rounded-2xl bg-muted/55 text-muted-foreground hover:bg-accent hover:text-foreground"
+                        />
+                      }
+                    >
+                      {isLoadingProposals ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : (
+                        <RefreshCcw size={14} />
+                      )}
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      Refresh proposals
+                    </TooltipContent>
+                  </Tooltip>
+                </>
+              ) : null}
             </div>
           </div>
           <div className="grid gap-2">
             <div
               className={`rounded-2xl px-3 py-2 text-sm ${
-                proactiveTaskProposalsEnabled
+                !isSignedIn
+                  ? "bg-amber-500/12 text-amber-200"
+                  : proactiveTaskProposalsEnabled
                   ? "bg-muted/35 text-muted-foreground"
                   : "bg-amber-500/10 text-amber-300 dark:text-amber-200"
               }`}
             >
-              {proactiveTaskProposalsEnabled
+              {!isSignedIn
+                ? "Sign in to sync remote task proposals into this inbox."
+                : proactiveTaskProposalsEnabled
                 ? "Automatic proposals are enabled for this inbox."
                 : "Automatic proposals are paused. Use Refresh or Trigger manually."}
             </div>
@@ -509,7 +552,9 @@ function InboxPanel({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-        {!hasWorkspace ? (
+        {!isSignedIn ? (
+          <SignedOutInboxNotice onRequestSignIn={onRequestSignIn} />
+        ) : !hasWorkspace ? (
           <EmptyNotice message="Select a workspace to review incoming task proposals." />
         ) : proposals.length === 0 ? (
           <EmptyNotice
@@ -538,7 +583,7 @@ function InboxPanel({
                         {proposal.task_prompt}
                       </div>
                     </div>
-                    <div className="shrink-0 rounded-full border border-border/45 px-2.5 py-1 text-xs uppercase tracking-[0.12em] text-muted-foreground">
+                    <div className="shrink-0 rounded-full border border-border/45 px-2.5 py-1 text-xs uppercase tracking-widest text-muted-foreground">
                       {proposal.state}
                     </div>
                   </div>
@@ -585,71 +630,111 @@ function InboxPanel({
   );
 }
 
+function SignedOutInboxNotice({
+  onRequestSignIn,
+}: {
+  onRequestSignIn: () => void;
+}) {
+  return (
+    <div className="rounded-[22px] border border-amber-500/20 bg-amber-500/10 px-4 py-5">
+      <div className="flex flex-col gap-4">
+        <div className="space-y-1">
+          <div className="text-sm font-semibold text-foreground">
+            Sign in to review task proposals
+          </div>
+          <div className="text-sm leading-6 text-muted-foreground">
+            Sign in to connect this desktop to your Holaboss account and review
+            Inbox proposals.
+          </div>
+        </div>
+        <div>
+          <Button type="button" size="sm" onClick={onRequestSignIn}>
+            <LogIn size={14} />
+            <span>Sign in</span>
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RunningPanel({
   hasWorkspace,
   isLoading,
   sessions,
   errorMessage,
+  onOpenSession,
+  activeSessionId,
 }: {
   hasWorkspace: boolean;
   isLoading: boolean;
   sessions: RunningSessionEntry[];
   errorMessage: string;
+  onOpenSession: (sessionId: string) => void;
+  activeSessionId: string | null;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 border-b border-border/35 px-4 py-4">
-        <div className="text-[10px] uppercase tracking-[0.16em] text-primary/76">
-          Running
-        </div>
-        <div className="mt-1 text-[12px] leading-6 text-foreground/88">
-          Active and failed runtime sessions for the current workspace,
-          including cronjob runs.
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-xs uppercase tracking-widest text-primary/76">
+            Running
+          </div>
+          <div className="rounded-full bg-muted/55 px-3 py-1 text-xs text-muted-foreground">
+            Idle and cronjob sessions
+          </div>
         </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {!hasWorkspace ? (
-          <CenteredNotice message="Choose a workspace to inspect active runtime sessions." />
+          <CenteredNotice message="Choose a workspace to inspect runtime sessions." />
         ) : errorMessage ? (
           <CenteredNotice message={errorMessage} tone="error" />
         ) : isLoading && sessions.length === 0 ? (
           <CenteredNotice message="Loading runtime sessions..." />
         ) : sessions.length === 0 ? (
-          <CenteredNotice message="No active or failed runtime sessions right now." />
+          <CenteredNotice message="No runtime sessions right now." />
         ) : (
           <div className="grid gap-3">
             {sessions.map((session) => (
-              <article
+              <button
                 key={session.sessionId}
-                className="theme-subtle-surface rounded-[18px] border border-border/35 px-4 py-4"
+                type="button"
+                onClick={() => onOpenSession(session.sessionId)}
+                aria-label={`Open session ${session.title}`}
+                className={`theme-subtle-surface w-full rounded-[18px] border px-4 py-4 text-left transition ${
+                  activeSessionId === session.sessionId
+                    ? "border-primary/45"
+                    : "border-border/35 hover:border-primary/30"
+                }`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13px] font-medium text-foreground">
+                    <div className="truncate text-sm font-medium text-foreground">
                       {session.title}
                     </div>
-                    <div className="mt-1 text-[11px] uppercase tracking-[0.12em] text-muted-foreground/76">
+                    <div className="mt-1 text-xs uppercase tracking-widest text-muted-foreground/76">
                       {session.kind.replace(/_/g, " ")}
                     </div>
                   </div>
                   <div
-                    className={`shrink-0 rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.12em] ${runningStatusClasses(session.status)}`}
+                    className={`shrink-0 rounded-full border px-2 py-1 text-xs uppercase tracking-widest ${runningStatusClasses(session.status)}`}
                   >
                     {session.status}
                   </div>
                 </div>
 
-                <div className="mt-3 text-[11px] text-muted-foreground/82">
+                <div className="mt-3 text-xs text-muted-foreground/82">
                   Updated {formatTimestamp(session.updatedAt)}
                 </div>
 
                 {session.lastError ? (
-                  <div className="mt-3 rounded-[14px] border border-destructive/25 bg-destructive/8 px-3 py-2 text-[11px] leading-5 text-destructive">
+                  <div className="mt-3 rounded-[14px] border border-destructive/25 bg-destructive/8 px-3 py-2 text-xs leading-5 text-destructive">
                     {session.lastError}
                   </div>
                 ) : null}
-              </article>
+              </button>
             ))}
           </div>
         )}
@@ -661,91 +746,65 @@ function RunningPanel({
 function OutputsPanel({
   outputs,
   installedApps,
-  selectedOutput,
-  onSelectOutput,
   onOpenOutput,
 }: {
   outputs: OperationsOutputEntry[];
   installedApps: WorkspaceInstalledAppDefinition[];
-  selectedOutput: OperationsOutputEntry | null;
-  onSelectOutput: (outputId: string) => void;
   onOpenOutput: (entry: OperationsOutputEntry) => void;
 }) {
   return (
     <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]">
       <div className="shrink-0 border-b border-border/35 px-4 py-4">
-        <div className="text-[10px] uppercase tracking-[0.16em] text-primary/76">
-          Outputs
-        </div>
-        <div className="mt-1 text-[12px] leading-6 text-foreground/88">
-          Latest operator-side events from the desktop surface, including
-          proposal actions and workflow handoffs.
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-xs uppercase tracking-widest text-primary/76">
+            Outputs
+          </div>
+          <div className="rounded-full bg-muted/55 px-3 py-1 text-xs text-muted-foreground">
+            Recent events
+          </div>
         </div>
       </div>
 
       {outputs.length === 0 ? (
         <div className="flex items-center justify-center p-6">
-          <EmptyNotice message="No output events yet. Accept or dismiss a proposal to start building this activity trail." />
+          <EmptyNotice message="No output events yet." />
         </div>
       ) : (
-        <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)]">
-          <div className="shrink-0 border-b border-border/35 px-3 py-3">
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {outputs.map((entry) => (
-                <button
-                  key={entry.id}
-                  type="button"
-                  onClick={() => onSelectOutput(entry.id)}
-                  className={`min-w-[120px] rounded-[14px] border px-3 py-2 text-left transition ${
-                    selectedOutput?.id === entry.id
-                      ? outputToneClasses(entry.tone, true)
-                      : "theme-subtle-surface border-border/35 text-foreground/86 hover:border-primary/30"
-                  }`}
-                >
-                  <div className="truncate text-[11px] font-medium">
-                    {entry.title}
-                  </div>
-                  <div className="mt-1 text-[10px] text-muted-foreground/78">
-                    {formatTimestamp(entry.createdAt)}
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="min-h-0 overflow-y-auto p-4">
-            {selectedOutput ? (
+        <div className="min-h-0 overflow-y-auto p-4">
+          <div className="grid gap-3">
+            {outputs.map((entry) => (
               <article
-                className={`rounded-[20px] border px-4 py-4 ${outputToneClasses(selectedOutput.tone, false)}`}
+                key={entry.id}
+                className={`rounded-[20px] border px-4 py-3 shadow-sm ${outputToneClasses(entry.tone, false)}`}
               >
-                <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/75">
-                  {selectedOutput.renderer.type === "app"
+                <div className="text-xs uppercase tracking-widest text-muted-foreground/75">
+                  {entry.renderer.type === "app"
                     ? "Workspace app output"
                     : "Internal output"}
                 </div>
-                <div className="mt-2 text-[16px] font-medium text-foreground">
-                  {selectedOutput.title}
+                <div className="mt-1 text-sm font-medium text-foreground">
+                  {entry.title}
                 </div>
-                <div className="mt-2 whitespace-pre-wrap text-[12px] leading-6 text-foreground/86">
-                  {selectedOutput.detail}
+                <div className="mt-2 whitespace-pre-wrap text-sm leading-5 text-foreground/86">
+                  {entry.detail}
                 </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <button
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs text-muted-foreground/78">
+                    {formatTimestamp(entry.createdAt)}
+                  </div>
+                  <Button
                     type="button"
-                    onClick={() => onOpenOutput(selectedOutput)}
-                    className="inline-flex h-9 items-center justify-center gap-2 rounded-[14px] border border-primary/40 bg-primary/10 px-3 text-[11px] text-primary transition hover:bg-primary/14"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => onOpenOutput(entry)}
+                    className="rounded-2xl bg-primary/10 text-primary hover:bg-primary/14 hover:text-primary"
                   >
                     <ChevronRight size={12} />
-                    <span>
-                      {openOutputLabel(selectedOutput, installedApps)}
-                    </span>
-                  </button>
-                </div>
-                <div className="mt-4 text-[10px] text-muted-foreground/78">
-                  {formatTimestamp(selectedOutput.createdAt)}
+                    <span>{openOutputLabel(entry, installedApps)}</span>
+                  </Button>
                 </div>
               </article>
-            ) : null}
+            ))}
           </div>
         </div>
       )}
@@ -769,7 +828,7 @@ function CenteredNotice({
             : "border-border/35"
         }`}
       >
-        <div className="text-[12px] leading-6">{message}</div>
+        <div className="text-sm leading-6">{message}</div>
       </div>
     </div>
   );

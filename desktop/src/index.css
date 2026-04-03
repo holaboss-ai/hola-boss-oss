@@ -533,6 +533,13 @@ webview {
   font-size: 11.5px;
   font-family: "IBM Plex Mono", ui-monospace, monospace;
 }
+.simple-markdown .md-code-block > code {
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  font-size: inherit;
+  font-family: inherit;
+}
 .simple-markdown .md-blockquote {
   border-left: 3px solid rgb(var(--color-panel-border) / 0.5);
   padding-left: 14px;
@@ -558,6 +565,8 @@ webview {
 }
 .simple-markdown .md-ul,
 .simple-markdown .md-ol { padding-left: 20px; margin: 8px 0; }
+.simple-markdown .md-ul { list-style: disc; }
+.simple-markdown .md-ol { list-style: decimal; }
 .simple-markdown .md-li,
 .simple-markdown .md-oli { margin: 4px 0; }
 .simple-markdown .md-link {
@@ -596,4 +605,50 @@ webview {
 .chat-markdown .md-table th {
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.chat-markdown .md-h1 {
+  font-size: 20px;
+  line-height: 1.45;
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
+
+.chat-markdown .md-h2 {
+  font-size: 17px;
+  line-height: 1.5;
+  margin-top: 14px;
+  margin-bottom: 8px;
+}
+
+.chat-markdown .md-h3,
+.chat-markdown .md-h4,
+.chat-markdown .md-h5,
+.chat-markdown .md-h6 {
+  margin-top: 12px;
+  margin-bottom: 6px;
+}
+
+.chat-markdown .md-p:first-child,
+.chat-markdown .md-ul:first-child,
+.chat-markdown .md-ol:first-child,
+.chat-markdown .md-blockquote:first-child,
+.chat-markdown .md-code-block:first-child,
+.chat-markdown .md-table:first-child {
+  margin-top: 0;
+}
+
+.chat-markdown .md-p:last-child,
+.chat-markdown .md-ul:last-child,
+.chat-markdown .md-ol:last-child,
+.chat-markdown .md-blockquote:last-child,
+.chat-markdown .md-code-block:last-child,
+.chat-markdown .md-table:last-child {
+  margin-bottom: 0;
+}
+
+.chat-markdown .md-code-block {
+  margin: 10px 0;
+  font-size: 12px;
+  line-height: 1.55;
 }

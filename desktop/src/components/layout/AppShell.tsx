@@ -23,7 +23,6 @@ import { MarketplacePane } from "@/components/panes/MarketplacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
 import { SkillsPane } from "@/components/panes/SkillsPane";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
-import { preferredSessionId } from "@/lib/sessionRouting";
 import {
   getWorkspaceAppDefinition,
   inferInstalledWorkspaceAppIdFromText,
@@ -140,6 +139,11 @@ type AgentView =
       resourceId?: string | null;
       htmlContent?: string | null;
     };
+
+type ChatSessionOpenRequest = {
+  sessionId: string;
+  requestKey: number;
+};
 
 function loadSpaceVisibility(): SpaceVisibilityState {
   return DEFAULT_SPACE_VISIBILITY;
@@ -539,6 +543,15 @@ function AppShellContent() {
     useState<LeftRailItem>("space");
   const [agentView, setAgentView] = useState<AgentView>({ type: "chat" });
   const [chatFocusRequestKey, setChatFocusRequestKey] = useState(1);
+  const [chatSessionJumpRequest, setChatSessionJumpRequest] = useState<{
+    sessionId: string;
+    requestKey: number;
+  } | null>(null);
+  const [chatSessionOpenRequest, setChatSessionOpenRequest] =
+    useState<ChatSessionOpenRequest | null>(null);
+  const [activeChatSessionId, setActiveChatSessionId] = useState<
+    string | null
+  >(null);
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = useState(false);
   const [spaceVisibility, setSpaceVisibility] =
     useState<SpaceVisibilityState>(loadSpaceVisibility);
@@ -585,7 +598,6 @@ function AppShellContent() {
   const [runtimeOutputEntries, setRuntimeOutputEntries] = useState<
     OperationsOutputEntry[]
   >([]);
-  const [selectedOutputId, setSelectedOutputId] = useState<string | null>(null);
   const outputRefreshTimerRef = useRef<number | null>(null);
   const utilityPaneHostRef = useRef<HTMLDivElement | null>(null);
   const utilityPaneResizeStateRef = useRef<UtilityPaneResizeState | null>(null);
@@ -851,11 +863,26 @@ function AppShellContent() {
         ) {
           return;
         }
-        setActiveLeftRailItem("space");
-        setSpaceVisibility((previous) => ({
-          ...previous,
-          browser: true,
-        }));
+
+        const openBrowserPane = () => {
+          setActiveLeftRailItem("space");
+          setSpaceVisibility((previous) => ({
+            ...previous,
+            browser: true,
+          }));
+        };
+
+        const requestedUrl =
+          typeof payload.url === "string" ? payload.url.trim() : "";
+        if (requestedUrl) {
+          openBrowserPane();
+          void window.electronAPI.browser
+            .setActiveWorkspace(payload.workspaceId ?? selectedWorkspaceId ?? null)
+            .then(() => window.electronAPI.browser.navigate(requestedUrl))
+            .catch(() => undefined);
+          return;
+        }
+        openBrowserPane();
       },
     );
 
@@ -926,6 +953,34 @@ function AppShellContent() {
     void window.electronAPI.ui.openExternalUrl(url);
   }, []);
 
+  const revealBrowserPane = useCallback(() => {
+    setActiveLeftRailItem("space");
+    setSpaceVisibility((previous) => ({
+      ...previous,
+      browser: true,
+    }));
+  }, []);
+
+  const handleOpenLinkInAppBrowser = useCallback(
+    (url: string, workspaceIdOverride?: string | null) => {
+      const normalizedUrl = url.trim();
+      if (!normalizedUrl) {
+        return;
+      }
+
+      revealBrowserPane();
+      const targetWorkspaceId =
+        workspaceIdOverride !== undefined
+          ? workspaceIdOverride
+          : selectedWorkspaceId || null;
+      void window.electronAPI.browser
+        .setActiveWorkspace(targetWorkspaceId)
+        .then(() => window.electronAPI.browser.navigate(normalizedUrl))
+        .catch(() => undefined);
+    },
+    [revealBrowserPane, selectedWorkspaceId],
+  );
+
   const handleOpenCreateWorkspacePanel = useCallback(() => {
     setCreateWorkspacePanelAnchorWorkspaceId(selectedWorkspaceId || "");
     setCreateWorkspacePanelOpen(true);
@@ -952,6 +1007,10 @@ function AppShellContent() {
     createWorkspacePanelOpen,
     selectedWorkspaceId,
   ]);
+
+  useEffect(() => {
+    setChatSessionJumpRequest(null);
+  }, [selectedWorkspaceId]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -995,6 +1054,11 @@ function AppShellContent() {
     }));
   }, [spaceVisibility.agent]);
 
+  useEffect(() => {
+    setChatSessionOpenRequest(null);
+    setActiveChatSessionId(null);
+  }, [selectedWorkspaceId]);
+
   const appendOutputEntry = (
     entry: Omit<OperationsOutputEntry, "id" | "createdAt">,
   ) => {
@@ -1004,7 +1068,6 @@ function AppShellContent() {
       ...entry,
     };
     setOutputEntries((previous) => [nextEntry, ...previous].slice(0, 16));
-    setSelectedOutputId(nextEntry.id);
   };
 
   useEffect(() => {
@@ -1162,30 +1225,18 @@ function AppShellContent() {
     setProposalAction({ proposalId: proposal.proposal_id, action: "accept" });
     setTaskProposalStatusMessage("");
     try {
-      const runtimeStatesResponse =
-        await window.electronAPI.workspace.listRuntimeStates(
-          selectedWorkspaceId,
-        );
-      const targetSessionId = preferredSessionId(
-        selectedWorkspace,
-        runtimeStatesResponse.items,
-      );
-      if (!targetSessionId) {
-        throw new Error("No active session found for this workspace.");
-      }
-
-      await window.electronAPI.workspace.queueSessionInput({
-        text: proposal.task_prompt,
-        workspace_id: selectedWorkspaceId,
-        image_urls: null,
-        session_id: targetSessionId,
+      const proposalSessionId = `proposal-${crypto.randomUUID()}`;
+      const accepted = await window.electronAPI.workspace.acceptTaskProposal({
+        proposal_id: proposal.proposal_id,
+        task_name: proposal.task_name,
+        task_prompt: proposal.task_prompt,
+        session_id: proposalSessionId,
+        parent_session_id:
+          (selectedWorkspace.main_session_id || "").trim() || null,
         priority: 0,
         model: runtimeConfig?.defaultModel ?? null,
       });
-      await window.electronAPI.workspace.updateTaskProposalState(
-        proposal.proposal_id,
-        "accepted",
-      );
+      const targetSessionId = accepted.session.session_id;
 
       const detail = `Queued "${proposal.task_name}" into session ${targetSessionId}.`;
       const inferredAppId = inferInstalledWorkspaceAppIdFromText(
@@ -1365,6 +1416,25 @@ function AppShellContent() {
     });
   };
 
+  const handleOpenAutomationRunSession = useCallback((sessionId: string) => {
+    const normalizedSessionId = sessionId.trim();
+    if (!normalizedSessionId) {
+      return;
+    }
+
+    setActiveLeftRailItem("space");
+    setSpaceVisibility((previous) => ({
+      ...previous,
+      agent: true,
+    }));
+    setAgentView({ type: "chat" });
+    setChatSessionJumpRequest({
+      sessionId: normalizedSessionId,
+      requestKey: Date.now(),
+    });
+    setChatFocusRequestKey((current) => current + 1);
+  }, []);
+
   const handleOpenOutput = (entry: OperationsOutputEntry) => {
     if (entry.renderer.type === "app") {
       setActiveLeftRailItem("app");
@@ -1388,6 +1458,24 @@ function AppShellContent() {
       resourceId: entry.renderer.resourceId ?? entry.id,
       htmlContent: entry.renderer.htmlContent,
     });
+  };
+
+  const handleOpenRunningSession = (sessionId: string) => {
+    const normalizedSessionId = sessionId.trim();
+    if (!normalizedSessionId) {
+      return;
+    }
+
+    setActiveLeftRailItem("space");
+    setSpaceVisibility((previous) => ({
+      ...previous,
+      agent: true,
+    }));
+    setAgentView({ type: "chat" });
+    setChatSessionOpenRequest((previous) => ({
+      sessionId: normalizedSessionId,
+      requestKey: (previous?.requestKey ?? 0) + 1,
+    }));
   };
 
   const spaceMode = activeLeftRailItem === "space";
@@ -1460,6 +1548,11 @@ function AppShellContent() {
             handleOpenOutput(runtimeOutputToEntry(output, new Set(installedApps.map((app) => app.id))))
           }
           focusRequestKey={chatFocusRequestKey}
+          onOpenLinkInBrowser={handleOpenLinkInAppBrowser}
+          sessionJumpSessionId={chatSessionJumpRequest?.sessionId ?? null}
+          sessionJumpRequestKey={chatSessionJumpRequest?.requestKey ?? 0}
+          sessionOpenRequest={chatSessionOpenRequest}
+          onActiveSessionIdChange={setActiveChatSessionId}
         />
       );
     }
@@ -1490,8 +1583,10 @@ function AppShellContent() {
     activeApp,
     activeAppId,
     agentView,
+    chatSessionJumpRequest,
     chatFocusRequestKey,
     hasSelectedWorkspace,
+    handleOpenLinkInAppBrowser,
     installedApps,
     onboardingModeActive,
     refreshRuntimeOutputs,
@@ -1783,7 +1878,7 @@ function AppShellContent() {
                             return (
                               <div key={pane.id} className="contents">
                                 <div
-                                  className={`relative min-h-0 min-w-0 overflow-hidden ${pane.flex ? "flex-1" : "shrink-0"}`}
+                                  className={`relative min-h-0 min-w-0 overflow-hidden rounded-[var(--radius-xl)] ${pane.flex ? "flex-1" : "shrink-0"}`}
                                   style={
                                     pane.flex
                                       ? undefined
@@ -1831,7 +1926,7 @@ function AppShellContent() {
                     </div>
                   </div>
                 ) : activeLeftRailItem === "app" ? (
-                  <div className="h-full min-h-0 overflow-hidden">
+                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
                     {agentView.type === "app" ? (
                       <AppSurfacePane
                         appId={agentView.appId}
@@ -1861,19 +1956,21 @@ function AppShellContent() {
                     )}
                   </div>
                 ) : activeLeftRailItem === "automations" ? (
-                  <div className="h-full min-h-0 overflow-hidden">
-                    <AutomationsPane />
+                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
+                    <AutomationsPane
+                      onOpenRunSession={handleOpenAutomationRunSession}
+                    />
                   </div>
                 ) : activeLeftRailItem === "integrations" ? (
-                  <div className="h-full min-h-0 overflow-hidden">
+                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
                     <IntegrationsPane />
                   </div>
                 ) : activeLeftRailItem === "marketplace" ? (
-                  <div className="h-full min-h-0 overflow-hidden">
+                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
                     <MarketplacePane />
                   </div>
                 ) : (
-                  <div className="h-full min-h-0 overflow-hidden">
+                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
                     <SkillsPane />
                   </div>
                 )}
@@ -1950,24 +2047,25 @@ function AppShellContent() {
                   proposalAction={proposalAction}
                   outputs={combinedOutputEntries}
                   installedApps={installedApps}
-                  selectedOutputId={selectedOutputId}
-                  onSelectOutput={setSelectedOutputId}
                   onOpenOutput={handleOpenOutput}
-                onRefreshProposals={() =>
-                  void refreshTaskProposals({ logErrors: true })
-                }
-                onTriggerProposal={() => void triggerRemoteTaskProposal()}
-                onProactiveTaskProposalsEnabledChange={(enabled) =>
-                  void handleProactiveTaskProposalsEnabledChange(enabled)
-                }
-                onAcceptProposal={(proposal) =>
-                  void acceptTaskProposal(proposal)
-                }
+                  onRefreshProposals={() =>
+                    void refreshTaskProposals({ logErrors: true })
+                  }
+                  onTriggerProposal={() => void triggerRemoteTaskProposal()}
+                  onProactiveTaskProposalsEnabledChange={(enabled) =>
+                    void handleProactiveTaskProposalsEnabledChange(enabled)
+                  }
+                  onAcceptProposal={(proposal) =>
+                    void acceptTaskProposal(proposal)
+                  }
                   onDismissProposal={(proposal) =>
                     void dismissTaskProposal(proposal)
                   }
+                  onOpenRunningSession={handleOpenRunningSession}
+                  activeRunningSessionId={activeChatSessionId}
                   hasWorkspace={hasSelectedWorkspace}
                   selectedWorkspaceId={selectedWorkspaceId}
+                  mainSessionId={(selectedWorkspace?.main_session_id || "").trim() || null}
                 />
               </div>
             ) : null}

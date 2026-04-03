@@ -7,15 +7,33 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.join(__dirname, "SimpleMarkdown.tsx");
 
-test("simple markdown normalizes line endings and supports indented gfm tables", async () => {
+test("simple markdown uses react-markdown with gfm and safe defaults", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.ok(source.includes('source.replace(/\\r\\n?/g, "\\n")'));
-  assert.ok(source.includes("const codeBlocks: string[] = [];"));
-  assert.ok(source.includes("@@MD_CODE_BLOCK_"));
-  assert.ok(source.includes("/^( {0,3}\\|[^\\n]*\\|[ \\t]*)\\n"));
-  assert.ok(source.includes(":?-{3,}:?[ \\t]*\\|"));
-  assert.ok(source.includes("((?: {0,3}\\|[^\\n]*\\|[ \\t]*(?:\\n|$))+)/gm"));
-  assert.ok(source.includes('/^ {0,3}#### (.+)$/gm'));
-  assert.ok(source.includes('<h4 class="md-h4">$1</h4>'));
+  assert.match(source, /import ReactMarkdown, \{ defaultUrlTransform, type Components \} from "react-markdown";/);
+  assert.match(source, /import remarkGfm from "remark-gfm";/);
+  assert.match(source, /remarkPlugins=\{\[remarkGfm\]\}/);
+  assert.match(source, /skipHtml/);
+  assert.match(source, /urlTransform=\{defaultUrlTransform\}/);
+  assert.doesNotMatch(source, /dangerouslySetInnerHTML/);
+  assert.doesNotMatch(source, /export function renderMarkdown/);
+});
+
+test("simple markdown preserves the md-* styling hooks used by chat and marketplace", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /onLinkClick\?: \(url: string\) => void;/);
+  assert.match(source, /const normalizedHref = normalizeHttpUrl/);
+  assert.match(source, /event\.preventDefault\(\);\s*onLinkClick\(normalizedHref\);/);
+  assert.match(source, /className=\{appendClassName\(className, "md-link"\)\}/);
+  assert.match(source, /className=\{appendClassName\(className, "md-blockquote"\)\}/);
+  assert.match(source, /className=\{appendClassName\(className, "md-code-block"\)\}/);
+  assert.match(source, /className=\{appendClassName\(className, "md-inline-code"\)\}/);
+  assert.match(source, /className=\{appendClassName\(className, "md-table"\)\}/);
+  assert.match(source, /className=\{appendClassName\(className, "md-ul"\)\}/);
+  assert.match(source, /className=\{appendClassName\(className, "md-ol"\)\}/);
+  assert.match(source, /className=\{appendClassName\(className, "md-li md-oli"\)\}/);
+  assert.match(source, /className=\{`simple-markdown \$\{className\}`\.trim\(\)\}/);
+  assert.match(source, /target="_blank"/);
+  assert.match(source, /rel="noopener noreferrer"/);
 });

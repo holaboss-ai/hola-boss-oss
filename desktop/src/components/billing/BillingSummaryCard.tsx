@@ -1,3 +1,12 @@
+import { CircleHelp } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+
 interface BillingSummaryCardProps {
   overview: DesktopBillingOverviewPayload | null;
   usage: DesktopBillingUsagePayload | null;
@@ -5,6 +14,12 @@ interface BillingSummaryCardProps {
   isLoading?: boolean;
   error?: Error | null;
 }
+
+const CREDITS_HELP_ITEMS = [
+  "Your available balance reflects all non-expired credit allocations minus usage.",
+  "Monthly credits come from your subscription and expire at the end of the current billing period.",
+  "Purchased credits and signup bonus credits do not expire.",
+];
 
 function formatBillingDate(value: string) {
   return new Date(value).toLocaleDateString(undefined, {
@@ -97,7 +112,32 @@ export function BillingSummaryCard({
               <div className="text-xl font-semibold tracking-[-0.03em] text-foreground tabular-nums">
                 {creditsValue}
               </div>
-              <div className="mt-1 text-sm text-muted-foreground">Credits</div>
+              <div className="mt-1 flex items-center gap-1 text-sm text-muted-foreground">
+                <span>Credits</span>
+                <Popover>
+                  <PopoverTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label="About credits"
+                        className="inline-flex size-5 items-center justify-center rounded-full text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                      />
+                    }
+                  >
+                    <CircleHelp size={14} />
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-80">
+                    <PopoverHeader>
+                      <PopoverTitle>About credits</PopoverTitle>
+                    </PopoverHeader>
+                    <ul className="flex list-disc flex-col gap-2 pl-4 text-sm text-muted-foreground">
+                      {CREDITS_HELP_ITEMS.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </PopoverContent>
+                </Popover>
+              </div>
             </div>
             <div className="text-right">
               <div className="text-xl font-semibold tracking-[-0.03em] text-foreground tabular-nums">

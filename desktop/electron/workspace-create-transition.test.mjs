@@ -14,12 +14,12 @@ const workspaceDesktopSourcePath = path.join(
   "workspaceDesktop.tsx",
 );
 
-test("desktop directory listing hides the agent-owned git repository from normal browsing", async () => {
+test("desktop directory listing hides dot-prefixed files and folders from normal browsing", async () => {
   const source = await readFile(mainSourcePath, "utf8");
 
   assert.match(
     source,
-    /async function listDirectory[\s\S]*for \(const dirEntry of dirEntries\) \{\s*if \(dirEntry\.name === "\.git"\) \{\s*continue;\s*\}/,
+    /async function listDirectory[\s\S]*for \(const dirEntry of dirEntries\) \{\s*if \(dirEntry\.name\.startsWith\("\."\)\) \{\s*continue;\s*\}/,
   );
 });
 
