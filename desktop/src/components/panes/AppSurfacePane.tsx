@@ -263,6 +263,22 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
               </div>
             ) : null}
           </div>
+
+          {app && "tools" in app && app.tools && app.tools.length > 0 ? (
+            <div className="mt-4">
+              <div className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+                Tools ({app.tools.length})
+              </div>
+              <div className="mt-2 space-y-0.5">
+                {app.tools.map((tool) => (
+                  <div key={tool.name} className="rounded-md px-2 py-1.5">
+                    <div className="text-[11px] font-medium text-foreground/80">{tool.name}</div>
+                    <div className="text-[10px] leading-relaxed text-muted-foreground">{tool.description}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
 
         {/* Actions pinned to bottom */}
