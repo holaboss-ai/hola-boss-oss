@@ -3628,28 +3628,28 @@ function ThinkingPanel({ text, collapsed, onToggle, live = false }: ThinkingPane
   const summary = summarizeThinking(text);
 
   return (
-    <div className="mt-4">
+    <div className="mt-3">
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={!collapsed}
-        className="bg-muted flex w-full items-center justify-between gap-3 rounded-[18px] border border-border/35 px-3.5 py-3 text-left transition hover:border-border/55"
+        className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 -ml-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60"
       >
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{live ? "Thinking" : "Reasoning"}</span>
-            {live ? (
-              <span className="rounded-full border border-[rgba(247,90,84,0.18)] bg-[rgba(247,90,84,0.08)] px-2 py-0.5 text-[9px] uppercase tracking-[0.14em] text-[rgba(206,92,84,0.92)]">
-                LIVE
-              </span>
-            ) : null}
-          </div>
-          <div className="mt-1 truncate text-[12px] text-muted-foreground/76">{collapsed ? summary : "Expanded reasoning trace"}</div>
-        </div>
-        <ChevronDown size={14} className={`shrink-0 text-muted-foreground transition ${collapsed ? "" : "rotate-180"}`} />
+        {live ? (
+          <Loader2 size={13} className="animate-spin text-muted-foreground" />
+        ) : (
+          <Lightbulb size={13} className="text-muted-foreground" />
+        )}
+        <span className="min-w-0 truncate">
+          {live ? "Reasoning..." : summary}
+        </span>
+        <ChevronDown
+          size={12}
+          className={`shrink-0 transition-transform ${collapsed ? "" : "rotate-180"}`}
+        />
       </button>
       {!collapsed ? (
-        <div className="theme-chat-thinking-inner mt-2 whitespace-pre-wrap rounded-[18px] border border-border/30 px-4 py-3 text-[12px] leading-6 text-muted-foreground/86">
+        <div className="theme-chat-thinking-inner mt-1 ml-1 whitespace-pre-wrap rounded-md border border-border/30 bg-muted/30 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
           {text}
         </div>
       ) : null}
