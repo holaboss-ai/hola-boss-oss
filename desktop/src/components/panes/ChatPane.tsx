@@ -1,6 +1,8 @@
 import { type ChangeEvent, type CompositionEvent, type DragEvent, FormEvent, KeyboardEvent, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { AlertTriangle, ArrowRight, ArrowUp, Bot, Cable, Check, ChevronDown, Clock3, FileText, Image as ImageIcon, Loader2, Paperclip, Search, Waypoints, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { PaneCard } from "@/components/ui/PaneCard";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
@@ -3020,13 +3022,14 @@ function ModelCombobox({
       <PopoverTrigger
         disabled={disabled}
         render={
-          <button
-            type="button"
-            className="flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-border/35 bg-muted/60 px-3 text-left text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+          <Button
+            variant="outline"
+            size="lg"
+            className="w-full justify-between text-xs font-medium"
           >
             <span className="truncate">{displayLabel}</span>
             <ChevronDown size={13} className="shrink-0 text-muted-foreground" />
-          </button>
+          </Button>
         }
       />
       <PopoverContent
@@ -3035,14 +3038,14 @@ function ModelCombobox({
         sideOffset={8}
         className="w-[280px] p-0"
       >
-        <div className="border-b border-border/40 px-3 py-2">
-          <div className="flex items-center gap-2">
-            <Search size={13} className="shrink-0 text-muted-foreground" />
-            <input
+        <div className="border-b border-border/40 p-2">
+          <div className="relative">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search models..."
-              className="h-7 w-full bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/50"
+              className="h-8 pl-8 text-xs"
               autoFocus
             />
           </div>
@@ -3245,22 +3248,24 @@ function Composer({
         )}
 
         <div className="ml-auto flex items-center gap-2">
-          <button
-            type="button"
+          <Button
+            variant="outline"
+            size="icon"
             disabled={isResponding || disabled}
             onClick={() => fileInputRef.current?.click()}
-            className="grid h-9 w-9 place-items-center rounded-full border border-border/40 text-muted-foreground transition hover:border-primary/35 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
             aria-label="Attach files"
+            className="rounded-full"
           >
             <Paperclip size={15} />
-          </button>
-          <button
-            type="submit"
+          </Button>
+          <Button
+            size="icon"
             disabled={(!input.trim() && attachments.length === 0) || isResponding || disabled}
-            className="grid h-9 w-9 place-items-center rounded-full bg-foreground text-background transition hover:opacity-92 disabled:cursor-not-allowed disabled:opacity-35"
+            render={<button type="submit" />}
+            className="rounded-full"
           >
             {isResponding ? <Loader2 size={16} className="animate-spin" /> : <ArrowUp size={16} />}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
