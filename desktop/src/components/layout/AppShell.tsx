@@ -312,6 +312,21 @@ function runtimeOutputToEntry(
     output.platform ? `Platform: ${output.platform}` : "",
   ].filter(Boolean);
 
+  // Read presentation protocol from metadata when available
+  const metadata = (output.metadata ?? {}) as Record<string, unknown>;
+  const presentation = metadata.presentation as
+    | { kind?: string; view?: string; path?: string }
+    | undefined;
+  const hasAppPresentation =
+    presentation?.kind === "app_resource" && presentation.view;
+
+  const presentationView = hasAppPresentation
+    ? presentation!.view!
+    : output.output_type || "home";
+  const presentationResourceId = hasAppPresentation && presentation!.path
+    ? presentation!.path
+    : output.module_resource_id || output.artifact_id || output.id;
+
   return {
     id: `runtime-output:${output.id}`,
     title,
@@ -325,9 +340,8 @@ function runtimeOutputToEntry(
         ? {
             type: "app",
             appId: moduleId,
-            resourceId:
-              output.module_resource_id || output.artifact_id || output.id,
-            view: output.output_type || "home",
+            resourceId: presentationResourceId,
+            view: presentationView,
           }
         : {
             type: "internal",

@@ -1,56 +1,37 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-async function loadRouteModule() {
-  try {
-    return await import("./appSurfaceRoute.ts");
-  } catch {
-    return null;
-  }
-}
+const routeModule = await import("./appSurfaceRoute.ts");
 
-test("app surface route helper exists", async () => {
-  const routeModule = await loadRouteModule();
-
+test("app surface route keeps explicit paths intact", () => {
   assert.equal(
-    typeof routeModule?.resolveAppSurfacePath,
-    "function",
-    "expected app surface routing to be extracted into a reusable helper",
+    routeModule.resolveAppSurfacePath({
+      path: "/drafts/draft-42",
+      resourceId: "draft-42",
+      view: "draft",
+    }),
+    "/drafts/draft-42",
   );
 });
 
-test("app surface route helper resolves the home page to the root path", async () => {
-  const routeModule = await loadRouteModule();
+test("app surface route resolves home and view-only routes", () => {
   assert.equal(
-    routeModule?.resolveAppSurfacePath({ view: "home", resourceId: null }),
+    routeModule.resolveAppSurfacePath({ path: null, resourceId: null, view: "home" }),
     "/",
   );
-});
-
-test("app surface route helper resolves view-only pages without a resource id", async () => {
-  const routeModule = await loadRouteModule();
   assert.equal(
-    routeModule?.resolveAppSurfacePath({ view: "preview", resourceId: null }),
+    routeModule.resolveAppSurfacePath({ path: null, resourceId: null, view: "preview" }),
     "/preview",
   );
 });
 
-test("app surface route helper preserves focused app views when a resource id is present", async () => {
-  const routeModule = await loadRouteModule();
+test("app surface route resolves resource routes and legacy fallback routes", () => {
   assert.equal(
-    routeModule?.resolveAppSurfacePath({ view: "editor", resourceId: "draft-42" }),
+    routeModule.resolveAppSurfacePath({ path: null, resourceId: "draft-42", view: "editor" }),
     "/editor/draft-42",
   );
   assert.equal(
-    routeModule?.resolveAppSurfacePath({ view: "thread", resourceId: "thread-9" }),
-    "/thread/thread-9",
-  );
-});
-
-test("app surface route helper falls back to legacy posts routes when no explicit view is provided", async () => {
-  const routeModule = await loadRouteModule();
-  assert.equal(
-    routeModule?.resolveAppSurfacePath({ view: null, resourceId: "artifact-7" }),
+    routeModule.resolveAppSurfacePath({ path: null, resourceId: "artifact-7", view: null }),
     "/posts/artifact-7",
   );
 });
