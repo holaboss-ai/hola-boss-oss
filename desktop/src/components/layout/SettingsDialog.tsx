@@ -6,12 +6,14 @@ import {
   Globe,
   Info,
   Palette,
+  Plug,
   User2,
   Waypoints,
   X,
 } from "lucide-react";
 import { AuthPanel } from "@/components/auth/AuthPanel";
 import { BillingSettingsPanel } from "@/components/billing/BillingSettingsPanel";
+import { IntegrationsPane } from "@/components/panes/IntegrationsPane";
 
 const THEME_SWATCHES: Record<string, [string, string, string]> = {
   "amber-minimal-dark": ["#1a1814", "#e8853a", "#2e2920"],
@@ -49,6 +51,7 @@ const SETTINGS_SECTIONS: Array<{
   { id: "account", label: "Account", icon: User2 },
   { id: "billing", label: "Billing", icon: CreditCard },
   { id: "providers", label: "Model Providers", icon: Waypoints },
+  { id: "integrations", label: "Integrations", icon: Plug },
   { id: "settings", label: "Settings", icon: Palette },
   { id: "about", label: "About", icon: Info },
 ];
@@ -87,6 +90,8 @@ function titleForSection(section: UiSettingsPaneSection): string {
       return "Billing";
     case "providers":
       return "Model Providers";
+    case "integrations":
+      return "Integrations";
     case "about":
       return "About";
     case "settings":
@@ -219,6 +224,10 @@ export function SettingsDialog({
                   <AuthPanel view="runtime" />
                 </section>
               </div>
+            ) : null}
+
+            {activeSection === "integrations" ? (
+              <IntegrationsPane embedded />
             ) : null}
 
             {activeSection === "settings" ? (

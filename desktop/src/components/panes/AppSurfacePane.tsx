@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Activity, Globe, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Activity, Globe, LoaderCircle, Plug, RefreshCw, Trash2 } from "lucide-react";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import { getWorkspaceAppDefinition, type WorkspaceAppDefinition, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
@@ -31,6 +31,48 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
   const addressText = resourceId
     ? `${label.toLowerCase()}://workspace/${viewLabel.toLowerCase()}/${resourceId}`
     : `${label.toLowerCase()}://workspace/${viewLabel.toLowerCase()}`;
+
+  // Integration connection status for this app
+  const [integrationStatus, setIntegrationStatus] = useState<{ connected: boolean; providerName: string } | null>(null);
+
+  const checkIntegration = useCallback(async () => {
+    if (!selectedWorkspaceId) return;
+    try {
+      const { connections } = await window.electronAPI.workspace.listIntegrationConnections();
+      const { providers } = await window.electronAPI.workspace.listIntegrationCatalog();
+      // Find provider required by this app via bindings or catalog lookup
+      const bindings = await window.electronAPI.workspace.listIntegrationBindings(selectedWorkspaceId);
+      const appBinding = bindings.bindings.find(
+        (b) => b.target_type === "app" && b.target_id === appId,
+      );
+      if (appBinding) {
+        const conn = connections.find((c) => c.connection_id === appBinding.connection_id);
+        const provider = providers.find((p) => p.provider_id === appBinding.integration_key);
+        setIntegrationStatus({
+          connected: conn?.status === "active",
+          providerName: provider?.display_name ?? appBinding.integration_key,
+        });
+      } else {
+        // No binding yet — check if there's a workspace-level default for a known provider
+        const knownProviders: Record<string, string> = { gmail: "gmail", sheets: "googlesheets", github: "github", reddit: "reddit", twitter: "twitter", linkedin: "linkedin" };
+        const expectedProvider = knownProviders[appId.toLowerCase()];
+        if (expectedProvider) {
+          const conn = connections.find((c) => c.provider_id === expectedProvider && c.status === "active");
+          const provider = providers.find((p) => p.provider_id === expectedProvider);
+          setIntegrationStatus({
+            connected: Boolean(conn),
+            providerName: provider?.display_name ?? expectedProvider,
+          });
+        }
+      }
+    } catch {
+      // Non-fatal
+    }
+  }, [appId, selectedWorkspaceId]);
+
+  useEffect(() => {
+    void checkIntegration();
+  }, [checkIntegration]);
 
   async function handleRemove() {
     if (isRemoving) return;
@@ -206,6 +248,18 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
               <div className="flex items-center justify-between rounded-md border border-border bg-muted/50 px-3 py-2">
                 <span className="text-xs text-muted-foreground">Resource</span>
                 <span className="max-w-[120px] truncate text-xs font-medium text-foreground">{resourceId}</span>
+              </div>
+            ) : null}
+            {integrationStatus ? (
+              <div className="flex items-center justify-between rounded-md border border-border bg-muted/50 px-3 py-2">
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Plug size={11} />
+                  {integrationStatus.providerName}
+                </span>
+                <span className={`flex items-center gap-1.5 text-xs font-medium ${integrationStatus.connected ? "text-primary" : "text-destructive"}`}>
+                  <span className={`size-1.5 rounded-full ${integrationStatus.connected ? "bg-primary" : "bg-destructive"}`} />
+                  {integrationStatus.connected ? "Connected" : "Not connected"}
+                </span>
               </div>
             ) : null}
           </div>
