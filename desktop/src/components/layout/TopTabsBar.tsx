@@ -223,7 +223,7 @@ export function TopTabsBar({
           <img
             src="/logo.svg"
             alt="Holaboss"
-            className="size-10 p-1 rounded-lg border border-border shrink-0"
+            className="size-10 shrink-0"
           />
           <div
             ref={workspaceSwitcherRef}
@@ -375,7 +375,7 @@ export function TopTabsBar({
                   value={workspaceQuery}
                   onChange={(event) => setWorkspaceQuery(event.target.value)}
                   placeholder="Search workspaces"
-                  className="h-8 pl-8 text-xs"
+                  className="embedded-input h-8 rounded-full pl-8 text-xs focus-visible:ring-0"
                 />
               </div>
 

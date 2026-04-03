@@ -666,12 +666,16 @@ export function ChatPane({
   onOutputsChanged,
   focusRequestKey = 0,
   variant = "default",
-  onOpenLinkInBrowser
+  onOpenLinkInBrowser,
+  sessionJumpSessionId = null,
+  sessionJumpRequestKey = 0
 }: {
   onOutputsChanged?: () => void;
   focusRequestKey?: number;
   variant?: ChatPaneVariant;
   onOpenLinkInBrowser?: (url: string) => void;
+  sessionJumpSessionId?: string | null;
+  sessionJumpRequestKey?: number;
 }) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const authSessionState = useDesktopAuthSession();
@@ -728,6 +732,7 @@ export function ChatPane({
   const selectedWorkspaceRef = useRef<WorkspaceRecordPayload | null>(null);
   const isOnboardingVariant = variant === "onboarding";
   const pendingFocusRequestKeyRef = useRef<number | null>(focusRequestKey);
+  const lastHandledSessionJumpRequestKeyRef = useRef(0);
   const liveAssistantTextRef = useRef("");
   const liveThinkingTextRef = useRef("");
   const liveThinkingExpandedRef = useRef(false);
@@ -1006,7 +1011,7 @@ export function ChatPane({
   function toggleTraceStep(stepId: string) {
     setCollapsedTraceByStepId((prev) => ({
       ...prev,
-      [stepId]: !prev[stepId]
+      [stepId]: !(prev[stepId] ?? true)
     }));
   }
 
@@ -1040,12 +1045,9 @@ export function ChatPane({
     });
   }
 
-  function upsertLiveTraceStep(step: ChatTraceStep, options?: { expand?: boolean }) {
+  function upsertLiveTraceStep(step: ChatTraceStep) {
     const next = upsertTraceStep(liveTraceStepsRef.current, step);
     setLiveTraceStepsState(next);
-    if (options?.expand) {
-      setCollapsedTraceByStepId((prev) => (step.id in prev ? prev : { ...prev, [step.id]: false }));
-    }
   }
 
   function finalizeLiveTraceSteps(status: Extract<ChatTraceStepStatus, "completed" | "error">) {
@@ -1140,6 +1142,7 @@ export function ChatPane({
       setPendingAttachments([]);
       setActiveSession(null);
       pendingInputIdRef.current = null;
+      lastHandledSessionJumpRequestKeyRef.current = 0;
       return;
     }
 
@@ -1150,12 +1153,37 @@ export function ChatPane({
       setChatErrorMessage("");
 
       try {
+        const requestedSessionId = (sessionJumpSessionId || "").trim();
+        const hasSessionJumpRequest =
+          Boolean(requestedSessionId) &&
+          sessionJumpRequestKey > 0 &&
+          sessionJumpRequestKey !== lastHandledSessionJumpRequestKeyRef.current;
+        if (hasSessionJumpRequest) {
+          lastHandledSessionJumpRequestKeyRef.current = sessionJumpRequestKey;
+          pendingInputIdRef.current = null;
+          activeAssistantMessageIdRef.current = null;
+          setIsResponding(false);
+          resetLiveTurn();
+
+          const activeStreamId = activeStreamIdRef.current;
+          activeStreamIdRef.current = null;
+          if (activeStreamId) {
+            await closeStreamWithReason(
+              activeStreamId,
+              "chatpane_session_jump_requested",
+            ).catch(() => undefined);
+          }
+        }
+
         const runtimeStates = await window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId);
         if (cancelled) {
           return;
         }
 
-        const nextSessionId = preferredSessionId(selectedWorkspaceRef.current, runtimeStates.items);
+        const nextSessionId =
+          hasSessionJumpRequest && requestedSessionId
+            ? requestedSessionId
+            : preferredSessionId(selectedWorkspaceRef.current, runtimeStates.items);
         await loadSessionConversation(nextSessionId, selectedWorkspaceId, runtimeStates.items, {
           cancelled: () => cancelled
         });
@@ -1176,6 +1204,8 @@ export function ChatPane({
     };
   }, [
     isOnboardingVariant,
+    sessionJumpRequestKey,
+    sessionJumpSessionId,
     selectedWorkspaceId,
     selectedWorkspace?.main_session_id,
     selectedWorkspace?.onboarding_session_id,
@@ -1475,13 +1505,13 @@ export function ChatPane({
 
       const phaseStep = phaseTraceStepFromEvent(eventType, eventPayload, eventSequence);
       if (phaseStep) {
-        upsertLiveTraceStep(phaseStep, { expand: phaseStep.status !== "completed" });
+        upsertLiveTraceStep(phaseStep);
       }
 
       const toolStep = toolTraceStepFromEvent(eventType, eventPayload, eventSequence);
       if (toolStep) {
         setLiveAgentStatus(toolStep.status === "completed" ? "Writing response..." : "Using tools...");
-        upsertLiveTraceStep(toolStep, { expand: toolStep.status !== "completed" });
+        upsertLiveTraceStep(toolStep);
       }
 
       if (eventType === "output_delta") {

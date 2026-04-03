@@ -539,6 +539,10 @@ function AppShellContent() {
     useState<LeftRailItem>("space");
   const [agentView, setAgentView] = useState<AgentView>({ type: "chat" });
   const [chatFocusRequestKey, setChatFocusRequestKey] = useState(1);
+  const [chatSessionJumpRequest, setChatSessionJumpRequest] = useState<{
+    sessionId: string;
+    requestKey: number;
+  } | null>(null);
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = useState(false);
   const [spaceVisibility, setSpaceVisibility] =
     useState<SpaceVisibilityState>(loadSpaceVisibility);
@@ -997,6 +1001,10 @@ function AppShellContent() {
   ]);
 
   useEffect(() => {
+    setChatSessionJumpRequest(null);
+  }, [selectedWorkspaceId]);
+
+  useEffect(() => {
     localStorage.setItem(
       OPERATIONS_DRAWER_OPEN_STORAGE_KEY,
       operationsDrawerOpen ? "1" : "0",
@@ -1408,6 +1416,25 @@ function AppShellContent() {
     });
   };
 
+  const handleOpenAutomationRunSession = useCallback((sessionId: string) => {
+    const normalizedSessionId = sessionId.trim();
+    if (!normalizedSessionId) {
+      return;
+    }
+
+    setActiveLeftRailItem("space");
+    setSpaceVisibility((previous) => ({
+      ...previous,
+      agent: true,
+    }));
+    setAgentView({ type: "chat" });
+    setChatSessionJumpRequest({
+      sessionId: normalizedSessionId,
+      requestKey: Date.now(),
+    });
+    setChatFocusRequestKey((current) => current + 1);
+  }, []);
+
   const handleOpenOutput = (entry: OperationsOutputEntry) => {
     if (entry.renderer.type === "app") {
       setActiveLeftRailItem("app");
@@ -1498,6 +1525,8 @@ function AppShellContent() {
           onOutputsChanged={() => void refreshRuntimeOutputs()}
           focusRequestKey={chatFocusRequestKey}
           onOpenLinkInBrowser={handleOpenLinkInAppBrowser}
+          sessionJumpSessionId={chatSessionJumpRequest?.sessionId ?? null}
+          sessionJumpRequestKey={chatSessionJumpRequest?.requestKey ?? 0}
         />
       );
     }
@@ -1528,6 +1557,7 @@ function AppShellContent() {
     activeApp,
     activeAppId,
     agentView,
+    chatSessionJumpRequest,
     chatFocusRequestKey,
     hasSelectedWorkspace,
     handleOpenLinkInAppBrowser,
@@ -1822,7 +1852,7 @@ function AppShellContent() {
                             return (
                               <div key={pane.id} className="contents">
                                 <div
-                                  className={`relative min-h-0 min-w-0 overflow-hidden ${pane.flex ? "flex-1" : "shrink-0"}`}
+                                  className={`relative min-h-0 min-w-0 overflow-hidden rounded-[var(--radius-xl)] ${pane.flex ? "flex-1" : "shrink-0"}`}
                                   style={
                                     pane.flex
                                       ? undefined
@@ -1870,7 +1900,7 @@ function AppShellContent() {
                     </div>
                   </div>
                 ) : activeLeftRailItem === "app" ? (
-                  <div className="h-full min-h-0 overflow-hidden">
+                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
                     {agentView.type === "app" ? (
                       <AppSurfacePane
                         appId={agentView.appId}
@@ -1900,19 +1930,21 @@ function AppShellContent() {
                     )}
                   </div>
                 ) : activeLeftRailItem === "automations" ? (
-                  <div className="h-full min-h-0 overflow-hidden">
-                    <AutomationsPane />
+                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
+                    <AutomationsPane
+                      onOpenRunSession={handleOpenAutomationRunSession}
+                    />
                   </div>
                 ) : activeLeftRailItem === "integrations" ? (
-                  <div className="h-full min-h-0 overflow-hidden">
+                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
                     <IntegrationsPane />
                   </div>
                 ) : activeLeftRailItem === "marketplace" ? (
-                  <div className="h-full min-h-0 overflow-hidden">
+                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
                     <MarketplacePane />
                   </div>
                 ) : (
-                  <div className="h-full min-h-0 overflow-hidden">
+                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
                     <SkillsPane />
                   </div>
                 )}

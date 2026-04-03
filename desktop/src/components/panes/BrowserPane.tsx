@@ -641,7 +641,7 @@ export function BrowserPane({
                       window.setTimeout(() => setAddressFocused(false), 120)
                     }
                     onKeyDown={onAddressKeyDown}
-                    className="w-full min-w-0 bg-transparent text-[11px] text-foreground outline-none placeholder:text-muted-foreground"
+                    className="embedded-input w-full min-w-0 bg-transparent text-[11px] text-foreground outline-none placeholder:text-muted-foreground"
                     placeholder={
                       isNarrowPane ? "Search" : "Enter URL or search"
                     }

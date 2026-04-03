@@ -77,3 +77,27 @@ test("chat turns render markdown and keep long content wrapped inside the bubble
   assert.match(source, /<SimpleMarkdown[\s\S]*className="chat-markdown chat-assistant-markdown mt-4 max-w-full text-foreground"[\s\S]*onLinkClick=\{onLinkClick\}[\s\S]*\{text\}[\s\S]*<\/SimpleMarkdown>/);
   assert.match(source, /theme-chat-user-bubble inline-flex min-w-0 max-w-full/);
 });
+
+test("tool trace steps are collapsed by default and first toggle expands them", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /return collapsedTraceByStepId\[step\.id\] \?\? true;/);
+  assert.match(source, /\[stepId\]: !\(prev\[stepId\] \?\? true\)/);
+  assert.doesNotMatch(source, /\[step\.id\]: false/);
+});
+
+test("chat pane can jump to a requested sub-session run", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /sessionJumpSessionId = null/);
+  assert.match(source, /sessionJumpRequestKey = 0/);
+  assert.match(source, /const lastHandledSessionJumpRequestKeyRef = useRef\(0\);/);
+  assert.match(
+    source,
+    /const hasSessionJumpRequest =[\s\S]*sessionJumpRequestKey > 0[\s\S]*sessionJumpRequestKey !== lastHandledSessionJumpRequestKeyRef\.current/
+  );
+  assert.match(
+    source,
+    /const nextSessionId =[\s\S]*hasSessionJumpRequest && requestedSessionId[\s\S]*\? requestedSessionId[\s\S]*: preferredSessionId\(selectedWorkspaceRef\.current, runtimeStates\.items\);/
+  );
+});
