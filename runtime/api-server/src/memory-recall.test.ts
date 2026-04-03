@@ -236,3 +236,134 @@ test("recalledMemoryContextFromEntries prefers durable business facts for schedu
   assert.match(String(context.selection_trace?.[0]?.reasons?.join(" ")), /query_intent_boost/);
   assert.match(String(context.selection_trace?.[1]?.reasons?.join(" ")), /query_intent_boost/);
 });
+
+test("recalledMemoryContextFromEntries applies scope and type budget guardrails before filling results", () => {
+  const context = recalledMemoryContextFromEntries({
+    query: "How should I release this workspace and what should I check first?",
+    nowIso: "2026-04-15T00:00:00.000Z",
+    entries: [
+      makeMemoryEntry({
+        memoryId: "user-preference:format",
+        workspaceId: null,
+        scope: "user",
+        memoryType: "preference",
+        subjectKey: "response:format",
+        path: "preference/response-format.md",
+        title: "Response format",
+        summary: "User prefers concise bullet responses.",
+        tags: ["preference", "response"],
+        verificationPolicy: "none",
+        stalenessPolicy: "stable",
+        staleAfterSeconds: null,
+      }),
+      makeMemoryEntry({
+        memoryId: "user-preference:tone",
+        workspaceId: null,
+        scope: "user",
+        memoryType: "preference",
+        subjectKey: "response:tone",
+        path: "preference/response-tone.md",
+        title: "Response tone",
+        summary: "User prefers direct and factual communication.",
+        tags: ["preference", "tone"],
+        verificationPolicy: "none",
+        stalenessPolicy: "stable",
+        staleAfterSeconds: null,
+      }),
+      makeMemoryEntry({
+        memoryId: "user-preference:language",
+        workspaceId: null,
+        scope: "user",
+        memoryType: "preference",
+        subjectKey: "response:language",
+        path: "preference/response-language.md",
+        title: "Response language",
+        summary: "User prefers English for technical work.",
+        tags: ["preference", "language"],
+        verificationPolicy: "none",
+        stalenessPolicy: "stable",
+        staleAfterSeconds: null,
+      }),
+      makeMemoryEntry({
+        memoryId: "workspace-procedure:release",
+        scope: "workspace",
+        memoryType: "procedure",
+        subjectKey: "procedure:release",
+        path: "workspace/workspace-1/knowledge/procedures/release-procedure.md",
+        title: "Release procedure",
+        summary: "Run tests, then build, then deploy with approval.",
+        tags: ["procedure", "release", "workflow"],
+      }),
+      makeMemoryEntry({
+        memoryId: "workspace-fact:release-check",
+        scope: "workspace",
+        memoryType: "fact",
+        subjectKey: "fact:release-check",
+        path: "workspace/workspace-1/knowledge/facts/release-check.md",
+        title: "Release check command",
+        summary: "Run `npm run test` before release.",
+        tags: ["command", "release", "test"],
+      }),
+    ],
+    maxEntries: 3,
+  });
+
+  assert.ok(context);
+  assert.equal(context.entries?.length, 3);
+  const userCount = context.entries?.filter((entry) => entry.scope === "user").length ?? 0;
+  assert.equal(userCount <= 2, true);
+  assert.equal(context.entries?.some((entry) => entry.scope === "workspace"), true);
+});
+
+test("recalledMemoryContextFromEntries deduplicates semantically equivalent memories by subject", () => {
+  const context = recalledMemoryContextFromEntries({
+    query: "Who approves invoices and what is the process?",
+    nowIso: "2026-04-15T00:00:00.000Z",
+    entries: [
+      makeMemoryEntry({
+        memoryId: "workspace-fact:invoice-approval-v1",
+        scope: "workspace",
+        memoryType: "fact",
+        subjectKey: "fact:invoice-approval-rule",
+        path: "workspace/workspace-1/knowledge/facts/invoice-approval-rule-v1.md",
+        title: "Finance approval rule (old)",
+        summary: "Invoices over $5000 require finance approval.",
+        tags: ["approval", "invoice"],
+        updatedAt: "2026-04-10T00:00:00.000Z",
+      }),
+      makeMemoryEntry({
+        memoryId: "workspace-fact:invoice-approval-v2",
+        scope: "workspace",
+        memoryType: "fact",
+        subjectKey: "fact:invoice-approval-rule",
+        path: "workspace/workspace-1/knowledge/facts/invoice-approval-rule-v2.md",
+        title: "Finance approval rule",
+        summary: "Invoices over $5000 require director finance approval.",
+        tags: ["approval", "invoice"],
+        updatedAt: "2026-04-14T00:00:00.000Z",
+      }),
+      makeMemoryEntry({
+        memoryId: "workspace-procedure:invoice-follow-up",
+        scope: "workspace",
+        memoryType: "procedure",
+        subjectKey: "procedure:invoice-follow-up",
+        path: "workspace/workspace-1/knowledge/procedures/invoice-follow-up.md",
+        title: "Invoice follow-up procedure",
+        summary: "Escalate pending approvals after one business day.",
+        tags: ["procedure", "invoice"],
+        updatedAt: "2026-04-13T00:00:00.000Z",
+      }),
+    ],
+    maxEntries: 3,
+  });
+
+  assert.ok(context);
+  const approvalEntries =
+    context.entries?.filter((entry) => entry.memory_type === "fact" && entry.title.toLowerCase().includes("approval")) ?? [];
+  assert.equal(approvalEntries.length, 1);
+  assert.equal(approvalEntries[0]?.title, "Finance approval rule");
+  assert.equal(
+    context.selection_trace?.some((entry) => entry.memory_id === "workspace-fact:invoice-approval-v2"),
+    true
+  );
+});

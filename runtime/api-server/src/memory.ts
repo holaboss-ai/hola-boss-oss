@@ -3,6 +3,8 @@ import path from "node:path";
 
 const MEMORY_BACKEND_ENV = "MEMORY_BACKEND";
 const MEMORY_ROOT_DIR_ENV = "MEMORY_ROOT_DIR";
+const MEMORY_ALLOWED_PATHS_MESSAGE =
+  "allowed memory paths: MEMORY.md, workspace/<workspace_id>/*, preference/*, identity/*";
 
 type StringMap = Record<string, unknown>;
 
@@ -111,14 +113,16 @@ function isMemoryPath(relPath: string, workspaceId: string): boolean {
   if (normalized === "MEMORY.md") {
     return true;
   }
-  const parts = normalized.split("/");
-  if (parts.length < 2) {
-    return false;
+  if (normalized.startsWith(workspaceScopePrefix(workspaceId))) {
+    return true;
   }
-  if (parts[0] === "workspace") {
-    return normalized.startsWith(workspaceScopePrefix(workspaceId));
+  if (normalized.startsWith("preference/")) {
+    return normalized.length > "preference/".length;
   }
-  return true;
+  if (normalized.startsWith("identity/")) {
+    return normalized.length > "identity/".length;
+  }
+  return false;
 }
 
 function workspaceDirForWorkspaceId(workspaceRoot: string, workspaceId: string): string {
@@ -409,10 +413,7 @@ export class FilesystemMemoryService implements MemoryServiceLike {
     const relPath = requiredString(payload.path, "path");
     const normalized = normalizeRelPath(relPath);
     if (!isMemoryPath(normalized, workspaceId)) {
-      throw new MemoryServiceError(
-        400,
-        "allowed memory paths: workspace/<workspace_id>/* and user scopes like preference/*"
-      );
+      throw new MemoryServiceError(400, MEMORY_ALLOWED_PATHS_MESSAGE);
     }
     const workspaceDir = workspaceDirForWorkspaceId(this.#workspaceRoot, workspaceId);
     const memoryRootDir = resolveMemoryRootDir(workspaceDir);
@@ -439,10 +440,7 @@ export class FilesystemMemoryService implements MemoryServiceLike {
     const relPath = requiredString(payload.path, "path");
     const normalized = normalizeRelPath(relPath);
     if (!isMemoryPath(normalized, workspaceId)) {
-      throw new MemoryServiceError(
-        400,
-        "allowed memory paths: workspace/<workspace_id>/* and user scopes like preference/*"
-      );
+      throw new MemoryServiceError(400, MEMORY_ALLOWED_PATHS_MESSAGE);
     }
     const content = typeof payload.content === "string" ? payload.content : "";
     const append = optionalBoolean(payload.append, false);

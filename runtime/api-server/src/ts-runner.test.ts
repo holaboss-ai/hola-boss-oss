@@ -1262,6 +1262,193 @@ test("runTsRunnerCli derives recalled durable memory from indexed memory entries
   assert.equal(recalledMemoryContext.selection_trace[0]?.memory_id, "user-preference:response-style");
 });
 
+test("runTsRunnerCli recalls workspace memory from scoped entries even with many newer cross-workspace entries", async () => {
+  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-recalled-memory-scope-"));
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  const workspaceRoot = path.join(sandboxRoot, "workspace");
+  const store = new RuntimeStateStore({
+    workspaceRoot,
+    sandboxRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-1",
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-2",
+    name: "Workspace 2",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-2",
+  });
+  store.upsertMemoryEntry({
+    memoryId: "workspace-blocker:workspace-1:deploy",
+    workspaceId: "workspace-1",
+    sessionId: "session-1",
+    scope: "workspace",
+    memoryType: "blocker",
+    subjectKey: "permission:deploy",
+    path: "workspace/workspace-1/knowledge/blockers/deploy.md",
+    title: "Deploy permission blocker",
+    summary: "Deploy calls may be denied by workspace policy.",
+    tags: ["deploy", "permission", "blocker"],
+    verificationPolicy: "check_before_use",
+    stalenessPolicy: "workspace_sensitive",
+    staleAfterSeconds: 14 * 24 * 60 * 60,
+    sourceTurnInputId: "input-0",
+    sourceMessageId: null,
+    fingerprint: "w".repeat(64),
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+  for (let index = 0; index < 240; index += 1) {
+    const minute = String(index % 60).padStart(2, "0");
+    const second = String(index % 60).padStart(2, "0");
+    store.upsertMemoryEntry({
+      memoryId: `workspace-fact:workspace-2:${index}`,
+      workspaceId: "workspace-2",
+      sessionId: "session-2",
+      scope: "workspace",
+      memoryType: "fact",
+      subjectKey: `fact:${index}`,
+      path: `workspace/workspace-2/knowledge/facts/item-${index}.md`,
+      title: `Workspace 2 note ${index}`,
+      summary: `Non-matching note ${index}.`,
+      tags: ["note"],
+      verificationPolicy: "check_before_use",
+      stalenessPolicy: "workspace_sensitive",
+      staleAfterSeconds: 30 * 24 * 60 * 60,
+      sourceTurnInputId: "input-x",
+      sourceMessageId: null,
+      fingerprint: "x".repeat(64),
+      createdAt: `2026-03-01T00:${minute}:${second}.000Z`,
+      updatedAt: `2026-03-01T00:${minute}:${second}.000Z`,
+    });
+  }
+  store.close();
+
+  let capturedProjectRequest: Record<string, unknown> | null = null;
+  const exitCode = await runTsRunnerCli(
+    ["--request-base64", encodeRequest({ ...baseRequest(), instruction: "Please fix deploy permission issues." })],
+    {
+      deps: {
+        ...testDeps(),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" }
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1"
+          };
+        }
+      },
+      io: {
+        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
+        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
+      }
+    }
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  const recalledMemoryContext = (capturedProjectRequest as {
+    recalled_memory_context: { entries: Array<Record<string, unknown>> }
+  }).recalled_memory_context;
+  assert.ok(Array.isArray(recalledMemoryContext.entries));
+  assert.equal(
+    recalledMemoryContext.entries.some(
+      (entry) => entry.path === "workspace/workspace-1/knowledge/blockers/deploy.md"
+    ),
+    true
+  );
+  assert.equal(
+    recalledMemoryContext.entries.every((entry) => {
+      const pathValue = String(entry.path ?? "");
+      return pathValue.startsWith("workspace/workspace-1/") || pathValue.startsWith("preference/") || pathValue.startsWith("identity/");
+    }),
+    true
+  );
+});
+
+test(
+  "runTsRunnerCli does not block bootstrap when recalled memory prefetch is unresolved",
+  { timeout: 3000 },
+  async () => {
+    const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-recalled-memory-prefetch-"));
+    process.env.HB_SANDBOX_ROOT = sandboxRoot;
+    let capturedProjectRequest: Record<string, unknown> | null = null;
+    let timeoutId: NodeJS.Timeout | null = null;
+
+    try {
+      const runPromise = runTsRunnerCli(
+        ["--request-base64", encodeRequest(baseRequest())],
+        {
+          deps: {
+            ...testDeps(),
+            loadRecalledMemoryContext: async () => await new Promise<null>(() => {}),
+            projectAgentRuntimeConfig: (request) => {
+              capturedProjectRequest = request as unknown as Record<string, unknown>;
+              return {
+                provider_id: "openai",
+                model_id: "gpt-5.4",
+                mode: "code",
+                system_prompt: "You are concise.",
+                model_client: {
+                  model_proxy_provider: "openai_compatible",
+                  api_key: "token",
+                  base_url: "http://127.0.0.1:4000/openai/v1",
+                  default_headers: { "X-Test": "1" }
+                },
+                tools: { read: true },
+                workspace_tool_ids: [],
+                workspace_skill_ids: [],
+                output_schema_member_id: null,
+                output_format: null,
+                workspace_config_checksum: "checksum-1"
+              };
+            }
+          },
+          io: {
+            stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
+            stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
+          }
+        }
+      );
+      const timedOut = new Promise<number>((_resolve, reject) => {
+        timeoutId = setTimeout(() => reject(new Error("runTsRunnerCli timed out while waiting on recall prefetch")), 1500);
+      });
+      const exitCode = await Promise.race([runPromise, timedOut]);
+
+      assert.equal(exitCode, 0);
+      assert.ok(capturedProjectRequest);
+      assert.equal(
+        (capturedProjectRequest as { recalled_memory_context?: unknown }).recalled_memory_context,
+        undefined
+      );
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
+  }
+);
+
 test("runTsRunnerCli only stages browser tools for the main session", async () => {
   setTempSandboxRoot("hb-ts-runner-browser-scope-");
   const seenSessionKinds: Array<string | null | undefined> = [];
@@ -1342,7 +1529,7 @@ test("runTsRunnerCli includes embedded default skill ids and source directories 
   fs.mkdirSync(embeddedSkillDir, { recursive: true });
   fs.writeFileSync(
     path.join(embeddedSkillDir, "SKILL.md"),
-    "---\ndescription: Runtime skill\n---\n# Holaboss Runtime\n",
+    "---\nname: holaboss-runtime\ndescription: Runtime skill\n---\n# Holaboss Runtime\n",
     "utf8"
   );
 
@@ -1426,7 +1613,7 @@ test("runTsRunnerCli keeps embedded skills authoritative when a workspace skill 
   fs.mkdirSync(workspaceSkillDir, { recursive: true });
   fs.writeFileSync(
     path.join(workspaceSkillDir, "SKILL.md"),
-    "---\ndescription: Workspace override\n---\n# Workspace Override\n",
+    "---\nname: holaboss-runtime\ndescription: Workspace override\n---\n# Workspace Override\n",
     "utf8"
   );
   fs.writeFileSync(
@@ -1438,7 +1625,7 @@ test("runTsRunnerCli keeps embedded skills authoritative when a workspace skill 
   fs.mkdirSync(embeddedSkillDir, { recursive: true });
   fs.writeFileSync(
     path.join(embeddedSkillDir, "SKILL.md"),
-    "---\ndescription: Embedded runtime skill\n---\n# Holaboss Runtime\n",
+    "---\nname: holaboss-runtime\ndescription: Embedded runtime skill\n---\n# Holaboss Runtime\n",
     "utf8"
   );
 
@@ -1518,7 +1705,7 @@ test("runTsRunnerCli resolves workspace skill ids and source directories for the
   const workspaceDir = path.join(sandboxRoot, "workspace", "workspace-1");
   const skillDir = path.join(workspaceDir, "skills", "alpha");
   fs.mkdirSync(skillDir, { recursive: true });
-  fs.writeFileSync(path.join(skillDir, "SKILL.md"), "---\ndescription: Alpha skill\n---\n# Alpha\n", "utf8");
+  fs.writeFileSync(path.join(skillDir, "SKILL.md"), "---\nname: alpha\ndescription: Alpha skill\n---\n# Alpha\n", "utf8");
   fs.writeFileSync(
     path.join(workspaceDir, "workspace.yaml"),
     ['skills:', '  path: "skills"', '  enabled:', '    - "alpha"'].join("\n"),

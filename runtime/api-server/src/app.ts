@@ -518,6 +518,7 @@ function compactionBoundaryPayload(record: CompactionBoundaryRecord): Record<str
     workspace_id: record.workspaceId,
     session_id: record.sessionId,
     input_id: record.inputId,
+    boundary_type: record.boundaryType,
     previous_boundary_id: record.previousBoundaryId,
     summary: record.summary,
     recent_runtime_context: record.recentRuntimeContext,

@@ -15,6 +15,12 @@ import type {
 import type { MemoryServiceLike } from "./memory.js";
 import { governanceRuleForMemoryType } from "./memory-governance.js";
 import { buildCompactionBoundaryArtifacts, compactTurnSummary } from "./turn-result-summary.js";
+import {
+  extractDurableMemoryCandidatesFromModel,
+  type DurableMemoryExtractionContext,
+  type ExtractedDurableMemoryCandidate,
+} from "./memory-writeback-extractor.js";
+import type { MemoryModelClientConfig } from "./memory-model-client.js";
 
 type TurnMemoryScope = "workspace" | "session" | "user" | "ephemeral";
 
@@ -45,7 +51,21 @@ interface DurableMemoryCandidate {
   confidence: number | null;
 }
 
+interface ModelDurableCandidate {
+  extractedCandidate: ExtractedDurableMemoryCandidate;
+  durableCandidate: DurableMemoryCandidate;
+}
+
+export interface TurnMemoryWritebackModelContext {
+  modelClient?: MemoryModelClientConfig | null;
+  instruction?: string | null;
+}
+
 const RECENT_TURNS_LIMIT = 5;
+const MODEL_EXTRACTION_MIN_CONFIDENCE = 0.82;
+const MODEL_EXTRACTION_MIN_CONFIDENCE_CORROBORATED = 0.6;
+const MODEL_EXTRACTION_MIN_EVIDENCE_CHARS = 36;
+const MODEL_EXTRACTION_MIN_EVIDENCE_CHARS_CORROBORATED = 16;
 
 function safePathSegment(value: string, fallback: string): string {
   const normalized = value.trim().replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
@@ -85,6 +105,10 @@ function latestTurnPath(turnResult: TurnResultRecord): string {
 
 function recentTurnsPath(turnResult: TurnResultRecord): string {
   return `workspace/${turnResult.workspaceId}/runtime/recent-turns/${safePathSegment(turnResult.sessionId, "session")}.md`;
+}
+
+function sessionMemoryPath(turnResult: TurnResultRecord): string {
+  return `workspace/${turnResult.workspaceId}/runtime/session-memory/${safePathSegment(turnResult.sessionId, "session")}.md`;
 }
 
 function permissionBlockerPath(turnResult: TurnResultRecord, toolName: string, toolId: string | null, reason: string): string {
@@ -250,6 +274,74 @@ function renderRecentTurns(turnResults: TurnResultRecord[]): string {
     lines.push("");
   });
 
+  return `${lines.join("\n").trim()}\n`;
+}
+
+function recentUserRequests(sessionMessages: SessionMessageRecord[], maxCount: number): string[] {
+  const userMessages = sessionMessages
+    .filter((message) => message.role === "user")
+    .map((message) => compactWhitespace(message.text))
+    .filter(Boolean);
+  if (userMessages.length <= maxCount) {
+    return userMessages;
+  }
+  return userMessages.slice(userMessages.length - maxCount);
+}
+
+function renderSessionMemory(turnResult: TurnResultRecord, recentTurns: TurnResultRecord[], sessionMessages: SessionMessageRecord[]): string {
+  const latestSummary = turnResult.compactedSummary ?? compactTurnSummary(turnResult) ?? "No compact summary available.";
+  const recentTurnSummaries = recentTurns.slice(0, 3).map((item) => ({
+    inputId: item.inputId,
+    status: item.status,
+    summary: item.compactedSummary ?? compactTurnSummary(item) ?? "No compact summary available.",
+  }));
+  const userRequests = recentUserRequests(sessionMessages, 3);
+  const recentErrors = recentTurns
+    .filter((item) => item.status === "failed" || item.permissionDenials.length > 0)
+    .slice(0, 3)
+    .map((item) => {
+      const reason = compactWhitespace(item.stopReason ?? "");
+      return `${item.inputId}: ${reason || "runtime error or permission denial"}`;
+    });
+
+  const lines = [
+    "# Session Memory",
+    "",
+    `- Workspace ID: \`${turnResult.workspaceId}\``,
+    `- Session ID: \`${turnResult.sessionId}\``,
+    `- Updated at: ${turnResult.completedAt ?? turnResult.updatedAt}`,
+    "",
+    "## Current State",
+    "",
+    latestSummary,
+    "",
+    "## Recent User Requests",
+    "",
+  ];
+  if (userRequests.length === 0) {
+    lines.push("- No recent user requests captured.");
+  } else {
+    for (const request of userRequests) {
+      lines.push(`- ${clippedText(request, 220)}`);
+    }
+  }
+
+  lines.push("", "## Recent Runtime Progress", "");
+  for (const item of recentTurnSummaries) {
+    lines.push(`- \`${item.inputId}\` (\`${item.status}\`): ${item.summary}`);
+  }
+  if (recentTurnSummaries.length === 0) {
+    lines.push("- No prior turn summaries available.");
+  }
+
+  lines.push("", "## Errors and Corrections", "");
+  if (recentErrors.length === 0) {
+    lines.push("- No recent runtime errors or permission denials.");
+  } else {
+    for (const error of recentErrors) {
+      lines.push(`- ${error}`);
+    }
+  }
   return `${lines.join("\n").trim()}\n`;
 }
 
@@ -862,10 +954,188 @@ function repeatedPermissionBlockerCandidates(params: {
   });
 }
 
+function extractedMemoryPath(turnResult: TurnResultRecord, candidate: ExtractedDurableMemoryCandidate): string {
+  const subjectToken = safePathSegment(candidate.subjectKey, "memory");
+  if (candidate.scope === "user") {
+    if (candidate.memoryType === "identity") {
+      return `identity/${subjectToken}.md`;
+    }
+    return `preference/${subjectToken}.md`;
+  }
+  switch (candidate.memoryType) {
+    case "procedure":
+      return `workspace/${turnResult.workspaceId}/knowledge/procedures/${subjectToken}-procedure.md`;
+    case "blocker":
+      return `workspace/${turnResult.workspaceId}/knowledge/blockers/${subjectToken}.md`;
+    case "reference":
+      return `workspace/${turnResult.workspaceId}/knowledge/reference/${subjectToken}.md`;
+    default:
+      return `workspace/${turnResult.workspaceId}/knowledge/facts/${subjectToken}.md`;
+  }
+}
+
+function extractedMemoryContent(params: {
+  turnResult: TurnResultRecord;
+  candidate: ExtractedDurableMemoryCandidate;
+}): string {
+  const lines = [
+    `# ${params.candidate.title}`,
+    "",
+    `- Scope: \`${params.candidate.scope}\``,
+    `- Type: \`${params.candidate.memoryType}\``,
+    `- Subject: \`${params.candidate.subjectKey}\``,
+    `- Workspace ID: \`${params.turnResult.workspaceId}\``,
+    `- Session ID: \`${params.turnResult.sessionId}\``,
+    `- Updated at: ${params.turnResult.completedAt ?? params.turnResult.updatedAt}`,
+    "",
+    "## Summary",
+    "",
+    params.candidate.summary,
+  ];
+  if (params.candidate.evidence) {
+    lines.push("", "## Evidence", "", params.candidate.evidence);
+  }
+  return `${lines.join("\n").trim()}\n`;
+}
+
+function durableCandidateFromExtracted(params: {
+  turnResult: TurnResultRecord;
+  extracted: ExtractedDurableMemoryCandidate;
+}): DurableMemoryCandidate {
+  const governance = governanceRuleForMemoryType(params.extracted.memoryType);
+  const pathValue = extractedMemoryPath(params.turnResult, params.extracted);
+  const memoryId = `extracted:${createHash("sha256")
+    .update(`${params.extracted.scope}:${params.extracted.memoryType}:${params.extracted.subjectKey}:${pathValue}`)
+    .digest("hex")
+    .slice(0, 24)}`;
+  const observedAt = params.turnResult.completedAt ?? params.turnResult.updatedAt;
+  return {
+    memoryId,
+    scope: params.extracted.scope,
+    memoryType: params.extracted.memoryType,
+    subjectKey: params.extracted.subjectKey,
+    path: pathValue,
+    title: params.extracted.title,
+    summary: params.extracted.summary,
+    content: extractedMemoryContent({
+      turnResult: params.turnResult,
+      candidate: params.extracted,
+    }),
+    tags: params.extracted.tags,
+    verificationPolicy: governance.verificationPolicy,
+    stalenessPolicy: governance.stalenessPolicy,
+    staleAfterSeconds: governance.staleAfterSeconds,
+    sourceType: "assistant_turn",
+    observedAt,
+    lastVerifiedAt: observedAt,
+    confidence: params.extracted.confidence,
+  };
+}
+
+async function extractedDurableMemoryCandidates(params: {
+  turnResult: TurnResultRecord;
+  recentTurns: TurnResultRecord[];
+  sessionMessages: SessionMessageRecord[];
+  modelContext?: TurnMemoryWritebackModelContext | null;
+}): Promise<ModelDurableCandidate[]> {
+  if (!params.modelContext?.modelClient) {
+    return [];
+  }
+  const recentTurnSummaries = params.recentTurns
+    .slice(0, 4)
+    .map((turnResult) => turnResult.compactedSummary ?? compactTurnSummary(turnResult))
+    .filter((summary): summary is string => Boolean(summary));
+  const recentUserMessages = params.sessionMessages
+    .filter((message) => message.role === "user")
+    .slice(-4)
+    .map((message) => clippedText(message.text, 220));
+  const extractionContext: DurableMemoryExtractionContext = {
+    modelClient: params.modelContext.modelClient,
+    workspaceId: params.turnResult.workspaceId,
+    sessionId: params.turnResult.sessionId,
+    inputId: params.turnResult.inputId,
+    instruction: params.modelContext.instruction?.trim() || recentUserMessages[recentUserMessages.length - 1] || "",
+    assistantText: clippedText(params.turnResult.assistantText, 1400),
+    recentUserMessages,
+    recentTurnSummaries,
+  };
+  const extracted = await extractDurableMemoryCandidatesFromModel(extractionContext);
+  return extracted.map((candidate) => ({
+    extractedCandidate: candidate,
+    durableCandidate: durableCandidateFromExtracted({
+      turnResult: params.turnResult,
+      extracted: candidate,
+    }),
+  }));
+}
+
+function hasHeuristicCorroboration(params: {
+  turnResult: TurnResultRecord;
+  extractedCandidate: ExtractedDurableMemoryCandidate;
+  heuristicDurableCandidates: DurableMemoryCandidate[];
+}): boolean {
+  const extractedPath = extractedMemoryPath(params.turnResult, params.extractedCandidate);
+  return params.heuristicDurableCandidates.some((candidate) => {
+    if (candidate.path === extractedPath) {
+      return true;
+    }
+    return (
+      candidate.scope === params.extractedCandidate.scope &&
+      candidate.memoryType === params.extractedCandidate.memoryType &&
+      candidate.subjectKey === params.extractedCandidate.subjectKey
+    );
+  });
+}
+
+function acceptedModelDurableCandidates(params: {
+  turnResult: TurnResultRecord;
+  modelCandidates: ModelDurableCandidate[];
+  heuristicDurableCandidates: DurableMemoryCandidate[];
+}): DurableMemoryCandidate[] {
+  const accepted: DurableMemoryCandidate[] = [];
+  for (const modelCandidate of params.modelCandidates) {
+    const corroborated = hasHeuristicCorroboration({
+      turnResult: params.turnResult,
+      extractedCandidate: modelCandidate.extractedCandidate,
+      heuristicDurableCandidates: params.heuristicDurableCandidates,
+    });
+    const confidence = modelCandidate.extractedCandidate.confidence ?? -1;
+    const evidenceChars = compactWhitespace(modelCandidate.extractedCandidate.evidence).length;
+    const minConfidence = corroborated
+      ? MODEL_EXTRACTION_MIN_CONFIDENCE_CORROBORATED
+      : MODEL_EXTRACTION_MIN_CONFIDENCE;
+    const minEvidenceChars = corroborated
+      ? MODEL_EXTRACTION_MIN_EVIDENCE_CHARS_CORROBORATED
+      : MODEL_EXTRACTION_MIN_EVIDENCE_CHARS;
+    if (confidence < minConfidence || evidenceChars < minEvidenceChars) {
+      continue;
+    }
+    accepted.push(modelCandidate.durableCandidate);
+  }
+  return accepted;
+}
+
+function mergeDurableCandidates(
+  primary: DurableMemoryCandidate[],
+  secondary: DurableMemoryCandidate[]
+): DurableMemoryCandidate[] {
+  const byPath = new Map<string, DurableMemoryCandidate>();
+  for (const candidate of primary) {
+    byPath.set(candidate.path, candidate);
+  }
+  for (const candidate of secondary) {
+    if (!byPath.has(candidate.path)) {
+      byPath.set(candidate.path, candidate);
+    }
+  }
+  return [...byPath.values()];
+}
+
 function buildRuntimeMemoryCandidates(params: {
   turnResult: TurnResultRecord;
   summary: string | null;
   recentTurns: TurnResultRecord[];
+  sessionMessages: SessionMessageRecord[];
 }): RuntimeMemoryCandidate[] {
   return [
     {
@@ -891,6 +1161,12 @@ function buildRuntimeMemoryCandidates(params: {
       key: `recent-turns:${params.turnResult.sessionId}`,
       path: recentTurnsPath(params.turnResult),
       content: renderRecentTurns(params.recentTurns),
+    },
+    {
+      scope: "session",
+      key: `session-memory:${params.turnResult.sessionId}`,
+      path: sessionMemoryPath(params.turnResult),
+      content: renderSessionMemory(params.turnResult, params.recentTurns, params.sessionMessages),
     },
     ...permissionBlockerCandidates(params.turnResult, params.summary),
   ];
@@ -1128,6 +1404,7 @@ function upsertCompactionBoundaryArtifact(params: {
     workspaceId: params.turnResult.workspaceId,
     sessionId: params.turnResult.sessionId,
     inputId: params.turnResult.inputId,
+    boundaryType: "executor_post_turn",
     previousBoundaryId: previousBoundary?.boundaryId ?? null,
     summary: boundaryArtifacts.summary,
     recentRuntimeContext: boundaryArtifacts.recentRuntimeContext as Record<string, unknown> | null,
@@ -1217,6 +1494,7 @@ export async function writeTurnMemory(params: {
   store: RuntimeStateStore;
   memoryService: MemoryServiceLike;
   turnResult: TurnResultRecord;
+  modelContext?: TurnMemoryWritebackModelContext | null;
 }): Promise<TurnResultRecord> {
   const compactedSummary = compactTurnSummary(params.turnResult);
   const updatedTurnResult = upsertCompactedSummary(params.store, params.turnResult, compactedSummary);
@@ -1234,13 +1512,26 @@ export async function writeTurnMemory(params: {
     turnResult: updatedTurnResult,
     summary: compactedSummary,
     recentTurns,
+    sessionMessages,
   });
-  const durableCandidates = buildDurableMemoryCandidates({
+  const heuristicDurableCandidates = buildDurableMemoryCandidates({
     turnResult: updatedTurnResult,
     summary: compactedSummary,
     recentTurns,
     sessionMessages,
   });
+  const extractedCandidates = await extractedDurableMemoryCandidates({
+    turnResult: updatedTurnResult,
+    recentTurns,
+    sessionMessages,
+    modelContext: params.modelContext ?? null,
+  });
+  const acceptedExtractedCandidates = acceptedModelDurableCandidates({
+    turnResult: updatedTurnResult,
+    modelCandidates: extractedCandidates,
+    heuristicDurableCandidates,
+  });
+  const durableCandidates = mergeDurableCandidates(acceptedExtractedCandidates, heuristicDurableCandidates);
   const restoredMemoryPaths: string[] = [];
 
   try {

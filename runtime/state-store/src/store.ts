@@ -161,6 +161,7 @@ export interface CompactionBoundaryRecord {
   workspaceId: string;
   sessionId: string;
   inputId: string;
+  boundaryType: CompactionBoundaryType;
   previousBoundaryId: string | null;
   summary: string | null;
   recentRuntimeContext: Record<string, unknown> | null;
@@ -170,6 +171,8 @@ export interface CompactionBoundaryRecord {
   createdAt: string;
   updatedAt: string;
 }
+
+export type CompactionBoundaryType = "executor_post_turn" | "harness_auto_compaction";
 
 export type RuntimeUserProfileNameSource = "manual" | "agent" | "auth_fallback";
 
@@ -2032,6 +2035,7 @@ export class RuntimeStateStore {
     workspaceId: string;
     sessionId: string;
     inputId: string;
+    boundaryType?: CompactionBoundaryType;
     previousBoundaryId?: string | null;
     summary?: string | null;
     recentRuntimeContext?: Record<string, unknown> | null;
@@ -2059,6 +2063,7 @@ export class RuntimeStateStore {
             workspace_id,
             session_id,
             input_id,
+            boundary_type,
             previous_boundary_id,
             summary,
             recent_runtime_context,
@@ -2067,11 +2072,12 @@ export class RuntimeStateStore {
             request_snapshot_fingerprint,
             created_at,
             updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(boundary_id) DO UPDATE SET
             workspace_id = excluded.workspace_id,
             session_id = excluded.session_id,
             input_id = excluded.input_id,
+            boundary_type = excluded.boundary_type,
             previous_boundary_id = excluded.previous_boundary_id,
             summary = excluded.summary,
             recent_runtime_context = excluded.recent_runtime_context,
@@ -2085,6 +2091,7 @@ export class RuntimeStateStore {
         params.workspaceId,
         params.sessionId,
         params.inputId,
+        params.boundaryType ?? "executor_post_turn",
         params.previousBoundaryId ?? null,
         params.summary ?? null,
         params.recentRuntimeContext ? JSON.stringify(params.recentRuntimeContext) : null,
@@ -3069,6 +3076,7 @@ export class RuntimeStateStore {
           workspace_id TEXT NOT NULL,
           session_id TEXT NOT NULL,
           input_id TEXT NOT NULL,
+          boundary_type TEXT NOT NULL DEFAULT 'executor_post_turn',
           previous_boundary_id TEXT,
           summary TEXT,
           recent_runtime_context TEXT,
@@ -3369,6 +3377,14 @@ export class RuntimeStateStore {
         db.exec("ALTER TABLE turn_results ADD COLUMN compaction_boundary_id TEXT;");
       }
     }
+    if (tableNames.has("compaction_boundaries")) {
+      const columns = new Set<string>(
+        (db.prepare("PRAGMA table_info(compaction_boundaries)").all() as Array<{ name: string }>).map((row) => row.name)
+      );
+      if (!columns.has("boundary_type")) {
+        db.exec("ALTER TABLE compaction_boundaries ADD COLUMN boundary_type TEXT NOT NULL DEFAULT 'executor_post_turn';");
+      }
+    }
 
     if (tableNames.has("memory_entries")) {
       const columns = new Set<string>(
@@ -3414,6 +3430,7 @@ export class RuntimeStateStore {
           workspace_id TEXT NOT NULL,
           session_id TEXT NOT NULL,
           input_id TEXT NOT NULL,
+          boundary_type TEXT NOT NULL DEFAULT 'executor_post_turn',
           previous_boundary_id TEXT,
           summary TEXT,
           recent_runtime_context TEXT,
@@ -3837,11 +3854,18 @@ export class RuntimeStateStore {
   }
 
   private rowToCompactionBoundary(row: Record<string, unknown>): CompactionBoundaryRecord {
+    const rawBoundaryType =
+      row.boundary_type == null || String(row.boundary_type).trim().length === 0
+        ? "executor_post_turn"
+        : String(row.boundary_type).trim();
+    const boundaryType: CompactionBoundaryType =
+      rawBoundaryType === "harness_auto_compaction" ? "harness_auto_compaction" : "executor_post_turn";
     return {
       boundaryId: String(row.boundary_id),
       workspaceId: String(row.workspace_id),
       sessionId: String(row.session_id),
       inputId: String(row.input_id),
+      boundaryType,
       previousBoundaryId: row.previous_boundary_id == null ? null : String(row.previous_boundary_id),
       summary: row.summary == null ? null : String(row.summary),
       recentRuntimeContext:

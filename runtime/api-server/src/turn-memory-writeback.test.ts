@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, test } from "node:test";
@@ -7,7 +8,7 @@ import { afterEach, test } from "node:test";
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import { FilesystemMemoryService } from "./memory.js";
-import { writeTurnMemory } from "./turn-memory-writeback.js";
+import { writeTurnMemory, type TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
 
 const tempDirs: string[] = [];
 
@@ -38,6 +39,64 @@ function makeRuntimeState(prefix: string): {
     }),
     memoryService: new FilesystemMemoryService({ workspaceRoot }),
   };
+}
+
+async function withModelExtractionResponse(params: {
+  memories: Array<Record<string, unknown>>;
+  run: (modelContext: TurnMemoryWritebackModelContext) => Promise<void>;
+}): Promise<void> {
+  const server = http.createServer((request, response) => {
+    if (request.method !== "POST" || request.url !== "/openai/v1/chat/completions") {
+      response.statusCode = 404;
+      response.end();
+      return;
+    }
+    void request.resume();
+    response.statusCode = 200;
+    response.setHeader("content-type", "application/json");
+    response.end(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                memories: params.memories,
+              }),
+            },
+          },
+        ],
+      })
+    );
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const modelContext: TurnMemoryWritebackModelContext = {
+      modelClient: {
+        baseUrl: `http://127.0.0.1:${address.port}/openai/v1`,
+        apiKey: "test-key",
+        modelId: "openai/gpt-4.1-mini",
+      },
+      instruction: "extract durable memory candidates",
+    };
+    await params.run(modelContext);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    });
+  }
 }
 
 function seedWorkspace(store: RuntimeStateStore): void {
@@ -122,6 +181,7 @@ test("writeTurnMemory compacts a turn and writes deterministic runtime memory fi
       "workspace/workspace-1/runtime/blockers/session-main.md",
       "workspace/workspace-1/runtime/latest-turn.md",
       "workspace/workspace-1/runtime/recent-turns/session-main.md",
+      "workspace/workspace-1/runtime/session-memory/session-main.md",
       "workspace/workspace-1/runtime/session-state/session-main.md",
     ]
   );
@@ -138,6 +198,8 @@ test("writeTurnMemory compacts a turn and writes deterministic runtime memory fi
   assert.match(files["workspace/workspace-1/runtime/latest-turn.md"], /Latest Runtime Turn/);
   assert.match(files["workspace/workspace-1/runtime/recent-turns/session-main.md"], /Recent Runtime Turns/);
   assert.match(files["workspace/workspace-1/runtime/recent-turns/session-main.md"], /input-1/);
+  assert.match(files["workspace/workspace-1/runtime/session-memory/session-main.md"], /Session Memory/);
+  assert.match(files["workspace/workspace-1/runtime/session-memory/session-main.md"], /Recent User Requests/);
   assert.match(files["preference/response-style.md"], /User Response Style Preference/);
   assert.match(files["preference/response-style.md"], /`concise`/);
   assert.match(files["preference/MEMORY.md"], /User response style/);
@@ -221,6 +283,7 @@ test("writeTurnMemory reuses stable blocker paths across repeated matching denia
       "workspace/workspace-1/runtime/blockers/session-main.md",
       "workspace/workspace-1/runtime/latest-turn.md",
       "workspace/workspace-1/runtime/recent-turns/session-main.md",
+      "workspace/workspace-1/runtime/session-memory/session-main.md",
       "workspace/workspace-1/runtime/session-state/session-main.md",
     ].sort((left, right) => left.localeCompare(right))
   );
@@ -237,6 +300,7 @@ test("writeTurnMemory reuses stable blocker paths across repeated matching denia
   assert.match(files["workspace/workspace-1/runtime/latest-turn.md"], /input-2/);
   assert.match(files["workspace/workspace-1/runtime/recent-turns/session-main.md"], /input-2/);
   assert.match(files["workspace/workspace-1/runtime/recent-turns/session-main.md"], /input-1/);
+  assert.match(files["workspace/workspace-1/runtime/session-memory/session-main.md"], /Session Memory/);
   assert.match(files["workspace/workspace-1/runtime/blockers/session-main.md"], /policy_denied/);
   assert.match(files[durableBlockerPaths[0]], /Recurring Permission Blocker/);
   assert.match(files["workspace/workspace-1/MEMORY.md"], /Deploy permission blocker/);
@@ -378,6 +442,128 @@ test("writeTurnMemory extracts durable business facts and procedures from explic
   assert.equal(followUpProcedure?.memoryType, "procedure");
   assert.equal(followUpProcedure?.sourceType, "session_message");
   assert.equal(followUpProcedure?.confidence, 0.93);
+
+  store.close();
+});
+
+test("writeTurnMemory rejects weak uncorroborated model-extracted durable candidates", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-turn-memory-model-reject-");
+  seedWorkspace(store);
+  store.insertSessionMessage({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    role: "user",
+    text: "Please keep your responses concise.",
+    messageId: "user-1",
+    createdAt: "2026-04-02T12:00:00.000Z",
+  });
+
+  const turnResult = store.upsertTurnResult({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    startedAt: "2026-04-02T12:00:00.000Z",
+    completedAt: "2026-04-02T12:00:05.000Z",
+    status: "completed",
+    stopReason: "ok",
+    assistantText: "Done.",
+  });
+
+  await withModelExtractionResponse({
+    memories: [
+      {
+        scope: "workspace",
+        memory_type: "reference",
+        subject_key: "untrusted-note",
+        title: "Untrusted Note",
+        summary: "Persist random note.",
+        tags: ["random"],
+        evidence: "short",
+        confidence: 0.42,
+      },
+    ],
+    run: async (modelContext) => {
+      await writeTurnMemory({
+        store,
+        memoryService,
+        turnResult,
+        modelContext,
+      });
+    },
+  });
+
+  const captured = await memoryService.capture({ workspace_id: "workspace-1" });
+  const files = captured.files as Record<string, string>;
+  const memoryEntries = store.listMemoryEntries({ status: "active" });
+
+  assert.equal(files["workspace/workspace-1/knowledge/reference/untrusted-note.md"], undefined);
+  assert.equal(
+    memoryEntries.some((entry) => entry.path === "workspace/workspace-1/knowledge/reference/untrusted-note.md"),
+    false
+  );
+  assert.ok(files["preference/response-style.md"]);
+
+  store.close();
+});
+
+test("writeTurnMemory accepts corroborated model-extracted durable candidates with relaxed threshold", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-turn-memory-model-corroborated-");
+  seedWorkspace(store);
+  store.insertSessionMessage({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    role: "user",
+    text: "For verification, use `npm run test`.",
+    messageId: "user-1",
+    createdAt: "2026-04-02T12:00:00.000Z",
+  });
+
+  const turnResult = store.upsertTurnResult({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    startedAt: "2026-04-02T12:00:00.000Z",
+    completedAt: "2026-04-02T12:00:05.000Z",
+    status: "completed",
+    stopReason: "ok",
+    assistantText: "Captured verification guidance.",
+  });
+
+  await withModelExtractionResponse({
+    memories: [
+      {
+        scope: "workspace",
+        memory_type: "fact",
+        subject_key: "verification-command",
+        title: "Verification command (model)",
+        summary: "Use `npm run test:ci` as the verification command for this workspace.",
+        tags: ["verification", "command"],
+        evidence: "This was explicitly provided as persistent verification guidance for the workspace.",
+        confidence: 0.61,
+      },
+    ],
+    run: async (modelContext) => {
+      await writeTurnMemory({
+        store,
+        memoryService,
+        turnResult,
+        modelContext,
+      });
+    },
+  });
+
+  const captured = await memoryService.capture({ workspace_id: "workspace-1" });
+  const files = captured.files as Record<string, string>;
+  const verificationFactPath = "workspace/workspace-1/knowledge/facts/verification-command.md";
+  const verificationFact = store
+    .listMemoryEntries({ status: "active" })
+    .find((entry) => entry.path === verificationFactPath);
+
+  assert.ok(files[verificationFactPath]);
+  assert.match(files[verificationFactPath], /Verification command \(model\)/);
+  assert.match(files[verificationFactPath], /npm run test:ci/);
+  assert.equal(verificationFact?.title, "Verification command (model)");
+  assert.equal(verificationFact?.confidence, 0.61);
 
   store.close();
 });

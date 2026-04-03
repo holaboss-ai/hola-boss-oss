@@ -10,6 +10,7 @@ export {
   sanitizeWorkspaceId,
   utcNowIso,
   type CronjobRecord,
+  type CompactionBoundaryType,
   type CompactionBoundaryRecord,
   type CreateWorkspaceParams,
   type MemoryEntryScope,

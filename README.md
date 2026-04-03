@@ -145,8 +145,8 @@ At a high level, one run follows this path:
 2. the runtime resolves the workspace plan, capability surface, prompt sections, and request snapshot
    - prompt sections keep base runtime doctrine, session policy, capability policy, workspace policy, and runtime continuity context distinct even when the harness ultimately receives only `system_prompt` plus `context_messages`
 3. the selected harness executes the run and streams output events
-4. the runtime persists normalized turn artifacts, updates compaction continuity, and writes deterministic memory projections
-5. future runs restore continuity from durable runtime artifacts first, then add a small recalled durable-memory context
+4. the runtime persists normalized turn artifacts, updates compaction continuity, writes session/runtime memory projections, and performs durable memory writeback
+5. future runs restore continuity from durable runtime artifacts first (including the session-memory projection), then add a small recalled durable-memory context selected from markdown memory manifests
 
 ### Execution And Continuity
 
@@ -163,6 +163,8 @@ The most important runtime continuity artifacts are:
   - one normalized record per run with status, stop reason, token usage, prompt-section ids, request fingerprint, capability fingerprint, and assistant output
 - compaction boundaries
   - durable handoff artifacts that summarize a run boundary, record recent runtime context, preserve selected turn ids, and define explicit restoration ordering
+- session-memory projections
+  - per-session markdown continuity snapshots under `memory/workspace/<workspace-id>/runtime/session-memory/` used for fast resume context in later runs
 - request snapshots
   - sanitized exact request-state artifacts used for replay, debugging, and future cache diagnostics
 - runtime user profile
@@ -214,6 +216,7 @@ Holaboss workspaces live under the runtime sandbox root. In the desktop app, tha
         runtime/
           latest-turn.md
           session-state/
+          session-memory/
           recent-turns/
           blockers/
           permission-blockers/
@@ -243,9 +246,10 @@ The memory system is intentionally split by purpose and by authority. Human-auth
 
 #### Memory Layers
 
-Holaboss currently has three memory layers:
+Holaboss currently has four memory layers:
 
 - session continuity lives in runtime-owned artifacts such as `turn_results` and compaction boundaries in `state/runtime.db`
+- session-memory continuity projections live under `memory/workspace/<workspace-id>/runtime/session-memory/`
 - operational projections live under `memory/workspace/<workspace-id>/runtime/`
 - durable recalled memory lives under `memory/workspace/<workspace-id>/knowledge/` and `memory/preference/`
 
@@ -288,10 +292,12 @@ The current memory lifecycle is:
 
 1. A run finishes and the runtime persists `turn_results`.
 2. Post-turn writeback updates the current compaction boundary and records ordered restoration inputs for later resume.
-3. Post-turn writeback generates volatile runtime projections under `memory/workspace/<workspace-id>/runtime/`.
-4. Deterministic durable extraction promotes selected items into `knowledge/` or `preference/`.
-5. `MEMORY.md` indexes are refreshed for durable memory only.
-6. Future runs restore session continuity from the latest compaction boundary first, then recall a small relevant durable subset and inject it as prompt context.
+3. Post-turn writeback generates volatile runtime projections under `memory/workspace/<workspace-id>/runtime/`, including `session-memory/`.
+4. Model-assisted durable extraction attempts to promote selected items into `knowledge/` or `preference/` using recent turn context.
+5. Deterministic durable extraction remains as a fallback safety path when model extraction is unavailable or sparse.
+6. `MEMORY.md` indexes are refreshed for durable memory only.
+7. Future runs restore session continuity from the latest compaction boundary first, then enrich continuity with the current session-memory snapshot.
+8. Future runs recall a small durable subset from markdown memory manifests (model-selected when available, deterministic fallback otherwise) and inject it as prompt context.
 
 This keeps replay, inspection, and durable recall separate instead of overloading one mechanism for all three jobs.
 
@@ -324,7 +330,7 @@ Durable recall is governed separately from storage:
 - stale references are penalized more aggressively than stable or workspace-sensitive memories
 - recalled durable memory is injected as context, not merged into the base system prompt
 
-Today, recall uses a local keyword-and-metadata ranking path backed by the durable memory catalog. The runtime also records a small recall-decision trace so it can explain why a memory surfaced during debugging. The architecture keeps retrieval separate from storage so alternate recall indexes can be added later without changing the memory model itself.
+Recall selection is manifest-based at query time. The runtime scans durable markdown memory files, reads frontmatter and compact summaries, and builds a bounded manifest. A model selector can choose a small relevant subset from that manifest; if model selection is unavailable, the runtime falls back to deterministic keyword-and-metadata ranking. Recalled entries include a compact selection trace and optional excerpt snippets for debugging and operator visibility. Retrieval stays separate from storage so alternate indexes can be added later without changing canonical markdown memory files.
 
 #### What Lives Where
 
@@ -336,6 +342,8 @@ Use these rules of thumb when reasoning about the system:
   - execution truth, session continuity, canonical runtime profile, memory catalog metadata
 - `memory/workspace/<workspace-id>/runtime/`
   - volatile runtime projections for inspection and debugging
+- `memory/workspace/<workspace-id>/runtime/session-memory/`
+  - session-scoped continuity snapshots consumed during resume/compaction restoration
 - `memory/workspace/<workspace-id>/knowledge/`
   - durable workspace memory that may be recalled in later runs
 - `memory/preference/`

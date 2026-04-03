@@ -23,7 +23,7 @@ function writeSkill(root: string, skillId: string, description = `${skillId} ski
   fs.mkdirSync(skillDir, { recursive: true });
   fs.writeFileSync(
     path.join(skillDir, "SKILL.md"),
-    `---\ndescription: ${description}\n---\n# ${skillId}\n`,
+    `---\nname: ${skillId}\ndescription: ${description}\n---\n# ${skillId}\n`,
     "utf8"
   );
   return skillDir;
@@ -137,5 +137,38 @@ test("resolveWorkspaceSkills ignores skills.path and still resolves workspace sk
   assert.deepEqual(
     resolveWorkspaceSkills(workspaceDir).map((skill) => skill.skill_id),
     ["fixed-skill"]
+  );
+});
+
+test("resolveWorkspaceSkills ignores invalid skill format when frontmatter is missing required fields", () => {
+  const embeddedRoot = makeTempDir("hb-embedded-skills-empty-");
+  process.env.HOLABOSS_EMBEDDED_SKILLS_DIR = embeddedRoot;
+
+  const workspaceDir = makeTempDir("hb-workspace-invalid-skill-format-");
+  const skillsRoot = path.join(workspaceDir, "skills");
+  const invalidNoNameDir = path.join(skillsRoot, "invalid-no-name");
+  const invalidNameMismatchDir = path.join(skillsRoot, "invalid-name-mismatch");
+  const invalidNoDescriptionDir = path.join(skillsRoot, "invalid-no-description");
+  const validDir = path.join(skillsRoot, "valid-skill");
+  fs.mkdirSync(invalidNoNameDir, { recursive: true });
+  fs.mkdirSync(invalidNameMismatchDir, { recursive: true });
+  fs.mkdirSync(invalidNoDescriptionDir, { recursive: true });
+  fs.mkdirSync(validDir, { recursive: true });
+  fs.writeFileSync(path.join(invalidNoNameDir, "SKILL.md"), "---\ndescription: Missing name\n---\n# Missing name\n", "utf8");
+  fs.writeFileSync(
+    path.join(invalidNameMismatchDir, "SKILL.md"),
+    "---\nname: another-skill\ndescription: Name mismatch\n---\n# Name mismatch\n",
+    "utf8"
+  );
+  fs.writeFileSync(path.join(invalidNoDescriptionDir, "SKILL.md"), "---\nname: invalid-no-description\n---\n# Missing desc\n", "utf8");
+  fs.writeFileSync(
+    path.join(validDir, "SKILL.md"),
+    "---\nname: valid-skill\ndescription: Valid skill\n---\n# Valid skill\n",
+    "utf8"
+  );
+
+  assert.deepEqual(
+    resolveWorkspaceSkills(workspaceDir).map((skill) => skill.skill_id),
+    ["valid-skill"]
   );
 });

@@ -963,6 +963,7 @@ test("turn request snapshots and compaction boundaries round trip", () => {
 
   assert.deepEqual(store.getTurnRequestSnapshot({ inputId: "input-1" }), snapshot);
   assert.deepEqual(store.listTurnRequestSnapshots({ workspaceId: "workspace-1", sessionId: "session-main" }), [snapshot]);
+  assert.equal(boundary.boundaryType, "executor_post_turn");
   assert.deepEqual(store.getCompactionBoundary({ boundaryId: "compaction:input-1" }), boundary);
   assert.deepEqual(store.listCompactionBoundaries({ workspaceId: "workspace-1", sessionId: "session-main" }), [boundary]);
   store.close();

@@ -125,3 +125,59 @@ test("filesystem memory service reports qmd fallback metadata when requested", a
     reason: "ts runtime uses builtin filesystem memory backend"
   });
 });
+
+test("filesystem memory service enforces strict memory path scopes", async () => {
+  const root = makeTempDir("hb-memory-");
+  const service = new MemoryService({ workspaceRoot: path.join(root, "workspace") });
+
+  await service.upsert({
+    workspace_id: "workspace-1",
+    path: "MEMORY.md",
+    content: "# Root Memory\n",
+    append: false
+  });
+  await service.upsert({
+    workspace_id: "workspace-1",
+    path: "workspace/workspace-1/runtime/session-state/main.md",
+    content: "# Runtime Session Snapshot\n",
+    append: false
+  });
+  await service.upsert({
+    workspace_id: "workspace-1",
+    path: "preference/profile.md",
+    content: "# Preference\n",
+    append: false
+  });
+  await service.upsert({
+    workspace_id: "workspace-1",
+    path: "identity/user-name.md",
+    content: "# Identity\n",
+    append: false
+  });
+
+  await assert.rejects(
+    service.upsert({
+      workspace_id: "workspace-1",
+      path: "workspace/workspace-2/runtime/session-state/main.md",
+      content: "# Other workspace\n",
+      append: false
+    }),
+    /allowed memory paths/
+  );
+  await assert.rejects(
+    service.upsert({
+      workspace_id: "workspace-1",
+      path: "knowledge/facts/example.md",
+      content: "# Invalid scope\n",
+      append: false
+    }),
+    /allowed memory paths/
+  );
+  await assert.rejects(
+    service.get({
+      workspace_id: "workspace-1",
+      path: "knowledge/facts/example.md"
+    }),
+    /allowed memory paths/
+  );
+});

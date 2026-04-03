@@ -1105,8 +1105,10 @@ test("runtime states and history endpoints read TS state store", async () => {
   assert.equal(compactionBoundaries.statusCode, 200);
   assert.equal(compactionBoundaries.json().count, 1);
   assert.equal(compactionBoundaries.json().items[0].boundary_id, "compaction:input-1");
+  assert.equal(compactionBoundaries.json().items[0].boundary_type, "executor_post_turn");
   assert.deepEqual(compactionBoundaries.json().items[0].compaction_restoration_context, {
     compaction_source: "executor_post_turn",
+    boundary_type: "executor_post_turn",
     restoration_order: [
       "boundary_summary",
       "recent_runtime_context",
@@ -1139,6 +1141,7 @@ test("runtime states and history endpoints read TS state store", async () => {
   assert.equal(resumeContext.statusCode, 200);
   assert.deepEqual(resumeContext.json().compaction_restoration_context, {
     compaction_source: "executor_post_turn",
+    boundary_type: "executor_post_turn",
     restoration_order: [
       "boundary_summary",
       "recent_runtime_context",
