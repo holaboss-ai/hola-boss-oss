@@ -2734,7 +2734,7 @@ function AssistantTurn({
 
         {text ? (
           <SimpleMarkdown
-            className="chat-markdown chat-assistant-markdown mt-4 max-w-full text-foreground"
+            className="chat-markdown chat-assistant-markdown mt-2 max-w-full text-foreground"
             onLinkClick={onLinkClick}
           >
             {text}
@@ -2794,7 +2794,7 @@ function TraceStepGroup({
       <button
         type="button"
         onClick={() => setGroupExpanded((v) => !v)}
-        className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60"
+        className="flex items-center gap-2 rounded-lg py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60"
       >
         {runningCount > 0 ? (
           <Loader2 size={13} className="animate-spin text-muted-foreground" />
@@ -2824,7 +2824,7 @@ function TraceStepGroup({
                 <button
                   type="button"
                   onClick={() => step.details.length > 0 && onToggleStep(step.id)}
-                  className={`flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors ${step.details.length > 0 ? "hover:bg-muted/50 cursor-pointer" : "cursor-default"}`}
+                  className={`flex w-full items-start gap-2 rounded-md py-1 text-left text-xs transition-colors ${step.details.length > 0 ? "hover:bg-muted/50 cursor-pointer" : "cursor-default"}`}
                 >
                   <span className="mt-0.5 shrink-0">
                     {step.status === "completed" ? (
