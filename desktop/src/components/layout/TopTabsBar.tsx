@@ -293,10 +293,10 @@ export function TopTabsBar({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" sideOffset={8} className="w-56">
               <DropdownMenuGroup>
-                <DropdownMenuLabel className="px-3 py-2.5">
-                  <div className="flex items-center gap-2">
+                <DropdownMenuLabel className="px-3 py-3">
+                  <div className="flex items-center gap-2.5">
                     <span
-                      className={`size-2 shrink-0 rounded-full ${
+                      className={`size-2.5 shrink-0 rounded-full ${
                         runtimeStatus?.status === "running"
                           ? "bg-emerald-500"
                           : runtimeStatus?.status === "starting"
@@ -306,7 +306,7 @@ export function TopTabsBar({
                               : "bg-muted-foreground/50"
                       }`}
                     />
-                    <span className="text-xs font-medium text-foreground">
+                    <span className="text-sm font-medium text-foreground">
                       {runtimeStatus?.status === "running"
                         ? "Runtime active"
                         : runtimeStatus?.status === "starting"
