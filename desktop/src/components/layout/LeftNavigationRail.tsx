@@ -1,8 +1,4 @@
-import {
-  MessageSquareText,
-  Sparkles,
-  Workflow,
-} from "lucide-react";
+import { MessageSquareText, Sparkles, Workflow } from "lucide-react";
 import type { WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 import { providerIcon } from "@/components/onboarding/constants";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
@@ -104,26 +100,22 @@ export function LeftNavigationRail({
                             aria-label={app.label}
                             title={app.label}
                             onClick={() => onSelectApp?.(app.id)}
-                            className={`relative flex size-10 items-center justify-center rounded-xl transition-colors ${
+                            className={`relative flex size-10 items-center justify-center rounded-md transition-colors ${
                               isActive
-                                ? `${app.accentClassName} text-slate-950`
-                                : "bg-muted/60 text-muted-foreground hover:bg-muted"
+                                ? "bg-accent text-accent-foreground"
+                                : "bg-muted/80 text-muted-foreground hover:bg-muted"
                             }`}
                           >
                             {providerIcon(app.id, 18) ?? (
-                              <span className="text-[11px] font-semibold uppercase tracking-wide">
+                              <span className="text-xs font-semibold uppercase tracking-wide">
                                 {appInitials(app.label)}
                               </span>
                             )}
-                            <span
-                              className={`absolute -right-0.5 -top-0.5 size-2.5 rounded-full border-2 border-card ${
-                                hasError
-                                  ? "bg-destructive"
-                                  : isReady
-                                    ? "bg-primary"
-                                    : "animate-pulse bg-sky-400"
-                              }`}
-                            />
+                            {hasError ? (
+                              <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full border-2 border-card bg-destructive" />
+                            ) : !isReady ? (
+                              <span className="absolute -right-0.5 -top-0.5 size-2.5 animate-pulse rounded-full border-2 border-card bg-sky-400" />
+                            ) : null}
                           </button>
                         }
                       />
