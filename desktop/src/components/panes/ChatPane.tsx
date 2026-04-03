@@ -1,7 +1,8 @@
 import { type ChangeEvent, type CompositionEvent, type DragEvent, FormEvent, KeyboardEvent, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { AlertTriangle, ArrowRight, ArrowUp, Bot, Cable, Check, ChevronDown, Clock3, FileText, Image as ImageIcon, Loader2, Paperclip, Waypoints, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, ArrowUp, Bot, Cable, Check, ChevronDown, Clock3, FileText, Image as ImageIcon, Loader2, Paperclip, Search, Waypoints, X } from "lucide-react";
 import { PaneCard } from "@/components/ui/PaneCard";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import {
   EXPLORER_ATTACHMENT_DRAG_TYPE,
@@ -2956,6 +2957,129 @@ function AttachmentList({
   );
 }
 
+function ModelCombobox({
+  selectedModel,
+  selectedModelLabel,
+  runtimeDefaultModelLabel,
+  runtimeDefaultModelAvailable,
+  modelOptions,
+  modelOptionGroups,
+  disabled,
+  onModelChange,
+}: {
+  selectedModel: string;
+  selectedModelLabel: string;
+  runtimeDefaultModelLabel: string;
+  runtimeDefaultModelAvailable: boolean;
+  modelOptions: ChatModelOption[];
+  modelOptionGroups: ChatModelOptionGroup[];
+  disabled: boolean;
+  onModelChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+
+  const allOptions = useMemo(() => {
+    const items: ChatModelOption[] = [];
+    if (runtimeDefaultModelAvailable) {
+      items.push({ value: CHAT_MODEL_USE_RUNTIME_DEFAULT, label: `Auto (${runtimeDefaultModelLabel})` });
+    }
+    if (modelOptionGroups.length > 0) {
+      for (const group of modelOptionGroups) {
+        for (const option of group.options) {
+          items.push(option);
+        }
+      }
+    } else {
+      for (const option of modelOptions) {
+        items.push(option);
+      }
+    }
+    return items;
+  }, [modelOptionGroups, modelOptions, runtimeDefaultModelAvailable, runtimeDefaultModelLabel]);
+
+  const filteredOptions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return allOptions;
+    return allOptions.filter((o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q));
+  }, [allOptions, query]);
+
+  const displayLabel =
+    selectedModel === CHAT_MODEL_USE_RUNTIME_DEFAULT
+      ? `Auto (${runtimeDefaultModelLabel})`
+      : selectedModelLabel;
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) setQuery("");
+      }}
+    >
+      <PopoverTrigger
+        disabled={disabled}
+        render={
+          <button
+            type="button"
+            className="flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-border/35 bg-muted/60 px-3 text-left text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <span className="truncate">{displayLabel}</span>
+            <ChevronDown size={13} className="shrink-0 text-muted-foreground" />
+          </button>
+        }
+      />
+      <PopoverContent
+        align="start"
+        side="top"
+        sideOffset={8}
+        className="w-[280px] p-0"
+      >
+        <div className="border-b border-border/40 px-3 py-2">
+          <div className="flex items-center gap-2">
+            <Search size={13} className="shrink-0 text-muted-foreground" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search models..."
+              className="h-7 w-full bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/50"
+              autoFocus
+            />
+          </div>
+        </div>
+        <div className="max-h-[240px] overflow-y-auto py-1">
+          {filteredOptions.length === 0 ? (
+            <div className="px-3 py-4 text-center text-xs text-muted-foreground">No models found</div>
+          ) : (
+            filteredOptions.map((option) => {
+              const active = option.value === selectedModel;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => {
+                    onModelChange(option.value);
+                    setOpen(false);
+                    setQuery("");
+                  }}
+                  className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs transition-colors ${
+                    active
+                      ? "bg-accent text-accent-foreground"
+                      : "text-foreground hover:bg-accent/50"
+                  }`}
+                >
+                  <span className="truncate">{option.label}</span>
+                  {active ? <Check size={13} className="shrink-0 text-primary" /> : null}
+                </button>
+              );
+            })
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function Composer({
   input,
   attachments,
@@ -3076,7 +3200,7 @@ function Composer({
           rows={1}
           disabled={inputDisabled}
           placeholder={inputDisabled ? disabledReason || "Chat unavailable right now" : placeholder}
-          className="composer-input block max-h-[220px] min-h-[76px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-7 text-foreground outline-none placeholder:text-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-55"
+          className="composer-input block max-h-[220px] min-h-[40px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-7 text-foreground outline-none placeholder:text-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-55"
         />
       </div>
 
@@ -3102,41 +3226,16 @@ function Composer({
                 </div>
               </>
             ) : (
-              <div className="relative">
-                <select
-                  value={selectedModel}
-                  onChange={(event) => onModelChange(event.target.value)}
-                  disabled={isResponding}
-                  aria-label="Model selection"
-                  title={
-                    selectedModel === CHAT_MODEL_USE_RUNTIME_DEFAULT
-                      ? `Auto (${runtimeDefaultModelLabel})`
-                      : selectedModelOptionLabel
-                  }
-                  className="composer-select bg-muted h-9 w-full appearance-none rounded-[11px] border border-border/28 px-3 pr-9 text-[12px] font-medium text-foreground transition hover:border-border/48 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {runtimeDefaultModelAvailable ? <option value={CHAT_MODEL_USE_RUNTIME_DEFAULT}>Auto</option> : null}
-                  {modelOptionGroups.length > 0
-                    ? modelOptionGroups.map((group, groupIndex) => (
-                        <optgroup key={`${group.label}-${groupIndex}`} label={group.label}>
-                          {group.options.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))
-                    : modelOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                </select>
-                <ChevronDown
-                  size={14}
-                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                />
-              </div>
+              <ModelCombobox
+                selectedModel={selectedModel}
+                selectedModelLabel={selectedModelOptionLabel}
+                runtimeDefaultModelLabel={runtimeDefaultModelLabel}
+                runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
+                modelOptions={modelOptions}
+                modelOptionGroups={modelOptionGroups}
+                disabled={isResponding}
+                onModelChange={onModelChange}
+              />
             )}
           </div>
         ) : (
