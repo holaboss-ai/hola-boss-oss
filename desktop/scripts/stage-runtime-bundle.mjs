@@ -160,6 +160,7 @@ async function validateStageDir() {
   const requiredPaths = [
     path.join(stageDir, "bin", "sandbox-runtime"),
     path.join(stageDir, "package-metadata.json"),
+    path.join(stageDir, "node-runtime", "node_modules", ".bin", "node"),
     path.join(stageDir, "runtime", "metadata.json"),
     path.join(stageDir, "runtime", "api-server", "dist", "index.mjs")
   ];

@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { useDesktopBilling } from "@/lib/billing/useDesktopBilling";
+import { holabossLogoUrl } from "@/lib/assetPaths";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
@@ -221,7 +222,7 @@ export function TopTabsBar({
       >
         <div className="flex min-w-0 items-center gap-2">
           <img
-            src="/logo.svg"
+            src={holabossLogoUrl}
             alt="Holaboss"
             className="size-10 shrink-0"
           />

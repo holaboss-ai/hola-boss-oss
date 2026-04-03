@@ -779,7 +779,7 @@ holaboss-runtime
 ### Notes
 
 - The packaged bundle includes the runtime app and its packaged runtime dependencies.
-- The current bootstrap still expects a working `node` binary on the host machine at runtime. Install Node.js 22+ on the target machine before starting the runtime.
+- The packaged runtime bundle includes a Node binary under `node-runtime/node_modules/.bin/node` that matches the packaging environment and starts it automatically.
 - The desktop app launches the same `bin/sandbox-runtime` entrypoint and passes the same bind host, bind port, sandbox root, and workflow-related environment variables.
 
 ## OSS Release Notes

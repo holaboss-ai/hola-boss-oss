@@ -246,16 +246,16 @@ function snippetForMatch(text: string, query: string, maxChars = 700): {
 }
 
 function resolveMemoryBackend(): ResolvedMemoryBackend {
-  const requested = (process.env[MEMORY_BACKEND_ENV] ?? "qmd").trim().toLowerCase();
-  if (requested === "qmd") {
+  const requested = (process.env[MEMORY_BACKEND_ENV] ?? "").trim().toLowerCase();
+  if (!requested || requested === "builtin" || requested === "filesystem") {
     return {
-      requestedProvider: "qmd",
-      fallbackReason: "ts runtime uses builtin filesystem memory backend"
+      requestedProvider: null,
+      fallbackReason: null
     };
   }
   return {
-    requestedProvider: null,
-    fallbackReason: null
+    requestedProvider: requested,
+    fallbackReason: "ts runtime only supports the builtin filesystem memory backend"
   };
 }
 

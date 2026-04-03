@@ -48,19 +48,21 @@ NODE_RUNTIME_DIR="${OUTPUT_ROOT}/node-runtime"
 BIN_DIR="${OUTPUT_ROOT}/bin"
 PACKAGE_METADATA_PATH="${OUTPUT_ROOT}/package-metadata.json"
 SKIP_NODE_DEPS="${HOLABOSS_SKIP_NODE_DEPS:-0}"
-INSTALL_QMD="${HOLABOSS_INSTALL_QMD:-1}"
+LOCAL_NODE_BIN="${NODE_RUNTIME_DIR}/node_modules/.bin/node"
+
+NODE_VERSION="${HOLABOSS_RUNTIME_NODE_VERSION:-}"
+if [ -z "${NODE_VERSION}" ]; then
+  require_cmd node
+  NODE_VERSION="$(node --version)"
+  NODE_VERSION="${NODE_VERSION#v}"
+fi
 
 mkdir -p "${BIN_DIR}"
 
-NODE_PACKAGES=()
-if [ "${INSTALL_QMD}" = "1" ]; then
-  NODE_PACKAGES+=("@tobilu/qmd@latest")
-fi
-
-if [ "${SKIP_NODE_DEPS}" != "1" ] && [ "${#NODE_PACKAGES[@]}" -gt 0 ]; then
+if [ "${SKIP_NODE_DEPS}" != "1" ]; then
   require_cmd npm
   mkdir -p "${NODE_RUNTIME_DIR}"
-  npm install --global --prefix "${NODE_RUNTIME_DIR}" "${NODE_PACKAGES[@]}"
+  npm install --prefix "${NODE_RUNTIME_DIR}" "node@${NODE_VERSION}"
   "${SCRIPT_DIR}/prune_packaged_tree.sh" "${NODE_RUNTIME_DIR}" "macos"
 fi
 
@@ -70,10 +72,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUNDLE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+BUNDLED_NODE_BIN="${BUNDLE_ROOT}/node-runtime/node_modules/.bin/node"
 
 export HOLABOSS_RUNTIME_APP_ROOT="${BUNDLE_ROOT}/runtime"
 export HOLABOSS_RUNTIME_ROOT="${BUNDLE_ROOT}/runtime"
-export PATH="${BUNDLE_ROOT}/node-runtime/bin:${PATH}"
+export PATH="${BUNDLE_ROOT}/node-runtime/node_modules/.bin:${BUNDLE_ROOT}/node-runtime/bin:${PATH}"
+if [ -x "${BUNDLED_NODE_BIN}" ]; then
+  export HOLABOSS_RUNTIME_NODE_BIN="${BUNDLED_NODE_BIN}"
+fi
 
 exec "${BUNDLE_ROOT}/runtime/bootstrap/macos.sh" "$@"
 EOF
@@ -84,7 +90,8 @@ cat > "${PACKAGE_METADATA_PATH}" <<EOF
 {
   "platform": "macos",
   "node_deps_installed": $([ "${SKIP_NODE_DEPS}" = "1" ] && printf 'false' || printf 'true'),
-  "qmd_installed": $([ "${SKIP_NODE_DEPS}" = "1" ] || [ "${INSTALL_QMD}" != "1" ] && printf 'false' || printf 'true')
+  "bundled_node_bin": $([ "${SKIP_NODE_DEPS}" = "1" ] || [ ! -x "${LOCAL_NODE_BIN}" ] && printf 'false' || printf 'true'),
+  "bundled_node_version": $([ "${SKIP_NODE_DEPS}" = "1" ] && printf 'null' || printf '"%s"' "${NODE_VERSION}")
 }
 EOF
 
