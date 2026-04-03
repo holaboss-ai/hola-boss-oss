@@ -868,7 +868,7 @@ test("runTsRunnerCli includes staged runtime tool ids in the projected extra too
   );
   assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
-    ["browser_get_state", "holaboss_onboarding_complete"]
+    ["web_search", "browser_get_state", "holaboss_onboarding_complete"]
   );
 });
 
@@ -1703,7 +1703,7 @@ test("runTsRunnerCli only stages browser tools for the main session", async () =
   );
   assert.deepEqual(
     (capturedProjectRequest as { extra_tools: string[] }).extra_tools,
-    ["holaboss_onboarding_complete"]
+    ["web_search", "holaboss_onboarding_complete"]
   );
 });
 

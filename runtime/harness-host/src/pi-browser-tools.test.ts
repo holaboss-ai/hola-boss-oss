@@ -4,18 +4,18 @@ import { once } from "node:events";
 import test from "node:test";
 
 import { DESKTOP_BROWSER_TOOL_IDS } from "../../harnesses/src/desktop-browser-tools.js";
-import { resolvePiDesktopBrowserExtensionFactory } from "./pi-browser-tools.js";
+import { resolvePiDesktopBrowserToolDefinitions } from "./pi-browser-tools.js";
 
-test("resolvePiDesktopBrowserExtensionFactory returns null when runtime api url is unavailable", async () => {
-  const factory = await resolvePiDesktopBrowserExtensionFactory({
+test("resolvePiDesktopBrowserToolDefinitions returns an empty tool list when runtime api url is unavailable", async () => {
+  const tools = await resolvePiDesktopBrowserToolDefinitions({
     runtimeApiBaseUrl: "",
   });
 
-  assert.equal(factory, null);
+  assert.deepEqual(tools, []);
 });
 
-test("resolvePiDesktopBrowserExtensionFactory returns null when browser capability is unavailable", async () => {
-  const factory = await resolvePiDesktopBrowserExtensionFactory({
+test("resolvePiDesktopBrowserToolDefinitions returns an empty tool list when browser capability is unavailable", async () => {
+  const tools = await resolvePiDesktopBrowserToolDefinitions({
     runtimeApiBaseUrl: "http://127.0.0.1:5060",
     fetchImpl: async () =>
       new Response(JSON.stringify({ available: false }), {
@@ -24,10 +24,10 @@ test("resolvePiDesktopBrowserExtensionFactory returns null when browser capabili
       }),
   });
 
-  assert.equal(factory, null);
+  assert.deepEqual(tools, []);
 });
 
-test("Pi desktop browser extension registers browser tools and executes through the runtime capability API", async () => {
+test("Pi desktop browser tools execute through the runtime capability API", async () => {
   const requests: Array<{ method: string; url: string; workspaceId: string; body: string }> = [];
   const fetchImpl: typeof fetch = async (input, init) => {
     const url = String(input);
@@ -54,26 +54,18 @@ test("Pi desktop browser extension registers browser tools and executes through 
     throw new Error(`unexpected request: ${url}`);
   };
 
-  const resolvedFactory = await resolvePiDesktopBrowserExtensionFactory({
+  const tools = await resolvePiDesktopBrowserToolDefinitions({
     runtimeApiBaseUrl: "http://127.0.0.1:5060",
     workspaceId: "workspace-1",
     fetchImpl,
   });
-  assert.ok(resolvedFactory);
-
-  const capturedTools: any[] = [];
-  await resolvedFactory!({
-    registerTool(tool: any) {
-      capturedTools.push(tool);
-    },
-  } as never);
 
   assert.deepEqual(
-    capturedTools.map((tool) => tool.name),
+    tools.map((tool) => tool.name),
     [...DESKTOP_BROWSER_TOOL_IDS]
   );
 
-  const getStateTool = capturedTools.find((tool) => tool.name === "browser_get_state");
+  const getStateTool = tools.find((tool) => tool.name === "browser_get_state");
   assert.ok(getStateTool);
   const result = await getStateTool.execute("call-1", { include_screenshot: true }, undefined, undefined, {} as never);
 
@@ -90,7 +82,7 @@ test("Pi desktop browser extension registers browser tools and executes through 
   assert.deepEqual(result.details, { tool_id: "browser_get_state" });
 });
 
-test("Pi desktop browser extension falls back to node http when no fetch implementation is provided", async () => {
+test("Pi desktop browser tools fall back to node http when no fetch implementation is provided", async () => {
   const requests: Array<{ method: string; url: string; workspaceId: string; body: string }> = [];
   const server = http.createServer((request, response) => {
     const url = request.url ?? "";
@@ -130,20 +122,12 @@ test("Pi desktop browser extension falls back to node http when no fetch impleme
   const runtimeApiBaseUrl = `http://127.0.0.1:${address.port}`;
 
   try {
-    const resolvedFactory = await resolvePiDesktopBrowserExtensionFactory({
+    const tools = await resolvePiDesktopBrowserToolDefinitions({
       runtimeApiBaseUrl,
       workspaceId: "workspace-1",
     });
-    assert.ok(resolvedFactory);
 
-    const capturedTools: any[] = [];
-    await resolvedFactory!({
-      registerTool(tool: any) {
-        capturedTools.push(tool);
-      },
-    } as never);
-
-    const getStateTool = capturedTools.find((tool) => tool.name === "browser_get_state");
+    const getStateTool = tools.find((tool) => tool.name === "browser_get_state");
     assert.ok(getStateTool);
     const result = await getStateTool.execute("call-1", { include_screenshot: false }, undefined, undefined, {} as never);
 

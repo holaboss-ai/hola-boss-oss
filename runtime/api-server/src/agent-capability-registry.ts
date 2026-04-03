@@ -4,6 +4,9 @@ import {
   DESKTOP_BROWSER_TOOL_DEFINITIONS,
 } from "../../harnesses/src/desktop-browser-tools.js";
 import {
+  NATIVE_WEB_SEARCH_TOOL_DEFINITIONS,
+} from "../../harnesses/src/native-web-search-tools.js";
+import {
   RUNTIME_AGENT_TOOL_DEFINITIONS,
 } from "../../harnesses/src/runtime-agent-tools.js";
 
@@ -397,6 +400,18 @@ const BROWSER_TOOL_DEFINITIONS = new Map<string, ToolCapabilityDefinition>(
   ])
 );
 
+const CUSTOM_TOOL_DEFINITIONS = new Map<string, ToolCapabilityDefinition>(
+  NATIVE_WEB_SEARCH_TOOL_DEFINITIONS.map((toolDef) => [
+    toolDef.id,
+    {
+      kind: "custom_tool",
+      policy: toolDef.policy,
+      title: titleFromToken(toolDef.id),
+      description: toolDef.description,
+    },
+  ])
+);
+
 function titleFromToken(token: string): string {
   return token
     .split(/[_-]+/g)
@@ -545,6 +560,7 @@ function resolveToolCapabilityDefinition(toolName: string): ToolCapabilityDefini
     BUILTIN_CAPABILITY_DEFINITIONS[normalized] ??
     RUNTIME_TOOL_DEFINITIONS.get(normalized) ??
     BROWSER_TOOL_DEFINITIONS.get(normalized) ??
+    CUSTOM_TOOL_DEFINITIONS.get(normalized) ??
     customCapabilityDefinition(toolName)
   );
 }

@@ -35,8 +35,9 @@ import type {
   RunnerEventType,
   RunnerOutputEventPayload,
 } from "./contracts.js";
-import { resolvePiDesktopBrowserExtensionFactory } from "./pi-browser-tools.js";
+import { resolvePiDesktopBrowserToolDefinitions } from "./pi-browser-tools.js";
 import { resolvePiRuntimeToolDefinitions } from "./pi-runtime-tools.js";
+import { resolvePiWebSearchToolDefinitions } from "./pi-web-search.js";
 
 export type PiMappedEvent = {
   event_type: RunnerEventType;
@@ -2093,17 +2094,17 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
   const skillDirs = resolvePiSkillDirs(request);
   const loadedSkills = loadPiSkills(skillDirs);
   const skillMetadataByAlias = buildPiSkillMetadataByAlias(loadedSkills.skills);
-  const browserExtensionFactory = request.browser_tools_enabled
-    ? await resolvePiDesktopBrowserExtensionFactory({
+  const browserTools = request.browser_tools_enabled
+    ? await resolvePiDesktopBrowserToolDefinitions({
         runtimeApiBaseUrl: request.runtime_api_base_url,
         workspaceId: request.workspace_id,
       })
-    : null;
+    : [];
   const resourceLoader = new DefaultResourceLoader({
     cwd: request.workspace_dir,
     agentDir: stateDir,
     settingsManager,
-    extensionFactories: browserExtensionFactory ? [browserExtensionFactory] : [],
+    extensionFactories: [],
     noExtensions: true,
     noSkills: true,
     noPromptTemplates: true,
@@ -2122,13 +2123,14 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     runtimeApiBaseUrl: request.runtime_api_base_url,
     workspaceId: request.workspace_id,
   });
+  const webSearchTools = await resolvePiWebSearchToolDefinitions();
   const baseTools = [
     ...createCodingTools(request.workspace_dir),
     createGrepTool(request.workspace_dir),
     createFindTool(request.workspace_dir),
     createLsTool(request.workspace_dir),
   ];
-  const nonSkillCustomTools: ToolDefinition[] = [...runtimeTools, ...mcpToolset.customTools];
+  const nonSkillCustomTools: ToolDefinition[] = [...browserTools, ...runtimeTools, ...webSearchTools, ...mcpToolset.customTools];
   const availableToolNames = [...baseTools, ...nonSkillCustomTools].map((tool) => tool.name);
   const availableCommandIds = workspaceCommandIdsFromRunStartedPayload(request.run_started_payload);
   const workspaceBoundaryPolicy = createWorkspaceBoundaryPolicy(

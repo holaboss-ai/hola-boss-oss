@@ -77,6 +77,7 @@ import {
 import { recalledMemoryContextFromManifest } from "./memory-recall-manifest.js";
 import type { MemoryModelClientConfig } from "./memory-model-client.js";
 import { pendingUserMemoryContextFromProposals } from "./user-memory-proposals.js";
+import { NATIVE_WEB_SEARCH_TOOL_IDS } from "../../harnesses/src/native-web-search-tools.js";
 
 type LoggerLike = Pick<typeof console, "warn">;
 
@@ -880,11 +881,15 @@ function selectorModelClientFromRequest(params: {
   };
 }
 
-function defaultExtraTools(): string[] {
-  return (process.env.HOLABOSS_EXTRA_TOOLS ?? "")
+function defaultExtraTools(harnessId?: string | null): string[] {
+  const configured = (process.env.HOLABOSS_EXTRA_TOOLS ?? "")
     .split(",")
     .map((token) => token.trim())
     .filter(Boolean);
+  if (normalizeHarnessId(harnessId) === "pi") {
+    return [...NATIVE_WEB_SEARCH_TOOL_IDS, ...configured];
+  }
+  return configured;
 }
 
 function explicitHolabossUserId(request: TsRunnerRequest): string | undefined {
@@ -971,7 +976,7 @@ function buildAgentRuntimeConfigRequest(params: {
   currentUserContext?: AgentCurrentUserContext | null;
   pendingUserMemoryContext?: AgentPendingUserMemoryContext | null;
 }): AgentRuntimeConfigCliRequest {
-  const extraTools = Array.from(new Set([...defaultExtraTools(), ...params.extraToolIds]));
+  const extraTools = Array.from(new Set([...defaultExtraTools(params.harnessId), ...params.extraToolIds]));
   const common = {
     session_id: params.request.session_id,
     workspace_id: params.request.workspace_id,

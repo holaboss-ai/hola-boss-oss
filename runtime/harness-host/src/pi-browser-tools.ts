@@ -2,7 +2,7 @@ import http from "node:http";
 import https from "node:https";
 
 import { Type } from "@sinclair/typebox";
-import type { ExtensionFactory, ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 
 import {
   DESKTOP_BROWSER_TOOL_DEFINITIONS,
@@ -14,7 +14,7 @@ const BROWSER_CAPABILITY_STATUS_PATH = "/api/v1/capabilities/browser";
 const BROWSER_CAPABILITY_TOOL_PATH = "/api/v1/capabilities/browser/tools";
 const DEFAULT_BROWSER_TOOL_TIMEOUT_MS = 30000;
 
-export interface PiDesktopBrowserExtensionOptions {
+export interface PiDesktopBrowserToolOptions {
   runtimeApiBaseUrl: string;
   workspaceId?: string | null;
   fetchImpl?: typeof fetch;
@@ -270,7 +270,7 @@ async function executeBrowserTool(params: {
 
 export function createPiDesktopBrowserToolDefinition(
   definition: DesktopBrowserToolDefinition,
-  options: PiDesktopBrowserExtensionOptions
+  options: PiDesktopBrowserToolOptions
 ): ToolDefinition {
   const fetchImpl = options.fetchImpl;
 
@@ -292,26 +292,24 @@ export function createPiDesktopBrowserToolDefinition(
   };
 }
 
-export function createPiDesktopBrowserExtensionFactory(
-  options: PiDesktopBrowserExtensionOptions
-): ExtensionFactory {
-  return (pi) => {
-    for (const definition of DESKTOP_BROWSER_TOOL_DEFINITIONS) {
-      pi.registerTool(createPiDesktopBrowserToolDefinition(definition, options));
-    }
-  };
+export function createPiDesktopBrowserToolDefinitions(
+  options: PiDesktopBrowserToolOptions
+): ToolDefinition[] {
+  return DESKTOP_BROWSER_TOOL_DEFINITIONS.map((definition) =>
+    createPiDesktopBrowserToolDefinition(definition, options)
+  );
 }
 
-export async function resolvePiDesktopBrowserExtensionFactory(
+export async function resolvePiDesktopBrowserToolDefinitions(
   options: {
     runtimeApiBaseUrl?: string | null;
     workspaceId?: string | null;
     fetchImpl?: typeof fetch;
   } = {}
-): Promise<ExtensionFactory | null> {
+): Promise<ToolDefinition[]> {
   const runtimeApiBaseUrl = normalizeRuntimeApiBaseUrl(options.runtimeApiBaseUrl ?? process.env.SANDBOX_RUNTIME_API_URL);
   if (!runtimeApiBaseUrl) {
-    return null;
+    return [];
   }
 
   const fetchImpl = options.fetchImpl;
@@ -336,13 +334,13 @@ export async function resolvePiDesktopBrowserExtensionFactory(
           signal: AbortSignal.timeout(2000),
         });
     if (!response.ok || !isRecord(response.payload) || response.payload.available !== true) {
-      return null;
+      return [];
     }
   } catch {
-    return null;
+    return [];
   }
 
-  return createPiDesktopBrowserExtensionFactory({
+  return createPiDesktopBrowserToolDefinitions({
     runtimeApiBaseUrl,
     workspaceId: options.workspaceId,
     fetchImpl,
