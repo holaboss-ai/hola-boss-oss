@@ -2824,7 +2824,7 @@ function TraceStepGroup({
                 <button
                   type="button"
                   onClick={() => step.details.length > 0 && onToggleStep(step.id)}
-                  className={`flex w-full items-start gap-2 rounded-md py-1 text-left text-xs transition-colors ${step.details.length > 0 ? "hover:bg-muted/50 cursor-pointer" : "cursor-default"}`}
+                  className={`flex w-full items-start gap-2 rounded-md px-2.5 -ml-2.5 py-1 text-left text-xs transition-colors ${step.details.length > 0 ? "hover:bg-muted/50 cursor-pointer" : "cursor-default"}`}
                 >
                   <span className="mt-0.5 shrink-0">
                     {step.status === "completed" ? (
