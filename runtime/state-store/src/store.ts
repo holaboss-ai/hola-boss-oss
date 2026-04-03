@@ -217,18 +217,6 @@ export interface MemoryEntryRecord {
   updatedAt: string;
 }
 
-export interface SessionArtifactRecord {
-  id: string;
-  sessionId: string;
-  workspaceId: string;
-  artifactType: string;
-  externalId: string;
-  platform: string | null;
-  title: string | null;
-  metadata: Record<string, unknown>;
-  createdAt: string;
-}
-
 export interface OutputFolderRecord {
   id: string;
   workspaceId: string;
@@ -236,6 +224,20 @@ export interface OutputFolderRecord {
   position: number;
   createdAt: string | null;
   updatedAt: string | null;
+}
+
+function outputTypeForArtifactType(artifactType: string): string {
+  switch (artifactType) {
+    case "draft":
+      return "post";
+    case "image":
+      return "file";
+    case "html":
+      return "html";
+    case "document":
+    default:
+      return "document";
+  }
 }
 
 export interface OutputRecord {
@@ -2147,106 +2149,6 @@ export class RuntimeStateStore {
     return rows.map((row) => this.rowToCompactionBoundary(row));
   }
 
-  createSessionArtifact(params: {
-    sessionId: string;
-    workspaceId: string;
-    artifactType: string;
-    externalId: string;
-    platform?: string | null;
-    title?: string | null;
-    metadata?: Record<string, unknown> | null;
-    artifactId?: string;
-    createdAt?: string;
-  }): SessionArtifactRecord {
-    const resolvedId = params.artifactId ?? randomUUID();
-    const resolvedCreatedAt = params.createdAt ?? utcNowIso();
-    this.db()
-      .prepare(`
-        INSERT OR REPLACE INTO session_artifacts (
-            id, session_id, workspace_id, artifact_type, external_id, platform, title, metadata, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        resolvedId,
-        params.sessionId,
-        params.workspaceId,
-        params.artifactType,
-        params.externalId,
-        params.platform ?? null,
-        params.title ?? null,
-        JSON.stringify(params.metadata ?? {}),
-        resolvedCreatedAt
-      );
-    const row = this.db()
-      .prepare<[string], Record<string, unknown>>("SELECT * FROM session_artifacts WHERE id = ? LIMIT 1")
-      .get(resolvedId);
-    if (!row) {
-      throw new Error("artifact row not found after insert");
-    }
-    return this.rowToSessionArtifact(row);
-  }
-
-  listSessionArtifacts(params: { sessionId: string; workspaceId?: string }): SessionArtifactRecord[] {
-    let query = `
-      SELECT * FROM session_artifacts
-      WHERE session_id = ?
-    `;
-    const values: string[] = [params.sessionId];
-    if (params.workspaceId) {
-      query += " AND workspace_id = ?";
-      values.push(params.workspaceId);
-    }
-    query += " ORDER BY datetime(created_at) ASC, id ASC";
-    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToSessionArtifact(row));
-  }
-
-  listSessionsWithArtifacts(params: { workspaceId: string; limit?: number; offset?: number }): Array<Record<string, unknown>> {
-    const rows = this.db()
-      .prepare<[string, number, number], Record<string, unknown>>(`
-        SELECT session_id, status, created_at, updated_at
-        FROM session_runtime_state
-        WHERE workspace_id = ?
-        ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC
-        LIMIT ? OFFSET ?
-      `)
-      .all(params.workspaceId, params.limit ?? 20, params.offset ?? 0);
-    const sessionIds = rows.map((row) => String(row.session_id));
-    const artifactsBySession = new Map<string, Array<Record<string, unknown>>>();
-    for (const sessionId of sessionIds) {
-      artifactsBySession.set(sessionId, []);
-    }
-    if (sessionIds.length > 0) {
-      const artifactRows = this.db()
-        .prepare<[string], Record<string, unknown>>(`
-          SELECT session_id, artifact_type, external_id, platform, title
-          FROM session_artifacts
-          WHERE workspace_id = ?
-          ORDER BY datetime(created_at) ASC, id ASC
-        `)
-        .all(params.workspaceId);
-      for (const row of artifactRows) {
-        const sessionId = String(row.session_id);
-        if (!artifactsBySession.has(sessionId)) {
-          continue;
-        }
-        artifactsBySession.get(sessionId)?.push({
-          artifact_type: String(row.artifact_type),
-          external_id: String(row.external_id),
-          platform: row.platform == null ? null : String(row.platform),
-          title: row.title == null ? null : String(row.title)
-        });
-      }
-    }
-    return rows.map((row) => ({
-      session_id: String(row.session_id),
-      status: String(row.status),
-      created_at: row.created_at == null ? null : String(row.created_at),
-      updated_at: row.updated_at == null ? null : String(row.updated_at),
-      artifacts: artifactsBySession.get(String(row.session_id)) ?? []
-    }));
-  }
-
   createOutputFolder(params: { workspaceId: string; name: string }): OutputFolderRecord {
     const resolvedId = randomUUID();
     const now = utcNowIso();
@@ -3147,21 +3049,6 @@ export class RuntimeStateStore {
       CREATE INDEX IF NOT EXISTS idx_memory_entries_scope_updated
           ON memory_entries (scope, status, updated_at DESC, created_at DESC);
 
-      CREATE TABLE IF NOT EXISTS session_artifacts (
-          id TEXT PRIMARY KEY,
-          session_id TEXT NOT NULL,
-          workspace_id TEXT NOT NULL,
-          artifact_type TEXT NOT NULL,
-          external_id TEXT NOT NULL,
-          platform TEXT,
-          title TEXT,
-          metadata TEXT NOT NULL DEFAULT '{}',
-          created_at TEXT NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_session_artifacts_workspace_session_created
-          ON session_artifacts (workspace_id, session_id, created_at ASC);
-
       CREATE TABLE IF NOT EXISTS task_proposals (
           proposal_id TEXT PRIMARY KEY,
           workspace_id TEXT NOT NULL,
@@ -3287,6 +3174,87 @@ export class RuntimeStateStore {
           updated_at TEXT NOT NULL
       );
     `);
+    this.migrateLegacySessionArtifactsToOutputs(db);
+  }
+
+  private migrateLegacySessionArtifactsToOutputs(db: Database.Database): void {
+    const tables = new Set<string>(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
+        (row) => row.name
+      )
+    );
+    if (!tables.has("session_artifacts")) {
+      return;
+    }
+
+    const legacyRows = db
+      .prepare<
+        [],
+        {
+          id: string;
+          session_id: string;
+          workspace_id: string;
+          artifact_type: string;
+          external_id: string;
+          platform: string | null;
+          title: string | null;
+          metadata: string | null;
+          created_at: string;
+        }
+      >(`
+        SELECT id, session_id, workspace_id, artifact_type, external_id, platform, title, metadata, created_at
+        FROM session_artifacts
+        ORDER BY datetime(created_at) ASC, id ASC
+      `)
+      .all();
+
+    const hasOutputForArtifact = db.prepare<[string], { present: number }>(
+      "SELECT 1 AS present FROM outputs WHERE artifact_id = ? LIMIT 1"
+    );
+    const insertOutput = db.prepare(`
+      INSERT INTO outputs (
+          id, workspace_id, output_type, title, status, module_id, module_resource_id, file_path,
+          html_content, session_id, input_id, artifact_id, folder_id, platform, metadata, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const migrate = db.transaction(() => {
+      for (const row of legacyRows) {
+        if (hasOutputForArtifact.get(row.id)) {
+          continue;
+        }
+        const existingMetadata = this.parseJsonDict(row.metadata);
+        const mergedMetadata = {
+          ...existingMetadata,
+          origin_type: "app",
+          change_type: "created",
+          artifact_type: row.artifact_type,
+          external_id: row.external_id,
+        };
+        insertOutput.run(
+          randomUUID(),
+          row.workspace_id,
+          outputTypeForArtifactType(row.artifact_type),
+          row.title ?? "",
+          "completed",
+          null,
+          row.external_id,
+          null,
+          null,
+          row.session_id,
+          null,
+          row.id,
+          null,
+          row.platform ?? null,
+          JSON.stringify(mergedMetadata),
+          row.created_at,
+          row.created_at
+        );
+      }
+      db.exec("DROP TABLE IF EXISTS session_artifacts;");
+    });
+
+    migrate();
   }
 
   private migrateSandboxRunTokensTable(db: Database.Database): void {
@@ -4051,20 +4019,6 @@ export class RuntimeStateStore {
     } catch {
       return { message: String(raw) };
     }
-  }
-
-  private rowToSessionArtifact(row: Record<string, unknown>): SessionArtifactRecord {
-    return {
-      id: String(row.id),
-      sessionId: String(row.session_id),
-      workspaceId: String(row.workspace_id),
-      artifactType: String(row.artifact_type),
-      externalId: String(row.external_id),
-      platform: row.platform == null ? null : String(row.platform),
-      title: row.title == null ? null : String(row.title),
-      metadata: this.parseJsonDict(row.metadata),
-      createdAt: String(row.created_at)
-    };
   }
 
   private rowToOutputFolder(row: Record<string, unknown>): OutputFolderRecord {

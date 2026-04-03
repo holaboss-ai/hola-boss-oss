@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { RuntimeStateStore, WorkspaceRecord } from "@holaboss/runtime-state-store";
+import type { OutputRecord, RuntimeStateStore, WorkspaceRecord } from "@holaboss/runtime-state-store";
 import yaml from "js-yaml";
 
 import type { MemoryServiceLike } from "./memory.js";
@@ -36,6 +36,34 @@ function taskProposalCountByState(taskProposals: Array<Record<string, unknown>>)
     counts[state] = (counts[state] ?? 0) + 1;
   }
   return counts;
+}
+
+function artifactTypeFromOutputRecord(record: OutputRecord): string {
+  const metadataArtifactType =
+    typeof record.metadata.artifact_type === "string" ? record.metadata.artifact_type.trim() : "";
+  if (metadataArtifactType) {
+    return metadataArtifactType;
+  }
+  if (record.outputType === "post") {
+    return "draft";
+  }
+  if (record.outputType === "html") {
+    return "html";
+  }
+  const category = typeof record.metadata.category === "string" ? record.metadata.category.trim() : "";
+  if (category === "image") {
+    return "image";
+  }
+  return "document";
+}
+
+function externalIdFromOutputRecord(record: OutputRecord): string {
+  const metadataExternalId =
+    typeof record.metadata.external_id === "string" ? record.metadata.external_id.trim() : "";
+  if (metadataExternalId) {
+    return metadataExternalId;
+  }
+  return record.moduleResourceId ?? record.filePath ?? record.artifactId ?? record.id;
 }
 
 function toolManifestFromCompiledPlan(compiledPlan: ReturnType<typeof compileWorkspaceRuntimePlanFromWorkspace>) {
@@ -153,7 +181,51 @@ export async function captureWorkspaceContext(params: {
     .listCronjobs({ workspaceId: params.workspaceId, enabledOnly: false })
     .map((job) => ({ ...job }));
   const taskProposals = params.store.listTaskProposals({ workspaceId: params.workspaceId }).map((proposal) => ({ ...proposal }));
-  const sessions = params.store.listSessionsWithArtifacts({ workspaceId: params.workspaceId, limit: 20, offset: 0 });
+  const outputs = params.store
+    .listOutputs({ workspaceId: params.workspaceId, limit: 1000, offset: 0 })
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.createdAt ?? "") || 0;
+      const rightTime = Date.parse(right.createdAt ?? "") || 0;
+      if (leftTime !== rightTime) {
+        return leftTime - rightTime;
+      }
+      return left.id.localeCompare(right.id);
+    });
+  const artifactsBySession = new Map<string, Array<Record<string, unknown>>>();
+  for (const output of outputs) {
+    const sessionId = output.sessionId ?? "";
+    if (!sessionId) {
+      continue;
+    }
+    const existing = artifactsBySession.get(sessionId);
+    const artifactPayload = {
+      id: output.artifactId ?? output.id,
+      session_id: sessionId,
+      workspace_id: output.workspaceId,
+      input_id: output.inputId,
+      artifact_type: artifactTypeFromOutputRecord(output),
+      external_id: externalIdFromOutputRecord(output),
+      platform: output.platform,
+      title: output.title || null,
+      metadata: output.metadata,
+      created_at: output.createdAt,
+    };
+    if (existing) {
+      existing.push(artifactPayload);
+    } else {
+      artifactsBySession.set(sessionId, [artifactPayload]);
+    }
+  }
+  const sessions = params.store
+    .listRuntimeStates(params.workspaceId)
+    .slice(0, 20)
+    .map((state) => ({
+      session_id: state.sessionId,
+      status: state.status,
+      created_at: state.createdAt,
+      updated_at: state.updatedAt,
+      artifacts: artifactsBySession.get(state.sessionId) ?? []
+    }));
   const warnings: string[] = [];
   const workspaceYamlPath = path.join(workspaceDir, "workspace.yaml");
 

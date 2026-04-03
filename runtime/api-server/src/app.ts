@@ -17,7 +17,6 @@ import {
   type CronjobRecord,
   type OutputFolderRecord,
   type OutputRecord,
-  type SessionArtifactRecord,
   type SessionMessageRecord,
   type SessionRuntimeStateRecord,
   type TaskProposalRecord,
@@ -541,15 +540,44 @@ function runtimeUserProfilePayload(record: RuntimeUserProfileRecord | null, prof
   };
 }
 
-function sessionArtifactPayload(record: SessionArtifactRecord): Record<string, unknown> {
+function artifactTypeFromOutputRecord(record: OutputRecord): string {
+  const metadataArtifactType =
+    typeof record.metadata.artifact_type === "string" ? record.metadata.artifact_type.trim() : "";
+  if (metadataArtifactType) {
+    return metadataArtifactType;
+  }
+  if (record.outputType === "post") {
+    return "draft";
+  }
+  if (record.outputType === "html") {
+    return "html";
+  }
+  const category = typeof record.metadata.category === "string" ? record.metadata.category.trim() : "";
+  if (category === "image") {
+    return "image";
+  }
+  return "document";
+}
+
+function externalIdFromOutputRecord(record: OutputRecord): string {
+  const metadataExternalId =
+    typeof record.metadata.external_id === "string" ? record.metadata.external_id.trim() : "";
+  if (metadataExternalId) {
+    return metadataExternalId;
+  }
+  return record.moduleResourceId ?? record.filePath ?? record.artifactId ?? record.id;
+}
+
+function sessionArtifactPayload(record: OutputRecord): Record<string, unknown> {
   return {
-    id: record.id,
+    id: record.artifactId ?? record.id,
     session_id: record.sessionId,
     workspace_id: record.workspaceId,
-    artifact_type: record.artifactType,
-    external_id: record.externalId,
+    input_id: record.inputId,
+    artifact_type: artifactTypeFromOutputRecord(record),
+    external_id: externalIdFromOutputRecord(record),
     platform: record.platform,
-    title: record.title,
+    title: record.title || null,
     metadata: record.metadata,
     created_at: record.createdAt
   };
@@ -3552,40 +3580,33 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       inputId: nullableString(request.body.input_id),
     });
     const metadata = optionalDict(request.body.metadata) ?? {};
+    const artifactId = nullableString(request.body.artifact_id) ?? randomUUID();
     store.ensureRuntimeState({
       workspaceId,
       sessionId: params.sessionId,
       status: "IDLE"
     });
-    const artifact = store.createSessionArtifact({
-      sessionId: params.sessionId,
+    const output = store.createOutput({
       workspaceId,
-      artifactType: requiredString(request.body.artifact_type, "artifact_type"),
-      externalId: requiredString(request.body.external_id, "external_id"),
-      platform: nullableString(request.body.platform) ?? null,
-      title: nullableString(request.body.title) ?? null,
-      metadata
-    });
-    store.createOutput({
-      workspaceId,
-      outputType: outputTypeForArtifact(artifact.artifactType),
-      title: artifact.title ?? "",
+      outputType: outputTypeForArtifact(requiredString(request.body.artifact_type, "artifact_type")),
+      title: nullableString(request.body.title) ?? "",
       status: "completed",
       moduleId: nullableString(request.body.module_id) ?? null,
-      moduleResourceId: nullableString(request.body.module_resource_id) ?? artifact.externalId,
+      moduleResourceId:
+        nullableString(request.body.module_resource_id) ?? requiredString(request.body.external_id, "external_id"),
       sessionId: params.sessionId,
       inputId,
-      artifactId: artifact.id,
-      platform: artifact.platform,
+      artifactId,
+      platform: nullableString(request.body.platform) ?? null,
       metadata: {
-        ...artifact.metadata,
+        ...metadata,
         origin_type: "app",
         change_type: optionalString(request.body.change_type) ?? "created",
-        artifact_type: artifact.artifactType,
-        external_id: artifact.externalId,
+        artifact_type: requiredString(request.body.artifact_type, "artifact_type"),
+        external_id: requiredString(request.body.external_id, "external_id"),
       }
     });
-    return reply.send({ artifact: sessionArtifactPayload(artifact) });
+    return reply.send({ artifact: sessionArtifactPayload(output) });
   });
 
   app.get("/api/v1/agent-sessions/:sessionId/artifacts", async (request, reply) => {
@@ -3597,9 +3618,27 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 422, "workspace_id and profile_id must match when both are provided");
     }
     const resolvedWorkspaceId = workspaceId ?? profileId;
+    const outputWorkspaceId = resolvedWorkspaceId ?? store.getRuntimeState({ sessionId: params.sessionId })?.workspaceId ?? null;
+    if (!outputWorkspaceId) {
+      return { items: [], count: 0 };
+    }
     const items = store
-      .listSessionArtifacts({ sessionId: params.sessionId, workspaceId: resolvedWorkspaceId })
-      .map((item: SessionArtifactRecord) => sessionArtifactPayload(item));
+      .listOutputs({
+        workspaceId: outputWorkspaceId,
+        sessionId: params.sessionId,
+        limit: 500,
+        offset: 0,
+      })
+      .filter((item) => item.sessionId === params.sessionId)
+      .sort((left, right) => {
+        const leftTime = Date.parse(left.createdAt ?? "") || 0;
+        const rightTime = Date.parse(right.createdAt ?? "") || 0;
+        if (leftTime !== rightTime) {
+          return leftTime - rightTime;
+        }
+        return left.id.localeCompare(right.id);
+      })
+      .map((item: OutputRecord) => sessionArtifactPayload(item));
     return { items, count: items.length };
   });
 
@@ -3608,7 +3647,41 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const query = isRecord(request.query) ? request.query : {};
     const limit = Math.max(1, Math.min(100, optionalInteger(query.limit, 20)));
     const offset = Math.max(0, optionalInteger(query.offset, 0));
-    const items = store.listSessionsWithArtifacts({ workspaceId: params.workspaceId, limit, offset });
+    const runtimeStates = store.listRuntimeStates(params.workspaceId).slice(offset, offset + limit);
+    const outputs = store.listOutputs({
+      workspaceId: params.workspaceId,
+      limit: 1000,
+      offset: 0,
+    })
+      .sort((left, right) => {
+        const leftTime = Date.parse(left.createdAt ?? "") || 0;
+        const rightTime = Date.parse(right.createdAt ?? "") || 0;
+        if (leftTime !== rightTime) {
+          return leftTime - rightTime;
+        }
+        return left.id.localeCompare(right.id);
+      });
+    const artifactsBySession = new Map<string, Array<Record<string, unknown>>>();
+    for (const output of outputs) {
+      const sessionId = output.sessionId ?? "";
+      if (!sessionId) {
+        continue;
+      }
+      const existing = artifactsBySession.get(sessionId);
+      const payload = sessionArtifactPayload(output);
+      if (existing) {
+        existing.push(payload);
+      } else {
+        artifactsBySession.set(sessionId, [payload]);
+      }
+    }
+    const items = runtimeStates.map((row) => ({
+      session_id: row.sessionId,
+      status: row.status,
+      created_at: row.createdAt,
+      updated_at: row.updatedAt,
+      artifacts: artifactsBySession.get(row.sessionId) ?? [],
+    }));
     return { items, count: items.length };
   });
 

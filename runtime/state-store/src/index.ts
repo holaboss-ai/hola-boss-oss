@@ -26,7 +26,6 @@ export {
   type RuntimeUserProfileNameSource,
   type RuntimeUserProfileRecord,
   type SessionBindingRecord,
-  type SessionArtifactRecord,
   type SessionInputRecord,
   type SessionMessageRecord,
   type SessionRuntimeStateRecord,

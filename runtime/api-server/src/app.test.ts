@@ -1399,8 +1399,16 @@ test("outputs, folders, and artifacts routes preserve local payload shape", asyn
     ["input-1", "input-1"]
   );
   assert.equal(countsResp.json().total, 2);
-  assert.equal(artifactsResp.json().count, 1);
-  assert.equal(withArtifactsResp.json().items[0].artifacts[0].external_id, "doc-1");
+  assert.equal(artifactsResp.json().count, 2);
+  assert.ok(
+    artifactsResp.json().items.some((item: { external_id: string }) => item.external_id === "doc-1")
+  );
+  assert.equal(withArtifactsResp.json().items[0].artifacts.length, 2);
+  assert.ok(
+    withArtifactsResp.json().items[0].artifacts.some(
+      (item: { external_id: string }) => item.external_id === "doc-1"
+    )
+  );
 
   await app.close();
   store.close();
