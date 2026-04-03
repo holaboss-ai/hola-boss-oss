@@ -662,21 +662,32 @@ function isNearChatBottom(container: HTMLDivElement) {
   return remaining <= CHAT_AUTO_SCROLL_THRESHOLD_PX;
 }
 
-export function ChatPane({
-  onOutputsChanged,
-  focusRequestKey = 0,
-  variant = "default",
-  onOpenLinkInBrowser,
-  sessionJumpSessionId = null,
-  sessionJumpRequestKey = 0
-}: {
+interface ChatPaneSessionOpenRequest {
+  sessionId: string;
+  requestKey: number;
+}
+
+interface ChatPaneProps {
   onOutputsChanged?: () => void;
   focusRequestKey?: number;
   variant?: ChatPaneVariant;
   onOpenLinkInBrowser?: (url: string) => void;
   sessionJumpSessionId?: string | null;
   sessionJumpRequestKey?: number;
-}) {
+  sessionOpenRequest?: ChatPaneSessionOpenRequest | null;
+  onActiveSessionIdChange?: (sessionId: string | null) => void;
+}
+
+export function ChatPane({
+  onOutputsChanged,
+  focusRequestKey = 0,
+  variant = "default",
+  onOpenLinkInBrowser,
+  sessionJumpSessionId = null,
+  sessionJumpRequestKey = 0,
+  sessionOpenRequest = null,
+  onActiveSessionIdChange
+}: ChatPaneProps) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const authSessionState = useDesktopAuthSession();
   const {
@@ -775,6 +786,7 @@ export function ChatPane({
   function setActiveSession(sessionId: string | null) {
     activeSessionIdRef.current = sessionId;
     setActiveSessionId(sessionId ?? "");
+    onActiveSessionIdChange?.(sessionId);
   }
 
   function resetLiveTurn() {
@@ -885,18 +897,28 @@ export function ChatPane({
 
     const onboardingSessionId = (selectedWorkspaceRef.current?.onboarding_session_id || "").trim();
     const currentRuntimeState = runtimeStates.find((item) => item.session_id === nextSessionId);
+    const currentRuntimeStatus = runtimeStateStatus(currentRuntimeState?.status);
     const hasAssistantMessage = nextMessages.some((message) => message.role === "assistant");
+    const shouldAttachLiveRunStream =
+      !activeStreamIdRef.current &&
+      !pendingInputIdRef.current &&
+      ["BUSY", "QUEUED"].includes(currentRuntimeStatus);
     const shouldAttachOnboardingBootstrapStream =
+      shouldAttachLiveRunStream &&
       isOnboardingVariant &&
       nextSessionId === onboardingSessionId &&
       !hasAssistantMessage &&
-      !activeStreamIdRef.current &&
-      !pendingInputIdRef.current &&
-      ["BUSY", "QUEUED"].includes(runtimeStateStatus(currentRuntimeState?.status));
+      currentRuntimeStatus === "BUSY";
 
-    if (shouldAttachOnboardingBootstrapStream) {
+    if (shouldAttachLiveRunStream) {
       setIsResponding(true);
-      setLiveAgentStatus("Preparing first question...");
+      setLiveAgentStatus(
+        shouldAttachOnboardingBootstrapStream
+          ? "Preparing first question..."
+          : currentRuntimeStatus === "QUEUED"
+            ? "Queued..."
+            : "Working..."
+      );
       setChatErrorMessage("");
       const stream = await window.electronAPI.workspace.openSessionOutputStream({
         sessionId: nextSessionId,
@@ -913,11 +935,17 @@ export function ChatPane({
         streamId: stream.streamId,
         transportType: "client",
         eventName: "openSessionOutputStream",
-        eventType: "stream_open_onboarding_bootstrap",
+        eventType: shouldAttachOnboardingBootstrapStream
+          ? "stream_open_onboarding_bootstrap"
+          : "stream_open_existing_run",
         inputId: "",
         sessionId: nextSessionId,
-        action: "stream_requested_onboarding_bootstrap",
-        detail: "attached to in-flight onboarding opener"
+        action: shouldAttachOnboardingBootstrapStream
+          ? "stream_requested_onboarding_bootstrap"
+          : "stream_requested_existing_run",
+        detail: shouldAttachOnboardingBootstrapStream
+          ? "attached to in-flight onboarding opener"
+          : "attached to in-flight session run"
       });
     } else if (!activeStreamIdRef.current && !pendingInputIdRef.current) {
       setIsResponding(false);
@@ -1180,10 +1208,12 @@ export function ChatPane({
           return;
         }
 
+        const requestedOpenSessionId = (sessionOpenRequest?.sessionId || "").trim();
         const nextSessionId =
-          hasSessionJumpRequest && requestedSessionId
+          (hasSessionJumpRequest && requestedSessionId
             ? requestedSessionId
-            : preferredSessionId(selectedWorkspaceRef.current, runtimeStates.items);
+            : requestedOpenSessionId) ||
+          preferredSessionId(selectedWorkspaceRef.current, runtimeStates.items);
         await loadSessionConversation(nextSessionId, selectedWorkspaceId, runtimeStates.items, {
           cancelled: () => cancelled
         });
@@ -1206,11 +1236,59 @@ export function ChatPane({
     isOnboardingVariant,
     sessionJumpRequestKey,
     sessionJumpSessionId,
+    sessionOpenRequest?.sessionId,
     selectedWorkspaceId,
     selectedWorkspace?.main_session_id,
     selectedWorkspace?.onboarding_session_id,
     selectedWorkspace?.onboarding_status
   ]);
+
+  useEffect(() => {
+    const requestedSessionId = (sessionOpenRequest?.sessionId || "").trim();
+    if (!selectedWorkspaceId || !requestedSessionId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function openRequestedSession() {
+      if (activeSessionIdRef.current === requestedSessionId) {
+        return;
+      }
+
+      setIsLoadingHistory(true);
+      setChatErrorMessage("");
+      pendingInputIdRef.current = null;
+      activeAssistantMessageIdRef.current = null;
+      setIsResponding(false);
+
+      const activeStreamId = activeStreamIdRef.current;
+      activeStreamIdRef.current = null;
+      if (activeStreamId) {
+        await closeStreamWithReason(activeStreamId, "chatpane_open_requested_session").catch(() => undefined);
+      }
+
+      try {
+        const runtimeStates = await window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId);
+        await loadSessionConversation(requestedSessionId, selectedWorkspaceId, runtimeStates.items, {
+          cancelled: () => cancelled
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setChatErrorMessage(normalizeErrorMessage(error));
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingHistory(false);
+        }
+      }
+    }
+
+    void openRequestedSession();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedWorkspaceId, sessionOpenRequest?.requestKey, sessionOpenRequest?.sessionId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2138,12 +2216,15 @@ export function ChatPane({
     availableChatModelOptions.length > 0
       ? ""
       : "No models available. Configure a provider to start chatting.";
-  const composerDisabledReason =
+  const composerBaseDisabledReason =
     baseComposerDisabledReason ||
     (usesHostedManagedCredits && isOutOfCredits
       ? "You're out of credits for managed usage."
       : "") ||
     (!isOnboardingVariant && !resolvedChatModel ? modelSelectionUnavailableReason : "");
+  const composerDisabledReason =
+    composerBaseDisabledReason ||
+    (isResponding ? "Current run is still in progress." : "");
   const composerDisabled = Boolean(composerDisabledReason);
   const showLowBalanceWarning = usesHostedManagedCredits && isLowBalance && !isOutOfCredits;
   const showOutOfCreditsWarning = usesHostedManagedCredits && isOutOfCredits;
@@ -2905,6 +2986,7 @@ function Composer({
 }: ComposerProps) {
   const [isDragActive, setIsDragActive] = useState(false);
   const noAvailableModels = !runtimeDefaultModelAvailable && modelOptions.length === 0;
+  const inputDisabled = disabled || isResponding;
   const selectedModelOptionLabel =
     modelOptions.find((option) => option.value === selectedModel)?.label ?? resolvedModelLabel;
 
@@ -2992,8 +3074,8 @@ function Composer({
           onCompositionStart={onCompositionStart}
           onCompositionEnd={onCompositionEnd}
           rows={1}
-          disabled={disabled}
-          placeholder={disabled ? disabledReason || "Chat unavailable right now" : placeholder}
+          disabled={inputDisabled}
+          placeholder={inputDisabled ? disabledReason || "Chat unavailable right now" : placeholder}
           className="composer-input block max-h-[220px] min-h-[76px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-7 text-foreground outline-none placeholder:text-muted-foreground/50 disabled:cursor-not-allowed disabled:opacity-55"
         />
       </div>

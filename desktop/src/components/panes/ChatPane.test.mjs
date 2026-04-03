@@ -98,6 +98,6 @@ test("chat pane can jump to a requested sub-session run", async () => {
   );
   assert.match(
     source,
-    /const nextSessionId =[\s\S]*hasSessionJumpRequest && requestedSessionId[\s\S]*\? requestedSessionId[\s\S]*: preferredSessionId\(selectedWorkspaceRef\.current, runtimeStates\.items\);/
+    /const requestedOpenSessionId = \(sessionOpenRequest\?\.sessionId \|\| ""\)\.trim\(\);[\s\S]*const nextSessionId =[\s\S]*hasSessionJumpRequest && requestedSessionId[\s\S]*\? requestedSessionId[\s\S]*: requestedOpenSessionId\)[\s\S]*preferredSessionId\(selectedWorkspaceRef\.current, runtimeStates\.items\);/
   );
 });

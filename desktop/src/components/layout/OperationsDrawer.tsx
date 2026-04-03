@@ -70,8 +70,11 @@ interface OperationsDrawerProps {
   onProactiveTaskProposalsEnabledChange: (enabled: boolean) => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
+  onOpenRunningSession: (sessionId: string) => void;
+  activeRunningSessionId: string | null;
   hasWorkspace: boolean;
   selectedWorkspaceId: string | null;
+  mainSessionId: string | null;
 }
 
 interface RunningSessionEntry {
@@ -104,8 +107,11 @@ export function OperationsDrawer({
   onProactiveTaskProposalsEnabledChange,
   onAcceptProposal,
   onDismissProposal,
+  onOpenRunningSession,
+  activeRunningSessionId,
   hasWorkspace,
   selectedWorkspaceId,
+  mainSessionId,
 }: OperationsDrawerProps) {
   const selectedOutput = useMemo(() => {
     if (!outputs.length) {
@@ -149,8 +155,22 @@ export function OperationsDrawer({
             session,
           ]),
         );
+        const normalizedMainSessionId = (mainSessionId || "").trim();
         const nextEntries = runtimeStatesResponse.items
-          .filter((state) => state.status !== "IDLE")
+          .filter((state) => {
+            if (
+              normalizedMainSessionId &&
+              state.session_id === normalizedMainSessionId
+            ) {
+              return false;
+            }
+            const sessionKind = (
+              sessionById.get(state.session_id)?.kind || ""
+            )
+              .trim()
+              .toLowerCase();
+            return sessionKind !== "main";
+          })
           .map((state) => {
             const session = sessionById.get(state.session_id);
             return {
@@ -188,7 +208,7 @@ export function OperationsDrawer({
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [activeTab, selectedWorkspaceId]);
+  }, [activeTab, mainSessionId, selectedWorkspaceId]);
 
   return (
     <aside className="theme-shell neon-border relative flex h-full min-h-0 min-w-[360px] max-w-[420px] flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
@@ -245,6 +265,8 @@ export function OperationsDrawer({
             isLoading={isLoadingRunningSessions}
             sessions={runningSessions}
             errorMessage={runningSessionsError}
+            onOpenSession={onOpenRunningSession}
+            activeSessionId={activeRunningSessionId}
           />
         ) : null}
 
@@ -312,8 +334,10 @@ function runningSessionStatusRank(status: string): number {
       return 2;
     case "ERROR":
       return 3;
-    default:
+    case "IDLE":
       return 4;
+    default:
+      return 5;
   }
 }
 
@@ -590,11 +614,15 @@ function RunningPanel({
   isLoading,
   sessions,
   errorMessage,
+  onOpenSession,
+  activeSessionId,
 }: {
   hasWorkspace: boolean;
   isLoading: boolean;
   sessions: RunningSessionEntry[];
   errorMessage: string;
+  onOpenSession: (sessionId: string) => void;
+  activeSessionId: string | null;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -603,8 +631,8 @@ function RunningPanel({
           Running
         </div>
         <div className="mt-1 text-[12px] leading-6 text-foreground/88">
-          Active and failed runtime sessions for the current workspace,
-          including cronjob runs.
+          Runtime sessions for the current workspace, including idle and
+          cronjob runs.
         </div>
       </div>
 
@@ -620,9 +648,16 @@ function RunningPanel({
         ) : (
           <div className="grid gap-3">
             {sessions.map((session) => (
-              <article
+              <button
                 key={session.sessionId}
-                className="theme-subtle-surface rounded-[18px] border border-border/35 px-4 py-4"
+                type="button"
+                onClick={() => onOpenSession(session.sessionId)}
+                aria-label={`Open session ${session.title}`}
+                className={`theme-subtle-surface w-full rounded-[18px] border px-4 py-4 text-left transition ${
+                  activeSessionId === session.sessionId
+                    ? "border-primary/45"
+                    : "border-border/35 hover:border-primary/30"
+                }`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
@@ -649,7 +684,7 @@ function RunningPanel({
                     {session.lastError}
                   </div>
                 ) : null}
-              </article>
+              </button>
             ))}
           </div>
         )}
