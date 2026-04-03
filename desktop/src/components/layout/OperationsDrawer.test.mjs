@@ -80,3 +80,13 @@ test("operations drawer running and outputs panels use the same compact shadcn l
   assert.doesNotMatch(source, /tracking-\[0\.16em\]/);
   assert.doesNotMatch(source, /tracking-\[0\.12em\]/);
 });
+
+test("operations drawer outputs panel surfaces crm-linked related outputs", async () => {
+  const source = await readFile(OPERATIONS_DRAWER_PATH, "utf8");
+
+  assert.match(source, /contactKey/);
+  assert.match(source, /contactRowRef/);
+  assert.match(source, /relatedOutputs/);
+  assert.match(source, /Open related CRM record/);
+  assert.match(source, /CRM-linked/);
+});

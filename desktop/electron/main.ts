@@ -12753,7 +12753,14 @@ app.whenReady().then(async () => {
         method: "POST",
         path: "/api/v1/marketplace/submissions/create",
         payload: {
-          ...payload,
+          workspace_id: payload.workspaceId,
+          name: payload.name,
+          description: payload.description,
+          category: payload.category,
+          tags: payload.tags,
+          apps: payload.apps,
+          onboarding_md: payload.onboardingMd,
+          readme_md: payload.readmeMd,
           holaboss_user_id: holabossUserId,
         },
       });

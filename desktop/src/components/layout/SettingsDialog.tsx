@@ -166,7 +166,7 @@ export function SettingsDialog({
                   key={id}
                   type="button"
                   onClick={() => onSectionChange(id)}
-                  className={`flex items-center gap-3 rounded-[14px] px-3 py-2.5 text-left transition ${
+                  className={`flex items-center gap-3 rounded-lg px-2.5 py-2 text-left transition ${
                     active
                       ? "bg-sidebar-accent text-sidebar-accent-foreground"
                       : "text-sidebar-foreground/72 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
@@ -179,7 +179,7 @@ export function SettingsDialog({
                         : "text-sidebar-foreground/60"
                     }`}
                   >
-                    <Icon size={15} />
+                    <Icon className="size-4" />
                   </span>
                   <span className="min-w-0 text-sm font-medium">{label}</span>
                 </button>
@@ -189,7 +189,7 @@ export function SettingsDialog({
         </aside>
 
         <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
-          <header className="theme-header-surface flex items-center justify-between gap-4 border-b border-border/35 px-6 py-5">
+          <header className="flex items-center justify-between gap-4 border-b border-border/35 px-6 py-5">
             <div className="text-xl font-semibold text-foreground">
               {titleForSection(activeSection)}
             </div>
@@ -206,7 +206,7 @@ export function SettingsDialog({
 
           <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 [scrollbar-gutter:stable]">
             {activeSection === "account" ? (
-              <div className="mx-auto max-w-lg">
+              <div className="w-full">
                 <AuthPanel view="account" />
               </div>
             ) : null}

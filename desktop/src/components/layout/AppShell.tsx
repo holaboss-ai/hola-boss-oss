@@ -304,6 +304,43 @@ function runtimeOutputTone(status: string): OperationsOutputEntry["tone"] {
   return "info";
 }
 
+function normalizeContactKey(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+}
+
+function normalizeContactRowRef(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value.trim() || null;
+  }
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const ref = value as {
+    spreadsheet_id?: unknown;
+    sheet_name?: unknown;
+    row_number?: unknown;
+  };
+  const spreadsheetId =
+    typeof ref.spreadsheet_id === "string" ? ref.spreadsheet_id.trim() : "";
+  const sheetName =
+    typeof ref.sheet_name === "string" ? ref.sheet_name.trim() : "";
+  const rowNumber =
+    typeof ref.row_number === "number" || typeof ref.row_number === "string"
+      ? String(ref.row_number).trim()
+      : "";
+
+  if (!spreadsheetId || !rowNumber) {
+    return null;
+  }
+
+  return `${spreadsheetId}:${sheetName}:${rowNumber}`;
+}
+
 function runtimeOutputToEntry(
   output: WorkspaceOutputRecordPayload,
   installedAppIds: Set<string>,
@@ -319,6 +356,7 @@ function runtimeOutputToEntry(
 
   // Read presentation protocol from metadata when available
   const metadata = (output.metadata ?? {}) as Record<string, unknown>;
+  const crm = (metadata.crm ?? null) as Record<string, unknown> | null;
   const presentation = metadata.presentation as
     | { kind?: string; view?: string; path?: string }
     | undefined;
@@ -341,6 +379,12 @@ function runtimeOutputToEntry(
     createdAt: output.created_at,
     tone: runtimeOutputTone(output.status),
     sessionId: output.session_id,
+    contactKey: normalizeContactKey(crm?.contact_key),
+    contactRowRef: normalizeContactRowRef(crm?.contact_row_ref),
+    primaryEmail:
+      typeof crm?.primary_email === "string" && crm.primary_email.trim()
+        ? crm.primary_email.trim()
+        : null,
     renderer:
       moduleId && installedAppIds.has(moduleId)
         ? {

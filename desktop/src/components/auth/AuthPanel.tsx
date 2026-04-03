@@ -223,12 +223,47 @@ function parseModelsText(value: string): string[] {
   );
 }
 
-function enabledProviderIdsForDrafts(
+function providerRequiresApiKey(providerId: KnownProviderId): boolean {
+  return providerId !== "holaboss" && providerId !== "ollama_direct";
+}
+
+function providerIsSelected(
+  providerId: KnownProviderId,
+  providerDrafts: ProviderDraftMap,
+  isSignedIn: boolean,
+): boolean {
+  return providerId === "holaboss"
+    ? isSignedIn
+    : providerDrafts[providerId].enabled;
+}
+
+function providerIsConnected(
+  providerId: KnownProviderId,
+  providerDrafts: ProviderDraftMap,
+  isSignedIn: boolean,
+): boolean {
+  if (providerId === "holaboss") {
+    return isSignedIn;
+  }
+
+  const draft = providerDrafts[providerId];
+  if (!draft.enabled) {
+    return false;
+  }
+
+  if (!providerRequiresApiKey(providerId)) {
+    return true;
+  }
+
+  return Boolean(draft.apiKey.trim());
+}
+
+function connectedProviderIdsForDrafts(
   providerDrafts: ProviderDraftMap,
   isSignedIn: boolean,
 ): KnownProviderId[] {
   return KNOWN_PROVIDER_ORDER.filter((providerId) =>
-    providerId === "holaboss" ? isSignedIn : providerDrafts[providerId].enabled,
+    providerIsConnected(providerId, providerDrafts, isSignedIn),
   );
 }
 
@@ -568,13 +603,15 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   }, [runtimeConfig, runtimeConfigDocument, isProviderDraftDirty]);
 
   const isSignedIn = Boolean(sessionUserId(session));
-  const providerEnabled = (providerId: KnownProviderId) =>
-    providerId === "holaboss" ? isSignedIn : providerDrafts[providerId].enabled;
+  const providerSelected = (providerId: KnownProviderId) =>
+    providerIsSelected(providerId, providerDrafts, isSignedIn);
+  const providerConnected = (providerId: KnownProviderId) =>
+    providerIsConnected(providerId, providerDrafts, isSignedIn);
   const connectedProviderIds = KNOWN_PROVIDER_ORDER.filter((providerId) =>
-    providerEnabled(providerId),
+    providerConnected(providerId),
   );
   const availableProviderIds = KNOWN_PROVIDER_ORDER.filter(
-    (providerId) => !providerEnabled(providerId),
+    (providerId) => !providerConnected(providerId),
   );
 
   const showAccountSection = view !== "runtime";
@@ -736,7 +773,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         }
       }
 
-      const enabledProviders = enabledProviderIdsForDrafts(
+      const enabledProviders = connectedProviderIdsForDrafts(
         draftsSnapshot,
         isSignedIn,
       );
@@ -937,7 +974,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       return null;
     }
 
-    if (!providerEnabled(providerId)) {
+    if (!providerSelected(providerId)) {
       return (
         <div className="rounded-[12px] border border-border/40 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
           Connect to edit settings.
@@ -1001,7 +1038,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   function renderProviderCard(providerId: KnownProviderId) {
     const template = KNOWN_PROVIDER_TEMPLATES[providerId];
     const isHolabossProvider = providerId === "holaboss";
-    const isEnabled = providerEnabled(providerId);
+    const isSelected = providerSelected(providerId);
+    const isConnected = providerConnected(providerId);
     const isExpandable = !isHolabossProvider;
     const isExpanded = isExpandable && expandedProviderId === providerId;
     const statusText = isHolabossProvider
@@ -1010,9 +1048,13 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         : isSignedIn
           ? "Signed in. Refresh runtime binding to finish setup."
           : "Sign in to enable the managed provider."
-      : isEnabled
+      : isConnected
         ? "Connected. Expand to edit settings."
-        : "Not connected.";
+        : isSelected && providerRequiresApiKey(providerId)
+          ? "Add API key to connect."
+          : isSelected
+            ? "Selected. Finish setup to connect."
+            : "Not connected.";
     const actionButtonClassName =
       "inline-flex h-9 min-w-[96px] shrink-0 items-center justify-center rounded-[10px] px-3 text-sm transition disabled:cursor-not-allowed disabled:opacity-50";
 
@@ -1045,7 +1087,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
           <div className="flex shrink-0 items-center gap-2">
             {isHolabossProvider ? (
-              isEnabled ? (
+              isConnected ? (
                 <div className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs uppercase tracking-[0.14em] text-primary">
                   Enabled
                 </div>
@@ -1059,7 +1101,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   {isStartingSignIn ? "Opening..." : "Sign in"}
                 </button>
               )
-            ) : isEnabled ? (
+            ) : isSelected ? (
               <>
                 <button
                   type="button"
@@ -1082,7 +1124,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   }}
                   className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-destructive/40 hover:text-destructive`}
                 >
-                  Disconnect
+                  {isConnected ? "Disconnect" : "Cancel"}
                 </button>
               </>
             ) : (
@@ -1100,7 +1142,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           </div>
         </div>
 
-        {isExpanded && isEnabled && (
+        {isExpanded && isSelected && (
           <div className="border-t border-border/35 px-4 pb-4 pt-3">
             {renderProviderDrawerContent(providerId)}
           </div>
@@ -1197,121 +1239,123 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   }
 
   return (
-    <section className="theme-shell w-full max-w-none overflow-hidden rounded-[24px] border border-border/40 text-sm text-foreground shadow-card">
+    <section className="theme-shell w-full max-w-none overflow-hidden rounded-xl bg-card border border-border/40 text-sm text-foreground shadow-card">
       {showAccountSection && (
-        <>
-          <div className="px-5 py-5">
-            {/* Profile header */}
-            <div className="flex items-center gap-4">
-              <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-primary/12 text-lg font-semibold text-primary">
-                {sessionInitials(session)}
+        <div className="px-5 py-5">
+          {/* Profile header */}
+          <div className="flex items-center gap-4">
+            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-primary/12 text-lg font-semibold text-primary">
+              {sessionInitials(session)}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-foreground">
+                {isSignedIn
+                  ? sessionDisplayName(session) || "Holaboss account"
+                  : "Holaboss account"}
               </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold text-foreground">
-                  {isSignedIn
-                    ? sessionDisplayName(session) || "Holaboss account"
-                    : "Holaboss account"}
-                </div>
-                <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                  {isSignedIn
-                    ? sessionEmail(session) || "Signed in"
-                    : "Not connected"}
-                </div>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span
-                  className={`size-2 rounded-full ${
-                    statusTone === "error"
-                      ? "bg-destructive"
-                      : statusTone === "ready"
-                        ? "bg-emerald-500"
-                        : statusTone === "syncing"
-                          ? "animate-pulse bg-amber-400"
-                          : "bg-muted-foreground/40"
-                  }`}
-                />
-                <span className="text-xs text-muted-foreground">{statusBadgeLabel}</span>
+              <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                {isSignedIn
+                  ? sessionEmail(session) || "Signed in"
+                  : "Not connected"}
               </div>
             </div>
-
-            {/* Status rows */}
-            <div className="mt-5 space-y-2">
-              {infoRows.map((row) => (
-                <div
-                  key={row.label}
-                  className="flex items-center justify-between rounded-lg border border-border bg-muted/50 px-4 py-2.5"
-                >
-                  <span className="text-sm text-foreground">{row.label}</span>
-                  <span className="text-sm text-muted-foreground">{row.value}</span>
-                </div>
-              ))}
-            </div>
-
-            {/* Status message */}
-            {isFinishingSetup && !isExchangingRuntimeBinding && (
-              <div className="mt-4 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-2.5 text-xs text-amber-500">
-                <span className="size-1.5 animate-pulse rounded-full bg-amber-400" />
-                Finishing local runtime setup...
-              </div>
-            )}
-
-            {(authMessage || authError) && (
-              <div
-                className={`mt-4 rounded-lg border px-4 py-2.5 text-xs ${
-                  authError
-                    ? "border-destructive/20 bg-destructive/5 text-destructive"
-                    : "border-emerald-500/20 bg-emerald-500/5 text-emerald-500"
+            <div className="flex items-center gap-1.5">
+              <span
+                className={`size-2 rounded-full ${
+                  statusTone === "error"
+                    ? "bg-destructive"
+                    : statusTone === "ready"
+                      ? "bg-emerald-500"
+                      : statusTone === "syncing"
+                        ? "animate-pulse bg-amber-400"
+                        : "bg-muted-foreground/40"
                 }`}
-              >
-                {authError || authMessage}
-              </div>
-            )}
-
-            {/* Actions */}
-            <div className="mt-5 flex items-center gap-2">
-              {!isSignedIn && (
-                <button
-                  className="inline-flex h-9 items-center rounded-lg bg-primary px-4 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-                  type="button"
-                  onClick={() => void handleStartSignIn()}
-                  disabled={isStartingSignIn}
-                >
-                  {isStartingSignIn ? "Opening..." : "Sign in"}
-                </button>
-              )}
-
-              {isSignedIn && !runtimeBindingReady && (
-                <button
-                  className="inline-flex h-9 items-center rounded-lg bg-primary px-4 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-                  type="button"
-                  onClick={() => void handleExchangeRuntimeBinding()}
-                  disabled={isExchangingRuntimeBinding}
-                >
-                  {isExchangingRuntimeBinding ? "Retrying..." : "Retry setup"}
-                </button>
-              )}
-
-              <button
-                className="inline-flex h-9 items-center rounded-lg border border-border px-4 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
-                type="button"
-                onClick={() => void handleRefreshSession()}
-                disabled={sessionState.isPending}
-              >
-                Refresh
-              </button>
-
-              {isSignedIn && (
-                <button
-                  className="inline-flex h-9 items-center rounded-lg border border-destructive/25 px-4 text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
-                  type="button"
-                  onClick={() => void handleSignOut()}
-                >
-                  Sign out
-                </button>
-              )}
+              />
+              <span className="text-xs text-muted-foreground">
+                {statusBadgeLabel}
+              </span>
             </div>
           </div>
-        </>
+
+          {/* Status rows */}
+          <div className="mt-5 space-y-2">
+            {infoRows.map((row) => (
+              <div
+                key={row.label}
+                className="flex items-center justify-between rounded-lg border border-border bg-muted/50 px-4 py-2.5"
+              >
+                <span className="text-sm text-foreground">{row.label}</span>
+                <span className="text-sm text-muted-foreground">
+                  {row.value}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Status message */}
+          {isFinishingSetup && !isExchangingRuntimeBinding && (
+            <div className="mt-4 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-2.5 text-xs text-amber-500">
+              <span className="size-1.5 animate-pulse rounded-full bg-amber-400" />
+              Finishing local runtime setup...
+            </div>
+          )}
+
+          {(authMessage || authError) && (
+            <div
+              className={`mt-4 rounded-lg border px-4 py-2.5 text-xs ${
+                authError
+                  ? "border-destructive/20 bg-destructive/5 text-destructive"
+                  : "border-emerald-500/20 bg-emerald-500/5 text-emerald-500"
+              }`}
+            >
+              {authError || authMessage}
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="mt-5 flex items-center gap-2">
+            {!isSignedIn && (
+              <button
+                className="inline-flex h-9 items-center rounded-lg bg-primary px-4 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                type="button"
+                onClick={() => void handleStartSignIn()}
+                disabled={isStartingSignIn}
+              >
+                {isStartingSignIn ? "Opening..." : "Sign in"}
+              </button>
+            )}
+
+            {isSignedIn && !runtimeBindingReady && (
+              <button
+                className="inline-flex h-9 items-center rounded-lg bg-primary px-4 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                type="button"
+                onClick={() => void handleExchangeRuntimeBinding()}
+                disabled={isExchangingRuntimeBinding}
+              >
+                {isExchangingRuntimeBinding ? "Retrying..." : "Retry setup"}
+              </button>
+            )}
+
+            <button
+              className="inline-flex h-9 items-center rounded-lg border border-border px-4 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+              type="button"
+              onClick={() => void handleRefreshSession()}
+              disabled={sessionState.isPending}
+            >
+              Refresh
+            </button>
+
+            {isSignedIn && (
+              <button
+                className="inline-flex h-9 items-center rounded-lg border border-destructive/25 px-4 text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
+                type="button"
+                onClick={() => void handleSignOut()}
+              >
+                Sign out
+              </button>
+            )}
+          </div>
+        </div>
       )}
 
       {!showAccountSection && showRuntimeSection && (
