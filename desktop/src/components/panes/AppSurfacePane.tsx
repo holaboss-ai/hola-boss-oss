@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Activity, Globe, LoaderCircle, Plug, RefreshCw, Trash2 } from "lucide-react";
+import { Activity, LoaderCircle, Plug, RefreshCw, Trash2 } from "lucide-react";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import { getWorkspaceAppDefinition, type WorkspaceAppDefinition, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
@@ -27,10 +27,6 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
   const summary = app?.summary ?? "";
   const accentClassName = app && "accentClassName" in app ? app.accentClassName : "bg-muted-foreground/40";
 
-  const viewLabel = view ? view.charAt(0).toUpperCase() + view.slice(1) : "Home";
-  const addressText = resourceId
-    ? `${label.toLowerCase()}://workspace/${viewLabel.toLowerCase()}/${resourceId}`
-    : `${label.toLowerCase()}://workspace/${viewLabel.toLowerCase()}`;
 
   // Integration connection status for this app
   const [integrationStatus, setIntegrationStatus] = useState<{ connected: boolean; providerName: string } | null>(null);
@@ -240,10 +236,6 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
                 Running
               </span>
             </div>
-            <div className="flex items-center justify-between rounded-md border border-border bg-muted/50 px-3 py-2">
-              <span className="text-xs text-muted-foreground">View</span>
-              <span className="text-xs font-medium text-foreground">{viewLabel}</span>
-            </div>
             {resourceId ? (
               <div className="flex items-center justify-between rounded-md border border-border bg-muted/50 px-3 py-2">
                 <span className="text-xs text-muted-foreground">Resource</span>
@@ -330,23 +322,9 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
         </div>
       </section>
 
-      {/* Right: Browser card */}
+      {/* Right: App viewport */}
       <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
-        {/* Browser chrome bar */}
-        <div className="flex items-center gap-2.5 border-b border-border px-3 py-2">
-          <div className="flex items-center gap-1.5">
-            <span className="size-[10px] rounded-full bg-[#ff5f57]" />
-            <span className="size-[10px] rounded-full bg-[#febc2e]" />
-            <span className="size-[10px] rounded-full bg-[#28c840]" />
-          </div>
-          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1">
-            <Globe size={11} className="shrink-0 text-muted-foreground" />
-            <span className="truncate text-[11px] text-muted-foreground">{addressText}</span>
-          </div>
-        </div>
-
-        {/* Viewport — inset so native BrowserView doesn't cover card corners */}
-        <div className="relative min-h-0 flex-1 p-1.5 pb-1.5">
+        <div className="relative min-h-0 flex-1 p-1.5">
           <div ref={viewportRef} className="h-full w-full rounded-lg" />
           <div className="pointer-events-none absolute inset-1.5 flex items-center justify-center rounded-lg">
             <div className="flex flex-col items-center gap-2">
