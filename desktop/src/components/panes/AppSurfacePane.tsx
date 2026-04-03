@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, LoaderCircle, Plug, RefreshCw, Trash2 } from "lucide-react";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
@@ -16,17 +16,25 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
   const { refreshInstalledApps, removeInstalledApp } = useWorkspaceDesktop();
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const app = providedApp || getWorkspaceAppDefinition(appId);
-  const viewportRef = useRef<HTMLDivElement | null>(null);
   const [isRemoving, setIsRemoving] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [frameUrl, setFrameUrl] = useState("");
+  const [frameLoading, setFrameLoading] = useState(false);
+  const [frameError, setFrameError] = useState("");
+
   const label = app?.label ?? appId;
   const ready = app && "ready" in app ? app.ready : false;
   const error = app && "error" in app && typeof app.error === "string" ? app.error : null;
   const summary = app?.summary ?? "";
   const accentClassName = app && "accentClassName" in app ? app.accentClassName : "bg-muted-foreground/40";
 
+  const routePath = useMemo(
+    () => resolveAppSurfacePath({ resourceId, view }),
+    [resourceId, view],
+  );
 
   // Integration connection status for this app
   const [integrationStatus, setIntegrationStatus] = useState<{ connected: boolean; providerName: string } | null>(null);
@@ -36,7 +44,6 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
     try {
       const { connections } = await window.electronAPI.workspace.listIntegrationConnections();
       const { providers } = await window.electronAPI.workspace.listIntegrationCatalog();
-      // Find provider required by this app via bindings or catalog lookup
       const bindings = await window.electronAPI.workspace.listIntegrationBindings(selectedWorkspaceId);
       const appBinding = bindings.bindings.find(
         (b) => b.target_type === "app" && b.target_id === appId,
@@ -49,7 +56,6 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
           providerName: provider?.display_name ?? appBinding.integration_key,
         });
       } else {
-        // No binding yet — check if there's a workspace-level default for a known provider
         const knownProviders: Record<string, string> = { gmail: "gmail", sheets: "googlesheets", github: "github", reddit: "reddit", twitter: "twitter", linkedin: "linkedin" };
         const expectedProvider = knownProviders[appId.toLowerCase()];
         if (expectedProvider) {
@@ -70,6 +76,34 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
     void checkIntegration();
   }, [checkIntegration]);
 
+  // Resolve iframe URL when app is ready
+  useEffect(() => {
+    if (!ready || !selectedWorkspaceId) {
+      setFrameUrl("");
+      setFrameLoading(false);
+      setFrameError("");
+      return;
+    }
+
+    let cancelled = false;
+    setFrameLoading(true);
+    setFrameError("");
+
+    void window.electronAPI.appSurface
+      .resolveUrl(selectedWorkspaceId, appId, routePath)
+      .then((url) => {
+        if (!cancelled) setFrameUrl(url);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setFrameError(err instanceof Error ? err.message : "Failed to resolve app URL.");
+          setFrameLoading(false);
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [appId, ready, reloadKey, routePath, selectedWorkspaceId]);
+
   async function handleRemove() {
     if (isRemoving) return;
     setIsRemoving(true);
@@ -88,58 +122,16 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
     if (isRetrying) return;
     setIsRetrying(true);
     setActionError("");
+    setFrameError("");
     try {
       await refreshInstalledApps();
+      setReloadKey((k) => k + 1);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Retry failed.");
     } finally {
       setIsRetrying(false);
     }
   }
-
-  // Navigate BrowserView when app is ready and appId/resourceId/view changes.
-  useEffect(() => {
-    if (!ready || !selectedWorkspaceId) return;
-    const urlPath = resolveAppSurfacePath({ view, resourceId });
-    void window.electronAPI.appSurface.navigate(selectedWorkspaceId, appId, urlPath);
-    return () => {
-      void window.electronAPI.appSurface.destroy(appId);
-    };
-  }, [appId, ready, selectedWorkspaceId, resourceId, view]);
-
-  useLayoutEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport || !ready) return;
-
-    let rafId = 0;
-    const syncBounds = () => {
-      const rect = viewport.getBoundingClientRect();
-      void window.electronAPI.appSurface.setBounds({
-        x: rect.left,
-        y: rect.top,
-        width: rect.width,
-        height: rect.height,
-      });
-    };
-    const queueSync = () => {
-      window.cancelAnimationFrame(rafId);
-      rafId = window.requestAnimationFrame(syncBounds);
-    };
-    queueSync();
-
-    const observer = new ResizeObserver(queueSync);
-    observer.observe(viewport);
-    window.addEventListener("resize", queueSync);
-    window.setTimeout(queueSync, 100);
-    window.setTimeout(queueSync, 400);
-
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", queueSync);
-      window.cancelAnimationFrame(rafId);
-      void window.electronAPI.appSurface.setBounds({ x: 0, y: 0, width: 0, height: 0 });
-    };
-  }, [ready]);
 
   // Initializing state
   if (!ready && !error) {
@@ -213,12 +205,12 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
     );
   }
 
-  // Ready state — left info card + right browser card
+  // Ready state — left info card + right iframe
   return (
     <div className="flex h-full min-h-0 gap-2">
       {/* Left: App info card */}
       <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
-        <div className="flex-1 p-4">
+        <div className="chat-scrollbar-hidden flex-1 overflow-y-auto p-4">
           <div className="flex items-center gap-2.5">
             <span className={`size-2.5 shrink-0 rounded-full ${accentClassName}`} />
             <span className="text-sm font-semibold text-foreground">{label}</span>
@@ -278,7 +270,7 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
           <div className="flex flex-col gap-1.5">
             <button
               type="button"
-              onClick={() => window.electronAPI.appSurface.reload(appId)}
+              onClick={() => setReloadKey((k) => k + 1)}
               className="flex h-8 items-center justify-center gap-2 rounded-md border border-border text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
             >
               <RefreshCw size={12} />
@@ -322,16 +314,45 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
         </div>
       </section>
 
-      {/* Right: App viewport */}
-      <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
-        <div className="relative min-h-0 flex-1 p-1.5">
-          <div ref={viewportRef} className="h-full w-full rounded-lg" />
-          <div className="pointer-events-none absolute inset-1.5 flex items-center justify-center rounded-lg">
-            <div className="flex flex-col items-center gap-2">
-              <LoaderCircle size={16} className="animate-spin text-muted-foreground" />
-              <span className="text-xs text-muted-foreground">Loading {label}...</span>
+      {/* Right: App iframe */}
+      <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-md">
+        <div className="relative min-h-0 flex-1">
+          {frameUrl ? (
+            <iframe
+              key={`${frameUrl}:${reloadKey}`}
+              src={frameUrl}
+              title={`${label} surface`}
+              className="h-full w-full border-0"
+              onLoad={() => {
+                setFrameLoading(false);
+                setFrameError("");
+              }}
+            />
+          ) : null}
+          {frameLoading ? (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/80">
+              <div className="text-center">
+                <LoaderCircle size={18} className="mx-auto animate-spin text-muted-foreground" />
+                <div className="mt-2 text-xs text-muted-foreground">Loading {label}...</div>
+              </div>
             </div>
-          </div>
+          ) : null}
+          {frameError ? (
+            <div className="absolute inset-0 flex items-center justify-center px-6">
+              <div className="max-w-sm rounded-lg border border-destructive/25 bg-destructive/5 p-4 text-center">
+                <div className="text-sm font-medium text-foreground">App preview unavailable</div>
+                <div className="mt-2 text-xs leading-5 text-muted-foreground">{frameError}</div>
+                <button
+                  type="button"
+                  onClick={() => setReloadKey((k) => k + 1)}
+                  className="mt-3 inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-xs text-foreground transition-colors hover:bg-accent"
+                >
+                  <RefreshCw size={12} />
+                  Retry
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
       </section>
     </div>

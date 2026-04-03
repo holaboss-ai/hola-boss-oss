@@ -851,6 +851,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("appSurface:destroy", appId) as Promise<void>,
     hide: () =>
       ipcRenderer.invoke("appSurface:hide") as Promise<void>,
+    resolveUrl: (workspaceId: string, appId: string, path?: string) =>
+      ipcRenderer.invoke("appSurface:resolveUrl", workspaceId, appId, path) as Promise<string>,
   },
   workspace: {
     getClientConfig: () => ipcRenderer.invoke("workspace:getClientConfig") as Promise<HolabossClientConfigPayload>,

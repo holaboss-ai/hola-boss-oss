@@ -9111,6 +9111,25 @@ function updateAttachedAppSurfaceView(): void {
   view.setBounds(appSurfaceBounds);
 }
 
+async function resolveAppSurfaceUrl(
+  workspaceId: string,
+  appId: string,
+  urlPath?: string,
+): Promise<string> {
+  const baseUrl = await getAppHttpUrl(workspaceId, appId);
+  if (!baseUrl) {
+    throw new Error(`Could not resolve HTTP URL for app ${appId}`);
+  }
+  const normalizedPath = typeof urlPath === "string" ? urlPath.trim() : "";
+  if (!normalizedPath) {
+    return baseUrl;
+  }
+  const targetPath = normalizedPath.startsWith("/")
+    ? normalizedPath
+    : `/${normalizedPath}`;
+  return `${baseUrl}${targetPath}`;
+}
+
 async function navigateAppSurface(
   workspaceId: string,
   appId: string,
@@ -12433,6 +12452,12 @@ app.whenReady().then(async () => {
   handleTrustedIpc("appSurface:hide", ["main"], () => {
     hideAppSurface();
   });
+  handleTrustedIpc(
+    "appSurface:resolveUrl",
+    ["main"],
+    async (_event, workspaceId: string, appId: string, urlPath?: string) =>
+      resolveAppSurfaceUrl(workspaceId, appId, urlPath),
+  );
   handleTrustedIpc(
     "workspace:listOutputs",
     ["main"],

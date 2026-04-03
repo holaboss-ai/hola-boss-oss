@@ -945,6 +945,7 @@ declare global {
       reload(appId: string): Promise<void>;
       destroy(appId: string): Promise<void>;
       hide(): Promise<void>;
+      resolveUrl(workspaceId: string, appId: string, path?: string): Promise<string>;
     };
     workspace: {
       getClientConfig: () => Promise<HolabossClientConfigPayload>;
