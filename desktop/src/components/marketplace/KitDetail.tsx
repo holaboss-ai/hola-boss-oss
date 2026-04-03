@@ -19,7 +19,7 @@ export function KitDetail({
   template,
   onBack,
   onSelect,
-  selectLabel = "Use this kit",
+  selectLabel = "Use this worker",
   selectDisabled = false,
   selectDisabledReason,
   onSignIn,
@@ -37,7 +37,7 @@ export function KitDetail({
         className="mb-5 self-start"
       >
         <ArrowLeft size={13} />
-        Back to kits
+        Back to workers
       </Button>
 
       {/* Header */}

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { holabossLogoUrl } from "@/lib/assetPaths";
 import { KitCard } from "./KitCard";
 import { FALLBACK_TEMPLATES } from "./fallbackTemplates";
 import { marketplaceGalleryBranding } from "./marketplaceGalleryBranding";
@@ -34,7 +35,7 @@ export function MarketplaceGallery({
   const branding = marketplaceGalleryBranding(mode);
 
   const effectiveTemplates =
-    authenticated && templates.length > 0 ? templates : FALLBACK_TEMPLATES;
+    templates.length > 0 ? templates : FALLBACK_TEMPLATES;
 
   const visibleTemplates = useMemo(() => {
     let available = effectiveTemplates.filter(
@@ -63,7 +64,7 @@ export function MarketplaceGallery({
         {branding.showLogo ? (
           <div className="mb-3 flex items-center gap-3">
             <div className="flex h-8 items-center gap-2 justify-center">
-              <img src="/logo.svg" alt="Holaboss" className="size-6" />
+              <img src={holabossLogoUrl} alt="Holaboss" className="size-6" />
               <h1 className="text-sm font-semibold tracking-tight">Holaboss</h1>
             </div>
             <div className="h-4 w-px bg-border" />
@@ -93,7 +94,7 @@ export function MarketplaceGallery({
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search kits by name or tag"
+          placeholder="Search workers by name or tag"
           className="h-9 pl-8"
         />
       </div>
@@ -139,8 +140,8 @@ export function MarketplaceGallery({
         ) : visibleTemplates.length === 0 ? (
           <div className="rounded-xl border border-border bg-muted/50 px-4 py-5 text-xs text-muted-foreground">
             {query.trim()
-              ? "No kits match your search."
-              : "No kits available yet."}
+              ? "No workers match your search."
+              : "No workers available yet."}
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">

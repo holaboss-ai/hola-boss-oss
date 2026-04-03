@@ -5083,6 +5083,21 @@ async function parseLocalTemplateMetadata(
 }
 
 async function listMarketplaceTemplates(): Promise<TemplateListResponsePayload> {
+  // Try unauthenticated fetch first — the templates endpoint is public.
+  const baseUrl = marketplaceBaseUrl();
+  try {
+    const res = await fetch(`${baseUrl}/api/v1/marketplace/templates`, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (res.ok) {
+      return (await res.json()) as TemplateListResponsePayload;
+    }
+  } catch {
+    // Fall through to authenticated path.
+  }
+
+  // Fallback: authenticated path (e.g. if public access is disabled).
   await ensureRuntimeBindingReadyForWorkspaceFlow("marketplace_templates", {
     allowProvisionWhenUnmanaged: true,
     waitForStartupSync: true,
@@ -8582,6 +8597,7 @@ async function fileExists(targetPath: string) {
 const REQUIRED_RUNTIME_BUNDLE_PATHS = [
   path.join("bin", "sandbox-runtime"),
   "package-metadata.json",
+  path.join("node-runtime", "node_modules", ".bin", "node"),
   path.join("runtime", "metadata.json"),
   path.join("runtime", "api-server", "dist", "index.mjs"),
 ] as const;

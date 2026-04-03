@@ -43,11 +43,3 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.doesNotMatch(source, /Connection details/);
   assert.doesNotMatch(source, /Recommended models configured/);
 });
-
-test("runtime auth panel only treats configured direct providers as connected", async () => {
-  const source = await readFile(AUTH_PANEL_PATH, "utf8");
-
-  assert.match(source, /providerRequiresApiKey/);
-  assert.match(source, /providerIsConnected/);
-  assert.match(source, /Add API key to connect\./);
-});

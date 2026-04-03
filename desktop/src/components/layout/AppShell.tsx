@@ -591,6 +591,8 @@ function AppShellContent() {
     hasHydratedWorkspaceList,
     selectedWorkspace,
     installedApps,
+    workspaceAppsReady,
+    workspaceBlockingReason,
     workspaceErrorMessage,
     onboardingModeActive,
   } = useWorkspaceDesktop();
@@ -1596,6 +1598,16 @@ function AppShellContent() {
         workspaceErrorMessage ||
         "Embedded runtime failed to start."
       : "";
+  const hydratedRuntimeErrorMessage =
+    hasHydratedWorkspaceList &&
+    hasSelectedWorkspace &&
+    runtimeStatus?.status === "error" &&
+    !workspaceAppsReady
+      ? runtimeStatus.lastError.trim() ||
+        workspaceBlockingReason ||
+        workspaceErrorMessage ||
+        "Embedded runtime failed to start."
+      : "";
   const isMacDesktop = window.electronAPI?.platform === "darwin";
   const mainGridClassName = appShellMainGridClassName({
     hasWorkspaces,
@@ -1918,6 +1930,8 @@ function AppShellContent() {
           )
         ) : !hasWorkspaces ? (
           <FirstWorkspacePane />
+        ) : hydratedRuntimeErrorMessage ? (
+          <WorkspaceStartupErrorPane message={hydratedRuntimeErrorMessage} />
         ) : showOnboardingTakeover ? (
           <WorkspaceOnboardingTakeover
             onOutputsChanged={() => void refreshRuntimeOutputs()}

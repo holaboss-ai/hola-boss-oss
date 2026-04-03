@@ -543,17 +543,6 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   }
 
   useEffect(() => {
-    if (!canUseMarketplaceTemplates) {
-      setMarketplaceTemplates([]);
-      setSelectedMarketplaceTemplateName("");
-      setMarketplaceTemplatesError("");
-      setIsLoadingMarketplaceTemplates(false);
-      if (templateSourceMode === "marketplace") {
-        setTemplateSourceModeState("local");
-      }
-      return;
-    }
-
     let cancelled = false;
     async function loadMarketplaceTemplates() {
       setIsLoadingMarketplaceTemplates(true);

@@ -143,7 +143,7 @@ export function MarketplacePane() {
               onClick={() => setView("detail")}
               className="mb-4 self-start text-[12px] text-muted-foreground/76 underline transition-colors hover:text-foreground"
             >
-              &larr; Back to kit details
+              &larr; Back to worker details
             </button>
 
             {isCreatingWorkspace ? (

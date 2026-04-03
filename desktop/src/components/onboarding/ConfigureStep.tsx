@@ -111,7 +111,7 @@ export function ConfigureStep({
           <ArrowRight size={16} />
         </Button>
         <Button variant="link" size="sm" onClick={onBackToKits} className="text-muted-foreground">
-          Back to kits
+          Back to workers
         </Button>
       </div>
     </div>
