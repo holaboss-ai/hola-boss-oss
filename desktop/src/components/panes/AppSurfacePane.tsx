@@ -315,8 +315,8 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
       </section>
 
       {/* Right: App iframe */}
-      <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-md">
-        <div className="relative min-h-0 flex-1">
+      <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-md shadow-black/5">
+        <div className="relative min-h-0 flex-1 ring-1 ring-inset ring-border/50 shadow-[inset_0_2px_6px_rgba(0,0,0,0.08)]" style={{ borderRadius: "inherit" }}>
           {frameUrl ? (
             <iframe
               key={`${frameUrl}:${reloadKey}`}
