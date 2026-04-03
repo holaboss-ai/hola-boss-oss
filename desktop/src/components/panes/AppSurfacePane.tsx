@@ -235,8 +235,8 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
           <div className="mt-4 space-y-1.5">
             <div className="flex items-center justify-between rounded-md border border-border bg-muted/50 px-3 py-2">
               <span className="text-xs text-muted-foreground">Status</span>
-              <span className="flex items-center gap-1.5 text-xs font-medium text-primary">
-                <span className="size-1.5 rounded-full bg-primary" />
+              <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-500">
+                <span className="size-1.5 rounded-full bg-emerald-500" />
                 Running
               </span>
             </div>
@@ -256,8 +256,8 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
                   <Plug size={11} />
                   {integrationStatus.providerName}
                 </span>
-                <span className={`flex items-center gap-1.5 text-xs font-medium ${integrationStatus.connected ? "text-primary" : "text-destructive"}`}>
-                  <span className={`size-1.5 rounded-full ${integrationStatus.connected ? "bg-primary" : "bg-destructive"}`} />
+                <span className={`flex items-center gap-1.5 text-xs font-medium ${integrationStatus.connected ? "text-emerald-500" : "text-destructive"}`}>
+                  <span className={`size-1.5 rounded-full ${integrationStatus.connected ? "bg-emerald-500" : "bg-destructive"}`} />
                   {integrationStatus.connected ? "Connected" : "Not connected"}
                 </span>
               </div>
