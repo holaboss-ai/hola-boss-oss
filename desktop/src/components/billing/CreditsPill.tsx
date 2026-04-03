@@ -1,4 +1,5 @@
 import { Loader2, Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface CreditsPillProps {
   balance: number | null;
@@ -14,13 +15,15 @@ export function CreditsPill({
   onClick,
 }: CreditsPillProps) {
   return (
-    <button
+    <Button
       type="button"
+      size="lg"
+      variant="outline"
       onClick={onClick}
-      className={`inline-flex h-9 shrink-0 items-center gap-2 rounded-full border px-3 text-sm transition ${
+      className={`inline-flex h-9 shrink-0 items-center border px-3 text-sm transition ${
         isLowBalance
           ? "border-amber-300/40 bg-amber-400/10 text-amber-200 hover:bg-amber-400/14"
-          : "border-border/55 bg-card/80 text-foreground hover:bg-accent"
+          : "border-border/55"
       }`}
       aria-label="Open credits and billing details"
     >
@@ -32,6 +35,6 @@ export function CreditsPill({
       <span className="font-medium tabular-nums">
         {isLoading ? "..." : (balance ?? 0).toLocaleString()}
       </span>
-    </button>
+    </Button>
   );
 }

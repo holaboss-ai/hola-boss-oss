@@ -65,13 +65,13 @@ export function LeftNavigationRail({
                         className={`flex size-10 items-center justify-center rounded-lg transition-colors ${
                           isActive
                             ? "bg-primary/12 text-primary"
-                            : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                            : "text-muted-foreground hover:bg-accent/36 hover:text-accent-foreground"
                         }`}
                       >
                         {item.icon}
                       </button>
                     }
-                  ></TooltipTrigger>
+                  />
                   <TooltipContent side="right" align="center">
                     {item.label}
                   </TooltipContent>
@@ -102,8 +102,8 @@ export function LeftNavigationRail({
                             onClick={() => onSelectApp?.(app.id)}
                             className={`relative flex size-10 items-center justify-center rounded-md transition-colors ${
                               isActive
-                                ? "bg-accent text-accent-foreground"
-                                : "bg-muted/80 text-muted-foreground hover:bg-muted"
+                                ? "bg-primary/12 text-accent-foreground"
+                                : "bg-muted/80 text-muted-foreground hover:bg-accent/36"
                             }`}
                           >
                             {providerIcon(app.id, 18) ?? (

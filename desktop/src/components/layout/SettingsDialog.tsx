@@ -1,16 +1,16 @@
-import { useEffect } from "react";
 import {
   CircleHelp,
   CreditCard,
   ExternalLink,
   Globe,
   Info,
-  Palette,
   Plug,
+  Settings2,
   User2,
   Waypoints,
   X,
 } from "lucide-react";
+import { useEffect } from "react";
 import { AuthPanel } from "@/components/auth/AuthPanel";
 import { BillingSettingsPanel } from "@/components/billing/BillingSettingsPanel";
 import { IntegrationsPane } from "@/components/panes/IntegrationsPane";
@@ -49,10 +49,10 @@ const SETTINGS_SECTIONS: Array<{
   icon: typeof User2;
 }> = [
   { id: "account", label: "Account", icon: User2 },
+  { id: "settings", label: "Settings", icon: Settings2 },
   { id: "billing", label: "Billing", icon: CreditCard },
   { id: "providers", label: "Model Providers", icon: Waypoints },
   { id: "integrations", label: "Integrations", icon: Plug },
-  { id: "settings", label: "Settings", icon: Palette },
   { id: "about", label: "About", icon: Info },
 ];
 
@@ -94,7 +94,6 @@ function titleForSection(section: UiSettingsPaneSection): string {
       return "Integrations";
     case "about":
       return "About";
-    case "settings":
     default:
       return "Settings";
   }
@@ -158,10 +157,6 @@ export function SettingsDialog({
         className="pointer-events-auto relative z-10 grid h-[min(780px,calc(100vh-32px))] w-[min(1080px,calc(100vw-24px))] min-w-0 overflow-hidden rounded-[28px] border border-border bg-background shadow-lg grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[248px_minmax(0,1fr)] lg:grid-rows-1"
       >
         <aside className="border-b border-sidebar-border bg-sidebar p-4 text-sidebar-foreground lg:border-b-0 lg:border-r">
-          <div className="text-sm font-semibold tracking-[0.01em] text-sidebar-foreground">
-            holaboss
-          </div>
-
           <nav className="mt-6 grid gap-1.5">
             {SETTINGS_SECTIONS.map(({ id, label, icon: Icon }) => {
               const active = id === activeSection;

@@ -121,7 +121,13 @@ function isAppTheme(value: string): value is AppTheme {
 }
 
 function isSettingsPaneSection(value: string): value is UiSettingsPaneSection {
-  return value === "account" || value === "billing" || value === "providers" || value === "settings" || value === "about";
+  return (
+    value === "account" ||
+    value === "billing" ||
+    value === "providers" ||
+    value === "settings" ||
+    value === "about"
+  );
 }
 
 type AgentView =
@@ -322,9 +328,10 @@ function runtimeOutputToEntry(
   const presentationView = hasAppPresentation
     ? presentation!.view!
     : output.output_type || "home";
-  const presentationResourceId = hasAppPresentation && presentation!.path
-    ? presentation!.path
-    : output.module_resource_id || output.artifact_id || output.id;
+  const presentationResourceId =
+    hasAppPresentation && presentation!.path
+      ? presentation!.path
+      : output.module_resource_id || output.artifact_id || output.id;
 
   return {
     id: `runtime-output:${output.id}`,
@@ -350,7 +357,6 @@ function runtimeOutputToEntry(
           },
   };
 }
-
 
 function EmptyWorkspacePane() {
   return (
@@ -397,7 +403,10 @@ function WorkspaceInitializingGate({
         {hasErrors ? (
           <TriangleAlert size={20} className="text-rose-400" />
         ) : (
-          <Loader2 size={20} className="animate-spin text-muted-foreground/60" />
+          <Loader2
+            size={20}
+            className="animate-spin text-muted-foreground/60"
+          />
         )}
 
         <h2 className="mt-5 text-[17px] font-medium tracking-[-0.01em] text-foreground">
@@ -420,7 +429,10 @@ function WorkspaceInitializingGate({
               ) : app.error ? (
                 <XCircle size={14} className="shrink-0 text-rose-400" />
               ) : (
-                <Loader2 size={14} className="shrink-0 animate-spin text-muted-foreground/50" />
+                <Loader2
+                  size={14}
+                  className="shrink-0 animate-spin text-muted-foreground/50"
+                />
               )}
               <span className="min-w-0 flex-1 text-left text-[13px] text-foreground">
                 {app.label}
@@ -538,7 +550,9 @@ function AppShellContent() {
     workspaceErrorMessage,
     onboardingModeActive,
   } = useWorkspaceDesktop();
-  const selectedWorkspaceExists = Boolean(selectedWorkspaceId && selectedWorkspace);
+  const selectedWorkspaceExists = Boolean(
+    selectedWorkspaceId && selectedWorkspace,
+  );
   const [theme, setTheme] = useState<AppTheme>(loadTheme);
   const [runtimeStatus, setRuntimeStatus] =
     useState<RuntimeStatusPayload | null>(null);
@@ -550,17 +564,19 @@ function AppShellContent() {
   const [publishOpen, setPublishOpen] = useState(false);
   const [createWorkspacePanelOpen, setCreateWorkspacePanelOpen] =
     useState(false);
-  const [createWorkspacePanelAnchorWorkspaceId, setCreateWorkspacePanelAnchorWorkspaceId] =
-    useState("");
+  const [
+    createWorkspacePanelAnchorWorkspaceId,
+    setCreateWorkspacePanelAnchorWorkspaceId,
+  ] = useState("");
   const [activeLeftRailItem, setActiveLeftRailItem] =
     useState<LeftRailItem>("space");
   const [agentView, setAgentView] = useState<AgentView>({ type: "chat" });
   const [chatFocusRequestKey, setChatFocusRequestKey] = useState(1);
   const [chatSessionOpenRequest, setChatSessionOpenRequest] =
     useState<ChatSessionOpenRequest | null>(null);
-  const [activeChatSessionId, setActiveChatSessionId] = useState<
-    string | null
-  >(null);
+  const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(
+    null,
+  );
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = useState(false);
   const [spaceVisibility, setSpaceVisibility] =
     useState<SpaceVisibilityState>(loadSpaceVisibility);
@@ -752,7 +768,11 @@ function AppShellContent() {
   );
 
   const refreshRuntimeOutputs = useCallback(async () => {
-    if (!selectedWorkspaceId || !selectedWorkspaceExists || runtimeStatus?.status !== "running") {
+    if (
+      !selectedWorkspaceId ||
+      !selectedWorkspaceExists ||
+      runtimeStatus?.status !== "running"
+    ) {
       setRuntimeOutputEntries([]);
       return;
     }
@@ -768,16 +788,30 @@ function AppShellContent() {
     } catch {
       setRuntimeOutputEntries([]);
     }
-  }, [installedApps, runtimeStatus?.status, selectedWorkspaceExists, selectedWorkspaceId]);
+  }, [
+    installedApps,
+    runtimeStatus?.status,
+    selectedWorkspaceExists,
+    selectedWorkspaceId,
+  ]);
 
   useEffect(() => {
-    if (!selectedWorkspaceId || !selectedWorkspaceExists || runtimeStatus?.status !== "running") {
+    if (
+      !selectedWorkspaceId ||
+      !selectedWorkspaceExists ||
+      runtimeStatus?.status !== "running"
+    ) {
       setRuntimeOutputEntries([]);
       return;
     }
 
     void refreshRuntimeOutputs();
-  }, [refreshRuntimeOutputs, runtimeStatus?.status, selectedWorkspaceExists, selectedWorkspaceId]);
+  }, [
+    refreshRuntimeOutputs,
+    runtimeStatus?.status,
+    selectedWorkspaceExists,
+    selectedWorkspaceId,
+  ]);
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.workspace.onSessionStreamEvent(
@@ -1753,10 +1787,6 @@ function AppShellContent() {
                 setSettingsDialogSection("billing");
                 setSettingsDialogOpen(true);
               }}
-              onOpenModelProviders={() => {
-                setSettingsDialogSection("providers");
-                setSettingsDialogOpen(true);
-              }}
               onOpenExternalUrl={handleOpenExternalUrl}
               onPublish={() => setPublishOpen(true)}
             />
@@ -1995,7 +2025,9 @@ function AppShellContent() {
                   activeRunningSessionId={activeChatSessionId}
                   hasWorkspace={hasSelectedWorkspace}
                   selectedWorkspaceId={selectedWorkspaceId}
-                  mainSessionId={(selectedWorkspace?.main_session_id || "").trim() || null}
+                  mainSessionId={
+                    (selectedWorkspace?.main_session_id || "").trim() || null
+                  }
                 />
               </div>
             ) : null}
