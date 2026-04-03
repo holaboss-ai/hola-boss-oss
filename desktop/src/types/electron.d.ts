@@ -64,7 +64,7 @@ declare global {
     height: number;
   }
 
-  type UiSettingsPaneSection = "account" | "billing" | "providers" | "integrations" | "settings" | "about";
+  type UiSettingsPaneSection = "account" | "billing" | "providers" | "integrations" | "submissions" | "settings" | "about";
 
   interface BrowserStatePayload {
     id: string;
@@ -949,6 +949,28 @@ declare global {
     archiveSizeBytes: number;
   }
 
+  interface SubmissionRecord {
+    id: string;
+    author_id: string;
+    author_name: string;
+    template_name: string;
+    template_id: string;
+    version: string;
+    status: "pending_review" | "published" | "rejected";
+    manifest: Record<string, unknown>;
+    archive_size_bytes: number;
+    review_notes: string | null;
+    reviewed_by: string | null;
+    reviewed_at: string | null;
+    created_at: string;
+    updated_at: string;
+  }
+
+  interface SubmissionListResponse {
+    submissions: SubmissionRecord[];
+    count: number;
+  }
+
   interface ElectronAPI {
     platform: string;
     versions: {
@@ -1092,6 +1114,7 @@ declare global {
         uploadUrl: string;
       }): Promise<PackageAndUploadResult>;
       finalizeSubmission(submissionId: string): Promise<FinalizeSubmissionResponse>;
+      listSubmissions(): Promise<SubmissionListResponse>;
       onSessionStreamEvent: (listener: (payload: HolabossSessionStreamEventPayload) => void) => () => void;
     };
     auth: {

@@ -5,6 +5,7 @@ import {
   Globe,
   Info,
   Plug,
+  Send,
   Settings2,
   User2,
   Waypoints,
@@ -14,6 +15,7 @@ import { useEffect } from "react";
 import { AuthPanel } from "@/components/auth/AuthPanel";
 import { BillingSettingsPanel } from "@/components/billing/BillingSettingsPanel";
 import { IntegrationsPane } from "@/components/panes/IntegrationsPane";
+import { SubmissionsPanel } from "@/components/settings/SubmissionsPanel";
 
 const THEME_SWATCHES: Record<string, [string, string, string]> = {
   "amber-minimal-dark": ["#1a1814", "#e8853a", "#2e2920"],
@@ -53,6 +55,7 @@ const SETTINGS_SECTIONS: Array<{
   { id: "billing", label: "Billing", icon: CreditCard },
   { id: "providers", label: "Model Providers", icon: Waypoints },
   { id: "integrations", label: "Integrations", icon: Plug },
+  { id: "submissions", label: "Submissions", icon: Send },
   { id: "about", label: "About", icon: Info },
 ];
 
@@ -92,6 +95,8 @@ function titleForSection(section: UiSettingsPaneSection): string {
       return "Model Providers";
     case "integrations":
       return "Integrations";
+    case "submissions":
+      return "Submissions";
     case "about":
       return "About";
     default:
@@ -223,6 +228,10 @@ export function SettingsDialog({
 
             {activeSection === "integrations" ? (
               <IntegrationsPane embedded />
+            ) : null}
+
+            {activeSection === "submissions" ? (
+              <SubmissionsPanel />
             ) : null}
 
             {activeSection === "settings" ? (

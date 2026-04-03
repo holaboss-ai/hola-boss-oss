@@ -1434,6 +1434,26 @@ interface WorkspaceListResponsePayload {
   offset: number;
 }
 
+interface SubmissionListResponsePayload {
+  submissions: Array<{
+    id: string;
+    author_id: string;
+    author_name: string;
+    template_name: string;
+    template_id: string;
+    version: string;
+    status: "pending_review" | "published" | "rejected";
+    manifest: Record<string, unknown>;
+    archive_size_bytes: number;
+    review_notes: string | null;
+    reviewed_by: string | null;
+    reviewed_at: string | null;
+    created_at: string;
+    updated_at: string;
+  }>;
+  count: number;
+}
+
 interface TaskProposalRecordPayload {
   proposal_id: string;
   workspace_id: string;
@@ -12971,6 +12991,21 @@ app.whenReady().then(async () => {
           category: params.category,
           tags: params.tags,
           apps: params.apps,
+        },
+      });
+    },
+  );
+  handleTrustedIpc(
+    "workspace:listSubmissions",
+    ["main"],
+    async () => {
+      const authorId = await controlPlaneWorkspaceUserId();
+      return requestControlPlaneJson<SubmissionListResponsePayload>({
+        service: "marketplace",
+        method: "GET",
+        path: "/api/v1/marketplace/submissions",
+        params: {
+          author_id: authorId,
         },
       });
     },

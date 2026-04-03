@@ -1050,6 +1050,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:packageAndUploadWorkspace", params) as Promise<PackageAndUploadResult>,
     finalizeSubmission: (submissionId: string) =>
       ipcRenderer.invoke("workspace:finalizeSubmission", submissionId) as Promise<FinalizeSubmissionResponse>,
+    listSubmissions: () =>
+      ipcRenderer.invoke("workspace:listSubmissions") as Promise<SubmissionListResponse>,
     onSessionStreamEvent: (listener: (payload: HolabossSessionStreamEventPayload) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, payload: HolabossSessionStreamEventPayload) => listener(payload);
       ipcRenderer.on("workspace:sessionStream", wrapped);
