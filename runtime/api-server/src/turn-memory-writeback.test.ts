@@ -162,7 +162,6 @@ test("writeTurnMemory compacts a turn and writes deterministic runtime memory fi
   const memoryEntryIds = store.listMemoryEntries({ status: "active" }).map((entry) => entry.memoryId).sort((left, right) =>
     left.localeCompare(right)
   );
-  const responseStyleMemory = store.getMemoryEntry({ memoryId: "user-preference:response-style" });
 
   assert.equal(
     updated.compactedSummary,
@@ -176,7 +175,6 @@ test("writeTurnMemory compacts a turn and writes deterministic runtime memory fi
     [
       "MEMORY.md",
       "preference/MEMORY.md",
-      "preference/response-style.md",
       "workspace/workspace-1/MEMORY.md",
       "workspace/workspace-1/runtime/blockers/session-main.md",
       "workspace/workspace-1/runtime/latest-turn.md",
@@ -185,14 +183,7 @@ test("writeTurnMemory compacts a turn and writes deterministic runtime memory fi
       "workspace/workspace-1/runtime/session-state/session-main.md",
     ]
   );
-  assert.deepEqual(memoryEntryIds, ["user-preference:response-style"]);
-  assert.equal(responseStyleMemory?.verificationPolicy, "none");
-  assert.equal(responseStyleMemory?.stalenessPolicy, "stable");
-  assert.equal(responseStyleMemory?.staleAfterSeconds, null);
-  assert.equal(responseStyleMemory?.sourceType, "session_message");
-  assert.equal(responseStyleMemory?.observedAt, "2026-04-02T12:00:00.000Z");
-  assert.equal(responseStyleMemory?.lastVerifiedAt, "2026-04-02T12:00:00.000Z");
-  assert.equal(responseStyleMemory?.confidence, 0.99);
+  assert.deepEqual(memoryEntryIds, []);
   assert.match(files["workspace/workspace-1/runtime/session-state/session-main.md"], /Runtime Session Snapshot/);
   assert.match(files["workspace/workspace-1/runtime/session-state/session-main.md"], /execution_policy/);
   assert.match(files["workspace/workspace-1/runtime/latest-turn.md"], /Latest Runtime Turn/);
@@ -200,11 +191,9 @@ test("writeTurnMemory compacts a turn and writes deterministic runtime memory fi
   assert.match(files["workspace/workspace-1/runtime/recent-turns/session-main.md"], /input-1/);
   assert.match(files["workspace/workspace-1/runtime/session-memory/session-main.md"], /Session Memory/);
   assert.match(files["workspace/workspace-1/runtime/session-memory/session-main.md"], /Recent User Requests/);
-  assert.match(files["preference/response-style.md"], /User Response Style Preference/);
-  assert.match(files["preference/response-style.md"], /`concise`/);
-  assert.match(files["preference/MEMORY.md"], /User response style/);
+  assert.match(files["preference/MEMORY.md"], /No durable preference memories indexed yet/);
   assert.match(files["workspace/workspace-1/MEMORY.md"], /No durable workspace memories indexed yet/);
-  assert.match(files["MEMORY.md"], /Preferences/);
+  assert.match(files["MEMORY.md"], /No durable memories indexed yet/);
   assert.match(String(permissionBlockerPath), /permission-blockers\/[a-f0-9]{16}\.md$/);
   assert.match(files[permissionBlockerPath as string], /permission denied by policy/);
 
@@ -501,7 +490,7 @@ test("writeTurnMemory rejects weak uncorroborated model-extracted durable candid
     memoryEntries.some((entry) => entry.path === "workspace/workspace-1/knowledge/reference/untrusted-note.md"),
     false
   );
-  assert.ok(files["preference/response-style.md"]);
+  assert.match(files["preference/MEMORY.md"], /No durable preference memories indexed yet/);
 
   store.close();
 });

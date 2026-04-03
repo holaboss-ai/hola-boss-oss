@@ -1,6 +1,6 @@
 import { type ChangeEvent, type CompositionEvent, type DragEvent, FormEvent, KeyboardEvent, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { AlertTriangle, ArrowRight, ArrowUp, Bot, Cable, Check, ChevronDown, Clock3, FileText, Image as ImageIcon, Loader2, Paperclip, Waypoints, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, ArrowUp, Bot, Cable, Check, ChevronDown, Clock3, FileText, Image as ImageIcon, Lightbulb, Loader2, Paperclip, PencilLine, Waypoints, X } from "lucide-react";
 import { PaneCard } from "@/components/ui/PaneCard";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import {
@@ -26,6 +26,7 @@ interface ChatMessage {
   thinkingText?: string;
   traceSteps?: ChatTraceStep[];
   outputs?: WorkspaceOutputRecordPayload[];
+  memoryProposals?: MemoryUpdateProposalRecordPayload[];
 }
 
 type ChatTraceStepStatus = "running" | "completed" | "error" | "waiting";
@@ -239,7 +240,8 @@ function hasRenderableAssistantTurn(message: ChatMessage) {
     hasRenderableMessageContent(message.text, message.attachments ?? []) ||
     Boolean(message.thinkingText) ||
     (message.traceSteps?.length ?? 0) > 0 ||
-    (message.outputs?.length ?? 0) > 0
+    (message.outputs?.length ?? 0) > 0 ||
+    (message.memoryProposals?.length ?? 0) > 0
   );
 }
 
@@ -328,6 +330,17 @@ function outputSecondaryLabel(output: WorkspaceOutputRecordPayload) {
 
 function sortOutputs(outputs: WorkspaceOutputRecordPayload[]) {
   return [...outputs].sort((left, right) => {
+    const leftTime = Date.parse(left.created_at || "") || 0;
+    const rightTime = Date.parse(right.created_at || "") || 0;
+    if (leftTime !== rightTime) {
+      return leftTime - rightTime;
+    }
+    return left.title.localeCompare(right.title);
+  });
+}
+
+function sortMemoryUpdateProposals(proposals: MemoryUpdateProposalRecordPayload[]) {
+  return [...proposals].sort((left, right) => {
     const leftTime = Date.parse(left.created_at || "") || 0;
     const rightTime = Date.parse(right.created_at || "") || 0;
     if (leftTime !== rightTime) {
@@ -914,6 +927,12 @@ export function ChatPane({
   const [streamTelemetry, setStreamTelemetry] = useState<StreamTelemetryEntry[]>([]);
   const [artifactBrowserOpen, setArtifactBrowserOpen] = useState(false);
   const [artifactBrowserFilter, setArtifactBrowserFilter] = useState<ArtifactBrowserFilter>("all");
+  const [memoryProposalAction, setMemoryProposalAction] = useState<{
+    proposalId: string;
+    action: "accept" | "dismiss";
+  } | null>(null);
+  const [editingMemoryProposalId, setEditingMemoryProposalId] = useState<string | null>(null);
+  const [memoryProposalDrafts, setMemoryProposalDrafts] = useState<Record<string, string>>({});
   const messagesRef = useRef<HTMLDivElement>(null);
   const messagesContentRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -993,6 +1012,9 @@ export function ChatPane({
     setSessionOutputs([]);
     setArtifactBrowserOpen(false);
     setArtifactBrowserFilter("all");
+    setMemoryProposalAction(null);
+    setEditingMemoryProposalId(null);
+    setMemoryProposalDrafts({});
     resetLiveTurn();
     setCollapsedThinkingByMessageId({});
     setCollapsedTraceByStepId({});
@@ -1002,10 +1024,12 @@ export function ChatPane({
   function historyMessagesFromSessionState(
     historyMessages: SessionHistoryMessagePayload[],
     outputEvents: SessionOutputEventPayload[],
-    outputs: WorkspaceOutputRecordPayload[]
+    outputs: WorkspaceOutputRecordPayload[],
+    memoryProposals: MemoryUpdateProposalRecordPayload[]
   ): ChatMessage[] {
     const outputEventsByInputId = new Map<string, SessionOutputEventPayload[]>();
     const outputsByInputId = new Map<string, WorkspaceOutputRecordPayload[]>();
+    const memoryProposalsByInputId = new Map<string, MemoryUpdateProposalRecordPayload[]>();
     for (const event of outputEvents) {
       const inputId = event.input_id.trim();
       if (!inputId) {
@@ -1030,6 +1054,18 @@ export function ChatPane({
         outputsByInputId.set(inputId, [output]);
       }
     }
+    for (const proposal of memoryProposals) {
+      const inputId = proposal.input_id.trim();
+      if (!inputId) {
+        continue;
+      }
+      const existing = memoryProposalsByInputId.get(inputId);
+      if (existing) {
+        existing.push(proposal);
+      } else {
+        memoryProposalsByInputId.set(inputId, [proposal]);
+      }
+    }
 
     return historyMessages
       .map((message) => {
@@ -1046,11 +1082,15 @@ export function ChatPane({
           if (inputId) {
             const restoredAssistantState = assistantHistoryStateFromOutputEvents(outputEventsByInputId.get(inputId) ?? []);
             const turnOutputs = sortOutputs(outputsByInputId.get(inputId) ?? []);
+            const turnMemoryProposals = sortMemoryUpdateProposals(memoryProposalsByInputId.get(inputId) ?? []);
             if (restoredAssistantState.thinkingText) {
               nextMessage.thinkingText = restoredAssistantState.thinkingText;
             }
             if (restoredAssistantState.traceSteps) {
               nextMessage.traceSteps = restoredAssistantState.traceSteps;
+            }
+            if (turnMemoryProposals.length > 0) {
+              nextMessage.memoryProposals = turnMemoryProposals;
             }
             if (turnOutputs.length > 0) {
               nextMessage.outputs = turnOutputs;
@@ -1087,7 +1127,7 @@ export function ChatPane({
       return;
     }
 
-    const [history, outputEventHistory, outputList] = await Promise.all([
+    const [history, outputEventHistory, outputList, memoryProposalList] = await Promise.all([
       window.electronAPI.workspace.getSessionHistory({
         sessionId: nextSessionId,
         workspaceId
@@ -1099,14 +1139,24 @@ export function ChatPane({
         workspaceId,
         sessionId: nextSessionId,
         limit: 200,
-      })
+      }),
+      window.electronAPI.workspace.listMemoryUpdateProposals({
+        workspaceId,
+        sessionId: nextSessionId,
+        limit: 200,
+      }),
     ]);
     if (cancelled()) {
       return;
     }
 
     const nextOutputs = sortOutputs(outputList.items);
-    const nextMessages = historyMessagesFromSessionState(history.messages, outputEventHistory.items, nextOutputs);
+    const nextMessages = historyMessagesFromSessionState(
+      history.messages,
+      outputEventHistory.items,
+      nextOutputs,
+      memoryProposalList.proposals
+    );
     setSessionOutputs(nextOutputs);
     setMessages(nextMessages);
     resetLiveTurn();
@@ -1268,6 +1318,59 @@ export function ChatPane({
           )
           .catch(() => undefined);
       }, delayMs);
+    }
+  }
+
+  function updateMemoryProposalDraft(proposalId: string, value: string) {
+    setMemoryProposalDrafts((prev) => ({
+      ...prev,
+      [proposalId]: value,
+    }));
+  }
+
+  async function handleAcceptMemoryProposal(proposal: MemoryUpdateProposalRecordPayload) {
+    if (!selectedWorkspaceId) {
+      return;
+    }
+    const nextSummary = (memoryProposalDrafts[proposal.proposal_id] ?? proposal.summary).trim();
+    if (!nextSummary) {
+      setChatErrorMessage("Memory proposal summary cannot be empty.");
+      return;
+    }
+    setMemoryProposalAction({
+      proposalId: proposal.proposal_id,
+      action: "accept",
+    });
+    try {
+      await window.electronAPI.workspace.acceptMemoryUpdateProposal({
+        proposalId: proposal.proposal_id,
+        summary: nextSummary,
+      });
+      setEditingMemoryProposalId((current) => (current === proposal.proposal_id ? null : current));
+      scheduleConversationRefresh(proposal.session_id, selectedWorkspaceId);
+    } catch (error) {
+      setChatErrorMessage(normalizeErrorMessage(error));
+    } finally {
+      setMemoryProposalAction((current) => (current?.proposalId === proposal.proposal_id ? null : current));
+    }
+  }
+
+  async function handleDismissMemoryProposal(proposal: MemoryUpdateProposalRecordPayload) {
+    if (!selectedWorkspaceId) {
+      return;
+    }
+    setMemoryProposalAction({
+      proposalId: proposal.proposal_id,
+      action: "dismiss",
+    });
+    try {
+      await window.electronAPI.workspace.dismissMemoryUpdateProposal(proposal.proposal_id);
+      setEditingMemoryProposalId((current) => (current === proposal.proposal_id ? null : current));
+      scheduleConversationRefresh(proposal.session_id, selectedWorkspaceId);
+    } catch (error) {
+      setChatErrorMessage(normalizeErrorMessage(error));
+    } finally {
+      setMemoryProposalAction((current) => (current?.proposalId === proposal.proposal_id ? null : current));
     }
   }
 
@@ -2740,8 +2843,30 @@ export function ChatPane({
                         thinkingCollapsed={collapsedThinkingByMessageId[message.id] ?? true}
                         onToggleThinking={() => toggleThinkingPanel(message.id)}
                         traceSteps={message.traceSteps ?? []}
+                        memoryProposals={message.memoryProposals ?? []}
                         outputs={message.outputs ?? []}
                         sessionOutputs={sessionOutputs}
+                        memoryProposalAction={memoryProposalAction}
+                        editingMemoryProposalId={editingMemoryProposalId}
+                        memoryProposalDrafts={memoryProposalDrafts}
+                        onEditMemoryProposal={(proposalId) => {
+                          setEditingMemoryProposalId((current) => {
+                            const next = current === proposalId ? null : proposalId;
+                            if (next === proposalId) {
+                              const proposal = (message.memoryProposals ?? []).find((item) => item.proposal_id === proposalId);
+                              if (proposal) {
+                                setMemoryProposalDrafts((prev) => ({
+                                  ...prev,
+                                  [proposalId]: prev[proposalId] ?? proposal.summary,
+                                }));
+                              }
+                            }
+                            return next;
+                          });
+                        }}
+                        onMemoryProposalDraftChange={updateMemoryProposalDraft}
+                        onAcceptMemoryProposal={handleAcceptMemoryProposal}
+                        onDismissMemoryProposal={handleDismissMemoryProposal}
                         onOpenOutput={onOpenOutput}
                         onOpenAllArtifacts={() => {
                           setArtifactBrowserFilter("all");
@@ -2767,8 +2892,16 @@ export function ChatPane({
                         setLiveThinkingExpanded(next);
                       }}
                       traceSteps={liveTraceSteps}
+                      memoryProposals={[]}
                       outputs={[]}
                       sessionOutputs={sessionOutputs}
+                      memoryProposalAction={memoryProposalAction}
+                      editingMemoryProposalId={editingMemoryProposalId}
+                      memoryProposalDrafts={memoryProposalDrafts}
+                      onEditMemoryProposal={() => undefined}
+                      onMemoryProposalDraftChange={updateMemoryProposalDraft}
+                      onAcceptMemoryProposal={handleAcceptMemoryProposal}
+                      onDismissMemoryProposal={handleDismissMemoryProposal}
                       onOpenOutput={onOpenOutput}
                       onOpenAllArtifacts={() => {
                         setArtifactBrowserFilter("all");
@@ -2972,8 +3105,16 @@ function AssistantTurn({
   thinkingCollapsed,
   onToggleThinking,
   traceSteps,
+  memoryProposals,
   outputs,
   sessionOutputs,
+  memoryProposalAction,
+  editingMemoryProposalId,
+  memoryProposalDrafts,
+  onEditMemoryProposal,
+  onMemoryProposalDraftChange,
+  onAcceptMemoryProposal,
+  onDismissMemoryProposal,
   onOpenOutput,
   onOpenAllArtifacts,
   collapsedTraceByStepId,
@@ -2989,8 +3130,16 @@ function AssistantTurn({
   thinkingCollapsed: boolean;
   onToggleThinking: () => void;
   traceSteps: ChatTraceStep[];
+  memoryProposals: MemoryUpdateProposalRecordPayload[];
   outputs: WorkspaceOutputRecordPayload[];
   sessionOutputs: WorkspaceOutputRecordPayload[];
+  memoryProposalAction: { proposalId: string; action: "accept" | "dismiss" } | null;
+  editingMemoryProposalId: string | null;
+  memoryProposalDrafts: Record<string, string>;
+  onEditMemoryProposal: (proposalId: string) => void;
+  onMemoryProposalDraftChange: (proposalId: string, value: string) => void;
+  onAcceptMemoryProposal: (proposal: MemoryUpdateProposalRecordPayload) => void;
+  onDismissMemoryProposal: (proposal: MemoryUpdateProposalRecordPayload) => void;
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
   onOpenAllArtifacts: () => void;
   collapsedTraceByStepId: Record<string, boolean>;
@@ -3047,6 +3196,19 @@ function AssistantTurn({
               >
                 {text}
               </SimpleMarkdown>
+            ) : null}
+
+            {memoryProposals.length > 0 ? (
+              <AssistantTurnMemoryProposals
+                proposals={memoryProposals}
+                proposalAction={memoryProposalAction}
+                editingProposalId={editingMemoryProposalId}
+                drafts={memoryProposalDrafts}
+                onEditProposal={onEditMemoryProposal}
+                onDraftChange={onMemoryProposalDraftChange}
+                onAcceptProposal={onAcceptMemoryProposal}
+                onDismissProposal={onDismissMemoryProposal}
+              />
             ) : null}
 
             {outputs.length > 0 ? (
@@ -3122,6 +3284,125 @@ function AssistantTurnOutputs({
           </div>
         </button>
       ) : null}
+    </div>
+  );
+}
+
+function memoryProposalStateLabel(state: MemoryUpdateProposalState) {
+  switch (state) {
+    case "accepted":
+      return "Saved";
+    case "dismissed":
+      return "Dismissed";
+    default:
+      return "Review";
+  }
+}
+
+function AssistantTurnMemoryProposals({
+  proposals,
+  proposalAction,
+  editingProposalId,
+  drafts,
+  onEditProposal,
+  onDraftChange,
+  onAcceptProposal,
+  onDismissProposal,
+}: {
+  proposals: MemoryUpdateProposalRecordPayload[];
+  proposalAction: { proposalId: string; action: "accept" | "dismiss" } | null;
+  editingProposalId: string | null;
+  drafts: Record<string, string>;
+  onEditProposal: (proposalId: string) => void;
+  onDraftChange: (proposalId: string, value: string) => void;
+  onAcceptProposal: (proposal: MemoryUpdateProposalRecordPayload) => void;
+  onDismissProposal: (proposal: MemoryUpdateProposalRecordPayload) => void;
+}) {
+  return (
+    <div className="mt-4 grid gap-3">
+      {proposals.map((proposal) => {
+        const isPending = proposal.state === "pending";
+        const isEditing = editingProposalId === proposal.proposal_id;
+        const isActing = proposalAction?.proposalId === proposal.proposal_id;
+        const draftValue = drafts[proposal.proposal_id] ?? proposal.summary;
+
+        return (
+          <article
+            key={proposal.proposal_id}
+            className="bg-card rounded-[22px] border border-border/35 px-4 py-4 shadow-sm"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <Lightbulb size={15} className="shrink-0 text-primary/72" />
+                  <span>{proposal.title}</span>
+                </div>
+                {isEditing ? (
+                  <textarea
+                    value={draftValue}
+                    onChange={(event) => onDraftChange(proposal.proposal_id, event.target.value)}
+                    className="bg-muted mt-3 min-h-[86px] w-full rounded-[16px] border border-border/45 px-3 py-2 text-sm leading-6 text-foreground outline-none transition focus:border-primary/40"
+                  />
+                ) : (
+                  <div className="mt-3 text-sm leading-6 text-muted-foreground">{proposal.summary}</div>
+                )}
+                {proposal.evidence ? (
+                  <div className="mt-3 text-[12px] leading-5 text-muted-foreground/82">
+                    {proposal.evidence}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="flex shrink-0 items-start gap-2">
+                <div className="rounded-full border border-border/45 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                  {memoryProposalStateLabel(proposal.state)}
+                </div>
+                {isPending ? (
+                  <button
+                    type="button"
+                    onClick={() => onEditProposal(proposal.proposal_id)}
+                    className="grid h-9 w-9 place-items-center rounded-[14px] border border-border/45 text-muted-foreground transition hover:border-border/70 hover:text-foreground"
+                    aria-label="Edit memory proposal"
+                  >
+                    <PencilLine size={14} />
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            {isPending ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => onDismissProposal(proposal)}
+                  disabled={isActing}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl border border-border/45 px-3 text-sm text-muted-foreground transition hover:border-primary/28 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isActing && proposalAction?.action === "dismiss" ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <X size={12} />
+                  )}
+                  <span>Dismiss</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onAcceptProposal(proposal)}
+                  disabled={isActing}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl border border-primary/40 bg-primary/10 px-3 text-sm text-primary transition hover:bg-primary/14 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isActing && proposalAction?.action === "accept" ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <Check size={12} />
+                  )}
+                  <span>Accept</span>
+                </button>
+              </div>
+            ) : null}
+          </article>
+        );
+      })}
     </div>
   );
 }

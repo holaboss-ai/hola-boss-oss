@@ -9,6 +9,7 @@ import {
 import {
   composeBaseAgentPrompt,
   type AgentCurrentUserContext,
+  type AgentPendingUserMemoryContext,
   type AgentRecalledMemoryContext,
   type AgentRecentRuntimeContext,
   type AgentSessionResumeContext,
@@ -44,6 +45,7 @@ export interface AgentRuntimeConfigCliRequest {
   session_resume_context?: AgentSessionResumeContext | null;
   recalled_memory_context?: AgentRecalledMemoryContext | null;
   current_user_context?: AgentCurrentUserContext | null;
+  pending_user_memory_context?: AgentPendingUserMemoryContext | null;
   selected_model?: string | null;
   default_provider_id: string;
   session_mode: string;
@@ -943,6 +945,7 @@ export function projectAgentRuntimeConfig(
     sessionResumeContext: request.session_resume_context ?? null,
     recalledMemoryContext: request.recalled_memory_context ?? null,
     currentUserContext: request.current_user_context ?? null,
+    pendingUserMemoryContext: request.pending_user_memory_context ?? null,
     capabilityManifest,
   });
 

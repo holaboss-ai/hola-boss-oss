@@ -31,6 +31,7 @@ import {
 } from "./agent-runtime-config.js";
 import type {
   AgentCurrentUserContext,
+  AgentPendingUserMemoryContext,
   AgentRecalledMemoryContext,
   AgentRecentRuntimeContext,
   AgentSessionResumeContext
@@ -75,6 +76,7 @@ import {
 } from "./turn-result-summary.js";
 import { recalledMemoryContextFromManifest } from "./memory-recall-manifest.js";
 import type { MemoryModelClientConfig } from "./memory-model-client.js";
+import { pendingUserMemoryContextFromProposals } from "./user-memory-proposals.js";
 
 type LoggerLike = Pick<typeof console, "warn">;
 
@@ -703,6 +705,43 @@ function loadCurrentUserContext(params: {
   }
 }
 
+function loadPendingUserMemoryContext(params: {
+  workspaceRoot: string;
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+  logger?: LoggerLike;
+}): AgentPendingUserMemoryContext | null {
+  const sandboxRoot = path.dirname(params.workspaceRoot);
+  const dbPath = path.join(sandboxRoot, "state", "runtime.db");
+  if (!fs.existsSync(dbPath)) {
+    return null;
+  }
+  const store = new RuntimeStateStore({
+    workspaceRoot: params.workspaceRoot,
+    sandboxRoot,
+    dbPath,
+  });
+  try {
+    const proposals = store.listMemoryUpdateProposals({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      inputId: params.inputId,
+      state: "pending",
+      limit: 50,
+      offset: 0,
+    });
+    return pendingUserMemoryContextFromProposals(proposals);
+  } catch (error) {
+    params.logger?.warn?.(
+      `Failed to load pending user memory context workspace_id=${params.workspaceId} session_id=${params.sessionId} input_id=${params.inputId}: ${errorMessage(error)}`
+    );
+    return null;
+  } finally {
+    store.close();
+  }
+}
+
 function normalizeRuntimeApiHost(value: string): string {
   const trimmed = value.trim();
   if (!trimmed || trimmed === "0.0.0.0" || trimmed === "::") {
@@ -930,6 +969,7 @@ function buildAgentRuntimeConfigRequest(params: {
   sessionResumeContext?: AgentSessionResumeContext | null;
   recalledMemoryContext?: AgentRecalledMemoryContext | null;
   currentUserContext?: AgentCurrentUserContext | null;
+  pendingUserMemoryContext?: AgentPendingUserMemoryContext | null;
 }): AgentRuntimeConfigCliRequest {
   const extraTools = Array.from(new Set([...defaultExtraTools(), ...params.extraToolIds]));
   const common = {
@@ -948,6 +988,7 @@ function buildAgentRuntimeConfigRequest(params: {
     session_resume_context: params.sessionResumeContext ?? undefined,
     recalled_memory_context: params.recalledMemoryContext ?? undefined,
     current_user_context: params.currentUserContext ?? undefined,
+    pending_user_memory_context: params.pendingUserMemoryContext ?? undefined,
     selected_model: firstNonEmptyString(params.request.model) ?? undefined,
     default_provider_id: defaultProviderId(),
     session_mode: defaultSessionMode(),
@@ -1460,6 +1501,18 @@ export async function executeTsRunnerRequest(
         logger,
       })
     );
+    const pendingUserMemoryContext = measureBootstrapStage(
+      bootstrapStageTimingsMs,
+      "load_pending_user_memory_context",
+      () =>
+        loadPendingUserMemoryContext({
+          workspaceRoot: bootstrap.workspaceRoot,
+          workspaceId: request.workspace_id,
+          sessionId: request.session_id,
+          inputId: request.input_id,
+          logger,
+        })
+    );
 
     const runtimeConfig = measureBootstrapStage(bootstrapStageTimingsMs, "project_runtime_config", () =>
       deps.projectAgentRuntimeConfig(
@@ -1479,6 +1532,7 @@ export async function executeTsRunnerRequest(
           sessionResumeContext,
           recalledMemoryContext,
           currentUserContext,
+          pendingUserMemoryContext,
         })
       )
     );

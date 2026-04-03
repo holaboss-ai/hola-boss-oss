@@ -31,7 +31,7 @@ interface RuntimeMemoryCandidate {
   content: string;
 }
 
-interface DurableMemoryCandidate {
+export interface DurableMemoryCandidate {
   memoryId: string;
   scope: Extract<MemoryEntryScope, "workspace" | "user">;
   memoryType: MemoryEntryType;
@@ -136,10 +136,6 @@ function rootMemoryIndexPath(): string {
 
 function preferenceMemoryIndexPath(): string {
   return "preference/MEMORY.md";
-}
-
-function responseStylePreferencePath(): string {
-  return "preference/response-style.md";
 }
 
 function workspaceCommandFactPath(turnResult: TurnResultRecord, purpose: WorkspaceCommandPurpose): string {
@@ -345,7 +341,7 @@ function renderSessionMemory(turnResult: TurnResultRecord, recentTurns: TurnResu
   return `${lines.join("\n").trim()}\n`;
 }
 
-type ResponseStylePreference = {
+export interface ResponseStylePreference {
   style: "concise" | "detailed";
   evidence: string;
 };
@@ -395,7 +391,7 @@ type WorkspaceProcedure = {
   evidence: string;
 };
 
-function detectExplicitResponseStylePreference(messageText: string): ResponseStylePreference | null {
+export function detectExplicitResponseStylePreference(messageText: string): ResponseStylePreference | null {
   const normalized = compactWhitespace(messageText);
   if (!normalized) {
     return null;
@@ -643,59 +639,6 @@ function detectWorkspaceProcedure(messageText: string): WorkspaceProcedure[] {
     }
   }
   return [];
-}
-
-function responseStylePreferenceCandidate(
-  turnResult: TurnResultRecord,
-  sessionMessages: SessionMessageRecord[]
-): DurableMemoryCandidate[] {
-  const message = latestUserMessage(sessionMessages);
-  if (!message) {
-    return [];
-  }
-  const preference = detectExplicitResponseStylePreference(message.text);
-  if (!preference) {
-    return [];
-  }
-  const summary = `User prefers ${preference.style} responses.`;
-  const lines = [
-    "# User Response Style Preference",
-    "",
-    `- Preference: \`${preference.style}\``,
-    `- Session ID: \`${turnResult.sessionId}\``,
-    `- Source message ID: \`${message.id}\``,
-    `- Updated at: ${turnResult.completedAt ?? turnResult.updatedAt}`,
-    "",
-    "## Summary",
-    "",
-    summary,
-    "",
-    "## Evidence",
-    "",
-    preference.evidence,
-  ];
-  const governance = governanceRuleForMemoryType("preference");
-  return [
-    {
-      memoryId: "user-preference:response-style",
-      scope: "user",
-      memoryType: "preference",
-      subjectKey: "response-style",
-      path: responseStylePreferencePath(),
-      title: "User response style",
-      summary,
-      content: `${lines.join("\n").trim()}\n`,
-      tags: ["response-style", preference.style],
-      verificationPolicy: governance.verificationPolicy,
-      stalenessPolicy: governance.stalenessPolicy,
-      staleAfterSeconds: governance.staleAfterSeconds,
-      sourceMessageId: message.id,
-      sourceType: "session_message",
-      observedAt: message.createdAt,
-      lastVerifiedAt: message.createdAt,
-      confidence: 0.99,
-    },
-  ];
 }
 
 function workspaceCommandFactCandidates(
@@ -1110,6 +1053,9 @@ function acceptedModelDurableCandidates(params: {
     if (confidence < minConfidence || evidenceChars < minEvidenceChars) {
       continue;
     }
+    if (modelCandidate.durableCandidate.scope === "user") {
+      continue;
+    }
     accepted.push(modelCandidate.durableCandidate);
   }
   return accepted;
@@ -1179,7 +1125,6 @@ function buildDurableMemoryCandidates(params: {
   sessionMessages: SessionMessageRecord[];
 }): DurableMemoryCandidate[] {
   return [
-    ...responseStylePreferenceCandidate(params.turnResult, params.sessionMessages),
     ...workspaceCommandFactCandidates(params.turnResult, params.sessionMessages),
     ...workspaceBusinessFactCandidates(params.turnResult, params.sessionMessages),
     ...workspaceProcedureCandidates(params.turnResult, params.sessionMessages),
@@ -1488,6 +1433,25 @@ async function upsertDurableMemoryCandidate(params: {
     fingerprint: fingerprintText(params.candidate.content),
   });
   return params.candidate.path;
+}
+
+export async function persistDurableMemoryCandidate(params: {
+  store: RuntimeStateStore;
+  memoryService: MemoryServiceLike;
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+  candidate: DurableMemoryCandidate;
+}): Promise<string> {
+  return upsertDurableMemoryCandidate(params);
+}
+
+export async function refreshMemoryIndexes(params: {
+  store: RuntimeStateStore;
+  memoryService: MemoryServiceLike;
+  workspaceId: string;
+}): Promise<string[]> {
+  return upsertMemoryIndexes(params);
 }
 
 export async function writeTurnMemory(params: {

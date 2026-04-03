@@ -15,6 +15,7 @@ import {
   type AppBuildRecord,
   type CompactionBoundaryRecord,
   type CronjobRecord,
+  type MemoryUpdateProposalRecord,
   type OutputFolderRecord,
   type OutputRecord,
   type SessionMessageRecord,
@@ -104,6 +105,15 @@ import {
   sessionResumeContextFromArtifacts,
   sessionResumeContextFromCompactionBoundary,
 } from "./turn-result-summary.js";
+import {
+  buildMemoryUpdateProposalsFromUserInput,
+  durableMemoryCandidateFromAcceptedProposal,
+  runtimeUserProfileUpdateFromAcceptedProposal,
+} from "./user-memory-proposals.js";
+import {
+  persistDurableMemoryCandidate,
+  refreshMemoryIndexes,
+} from "./turn-memory-writeback.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 50;
 const DEFAULT_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
@@ -653,6 +663,29 @@ function taskProposalPayload(record: TaskProposalRecord): Record<string, unknown
   };
 }
 
+function memoryUpdateProposalPayload(record: MemoryUpdateProposalRecord): Record<string, unknown> {
+  return {
+    proposal_id: record.proposalId,
+    workspace_id: record.workspaceId,
+    session_id: record.sessionId,
+    input_id: record.inputId,
+    proposal_kind: record.proposalKind,
+    target_key: record.targetKey,
+    title: record.title,
+    summary: record.summary,
+    payload: record.payload,
+    evidence: record.evidence,
+    confidence: record.confidence,
+    source_message_id: record.sourceMessageId,
+    state: record.state,
+    persisted_memory_id: record.persistedMemoryId,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt,
+    accepted_at: record.acceptedAt,
+    dismissed_at: record.dismissedAt,
+  };
+}
+
 function resolvedWorkspaceHarness(workspace: WorkspaceRecord): string {
   const harness = (workspace.harness ?? process.env.SANDBOX_AGENT_HARNESS ?? "pi").trim();
   return harness || "pi";
@@ -719,6 +752,120 @@ function resolveQueueSessionId(requestedSessionId: string | undefined, workspace
     return workspace.mainSessionId;
   }
   throw new Error("workspace main_session_id is not configured");
+}
+
+function activeUserPreferenceMemoryMatchesProposal(params: {
+  entry: ReturnType<RuntimeStateStore["listMemoryEntries"]>[number];
+  proposal: ReturnType<typeof buildMemoryUpdateProposalsFromUserInput>[number];
+}): boolean {
+  if (params.entry.scope !== "user" || params.entry.memoryType !== "preference") {
+    return false;
+  }
+  if (params.entry.subjectKey !== params.proposal.targetKey) {
+    return false;
+  }
+  if (params.proposal.targetKey === "response-style") {
+    const style = optionalString(params.proposal.payload.style)?.toLowerCase();
+    if (!style) {
+      return params.entry.summary === params.proposal.summary;
+    }
+    return (
+      params.entry.tags.some((tag) => tag.toLowerCase() === style) ||
+      params.entry.summary.toLowerCase().includes(style)
+    );
+  }
+  if (params.proposal.targetKey === "file-delivery") {
+    return (
+      params.entry.tags.some((tag) => ["individual-files", "no-zip"].includes(tag.toLowerCase())) ||
+      params.entry.summary.toLowerCase().includes("deliver") ||
+      params.entry.summary.toLowerCase().includes("zip")
+    );
+  }
+  return params.entry.summary === params.proposal.summary;
+}
+
+function existingMemoryUpdateProposalMatches(params: {
+  existing: MemoryUpdateProposalRecord;
+  proposal: ReturnType<typeof buildMemoryUpdateProposalsFromUserInput>[number];
+}): boolean {
+  if (params.existing.proposalKind !== params.proposal.proposalKind) {
+    return false;
+  }
+  if (params.existing.targetKey !== params.proposal.targetKey) {
+    return false;
+  }
+  if (params.existing.summary === params.proposal.summary) {
+    return true;
+  }
+  if (params.proposal.targetKey === "response-style") {
+    return optionalString(params.existing.payload.style) === optionalString(params.proposal.payload.style);
+  }
+  if (params.proposal.targetKey === "file-delivery") {
+    return true;
+  }
+  return false;
+}
+
+function createInputMemoryUpdateProposals(params: {
+  store: RuntimeStateStore;
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+  sourceMessageId: string;
+  text: string;
+}): MemoryUpdateProposalRecord[] {
+  if (!params.text.trim()) {
+    return [];
+  }
+  const detected = buildMemoryUpdateProposalsFromUserInput(params.text);
+  if (detected.length === 0) {
+    return [];
+  }
+  const activeMemoryEntries = params.store.listMemoryEntries({
+    status: "active",
+    limit: 500,
+    offset: 0,
+  });
+  const existingProposals = params.store.listMemoryUpdateProposals({
+    workspaceId: params.workspaceId,
+    limit: 500,
+    offset: 0,
+  });
+  const createdAt = utcNowIso();
+  const created: MemoryUpdateProposalRecord[] = [];
+  for (const proposal of detected) {
+    const alreadyPersisted = activeMemoryEntries.some((entry) =>
+      activeUserPreferenceMemoryMatchesProposal({ entry, proposal })
+    );
+    if (alreadyPersisted) {
+      continue;
+    }
+    const alreadyProposed = existingProposals.some((existing) =>
+      existingMemoryUpdateProposalMatches({ existing, proposal })
+    );
+    if (alreadyProposed) {
+      continue;
+    }
+    created.push(
+      params.store.createMemoryUpdateProposal({
+        proposalId: randomUUID(),
+        workspaceId: params.workspaceId,
+        sessionId: params.sessionId,
+        inputId: params.inputId,
+        proposalKind: proposal.proposalKind,
+        targetKey: proposal.targetKey,
+        title: proposal.title,
+        summary: proposal.summary,
+        payload: proposal.payload,
+        evidence: proposal.evidence,
+        confidence: proposal.confidence,
+        sourceMessageId: params.sourceMessageId,
+        createdAt,
+        updatedAt: createdAt,
+      })
+    );
+  }
+  return created;
 }
 
 function effectiveSessionState(
@@ -3284,6 +3431,14 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       text: trimmedText,
       messageId: `user-${record.inputId}`
     });
+    createInputMemoryUpdateProposals({
+      store,
+      workspaceId,
+      sessionId: resolvedSessionId,
+      inputId: record.inputId,
+      sourceMessageId: `user-${record.inputId}`,
+      text: trimmedText,
+    });
     store.updateRuntimeState({
       workspaceId,
       sessionId: resolvedSessionId,
@@ -4136,6 +4291,118 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 404, "Task proposal not found");
     }
     return { proposal: taskProposalPayload(proposal) };
+  });
+
+  app.get("/api/v1/memory-update-proposals", async (request, reply) => {
+    const query = isRecord(request.query) ? request.query : {};
+    const workspaceId = optionalString(query.workspace_id);
+    if (!workspaceId) {
+      return sendError(reply, 400, "workspace_id is required");
+    }
+    const state = optionalString(query.state) as MemoryUpdateProposalRecord["state"] | null;
+    const proposals = store.listMemoryUpdateProposals({
+      workspaceId,
+      sessionId: optionalString(query.session_id),
+      inputId: optionalString(query.input_id),
+      state,
+      limit: optionalInteger(query.limit, 200),
+      offset: optionalInteger(query.offset, 0),
+    });
+    return {
+      proposals: proposals.map((item) => memoryUpdateProposalPayload(item)),
+      count: proposals.length,
+    };
+  });
+
+  app.post("/api/v1/memory-update-proposals/:proposalId/accept", async (request, reply) => {
+    const body = isRecord(request.body) ? request.body : {};
+    const params = request.params as { proposalId: string };
+    const proposal = store.getMemoryUpdateProposal(params.proposalId);
+    if (!proposal) {
+      return sendError(reply, 404, "Memory update proposal not found");
+    }
+    if (proposal.state === "dismissed") {
+      return sendError(reply, 409, "Memory update proposal has already been dismissed");
+    }
+    if (proposal.state === "accepted") {
+      return sendError(reply, 409, "Memory update proposal has already been accepted");
+    }
+
+    const acceptedAt = utcNowIso();
+    const summary = requiredString(body.summary ?? proposal.summary, "summary");
+    let persistedMemoryId: string | null = null;
+
+    if (proposal.proposalKind === "preference") {
+      const candidate = durableMemoryCandidateFromAcceptedProposal({
+        proposal,
+        summary,
+        acceptedAt,
+      });
+      if (!candidate) {
+        return sendError(reply, 422, "Unsupported preference proposal");
+      }
+      await persistDurableMemoryCandidate({
+        store,
+        memoryService,
+        workspaceId: proposal.workspaceId,
+        sessionId: proposal.sessionId,
+        inputId: proposal.inputId,
+        candidate,
+      });
+      await refreshMemoryIndexes({
+        store,
+        memoryService,
+        workspaceId: proposal.workspaceId,
+      });
+      persistedMemoryId = candidate.memoryId;
+    } else if (proposal.proposalKind === "profile") {
+      const profileUpdate = runtimeUserProfileUpdateFromAcceptedProposal({ proposal });
+      if (!profileUpdate) {
+        return sendError(reply, 422, "Unsupported profile proposal");
+      }
+      const profile = store.upsertRuntimeUserProfile(profileUpdate);
+      persistedMemoryId = `runtime-profile:${profile.profileId}`;
+    } else {
+      return sendError(reply, 422, "Unsupported memory proposal kind");
+    }
+
+    const updatedProposal = store.updateMemoryUpdateProposal({
+      proposalId: proposal.proposalId,
+      fields: {
+        summary,
+        state: "accepted",
+        persistedMemoryId,
+        acceptedAt,
+        dismissedAt: null,
+      },
+    });
+    return {
+      proposal: memoryUpdateProposalPayload(updatedProposal ?? proposal),
+    };
+  });
+
+  app.post("/api/v1/memory-update-proposals/:proposalId/dismiss", async (request, reply) => {
+    const params = request.params as { proposalId: string };
+    const proposal = store.getMemoryUpdateProposal(params.proposalId);
+    if (!proposal) {
+      return sendError(reply, 404, "Memory update proposal not found");
+    }
+    if (proposal.state === "accepted") {
+      return sendError(reply, 409, "Memory update proposal has already been accepted");
+    }
+    if (proposal.state === "dismissed") {
+      return sendError(reply, 409, "Memory update proposal has already been dismissed");
+    }
+    const updatedProposal = store.updateMemoryUpdateProposal({
+      proposalId: proposal.proposalId,
+      fields: {
+        state: "dismissed",
+        dismissedAt: utcNowIso(),
+      },
+    });
+    return {
+      proposal: memoryUpdateProposalPayload(updatedProposal ?? proposal),
+    };
   });
 
   app.get("/api/v1/agent-sessions/:sessionId/outputs/events", async (request) => {

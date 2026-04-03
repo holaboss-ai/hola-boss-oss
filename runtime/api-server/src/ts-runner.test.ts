@@ -730,6 +730,7 @@ test("runTsRunnerCli only advertises structured output when the selected harness
       "build_harness_host_request",
       "compile_runtime_plan",
       "load_current_user_context",
+      "load_pending_user_memory_context",
       "load_recalled_memory_context",
       "load_recent_runtime_context",
       "load_session_resume_context",
@@ -1357,6 +1358,97 @@ test("runTsRunnerCli derives recalled durable memory from indexed memory entries
   assert.match(String(recalledMemoryContext.entries[1]?.updated_at ?? ""), /\d{4}-\d{2}-\d{2}T/);
   assert.equal(recalledMemoryContext.selection_trace.length, 2);
   assert.equal(recalledMemoryContext.selection_trace[0]?.memory_id, "user-preference:response-style");
+});
+
+test("runTsRunnerCli loads pending user memory proposals into prompt context for the same input", async () => {
+  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-pending-user-memory-"));
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  const workspaceRoot = path.join(sandboxRoot, "workspace");
+  const store = new RuntimeStateStore({
+    workspaceRoot,
+    sandboxRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-1",
+  });
+  store.ensureSession({
+    workspaceId: "workspace-1",
+    sessionId: "session-1",
+    kind: "main",
+    title: "Main",
+  });
+  store.createMemoryUpdateProposal({
+    proposalId: "proposal-1",
+    workspaceId: "workspace-1",
+    sessionId: "session-1",
+    inputId: "input-1",
+    proposalKind: "preference",
+    targetKey: "file-delivery",
+    title: "File delivery preference",
+    summary: "Do not compress or zip multiple files; deliver them individually.",
+    payload: {
+      preference_type: "file_delivery",
+      mode: "individual_files",
+      avoid_archive: true,
+    },
+    evidence: "Please do not zip the files. Send them individually.",
+    confidence: 0.97,
+    sourceMessageId: "user-input-1",
+    createdAt: "2026-04-03T10:00:00.000Z",
+  });
+  store.close();
+
+  let capturedProjectRequest: Record<string, unknown> | null = null;
+  const exitCode = await runTsRunnerCli(
+    ["--request-base64", encodeRequest(baseRequest())],
+    {
+      deps: {
+        ...testDeps(),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" }
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1"
+          };
+        }
+      },
+      io: {
+        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
+        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
+      }
+    }
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  const pendingUserMemoryContext = (capturedProjectRequest as {
+    pending_user_memory_context: { entries: Array<Record<string, unknown>> }
+  }).pending_user_memory_context;
+
+  assert.equal(pendingUserMemoryContext.entries.length, 1);
+  assert.equal(pendingUserMemoryContext.entries[0]?.target_key, "file-delivery");
+  assert.equal(
+    pendingUserMemoryContext.entries[0]?.summary,
+    "Do not compress or zip multiple files; deliver them individually."
+  );
 });
 
 test("runTsRunnerCli recalls workspace memory from scoped entries even with many newer cross-workspace entries", async () => {

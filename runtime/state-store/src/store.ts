@@ -324,6 +324,30 @@ export interface TaskProposalRecord {
   acceptedAt: string | null;
 }
 
+export type MemoryUpdateProposalKind = "preference" | "identity" | "profile";
+export type MemoryUpdateProposalState = "pending" | "accepted" | "dismissed";
+
+export interface MemoryUpdateProposalRecord {
+  proposalId: string;
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+  proposalKind: MemoryUpdateProposalKind;
+  targetKey: string;
+  title: string;
+  summary: string;
+  payload: Record<string, unknown>;
+  evidence: string | null;
+  confidence: number | null;
+  sourceMessageId: string | null;
+  state: MemoryUpdateProposalState;
+  persistedMemoryId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  acceptedAt: string | null;
+  dismissedAt: string | null;
+}
+
 export interface CreateWorkspaceParams {
   workspaceId?: string;
   name: string;
@@ -385,6 +409,18 @@ type TaskProposalUpdateFields = Partial<{
   acceptedSessionId: string | null;
   acceptedInputId: string | null;
   acceptedAt: string | null;
+}>;
+
+type MemoryUpdateProposalUpdateFields = Partial<{
+  title: string;
+  summary: string;
+  payload: Record<string, unknown>;
+  evidence: string | null;
+  confidence: number | null;
+  state: MemoryUpdateProposalState;
+  persistedMemoryId: string | null;
+  acceptedAt: string | null;
+  dismissedAt: string | null;
 }>;
 
 type WorkspaceRow = {
@@ -771,6 +807,53 @@ export class RuntimeStateStore {
       return null;
     }
     return this.getTaskProposal(params.proposalId);
+  }
+
+  updateMemoryUpdateProposal(params: {
+    proposalId: string;
+    fields: MemoryUpdateProposalUpdateFields;
+  }): MemoryUpdateProposalRecord | null {
+    const entries = Object.entries(params.fields);
+    if (entries.length === 0) {
+      return this.getMemoryUpdateProposal(params.proposalId);
+    }
+
+    const columnMap: Record<keyof MemoryUpdateProposalUpdateFields, string> = {
+      title: "title",
+      summary: "summary",
+      payload: "payload",
+      evidence: "evidence",
+      confidence: "confidence",
+      state: "state",
+      persistedMemoryId: "persisted_memory_id",
+      acceptedAt: "accepted_at",
+      dismissedAt: "dismissed_at",
+    };
+
+    const assignments: string[] = [];
+    const values: unknown[] = [];
+    for (const [key, value] of entries) {
+      const column = columnMap[key as keyof MemoryUpdateProposalUpdateFields];
+      if (!column) {
+        throw new Error(`unsupported memory update proposal field: ${key}`);
+      }
+      assignments.push(`${column} = ?`);
+      if (key === "payload") {
+        values.push(JSON.stringify(value ?? {}));
+      } else {
+        values.push(value ?? null);
+      }
+    }
+    assignments.push("updated_at = ?");
+    values.push(utcNowIso(), params.proposalId);
+
+    const result = this.db()
+      .prepare(`UPDATE memory_update_proposals SET ${assignments.join(", ")} WHERE proposal_id = ?`)
+      .run(...values);
+    if (result.changes <= 0) {
+      return null;
+    }
+    return this.getMemoryUpdateProposal(params.proposalId);
   }
 
   upsertBinding(params: {
@@ -2750,6 +2833,122 @@ export class RuntimeStateStore {
     });
   }
 
+  createMemoryUpdateProposal(params: {
+    proposalId: string;
+    workspaceId: string;
+    sessionId: string;
+    inputId: string;
+    proposalKind: MemoryUpdateProposalKind;
+    targetKey: string;
+    title: string;
+    summary: string;
+    payload?: Record<string, unknown> | null;
+    evidence?: string | null;
+    confidence?: number | null;
+    sourceMessageId?: string | null;
+    state?: MemoryUpdateProposalState;
+    persistedMemoryId?: string | null;
+    createdAt?: string;
+    updatedAt?: string;
+    acceptedAt?: string | null;
+    dismissedAt?: string | null;
+  }): MemoryUpdateProposalRecord {
+    this.ensureSession(
+      {
+        workspaceId: params.workspaceId,
+        sessionId: params.sessionId,
+      },
+      { touchExisting: false }
+    );
+    const createdAt = params.createdAt ?? utcNowIso();
+    const updatedAt = params.updatedAt ?? createdAt;
+    this.db()
+      .prepare(`
+        INSERT INTO memory_update_proposals (
+            proposal_id,
+            workspace_id,
+            session_id,
+            input_id,
+            proposal_kind,
+            target_key,
+            title,
+            summary,
+            payload,
+            evidence,
+            confidence,
+            source_message_id,
+            state,
+            persisted_memory_id,
+            created_at,
+            updated_at,
+            accepted_at,
+            dismissed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        params.proposalId,
+        params.workspaceId,
+        params.sessionId,
+        params.inputId,
+        params.proposalKind,
+        params.targetKey,
+        params.title,
+        params.summary,
+        JSON.stringify(params.payload ?? {}),
+        this.normalizedNullableText(params.evidence),
+        params.confidence ?? null,
+        this.normalizedNullableText(params.sourceMessageId),
+        params.state ?? "pending",
+        this.normalizedNullableText(params.persistedMemoryId),
+        createdAt,
+        updatedAt,
+        this.normalizedNullableText(params.acceptedAt),
+        this.normalizedNullableText(params.dismissedAt)
+      );
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>("SELECT * FROM memory_update_proposals WHERE proposal_id = ? LIMIT 1")
+      .get(params.proposalId);
+    if (!row) {
+      throw new Error("memory update proposal row not found after insert");
+    }
+    return this.rowToMemoryUpdateProposal(row);
+  }
+
+  getMemoryUpdateProposal(proposalId: string): MemoryUpdateProposalRecord | null {
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>("SELECT * FROM memory_update_proposals WHERE proposal_id = ? LIMIT 1")
+      .get(proposalId);
+    return row ? this.rowToMemoryUpdateProposal(row) : null;
+  }
+
+  listMemoryUpdateProposals(params: {
+    workspaceId: string;
+    sessionId?: string | null;
+    inputId?: string | null;
+    state?: MemoryUpdateProposalState | null;
+    limit?: number;
+    offset?: number;
+  }): MemoryUpdateProposalRecord[] {
+    let query = "SELECT * FROM memory_update_proposals WHERE workspace_id = ?";
+    const values: Array<string | number> = [params.workspaceId];
+    if (params.sessionId) {
+      query += " AND session_id = ?";
+      values.push(params.sessionId);
+    }
+    if (params.inputId) {
+      query += " AND input_id = ?";
+      values.push(params.inputId);
+    }
+    if (params.state) {
+      query += " AND state = ?";
+      values.push(params.state);
+    }
+    query += " ORDER BY datetime(created_at) ASC, proposal_id ASC LIMIT ? OFFSET ?";
+    values.push(params.limit ?? 200, params.offset ?? 0);
+    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToMemoryUpdateProposal(row));
+  }
+
   private db(): Database.Database {
     if (this.#db) {
       return this.#db;
@@ -2771,6 +2970,7 @@ export class RuntimeStateStore {
   private ensureRuntimeDbSchema(db: Database.Database): void {
     this.ensureWorkspacesTableSchema(db);
     this.ensureTaskProposalsTableSchema(db);
+    this.ensureMemoryUpdateProposalsTableSchema(db);
     this.ensureTurnArtifactsSchema(db);
     this.ensureOutputsTableSchema(db);
     this.migrateSandboxRunTokensTable(db);
@@ -3069,6 +3269,36 @@ export class RuntimeStateStore {
       CREATE INDEX IF NOT EXISTS idx_task_proposals_workspace_state_created
           ON task_proposals (workspace_id, state, created_at DESC);
 
+      CREATE TABLE IF NOT EXISTS memory_update_proposals (
+          proposal_id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          input_id TEXT NOT NULL,
+          proposal_kind TEXT NOT NULL,
+          target_key TEXT NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          payload TEXT NOT NULL DEFAULT '{}',
+          evidence TEXT,
+          confidence REAL,
+          source_message_id TEXT,
+          state TEXT NOT NULL DEFAULT 'pending',
+          persisted_memory_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          accepted_at TEXT,
+          dismissed_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_memory_update_proposals_workspace_created
+          ON memory_update_proposals (workspace_id, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_memory_update_proposals_session_input_created
+          ON memory_update_proposals (session_id, input_id, created_at ASC);
+
+      CREATE INDEX IF NOT EXISTS idx_memory_update_proposals_workspace_state_created
+          ON memory_update_proposals (workspace_id, state, created_at DESC);
+
       CREATE TABLE IF NOT EXISTS output_folders (
           id TEXT PRIMARY KEY,
           workspace_id TEXT NOT NULL,
@@ -3341,6 +3571,50 @@ export class RuntimeStateStore {
     }
     if (!columns.has("accepted_at")) {
       db.exec("ALTER TABLE task_proposals ADD COLUMN accepted_at TEXT;");
+    }
+  }
+
+  private ensureMemoryUpdateProposalsTableSchema(db: Database.Database): void {
+    const tableNames = new Set<string>(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
+        (row) => row.name
+      )
+    );
+    if (!tableNames.has("memory_update_proposals")) {
+      return;
+    }
+
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(memory_update_proposals)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+
+    if (!columns.has("payload")) {
+      db.exec("ALTER TABLE memory_update_proposals ADD COLUMN payload TEXT NOT NULL DEFAULT '{}';");
+    }
+    if (!columns.has("evidence")) {
+      db.exec("ALTER TABLE memory_update_proposals ADD COLUMN evidence TEXT;");
+    }
+    if (!columns.has("confidence")) {
+      db.exec("ALTER TABLE memory_update_proposals ADD COLUMN confidence REAL;");
+    }
+    if (!columns.has("source_message_id")) {
+      db.exec("ALTER TABLE memory_update_proposals ADD COLUMN source_message_id TEXT;");
+    }
+    if (!columns.has("state")) {
+      db.exec("ALTER TABLE memory_update_proposals ADD COLUMN state TEXT NOT NULL DEFAULT 'pending';");
+    }
+    if (!columns.has("persisted_memory_id")) {
+      db.exec("ALTER TABLE memory_update_proposals ADD COLUMN persisted_memory_id TEXT;");
+    }
+    if (!columns.has("updated_at")) {
+      db.exec("ALTER TABLE memory_update_proposals ADD COLUMN updated_at TEXT;");
+      db.exec("UPDATE memory_update_proposals SET updated_at = created_at WHERE updated_at IS NULL;");
+    }
+    if (!columns.has("accepted_at")) {
+      db.exec("ALTER TABLE memory_update_proposals ADD COLUMN accepted_at TEXT;");
+    }
+    if (!columns.has("dismissed_at")) {
+      db.exec("ALTER TABLE memory_update_proposals ADD COLUMN dismissed_at TEXT;");
     }
   }
 
@@ -4102,6 +4376,29 @@ export class RuntimeStateStore {
       acceptedSessionId: row.accepted_session_id == null ? null : String(row.accepted_session_id),
       acceptedInputId: row.accepted_input_id == null ? null : String(row.accepted_input_id),
       acceptedAt: row.accepted_at == null ? null : String(row.accepted_at)
+    };
+  }
+
+  private rowToMemoryUpdateProposal(row: Record<string, unknown>): MemoryUpdateProposalRecord {
+    return {
+      proposalId: String(row.proposal_id),
+      workspaceId: String(row.workspace_id),
+      sessionId: String(row.session_id),
+      inputId: String(row.input_id),
+      proposalKind: String(row.proposal_kind) as MemoryUpdateProposalKind,
+      targetKey: String(row.target_key),
+      title: String(row.title),
+      summary: String(row.summary),
+      payload: this.parseJsonDict(row.payload),
+      evidence: row.evidence == null ? null : String(row.evidence),
+      confidence: row.confidence == null ? null : Number(row.confidence),
+      sourceMessageId: row.source_message_id == null ? null : String(row.source_message_id),
+      state: String(row.state) as MemoryUpdateProposalState,
+      persistedMemoryId: row.persisted_memory_id == null ? null : String(row.persisted_memory_id),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      acceptedAt: row.accepted_at == null ? null : String(row.accepted_at),
+      dismissedAt: row.dismissed_at == null ? null : String(row.dismissed_at),
     };
   }
 

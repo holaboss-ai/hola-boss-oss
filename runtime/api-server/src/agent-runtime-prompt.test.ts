@@ -222,6 +222,43 @@ test("composeBaseAgentPrompt includes current user context when provided", () =>
   assert.match(prompt.contextMessages.join("\n\n"), /Name source: `manual`\./);
 });
 
+test("composeBaseAgentPrompt includes pending user memory context when provided", () => {
+  const prompt = composeBaseAgentPrompt("", {
+    defaultTools: ["read"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    pendingUserMemoryContext: {
+      entries: [
+        {
+          proposal_id: "proposal-1",
+          proposal_kind: "preference",
+          target_key: "file-delivery",
+          title: "File delivery preference",
+          summary: "Do not compress or zip multiple files; deliver them individually.",
+          evidence: "Please do not zip the files. Send them individually.",
+        },
+      ],
+    },
+  });
+
+  assert.ok(prompt.promptSections.some((section) => section.id === "pending_user_memory"));
+  assert.equal(
+    prompt.promptSections.find((section) => section.id === "pending_user_memory")?.channel,
+    "context_message"
+  );
+  assert.equal(
+    prompt.promptSections.find((section) => section.id === "pending_user_memory")?.precedence,
+    "runtime_context"
+  );
+  assert.equal(prompt.promptLayers.some((layer) => layer.id === "pending_user_memory"), false);
+  assert.match(prompt.contextMessages.join("\n\n"), /Current-turn inferred user memory:/);
+  assert.match(prompt.contextMessages.join("\n\n"), /not durably saved yet/i);
+  assert.match(prompt.contextMessages.join("\n\n"), /File delivery preference: Do not compress or zip multiple files; deliver them individually\./);
+});
+
 test("composeBaseAgentPrompt includes session resume context only when provided", () => {
   const prompt = composeBaseAgentPrompt("", {
     defaultTools: ["read"],

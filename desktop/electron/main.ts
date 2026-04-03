@@ -1442,11 +1442,65 @@ interface TaskProposalRecordPayload {
   created_at: string;
   state: string;
   source_event_ids: string[];
+  accepted_session_id: string | null;
+  accepted_input_id: string | null;
+  accepted_at: string | null;
 }
 
 interface TaskProposalListResponsePayload {
   proposals: TaskProposalRecordPayload[];
   count: number;
+}
+
+type MemoryUpdateProposalKind = "preference" | "identity" | "profile";
+type MemoryUpdateProposalState = "pending" | "accepted" | "dismissed";
+
+interface MemoryUpdateProposalRecordPayload {
+  proposal_id: string;
+  workspace_id: string;
+  session_id: string;
+  input_id: string;
+  proposal_kind: MemoryUpdateProposalKind;
+  target_key: string;
+  title: string;
+  summary: string;
+  payload: Record<string, unknown>;
+  evidence: string | null;
+  confidence: number | null;
+  source_message_id: string | null;
+  state: MemoryUpdateProposalState;
+  persisted_memory_id: string | null;
+  created_at: string;
+  updated_at: string;
+  accepted_at: string | null;
+  dismissed_at: string | null;
+}
+
+interface MemoryUpdateProposalListRequestPayload {
+  workspaceId: string;
+  sessionId?: string | null;
+  inputId?: string | null;
+  state?: MemoryUpdateProposalState | null;
+  limit?: number;
+  offset?: number;
+}
+
+interface MemoryUpdateProposalListResponsePayload {
+  proposals: MemoryUpdateProposalRecordPayload[];
+  count: number;
+}
+
+interface MemoryUpdateProposalAcceptPayload {
+  proposalId: string;
+  summary?: string | null;
+}
+
+interface MemoryUpdateProposalAcceptResponsePayload {
+  proposal: MemoryUpdateProposalRecordPayload;
+}
+
+interface MemoryUpdateProposalDismissResponsePayload {
+  proposal: MemoryUpdateProposalRecordPayload;
 }
 
 interface DemoTaskProposalRequestPayload {
@@ -5119,6 +5173,26 @@ async function listTaskProposals(
   });
 }
 
+async function listMemoryUpdateProposals(
+  payload: MemoryUpdateProposalListRequestPayload,
+): Promise<MemoryUpdateProposalListResponsePayload> {
+  if (!payload.workspaceId.trim()) {
+    return { proposals: [], count: 0 };
+  }
+  return requestRuntimeJson<MemoryUpdateProposalListResponsePayload>({
+    method: "GET",
+    path: "/api/v1/memory-update-proposals",
+    params: {
+      workspace_id: payload.workspaceId,
+      session_id: payload.sessionId ?? undefined,
+      input_id: payload.inputId ?? undefined,
+      state: payload.state ?? undefined,
+      limit: payload.limit ?? 200,
+      offset: payload.offset ?? 0,
+    },
+  });
+}
+
 function secondsSinceIso(value: string | null): number | null {
   const trimmed = value?.trim() || "";
   if (!trimmed) {
@@ -5146,6 +5220,28 @@ async function acceptTaskProposal(
       priority: payload.priority ?? 0,
       model: payload.model ?? null,
     },
+  });
+}
+
+async function acceptMemoryUpdateProposal(
+  payload: MemoryUpdateProposalAcceptPayload,
+): Promise<MemoryUpdateProposalAcceptResponsePayload> {
+  return requestRuntimeJson<MemoryUpdateProposalAcceptResponsePayload>({
+    method: "POST",
+    path: `/api/v1/memory-update-proposals/${encodeURIComponent(payload.proposalId)}/accept`,
+    payload: {
+      summary: payload.summary ?? undefined,
+    },
+  });
+}
+
+async function dismissMemoryUpdateProposal(
+  proposalId: string,
+): Promise<MemoryUpdateProposalDismissResponsePayload> {
+  return requestRuntimeJson<MemoryUpdateProposalDismissResponsePayload>({
+    method: "POST",
+    path: `/api/v1/memory-update-proposals/${encodeURIComponent(proposalId)}/dismiss`,
+    payload: {},
   });
 }
 
@@ -12499,6 +12595,24 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, payload: TaskProposalAcceptPayload) =>
       acceptTaskProposal(payload),
+  );
+  handleTrustedIpc(
+    "workspace:listMemoryUpdateProposals",
+    ["main"],
+    async (_event, payload: MemoryUpdateProposalListRequestPayload) =>
+      listMemoryUpdateProposals(payload),
+  );
+  handleTrustedIpc(
+    "workspace:acceptMemoryUpdateProposal",
+    ["main"],
+    async (_event, payload: MemoryUpdateProposalAcceptPayload) =>
+      acceptMemoryUpdateProposal(payload),
+  );
+  handleTrustedIpc(
+    "workspace:dismissMemoryUpdateProposal",
+    ["main"],
+    async (_event, proposalId: string) =>
+      dismissMemoryUpdateProposal(proposalId),
   );
   handleTrustedIpc(
     "workspace:getProactiveStatus",

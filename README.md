@@ -270,6 +270,8 @@ Holaboss currently has four memory layers:
 
 Alongside those layers, the runtime also keeps a canonical operator profile in `state/runtime.db`. That profile is not treated as markdown memory. It is runtime-owned identity state used first for things like the current user's name, with auth-provided identity only acting as a non-destructive fallback when the local profile is empty.
 
+The runtime also keeps pending user-memory proposals in `state/runtime.db`. These are input-scoped candidates such as inferred user preferences. They can shape the current run ephemerally, but they are not promoted into durable memory or into the canonical runtime profile until the user explicitly accepts them.
+
 That means short-horizon execution state, canonical operator identity, and long-lived recalled memory are not mixed together.
 
 Compaction boundaries are the durable handoff point for session continuity. Each boundary stores a compact summary, recent runtime context, preserved turn ids, and explicit restoration ordering so later runs can rebuild continuity from durable artifacts before falling back to broader transcript history.
@@ -305,14 +307,17 @@ Holaboss does not auto-write runtime state into `AGENTS.md`. `AGENTS.md` stays a
 
 The current memory lifecycle is:
 
-1. A run finishes and the runtime persists `turn_results`.
-2. Post-turn writeback updates the current compaction boundary and records ordered restoration inputs for later resume.
-3. Post-turn writeback generates volatile runtime projections under `memory/workspace/<workspace-id>/runtime/`, including `session-memory/`.
-4. Model-assisted durable extraction attempts to promote selected items into `knowledge/` or `preference/` using recent turn context.
-5. Deterministic durable extraction remains as a fallback safety path when model extraction is unavailable or sparse.
-6. `MEMORY.md` indexes are refreshed for durable memory only.
-7. Future runs restore session continuity from the latest compaction boundary first, then enrich continuity with the current session-memory snapshot.
-8. Future runs recall a small durable subset from markdown memory manifests (model-selected when available, deterministic fallback otherwise) and inject it as prompt context.
+1. User input is queued, and strong-signal user-scoped proposals can be captured into runtime-owned pending proposal records in `state/runtime.db`.
+2. The current run can use those pending proposals as ephemeral prompt context without treating them as durable memory yet.
+3. A run finishes and the runtime persists `turn_results`.
+4. Post-turn writeback updates the current compaction boundary and records ordered restoration inputs for later resume.
+5. Post-turn writeback generates volatile runtime projections under `memory/workspace/<workspace-id>/runtime/`, including `session-memory/`.
+6. Model-assisted durable extraction attempts to promote selected workspace-scoped items into `knowledge/` using recent turn context.
+7. Deterministic durable extraction remains as a fallback safety path when model extraction is unavailable or sparse.
+8. Accepted user-scoped proposals are promoted into durable preference memory or into the canonical runtime profile, depending on what they target.
+9. `MEMORY.md` indexes are refreshed for durable memory only.
+10. Future runs restore session continuity from the latest compaction boundary first, then enrich continuity with the current session-memory snapshot.
+11. Future runs recall a small durable subset from markdown memory manifests (model-selected when available, deterministic fallback otherwise) and inject it as prompt context.
 
 This keeps replay, inspection, and durable recall separate instead of overloading one mechanism for all three jobs.
 
@@ -334,6 +339,8 @@ The durable memory catalog currently supports these memory classes:
   - reserved for durable references that should usually be reconfirmed before use
 
 Current writeback is intentionally conservative. The runtime only promotes facts and procedures that are explicit enough to survive beyond a single turn, and it keeps transient runtime state out of durable knowledge.
+
+User-scoped inferred preferences and other behavioral updates now flow through the pending proposal lane first. Workspace facts and procedures can still be persisted automatically, but user-scoped changes that affect future behavior are designed to wait for explicit confirmation before promotion.
 
 #### Recall And Governance
 

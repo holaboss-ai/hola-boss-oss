@@ -381,6 +381,57 @@ declare global {
     input: EnqueueSessionInputResponsePayload;
   }
 
+  type MemoryUpdateProposalKind = "preference" | "identity" | "profile";
+  type MemoryUpdateProposalState = "pending" | "accepted" | "dismissed";
+
+  interface MemoryUpdateProposalRecordPayload {
+    proposal_id: string;
+    workspace_id: string;
+    session_id: string;
+    input_id: string;
+    proposal_kind: MemoryUpdateProposalKind;
+    target_key: string;
+    title: string;
+    summary: string;
+    payload: Record<string, unknown>;
+    evidence: string | null;
+    confidence: number | null;
+    source_message_id: string | null;
+    state: MemoryUpdateProposalState;
+    persisted_memory_id: string | null;
+    created_at: string;
+    updated_at: string;
+    accepted_at: string | null;
+    dismissed_at: string | null;
+  }
+
+  interface MemoryUpdateProposalListRequestPayload {
+    workspaceId: string;
+    sessionId?: string | null;
+    inputId?: string | null;
+    state?: MemoryUpdateProposalState | null;
+    limit?: number;
+    offset?: number;
+  }
+
+  interface MemoryUpdateProposalListResponsePayload {
+    proposals: MemoryUpdateProposalRecordPayload[];
+    count: number;
+  }
+
+  interface MemoryUpdateProposalAcceptPayload {
+    proposalId: string;
+    summary?: string | null;
+  }
+
+  interface MemoryUpdateProposalAcceptResponsePayload {
+    proposal: MemoryUpdateProposalRecordPayload;
+  }
+
+  interface MemoryUpdateProposalDismissResponsePayload {
+    proposal: MemoryUpdateProposalRecordPayload;
+  }
+
   interface CronjobDeliveryPayload {
     mode: string;
     channel: string;
@@ -978,6 +1029,13 @@ declare global {
       deleteCronjob: (jobId: string) => Promise<{ success: boolean }>;
       listTaskProposals: (workspaceId: string) => Promise<TaskProposalListResponsePayload>;
       acceptTaskProposal: (payload: TaskProposalAcceptPayload) => Promise<TaskProposalAcceptResponsePayload>;
+      listMemoryUpdateProposals: (
+        payload: MemoryUpdateProposalListRequestPayload
+      ) => Promise<MemoryUpdateProposalListResponsePayload>;
+      acceptMemoryUpdateProposal: (
+        payload: MemoryUpdateProposalAcceptPayload
+      ) => Promise<MemoryUpdateProposalAcceptResponsePayload>;
+      dismissMemoryUpdateProposal: (proposalId: string) => Promise<MemoryUpdateProposalDismissResponsePayload>;
       getProactiveStatus: (workspaceId: string) => Promise<ProactiveAgentStatusPayload>;
       getProactiveTaskProposalPreference: () => Promise<ProactiveTaskProposalPreferencePayload>;
       setProactiveTaskProposalPreference: (

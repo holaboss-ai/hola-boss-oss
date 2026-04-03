@@ -1080,7 +1080,15 @@ export async function processClaimedInput(params: {
         limit: 1,
         offset: 0
       }).length > 0;
-    if (assistantText || hasPersistedOutputs) {
+    const hasPersistedMemoryProposals =
+      store.listMemoryUpdateProposals({
+        workspaceId: record.workspaceId,
+        sessionId: record.sessionId,
+        inputId: record.inputId,
+        limit: 1,
+        offset: 0,
+      }).length > 0;
+    if (assistantText || hasPersistedOutputs || hasPersistedMemoryProposals) {
       store.insertSessionMessage({
         workspaceId: record.workspaceId,
         sessionId: record.sessionId,

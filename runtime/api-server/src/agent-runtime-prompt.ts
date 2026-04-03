@@ -77,6 +77,18 @@ export interface AgentCurrentUserContext {
   name_source?: string | null;
 }
 
+export interface AgentPendingUserMemoryContext {
+  entries?: Array<{
+    proposal_id: string;
+    proposal_kind: string;
+    target_key: string;
+    title: string;
+    summary: string;
+    confidence?: number | null;
+    evidence?: string | null;
+  }> | null;
+}
+
 export interface ComposeBaseAgentPromptRequest {
   defaultTools: string[];
   extraTools: string[];
@@ -89,6 +101,7 @@ export interface ComposeBaseAgentPromptRequest {
   sessionResumeContext?: AgentSessionResumeContext | null;
   recalledMemoryContext?: AgentRecalledMemoryContext | null;
   currentUserContext?: AgentCurrentUserContext | null;
+  pendingUserMemoryContext?: AgentPendingUserMemoryContext | null;
   capabilityManifest?: AgentCapabilityManifest | null;
 }
 
@@ -202,6 +215,33 @@ function currentUserContextPromptSection(context: AgentCurrentUserContext | null
     lines.push(`Name source: \`${nameSource}\`.`);
   }
 
+  return linesSection(lines);
+}
+
+function pendingUserMemoryContextPromptSection(context: AgentPendingUserMemoryContext | null | undefined): string {
+  const entries = Array.isArray(context?.entries) ? context.entries : [];
+  if (entries.length === 0) {
+    return "";
+  }
+  const lines = [
+    "Current-turn inferred user memory:",
+    "These items were inferred from the latest user input and are not durably saved yet.",
+    "Use them for this run when directly relevant, but do not claim they are saved as long-term memory unless the user later confirms them.",
+    "",
+  ];
+  for (const entry of entries) {
+    const title = nonEmptyText(entry.title) || "Pending user memory";
+    const summary = nonEmptyText(entry.summary);
+    const evidence = nonEmptyText(entry.evidence);
+    if (summary) {
+      lines.push(`- ${title}: ${summary}`);
+    } else {
+      lines.push(`- ${title}`);
+    }
+    if (evidence) {
+      lines.push(`  Evidence: ${evidence}`);
+    }
+  }
   return linesSection(lines);
 }
 
@@ -451,6 +491,16 @@ export function buildBaseAgentPromptSections(
     priority: 475,
     volatility: "workspace",
     content: currentUserContextPromptSection(request.currentUserContext)
+  });
+
+  pushPromptLayer(promptSections, {
+    id: "pending_user_memory",
+    channel: "context_message",
+    apply_at: "runtime_config",
+    precedence: "runtime_context",
+    priority: 490,
+    volatility: "run",
+    content: pendingUserMemoryContextPromptSection(request.pendingUserMemoryContext)
   });
 
   pushPromptLayer(promptSections, {
