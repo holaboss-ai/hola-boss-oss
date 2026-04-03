@@ -17,8 +17,10 @@ export type TsRunnerEventType =
   | "thinking_delta"
   | "output_delta"
   | "tool_call"
+  | "skill_invocation"
   | "auto_compaction_start"
   | "auto_compaction_end"
+  | "compaction_restored"
   | "run_completed"
   | "run_failed";
 

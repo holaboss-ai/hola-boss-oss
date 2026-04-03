@@ -24,6 +24,15 @@ import {
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 type TextPreviewMode = "preview" | "edit";
+export type FileExplorerFocusRequest = {
+  path: string;
+  requestKey: number;
+};
+
+interface FileExplorerPaneProps {
+  focusRequest?: FileExplorerFocusRequest | null;
+  onFocusRequestConsumed?: (requestKey: number) => void;
+}
 
 const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   ".js": "javascript",
@@ -104,6 +113,25 @@ function normalizeComparablePath(targetPath: string) {
     normalized = normalized.toLowerCase();
   }
   return normalized;
+}
+
+function isAbsolutePath(targetPath: string) {
+  return /^(?:[a-zA-Z]:[\\/]|\/)/.test(targetPath.trim());
+}
+
+function resolveWorkspaceTargetPath(workspaceRoot: string, targetPath: string) {
+  const trimmedRoot = workspaceRoot.trim();
+  const trimmedTarget = targetPath.trim();
+  if (!trimmedRoot) {
+    return trimmedTarget;
+  }
+  if (isAbsolutePath(trimmedTarget)) {
+    return trimmedTarget;
+  }
+  const separator = trimmedRoot.includes("\\") ? "\\" : "/";
+  const normalizedRoot = trimmedRoot.replace(/[\\/]+$/, "");
+  const normalizedTarget = trimmedTarget.replace(/^[\\/]+/, "");
+  return `${normalizedRoot}${separator}${normalizedTarget}`;
 }
 
 function formatFileSize(size: number) {
@@ -192,10 +220,14 @@ function getHighlightedHtml(preview: FilePreviewPayload | null, draft: string) {
   return hljs.highlightAuto(source).value;
 }
 
-export function FileExplorerPane() {
+export function FileExplorerPane({
+  focusRequest = null,
+  onFocusRequestConsumed,
+}: FileExplorerPaneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const dragPreviewRef = useRef<HTMLDivElement | null>(null);
   const lastSyncedWorkspaceRootRef = useRef<{ workspaceId: string; rootPath: string } | null>(null);
+  const lastProcessedFocusRequestKeyRef = useRef<number | null>(null);
   const [currentPath, setCurrentPath] = useState<string>("");
   const [parentPath, setParentPath] = useState<string | null>(null);
   const [entries, setEntries] = useState<LocalFileEntry[]>([]);
@@ -602,6 +634,58 @@ export function FileExplorerPane() {
 
     await openFilePreview(bookmark.targetPath, { skipConfirm: false, syncDirectory: true });
   };
+
+  useEffect(() => {
+    if (!focusRequest?.path?.trim()) {
+      return;
+    }
+    const request = focusRequest;
+    if (lastProcessedFocusRequestKeyRef.current === request.requestKey) {
+      return;
+    }
+    lastProcessedFocusRequestKeyRef.current = request.requestKey;
+
+    let cancelled = false;
+
+    async function openRequestedArtifact() {
+      let targetPath = request.path.trim();
+      if (!isAbsolutePath(targetPath) && selectedWorkspaceId) {
+        const workspaceRoot =
+          workspaceRootPath ??
+          (await window.electronAPI.workspace.getWorkspaceRoot(selectedWorkspaceId));
+        if (cancelled) {
+          return;
+        }
+        if (workspaceRoot) {
+          setWorkspaceRootPath(workspaceRoot);
+          targetPath = resolveWorkspaceTargetPath(workspaceRoot, targetPath);
+        }
+      }
+
+      if (cancelled) {
+        return;
+      }
+
+      try {
+        await openFilePreview(targetPath, { syncDirectory: true });
+      } finally {
+        if (!cancelled) {
+          onFocusRequestConsumed?.(request.requestKey);
+        }
+      }
+    }
+
+    void openRequestedArtifact();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    focusRequest,
+    onFocusRequestConsumed,
+    openFilePreview,
+    selectedWorkspaceId,
+    workspaceRootPath,
+  ]);
 
   return (
     <PaneCard

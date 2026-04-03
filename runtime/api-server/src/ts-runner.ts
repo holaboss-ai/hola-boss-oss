@@ -31,6 +31,7 @@ import {
 } from "./agent-runtime-config.js";
 import type {
   AgentCurrentUserContext,
+  AgentPendingUserMemoryContext,
   AgentRecalledMemoryContext,
   AgentRecentRuntimeContext,
   AgentSessionResumeContext
@@ -73,7 +74,10 @@ import {
   sessionResumeContextFromArtifacts,
   sessionResumeContextFromCompactionBoundary,
 } from "./turn-result-summary.js";
-import { recalledMemoryContextFromEntries } from "./memory-recall.js";
+import { recalledMemoryContextFromManifest } from "./memory-recall-manifest.js";
+import type { MemoryModelClientConfig } from "./memory-model-client.js";
+import { pendingUserMemoryContextFromProposals } from "./user-memory-proposals.js";
+import { NATIVE_WEB_SEARCH_TOOL_IDS } from "../../harnesses/src/native-web-search-tools.js";
 
 type LoggerLike = Pick<typeof console, "warn">;
 
@@ -83,6 +87,7 @@ const RUNTIME_EXEC_CONTEXT_KEY = "_sandbox_runtime_exec_v1";
 const DEFAULT_SESSION_MODE = "code";
 const DEFAULT_PROVIDER_ID = "openai";
 const WORKSPACE_MCP_READY_TIMEOUT_S = 10;
+const RECALL_SCOPE_ENTRY_LIMIT = 200;
 const DEFAULT_TOOLS = [
   "read",
   "edit",
@@ -136,6 +141,15 @@ export interface TsRunnerExecutionDeps {
     logger?: LoggerLike;
   }) => Promise<TsRunnerHarnessRelayResult>;
   startWorkspaceMcpSidecar: (request: WorkspaceMcpSidecarCliRequest) => Promise<RunningWorkspaceMcpSidecar | null>;
+  loadRecalledMemoryContext: (params: {
+    workspaceRoot: string;
+    workspaceId: string;
+    sessionId: string;
+    inputId: string;
+    request: TsRunnerRequest;
+    instruction: string;
+    logger?: LoggerLike;
+  }) => Promise<AgentRecalledMemoryContext | null>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -384,6 +398,56 @@ function loadRecentRuntimeContext(params: {
   }
 }
 
+function resolveMemoryRootDir(workspaceRoot: string): string {
+  const configured = (process.env.MEMORY_ROOT_DIR ?? "").trim();
+  if (!configured) {
+    return path.join(workspaceRoot, "memory");
+  }
+  if (path.isAbsolute(configured)) {
+    return path.resolve(configured);
+  }
+  return path.resolve(path.join(workspaceRoot, configured));
+}
+
+function sessionMemoryPath(workspaceId: string, sessionId: string): string {
+  const sanitizedSessionId = sessionId.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "session";
+  return `workspace/${workspaceId}/runtime/session-memory/${sanitizedSessionId}.md`;
+}
+
+function sessionMemoryExcerpt(raw: string, maxChars = 320): string {
+  const normalized = raw.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
+function loadSessionMemoryExcerpt(params: {
+  workspaceRoot: string;
+  workspaceId: string;
+  sessionId: string;
+}): { path: string; excerpt: string } | null {
+  const relPath = sessionMemoryPath(params.workspaceId, params.sessionId);
+  const memoryRoot = resolveMemoryRootDir(params.workspaceRoot);
+  const targetPath = path.join(memoryRoot, relPath);
+  if (!fs.existsSync(targetPath) || !fs.statSync(targetPath, { throwIfNoEntry: false })?.isFile()) {
+    return null;
+  }
+  try {
+    const text = fs.readFileSync(targetPath, "utf8");
+    const excerpt = sessionMemoryExcerpt(text);
+    if (!excerpt) {
+      return null;
+    }
+    return {
+      path: relPath,
+      excerpt,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function loadSessionResumeContext(params: {
   workspaceRoot: string;
   workspaceId: string;
@@ -391,10 +455,21 @@ function loadSessionResumeContext(params: {
   inputId: string;
   logger?: LoggerLike;
 }): AgentSessionResumeContext | null {
+  const sessionMemory = loadSessionMemoryExcerpt({
+    workspaceRoot: params.workspaceRoot,
+    workspaceId: params.workspaceId,
+    sessionId: params.sessionId,
+  });
   const sandboxRoot = path.dirname(params.workspaceRoot);
   const dbPath = path.join(sandboxRoot, "state", "runtime.db");
   if (!fs.existsSync(dbPath)) {
-    return null;
+    if (!sessionMemory) {
+      return null;
+    }
+    return {
+      session_memory_path: sessionMemory.path,
+      session_memory_excerpt: sessionMemory.excerpt,
+    };
   }
   const store = new RuntimeStateStore({
     workspaceRoot: params.workspaceRoot,
@@ -410,7 +485,14 @@ function loadSessionResumeContext(params: {
     }).find((boundary) => boundary.inputId !== params.inputId) ?? null;
     const boundaryContext = sessionResumeContextFromCompactionBoundary(latestBoundary);
     if (boundaryContext) {
-      return boundaryContext;
+      if (!sessionMemory) {
+        return boundaryContext;
+      }
+      return {
+        ...boundaryContext,
+        session_memory_path: sessionMemory.path,
+        session_memory_excerpt: sessionMemory.excerpt,
+      };
     }
     const turnResults = store.listTurnResults({
       workspaceId: params.workspaceId,
@@ -421,49 +503,109 @@ function loadSessionResumeContext(params: {
       workspaceId: params.workspaceId,
       sessionId: params.sessionId,
     });
-    return sessionResumeContextFromArtifacts({
+    const artifactContext = sessionResumeContextFromArtifacts({
       turnResults,
       sessionMessages,
       currentInputId: params.inputId,
     });
+    if (!artifactContext && !sessionMemory) {
+      return null;
+    }
+    if (!sessionMemory) {
+      return artifactContext ?? null;
+    }
+    return {
+      ...(artifactContext ?? {}),
+      session_memory_path: sessionMemory.path,
+      session_memory_excerpt: sessionMemory.excerpt,
+    };
   } catch (error) {
     params.logger?.warn?.(
       `Failed to load session resume context workspace_id=${params.workspaceId} session_id=${params.sessionId}: ${errorMessage(error)}`
     );
-    return null;
+    if (!sessionMemory) {
+      return null;
+    }
+    return {
+      session_memory_path: sessionMemory.path,
+      session_memory_excerpt: sessionMemory.excerpt,
+    };
   } finally {
     store.close();
   }
 }
 
-function loadRecalledMemoryContext(params: {
+async function loadRecalledMemoryContext(params: {
   workspaceRoot: string;
   workspaceId: string;
+  sessionId: string;
+  inputId: string;
+  request: TsRunnerRequest;
   instruction: string;
   logger?: LoggerLike;
-}): AgentRecalledMemoryContext | null {
+}): Promise<AgentRecalledMemoryContext | null> {
   const sandboxRoot = path.dirname(params.workspaceRoot);
   const dbPath = path.join(sandboxRoot, "state", "runtime.db");
-  if (!fs.existsSync(dbPath)) {
-    return null;
-  }
-  const store = new RuntimeStateStore({
-    workspaceRoot: params.workspaceRoot,
-    sandboxRoot,
-    dbPath,
-  });
-  try {
-    const entries = store
-      .listMemoryEntries({
-        status: "active",
-        limit: 200,
-        offset: 0,
+  const store = fs.existsSync(dbPath)
+    ? new RuntimeStateStore({
+        workspaceRoot: params.workspaceRoot,
+        sandboxRoot,
+        dbPath,
       })
-      .filter((entry) => entry.scope === "user" || entry.workspaceId === params.workspaceId);
-    return recalledMemoryContextFromEntries({
+    : null;
+  try {
+    const workspaceEntries = store
+      ? store.listMemoryEntries({
+          workspaceId: params.workspaceId,
+          status: "active",
+          limit: RECALL_SCOPE_ENTRY_LIMIT,
+          offset: 0,
+        })
+      : [];
+    const userEntries = store
+      ? store.listMemoryEntries({
+          scope: "user",
+          status: "active",
+          limit: RECALL_SCOPE_ENTRY_LIMIT,
+          offset: 0,
+        })
+      : [];
+    const byMemoryId = new Map<string, (typeof workspaceEntries)[number]>();
+    for (const entry of [...workspaceEntries, ...userEntries]) {
+      const existing = byMemoryId.get(entry.memoryId);
+      if (!existing) {
+        byMemoryId.set(entry.memoryId, entry);
+        continue;
+      }
+      const existingTime = Date.parse(existing.updatedAt);
+      const nextTime = Date.parse(entry.updatedAt);
+      if (Number.isFinite(nextTime) && (!Number.isFinite(existingTime) || nextTime > existingTime)) {
+        byMemoryId.set(entry.memoryId, entry);
+      }
+    }
+    const entries = [...byMemoryId.values()].sort((left, right) => {
+      const updatedDiff = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+      if (updatedDiff !== 0 && Number.isFinite(updatedDiff)) {
+        return updatedDiff;
+      }
+      const createdDiff = Date.parse(right.createdAt) - Date.parse(left.createdAt);
+      if (createdDiff !== 0 && Number.isFinite(createdDiff)) {
+        return createdDiff;
+      }
+      return left.memoryId.localeCompare(right.memoryId);
+    });
+    return await recalledMemoryContextFromManifest({
       query: params.instruction,
+      workspaceRoot: params.workspaceRoot,
+      workspaceId: params.workspaceId,
       entries,
       maxEntries: 5,
+      modelClient: selectorModelClientFromRequest({
+        request: params.request,
+        workspaceId: params.workspaceId,
+        sessionId: params.sessionId,
+        inputId: params.inputId,
+      }),
     });
   } catch (error) {
     params.logger?.warn?.(
@@ -471,7 +613,59 @@ function loadRecalledMemoryContext(params: {
     );
     return null;
   } finally {
-    store.close();
+    store?.close();
+  }
+}
+
+interface RecalledMemoryPrefetchHandle {
+  promise: Promise<AgentRecalledMemoryContext | null>;
+  settledAt: number | null;
+}
+
+function startRecalledMemoryContextPrefetch(params: {
+  load: () => Promise<AgentRecalledMemoryContext | null>;
+  logger?: LoggerLike;
+}): RecalledMemoryPrefetchHandle {
+  const handle: RecalledMemoryPrefetchHandle = {
+    promise: Promise.resolve(null),
+    settledAt: null,
+  };
+  handle.promise = params
+    .load()
+    .catch((error) => {
+      params.logger?.warn?.(`Failed in recalled memory prefetch: ${errorMessage(error)}`);
+      return null;
+    })
+    .finally(() => {
+      handle.settledAt = Date.now();
+    });
+  return handle;
+}
+
+async function consumeRecalledMemoryContextPrefetch(
+  prefetch: RecalledMemoryPrefetchHandle,
+  maxWaitMs = 25
+): Promise<AgentRecalledMemoryContext | null> {
+  if (prefetch.settledAt !== null) {
+    return await prefetch.promise;
+  }
+  const boundedWaitMs = Math.max(0, Math.trunc(maxWaitMs));
+  if (boundedWaitMs === 0) {
+    return null;
+  }
+  let timeoutHandle: NodeJS.Timeout | null = null;
+  try {
+    const result = await Promise.race([
+      prefetch.promise.then((value) => ({ ready: true as const, value })),
+      new Promise<{ ready: false }>((resolve) => {
+        timeoutHandle = setTimeout(() => resolve({ ready: false }), boundedWaitMs);
+      }),
+    ]);
+    return result.ready ? result.value : null;
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
   }
 }
 
@@ -507,6 +701,43 @@ function loadCurrentUserContext(params: {
   } catch (error) {
     params.logger?.warn?.(`Failed to load current user context: ${errorMessage(error)}`);
     return defaultContext;
+  } finally {
+    store.close();
+  }
+}
+
+function loadPendingUserMemoryContext(params: {
+  workspaceRoot: string;
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+  logger?: LoggerLike;
+}): AgentPendingUserMemoryContext | null {
+  const sandboxRoot = path.dirname(params.workspaceRoot);
+  const dbPath = path.join(sandboxRoot, "state", "runtime.db");
+  if (!fs.existsSync(dbPath)) {
+    return null;
+  }
+  const store = new RuntimeStateStore({
+    workspaceRoot: params.workspaceRoot,
+    sandboxRoot,
+    dbPath,
+  });
+  try {
+    const proposals = store.listMemoryUpdateProposals({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+      inputId: params.inputId,
+      state: "pending",
+      limit: 50,
+      offset: 0,
+    });
+    return pendingUserMemoryContextFromProposals(proposals);
+  } catch (error) {
+    params.logger?.warn?.(
+      `Failed to load pending user memory context workspace_id=${params.workspaceId} session_id=${params.sessionId} input_id=${params.inputId}: ${errorMessage(error)}`
+    );
+    return null;
   } finally {
     store.close();
   }
@@ -581,11 +812,84 @@ function defaultSessionMode(): string {
   return firstNonEmptyString(process.env.HOLABOSS_SESSION_MODE, DEFAULT_SESSION_MODE) ?? DEFAULT_SESSION_MODE;
 }
 
-function defaultExtraTools(): string[] {
-  return (process.env.HOLABOSS_EXTRA_TOOLS ?? "")
+function normalizeModelIdForSelector(model: string | null): string {
+  const trimmed = (model ?? "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  const slashIndex = trimmed.indexOf("/");
+  return slashIndex >= 0 ? trimmed.slice(slashIndex + 1).trim() : trimmed;
+}
+
+function openAiBaseUrl(baseRoot: string): string {
+  const normalized = baseRoot.trim().replace(/\/+$/, "");
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.endsWith("/openai/v1")) {
+    return normalized;
+  }
+  return `${normalized}/openai/v1`;
+}
+
+function selectorModelClientFromRequest(params: {
+  request: TsRunnerRequest;
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+}): MemoryModelClientConfig | null {
+  const selectedModel = normalizeModelIdForSelector(
+    firstNonEmptyString(typeof params.request.model === "string" ? params.request.model : "", null)
+  );
+  const runtimeConfig = resolveProductRuntimeConfig({
+    requireAuth: false,
+    requireUser: false,
+    requireBaseUrl: false,
+    includeDefaultBaseUrl: false,
+  });
+  const baseUrl = openAiBaseUrl(runtimeConfig.modelProxyBaseUrl);
+  if (!baseUrl) {
+    return null;
+  }
+  const runtimeExecContext = isRecord(params.request.context[RUNTIME_EXEC_CONTEXT_KEY])
+    ? (params.request.context[RUNTIME_EXEC_CONTEXT_KEY] as Record<string, unknown>)
+    : {};
+  const apiKey =
+    firstNonEmptyString(runtimeExecContext.model_proxy_api_key, runtimeConfig.authToken) ||
+    firstNonEmptyString(runtimeConfig.authToken);
+  if (!apiKey) {
+    return null;
+  }
+  const sandboxId = firstNonEmptyString(runtimeExecContext.sandbox_id, runtimeConfig.sandboxId);
+  const defaultHeaders: Record<string, string> = {
+    "X-API-Key": apiKey,
+    "X-Holaboss-Session-Id": params.sessionId,
+    "X-Holaboss-Workspace-Id": params.workspaceId,
+    "X-Holaboss-Input-Id": params.inputId,
+  };
+  if (sandboxId) {
+    defaultHeaders["X-Holaboss-Sandbox-Id"] = sandboxId;
+  }
+  if (runtimeConfig.userId) {
+    defaultHeaders["X-Holaboss-User-Id"] = runtimeConfig.userId;
+  }
+  return {
+    baseUrl,
+    apiKey,
+    defaultHeaders,
+    modelId: selectedModel || normalizeModelIdForSelector(runtimeConfig.defaultModel),
+  };
+}
+
+function defaultExtraTools(harnessId?: string | null): string[] {
+  const configured = (process.env.HOLABOSS_EXTRA_TOOLS ?? "")
     .split(",")
     .map((token) => token.trim())
     .filter(Boolean);
+  if (normalizeHarnessId(harnessId) === "pi") {
+    return [...NATIVE_WEB_SEARCH_TOOL_IDS, ...configured];
+  }
+  return configured;
 }
 
 function explicitHolabossUserId(request: TsRunnerRequest): string | undefined {
@@ -611,6 +915,7 @@ function bootstrapStartedPayload(params: {
     model_id: params.runtimeConfig.model_id,
     workspace_tool_ids: [...params.runtimeConfig.workspace_tool_ids],
     workspace_skill_ids: [...params.runtimeConfig.workspace_skill_ids],
+    workspace_command_ids: [...(params.runtimeConfig.capability_manifest?.workspace_commands ?? [])],
     context_message_count: params.runtimeConfig.context_messages?.length ?? 0,
     prompt_section_ids: [...(params.runtimeConfig.prompt_sections?.map((section) => section.id) ?? [])],
     prompt_cache_profile: params.runtimeConfig.prompt_cache_profile ?? null,
@@ -669,8 +974,9 @@ function buildAgentRuntimeConfigRequest(params: {
   sessionResumeContext?: AgentSessionResumeContext | null;
   recalledMemoryContext?: AgentRecalledMemoryContext | null;
   currentUserContext?: AgentCurrentUserContext | null;
+  pendingUserMemoryContext?: AgentPendingUserMemoryContext | null;
 }): AgentRuntimeConfigCliRequest {
-  const extraTools = Array.from(new Set([...defaultExtraTools(), ...params.extraToolIds]));
+  const extraTools = Array.from(new Set([...defaultExtraTools(params.harnessId), ...params.extraToolIds]));
   const common = {
     session_id: params.request.session_id,
     workspace_id: params.request.workspace_id,
@@ -687,6 +993,7 @@ function buildAgentRuntimeConfigRequest(params: {
     session_resume_context: params.sessionResumeContext ?? undefined,
     recalled_memory_context: params.recalledMemoryContext ?? undefined,
     current_user_context: params.currentUserContext ?? undefined,
+    pending_user_memory_context: params.pendingUserMemoryContext ?? undefined,
     selected_model: firstNonEmptyString(params.request.model) ?? undefined,
     default_provider_id: defaultProviderId(),
     session_mode: defaultSessionMode(),
@@ -911,6 +1218,7 @@ function defaultExecutionDeps(): TsRunnerExecutionDeps {
     projectAgentRuntimeConfig: (request) => projectAgentRuntimeConfig(request),
     resolveHarnessPlugin: (harness) => requireRuntimeHarnessPlugin(harness),
     runHarnessHost: defaultRunHarnessHost,
+    loadRecalledMemoryContext,
     startWorkspaceMcpSidecar: async (request) => {
       const result = await startWorkspaceMcpSidecar(request);
       return {
@@ -1024,6 +1332,7 @@ export async function executeTsRunnerRequest(
   const bootstrapStartedAtMs = Date.now();
   const bootstrapStartedAt = new Date(bootstrapStartedAtMs).toISOString();
   const bootstrapStageTimingsMs: BootstrapStageTimingMap = {};
+  let syntheticSequence = 0;
 
   await relayTsRunnerEvent({
     emitEvent: options.emitEvent,
@@ -1033,7 +1342,7 @@ export async function executeTsRunnerRequest(
     event: buildTsRunnerEvent({
       sessionId: request.session_id,
       inputId: request.input_id,
-      sequence: 1,
+      sequence: ++syntheticSequence,
       eventType: "run_claimed",
       payload: {
         instruction_preview: request.instruction.slice(0, 120)
@@ -1083,6 +1392,19 @@ export async function executeTsRunnerRequest(
         workspaceDir: bootstrap.workspaceDir
       })
     );
+    const recalledMemoryPrefetch = startRecalledMemoryContextPrefetch({
+      load: () =>
+        deps.loadRecalledMemoryContext({
+          workspaceRoot: bootstrap.workspaceRoot,
+          workspaceId: request.workspace_id,
+          sessionId: request.session_id,
+          inputId: request.input_id,
+          request,
+          instruction: request.instruction,
+          logger,
+        }),
+      logger,
+    });
     const serverIdMap = runnerPrepPlan.prepareMcpTooling
       ? mcpServerIdMap({
           workspaceId: request.workspace_id,
@@ -1153,19 +1475,48 @@ export async function executeTsRunnerRequest(
         logger,
       })
     );
-    const recalledMemoryContext = measureBootstrapStage(bootstrapStageTimingsMs, "load_recalled_memory_context", () =>
-      loadRecalledMemoryContext({
-        workspaceRoot: bootstrap.workspaceRoot,
-        workspaceId: request.workspace_id,
-        instruction: request.instruction,
+    if (sessionResumeContext?.compaction_boundary_id) {
+      await relayTsRunnerEvent({
+        emitEvent: options.emitEvent,
+        harness: bootstrap.harness,
+        workspaceDir: bootstrap.workspaceDir,
         logger,
-      })
+        event: buildTsRunnerEvent({
+          sessionId: request.session_id,
+          inputId: request.input_id,
+          sequence: ++syntheticSequence,
+          eventType: "compaction_restored",
+          payload: {
+            source: sessionResumeContext.compaction_source ?? "executor_post_turn",
+            boundary_id: sessionResumeContext.compaction_boundary_id,
+            restoration_order: sessionResumeContext.restoration_order ?? [],
+            restored_memory_paths: sessionResumeContext.restored_memory_paths ?? [],
+          },
+        }),
+      });
+    }
+    const recalledMemoryContext = await measureBootstrapStageAsync(
+      bootstrapStageTimingsMs,
+      "load_recalled_memory_context",
+      async () => await consumeRecalledMemoryContextPrefetch(recalledMemoryPrefetch)
     );
     const currentUserContext = measureBootstrapStage(bootstrapStageTimingsMs, "load_current_user_context", () =>
       loadCurrentUserContext({
         workspaceRoot: bootstrap.workspaceRoot,
         logger,
       })
+    );
+    const pendingUserMemoryContext = measureBootstrapStage(
+      bootstrapStageTimingsMs,
+      "load_pending_user_memory_context",
+      () =>
+        loadPendingUserMemoryContext({
+          workspaceRoot: bootstrap.workspaceRoot,
+          workspaceId: request.workspace_id,
+          sessionId: request.session_id,
+          inputId: request.input_id,
+          logger,
+        })
     );
 
     const runtimeConfig = measureBootstrapStage(bootstrapStageTimingsMs, "project_runtime_config", () =>
@@ -1186,6 +1537,7 @@ export async function executeTsRunnerRequest(
           sessionResumeContext,
           recalledMemoryContext,
           currentUserContext,
+          pendingUserMemoryContext,
         })
       )
     );

@@ -156,9 +156,13 @@ test("claimed input persists runner events, assistant text, and idle state on su
     `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello', prompt_section_ids: ['runtime_core', 'execution_policy', 'capability_policy'], capability_manifest_fingerprint: 'a'.repeat(64), request_snapshot_fingerprint: 'b'.repeat(64), prompt_cache_profile: { cacheable_section_ids: ['runtime_core', 'execution_policy'], volatile_section_ids: ['capability_policy'] } } }) + '\\n');`,
     `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 2, event_type: 'tool_call', payload: { phase: 'started', tool_name: 'read_file', call_id: 'call-1', error: false } }) + '\\n');`,
     `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 3, event_type: 'tool_call', payload: { phase: 'completed', tool_name: 'read_file', call_id: 'call-1', error: false } }) + '\\n');`,
-    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 4, event_type: 'tool_call', payload: { phase: 'completed', tool_name: 'deploy', tool_id: 'workspace.deploy', call_id: 'call-2', error: true, message: 'permission denied by policy' } }) + '\\n');`,
-    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 5, event_type: 'output_delta', payload: { delta: 'Hello from TS' } }) + '\\n');`,
-    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 6, event_type: 'run_completed', payload: { status: 'ok', usage: { input_tokens: 12, output_tokens: 34 } } }) + '\\n');`
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 4, event_type: 'tool_call', payload: { phase: 'started', tool_name: 'skill', call_id: 'call-skill', tool_args: { name: 'customer_lookup' }, error: false } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 5, event_type: 'skill_invocation', payload: { phase: 'started', call_id: 'call-skill', requested_name: 'customer_lookup', skill_name: 'customer_lookup', skill_id: 'customer_lookup', error: false } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 6, event_type: 'tool_call', payload: { phase: 'completed', tool_name: 'skill', call_id: 'call-skill', tool_args: { name: 'customer_lookup' }, error: false } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 7, event_type: 'skill_invocation', payload: { phase: 'completed', call_id: 'call-skill', requested_name: 'customer_lookup', skill_name: 'customer_lookup', skill_id: 'customer_lookup', widening_scope: 'run', workspace_boundary_override: false, managed_tools: ['bash', 'deploy'], granted_tools: ['deploy'], active_granted_tools: ['deploy'], managed_commands: ['deploy-docs'], granted_commands: ['deploy-docs'], active_granted_commands: ['deploy-docs'], error: false } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 8, event_type: 'tool_call', payload: { phase: 'completed', tool_name: 'deploy', tool_id: 'workspace.deploy', call_id: 'call-2', error: true, message: 'permission denied by policy' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 9, event_type: 'output_delta', payload: { delta: 'Hello from TS' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 10, event_type: 'run_completed', payload: { status: 'ok', usage: { input_tokens: 12, output_tokens: 34 } } }) + '\\n');`
   ]);
 
   const claimed = store.claimInputs({
@@ -198,7 +202,21 @@ test("claimed input persists runner events, assistant text, and idle state on su
   assert.equal(runtimeState.lastError, null);
   assert.deepEqual(
     events.map((event) => event.eventType),
-    ["run_started", "tool_call", "tool_call", "tool_call", "output_delta", "run_completed"]
+    [
+      "run_started",
+      "tool_call",
+      "tool_call",
+      "tool_call",
+      "skill_invocation",
+      "tool_call",
+      "skill_invocation",
+      "tool_call",
+      "output_delta",
+      "compaction_start",
+      "compaction_boundary_written",
+      "compaction_end",
+      "run_completed",
+    ]
   );
   assert.equal(messages.length, 1);
   assert.equal(messages[0].role, "assistant");
@@ -221,11 +239,31 @@ test("claimed input persists runner events, assistant text, and idle state on su
   });
   assert.equal(turnResult.compactionBoundaryId, `compaction:${queued.inputId}`);
   assert.deepEqual(turnResult.toolUsageSummary, {
-    total_calls: 2,
-    completed_calls: 1,
+    total_calls: 3,
+    completed_calls: 2,
     failed_calls: 1,
-    tool_names: ["deploy", "read_file"],
-    tool_ids: ["workspace.deploy"]
+    tool_names: ["deploy", "read_file", "skill"],
+    tool_ids: ["workspace.deploy"],
+    skill_invocations: {
+      total_calls: 1,
+      completed_calls: 1,
+      failed_calls: 0,
+      skill_names: ["customer_lookup"],
+      skill_ids: ["customer_lookup"],
+    },
+    skill_policy_widening: {
+      scope: "run",
+      workspace_boundary_override: false,
+      managed_tools: ["bash", "deploy"],
+      granted_tools: ["deploy"],
+      active_granted_tools: ["deploy"],
+      managed_commands: ["deploy-docs"],
+      granted_commands: ["deploy-docs"],
+      active_granted_commands: ["deploy-docs"],
+      activation_count: 1,
+      denied_calls: 0,
+      denied_tool_names: [],
+    },
   });
   assert.deepEqual(turnResult.permissionDenials, [
     {
@@ -235,14 +273,26 @@ test("claimed input persists runner events, assistant text, and idle state on su
     }
   ]);
   assert.deepEqual(turnResult.tokenUsage, { input_tokens: 12, output_tokens: 34 });
-  assert.equal(memoryUpserts.length, 8);
+  const compactionStartEvent = events.find((event) => event.eventType === "compaction_start");
+  const compactionBoundaryEvent = events.find((event) => event.eventType === "compaction_boundary_written");
+  const compactionEndEvent = events.find((event) => event.eventType === "compaction_end");
+  assert.ok(compactionStartEvent);
+  assert.ok(compactionBoundaryEvent);
+  assert.ok(compactionEndEvent);
+  assert.equal(compactionStartEvent?.payload.source, "executor_post_turn");
+  assert.equal(compactionBoundaryEvent?.payload.boundary_id, `compaction:${queued.inputId}`);
+  assert.equal(compactionBoundaryEvent?.payload.boundary_type, "executor_post_turn");
+  assert.equal(compactionEndEvent?.payload.status, "completed");
+  assert.equal(compactionEndEvent?.payload.boundary_id, `compaction:${queued.inputId}`);
+  assert.equal(memoryUpserts.length, 9);
   assert.deepEqual(
-    memoryUpserts.slice(0, 4).map((payload) => payload.path),
+    memoryUpserts.slice(0, 5).map((payload) => payload.path),
     [
       `workspace/${workspace.id}/runtime/session-state/session-main.md`,
       `workspace/${workspace.id}/runtime/blockers/session-main.md`,
       `workspace/${workspace.id}/runtime/latest-turn.md`,
       `workspace/${workspace.id}/runtime/recent-turns/session-main.md`,
+      `workspace/${workspace.id}/runtime/session-memory/session-main.md`,
     ]
   );
   assert.match(String(memoryUpserts[0].content), /Runtime Session Snapshot/);
@@ -253,12 +303,14 @@ test("claimed input persists runner events, assistant text, and idle state on su
   assert.match(String(memoryUpserts[2].content), /Hello from TS/);
   assert.match(String(memoryUpserts[3].content), /Recent Runtime Turns/);
   assert.match(String(memoryUpserts[3].content), /Hello from TS/);
-  assert.match(String(memoryUpserts[4].path), new RegExp(`workspace/${workspace.id}/runtime/permission-blockers/[a-f0-9]{16}\\.md$`));
-  assert.match(String(memoryUpserts[4].content), /Runtime Permission Blocker/);
-  assert.match(String(memoryUpserts[4].content), /workspace\.deploy/);
+  assert.match(String(memoryUpserts[4].content), /Session Memory/);
+  assert.match(String(memoryUpserts[4].content), /Recent Runtime Progress/);
+  assert.match(String(memoryUpserts[5].path), new RegExp(`workspace/${workspace.id}/runtime/permission-blockers/[a-f0-9]{16}\\.md$`));
+  assert.match(String(memoryUpserts[5].content), /Runtime Permission Blocker/);
+  assert.match(String(memoryUpserts[5].content), /workspace\.deploy/);
   assert.deepEqual(
     memoryUpserts
-      .slice(5)
+      .slice(6)
       .map((payload) => String(payload.path))
       .sort((left, right) => left.localeCompare(right)),
     [
@@ -336,6 +388,161 @@ test("claimed input ignores waiting_user terminal status for harnesses that do n
   assert.ok(turnResult);
   assert.equal(turnResult.status, "completed");
   assert.equal(turnResult.stopReason, "waiting_user");
+
+  store.close();
+});
+
+test("claimed input captures file outputs and persists an assistant turn for output-only runs", async () => {
+  const store = makeStore("hb-claimed-input-file-output-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "create a report file" }
+  });
+
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      const workspaceDir = store.workspaceDir(workspace.id);
+      fs.mkdirSync(workspaceDir, { recursive: true });
+      fs.writeFileSync(path.join(workspaceDir, "report.md"), "# Report\n");
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {}
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "run_completed",
+        payload: { status: "ok" }
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true
+      };
+    }
+  });
+
+  const outputs = store.listOutputs({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: queued.inputId,
+    limit: 20,
+    offset: 0
+  });
+  const messages = store.listSessionMessages({
+    workspaceId: workspace.id,
+    sessionId: "session-main"
+  });
+
+  assert.equal(outputs.length, 1);
+  assert.equal(outputs[0].title, "report.md");
+  assert.equal(outputs[0].filePath, "report.md");
+  assert.equal(outputs[0].status, "completed");
+  assert.equal(outputs[0].metadata.origin_type, "file");
+  assert.equal(outputs[0].metadata.change_type, "created");
+  assert.equal(outputs[0].metadata.category, "document");
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].id, `assistant-${queued.inputId}`);
+  assert.equal(messages[0].role, "assistant");
+  assert.equal(messages[0].text, "");
+
+  store.close();
+});
+
+test("claimed input records skill-policy denial audit in tool usage summary", async () => {
+  const store = makeStore("hb-claimed-input-skill-policy-denial-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello" }
+  });
+
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {}
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "tool_call",
+        payload: {
+          phase: "completed",
+          tool_name: "bash",
+          call_id: "call-denied",
+          error: true,
+          message: "permission denied by skill policy: tool \"bash\" is gated and must be widened"
+        }
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 3,
+        event_type: "run_completed",
+        payload: { status: "ok" }
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true
+      };
+    }
+  });
+
+  const turnResult = store.getTurnResult({ inputId: queued.inputId });
+  assert.ok(turnResult);
+  assert.deepEqual(turnResult.toolUsageSummary, {
+    total_calls: 1,
+    completed_calls: 0,
+    failed_calls: 1,
+    tool_names: ["bash"],
+    tool_ids: [],
+    skill_policy_widening: {
+      scope: null,
+      workspace_boundary_override: null,
+      managed_tools: [],
+      granted_tools: [],
+      active_granted_tools: [],
+      managed_commands: [],
+      granted_commands: [],
+      active_granted_commands: [],
+      activation_count: 0,
+      denied_calls: 1,
+      denied_tool_names: ["bash"],
+    }
+  });
 
   store.close();
 });

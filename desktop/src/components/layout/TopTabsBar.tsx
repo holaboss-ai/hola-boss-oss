@@ -63,11 +63,8 @@ export function TopTabsBar({
   onOpenExternalUrl,
   onPublish,
 }: TopTabsBarProps) {
-  const {
-    overview,
-    isLoading: isBillingLoading,
-    isLowBalance,
-  } = useDesktopBilling();
+  const { isAvailable: isBillingAvailable, overview, isLoading: isBillingLoading, isLowBalance } =
+    useDesktopBilling();
   const userButtonRef = useRef<HTMLButtonElement | null>(null);
   const workspaceSwitcherRef = useRef<HTMLDivElement | null>(null);
   const workspaceSwitcherButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -279,12 +276,14 @@ export function TopTabsBar({
               <span className="hidden sm:inline">Marketplace</span>
             </Button>
           ) : null}
-          <CreditsPill
-            balance={overview?.creditsBalance ?? 0}
-            isLoading={isBillingLoading}
-            isLowBalance={isLowBalance}
-            onClick={() => onOpenBilling?.()}
-          />
+          {isBillingAvailable ? (
+            <CreditsPill
+              balance={overview?.creditsBalance ?? 0}
+              isLoading={isBillingLoading}
+              isLowBalance={isLowBalance}
+              onClick={() => onOpenBilling?.()}
+            />
+          ) : null}
           <DropdownMenu>
             <DropdownMenuTrigger
               ref={userButtonRef}

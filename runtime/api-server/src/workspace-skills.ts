@@ -15,6 +15,10 @@ export interface ResolvedWorkspaceSkill {
 const EMBEDDED_SKILLS_DIR_ENV = "HOLABOSS_EMBEDDED_SKILLS_DIR";
 const WORKSPACE_SKILLS_RELATIVE_PATH = "skills";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function normalizeSkillId(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -80,6 +84,50 @@ function workspaceEnabledSkillIds(payload: Record<string, unknown>): string[] {
   return ordered;
 }
 
+function skillFrontmatter(content: string): Record<string, unknown> | null {
+  const normalized = content.replace(/^\uFEFF/, "");
+  const match = normalized.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!match) {
+    return null;
+  }
+  try {
+    const parsed = yaml.load(match[1] ?? "");
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizedFrontmatterString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function hasValidSkillFormat(params: { skillId: string; skillFilePath: string }): boolean {
+  let content: string;
+  try {
+    content = fs.readFileSync(params.skillFilePath, "utf8");
+  } catch {
+    return false;
+  }
+  const frontmatter = skillFrontmatter(content);
+  if (!frontmatter) {
+    return false;
+  }
+  const frontmatterName = normalizeSkillId(normalizedFrontmatterString(frontmatter.name));
+  if (!frontmatterName || frontmatterName !== params.skillId) {
+    return false;
+  }
+  const description = normalizedFrontmatterString(frontmatter.description);
+  if (!description) {
+    return false;
+  }
+  return true;
+}
+
 function listSkillsInRoot(skillRoot: string, origin: ResolvedSkillOrigin): ResolvedWorkspaceSkill[] {
   const skillRootPath = path.resolve(skillRoot);
   const stats = fs.statSync(skillRootPath, { throwIfNoEntry: false });
@@ -102,7 +150,11 @@ function listSkillsInRoot(skillRoot: string, origin: ResolvedSkillOrigin): Resol
       } catch {
         return null;
       }
-      if (!fs.existsSync(path.join(sourceRealPath, "SKILL.md"))) {
+      const skillFilePath = path.join(sourceRealPath, "SKILL.md");
+      if (!fs.existsSync(skillFilePath)) {
+        return null;
+      }
+      if (!hasValidSkillFormat({ skillId, skillFilePath })) {
         return null;
       }
       return {

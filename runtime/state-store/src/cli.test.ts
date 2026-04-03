@@ -219,8 +219,9 @@ test("handleRequest maps output folders, outputs, and artifacts to snake_case pa
   assert.equal(folder.workspace_id, "workspace-1");
   assert.equal(output.folder_id, folder.id);
   assert.equal(artifact.external_id, "doc-1");
-  assert.equal(counts.total, 1);
-  assert.equal(listedArtifacts[0].platform, "notion");
+  assert.equal(counts.total, 2);
+  assert.equal(listedArtifacts.length, 2);
+  assert.ok(listedArtifacts.some((item) => item.platform === "notion"));
 });
 
 test("handleRequest maps cronjobs and task proposals to snake_case payloads", () => {

@@ -134,6 +134,26 @@ test("buildAgentCapabilityManifest filters browser tools when policy context doe
   assert.equal(buildEnabledToolMapFromManifest(manifest).browser_get_state, undefined);
 });
 
+test("buildAgentCapabilityManifest includes native web search as a custom tool", () => {
+  const manifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "main",
+    browserToolsAvailable: false,
+    browserToolIds: [],
+    runtimeToolIds: [],
+    defaultTools: ["read"],
+    extraTools: ["web_search"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const capability = manifest.custom_tools.find((entry) => entry.id === "web_search");
+  assert.ok(capability);
+  assert.equal(capability.title, "Web Search");
+  assert.match(capability.description, /Search the public web/i);
+  assert.equal(buildEnabledToolMapFromManifest(manifest).web_search, true);
+});
+
 test("evaluateAgentCapabilities keeps command and skill surfaces while excluding non-staged browser tools", () => {
   const evaluation = evaluateAgentCapabilities({
     harnessId: "pi",

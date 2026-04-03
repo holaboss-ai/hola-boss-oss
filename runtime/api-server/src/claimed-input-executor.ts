@@ -7,12 +7,14 @@ import { buildRunFailedEvent, executeRunnerRequest, type RunnerEvent } from "./r
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
 import { normalizeHarnessId, resolveRuntimeHarnessAdapter } from "./harness-registry.js";
 import type { MemoryServiceLike } from "./memory.js";
-import { writeTurnMemory } from "./turn-memory-writeback.js";
+import { writeTurnMemory, type TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
+import { collectWorkspaceFileManifest, detectWorkspaceFileOutputs, type WorkspaceFileManifest } from "./turn-output-capture.js";
 
 const ONBOARD_PROMPT_HEADER = "[Holaboss Workspace Onboarding v1]";
 const RUNTIME_EXEC_CONTEXT_KEY = "_sandbox_runtime_exec_v1";
 const RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY = "model_proxy_api_key";
 const RUNTIME_EXEC_SANDBOX_ID_KEY = "sandbox_id";
+const EXECUTOR_COMPACTION_SOURCE = "executor_post_turn";
 
 interface SessionInputAttachment {
   id: string;
@@ -71,6 +73,86 @@ function defaultInstructionForAttachments(attachments: SessionInputAttachment[])
 
 function selectedHarness(): string {
   return normalizeHarnessId(process.env.SANDBOX_AGENT_HARNESS);
+}
+
+function normalizeModelIdForWriteback(value: unknown): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+  const slashIndex = trimmed.indexOf("/");
+  return slashIndex >= 0 ? trimmed.slice(slashIndex + 1).trim() : trimmed;
+}
+
+function openAiMemoryModelBaseUrl(baseRoot: string): string {
+  const normalized = baseRoot.trim().replace(/\/+$/, "");
+  if (!normalized) {
+    return "";
+  }
+  return normalized.endsWith("/openai/v1") ? normalized : `${normalized}/openai/v1`;
+}
+
+function writebackModelContext(params: {
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+  instruction: string;
+  model: unknown;
+  runtimeBinding: {
+    authToken: string;
+    userId: string;
+    sandboxId: string;
+    modelProxyBaseUrl: string;
+    defaultModel: string;
+  };
+  runtimeExecContext: Record<string, unknown>;
+}): TurnMemoryWritebackModelContext | null {
+  const baseUrl = openAiMemoryModelBaseUrl(params.runtimeBinding.modelProxyBaseUrl);
+  if (!baseUrl) {
+    return null;
+  }
+  const apiKey =
+    (typeof params.runtimeExecContext[RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY] === "string"
+      ? params.runtimeExecContext[RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY]
+      : params.runtimeBinding.authToken
+    ).trim();
+  if (!apiKey) {
+    return null;
+  }
+  const modelId =
+    normalizeModelIdForWriteback(params.model) || normalizeModelIdForWriteback(params.runtimeBinding.defaultModel);
+  if (!modelId) {
+    return null;
+  }
+  const headers: Record<string, string> = {
+    "X-API-Key": apiKey,
+    "X-Holaboss-Session-Id": params.sessionId,
+    "X-Holaboss-Workspace-Id": params.workspaceId,
+    "X-Holaboss-Input-Id": params.inputId,
+  };
+  const sandboxId =
+    typeof params.runtimeExecContext[RUNTIME_EXEC_SANDBOX_ID_KEY] === "string" &&
+    params.runtimeExecContext[RUNTIME_EXEC_SANDBOX_ID_KEY].trim()
+      ? params.runtimeExecContext[RUNTIME_EXEC_SANDBOX_ID_KEY].trim()
+      : params.runtimeBinding.sandboxId.trim();
+  if (sandboxId) {
+    headers["X-Holaboss-Sandbox-Id"] = sandboxId;
+  }
+  if (params.runtimeBinding.userId.trim()) {
+    headers["X-Holaboss-User-Id"] = params.runtimeBinding.userId.trim();
+  }
+  return {
+    modelClient: {
+      baseUrl,
+      apiKey,
+      defaultHeaders: headers,
+      modelId,
+    },
+    instruction: params.instruction,
+  };
 }
 
 function ensureLocalBinding(params: {
@@ -245,11 +327,115 @@ function permissionDenialFromEventPayload(payload: Record<string, unknown>): Rec
   };
 }
 
+function optionalString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+type SkillInvocationSummaryEntry = {
+  skillName: string;
+  skillId: string | null;
+  completed: boolean;
+  error: boolean;
+};
+
+type SkillWideningAudit = {
+  scope: string | null;
+  workspaceBoundaryOverride: boolean | null;
+  managedTools: Set<string>;
+  grantedTools: Set<string>;
+  activeGrantedTools: Set<string>;
+  managedCommands: Set<string>;
+  grantedCommands: Set<string>;
+  activeGrantedCommands: Set<string>;
+  activationCount: number;
+  deniedCalls: number;
+  deniedToolNames: Set<string>;
+};
+
+function summarizeSkillInvocations(skillInvocationsById: Map<string, SkillInvocationSummaryEntry>): Record<string, unknown> {
+  const calls = [...skillInvocationsById.values()];
+  return {
+    total_calls: calls.length,
+    completed_calls: calls.filter((call) => call.completed && !call.error).length,
+    failed_calls: calls.filter((call) => call.error).length,
+    skill_names: [...new Set(calls.map((call) => call.skillName).filter(Boolean))].sort((left, right) =>
+      left.localeCompare(right)
+    ),
+    skill_ids: [...new Set(calls.map((call) => call.skillId).filter((value): value is string => Boolean(value)))].sort(
+      (left, right) => left.localeCompare(right)
+    ),
+  };
+}
+
+function createSkillWideningAudit(): SkillWideningAudit {
+  return {
+    scope: null,
+    workspaceBoundaryOverride: null,
+    managedTools: new Set<string>(),
+    grantedTools: new Set<string>(),
+    activeGrantedTools: new Set<string>(),
+    managedCommands: new Set<string>(),
+    grantedCommands: new Set<string>(),
+    activeGrantedCommands: new Set<string>(),
+    activationCount: 0,
+    deniedCalls: 0,
+    deniedToolNames: new Set<string>(),
+  };
+}
+
+function skillWideningSummary(audit: SkillWideningAudit): Record<string, unknown> | null {
+  if (
+    audit.scope === null &&
+    audit.workspaceBoundaryOverride === null &&
+    audit.managedTools.size === 0 &&
+    audit.grantedTools.size === 0 &&
+    audit.activeGrantedTools.size === 0 &&
+    audit.managedCommands.size === 0 &&
+    audit.grantedCommands.size === 0 &&
+    audit.activeGrantedCommands.size === 0 &&
+    audit.activationCount === 0 &&
+    audit.deniedCalls === 0
+  ) {
+    return null;
+  }
+  return {
+    scope: audit.scope,
+    workspace_boundary_override: audit.workspaceBoundaryOverride,
+    managed_tools: [...audit.managedTools].sort((left, right) => left.localeCompare(right)),
+    granted_tools: [...audit.grantedTools].sort((left, right) => left.localeCompare(right)),
+    active_granted_tools: [...audit.activeGrantedTools].sort((left, right) => left.localeCompare(right)),
+    managed_commands: [...audit.managedCommands].sort((left, right) => left.localeCompare(right)),
+    granted_commands: [...audit.grantedCommands].sort((left, right) => left.localeCompare(right)),
+    active_granted_commands: [...audit.activeGrantedCommands].sort((left, right) => left.localeCompare(right)),
+    activation_count: audit.activationCount,
+    denied_calls: audit.deniedCalls,
+    denied_tool_names: [...audit.deniedToolNames].sort((left, right) => left.localeCompare(right)),
+  };
+}
+
+function isSkillPolicyDeniedPayload(payload: Record<string, unknown>): boolean {
+  if (payload.error !== true) {
+    return false;
+  }
+  const candidates = [
+    optionalString(payload.message),
+    optionalString(payload.result),
+    optionalString(payload.error_message),
+  ].filter((value): value is string => Boolean(value));
+  return candidates.some((value) => /permission denied by skill policy/i.test(value));
+}
+
 function summarizeToolCalls(
-  toolCallsById: Map<string, { toolName: string; toolId: string | null; completed: boolean; error: boolean }>
+  toolCallsById: Map<string, { toolName: string; toolId: string | null; completed: boolean; error: boolean }>,
+  skillInvocationsById: Map<string, SkillInvocationSummaryEntry> = new Map(),
+  wideningAudit: SkillWideningAudit | null = null
 ): Record<string, unknown> {
   const calls = [...toolCallsById.values()];
-  return {
+  const summary: Record<string, unknown> = {
     total_calls: calls.length,
     completed_calls: calls.filter((call) => call.completed && !call.error).length,
     failed_calls: calls.filter((call) => call.error).length,
@@ -260,6 +446,14 @@ function summarizeToolCalls(
       (left, right) => left.localeCompare(right)
     ),
   };
+  if (skillInvocationsById.size > 0) {
+    summary.skill_invocations = summarizeSkillInvocations(skillInvocationsById);
+  }
+  const widening = wideningAudit ? skillWideningSummary(wideningAudit) : null;
+  if (widening) {
+    summary.skill_policy_widening = widening;
+  }
+  return summary;
 }
 
 function persistTurnResult(params: {
@@ -307,15 +501,131 @@ async function writeTurnMemoryIfAvailable(params: {
   store: RuntimeStateStore;
   memoryService?: MemoryServiceLike | null;
   turnResult: TurnResultRecord | null;
-}): Promise<void> {
+  modelContext?: TurnMemoryWritebackModelContext | null;
+}): Promise<TurnResultRecord | null> {
   if (!params.memoryService || !params.turnResult) {
-    return;
+    return params.turnResult ?? null;
   }
-  await writeTurnMemory({
+  return await writeTurnMemory({
     store: params.store,
     memoryService: params.memoryService,
     turnResult: params.turnResult,
+    modelContext: params.modelContext ?? null,
   });
+}
+
+function appendNextOutputEvent(params: {
+  store: RuntimeStateStore;
+  record: SessionInputRecord;
+  lastSequence: number;
+  eventType: string;
+  payload: Record<string, unknown>;
+  createdAt?: string;
+}): number {
+  const nextSequence = Math.max(0, params.lastSequence) + 1;
+  params.store.appendOutputEvent({
+    workspaceId: params.record.workspaceId,
+    sessionId: params.record.sessionId,
+    inputId: params.record.inputId,
+    sequence: nextSequence,
+    eventType: params.eventType,
+    payload: params.payload,
+    createdAt: params.createdAt,
+  });
+  return nextSequence;
+}
+
+function restoredMemoryPathCount(value: unknown): number {
+  if (!isRecord(value)) {
+    return 0;
+  }
+  const restored = Array.isArray(value.restored_memory_paths) ? value.restored_memory_paths : [];
+  return restored.filter((entry) => typeof entry === "string" && entry.trim().length > 0).length;
+}
+
+async function writeTurnMemoryWithLifecycleEvents(params: {
+  store: RuntimeStateStore;
+  record: SessionInputRecord;
+  memoryService?: MemoryServiceLike | null;
+  turnResult: TurnResultRecord | null;
+  modelContext?: TurnMemoryWritebackModelContext | null;
+  lastSequence: number;
+}): Promise<{ turnResult: TurnResultRecord | null; lastSequence: number }> {
+  if (!params.memoryService || !params.turnResult) {
+    return {
+      turnResult: params.turnResult ?? null,
+      lastSequence: params.lastSequence,
+    };
+  }
+
+  const startedAtMs = Date.now();
+  let lastSequence = appendNextOutputEvent({
+    store: params.store,
+    record: params.record,
+    lastSequence: params.lastSequence,
+    eventType: "compaction_start",
+    payload: {
+      source: EXECUTOR_COMPACTION_SOURCE,
+      status: "started",
+    },
+  });
+
+  try {
+    const updatedTurnResult = await writeTurnMemory({
+      store: params.store,
+      memoryService: params.memoryService,
+      turnResult: params.turnResult,
+      modelContext: params.modelContext ?? null,
+    });
+    const boundaryId = updatedTurnResult.compactionBoundaryId ?? `compaction:${updatedTurnResult.inputId}`;
+    const boundary = params.store.getCompactionBoundary({ boundaryId });
+    lastSequence = appendNextOutputEvent({
+      store: params.store,
+      record: params.record,
+      lastSequence,
+      eventType: "compaction_boundary_written",
+      payload: {
+        source: EXECUTOR_COMPACTION_SOURCE,
+        boundary_id: boundary?.boundaryId ?? boundaryId,
+        boundary_type: boundary?.boundaryType ?? EXECUTOR_COMPACTION_SOURCE,
+        previous_boundary_id: boundary?.previousBoundaryId ?? null,
+        request_snapshot_fingerprint: boundary?.requestSnapshotFingerprint ?? null,
+        restored_memory_path_count: restoredMemoryPathCount(boundary?.restorationContext),
+      },
+    });
+    lastSequence = appendNextOutputEvent({
+      store: params.store,
+      record: params.record,
+      lastSequence,
+      eventType: "compaction_end",
+      payload: {
+        source: EXECUTOR_COMPACTION_SOURCE,
+        status: "completed",
+        duration_ms: Math.max(0, Date.now() - startedAtMs),
+        boundary_id: boundary?.boundaryId ?? boundaryId,
+        boundary_type: boundary?.boundaryType ?? EXECUTOR_COMPACTION_SOURCE,
+      },
+    });
+    return {
+      turnResult: updatedTurnResult,
+      lastSequence,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    lastSequence = appendNextOutputEvent({
+      store: params.store,
+      record: params.record,
+      lastSequence,
+      eventType: "compaction_end",
+      payload: {
+        source: EXECUTOR_COMPACTION_SOURCE,
+        status: "failed",
+        duration_ms: Math.max(0, Date.now() - startedAtMs),
+        error_message: errorMessage,
+      },
+    });
+    throw error;
+  }
 }
 
 function terminalStatusForCompletedPayload(
@@ -401,6 +711,7 @@ export async function processClaimedInput(params: {
   }
 
   const harness = normalizeHarnessId(workspace.harness ?? selectedHarness());
+  const workspaceDir = store.workspaceDir(record.workspaceId);
   const session = store.getSession({
     workspaceId: record.workspaceId,
     sessionId: record.sessionId
@@ -473,6 +784,15 @@ export async function processClaimedInput(params: {
     model: record.payload.model ?? null,
     debug: false
   };
+  const memoryWritebackModelContext = writebackModelContext({
+    workspaceId: record.workspaceId,
+    sessionId: record.sessionId,
+    inputId: record.inputId,
+    instruction,
+    model: record.payload.model ?? null,
+    runtimeBinding,
+    runtimeExecContext: priorExecContext,
+  });
 
   const assistantParts: string[] = [];
   let terminalStatus: "IDLE" | "WAITING_USER" | "ERROR" = "IDLE";
@@ -486,7 +806,21 @@ export async function processClaimedInput(params: {
   let requestSnapshotFingerprint: string | null = null;
   let promptCacheProfile: Record<string, unknown> | null = null;
   const toolCallsById = new Map<string, { toolName: string; toolId: string | null; completed: boolean; error: boolean }>();
+  const skillInvocationsById = new Map<string, SkillInvocationSummaryEntry>();
+  const wideningAudit = createSkillWideningAudit();
   const permissionDenials: Array<Record<string, unknown>> = [];
+  let deferredTerminalEvent: {
+    eventType: "run_completed" | "run_failed";
+    payload: Record<string, unknown>;
+    createdAt: string;
+  } | null = null;
+  let workspaceFileManifestBefore: WorkspaceFileManifest | null = null;
+
+  try {
+    workspaceFileManifestBefore = collectWorkspaceFileManifest(workspaceDir);
+  } catch {
+    workspaceFileManifestBefore = null;
+  }
 
   try {
     const executeRunner = params.executeRunnerRequestFn ?? executeRunnerRequest;
@@ -507,21 +841,30 @@ export async function processClaimedInput(params: {
         lastSequence = Math.max(lastSequence, sequence);
         const eventPayload = payloadForEvent(event);
         const eventTimestamp = eventTimestampOrNow(event);
-        store.appendOutputEvent({
-          workspaceId: record.workspaceId,
-          sessionId: record.sessionId,
-          inputId: record.inputId,
-          sequence,
-          eventType: typeof event.event_type === "string" ? event.event_type : "unknown",
-          payload: eventPayload,
-          createdAt: eventTimestamp
-        });
+        const eventType = typeof event.event_type === "string" ? event.event_type : "unknown";
+        if (eventType === "run_completed" || eventType === "run_failed") {
+          deferredTerminalEvent = {
+            eventType,
+            payload: eventPayload,
+            createdAt: eventTimestamp,
+          };
+        } else {
+          store.appendOutputEvent({
+            workspaceId: record.workspaceId,
+            sessionId: record.sessionId,
+            inputId: record.inputId,
+            sequence,
+            eventType,
+            payload: eventPayload,
+            createdAt: eventTimestamp
+          });
+        }
         maybePersistHarnessSessionId({
           store,
           workspaceId: record.workspaceId,
           sessionId: record.sessionId,
           harness,
-          eventType: typeof event.event_type === "string" ? event.event_type : "unknown",
+          eventType,
           payload: eventPayload
         });
         if (event.event_type === "output_delta" && typeof eventPayload.delta === "string") {
@@ -568,6 +911,74 @@ export async function processClaimedInput(params: {
             permissionDenials.push(denial);
           }
         }
+        if (event.event_type === "skill_invocation" || event.event_type === "tool_call") {
+          const callId =
+            typeof eventPayload.call_id === "string" && eventPayload.call_id.trim()
+              ? eventPayload.call_id.trim()
+              : `sequence:${sequence}`;
+          const toolName = optionalString(eventPayload.tool_name);
+          const isSkillInvocation =
+            event.event_type === "skill_invocation" ||
+            (toolName !== null && toolName.toLowerCase() === "skill");
+          if (isSkillInvocation) {
+            const existingInvocation = skillInvocationsById.get(callId);
+            const toolArgs = jsonRecord(eventPayload.tool_args);
+            const skillName =
+              optionalString(eventPayload.skill_name) ??
+              optionalString(eventPayload.requested_name) ??
+              optionalString(toolArgs?.name) ??
+              existingInvocation?.skillName ??
+              "unknown";
+            const skillId = optionalString(eventPayload.skill_id) ?? existingInvocation?.skillId ?? null;
+            const completed = eventPayload.phase === "completed" || existingInvocation?.completed === true;
+            const error = eventPayload.error === true || existingInvocation?.error === true;
+            skillInvocationsById.set(callId, {
+              skillName,
+              skillId,
+              completed,
+              error,
+            });
+          }
+        }
+        if (event.event_type === "skill_invocation") {
+          const scope = optionalString(eventPayload.widening_scope);
+          if (scope) {
+            wideningAudit.scope = scope;
+          }
+          if (typeof eventPayload.workspace_boundary_override === "boolean") {
+            wideningAudit.workspaceBoundaryOverride = eventPayload.workspace_boundary_override;
+          }
+          for (const toolName of stringList(eventPayload.managed_tools)) {
+            wideningAudit.managedTools.add(toolName);
+          }
+          const grantedTools = stringList(eventPayload.granted_tools);
+          for (const toolName of grantedTools) {
+            wideningAudit.grantedTools.add(toolName);
+          }
+          for (const toolName of stringList(eventPayload.active_granted_tools)) {
+            wideningAudit.activeGrantedTools.add(toolName);
+          }
+          for (const commandId of stringList(eventPayload.managed_commands)) {
+            wideningAudit.managedCommands.add(commandId);
+          }
+          const grantedCommands = stringList(eventPayload.granted_commands);
+          for (const commandId of grantedCommands) {
+            wideningAudit.grantedCommands.add(commandId);
+          }
+          for (const commandId of stringList(eventPayload.active_granted_commands)) {
+            wideningAudit.activeGrantedCommands.add(commandId);
+          }
+          if (eventPayload.phase === "completed" && (grantedTools.length > 0 || grantedCommands.length > 0)) {
+            wideningAudit.activationCount += 1;
+          }
+        }
+        if (event.event_type === "tool_call" && isSkillPolicyDeniedPayload(eventPayload)) {
+          wideningAudit.deniedCalls += 1;
+          const toolName = optionalString(eventPayload.tool_name);
+          if (toolName) {
+            wideningAudit.deniedToolNames.add(toolName);
+          }
+        }
         if (event.event_type === "run_completed") {
           terminalStatus = terminalStatusForCompletedPayload(eventPayload, harnessSupportsWaitingUser);
           completedAt = eventTimestamp;
@@ -606,14 +1017,12 @@ export async function processClaimedInput(params: {
         errorType: execution.returnCode !== 0 ? "RunnerCommandError" : "RuntimeError"
       });
       const failurePayload = payloadForEvent(failure);
-      store.appendOutputEvent({
-        workspaceId: record.workspaceId,
-        sessionId: record.sessionId,
-        inputId: record.inputId,
-        sequence: typeof failure.sequence === "number" ? failure.sequence : lastSequence + 1,
-        eventType: String(failure.event_type),
-        payload: failurePayload
-      });
+      lastSequence = Math.max(lastSequence, typeof failure.sequence === "number" ? failure.sequence : lastSequence + 1);
+      deferredTerminalEvent = {
+        eventType: "run_failed",
+        payload: failurePayload,
+        createdAt: new Date().toISOString(),
+      };
       terminalStatus = "ERROR";
       lastError = failurePayload;
       completedAt = new Date().toISOString();
@@ -639,8 +1048,47 @@ export async function processClaimedInput(params: {
       lastError
     });
 
+    if (workspaceFileManifestBefore) {
+      try {
+        const fileOutputs = detectWorkspaceFileOutputs({
+          workspaceDir,
+          before: workspaceFileManifestBefore
+        });
+        for (const output of fileOutputs) {
+          store.createOutput({
+            workspaceId: record.workspaceId,
+            outputType: output.outputType,
+            title: output.title,
+            status: "completed",
+            filePath: output.filePath,
+            sessionId: record.sessionId,
+            inputId: record.inputId,
+            metadata: output.metadata
+          });
+        }
+      } catch {
+        // Output capture is best-effort and should not fail the turn.
+      }
+    }
+
     const assistantText = assistantParts.join("").trim();
-    if (assistantText) {
+    const hasPersistedOutputs =
+      store.listOutputs({
+        workspaceId: record.workspaceId,
+        sessionId: record.sessionId,
+        inputId: record.inputId,
+        limit: 1,
+        offset: 0
+      }).length > 0;
+    const hasPersistedMemoryProposals =
+      store.listMemoryUpdateProposals({
+        workspaceId: record.workspaceId,
+        sessionId: record.sessionId,
+        inputId: record.inputId,
+        limit: 1,
+        offset: 0,
+      }).length > 0;
+    if (assistantText || hasPersistedOutputs || hasPersistedMemoryProposals) {
       store.insertSessionMessage({
         workspaceId: record.workspaceId,
         sessionId: record.sessionId,
@@ -657,7 +1105,7 @@ export async function processClaimedInput(params: {
       terminalStatus,
       stopReason,
       assistantText,
-      toolUsageSummary: summarizeToolCalls(toolCallsById),
+      toolUsageSummary: summarizeToolCalls(toolCallsById, skillInvocationsById, wideningAudit),
       permissionDenials,
       promptSectionIds,
       capabilityManifestFingerprint,
@@ -665,11 +1113,26 @@ export async function processClaimedInput(params: {
       promptCacheProfile,
       tokenUsage,
     });
-    await writeTurnMemoryIfAvailable({
+    const memoryWriteback = await writeTurnMemoryWithLifecycleEvents({
       store,
+      record,
       memoryService: params.memoryService,
       turnResult,
+      modelContext: memoryWritebackModelContext,
+      lastSequence,
     });
+    lastSequence = memoryWriteback.lastSequence;
+    if (deferredTerminalEvent) {
+      lastSequence = appendNextOutputEvent({
+        store,
+        record,
+        lastSequence,
+        eventType: deferredTerminalEvent.eventType,
+        payload: deferredTerminalEvent.payload,
+        createdAt: deferredTerminalEvent.createdAt,
+      });
+      deferredTerminalEvent = null;
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     store.updateInput(record.inputId, {
@@ -680,7 +1143,7 @@ export async function processClaimedInput(params: {
       workspaceId: record.workspaceId,
       sessionId: record.sessionId,
       inputId: record.inputId,
-      sequence: 1,
+      sequence: Math.max(0, lastSequence) + 1,
       eventType: "run_failed",
       payload: { message }
     });
@@ -714,6 +1177,7 @@ export async function processClaimedInput(params: {
       store,
       memoryService: params.memoryService,
       turnResult,
+      modelContext: memoryWritebackModelContext,
     });
   }
 }

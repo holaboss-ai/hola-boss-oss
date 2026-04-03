@@ -362,6 +362,57 @@ interface TaskProposalAcceptResponsePayload {
   input: EnqueueSessionInputResponsePayload;
 }
 
+type MemoryUpdateProposalKind = "preference" | "identity" | "profile";
+type MemoryUpdateProposalState = "pending" | "accepted" | "dismissed";
+
+interface MemoryUpdateProposalRecordPayload {
+  proposal_id: string;
+  workspace_id: string;
+  session_id: string;
+  input_id: string;
+  proposal_kind: MemoryUpdateProposalKind;
+  target_key: string;
+  title: string;
+  summary: string;
+  payload: Record<string, unknown>;
+  evidence: string | null;
+  confidence: number | null;
+  source_message_id: string | null;
+  state: MemoryUpdateProposalState;
+  persisted_memory_id: string | null;
+  created_at: string;
+  updated_at: string;
+  accepted_at: string | null;
+  dismissed_at: string | null;
+}
+
+interface MemoryUpdateProposalListRequestPayload {
+  workspaceId: string;
+  sessionId?: string | null;
+  inputId?: string | null;
+  state?: MemoryUpdateProposalState | null;
+  limit?: number;
+  offset?: number;
+}
+
+interface MemoryUpdateProposalListResponsePayload {
+  proposals: MemoryUpdateProposalRecordPayload[];
+  count: number;
+}
+
+interface MemoryUpdateProposalAcceptPayload {
+  proposalId: string;
+  summary?: string | null;
+}
+
+interface MemoryUpdateProposalAcceptResponsePayload {
+  proposal: MemoryUpdateProposalRecordPayload;
+}
+
+interface MemoryUpdateProposalDismissResponsePayload {
+  proposal: MemoryUpdateProposalRecordPayload;
+}
+
 interface CronjobDeliveryPayload {
   mode: string;
   channel: string;
@@ -556,6 +607,18 @@ interface HolabossStreamSessionOutputsPayload {
   inputId?: string | null;
   includeHistory?: boolean;
   stopOnTerminal?: boolean;
+}
+
+interface HolabossListOutputsPayload {
+  workspaceId: string;
+  outputType?: string | null;
+  status?: string | null;
+  platform?: string | null;
+  folderId?: string | null;
+  sessionId?: string | null;
+  inputId?: string | null;
+  limit?: number;
+  offset?: number;
 }
 
 interface HolabossSessionStreamHandlePayload {
@@ -868,8 +931,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:listInstalledApps", workspaceId) as Promise<InstalledWorkspaceAppListResponsePayload>,
     removeInstalledApp: (workspaceId: string, appId: string) =>
       ipcRenderer.invoke("workspace:removeInstalledApp", workspaceId, appId) as Promise<void>,
-    listOutputs: (workspaceId: string) =>
-      ipcRenderer.invoke("workspace:listOutputs", workspaceId) as Promise<WorkspaceOutputListResponsePayload>,
+    listOutputs: (payload: string | HolabossListOutputsPayload) =>
+      ipcRenderer.invoke("workspace:listOutputs", payload) as Promise<WorkspaceOutputListResponsePayload>,
     listSkills: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listSkills", workspaceId) as Promise<WorkspaceSkillListResponsePayload>,
     getWorkspaceRoot: (workspaceId: string) => ipcRenderer.invoke("workspace:getWorkspaceRoot", workspaceId) as Promise<string>,
@@ -889,6 +952,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:listTaskProposals", workspaceId) as Promise<TaskProposalListResponsePayload>,
     acceptTaskProposal: (payload: TaskProposalAcceptPayload) =>
       ipcRenderer.invoke("workspace:acceptTaskProposal", payload) as Promise<TaskProposalAcceptResponsePayload>,
+    listMemoryUpdateProposals: (payload: MemoryUpdateProposalListRequestPayload) =>
+      ipcRenderer.invoke("workspace:listMemoryUpdateProposals", payload) as Promise<MemoryUpdateProposalListResponsePayload>,
+    acceptMemoryUpdateProposal: (payload: MemoryUpdateProposalAcceptPayload) =>
+      ipcRenderer.invoke("workspace:acceptMemoryUpdateProposal", payload) as Promise<MemoryUpdateProposalAcceptResponsePayload>,
+    dismissMemoryUpdateProposal: (proposalId: string) =>
+      ipcRenderer.invoke("workspace:dismissMemoryUpdateProposal", proposalId) as Promise<MemoryUpdateProposalDismissResponsePayload>,
     getProactiveStatus: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:getProactiveStatus", workspaceId) as Promise<ProactiveAgentStatusPayload>,
     getProactiveTaskProposalPreference: () =>

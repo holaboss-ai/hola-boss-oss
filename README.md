@@ -106,10 +106,10 @@ Copy the desktop env template and fill in the required values:
 cp desktop/.env.example desktop/.env
 ```
 
-Build and stage a local runtime bundle from this repo into `desktop/out/runtime-<platform>`:
+If you want to verify the desktop code before launching the app, run:
 
 ```bash
-npm run desktop:prepare-runtime:local
+npm run desktop:typecheck
 ```
 
 Run the desktop app in development:
@@ -118,11 +118,21 @@ Run the desktop app in development:
 npm run desktop:dev
 ```
 
-If you want to stage the latest released runtime bundle for your current host platform instead of building from local runtime sources:
+`npm run desktop:dev` already runs the desktop `predev` hook for you. That hook validates the dev environment, rebuilds native modules, and ensures a staged runtime bundle exists under `desktop/out/runtime-<platform>`. If the bundle is missing or older than your local runtime sources, it automatically runs `npm run desktop:prepare-runtime:local`.
+
+If you want to stage the local runtime bundle from this repo explicitly ahead of time, you can still run:
+
+```bash
+npm run desktop:prepare-runtime:local
+```
+
+If you want to stage the latest released runtime bundle for your current host platform instead of rebuilding from local runtime sources:
 
 ```bash
 npm run desktop:prepare-runtime
 ```
+
+`desktop:prepare-runtime` pulls the latest published runtime bundle for the current platform from GitHub Releases and stages it into `desktop/out/runtime-<platform>`. `desktop:prepare-runtime:local` builds the runtime from your local source checkout and then stages that local bundle into the same location.
 
 ## Architecture Overview
 
@@ -150,8 +160,8 @@ At a high level, one run follows this path:
 2. the runtime resolves the workspace plan, capability surface, prompt sections, and request snapshot
    - prompt sections keep base runtime doctrine, session policy, capability policy, workspace policy, and runtime continuity context distinct even when the harness ultimately receives only `system_prompt` plus `context_messages`
 3. the selected harness executes the run and streams output events
-4. the runtime persists normalized turn artifacts, updates compaction continuity, and writes deterministic memory projections
-5. future runs restore continuity from durable runtime artifacts first, then add a small recalled durable-memory context
+4. the runtime persists normalized turn artifacts, updates compaction continuity, writes session/runtime memory projections, and performs durable memory writeback
+5. future runs restore continuity from durable runtime artifacts first (including the session-memory projection), then add a small recalled durable-memory context selected from markdown memory manifests
 
 ### Execution And Continuity
 
@@ -168,6 +178,8 @@ The most important runtime continuity artifacts are:
   - one normalized record per run with status, stop reason, token usage, prompt-section ids, request fingerprint, capability fingerprint, and assistant output
 - compaction boundaries
   - durable handoff artifacts that summarize a run boundary, record recent runtime context, preserve selected turn ids, and define explicit restoration ordering
+- session-memory projections
+  - per-session markdown continuity snapshots under `memory/workspace/<workspace-id>/runtime/session-memory/` used for fast resume context in later runs
 - request snapshots
   - sanitized exact request-state artifacts used for replay, debugging, and future cache diagnostics
 - runtime user profile
@@ -219,6 +231,7 @@ Holaboss workspaces live under the runtime sandbox root. In the desktop app, tha
         runtime/
           latest-turn.md
           session-state/
+          session-memory/
           recent-turns/
           blockers/
           permission-blockers/
@@ -248,13 +261,16 @@ The memory system is intentionally split by purpose and by authority. Human-auth
 
 #### Memory Layers
 
-Holaboss currently has three memory layers:
+Holaboss currently has four memory layers:
 
 - session continuity lives in runtime-owned artifacts such as `turn_results` and compaction boundaries in `state/runtime.db`
+- session-memory continuity projections live under `memory/workspace/<workspace-id>/runtime/session-memory/`
 - operational projections live under `memory/workspace/<workspace-id>/runtime/`
 - durable recalled memory lives under `memory/workspace/<workspace-id>/knowledge/` and `memory/preference/`
 
 Alongside those layers, the runtime also keeps a canonical operator profile in `state/runtime.db`. That profile is not treated as markdown memory. It is runtime-owned identity state used first for things like the current user's name, with auth-provided identity only acting as a non-destructive fallback when the local profile is empty.
+
+The runtime also keeps pending user-memory proposals in `state/runtime.db`. These are input-scoped candidates such as inferred user preferences. They can shape the current run ephemerally, but they are not promoted into durable memory or into the canonical runtime profile until the user explicitly accepts them.
 
 That means short-horizon execution state, canonical operator identity, and long-lived recalled memory are not mixed together.
 
@@ -291,12 +307,17 @@ Holaboss does not auto-write runtime state into `AGENTS.md`. `AGENTS.md` stays a
 
 The current memory lifecycle is:
 
-1. A run finishes and the runtime persists `turn_results`.
-2. Post-turn writeback updates the current compaction boundary and records ordered restoration inputs for later resume.
-3. Post-turn writeback generates volatile runtime projections under `memory/workspace/<workspace-id>/runtime/`.
-4. Deterministic durable extraction promotes selected items into `knowledge/` or `preference/`.
-5. `MEMORY.md` indexes are refreshed for durable memory only.
-6. Future runs restore session continuity from the latest compaction boundary first, then recall a small relevant durable subset and inject it as prompt context.
+1. User input is queued, and strong-signal user-scoped proposals can be captured into runtime-owned pending proposal records in `state/runtime.db`.
+2. The current run can use those pending proposals as ephemeral prompt context without treating them as durable memory yet.
+3. A run finishes and the runtime persists `turn_results`.
+4. Post-turn writeback updates the current compaction boundary and records ordered restoration inputs for later resume.
+5. Post-turn writeback generates volatile runtime projections under `memory/workspace/<workspace-id>/runtime/`, including `session-memory/`.
+6. Model-assisted durable extraction attempts to promote selected workspace-scoped items into `knowledge/` using recent turn context.
+7. Deterministic durable extraction remains as a fallback safety path when model extraction is unavailable or sparse.
+8. Accepted user-scoped proposals are promoted into durable preference memory or into the canonical runtime profile, depending on what they target.
+9. `MEMORY.md` indexes are refreshed for durable memory only.
+10. Future runs restore session continuity from the latest compaction boundary first, then enrich continuity with the current session-memory snapshot.
+11. Future runs recall a small durable subset from markdown memory manifests (model-selected when available, deterministic fallback otherwise) and inject it as prompt context.
 
 This keeps replay, inspection, and durable recall separate instead of overloading one mechanism for all three jobs.
 
@@ -319,6 +340,8 @@ The durable memory catalog currently supports these memory classes:
 
 Current writeback is intentionally conservative. The runtime only promotes facts and procedures that are explicit enough to survive beyond a single turn, and it keeps transient runtime state out of durable knowledge.
 
+User-scoped inferred preferences and other behavioral updates now flow through the pending proposal lane first. Workspace facts and procedures can still be persisted automatically, but user-scoped changes that affect future behavior are designed to wait for explicit confirmation before promotion.
+
 #### Recall And Governance
 
 Durable recall is governed separately from storage:
@@ -329,7 +352,7 @@ Durable recall is governed separately from storage:
 - stale references are penalized more aggressively than stable or workspace-sensitive memories
 - recalled durable memory is injected as context, not merged into the base system prompt
 
-Today, recall uses a local keyword-and-metadata ranking path backed by the durable memory catalog. The runtime also records a small recall-decision trace so it can explain why a memory surfaced during debugging. The architecture keeps retrieval separate from storage so alternate recall indexes can be added later without changing the memory model itself.
+Recall selection is manifest-based at query time. The runtime scans durable markdown memory files, reads frontmatter and compact summaries, and builds a bounded manifest. A model selector can choose a small relevant subset from that manifest; if model selection is unavailable, the runtime falls back to deterministic keyword-and-metadata ranking. Recalled entries include a compact selection trace and optional excerpt snippets for debugging and operator visibility. Retrieval stays separate from storage so alternate indexes can be added later without changing canonical markdown memory files.
 
 #### What Lives Where
 
@@ -341,6 +364,8 @@ Use these rules of thumb when reasoning about the system:
   - execution truth, session continuity, canonical runtime profile, memory catalog metadata
 - `memory/workspace/<workspace-id>/runtime/`
   - volatile runtime projections for inspection and debugging
+- `memory/workspace/<workspace-id>/runtime/session-memory/`
+  - session-scoped continuity snapshots consumed during resume/compaction restoration
 - `memory/workspace/<workspace-id>/knowledge/`
   - durable workspace memory that may be recalled in later runs
 - `memory/preference/`

@@ -7,8 +7,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useDesktopAuthSession } from "@/lib/auth/authClient";
 
 interface DesktopBillingContextValue {
+  isAvailable: boolean;
   isLoading: boolean;
   error: Error | null;
   overview: DesktopBillingOverviewPayload | null;
@@ -36,7 +38,9 @@ export function DesktopBillingProvider({
 }: {
   children: ReactNode;
 }) {
-  const [isLoading, setIsLoading] = useState(true);
+  const authSessionState = useDesktopAuthSession();
+  const isAuthenticated = Boolean(authSessionState.data?.user?.id?.trim());
+  const [isLoading, setIsLoading] = useState(authSessionState.isPending);
   const [error, setError] = useState<Error | null>(null);
   const [overview, setOverview] =
     useState<DesktopBillingOverviewPayload | null>(null);
@@ -44,6 +48,15 @@ export function DesktopBillingProvider({
   const [links, setLinks] = useState<DesktopBillingLinksPayload | null>(null);
 
   const refresh = useCallback(async () => {
+    if (!isAuthenticated) {
+      setOverview(null);
+      setUsage(null);
+      setLinks(null);
+      setError(null);
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     try {
       const [nextOverview, nextUsage, nextLinks] = await Promise.all([
@@ -60,11 +73,15 @@ export function DesktopBillingProvider({
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [isAuthenticated]);
 
   useEffect(() => {
+    if (authSessionState.isPending) {
+      setIsLoading(true);
+      return;
+    }
     void refresh();
-  }, [refresh]);
+  }, [authSessionState.isPending, refresh]);
 
   const isLowBalance = Boolean(
     overview &&
@@ -76,6 +93,7 @@ export function DesktopBillingProvider({
 
   const value = useMemo<DesktopBillingContextValue>(
     () => ({
+      isAvailable: isAuthenticated,
       isLoading,
       error,
       overview,
@@ -86,7 +104,7 @@ export function DesktopBillingProvider({
       isOutOfCredits,
       refresh,
     }),
-    [error, isLoading, isLowBalance, isOutOfCredits, links, overview, refresh, usage],
+    [error, isAuthenticated, isLoading, isLowBalance, isOutOfCredits, links, overview, refresh, usage],
   );
 
   return (

@@ -18,6 +18,8 @@ import {
   createPiMcpCustomTools,
   mapPiSessionEvent,
   resolvePiSkillDirs,
+  workspaceBoundaryOverrideRequested,
+  workspaceBoundaryViolationForToolCall,
   runPi
 } from "./pi.js";
 
@@ -118,6 +120,19 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
           serverId: "workspace",
           toolId: "workspace.lookup",
           toolName: "lookup",
+        },
+      ],
+    ]),
+    new Map([
+      [
+        "customer_lookup",
+        {
+          skillId: "customer_lookup",
+          skillName: "customer_lookup",
+          filePath: "/tmp/workspace-1/skills/customer_lookup/SKILL.md",
+          baseDir: "/tmp/workspace-1/skills/customer_lookup",
+          grantedTools: [],
+          grantedCommands: [],
         },
       ],
     ])
@@ -240,6 +255,136 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
           pi_tool_name: buildPiMcpToolName("workspace", "lookup"),
           mcp_server_id: "workspace",
           tool_id: "workspace.lookup",
+        },
+      },
+    ]
+  );
+
+  assert.deepEqual(
+    mapPiSessionEvent(
+      {
+        type: "tool_execution_start",
+        toolCallId: "skill-call-1",
+        toolName: "skill",
+        args: { name: "customer_lookup", args: "Focus on the loyalty tier section." },
+      },
+      sessionFile,
+      state
+    ),
+    [
+      {
+        event_type: "tool_call",
+        payload: {
+          phase: "started",
+          tool_name: "skill",
+          tool_args: { name: "customer_lookup", args: "Focus on the loyalty tier section." },
+          result: null,
+          error: false,
+          event: "tool_execution_start",
+          source: "pi",
+          call_id: "skill-call-1",
+        },
+      },
+      {
+        event_type: "skill_invocation",
+        payload: {
+          phase: "started",
+          requested_name: "customer_lookup",
+          skill_id: "customer_lookup",
+          skill_name: "customer_lookup",
+          skill_location: "/tmp/workspace-1/skills/customer_lookup/SKILL.md",
+          granted_tools_expected: [],
+          granted_commands_expected: [],
+          args: "Focus on the loyalty tier section.",
+          error: false,
+          event: "tool_execution_start",
+          source: "pi",
+          call_id: "skill-call-1",
+        },
+      },
+    ]
+  );
+
+  assert.deepEqual(
+    mapPiSessionEvent(
+      {
+        type: "tool_execution_end",
+        toolCallId: "skill-call-1",
+        toolName: "skill",
+        result: {
+          details: {
+            skill_id: "customer_lookup",
+            skill_name: "customer_lookup",
+            skill_file_path: "/tmp/workspace-1/skills/customer_lookup/SKILL.md",
+            policy_widening: {
+              scope: "run",
+              workspace_boundary_override: false,
+              managed_tools: ["bash", "deploy"],
+              granted_tools: ["deploy"],
+              active_granted_tools: ["deploy"],
+              managed_commands: ["deploy-docs"],
+              granted_commands: ["deploy-docs"],
+              active_granted_commands: ["deploy-docs"],
+            },
+          },
+        },
+        isError: false,
+      },
+      sessionFile,
+      state
+    ),
+    [
+      {
+        event_type: "tool_call",
+        payload: {
+          phase: "completed",
+          tool_name: "skill",
+          tool_args: { name: "customer_lookup", args: "Focus on the loyalty tier section." },
+          result: {
+            details: {
+              skill_id: "customer_lookup",
+              skill_name: "customer_lookup",
+              skill_file_path: "/tmp/workspace-1/skills/customer_lookup/SKILL.md",
+              policy_widening: {
+                scope: "run",
+                workspace_boundary_override: false,
+                managed_tools: ["bash", "deploy"],
+                granted_tools: ["deploy"],
+                active_granted_tools: ["deploy"],
+                managed_commands: ["deploy-docs"],
+                granted_commands: ["deploy-docs"],
+                active_granted_commands: ["deploy-docs"],
+              },
+            },
+          },
+          error: false,
+          event: "tool_execution_end",
+          source: "pi",
+          call_id: "skill-call-1",
+        },
+      },
+      {
+        event_type: "skill_invocation",
+        payload: {
+          phase: "completed",
+          requested_name: "customer_lookup",
+          skill_id: "customer_lookup",
+          skill_name: "customer_lookup",
+          skill_location: "/tmp/workspace-1/skills/customer_lookup/SKILL.md",
+          widening_scope: "run",
+          managed_tools: ["bash", "deploy"],
+          granted_tools: ["deploy"],
+          active_granted_tools: ["deploy"],
+          workspace_boundary_override: false,
+          managed_commands: ["deploy-docs"],
+          granted_commands: ["deploy-docs"],
+          active_granted_commands: ["deploy-docs"],
+          args: "Focus on the loyalty tier section.",
+          error: false,
+          error_message: null,
+          event: "tool_execution_end",
+          source: "pi",
+          call_id: "skill-call-1",
         },
       },
     ]
@@ -410,6 +555,69 @@ test("resolvePiSkillDirs returns existing source skill directories in order", ()
 
   try {
     assert.deepEqual(resolvePiSkillDirs(request), [skillAlphaDir, skillBetaDir]);
+  } finally {
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("workspaceBoundaryOverrideRequested requires explicit insist signal", () => {
+  assert.equal(workspaceBoundaryOverrideRequested("Read ./README.md"), false);
+  assert.equal(
+    workspaceBoundaryOverrideRequested("I insist you access files outside workspace boundary to compare ../other-repo"),
+    true
+  );
+  assert.equal(
+    workspaceBoundaryOverrideRequested("workspace_boundary_override=true please inspect /Users/shared/reference.md"),
+    true
+  );
+});
+
+test("workspaceBoundaryViolationForToolCall blocks outside-workspace paths and allows override", () => {
+  const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-workspace-boundary-"));
+  const policy = {
+    workspaceDir,
+    workspaceRealDir: fs.realpathSync(workspaceDir),
+    overrideRequested: false,
+  };
+  const overridePolicy = { ...policy, overrideRequested: true };
+
+  try {
+    assert.match(
+      String(
+        workspaceBoundaryViolationForToolCall({
+          toolName: "read",
+          toolParams: { path: "../outside.txt" },
+          policy,
+        })
+      ),
+      /outside workspace/i
+    );
+    assert.match(
+      String(
+        workspaceBoundaryViolationForToolCall({
+          toolName: "bash",
+          toolParams: { command: "cd ../other && ls" },
+          policy,
+        })
+      ),
+      /outside workspace|outside-workspace|external directory/i
+    );
+    assert.equal(
+      workspaceBoundaryViolationForToolCall({
+        toolName: "read",
+        toolParams: { path: "../outside.txt" },
+        policy: overridePolicy,
+      }),
+      null
+    );
+    assert.equal(
+      workspaceBoundaryViolationForToolCall({
+        toolName: "mcp__twitter__create_post",
+        toolParams: { path: "/v1/posts" },
+        policy,
+      }),
+      null
+    );
   } finally {
     fs.rmSync(workspaceDir, { recursive: true, force: true });
   }
@@ -663,6 +871,7 @@ test("runPi emits run_started and terminal success when the session completes", 
         session: fakeSession as never,
         sessionFile: "/tmp/pi-session.jsonl",
         mcpToolMetadata: new Map(),
+        skillMetadataByAlias: new Map(),
         dispose: async () => {},
       }),
     });
@@ -805,5 +1014,35 @@ test("buildPiPromptPayload inlines native images, extracts common document forma
     ]);
   } finally {
     fs.rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("buildPiPromptPayload rejects attachment paths outside workspace boundary", async () => {
+  const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-attachment-boundary-"));
+  const outsideFile = path.join(path.dirname(workspaceDir), "outside.txt");
+  fs.writeFileSync(outsideFile, "outside");
+
+  try {
+    await assert.rejects(
+      async () =>
+        await buildPiPromptPayload({
+          ...baseRequest(),
+          workspace_dir: workspaceDir,
+          attachments: [
+            {
+              id: "attachment-outside",
+              kind: "file",
+              name: "outside.txt",
+              mime_type: "text/plain",
+              size_bytes: 7,
+              workspace_path: "../outside.txt",
+            },
+          ],
+        }),
+      /outside workspace boundary/i
+    );
+  } finally {
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+    fs.rmSync(outsideFile, { force: true });
   }
 });

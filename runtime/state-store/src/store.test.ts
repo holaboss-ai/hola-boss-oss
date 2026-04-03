@@ -963,6 +963,7 @@ test("turn request snapshots and compaction boundaries round trip", () => {
 
   assert.deepEqual(store.getTurnRequestSnapshot({ inputId: "input-1" }), snapshot);
   assert.deepEqual(store.listTurnRequestSnapshots({ workspaceId: "workspace-1", sessionId: "session-main" }), [snapshot]);
+  assert.equal(boundary.boundaryType, "executor_post_turn");
   assert.deepEqual(store.getCompactionBoundary({ boundaryId: "compaction:input-1" }), boundary);
   assert.deepEqual(store.listCompactionBoundaries({ workspaceId: "workspace-1", sessionId: "session-main" }), [boundary]);
   store.close();
@@ -1187,6 +1188,80 @@ test("task proposal acceptance fields and child session metadata round trip", ()
   assert.equal(updated.acceptedSessionId, "proposal-session-1");
   assert.equal(updated.acceptedInputId, "input-1");
   assert.equal(updated.acceptedAt, "2026-01-01T01:00:00+00:00");
+  store.close();
+});
+
+test("memory update proposals round trip supports create list filter get and accept metadata", () => {
+  const root = makeTempDir("hb-state-store-memory-proposals-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  store.ensureSession({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    kind: "main",
+    title: "Main"
+  });
+  const created = store.createMemoryUpdateProposal({
+    proposalId: "memory-proposal-1",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    proposalKind: "preference",
+    targetKey: "response-style",
+    title: "Response style preference",
+    summary: "Prefer concise responses.",
+    payload: {
+      preference_type: "response_style",
+      style: "concise",
+    },
+    evidence: "Please keep your responses concise.",
+    confidence: 0.99,
+    sourceMessageId: "user-input-1",
+    createdAt: "2026-04-03T10:00:00.000Z"
+  });
+
+  const listed = store.listMemoryUpdateProposals({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    limit: 10,
+    offset: 0
+  });
+  const fetched = store.getMemoryUpdateProposal("memory-proposal-1");
+  const accepted = store.updateMemoryUpdateProposal({
+    proposalId: "memory-proposal-1",
+    fields: {
+      summary: "Prefer concise responses.",
+      state: "accepted",
+      persistedMemoryId: "user-preference:response-style",
+      acceptedAt: "2026-04-03T10:01:00.000Z",
+      dismissedAt: null
+    }
+  });
+
+  assert.equal(created.state, "pending");
+  assert.equal(listed.length, 1);
+  assert.ok(fetched);
+  assert.deepEqual(fetched?.payload, {
+    preference_type: "response_style",
+    style: "concise",
+  });
+  assert.equal(accepted?.state, "accepted");
+  assert.equal(accepted?.persistedMemoryId, "user-preference:response-style");
+  assert.equal(accepted?.acceptedAt, "2026-04-03T10:01:00.000Z");
+  assert.deepEqual(
+    store.listMemoryUpdateProposals({
+      workspaceId: "workspace-1",
+      state: "accepted",
+      limit: 10,
+      offset: 0
+    }).map((proposal) => proposal.proposalId),
+    ["memory-proposal-1"]
+  );
+
   store.close();
 });
 

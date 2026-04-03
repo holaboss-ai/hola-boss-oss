@@ -1,6 +1,6 @@
 import { type ChangeEvent, type CompositionEvent, type DragEvent, FormEvent, KeyboardEvent, type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { AlertTriangle, ArrowRight, ArrowUp, Bot, Cable, Check, ChevronDown, Clock3, FileText, Image as ImageIcon, Loader2, Paperclip, Search, Waypoints, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, ArrowUp, Cable, Check, ChevronDown, Clock3, FileText, Image as ImageIcon, Lightbulb, Loader2, Paperclip, PencilLine, Search, Waypoints, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PaneCard } from "@/components/ui/PaneCard";
@@ -28,6 +28,8 @@ interface ChatMessage {
   attachments?: ChatAttachment[];
   thinkingText?: string;
   traceSteps?: ChatTraceStep[];
+  outputs?: WorkspaceOutputRecordPayload[];
+  memoryProposals?: MemoryUpdateProposalRecordPayload[];
 }
 
 type ChatTraceStepStatus = "running" | "completed" | "error" | "waiting";
@@ -81,6 +83,8 @@ interface StreamTelemetryEntry {
   action: string;
   detail: string;
 }
+
+type ArtifactBrowserFilter = "all" | "documents" | "images" | "code" | "links" | "apps";
 
 const STREAM_ATTACH_PENDING = "__stream_attach_pending__";
 const STREAM_TELEMETRY_LIMIT = 240;
@@ -234,6 +238,16 @@ function hasRenderableMessageContent(text: string, attachments: ChatAttachment[]
   return Boolean(text.trim()) || attachments.length > 0;
 }
 
+function hasRenderableAssistantTurn(message: ChatMessage) {
+  return (
+    hasRenderableMessageContent(message.text, message.attachments ?? []) ||
+    Boolean(message.thinkingText) ||
+    (message.traceSteps?.length ?? 0) > 0 ||
+    (message.outputs?.length ?? 0) > 0 ||
+    (message.memoryProposals?.length ?? 0) > 0
+  );
+}
+
 function formatAttachmentSize(sizeBytes: number) {
   if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
     return "";
@@ -245,6 +259,98 @@ function formatAttachmentSize(sizeBytes: number) {
     return `${Math.round(sizeBytes / 1024)} KB`;
   }
   return `${sizeBytes} B`;
+}
+
+function outputMetadataString(output: WorkspaceOutputRecordPayload, key: string) {
+  const value = output.metadata[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function outputMetadataNumber(output: WorkspaceOutputRecordPayload, key: string) {
+  const value = output.metadata[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function outputBrowserFilterForOutput(output: WorkspaceOutputRecordPayload): ArtifactBrowserFilter {
+  if (outputMetadataString(output, "origin_type") === "app") {
+    return "apps";
+  }
+  const category = outputMetadataString(output, "category");
+  if (category === "image") {
+    return "images";
+  }
+  if (category === "code") {
+    return "code";
+  }
+  if (category === "link") {
+    return "links";
+  }
+  return "documents";
+}
+
+function outputKindLabel(output: WorkspaceOutputRecordPayload) {
+  if (outputMetadataString(output, "origin_type") === "app") {
+    return output.platform?.trim() || "App artifact";
+  }
+  const category = outputMetadataString(output, "category");
+  if (category === "image") {
+    return "Image";
+  }
+  if (category === "code") {
+    return "Code file";
+  }
+  if (category === "link") {
+    return "Link";
+  }
+  if (category === "spreadsheet") {
+    return "Spreadsheet";
+  }
+  if (category === "document") {
+    return "Document";
+  }
+  return output.output_type === "document" ? "Document" : "File";
+}
+
+function outputChangeLabel(output: WorkspaceOutputRecordPayload) {
+  const changeType = outputMetadataString(output, "change_type");
+  if (changeType === "created") {
+    return "Created";
+  }
+  if (changeType === "modified") {
+    return "Updated";
+  }
+  return "";
+}
+
+function outputSecondaryLabel(output: WorkspaceOutputRecordPayload) {
+  const parts = [outputKindLabel(output)];
+  const sizeLabel = formatAttachmentSize(outputMetadataNumber(output, "size_bytes") ?? 0);
+  if (sizeLabel) {
+    parts.push(sizeLabel);
+  }
+  return parts.join(" · ");
+}
+
+function sortOutputs(outputs: WorkspaceOutputRecordPayload[]) {
+  return [...outputs].sort((left, right) => {
+    const leftTime = Date.parse(left.created_at || "") || 0;
+    const rightTime = Date.parse(right.created_at || "") || 0;
+    if (leftTime !== rightTime) {
+      return leftTime - rightTime;
+    }
+    return left.title.localeCompare(right.title);
+  });
+}
+
+function sortMemoryUpdateProposals(proposals: MemoryUpdateProposalRecordPayload[]) {
+  return [...proposals].sort((left, right) => {
+    const leftTime = Date.parse(left.created_at || "") || 0;
+    const rightTime = Date.parse(right.created_at || "") || 0;
+    if (leftTime !== rightTime) {
+      return leftTime - rightTime;
+    }
+    return left.title.localeCompare(right.title);
+  });
 }
 
 function attachmentButtonLabel(attachment: { name: string; size_bytes: number }) {
@@ -554,6 +660,94 @@ function phaseTraceStepFromEvent(eventType: string, payload: Record<string, unkn
     };
   }
 
+  if (eventType === "compaction_start") {
+    const source = typeof payload.source === "string" ? payload.source.trim() : "";
+    if (source) {
+      details.push(`Source: ${source}`);
+    }
+    return {
+      id: "phase:post-turn-compaction",
+      kind: "phase",
+      title: "Finalizing run context",
+      status: "running",
+      details: details.length > 0 ? details : ["Persisting post-turn continuity and memory artifacts."],
+      order
+    };
+  }
+
+  if (eventType === "compaction_boundary_written") {
+    const boundaryId = typeof payload.boundary_id === "string" ? payload.boundary_id.trim() : "";
+    const boundaryType = typeof payload.boundary_type === "string" ? payload.boundary_type.trim() : "";
+    const restoredMemoryPathCount =
+      typeof payload.restored_memory_path_count === "number" ? payload.restored_memory_path_count : null;
+    if (boundaryId) {
+      details.push(`Boundary: ${boundaryId}`);
+    }
+    if (boundaryType) {
+      details.push(`Boundary type: ${boundaryType}`);
+    }
+    if (restoredMemoryPathCount !== null) {
+      details.push(`Restored memory paths: ${restoredMemoryPathCount}`);
+    }
+    return {
+      id: "phase:post-turn-compaction",
+      kind: "phase",
+      title: "Compaction boundary saved",
+      status: "running",
+      details: details.length > 0 ? details : ["Compaction boundary written."],
+      order
+    };
+  }
+
+  if (eventType === "compaction_end") {
+    const status = typeof payload.status === "string" ? payload.status.trim().toLowerCase() : "";
+    const durationMs = typeof payload.duration_ms === "number" ? payload.duration_ms : null;
+    const boundaryId = typeof payload.boundary_id === "string" ? payload.boundary_id.trim() : "";
+    const errorMessage = typeof payload.error_message === "string" ? payload.error_message.trim() : "";
+    if (boundaryId) {
+      details.push(`Boundary: ${boundaryId}`);
+    }
+    if (durationMs !== null) {
+      details.push(`Duration: ${durationMs} ms`);
+    }
+    if (errorMessage) {
+      details.push(`Error: ${summarizeUnknown(errorMessage, 120)}`);
+    }
+    return {
+      id: "phase:post-turn-compaction",
+      kind: "phase",
+      title: status === "failed" ? "Compaction failed" : "Run context finalized",
+      status: status === "failed" ? "error" : "completed",
+      details,
+      order
+    };
+  }
+
+  if (eventType === "compaction_restored") {
+    const boundaryId = typeof payload.boundary_id === "string" ? payload.boundary_id.trim() : "";
+    const source = typeof payload.source === "string" ? payload.source.trim() : "";
+    const restoredMemoryPaths = Array.isArray(payload.restored_memory_paths)
+      ? payload.restored_memory_paths.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : [];
+    if (boundaryId) {
+      details.push(`Boundary: ${boundaryId}`);
+    }
+    if (source) {
+      details.push(`Source: ${source}`);
+    }
+    if (restoredMemoryPaths.length > 0) {
+      details.push(`Restored memory paths: ${restoredMemoryPaths.length}`);
+    }
+    return {
+      id: "phase:compaction-restored",
+      kind: "phase",
+      title: "Restored compacted context",
+      status: "completed",
+      details: details.length > 0 ? details : ["Resume context restored from a previous compaction boundary."],
+      order
+    };
+  }
+
   if (eventType === "run_waiting_user" || eventType === "awaiting_user_input") {
     return {
       id: "phase:awaiting-user",
@@ -672,6 +866,7 @@ interface ChatPaneSessionOpenRequest {
 
 interface ChatPaneProps {
   onOutputsChanged?: () => void;
+  onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
   focusRequestKey?: number;
   variant?: ChatPaneVariant;
   onOpenLinkInBrowser?: (url: string) => void;
@@ -683,6 +878,7 @@ interface ChatPaneProps {
 
 export function ChatPane({
   onOutputsChanged,
+  onOpenOutput,
   focusRequestKey = 0,
   variant = "default",
   onOpenLinkInBrowser,
@@ -710,6 +906,7 @@ export function ChatPane({
     refreshWorkspaceData
   } = useWorkspaceDesktop();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [sessionOutputs, setSessionOutputs] = useState<WorkspaceOutputRecordPayload[]>([]);
   const [liveAssistantText, setLiveAssistantText] = useState("");
   const [liveThinkingText, setLiveThinkingText] = useState("");
   const [liveThinkingExpanded, setLiveThinkingExpanded] = useState(false);
@@ -731,6 +928,14 @@ export function ChatPane({
     clientHeight: 0
   });
   const [streamTelemetry, setStreamTelemetry] = useState<StreamTelemetryEntry[]>([]);
+  const [artifactBrowserOpen, setArtifactBrowserOpen] = useState(false);
+  const [artifactBrowserFilter, setArtifactBrowserFilter] = useState<ArtifactBrowserFilter>("all");
+  const [memoryProposalAction, setMemoryProposalAction] = useState<{
+    proposalId: string;
+    action: "accept" | "dismiss";
+  } | null>(null);
+  const [editingMemoryProposalId, setEditingMemoryProposalId] = useState<string | null>(null);
+  const [memoryProposalDrafts, setMemoryProposalDrafts] = useState<Record<string, string>>({});
   const messagesRef = useRef<HTMLDivElement>(null);
   const messagesContentRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -807,6 +1012,12 @@ export function ChatPane({
 
   function clearSessionView() {
     setMessages([]);
+    setSessionOutputs([]);
+    setArtifactBrowserOpen(false);
+    setArtifactBrowserFilter("all");
+    setMemoryProposalAction(null);
+    setEditingMemoryProposalId(null);
+    setMemoryProposalDrafts({});
     resetLiveTurn();
     setCollapsedThinkingByMessageId({});
     setCollapsedTraceByStepId({});
@@ -815,9 +1026,13 @@ export function ChatPane({
 
   function historyMessagesFromSessionState(
     historyMessages: SessionHistoryMessagePayload[],
-    outputEvents: SessionOutputEventPayload[]
+    outputEvents: SessionOutputEventPayload[],
+    outputs: WorkspaceOutputRecordPayload[],
+    memoryProposals: MemoryUpdateProposalRecordPayload[]
   ): ChatMessage[] {
     const outputEventsByInputId = new Map<string, SessionOutputEventPayload[]>();
+    const outputsByInputId = new Map<string, WorkspaceOutputRecordPayload[]>();
+    const memoryProposalsByInputId = new Map<string, MemoryUpdateProposalRecordPayload[]>();
     for (const event of outputEvents) {
       const inputId = event.input_id.trim();
       if (!inputId) {
@@ -828,6 +1043,30 @@ export function ChatPane({
         existing.push(event);
       } else {
         outputEventsByInputId.set(inputId, [event]);
+      }
+    }
+    for (const output of outputs) {
+      const inputId = (output.input_id || "").trim();
+      if (!inputId) {
+        continue;
+      }
+      const existing = outputsByInputId.get(inputId);
+      if (existing) {
+        existing.push(output);
+      } else {
+        outputsByInputId.set(inputId, [output]);
+      }
+    }
+    for (const proposal of memoryProposals) {
+      const inputId = proposal.input_id.trim();
+      if (!inputId) {
+        continue;
+      }
+      const existing = memoryProposalsByInputId.get(inputId);
+      if (existing) {
+        existing.push(proposal);
+      } else {
+        memoryProposalsByInputId.set(inputId, [proposal]);
       }
     }
 
@@ -845,11 +1084,19 @@ export function ChatPane({
           const inputId = inputIdFromMessageId(nextMessage.id, "assistant");
           if (inputId) {
             const restoredAssistantState = assistantHistoryStateFromOutputEvents(outputEventsByInputId.get(inputId) ?? []);
+            const turnOutputs = sortOutputs(outputsByInputId.get(inputId) ?? []);
+            const turnMemoryProposals = sortMemoryUpdateProposals(memoryProposalsByInputId.get(inputId) ?? []);
             if (restoredAssistantState.thinkingText) {
               nextMessage.thinkingText = restoredAssistantState.thinkingText;
             }
             if (restoredAssistantState.traceSteps) {
               nextMessage.traceSteps = restoredAssistantState.traceSteps;
+            }
+            if (turnMemoryProposals.length > 0) {
+              nextMessage.memoryProposals = turnMemoryProposals;
+            }
+            if (turnOutputs.length > 0) {
+              nextMessage.outputs = turnOutputs;
             }
           }
         }
@@ -859,7 +1106,9 @@ export function ChatPane({
       .filter(
         (message) =>
           (message.role === "user" || message.role === "assistant") &&
-          hasRenderableMessageContent(message.text, message.attachments ?? [])
+          (message.role === "assistant"
+            ? hasRenderableAssistantTurn(message)
+            : hasRenderableMessageContent(message.text, message.attachments ?? []))
       );
   }
 
@@ -881,20 +1130,37 @@ export function ChatPane({
       return;
     }
 
-    const [history, outputEventHistory] = await Promise.all([
+    const [history, outputEventHistory, outputList, memoryProposalList] = await Promise.all([
       window.electronAPI.workspace.getSessionHistory({
         sessionId: nextSessionId,
         workspaceId
       }),
       window.electronAPI.workspace.getSessionOutputEvents({
         sessionId: nextSessionId
-      })
+      }),
+      window.electronAPI.workspace.listOutputs({
+        workspaceId,
+        sessionId: nextSessionId,
+        limit: 200,
+      }),
+      window.electronAPI.workspace.listMemoryUpdateProposals({
+        workspaceId,
+        sessionId: nextSessionId,
+        limit: 200,
+      }),
     ]);
     if (cancelled()) {
       return;
     }
 
-    const nextMessages = historyMessagesFromSessionState(history.messages, outputEventHistory.items);
+    const nextOutputs = sortOutputs(outputList.items);
+    const nextMessages = historyMessagesFromSessionState(
+      history.messages,
+      outputEventHistory.items,
+      nextOutputs,
+      memoryProposalList.proposals
+    );
+    setSessionOutputs(nextOutputs);
     setMessages(nextMessages);
     resetLiveTurn();
 
@@ -1030,6 +1296,85 @@ export function ChatPane({
       [messageId]: true
     }));
     resetLiveTurn();
+  }
+
+  function scheduleConversationRefresh(sessionId: string | null, workspaceId: string | null | undefined) {
+    const normalizedSessionId = (sessionId || "").trim();
+    const normalizedWorkspaceId = (workspaceId || "").trim();
+    if (!normalizedSessionId || !normalizedWorkspaceId) {
+      return;
+    }
+
+    const delays = [150, 500];
+    for (const delayMs of delays) {
+      window.setTimeout(() => {
+        if (activeSessionIdRef.current !== normalizedSessionId || selectedWorkspaceId !== normalizedWorkspaceId) {
+          return;
+        }
+        void window.electronAPI.workspace
+          .listRuntimeStates(normalizedWorkspaceId)
+          .then((runtimeStates) =>
+            loadSessionConversation(normalizedSessionId, normalizedWorkspaceId, runtimeStates.items, {
+              cancelled: () =>
+                activeSessionIdRef.current !== normalizedSessionId || selectedWorkspaceId !== normalizedWorkspaceId
+            })
+          )
+          .catch(() => undefined);
+      }, delayMs);
+    }
+  }
+
+  function updateMemoryProposalDraft(proposalId: string, value: string) {
+    setMemoryProposalDrafts((prev) => ({
+      ...prev,
+      [proposalId]: value,
+    }));
+  }
+
+  async function handleAcceptMemoryProposal(proposal: MemoryUpdateProposalRecordPayload) {
+    if (!selectedWorkspaceId) {
+      return;
+    }
+    const nextSummary = (memoryProposalDrafts[proposal.proposal_id] ?? proposal.summary).trim();
+    if (!nextSummary) {
+      setChatErrorMessage("Memory proposal summary cannot be empty.");
+      return;
+    }
+    setMemoryProposalAction({
+      proposalId: proposal.proposal_id,
+      action: "accept",
+    });
+    try {
+      await window.electronAPI.workspace.acceptMemoryUpdateProposal({
+        proposalId: proposal.proposal_id,
+        summary: nextSummary,
+      });
+      setEditingMemoryProposalId((current) => (current === proposal.proposal_id ? null : current));
+      scheduleConversationRefresh(proposal.session_id, selectedWorkspaceId);
+    } catch (error) {
+      setChatErrorMessage(normalizeErrorMessage(error));
+    } finally {
+      setMemoryProposalAction((current) => (current?.proposalId === proposal.proposal_id ? null : current));
+    }
+  }
+
+  async function handleDismissMemoryProposal(proposal: MemoryUpdateProposalRecordPayload) {
+    if (!selectedWorkspaceId) {
+      return;
+    }
+    setMemoryProposalAction({
+      proposalId: proposal.proposal_id,
+      action: "dismiss",
+    });
+    try {
+      await window.electronAPI.workspace.dismissMemoryUpdateProposal(proposal.proposal_id);
+      setEditingMemoryProposalId((current) => (current === proposal.proposal_id ? null : current));
+      scheduleConversationRefresh(proposal.session_id, selectedWorkspaceId);
+    } catch (error) {
+      setChatErrorMessage(normalizeErrorMessage(error));
+    } finally {
+      setMemoryProposalAction((current) => (current?.proposalId === proposal.proposal_id ? null : current));
+    }
   }
 
   function toggleThinkingPanel(messageId: string) {
@@ -1580,6 +1925,18 @@ export function ChatPane({
         setLiveAgentStatus("Compacting context...");
       } else if (eventType === "auto_compaction_end") {
         setLiveAgentStatus(eventPayload.will_retry === true ? "Retrying after compaction..." : "Continuing after compaction...");
+      } else if (eventType === "compaction_restored") {
+        setLiveAgentStatus("Restored prior context...");
+      } else if (eventType === "compaction_start") {
+        setLiveAgentStatus("Finalizing turn context...");
+      } else if (eventType === "compaction_boundary_written") {
+        setLiveAgentStatus("Saving compaction boundary...");
+      } else if (eventType === "compaction_end") {
+        setLiveAgentStatus(
+          typeof eventPayload.status === "string" && eventPayload.status.trim().toLowerCase() === "failed"
+            ? "Compaction failed."
+            : "Turn context finalized."
+        );
       } else if (eventType === "run_waiting_user" || eventType === "awaiting_user_input") {
         setLiveAgentStatus("Waiting for your input...");
       }
@@ -1612,7 +1969,9 @@ export function ChatPane({
           return;
         }
 
-        const assistantMessageId = activeAssistantMessageIdRef.current ?? `assistant-${Date.now()}`;
+        const assistantMessageId =
+          activeAssistantMessageIdRef.current ??
+          (eventInputId ? `assistant-${eventInputId}` : `assistant-${Date.now()}`);
         activeAssistantMessageIdRef.current = assistantMessageId;
         appendLiveAssistantDelta(delta);
         appendStreamTelemetry({
@@ -1683,6 +2042,7 @@ export function ChatPane({
           action: "applied_run_failed",
           detail
         });
+        scheduleConversationRefresh(eventSessionId, selectedWorkspaceId);
         return;
       }
 
@@ -1702,6 +2062,7 @@ export function ChatPane({
           action: "applied_run_completed",
           detail: "run completed"
         });
+        scheduleConversationRefresh(eventSessionId, selectedWorkspaceId);
         void refreshWorkspaceData().catch(() => undefined);
         onOutputsChanged?.();
       }
@@ -1710,7 +2071,7 @@ export function ChatPane({
     return () => {
       unsubscribe();
     };
-  }, [onOutputsChanged, refreshWorkspaceData]);
+  }, [onOutputsChanged, refreshWorkspaceData, selectedWorkspaceId]);
 
   useEffect(() => {
     if (!isResponding || !selectedWorkspaceId || !activeSessionId) {
@@ -2485,6 +2846,35 @@ export function ChatPane({
                         thinkingCollapsed={collapsedThinkingByMessageId[message.id] ?? true}
                         onToggleThinking={() => toggleThinkingPanel(message.id)}
                         traceSteps={message.traceSteps ?? []}
+                        memoryProposals={message.memoryProposals ?? []}
+                        outputs={message.outputs ?? []}
+                        sessionOutputs={sessionOutputs}
+                        memoryProposalAction={memoryProposalAction}
+                        editingMemoryProposalId={editingMemoryProposalId}
+                        memoryProposalDrafts={memoryProposalDrafts}
+                        onEditMemoryProposal={(proposalId) => {
+                          setEditingMemoryProposalId((current) => {
+                            const next = current === proposalId ? null : proposalId;
+                            if (next === proposalId) {
+                              const proposal = (message.memoryProposals ?? []).find((item) => item.proposal_id === proposalId);
+                              if (proposal) {
+                                setMemoryProposalDrafts((prev) => ({
+                                  ...prev,
+                                  [proposalId]: prev[proposalId] ?? proposal.summary,
+                                }));
+                              }
+                            }
+                            return next;
+                          });
+                        }}
+                        onMemoryProposalDraftChange={updateMemoryProposalDraft}
+                        onAcceptMemoryProposal={handleAcceptMemoryProposal}
+                        onDismissMemoryProposal={handleDismissMemoryProposal}
+                        onOpenOutput={onOpenOutput}
+                        onOpenAllArtifacts={() => {
+                          setArtifactBrowserFilter("all");
+                          setArtifactBrowserOpen(true);
+                        }}
                         collapsedTraceByStepId={collapsedTraceByStepId}
                         onToggleTraceStep={toggleTraceStep}
                         onLinkClick={onOpenLinkInBrowser}
@@ -2505,6 +2895,21 @@ export function ChatPane({
                         setLiveThinkingExpanded(next);
                       }}
                       traceSteps={liveTraceSteps}
+                      memoryProposals={[]}
+                      outputs={[]}
+                      sessionOutputs={sessionOutputs}
+                      memoryProposalAction={memoryProposalAction}
+                      editingMemoryProposalId={editingMemoryProposalId}
+                      memoryProposalDrafts={memoryProposalDrafts}
+                      onEditMemoryProposal={() => undefined}
+                      onMemoryProposalDraftChange={updateMemoryProposalDraft}
+                      onAcceptMemoryProposal={handleAcceptMemoryProposal}
+                      onDismissMemoryProposal={handleDismissMemoryProposal}
+                      onOpenOutput={onOpenOutput}
+                      onOpenAllArtifacts={() => {
+                        setArtifactBrowserFilter("all");
+                        setArtifactBrowserOpen(true);
+                      }}
                       collapsedTraceByStepId={collapsedTraceByStepId}
                       onToggleTraceStep={toggleTraceStep}
                       onLinkClick={onOpenLinkInBrowser}
@@ -2614,6 +3019,15 @@ export function ChatPane({
               </form>
             </div>
           ) : null}
+
+          <ArtifactBrowserModal
+            open={artifactBrowserOpen}
+            filter={artifactBrowserFilter}
+            outputs={sessionOutputs}
+            onClose={() => setArtifactBrowserOpen(false)}
+            onFilterChange={setArtifactBrowserFilter}
+            onOpenOutput={onOpenOutput}
+          />
         </div>
       </div>
     </PaneCard>
@@ -2694,6 +3108,18 @@ function AssistantTurn({
   thinkingCollapsed,
   onToggleThinking,
   traceSteps,
+  memoryProposals,
+  outputs,
+  sessionOutputs,
+  memoryProposalAction,
+  editingMemoryProposalId,
+  memoryProposalDrafts,
+  onEditMemoryProposal,
+  onMemoryProposalDraftChange,
+  onAcceptMemoryProposal,
+  onDismissMemoryProposal,
+  onOpenOutput,
+  onOpenAllArtifacts,
   collapsedTraceByStepId,
   onToggleTraceStep,
   onLinkClick,
@@ -2707,6 +3133,18 @@ function AssistantTurn({
   thinkingCollapsed: boolean;
   onToggleThinking: () => void;
   traceSteps: ChatTraceStep[];
+  memoryProposals: MemoryUpdateProposalRecordPayload[];
+  outputs: WorkspaceOutputRecordPayload[];
+  sessionOutputs: WorkspaceOutputRecordPayload[];
+  memoryProposalAction: { proposalId: string; action: "accept" | "dismiss" } | null;
+  editingMemoryProposalId: string | null;
+  memoryProposalDrafts: Record<string, string>;
+  onEditMemoryProposal: (proposalId: string) => void;
+  onMemoryProposalDraftChange: (proposalId: string, value: string) => void;
+  onAcceptMemoryProposal: (proposal: MemoryUpdateProposalRecordPayload) => void;
+  onDismissMemoryProposal: (proposal: MemoryUpdateProposalRecordPayload) => void;
+  onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
+  onOpenAllArtifacts: () => void;
   collapsedTraceByStepId: Record<string, boolean>;
   onToggleTraceStep: (stepId: string) => void;
   onLinkClick?: (url: string) => void;
@@ -2740,7 +3178,318 @@ function AssistantTurn({
             {text}
           </SimpleMarkdown>
         ) : null}
+
+        {memoryProposals.length > 0 ? (
+          <AssistantTurnMemoryProposals
+            proposals={memoryProposals}
+            proposalAction={memoryProposalAction}
+            editingProposalId={editingMemoryProposalId}
+            drafts={memoryProposalDrafts}
+            onEditProposal={onEditMemoryProposal}
+            onDraftChange={onMemoryProposalDraftChange}
+            onAcceptProposal={onAcceptMemoryProposal}
+            onDismissProposal={onDismissMemoryProposal}
+          />
+        ) : null}
+
+        {outputs.length > 0 ? (
+          <AssistantTurnOutputs
+            outputs={outputs}
+            sessionOutputs={sessionOutputs}
+            onOpenOutput={onOpenOutput}
+            onOpenAllArtifacts={onOpenAllArtifacts}
+          />
+        ) : null}
       </article>
+    </div>
+  );
+}
+
+function OutputArtifactIcon({ output }: { output: WorkspaceOutputRecordPayload }) {
+  const filter = outputBrowserFilterForOutput(output);
+  if (filter === "images") {
+    return <ImageIcon size={16} className="shrink-0 text-primary/72" />;
+  }
+  if (filter === "apps") {
+    return <Waypoints size={16} className="shrink-0 text-primary/72" />;
+  }
+  return <FileText size={16} className="shrink-0 text-primary/72" />;
+}
+
+function AssistantTurnOutputs({
+  outputs,
+  sessionOutputs,
+  onOpenOutput,
+  onOpenAllArtifacts
+}: {
+  outputs: WorkspaceOutputRecordPayload[];
+  sessionOutputs: WorkspaceOutputRecordPayload[];
+  onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
+  onOpenAllArtifacts: () => void;
+}) {
+  return (
+    <div className="mt-4 flex flex-wrap gap-3">
+      {outputs.map((output) => (
+        <button
+          key={output.id}
+          type="button"
+          onClick={() => onOpenOutput?.(output)}
+          className="bg-muted flex min-w-[240px] max-w-full flex-1 items-center gap-3 rounded-[20px] border border-border/35 px-4 py-3 text-left transition hover:border-border/55 hover:bg-card/70 disabled:cursor-default disabled:hover:border-border/35 disabled:hover:bg-muted"
+          disabled={!onOpenOutput}
+        >
+          <OutputArtifactIcon output={output} />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[14px] font-medium text-foreground">{output.title || "Untitled artifact"}</div>
+            <div className="truncate text-[12px] text-muted-foreground">{outputSecondaryLabel(output)}</div>
+            {outputChangeLabel(output) ? (
+              <div className="mt-1 text-[11px] uppercase tracking-[0.12em] text-muted-foreground/70">{outputChangeLabel(output)}</div>
+            ) : null}
+          </div>
+        </button>
+      ))}
+
+      {sessionOutputs.length > 0 ? (
+        <button
+          type="button"
+          onClick={onOpenAllArtifacts}
+          className="bg-card flex min-w-[240px] max-w-full flex-1 items-center gap-3 rounded-[20px] border border-border/35 px-4 py-3 text-left transition hover:border-border/55 hover:bg-card/80"
+        >
+          <FileText size={16} className="shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[14px] font-medium text-foreground">View all artifacts in this session</div>
+            <div className="truncate text-[12px] text-muted-foreground">
+              {sessionOutputs.length} artifact{sessionOutputs.length === 1 ? "" : "s"}
+            </div>
+          </div>
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function memoryProposalStateLabel(state: MemoryUpdateProposalState) {
+  switch (state) {
+    case "accepted":
+      return "Saved";
+    case "dismissed":
+      return "Dismissed";
+    default:
+      return "Review";
+  }
+}
+
+function AssistantTurnMemoryProposals({
+  proposals,
+  proposalAction,
+  editingProposalId,
+  drafts,
+  onEditProposal,
+  onDraftChange,
+  onAcceptProposal,
+  onDismissProposal,
+}: {
+  proposals: MemoryUpdateProposalRecordPayload[];
+  proposalAction: { proposalId: string; action: "accept" | "dismiss" } | null;
+  editingProposalId: string | null;
+  drafts: Record<string, string>;
+  onEditProposal: (proposalId: string) => void;
+  onDraftChange: (proposalId: string, value: string) => void;
+  onAcceptProposal: (proposal: MemoryUpdateProposalRecordPayload) => void;
+  onDismissProposal: (proposal: MemoryUpdateProposalRecordPayload) => void;
+}) {
+  return (
+    <div className="mt-4 grid gap-3">
+      {proposals.map((proposal) => {
+        const isPending = proposal.state === "pending";
+        const isEditing = editingProposalId === proposal.proposal_id;
+        const isActing = proposalAction?.proposalId === proposal.proposal_id;
+        const draftValue = drafts[proposal.proposal_id] ?? proposal.summary;
+
+        return (
+          <article
+            key={proposal.proposal_id}
+            className="bg-card rounded-[22px] border border-border/35 px-4 py-4 shadow-sm"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <Lightbulb size={15} className="shrink-0 text-primary/72" />
+                  <span>{proposal.title}</span>
+                </div>
+                {isEditing ? (
+                  <textarea
+                    value={draftValue}
+                    onChange={(event) => onDraftChange(proposal.proposal_id, event.target.value)}
+                    className="bg-muted mt-3 min-h-[86px] w-full rounded-[16px] border border-border/45 px-3 py-2 text-sm leading-6 text-foreground outline-none transition focus:border-primary/40"
+                  />
+                ) : (
+                  <div className="mt-3 text-sm leading-6 text-muted-foreground">{proposal.summary}</div>
+                )}
+                {proposal.evidence ? (
+                  <div className="mt-3 text-[12px] leading-5 text-muted-foreground/82">
+                    {proposal.evidence}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="flex shrink-0 items-start gap-2">
+                <div className="rounded-full border border-border/45 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                  {memoryProposalStateLabel(proposal.state)}
+                </div>
+                {isPending ? (
+                  <button
+                    type="button"
+                    onClick={() => onEditProposal(proposal.proposal_id)}
+                    className="grid h-9 w-9 place-items-center rounded-[14px] border border-border/45 text-muted-foreground transition hover:border-border/70 hover:text-foreground"
+                    aria-label="Edit memory proposal"
+                  >
+                    <PencilLine size={14} />
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            {isPending ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => onDismissProposal(proposal)}
+                  disabled={isActing}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl border border-border/45 px-3 text-sm text-muted-foreground transition hover:border-primary/28 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isActing && proposalAction?.action === "dismiss" ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <X size={12} />
+                  )}
+                  <span>Dismiss</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onAcceptProposal(proposal)}
+                  disabled={isActing}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl border border-primary/40 bg-primary/10 px-3 text-sm text-primary transition hover:bg-primary/14 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isActing && proposalAction?.action === "accept" ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <Check size={12} />
+                  )}
+                  <span>Accept</span>
+                </button>
+              </div>
+            ) : null}
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function ArtifactBrowserModal({
+  open,
+  filter,
+  outputs,
+  onClose,
+  onFilterChange,
+  onOpenOutput,
+}: {
+  open: boolean;
+  filter: ArtifactBrowserFilter;
+  outputs: WorkspaceOutputRecordPayload[];
+  onClose: () => void;
+  onFilterChange: (nextFilter: ArtifactBrowserFilter) => void;
+  onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  const filterLabels: Array<{ id: ArtifactBrowserFilter; label: string }> = [
+    { id: "all", label: "All" },
+    { id: "documents", label: "Documents" },
+    { id: "images", label: "Images" },
+    { id: "code", label: "Code files" },
+    { id: "links", label: "Links" },
+    { id: "apps", label: "Apps" },
+  ];
+  const filteredOutputs =
+    filter === "all" ? outputs : outputs.filter((output) => outputBrowserFilterForOutput(output) === filter);
+
+  return (
+    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/45 px-4 py-6 backdrop-blur-[2px]">
+      <div className="bg-background flex h-full max-h-[720px] w-full max-w-[760px] flex-col rounded-[28px] border border-border/50 shadow-2xl">
+        <div className="flex items-center justify-between gap-4 border-b border-border/35 px-5 py-4">
+          <div>
+            <div className="text-[24px] font-semibold tracking-[-0.03em] text-foreground">All artifacts in this session</div>
+            <div className="mt-1 text-[12px] text-muted-foreground">
+              {outputs.length} artifact{outputs.length === 1 ? "" : "s"}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid h-9 w-9 place-items-center rounded-full border border-border/45 text-muted-foreground transition hover:border-border/70 hover:text-foreground"
+            aria-label="Close artifacts browser"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="flex flex-wrap gap-2 px-5 py-4">
+          {filterLabels.map((item) => {
+            const active = filter === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onFilterChange(item.id)}
+                className={`rounded-full border px-3 py-1.5 text-[12px] transition ${
+                  active
+                    ? "border-foreground bg-foreground text-background"
+                    : "border-border/45 text-muted-foreground hover:border-border/70 hover:text-foreground"
+                }`}
+              >
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+          {filteredOutputs.length === 0 ? (
+            <div className="flex h-full items-center justify-center rounded-[24px] border border-dashed border-border/45 text-[13px] text-muted-foreground">
+              No artifacts match this filter.
+            </div>
+          ) : (
+            <div className="grid gap-2">
+              {filteredOutputs.map((output) => (
+                <button
+                  key={output.id}
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenOutput?.(output);
+                  }}
+                  disabled={!onOpenOutput}
+                  className="flex items-center gap-3 rounded-[18px] border border-border/35 px-4 py-3 text-left transition hover:border-border/60 hover:bg-muted/45 disabled:cursor-default disabled:hover:border-border/35 disabled:hover:bg-transparent"
+                >
+                  <OutputArtifactIcon output={output} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[14px] font-medium text-foreground">{output.title || "Untitled artifact"}</div>
+                    <div className="truncate text-[12px] text-muted-foreground">{outputSecondaryLabel(output)}</div>
+                  </div>
+                  {outputChangeLabel(output) ? (
+                    <div className="rounded-full border border-border/45 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                      {outputChangeLabel(output)}
+                    </div>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

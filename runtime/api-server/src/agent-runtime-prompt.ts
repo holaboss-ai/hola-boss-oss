@@ -39,6 +39,8 @@ export interface AgentSessionResumeContext {
   restoration_order?: string[] | null;
   preserved_turn_input_ids?: string[] | null;
   restored_memory_paths?: string[] | null;
+  session_memory_path?: string | null;
+  session_memory_excerpt?: string | null;
 }
 
 export interface AgentRecalledMemoryContext {
@@ -57,6 +59,7 @@ export interface AgentRecalledMemoryContext {
     last_verified_at?: string | null;
     confidence?: number | null;
     updated_at?: string | null;
+    excerpt?: string | null;
   }> | null;
   selection_trace?: Array<{
     memory_id: string;
@@ -74,6 +77,18 @@ export interface AgentCurrentUserContext {
   name_source?: string | null;
 }
 
+export interface AgentPendingUserMemoryContext {
+  entries?: Array<{
+    proposal_id: string;
+    proposal_kind: string;
+    target_key: string;
+    title: string;
+    summary: string;
+    confidence?: number | null;
+    evidence?: string | null;
+  }> | null;
+}
+
 export interface ComposeBaseAgentPromptRequest {
   defaultTools: string[];
   extraTools: string[];
@@ -86,6 +101,7 @@ export interface ComposeBaseAgentPromptRequest {
   sessionResumeContext?: AgentSessionResumeContext | null;
   recalledMemoryContext?: AgentRecalledMemoryContext | null;
   currentUserContext?: AgentCurrentUserContext | null;
+  pendingUserMemoryContext?: AgentPendingUserMemoryContext | null;
   capabilityManifest?: AgentCapabilityManifest | null;
 }
 
@@ -202,6 +218,33 @@ function currentUserContextPromptSection(context: AgentCurrentUserContext | null
   return linesSection(lines);
 }
 
+function pendingUserMemoryContextPromptSection(context: AgentPendingUserMemoryContext | null | undefined): string {
+  const entries = Array.isArray(context?.entries) ? context.entries : [];
+  if (entries.length === 0) {
+    return "";
+  }
+  const lines = [
+    "Current-turn inferred user memory:",
+    "These items were inferred from the latest user input and are not durably saved yet.",
+    "Use them for this run when directly relevant, but do not claim they are saved as long-term memory unless the user later confirms them.",
+    "",
+  ];
+  for (const entry of entries) {
+    const title = nonEmptyText(entry.title) || "Pending user memory";
+    const summary = nonEmptyText(entry.summary);
+    const evidence = nonEmptyText(entry.evidence);
+    if (summary) {
+      lines.push(`- ${title}: ${summary}`);
+    } else {
+      lines.push(`- ${title}`);
+    }
+    if (evidence) {
+      lines.push(`  Evidence: ${evidence}`);
+    }
+  }
+  return linesSection(lines);
+}
+
 function sessionResumeContextPromptSection(context: AgentSessionResumeContext | null | undefined): string {
   if (!context) {
     return "";
@@ -217,6 +260,8 @@ function sessionResumeContextPromptSection(context: AgentSessionResumeContext | 
   const restoredMemoryPaths = Array.isArray(context.restored_memory_paths)
     ? context.restored_memory_paths.map((value) => nonEmptyText(value)).filter(Boolean)
     : [];
+  const sessionMemoryPath = nonEmptyText(context.session_memory_path);
+  const sessionMemoryExcerpt = nonEmptyText(context.session_memory_excerpt);
   const compactionBoundaryId = nonEmptyText(context.compaction_boundary_id);
   const compactionBoundarySummary = nonEmptyText(context.compaction_boundary_summary);
 
@@ -227,7 +272,9 @@ function sessionResumeContextPromptSection(context: AgentSessionResumeContext | 
     !compactionBoundarySummary &&
     restorationOrder.length === 0 &&
     preservedTurnInputIds.length === 0 &&
-    restoredMemoryPaths.length === 0
+    restoredMemoryPaths.length === 0 &&
+    !sessionMemoryPath &&
+    !sessionMemoryExcerpt
   ) {
     return "";
   }
@@ -263,6 +310,16 @@ function sessionResumeContextPromptSection(context: AgentSessionResumeContext | 
     }
     if (restoredMemoryPaths.length > 5) {
       lines.push(`- ...and ${restoredMemoryPaths.length - 5} more restored memory paths.`);
+    }
+  }
+
+  if (sessionMemoryPath || sessionMemoryExcerpt) {
+    lines.push("", "Session memory:");
+    if (sessionMemoryPath) {
+      lines.push(`- Path: \`${sessionMemoryPath}\``);
+    }
+    if (sessionMemoryExcerpt) {
+      lines.push(`- Excerpt: ${sessionMemoryExcerpt}`);
     }
   }
 
@@ -315,13 +372,15 @@ function recalledMemoryPromptSection(context: AgentRecalledMemoryContext | null 
     const stalenessPolicy = nonEmptyText(entry.staleness_policy) || "stable";
     const freshnessState = nonEmptyText(entry.freshness_state) || "fresh";
     const freshnessNote = nonEmptyText(entry.freshness_note);
+    const excerpt = nonEmptyText(entry.excerpt);
     const pathSuffix = path ? ` (\`${path}\`)` : "";
     const freshnessSuffix = freshnessNote
       ? ` Freshness: \`${freshnessState}\` (\`${stalenessPolicy}\`) - ${freshnessNote}`
       : ` Freshness: \`${freshnessState}\` (\`${stalenessPolicy}\`).`;
-    lines.push(
-      `- [${scope}/${memoryType}] ${title}${pathSuffix}: ${summary} Verification: \`${verificationPolicy}\`.${freshnessSuffix}`
-    );
+    lines.push(`- [${scope}/${memoryType}] ${title}${pathSuffix}: ${summary} Verification: \`${verificationPolicy}\`.${freshnessSuffix}`);
+    if (excerpt) {
+      lines.push(`Excerpt: ${excerpt}`);
+    }
   }
 
   return linesSection(lines);
@@ -364,9 +423,14 @@ export function buildBaseAgentPromptSections(
     "Execution doctrine:",
     "Start with inspection and context-gathering before mutating files, runtime state, browser state, or external systems whenever possible.",
     "After edits, shell commands, browser actions, or state-changing tool calls, verify the result with the most direct inspection capability available before claiming success.",
-    "When the workspace is initialized as a local git repository, use git for local version control checkpoints around meaningful verified changes.",
-    "Check repository state with git before and after substantial edits, and create concise local checkpoint commits after meaningful verified changes.",
+    "If local git is available, treat it as an internal recovery mechanism for the agent rather than a user-facing workflow.",
+    "When meaningful changes are implemented and verified, create concise local checkpoint commits for agent recovery.",
+    "Do not proactively surface git status, dirty or untracked file reports, repository cleanup recommendations, or checkpoint/commit chatter to the user.",
+    "Only discuss explicit git operations when the user directly asks for version-control help or when the task cannot be completed otherwise.",
     "Do not use destructive git history operations such as reset --hard, rebase, or force pushes unless the user explicitly asks for them.",
+    "Treat the active workspace root as a hard boundary: do not read, write, edit, execute against, or reference paths outside the workspace by default.",
+    "Block path traversal and cross-workspace access by default, including parent-directory paths, absolute external paths, and symlink escapes.",
+    "Only cross the workspace boundary when the user explicitly insists, and then keep scope minimal and clearly tied to that instruction.",
     "Keep plans and missing decisions explicit: use coordination capabilities such as question, todo, and skill access instead of relying on hidden state.",
     "If a task requires the user's name or other personal identity details and current user context does not provide them, ask the user explicitly instead of guessing.",
     "On the first strong signal that user input describes a reusable workflow, procedure, or operating pattern, proactively create or update a workspace-local skill instead of waiting for an explicit skill request.",
@@ -427,6 +491,16 @@ export function buildBaseAgentPromptSections(
     priority: 475,
     volatility: "workspace",
     content: currentUserContextPromptSection(request.currentUserContext)
+  });
+
+  pushPromptLayer(promptSections, {
+    id: "pending_user_memory",
+    channel: "context_message",
+    apply_at: "runtime_config",
+    precedence: "runtime_context",
+    priority: 490,
+    volatility: "run",
+    content: pendingUserMemoryContextPromptSection(request.pendingUserMemoryContext)
   });
 
   pushPromptLayer(promptSections, {

@@ -161,6 +161,7 @@ export interface CompactionBoundaryRecord {
   workspaceId: string;
   sessionId: string;
   inputId: string;
+  boundaryType: CompactionBoundaryType;
   previousBoundaryId: string | null;
   summary: string | null;
   recentRuntimeContext: Record<string, unknown> | null;
@@ -170,6 +171,8 @@ export interface CompactionBoundaryRecord {
   createdAt: string;
   updatedAt: string;
 }
+
+export type CompactionBoundaryType = "executor_post_turn" | "harness_auto_compaction";
 
 export type RuntimeUserProfileNameSource = "manual" | "agent" | "auth_fallback";
 
@@ -214,18 +217,6 @@ export interface MemoryEntryRecord {
   updatedAt: string;
 }
 
-export interface SessionArtifactRecord {
-  id: string;
-  sessionId: string;
-  workspaceId: string;
-  artifactType: string;
-  externalId: string;
-  platform: string | null;
-  title: string | null;
-  metadata: Record<string, unknown>;
-  createdAt: string;
-}
-
 export interface OutputFolderRecord {
   id: string;
   workspaceId: string;
@@ -233,6 +224,20 @@ export interface OutputFolderRecord {
   position: number;
   createdAt: string | null;
   updatedAt: string | null;
+}
+
+function outputTypeForArtifactType(artifactType: string): string {
+  switch (artifactType) {
+    case "draft":
+      return "post";
+    case "image":
+      return "file";
+    case "html":
+      return "html";
+    case "document":
+    default:
+      return "document";
+  }
 }
 
 export interface OutputRecord {
@@ -246,6 +251,7 @@ export interface OutputRecord {
   filePath: string | null;
   htmlContent: string | null;
   sessionId: string | null;
+  inputId: string | null;
   artifactId: string | null;
   folderId: string | null;
   platform: string | null;
@@ -318,6 +324,30 @@ export interface TaskProposalRecord {
   acceptedAt: string | null;
 }
 
+export type MemoryUpdateProposalKind = "preference" | "identity" | "profile";
+export type MemoryUpdateProposalState = "pending" | "accepted" | "dismissed";
+
+export interface MemoryUpdateProposalRecord {
+  proposalId: string;
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+  proposalKind: MemoryUpdateProposalKind;
+  targetKey: string;
+  title: string;
+  summary: string;
+  payload: Record<string, unknown>;
+  evidence: string | null;
+  confidence: number | null;
+  sourceMessageId: string | null;
+  state: MemoryUpdateProposalState;
+  persistedMemoryId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  acceptedAt: string | null;
+  dismissedAt: string | null;
+}
+
 export interface CreateWorkspaceParams {
   workspaceId?: string;
   name: string;
@@ -379,6 +409,18 @@ type TaskProposalUpdateFields = Partial<{
   acceptedSessionId: string | null;
   acceptedInputId: string | null;
   acceptedAt: string | null;
+}>;
+
+type MemoryUpdateProposalUpdateFields = Partial<{
+  title: string;
+  summary: string;
+  payload: Record<string, unknown>;
+  evidence: string | null;
+  confidence: number | null;
+  state: MemoryUpdateProposalState;
+  persistedMemoryId: string | null;
+  acceptedAt: string | null;
+  dismissedAt: string | null;
 }>;
 
 type WorkspaceRow = {
@@ -765,6 +807,53 @@ export class RuntimeStateStore {
       return null;
     }
     return this.getTaskProposal(params.proposalId);
+  }
+
+  updateMemoryUpdateProposal(params: {
+    proposalId: string;
+    fields: MemoryUpdateProposalUpdateFields;
+  }): MemoryUpdateProposalRecord | null {
+    const entries = Object.entries(params.fields);
+    if (entries.length === 0) {
+      return this.getMemoryUpdateProposal(params.proposalId);
+    }
+
+    const columnMap: Record<keyof MemoryUpdateProposalUpdateFields, string> = {
+      title: "title",
+      summary: "summary",
+      payload: "payload",
+      evidence: "evidence",
+      confidence: "confidence",
+      state: "state",
+      persistedMemoryId: "persisted_memory_id",
+      acceptedAt: "accepted_at",
+      dismissedAt: "dismissed_at",
+    };
+
+    const assignments: string[] = [];
+    const values: unknown[] = [];
+    for (const [key, value] of entries) {
+      const column = columnMap[key as keyof MemoryUpdateProposalUpdateFields];
+      if (!column) {
+        throw new Error(`unsupported memory update proposal field: ${key}`);
+      }
+      assignments.push(`${column} = ?`);
+      if (key === "payload") {
+        values.push(JSON.stringify(value ?? {}));
+      } else {
+        values.push(value ?? null);
+      }
+    }
+    assignments.push("updated_at = ?");
+    values.push(utcNowIso(), params.proposalId);
+
+    const result = this.db()
+      .prepare(`UPDATE memory_update_proposals SET ${assignments.join(", ")} WHERE proposal_id = ?`)
+      .run(...values);
+    if (result.changes <= 0) {
+      return null;
+    }
+    return this.getMemoryUpdateProposal(params.proposalId);
   }
 
   upsertBinding(params: {
@@ -2032,6 +2121,7 @@ export class RuntimeStateStore {
     workspaceId: string;
     sessionId: string;
     inputId: string;
+    boundaryType?: CompactionBoundaryType;
     previousBoundaryId?: string | null;
     summary?: string | null;
     recentRuntimeContext?: Record<string, unknown> | null;
@@ -2059,6 +2149,7 @@ export class RuntimeStateStore {
             workspace_id,
             session_id,
             input_id,
+            boundary_type,
             previous_boundary_id,
             summary,
             recent_runtime_context,
@@ -2067,11 +2158,12 @@ export class RuntimeStateStore {
             request_snapshot_fingerprint,
             created_at,
             updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(boundary_id) DO UPDATE SET
             workspace_id = excluded.workspace_id,
             session_id = excluded.session_id,
             input_id = excluded.input_id,
+            boundary_type = excluded.boundary_type,
             previous_boundary_id = excluded.previous_boundary_id,
             summary = excluded.summary,
             recent_runtime_context = excluded.recent_runtime_context,
@@ -2085,6 +2177,7 @@ export class RuntimeStateStore {
         params.workspaceId,
         params.sessionId,
         params.inputId,
+        params.boundaryType ?? "executor_post_turn",
         params.previousBoundaryId ?? null,
         params.summary ?? null,
         params.recentRuntimeContext ? JSON.stringify(params.recentRuntimeContext) : null,
@@ -2137,106 +2230,6 @@ export class RuntimeStateStore {
     values.push(params.limit ?? 100, params.offset ?? 0);
     const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
     return rows.map((row) => this.rowToCompactionBoundary(row));
-  }
-
-  createSessionArtifact(params: {
-    sessionId: string;
-    workspaceId: string;
-    artifactType: string;
-    externalId: string;
-    platform?: string | null;
-    title?: string | null;
-    metadata?: Record<string, unknown> | null;
-    artifactId?: string;
-    createdAt?: string;
-  }): SessionArtifactRecord {
-    const resolvedId = params.artifactId ?? randomUUID();
-    const resolvedCreatedAt = params.createdAt ?? utcNowIso();
-    this.db()
-      .prepare(`
-        INSERT OR REPLACE INTO session_artifacts (
-            id, session_id, workspace_id, artifact_type, external_id, platform, title, metadata, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        resolvedId,
-        params.sessionId,
-        params.workspaceId,
-        params.artifactType,
-        params.externalId,
-        params.platform ?? null,
-        params.title ?? null,
-        JSON.stringify(params.metadata ?? {}),
-        resolvedCreatedAt
-      );
-    const row = this.db()
-      .prepare<[string], Record<string, unknown>>("SELECT * FROM session_artifacts WHERE id = ? LIMIT 1")
-      .get(resolvedId);
-    if (!row) {
-      throw new Error("artifact row not found after insert");
-    }
-    return this.rowToSessionArtifact(row);
-  }
-
-  listSessionArtifacts(params: { sessionId: string; workspaceId?: string }): SessionArtifactRecord[] {
-    let query = `
-      SELECT * FROM session_artifacts
-      WHERE session_id = ?
-    `;
-    const values: string[] = [params.sessionId];
-    if (params.workspaceId) {
-      query += " AND workspace_id = ?";
-      values.push(params.workspaceId);
-    }
-    query += " ORDER BY datetime(created_at) ASC, id ASC";
-    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToSessionArtifact(row));
-  }
-
-  listSessionsWithArtifacts(params: { workspaceId: string; limit?: number; offset?: number }): Array<Record<string, unknown>> {
-    const rows = this.db()
-      .prepare<[string, number, number], Record<string, unknown>>(`
-        SELECT session_id, status, created_at, updated_at
-        FROM session_runtime_state
-        WHERE workspace_id = ?
-        ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC
-        LIMIT ? OFFSET ?
-      `)
-      .all(params.workspaceId, params.limit ?? 20, params.offset ?? 0);
-    const sessionIds = rows.map((row) => String(row.session_id));
-    const artifactsBySession = new Map<string, Array<Record<string, unknown>>>();
-    for (const sessionId of sessionIds) {
-      artifactsBySession.set(sessionId, []);
-    }
-    if (sessionIds.length > 0) {
-      const artifactRows = this.db()
-        .prepare<[string], Record<string, unknown>>(`
-          SELECT session_id, artifact_type, external_id, platform, title
-          FROM session_artifacts
-          WHERE workspace_id = ?
-          ORDER BY datetime(created_at) ASC, id ASC
-        `)
-        .all(params.workspaceId);
-      for (const row of artifactRows) {
-        const sessionId = String(row.session_id);
-        if (!artifactsBySession.has(sessionId)) {
-          continue;
-        }
-        artifactsBySession.get(sessionId)?.push({
-          artifact_type: String(row.artifact_type),
-          external_id: String(row.external_id),
-          platform: row.platform == null ? null : String(row.platform),
-          title: row.title == null ? null : String(row.title)
-        });
-      }
-    }
-    return rows.map((row) => ({
-      session_id: String(row.session_id),
-      status: String(row.status),
-      created_at: row.created_at == null ? null : String(row.created_at),
-      updated_at: row.updated_at == null ? null : String(row.updated_at),
-      artifacts: artifactsBySession.get(String(row.session_id)) ?? []
-    }));
   }
 
   createOutputFolder(params: { workspaceId: string; name: string }): OutputFolderRecord {
@@ -2306,11 +2299,13 @@ export class RuntimeStateStore {
     workspaceId: string;
     outputType: string;
     title?: string;
+    status?: string;
     moduleId?: string | null;
     moduleResourceId?: string | null;
     filePath?: string | null;
     htmlContent?: string | null;
     sessionId?: string | null;
+    inputId?: string | null;
     artifactId?: string | null;
     folderId?: string | null;
     platform?: string | null;
@@ -2323,19 +2318,21 @@ export class RuntimeStateStore {
       .prepare(`
         INSERT INTO outputs (
             id, workspace_id, output_type, title, status, module_id, module_resource_id, file_path,
-            html_content, session_id, artifact_id, folder_id, platform, metadata, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            html_content, session_id, input_id, artifact_id, folder_id, platform, metadata, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         resolvedId,
         params.workspaceId,
         params.outputType,
         params.title ?? "",
+        params.status ?? "draft",
         params.moduleId ?? null,
         params.moduleResourceId ?? null,
         params.filePath ?? null,
         params.htmlContent ?? null,
         params.sessionId ?? null,
+        params.inputId ?? null,
         params.artifactId ?? null,
         params.folderId ?? null,
         params.platform ?? null,
@@ -2356,6 +2353,8 @@ export class RuntimeStateStore {
     status?: string | null;
     platform?: string | null;
     folderId?: string | null;
+    sessionId?: string | null;
+    inputId?: string | null;
     limit?: number;
     offset?: number;
   }): OutputRecord[] {
@@ -2376,6 +2375,14 @@ export class RuntimeStateStore {
     if (params.folderId) {
       query += " AND folder_id = ?";
       values.push(params.folderId);
+    }
+    if (params.sessionId) {
+      query += " AND session_id = ?";
+      values.push(params.sessionId);
+    }
+    if (params.inputId) {
+      query += " AND input_id = ?";
+      values.push(params.inputId);
     }
     query += " ORDER BY datetime(created_at) DESC LIMIT ? OFFSET ?";
     values.push(params.limit ?? 50, params.offset ?? 0);
@@ -2826,6 +2833,122 @@ export class RuntimeStateStore {
     });
   }
 
+  createMemoryUpdateProposal(params: {
+    proposalId: string;
+    workspaceId: string;
+    sessionId: string;
+    inputId: string;
+    proposalKind: MemoryUpdateProposalKind;
+    targetKey: string;
+    title: string;
+    summary: string;
+    payload?: Record<string, unknown> | null;
+    evidence?: string | null;
+    confidence?: number | null;
+    sourceMessageId?: string | null;
+    state?: MemoryUpdateProposalState;
+    persistedMemoryId?: string | null;
+    createdAt?: string;
+    updatedAt?: string;
+    acceptedAt?: string | null;
+    dismissedAt?: string | null;
+  }): MemoryUpdateProposalRecord {
+    this.ensureSession(
+      {
+        workspaceId: params.workspaceId,
+        sessionId: params.sessionId,
+      },
+      { touchExisting: false }
+    );
+    const createdAt = params.createdAt ?? utcNowIso();
+    const updatedAt = params.updatedAt ?? createdAt;
+    this.db()
+      .prepare(`
+        INSERT INTO memory_update_proposals (
+            proposal_id,
+            workspace_id,
+            session_id,
+            input_id,
+            proposal_kind,
+            target_key,
+            title,
+            summary,
+            payload,
+            evidence,
+            confidence,
+            source_message_id,
+            state,
+            persisted_memory_id,
+            created_at,
+            updated_at,
+            accepted_at,
+            dismissed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        params.proposalId,
+        params.workspaceId,
+        params.sessionId,
+        params.inputId,
+        params.proposalKind,
+        params.targetKey,
+        params.title,
+        params.summary,
+        JSON.stringify(params.payload ?? {}),
+        this.normalizedNullableText(params.evidence),
+        params.confidence ?? null,
+        this.normalizedNullableText(params.sourceMessageId),
+        params.state ?? "pending",
+        this.normalizedNullableText(params.persistedMemoryId),
+        createdAt,
+        updatedAt,
+        this.normalizedNullableText(params.acceptedAt),
+        this.normalizedNullableText(params.dismissedAt)
+      );
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>("SELECT * FROM memory_update_proposals WHERE proposal_id = ? LIMIT 1")
+      .get(params.proposalId);
+    if (!row) {
+      throw new Error("memory update proposal row not found after insert");
+    }
+    return this.rowToMemoryUpdateProposal(row);
+  }
+
+  getMemoryUpdateProposal(proposalId: string): MemoryUpdateProposalRecord | null {
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>("SELECT * FROM memory_update_proposals WHERE proposal_id = ? LIMIT 1")
+      .get(proposalId);
+    return row ? this.rowToMemoryUpdateProposal(row) : null;
+  }
+
+  listMemoryUpdateProposals(params: {
+    workspaceId: string;
+    sessionId?: string | null;
+    inputId?: string | null;
+    state?: MemoryUpdateProposalState | null;
+    limit?: number;
+    offset?: number;
+  }): MemoryUpdateProposalRecord[] {
+    let query = "SELECT * FROM memory_update_proposals WHERE workspace_id = ?";
+    const values: Array<string | number> = [params.workspaceId];
+    if (params.sessionId) {
+      query += " AND session_id = ?";
+      values.push(params.sessionId);
+    }
+    if (params.inputId) {
+      query += " AND input_id = ?";
+      values.push(params.inputId);
+    }
+    if (params.state) {
+      query += " AND state = ?";
+      values.push(params.state);
+    }
+    query += " ORDER BY datetime(created_at) ASC, proposal_id ASC LIMIT ? OFFSET ?";
+    values.push(params.limit ?? 200, params.offset ?? 0);
+    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToMemoryUpdateProposal(row));
+  }
+
   private db(): Database.Database {
     if (this.#db) {
       return this.#db;
@@ -2847,7 +2970,9 @@ export class RuntimeStateStore {
   private ensureRuntimeDbSchema(db: Database.Database): void {
     this.ensureWorkspacesTableSchema(db);
     this.ensureTaskProposalsTableSchema(db);
+    this.ensureMemoryUpdateProposalsTableSchema(db);
     this.ensureTurnArtifactsSchema(db);
+    this.ensureOutputsTableSchema(db);
     this.migrateSandboxRunTokensTable(db);
     db.exec(`
       CREATE TABLE IF NOT EXISTS workspaces (
@@ -3069,6 +3194,7 @@ export class RuntimeStateStore {
           workspace_id TEXT NOT NULL,
           session_id TEXT NOT NULL,
           input_id TEXT NOT NULL,
+          boundary_type TEXT NOT NULL DEFAULT 'executor_post_turn',
           previous_boundary_id TEXT,
           summary TEXT,
           recent_runtime_context TEXT,
@@ -3123,21 +3249,6 @@ export class RuntimeStateStore {
       CREATE INDEX IF NOT EXISTS idx_memory_entries_scope_updated
           ON memory_entries (scope, status, updated_at DESC, created_at DESC);
 
-      CREATE TABLE IF NOT EXISTS session_artifacts (
-          id TEXT PRIMARY KEY,
-          session_id TEXT NOT NULL,
-          workspace_id TEXT NOT NULL,
-          artifact_type TEXT NOT NULL,
-          external_id TEXT NOT NULL,
-          platform TEXT,
-          title TEXT,
-          metadata TEXT NOT NULL DEFAULT '{}',
-          created_at TEXT NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_session_artifacts_workspace_session_created
-          ON session_artifacts (workspace_id, session_id, created_at ASC);
-
       CREATE TABLE IF NOT EXISTS task_proposals (
           proposal_id TEXT PRIMARY KEY,
           workspace_id TEXT NOT NULL,
@@ -3157,6 +3268,36 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_task_proposals_workspace_state_created
           ON task_proposals (workspace_id, state, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS memory_update_proposals (
+          proposal_id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          input_id TEXT NOT NULL,
+          proposal_kind TEXT NOT NULL,
+          target_key TEXT NOT NULL,
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          payload TEXT NOT NULL DEFAULT '{}',
+          evidence TEXT,
+          confidence REAL,
+          source_message_id TEXT,
+          state TEXT NOT NULL DEFAULT 'pending',
+          persisted_memory_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          accepted_at TEXT,
+          dismissed_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_memory_update_proposals_workspace_created
+          ON memory_update_proposals (workspace_id, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_memory_update_proposals_session_input_created
+          ON memory_update_proposals (session_id, input_id, created_at ASC);
+
+      CREATE INDEX IF NOT EXISTS idx_memory_update_proposals_workspace_state_created
+          ON memory_update_proposals (workspace_id, state, created_at DESC);
 
       CREATE TABLE IF NOT EXISTS output_folders (
           id TEXT PRIMARY KEY,
@@ -3181,6 +3322,7 @@ export class RuntimeStateStore {
           file_path TEXT,
           html_content TEXT,
           session_id TEXT,
+          input_id TEXT,
           artifact_id TEXT,
           folder_id TEXT,
           platform TEXT,
@@ -3194,6 +3336,9 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_outputs_workspace_folder_created
           ON outputs (workspace_id, folder_id, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_outputs_session_input_created
+          ON outputs (session_id, input_id, created_at DESC);
 
       CREATE TABLE IF NOT EXISTS app_builds (
           workspace_id TEXT NOT NULL,
@@ -3259,6 +3404,87 @@ export class RuntimeStateStore {
           updated_at TEXT NOT NULL
       );
     `);
+    this.migrateLegacySessionArtifactsToOutputs(db);
+  }
+
+  private migrateLegacySessionArtifactsToOutputs(db: Database.Database): void {
+    const tables = new Set<string>(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
+        (row) => row.name
+      )
+    );
+    if (!tables.has("session_artifacts")) {
+      return;
+    }
+
+    const legacyRows = db
+      .prepare<
+        [],
+        {
+          id: string;
+          session_id: string;
+          workspace_id: string;
+          artifact_type: string;
+          external_id: string;
+          platform: string | null;
+          title: string | null;
+          metadata: string | null;
+          created_at: string;
+        }
+      >(`
+        SELECT id, session_id, workspace_id, artifact_type, external_id, platform, title, metadata, created_at
+        FROM session_artifacts
+        ORDER BY datetime(created_at) ASC, id ASC
+      `)
+      .all();
+
+    const hasOutputForArtifact = db.prepare<[string], { present: number }>(
+      "SELECT 1 AS present FROM outputs WHERE artifact_id = ? LIMIT 1"
+    );
+    const insertOutput = db.prepare(`
+      INSERT INTO outputs (
+          id, workspace_id, output_type, title, status, module_id, module_resource_id, file_path,
+          html_content, session_id, input_id, artifact_id, folder_id, platform, metadata, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const migrate = db.transaction(() => {
+      for (const row of legacyRows) {
+        if (hasOutputForArtifact.get(row.id)) {
+          continue;
+        }
+        const existingMetadata = this.parseJsonDict(row.metadata);
+        const mergedMetadata = {
+          ...existingMetadata,
+          origin_type: "app",
+          change_type: "created",
+          artifact_type: row.artifact_type,
+          external_id: row.external_id,
+        };
+        insertOutput.run(
+          randomUUID(),
+          row.workspace_id,
+          outputTypeForArtifactType(row.artifact_type),
+          row.title ?? "",
+          "completed",
+          null,
+          row.external_id,
+          null,
+          null,
+          row.session_id,
+          null,
+          row.id,
+          null,
+          row.platform ?? null,
+          JSON.stringify(mergedMetadata),
+          row.created_at,
+          row.created_at
+        );
+      }
+      db.exec("DROP TABLE IF EXISTS session_artifacts;");
+    });
+
+    migrate();
   }
 
   private migrateSandboxRunTokensTable(db: Database.Database): void {
@@ -3348,6 +3574,50 @@ export class RuntimeStateStore {
     }
   }
 
+  private ensureMemoryUpdateProposalsTableSchema(db: Database.Database): void {
+    const tableNames = new Set<string>(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
+        (row) => row.name
+      )
+    );
+    if (!tableNames.has("memory_update_proposals")) {
+      return;
+    }
+
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(memory_update_proposals)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+
+    if (!columns.has("payload")) {
+      db.exec("ALTER TABLE memory_update_proposals ADD COLUMN payload TEXT NOT NULL DEFAULT '{}';");
+    }
+    if (!columns.has("evidence")) {
+      db.exec("ALTER TABLE memory_update_proposals ADD COLUMN evidence TEXT;");
+    }
+    if (!columns.has("confidence")) {
+      db.exec("ALTER TABLE memory_update_proposals ADD COLUMN confidence REAL;");
+    }
+    if (!columns.has("source_message_id")) {
+      db.exec("ALTER TABLE memory_update_proposals ADD COLUMN source_message_id TEXT;");
+    }
+    if (!columns.has("state")) {
+      db.exec("ALTER TABLE memory_update_proposals ADD COLUMN state TEXT NOT NULL DEFAULT 'pending';");
+    }
+    if (!columns.has("persisted_memory_id")) {
+      db.exec("ALTER TABLE memory_update_proposals ADD COLUMN persisted_memory_id TEXT;");
+    }
+    if (!columns.has("updated_at")) {
+      db.exec("ALTER TABLE memory_update_proposals ADD COLUMN updated_at TEXT;");
+      db.exec("UPDATE memory_update_proposals SET updated_at = created_at WHERE updated_at IS NULL;");
+    }
+    if (!columns.has("accepted_at")) {
+      db.exec("ALTER TABLE memory_update_proposals ADD COLUMN accepted_at TEXT;");
+    }
+    if (!columns.has("dismissed_at")) {
+      db.exec("ALTER TABLE memory_update_proposals ADD COLUMN dismissed_at TEXT;");
+    }
+  }
+
   private ensureTurnArtifactsSchema(db: Database.Database): void {
     const tableNames = new Set<string>(
       (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
@@ -3367,6 +3637,14 @@ export class RuntimeStateStore {
       }
       if (!columns.has("compaction_boundary_id")) {
         db.exec("ALTER TABLE turn_results ADD COLUMN compaction_boundary_id TEXT;");
+      }
+    }
+    if (tableNames.has("compaction_boundaries")) {
+      const columns = new Set<string>(
+        (db.prepare("PRAGMA table_info(compaction_boundaries)").all() as Array<{ name: string }>).map((row) => row.name)
+      );
+      if (!columns.has("boundary_type")) {
+        db.exec("ALTER TABLE compaction_boundaries ADD COLUMN boundary_type TEXT NOT NULL DEFAULT 'executor_post_turn';");
       }
     }
 
@@ -3414,6 +3692,7 @@ export class RuntimeStateStore {
           workspace_id TEXT NOT NULL,
           session_id TEXT NOT NULL,
           input_id TEXT NOT NULL,
+          boundary_type TEXT NOT NULL DEFAULT 'executor_post_turn',
           previous_boundary_id TEXT,
           summary TEXT,
           recent_runtime_context TEXT,
@@ -3427,6 +3706,24 @@ export class RuntimeStateStore {
       CREATE INDEX IF NOT EXISTS idx_compaction_boundaries_workspace_session_updated
           ON compaction_boundaries (workspace_id, session_id, updated_at DESC, created_at DESC);
     `);
+  }
+
+  private ensureOutputsTableSchema(db: Database.Database): void {
+    const tableNames = new Set<string>(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
+        (row) => row.name
+      )
+    );
+    if (!tableNames.has("outputs")) {
+      return;
+    }
+
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(outputs)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+    if (!columns.has("input_id")) {
+      db.exec("ALTER TABLE outputs ADD COLUMN input_id TEXT;");
+    }
   }
 
   private ensureWorkspacesTableSchema(db: Database.Database): void {
@@ -3837,11 +4134,18 @@ export class RuntimeStateStore {
   }
 
   private rowToCompactionBoundary(row: Record<string, unknown>): CompactionBoundaryRecord {
+    const rawBoundaryType =
+      row.boundary_type == null || String(row.boundary_type).trim().length === 0
+        ? "executor_post_turn"
+        : String(row.boundary_type).trim();
+    const boundaryType: CompactionBoundaryType =
+      rawBoundaryType === "harness_auto_compaction" ? "harness_auto_compaction" : "executor_post_turn";
     return {
       boundaryId: String(row.boundary_id),
       workspaceId: String(row.workspace_id),
       sessionId: String(row.session_id),
       inputId: String(row.input_id),
+      boundaryType,
       previousBoundaryId: row.previous_boundary_id == null ? null : String(row.previous_boundary_id),
       summary: row.summary == null ? null : String(row.summary),
       recentRuntimeContext:
@@ -3991,20 +4295,6 @@ export class RuntimeStateStore {
     }
   }
 
-  private rowToSessionArtifact(row: Record<string, unknown>): SessionArtifactRecord {
-    return {
-      id: String(row.id),
-      sessionId: String(row.session_id),
-      workspaceId: String(row.workspace_id),
-      artifactType: String(row.artifact_type),
-      externalId: String(row.external_id),
-      platform: row.platform == null ? null : String(row.platform),
-      title: row.title == null ? null : String(row.title),
-      metadata: this.parseJsonDict(row.metadata),
-      createdAt: String(row.created_at)
-    };
-  }
-
   private rowToOutputFolder(row: Record<string, unknown>): OutputFolderRecord {
     return {
       id: String(row.id),
@@ -4028,6 +4318,7 @@ export class RuntimeStateStore {
       filePath: row.file_path == null ? null : String(row.file_path),
       htmlContent: row.html_content == null ? null : String(row.html_content),
       sessionId: row.session_id == null ? null : String(row.session_id),
+      inputId: row.input_id == null ? null : String(row.input_id),
       artifactId: row.artifact_id == null ? null : String(row.artifact_id),
       folderId: row.folder_id == null ? null : String(row.folder_id),
       platform: row.platform == null ? null : String(row.platform),
@@ -4085,6 +4376,29 @@ export class RuntimeStateStore {
       acceptedSessionId: row.accepted_session_id == null ? null : String(row.accepted_session_id),
       acceptedInputId: row.accepted_input_id == null ? null : String(row.accepted_input_id),
       acceptedAt: row.accepted_at == null ? null : String(row.accepted_at)
+    };
+  }
+
+  private rowToMemoryUpdateProposal(row: Record<string, unknown>): MemoryUpdateProposalRecord {
+    return {
+      proposalId: String(row.proposal_id),
+      workspaceId: String(row.workspace_id),
+      sessionId: String(row.session_id),
+      inputId: String(row.input_id),
+      proposalKind: String(row.proposal_kind) as MemoryUpdateProposalKind,
+      targetKey: String(row.target_key),
+      title: String(row.title),
+      summary: String(row.summary),
+      payload: this.parseJsonDict(row.payload),
+      evidence: row.evidence == null ? null : String(row.evidence),
+      confidence: row.confidence == null ? null : Number(row.confidence),
+      sourceMessageId: row.source_message_id == null ? null : String(row.source_message_id),
+      state: String(row.state) as MemoryUpdateProposalState,
+      persistedMemoryId: row.persisted_memory_id == null ? null : String(row.persisted_memory_id),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      acceptedAt: row.accepted_at == null ? null : String(row.accepted_at),
+      dismissedAt: row.dismissed_at == null ? null : String(row.dismissed_at),
     };
   }
 

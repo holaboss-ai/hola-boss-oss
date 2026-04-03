@@ -3,9 +3,11 @@ import type { CompactionBoundaryRecord, SessionMessageRecord, TurnResultRecord }
 import type { AgentRecentRuntimeContext, AgentSessionResumeContext } from "./agent-runtime-prompt.js";
 
 const DEFAULT_COMPACTION_SOURCE = "executor_post_turn";
+const DEFAULT_COMPACTION_BOUNDARY_TYPE = "executor_post_turn";
 
 export interface AgentCompactionRestorationContext {
   compaction_source: string;
+  boundary_type: string;
   restoration_order: string[];
   boundary_summary?: string | null;
   recent_runtime_context?: AgentRecentRuntimeContext | null;
@@ -189,6 +191,7 @@ export function buildCompactionBoundaryArtifacts(params: {
     recentRuntimeContext,
     restorationContext: {
       compaction_source: DEFAULT_COMPACTION_SOURCE,
+      boundary_type: DEFAULT_COMPACTION_BOUNDARY_TYPE,
       restoration_order: buildRestorationOrder({
         boundarySummary: summary,
         recentRuntimeContext,
@@ -281,6 +284,10 @@ export function compactionRestorationContextFromCompactionBoundary(
     typeof restorationContext?.compaction_source === "string" && restorationContext.compaction_source.trim()
       ? restorationContext.compaction_source.trim()
       : DEFAULT_COMPACTION_SOURCE;
+  const boundaryType =
+    typeof restorationContext?.boundary_type === "string" && restorationContext.boundary_type.trim()
+      ? restorationContext.boundary_type.trim()
+      : boundary.boundaryType ?? DEFAULT_COMPACTION_BOUNDARY_TYPE;
 
   if (
     !boundarySummary &&
@@ -293,6 +300,7 @@ export function compactionRestorationContextFromCompactionBoundary(
   }
   return {
     compaction_source: compactionSource,
+    boundary_type: boundaryType,
     restoration_order: restorationOrder,
     boundary_summary: boundarySummary,
     recent_runtime_context: recentRuntimeContext,

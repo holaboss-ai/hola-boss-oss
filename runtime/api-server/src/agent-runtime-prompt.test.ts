@@ -85,15 +85,39 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   assert.match(prompt.systemPrompt, /Execution doctrine:/);
   assert.match(
     prompt.systemPrompt,
-    /When the workspace is initialized as a local git repository, use git for local version control checkpoints around meaningful verified changes\./
+    /If local git is available, treat it as an internal recovery mechanism for the agent rather than a user-facing workflow\./
   );
   assert.match(
     prompt.systemPrompt,
-    /Check repository state with git before and after substantial edits, and create concise local checkpoint commits after meaningful verified changes\./
+    /When meaningful changes are implemented and verified, create concise local checkpoint commits for agent recovery\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not proactively surface git status, dirty or untracked file reports, repository cleanup recommendations, or checkpoint\/commit chatter to the user\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Only discuss explicit git operations when the user directly asks for version-control help or when the task cannot be completed otherwise\./
   );
   assert.match(
     prompt.systemPrompt,
     /Do not use destructive git history operations such as reset --hard, rebase, or force pushes unless the user explicitly asks for them\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Treat the active workspace root as a hard boundary: do not read, write, edit, execute against, or reference paths outside the workspace by default\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Block path traversal and cross-workspace access by default, including parent-directory paths, absolute external paths, and symlink escapes\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Only cross the workspace boundary when the user explicitly insists, and then keep scope minimal and clearly tied to that instruction\./
+  );
+  assert.doesNotMatch(
+    prompt.systemPrompt,
+    /Check repository state with git before and after substantial edits/
   );
   assert.match(
     prompt.systemPrompt,
@@ -196,6 +220,43 @@ test("composeBaseAgentPrompt includes current user context when provided", () =>
   assert.match(prompt.contextMessages.join("\n\n"), /Current user context:/);
   assert.match(prompt.contextMessages.join("\n\n"), /The current operator name is `Jeffrey`\./);
   assert.match(prompt.contextMessages.join("\n\n"), /Name source: `manual`\./);
+});
+
+test("composeBaseAgentPrompt includes pending user memory context when provided", () => {
+  const prompt = composeBaseAgentPrompt("", {
+    defaultTools: ["read"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    pendingUserMemoryContext: {
+      entries: [
+        {
+          proposal_id: "proposal-1",
+          proposal_kind: "preference",
+          target_key: "file-delivery",
+          title: "File delivery preference",
+          summary: "Do not compress or zip multiple files; deliver them individually.",
+          evidence: "Please do not zip the files. Send them individually.",
+        },
+      ],
+    },
+  });
+
+  assert.ok(prompt.promptSections.some((section) => section.id === "pending_user_memory"));
+  assert.equal(
+    prompt.promptSections.find((section) => section.id === "pending_user_memory")?.channel,
+    "context_message"
+  );
+  assert.equal(
+    prompt.promptSections.find((section) => section.id === "pending_user_memory")?.precedence,
+    "runtime_context"
+  );
+  assert.equal(prompt.promptLayers.some((layer) => layer.id === "pending_user_memory"), false);
+  assert.match(prompt.contextMessages.join("\n\n"), /Current-turn inferred user memory:/);
+  assert.match(prompt.contextMessages.join("\n\n"), /not durably saved yet/i);
+  assert.match(prompt.contextMessages.join("\n\n"), /File delivery preference: Do not compress or zip multiple files; deliver them individually\./);
 });
 
 test("composeBaseAgentPrompt includes session resume context only when provided", () => {

@@ -78,6 +78,18 @@ test("chat turns render markdown and keep long content wrapped inside the bubble
   assert.match(source, /theme-chat-user-bubble inline-flex min-w-0 max-w-full/);
 });
 
+test("chat pane renders run-scoped memory proposal cards with accept dismiss and edit actions", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /window\.electronAPI\.workspace\.listMemoryUpdateProposals\(\{/);
+  assert.match(source, /memoryProposalsByInputId/);
+  assert.match(source, /nextMessage\.memoryProposals = turnMemoryProposals/);
+  assert.match(source, /AssistantTurnMemoryProposals/);
+  assert.match(source, /window\.electronAPI\.workspace\.acceptMemoryUpdateProposal\(\{/);
+  assert.match(source, /window\.electronAPI\.workspace\.dismissMemoryUpdateProposal\(proposal\.proposal_id\)/);
+  assert.match(source, /Edit memory proposal/);
+});
+
 test("tool trace steps are collapsed by default and first toggle expands them", async () => {
   const source = await readFile(sourcePath, "utf8");
 

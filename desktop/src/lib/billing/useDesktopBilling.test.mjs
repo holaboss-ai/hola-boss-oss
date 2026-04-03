@@ -12,6 +12,18 @@ test("desktop billing hook reads overview, usage, and links from electron API", 
   assert.match(source, /window\.electronAPI\.billing\.getLinks/);
 });
 
+test("desktop billing hook gates billing fetches on desktop auth state", async () => {
+  const source = await readFile(HOOK_PATH, "utf8");
+
+  assert.match(source, /useDesktopAuthSession/);
+  assert.match(source, /const isAuthenticated = Boolean\(authSessionState\.data\?\.user\?\.id\?\.trim\(\)\);/);
+  assert.match(
+    source,
+    /if \(!isAuthenticated\) \{\s*setOverview\(null\);\s*setUsage\(null\);\s*setLinks\(null\);\s*setError\(null\);\s*setIsLoading\(false\);\s*return;\s*\}/
+  );
+  assert.match(source, /if \(authSessionState\.isPending\) \{\s*setIsLoading\(true\);\s*return;\s*\}/);
+});
+
 test("desktop billing hook derives low-balance and out-of-credits state", async () => {
   const source = await readFile(HOOK_PATH, "utf8");
 
@@ -26,4 +38,5 @@ test("desktop billing hook exposes a provider and refresh method", async () => {
   assert.match(source, /export function DesktopBillingProvider/);
   assert.match(source, /export function useDesktopBilling/);
   assert.match(source, /const refresh = useCallback/);
+  assert.match(source, /isAvailable: isAuthenticated/);
 });

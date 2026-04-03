@@ -1105,8 +1105,10 @@ test("runtime states and history endpoints read TS state store", async () => {
   assert.equal(compactionBoundaries.statusCode, 200);
   assert.equal(compactionBoundaries.json().count, 1);
   assert.equal(compactionBoundaries.json().items[0].boundary_id, "compaction:input-1");
+  assert.equal(compactionBoundaries.json().items[0].boundary_type, "executor_post_turn");
   assert.deepEqual(compactionBoundaries.json().items[0].compaction_restoration_context, {
     compaction_source: "executor_post_turn",
+    boundary_type: "executor_post_turn",
     restoration_order: [
       "boundary_summary",
       "recent_runtime_context",
@@ -1139,6 +1141,7 @@ test("runtime states and history endpoints read TS state store", async () => {
   assert.equal(resumeContext.statusCode, 200);
   assert.deepEqual(resumeContext.json().compaction_restoration_context, {
     compaction_source: "executor_post_turn",
+    boundary_type: "executor_post_turn",
     restoration_order: [
       "boundary_summary",
       "recent_runtime_context",
@@ -1318,6 +1321,12 @@ test("outputs, folders, and artifacts routes preserve local payload shape", asyn
     status: "active",
     mainSessionId: "session-main"
   });
+  store.ensureRuntimeState({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    status: "BUSY",
+    currentInputId: "input-1",
+  });
 
   const folderResp = await app.inject({
     method: "POST",
@@ -1335,11 +1344,14 @@ test("outputs, folders, and artifacts routes preserve local payload shape", asyn
       output_type: "document",
       title: "Spec Draft",
       folder_id: folder.id,
-      session_id: "session-main"
+      session_id: "session-main",
+      input_id: "input-1",
+      status: "completed",
     }
   });
   assert.equal(outputResp.statusCode, 200);
   assert.equal(outputResp.json().output.folder_id, folder.id);
+  assert.equal(outputResp.json().output.input_id, "input-1");
 
   const artifactResp = await app.inject({
     method: "POST",
@@ -1358,6 +1370,10 @@ test("outputs, folders, and artifacts routes preserve local payload shape", asyn
     method: "GET",
     url: `/api/v1/outputs?workspace_id=${workspace.id}`
   });
+  const filteredOutputsResp = await app.inject({
+    method: "GET",
+    url: `/api/v1/outputs?workspace_id=${workspace.id}&session_id=session-main&input_id=input-1`
+  });
   const countsResp = await app.inject({
     method: "GET",
     url: `/api/v1/outputs/counts?workspace_id=${workspace.id}`
@@ -1372,13 +1388,27 @@ test("outputs, folders, and artifacts routes preserve local payload shape", asyn
   });
 
   assert.equal(outputsResp.statusCode, 200);
+  assert.equal(filteredOutputsResp.statusCode, 200);
   assert.equal(countsResp.statusCode, 200);
   assert.equal(artifactsResp.statusCode, 200);
   assert.equal(withArtifactsResp.statusCode, 200);
   assert.equal(outputsResp.json().items.length, 2);
+  assert.equal(filteredOutputsResp.json().items.length, 2);
+  assert.deepEqual(
+    filteredOutputsResp.json().items.map((item: { input_id: string | null }) => item.input_id),
+    ["input-1", "input-1"]
+  );
   assert.equal(countsResp.json().total, 2);
-  assert.equal(artifactsResp.json().count, 1);
-  assert.equal(withArtifactsResp.json().items[0].artifacts[0].external_id, "doc-1");
+  assert.equal(artifactsResp.json().count, 2);
+  assert.ok(
+    artifactsResp.json().items.some((item: { external_id: string }) => item.external_id === "doc-1")
+  );
+  assert.equal(withArtifactsResp.json().items[0].artifacts.length, 2);
+  assert.ok(
+    withArtifactsResp.json().items[0].artifacts.some(
+      (item: { external_id: string }) => item.external_id === "doc-1"
+    )
+  );
 
   await app.close();
   store.close();
@@ -1482,6 +1512,56 @@ test("cronjobs, task proposals, and session state routes preserve local payload 
   assert.equal(unreviewed.json().count, 1);
   assert.equal(updatedProposal.statusCode, 200);
   assert.equal(updatedProposal.json().proposal.state, "accepted");
+
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    kind: "main",
+    title: "Main"
+  });
+  store.createMemoryUpdateProposal({
+    proposalId: "memory-proposal-1",
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: "input-1",
+    proposalKind: "preference",
+    targetKey: "response-style",
+    title: "Response style preference",
+    summary: "Prefer concise responses.",
+    payload: {
+      preference_type: "response_style",
+      style: "concise",
+    },
+    evidence: "Please keep responses concise.",
+    confidence: 0.99,
+    sourceMessageId: "user-input-1",
+    createdAt: "2026-04-03T10:00:00.000Z"
+  });
+
+  const listedMemoryProposals = await app.inject({
+    method: "GET",
+    url: `/api/v1/memory-update-proposals?workspace_id=${workspace.id}&session_id=session-main`
+  });
+  const acceptedMemoryProposal = await app.inject({
+    method: "POST",
+    url: "/api/v1/memory-update-proposals/memory-proposal-1/accept",
+    payload: {
+      summary: "Prefer concise responses."
+    }
+  });
+  const dismissedMemoryProposal = await app.inject({
+    method: "POST",
+    url: "/api/v1/memory-update-proposals/memory-proposal-1/dismiss",
+    payload: {}
+  });
+
+  assert.equal(listedMemoryProposals.statusCode, 200);
+  assert.equal(listedMemoryProposals.json().count, 1);
+  assert.equal(acceptedMemoryProposal.statusCode, 200);
+  assert.equal(acceptedMemoryProposal.json().proposal.state, "accepted");
+  assert.equal(acceptedMemoryProposal.json().proposal.persisted_memory_id, "user-preference:response-style");
+  assert.equal(store.getMemoryEntry({ memoryId: "user-preference:response-style" })?.summary, "Prefer concise responses.");
+  assert.equal(dismissedMemoryProposal.statusCode, 409);
 
   await app.close();
   store.close();
@@ -3163,6 +3243,51 @@ test("queue route persists input, user message, and runtime state", async () => 
   assert.equal(history.length, 1);
   assert.equal(history[0].role, "user");
   assert.equal(history[0].text, "hello world");
+
+  await app.close();
+  store.close();
+});
+
+test("queue route creates pending user memory proposals from strong preference signals", async () => {
+  const root = makeTempDir("hb-runtime-api-memory-proposals-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/agent-sessions/queue",
+    payload: {
+      workspace_id: workspace.id,
+      text: "Please keep your responses concise and do not zip the files; deliver them individually."
+    }
+  });
+
+  assert.equal(response.statusCode, 200);
+  const proposals = store.listMemoryUpdateProposals({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: response.json().input_id,
+    limit: 10,
+    offset: 0
+  });
+
+  assert.equal(proposals.length, 2);
+  assert.deepEqual(
+    proposals.map((proposal) => proposal.targetKey).sort(),
+    ["file-delivery", "response-style"]
+  );
+  assert.ok(proposals.every((proposal) => proposal.state === "pending"));
 
   await app.close();
   store.close();

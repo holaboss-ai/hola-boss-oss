@@ -35,8 +35,9 @@ import type {
   RunnerEventType,
   RunnerOutputEventPayload,
 } from "./contracts.js";
-import { resolvePiDesktopBrowserExtensionFactory } from "./pi-browser-tools.js";
+import { resolvePiDesktopBrowserToolDefinitions } from "./pi-browser-tools.js";
 import { resolvePiRuntimeToolDefinitions } from "./pi-runtime-tools.js";
+import { resolvePiWebSearchToolDefinitions } from "./pi-web-search.js";
 
 export type PiMappedEvent = {
   event_type: RunnerEventType;
@@ -46,12 +47,14 @@ export type PiMappedEvent = {
 export type PiEventMapperState = {
   toolArgsByCallId: Map<string, JsonValue>;
   mcpToolMetadata: ReadonlyMap<string, PiMcpToolMetadata>;
+  skillMetadataByAlias: ReadonlyMap<string, PiSkillMetadata>;
 };
 
 export interface PiSessionHandle {
   session: AgentSession;
   sessionFile: string;
   mcpToolMetadata: Map<string, PiMcpToolMetadata>;
+  skillMetadataByAlias: Map<string, PiSkillMetadata>;
   dispose: () => Promise<void>;
 }
 
@@ -158,6 +161,31 @@ export interface PiMcpToolMetadata {
   toolName: string;
 }
 
+export interface PiSkillMetadata {
+  skillId: string;
+  skillName: string;
+  filePath: string;
+  baseDir: string;
+  grantedTools: string[];
+  grantedCommands: string[];
+}
+
+export interface PiSkillWideningState {
+  scope: "run";
+  managedToolNames: Set<string>;
+  grantedToolNames: Set<string>;
+  skillIdsByManagedTool: ReadonlyMap<string, ReadonlySet<string>>;
+  managedCommandIds: Set<string>;
+  grantedCommandIds: Set<string>;
+  skillIdsByManagedCommand: ReadonlyMap<string, ReadonlySet<string>>;
+}
+
+export interface PiWorkspaceBoundaryPolicy {
+  workspaceDir: string;
+  workspaceRealDir: string;
+  overrideRequested: boolean;
+}
+
 export type PiMcpServerBinding = {
   serverId: string;
   timeoutMs: number;
@@ -177,12 +205,52 @@ export interface PiPromptPayload {
 
 type PiAttachment = HarnessHostInputAttachmentPayload;
 
+const WORKSPACE_PATH_KEY_PATTERN =
+  /(?:^|_)(?:path|file|filepath|filename|target|source|destination|cwd|dir|directory|root)$/i;
+const TOOL_COMMAND_KEY_PATTERN = /^(?:command|cmd|script)$/i;
+const WORKSPACE_LOCAL_TOOL_NAMES = new Set([
+  "read",
+  "edit",
+  "write",
+  "bash",
+  "glob",
+  "grep",
+  "find",
+  "ls",
+  "list",
+  "mkdir",
+  "rm",
+  "mv",
+  "cp",
+  "todoread",
+  "todowrite",
+  "skill",
+]);
+
+function shouldEnforceWorkspaceBoundaryForTool(toolName: string): boolean {
+  const normalized = toolName.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (normalized.startsWith("mcp__") || normalized.startsWith("holaboss_")) {
+    return false;
+  }
+  return WORKSPACE_LOCAL_TOOL_NAMES.has(normalized);
+}
+
 function attachmentPromptPath(attachment: PiAttachment): string {
   return `./${attachment.workspace_path}`;
 }
 
 function resolveAttachmentAbsolutePath(request: HarnessHostPiRequest, attachment: PiAttachment): string {
-  return path.resolve(request.workspace_dir, attachment.workspace_path);
+  const policy = createWorkspaceBoundaryPolicy(request.workspace_dir, false);
+  const resolved = resolvePathWithinWorkspace(policy, attachment.workspace_path);
+  if (!resolved) {
+    throw new Error(
+      `Attachment '${attachment.name}' resolves outside workspace boundary: ${attachment.workspace_path}`
+    );
+  }
+  return resolved;
 }
 
 function isTextLikeAttachment(attachment: PiAttachment): boolean {
@@ -578,6 +646,1050 @@ function loadPiSkills(skillDirs: string[]): LoadSkillsResult {
   }
 
   return { skills, diagnostics };
+}
+
+function stripMarkdownFrontmatter(value: string): string {
+  const normalized = value.replace(/^\uFEFF/, "");
+  const match = normalized.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
+  if (!match) {
+    return normalized;
+  }
+  return normalized.slice(match[0].length);
+}
+
+function normalizeSkillLookupToken(value: unknown): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.trim().toLowerCase();
+}
+
+function optionalTrimmedString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizedWorkspaceDir(workspaceDir: string): { resolved: string; real: string } {
+  const resolved = path.resolve(workspaceDir);
+  try {
+    return { resolved, real: fs.realpathSync(resolved) };
+  } catch {
+    return { resolved, real: resolved };
+  }
+}
+
+function isPathInsideWorkspaceRoot(workspaceRealDir: string, candidatePath: string): boolean {
+  const normalizedRoot = path.resolve(workspaceRealDir);
+  const normalizedCandidate = path.resolve(candidatePath);
+  if (normalizedCandidate === normalizedRoot) {
+    return true;
+  }
+  const relative = path.relative(normalizedRoot, normalizedCandidate);
+  return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function resolvePathWithinWorkspace(
+  policy: Pick<PiWorkspaceBoundaryPolicy, "workspaceDir" | "workspaceRealDir">,
+  candidate: string
+): string | null {
+  const raw = candidate.trim();
+  if (!raw) {
+    return null;
+  }
+  const resolved = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(policy.workspaceDir, raw);
+  let canonical = resolved;
+  try {
+    canonical = fs.realpathSync(resolved);
+  } catch {
+    canonical = resolved;
+  }
+  return isPathInsideWorkspaceRoot(policy.workspaceRealDir, canonical) ? canonical : null;
+}
+
+export function workspaceBoundaryOverrideRequested(instruction: string): boolean {
+  const normalized = instruction.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (
+    /(?:workspace[_ -]?boundary[_ -]?override\s*[:=]\s*(?:1|true|yes|on))|(?:#allow-outside-workspace)/i.test(
+      normalized
+    )
+  ) {
+    return true;
+  }
+  const insist = /\b(i insist|insist|override|must)\b/i.test(normalized);
+  const outsideScope =
+    /\b(outside (?:the )?workspace|outside workspace|cross[- ]workspace|parent directory|external path|beyond (?:the )?workspace)\b/i.test(
+      normalized
+    ) || /(?:\.\.\/|~\/|\/users\/|\/etc\/|\/var\/)/i.test(normalized);
+  return insist && outsideScope;
+}
+
+function createWorkspaceBoundaryPolicy(workspaceDir: string, overrideRequested: boolean): PiWorkspaceBoundaryPolicy {
+  const normalized = normalizedWorkspaceDir(workspaceDir);
+  return {
+    workspaceDir: normalized.resolved,
+    workspaceRealDir: normalized.real,
+    overrideRequested,
+  };
+}
+
+function commandTokens(command: string): string[] {
+  const tokens: string[] = [];
+  const tokenPattern = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|`([^`\\]*(?:\\.[^`\\]*)*)`|(\S+)/g;
+  let match: RegExpExecArray | null = tokenPattern.exec(command);
+  while (match) {
+    const value = match[1] ?? match[2] ?? match[3] ?? match[4] ?? "";
+    const trimmed = value.trim();
+    if (trimmed) {
+      tokens.push(trimmed);
+    }
+    match = tokenPattern.exec(command);
+  }
+  return tokens;
+}
+
+function pathCandidatesFromCommandToken(token: string): string[] {
+  const candidates = new Set<string>();
+  const normalized = token.trim();
+  if (!normalized) {
+    return [];
+  }
+  candidates.add(normalized);
+
+  const assignmentIndex = normalized.indexOf("=");
+  if (assignmentIndex >= 0 && assignmentIndex < normalized.length - 1) {
+    candidates.add(normalized.slice(assignmentIndex + 1));
+  }
+
+  if (normalized.startsWith("--")) {
+    const pathMatch = normalized.match(/^--(?:cwd|directory|dir|path|file|root)=(.+)$/i);
+    if (pathMatch?.[1]) {
+      candidates.add(pathMatch[1]);
+    }
+  }
+  return [...candidates];
+}
+
+function commandPathLooksExternal(pathValue: string): boolean {
+  const trimmed = pathValue.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
+    return false;
+  }
+  if (trimmed === ".." || trimmed.startsWith("../") || trimmed.includes("/../") || trimmed.includes("\\..\\")) {
+    return true;
+  }
+  if (trimmed.startsWith("~")) {
+    return true;
+  }
+  return false;
+}
+
+function commandBoundaryViolation(command: string, policy: PiWorkspaceBoundaryPolicy): string | null {
+  const trimmed = command.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (policy.overrideRequested) {
+    return null;
+  }
+
+  const tokens = commandTokens(trimmed);
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index] ?? "";
+    const normalized = token.toLowerCase();
+    if (normalized === "cd") {
+      const destination = tokens[index + 1] ?? "";
+      if (commandPathLooksExternal(destination)) {
+        return `command uses external directory '${destination}'`;
+      }
+      const resolved = resolvePathWithinWorkspace(policy, destination);
+      if (destination.trim() && !resolved) {
+        return `command changes directory outside workspace: '${destination}'`;
+      }
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      continue;
+    }
+  }
+  return null;
+}
+
+function workspaceBoundaryViolationForCommand(command: string, policy: PiWorkspaceBoundaryPolicy): string | null {
+  const trimmed = command.trim();
+  if (!trimmed || policy.overrideRequested) {
+    return null;
+  }
+
+  const baselineViolation = commandBoundaryViolation(trimmed, policy);
+  if (baselineViolation) {
+    return baselineViolation;
+  }
+
+  const tokens = commandTokens(trimmed);
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index] ?? "";
+    const normalized = token.toLowerCase();
+
+    if (normalized === "cd") {
+      const destination = tokens[index + 1] ?? "";
+      if (commandPathLooksExternal(destination)) {
+        return `command uses external directory '${destination}'`;
+      }
+      const resolved = resolvePathWithinWorkspace(policy, destination);
+      if (destination.trim() && !resolved) {
+        return `command changes directory outside workspace: '${destination}'`;
+      }
+      continue;
+    }
+
+    if (normalized === "git" && (tokens[index + 1] ?? "").toLowerCase() === "-c") {
+      const repositoryRoot = tokens[index + 2] ?? "";
+      if (!repositoryRoot.trim()) {
+        continue;
+      }
+      if (commandPathLooksExternal(repositoryRoot)) {
+        return `git command points outside workspace: '${repositoryRoot}'`;
+      }
+      if (!resolvePathWithinWorkspace(policy, repositoryRoot)) {
+        return `git command points outside workspace: '${repositoryRoot}'`;
+      }
+      continue;
+    }
+
+    for (const candidate of pathCandidatesFromCommandToken(token)) {
+      if (!candidate) {
+        continue;
+      }
+      if (commandPathLooksExternal(candidate)) {
+        return `command references outside-workspace path '${candidate}'`;
+      }
+      const hasPathSignal =
+        path.isAbsolute(candidate) ||
+        candidate.includes("/") ||
+        candidate.includes("\\") ||
+        candidate.startsWith(".");
+      if (!hasPathSignal) {
+        continue;
+      }
+      if (!resolvePathWithinWorkspace(policy, candidate)) {
+        return `command references outside-workspace path '${candidate}'`;
+      }
+    }
+  }
+  return null;
+}
+
+function workspacePathViolationForValue(
+  value: string,
+  pathRef: string,
+  policy: PiWorkspaceBoundaryPolicy
+): string | null {
+  const trimmed = value.trim();
+  if (!trimmed || policy.overrideRequested) {
+    return null;
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
+    return null;
+  }
+  if (commandPathLooksExternal(trimmed)) {
+    return `${pathRef} points outside workspace: '${trimmed}'`;
+  }
+  if (!resolvePathWithinWorkspace(policy, trimmed)) {
+    return `${pathRef} points outside workspace: '${trimmed}'`;
+  }
+  return null;
+}
+
+export function workspaceBoundaryViolationForToolCall(params: {
+  toolName: string;
+  toolParams: unknown;
+  policy: PiWorkspaceBoundaryPolicy;
+}): string | null {
+  const normalizedToolName = params.toolName.trim().toLowerCase();
+  if (!normalizedToolName) {
+    return null;
+  }
+  if (!shouldEnforceWorkspaceBoundaryForTool(normalizedToolName)) {
+    return null;
+  }
+  if (params.policy.overrideRequested) {
+    return null;
+  }
+  if (!isRecord(params.toolParams)) {
+    return null;
+  }
+
+  const queue: Array<{ value: unknown; ref: string }> = [{ value: params.toolParams, ref: "params" }];
+  while (queue.length > 0) {
+    const current = queue.shift() as { value: unknown; ref: string };
+    if (Array.isArray(current.value)) {
+      current.value.forEach((entry, index) => queue.push({ value: entry, ref: `${current.ref}[${index}]` }));
+      continue;
+    }
+    if (!isRecord(current.value)) {
+      continue;
+    }
+
+    for (const [key, value] of Object.entries(current.value)) {
+      const childRef = `${current.ref}.${key}`;
+      if (typeof value === "string") {
+        if (TOOL_COMMAND_KEY_PATTERN.test(key)) {
+          const violation = workspaceBoundaryViolationForCommand(value, params.policy);
+          if (violation) {
+            return violation;
+          }
+        }
+        if (WORKSPACE_PATH_KEY_PATTERN.test(key)) {
+          const violation = workspacePathViolationForValue(value, childRef, params.policy);
+          if (violation) {
+            return violation;
+          }
+        }
+      } else if (value && typeof value === "object") {
+        queue.push({ value, ref: childRef });
+      }
+    }
+  }
+
+  return null;
+}
+
+function skillIdFromFilePath(filePath: string): string {
+  const parsed = path.parse(filePath);
+  if (parsed.base.toLowerCase() === "skill.md") {
+    return path.basename(path.dirname(filePath));
+  }
+  return parsed.name;
+}
+
+function markdownFrontmatterBlock(value: string): string | null {
+  const normalized = value.replace(/^\uFEFF/, "");
+  const match = normalized.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  return match?.[1] ?? null;
+}
+
+function normalizeGrantedToolName(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function parseInlineStringList(value: string): string[] {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return [];
+  }
+  const bracketMatch = trimmed.match(/^\[([\s\S]*?)\]$/);
+  const body = bracketMatch ? bracketMatch[1] ?? "" : trimmed;
+  return body
+    .split(",")
+    .map((item) => item.trim().replace(/^['"]|['"]$/g, ""))
+    .map((item) => normalizeGrantedToolName(item))
+    .filter((item): item is string => Boolean(item));
+}
+
+function parseFrontmatterStringList(frontmatter: string, keyName: string): string[] {
+  const lines = frontmatter.split(/\r?\n/);
+  const escapedKey = keyName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const keyPattern = new RegExp(`^\\s*${escapedKey}\\s*:\\s*(.*)$`, "i");
+  for (let index = 0; index < lines.length; index += 1) {
+    const current = lines[index] ?? "";
+    const match = current.match(keyPattern);
+    if (!match) {
+      continue;
+    }
+    const inlineValue = (match[1] ?? "").trim();
+    if (inlineValue.length > 0) {
+      return parseInlineStringList(inlineValue);
+    }
+    const collected: string[] = [];
+    for (let lookahead = index + 1; lookahead < lines.length; lookahead += 1) {
+      const candidate = lines[lookahead] ?? "";
+      if (!candidate.trim()) {
+        if (collected.length > 0) {
+          break;
+        }
+        continue;
+      }
+      const itemMatch = candidate.match(/^\s*-\s*(.+?)\s*$/);
+      if (!itemMatch) {
+        break;
+      }
+      const normalized = normalizeGrantedToolName(itemMatch[1]?.replace(/^['"]|['"]$/g, ""));
+      if (normalized) {
+        collected.push(normalized);
+      }
+    }
+    return collected;
+  }
+  return [];
+}
+
+function parseHolabossNestedStringList(frontmatter: string, nestedKeyNames: string[]): string[] {
+  const lines = frontmatter.split(/\r?\n/);
+  let holabossStart = -1;
+  let holabossIndent = -1;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const match = line.match(/^(\s*)holaboss\s*:\s*$/i);
+    if (!match) {
+      continue;
+    }
+    holabossStart = index + 1;
+    holabossIndent = match[1]?.length ?? 0;
+    break;
+  }
+  if (holabossStart < 0) {
+    return [];
+  }
+
+  const nestedLines: string[] = [];
+  for (let index = holabossStart; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    if (!line.trim()) {
+      nestedLines.push(line);
+      continue;
+    }
+    const indent = line.match(/^\s*/)?.[0]?.length ?? 0;
+    if (indent <= holabossIndent) {
+      break;
+    }
+    nestedLines.push(line.slice(holabossIndent + 2));
+  }
+
+  const nestedFrontmatter = nestedLines.join("\n");
+  for (const nestedKey of nestedKeyNames) {
+    const parsed = parseFrontmatterStringList(nestedFrontmatter, nestedKey);
+    if (parsed.length > 0) {
+      return parsed;
+    }
+  }
+  return [];
+}
+
+function parseGrantedToolsFromSkillFrontmatter(frontmatter: string | null): string[] {
+  if (!frontmatter) {
+    return [];
+  }
+  const directKeys = [
+    "holaboss_granted_tools",
+    "holaboss-granted-tools",
+    "holaboss_tools",
+    "holaboss-tools",
+    "capability_grants",
+    "capability-grants",
+  ];
+  for (const key of directKeys) {
+    const parsed = parseFrontmatterStringList(frontmatter, key);
+    if (parsed.length > 0) {
+      return [...new Set(parsed)];
+    }
+  }
+  const nested = parseHolabossNestedStringList(frontmatter, ["granted_tools", "granted-tools", "tools"]);
+  if (nested.length > 0) {
+    return [...new Set(nested)];
+  }
+  return [];
+}
+
+function normalizeWorkspaceCommandId(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function parseGrantedCommandsFromSkillFrontmatter(frontmatter: string | null): string[] {
+  if (!frontmatter) {
+    return [];
+  }
+  const directKeys = [
+    "holaboss_granted_commands",
+    "holaboss-granted-commands",
+    "holaboss_commands",
+    "holaboss-commands",
+    "command_grants",
+    "command-grants",
+  ];
+  for (const key of directKeys) {
+    const parsed = parseFrontmatterStringList(frontmatter, key)
+      .map((commandId) => normalizeWorkspaceCommandId(commandId))
+      .filter((commandId): commandId is string => Boolean(commandId));
+    if (parsed.length > 0) {
+      return [...new Set(parsed)];
+    }
+  }
+  const nested = parseHolabossNestedStringList(frontmatter, ["granted_commands", "granted-commands", "commands"])
+    .map((commandId) => normalizeWorkspaceCommandId(commandId))
+    .filter((commandId): commandId is string => Boolean(commandId));
+  if (nested.length > 0) {
+    return [...new Set(nested)];
+  }
+  return [];
+}
+
+function workspaceCommandIdsFromRunStartedPayload(payload: JsonObject): string[] {
+  const raw = Array.isArray(payload.workspace_command_ids) ? payload.workspace_command_ids : [];
+  return [...new Set(raw.map((commandId) => normalizeWorkspaceCommandId(commandId)).filter((commandId): commandId is string => Boolean(commandId)))].sort((left, right) =>
+    left.localeCompare(right)
+  );
+}
+
+function uniqueSkillMetadata(skillMetadataByAlias: ReadonlyMap<string, PiSkillMetadata>): PiSkillMetadata[] {
+  const bySkillId = new Map<string, PiSkillMetadata>();
+  for (const metadata of skillMetadataByAlias.values()) {
+    if (!bySkillId.has(metadata.skillId)) {
+      bySkillId.set(metadata.skillId, metadata);
+    }
+  }
+  return [...bySkillId.values()].sort((left, right) => left.skillId.localeCompare(right.skillId));
+}
+
+function createPiSkillWideningState(
+  skillMetadataByAlias: ReadonlyMap<string, PiSkillMetadata>,
+  availableToolNames: string[],
+  availableCommandIds: string[]
+): PiSkillWideningState {
+  const available = new Set(availableToolNames.map((toolName) => toolName.trim().toLowerCase()).filter(Boolean));
+  const availableCommands = new Set(availableCommandIds.map((commandId) => commandId.trim().toLowerCase()).filter(Boolean));
+  const skillIdsByManagedToolMutable = new Map<string, Set<string>>();
+  const skillIdsByManagedCommandMutable = new Map<string, Set<string>>();
+  for (const metadata of uniqueSkillMetadata(skillMetadataByAlias)) {
+    for (const toolName of metadata.grantedTools) {
+      if (!available.has(toolName) || toolName === "skill") {
+        continue;
+      }
+      const skillIds = skillIdsByManagedToolMutable.get(toolName) ?? new Set<string>();
+      skillIds.add(metadata.skillId);
+      skillIdsByManagedToolMutable.set(toolName, skillIds);
+    }
+    for (const commandId of metadata.grantedCommands) {
+      if (!availableCommands.has(commandId)) {
+        continue;
+      }
+      const skillIds = skillIdsByManagedCommandMutable.get(commandId) ?? new Set<string>();
+      skillIds.add(metadata.skillId);
+      skillIdsByManagedCommandMutable.set(commandId, skillIds);
+    }
+  }
+  const skillIdsByManagedTool = new Map<string, ReadonlySet<string>>(
+    [...skillIdsByManagedToolMutable.entries()].map(([toolName, skillIds]) => [toolName, new Set(skillIds)])
+  );
+  const skillIdsByManagedCommand = new Map<string, ReadonlySet<string>>(
+    [...skillIdsByManagedCommandMutable.entries()].map(([commandId, skillIds]) => [commandId, new Set(skillIds)])
+  );
+  return {
+    scope: "run",
+    managedToolNames: new Set(skillIdsByManagedTool.keys()),
+    grantedToolNames: new Set(),
+    skillIdsByManagedTool,
+    managedCommandIds: new Set(skillIdsByManagedCommand.keys()),
+    grantedCommandIds: new Set(),
+    skillIdsByManagedCommand,
+  };
+}
+
+function requiredSkillIdsForTool(state: PiSkillWideningState, toolName: string): string[] {
+  return [...(state.skillIdsByManagedTool.get(toolName) ?? new Set<string>())].sort((left, right) =>
+    left.localeCompare(right)
+  );
+}
+
+function applySkillWideningGrants(
+  state: PiSkillWideningState,
+  skillMetadata: PiSkillMetadata
+): { grantedTools: string[]; grantedCommands: string[] } {
+  const newlyGrantedTools: string[] = [];
+  const newlyGrantedCommands: string[] = [];
+  for (const toolName of skillMetadata.grantedTools) {
+    if (!state.managedToolNames.has(toolName)) {
+      continue;
+    }
+    if (!state.grantedToolNames.has(toolName)) {
+      newlyGrantedTools.push(toolName);
+    }
+    state.grantedToolNames.add(toolName);
+  }
+  for (const commandId of skillMetadata.grantedCommands) {
+    if (!state.managedCommandIds.has(commandId)) {
+      continue;
+    }
+    if (!state.grantedCommandIds.has(commandId)) {
+      newlyGrantedCommands.push(commandId);
+    }
+    state.grantedCommandIds.add(commandId);
+  }
+  return {
+    grantedTools: newlyGrantedTools.sort((left, right) => left.localeCompare(right)),
+    grantedCommands: newlyGrantedCommands.sort((left, right) => left.localeCompare(right)),
+  };
+}
+
+function activeGrantedTools(state: PiSkillWideningState): string[] {
+  return [...state.grantedToolNames].sort((left, right) => left.localeCompare(right));
+}
+
+function activeGrantedCommands(state: PiSkillWideningState): string[] {
+  return [...state.grantedCommandIds].sort((left, right) => left.localeCompare(right));
+}
+
+function addSkillAlias(aliasMap: Map<string, PiSkillMetadata>, alias: unknown, metadata: PiSkillMetadata): void {
+  const normalized = normalizeSkillLookupToken(alias);
+  if (!normalized || aliasMap.has(normalized)) {
+    return;
+  }
+  aliasMap.set(normalized, metadata);
+}
+
+function buildPiSkillMetadataByAlias(skills: Skill[]): Map<string, PiSkillMetadata> {
+  const aliasMap = new Map<string, PiSkillMetadata>();
+  for (const skill of skills) {
+    const skillId = skillIdFromFilePath(skill.filePath);
+    const rawSkillFile = fs.readFileSync(skill.filePath, "utf8");
+    const frontmatter = markdownFrontmatterBlock(rawSkillFile);
+    const grantedTools = parseGrantedToolsFromSkillFrontmatter(frontmatter);
+    const grantedCommands = parseGrantedCommandsFromSkillFrontmatter(frontmatter);
+    const metadata: PiSkillMetadata = {
+      skillId,
+      skillName: skill.name,
+      filePath: skill.filePath,
+      baseDir: skill.baseDir,
+      grantedTools,
+      grantedCommands,
+    };
+    addSkillAlias(aliasMap, skillId, metadata);
+    addSkillAlias(aliasMap, skill.name, metadata);
+  }
+  return aliasMap;
+}
+
+function resolveSkillMetadata(
+  skillMetadataByAlias: ReadonlyMap<string, PiSkillMetadata>,
+  requestedName: unknown
+): PiSkillMetadata | null {
+  const normalizedName = normalizeSkillLookupToken(requestedName);
+  if (!normalizedName) {
+    return null;
+  }
+  return skillMetadataByAlias.get(normalizedName) ?? null;
+}
+
+function uniqueSkillIds(skillMetadataByAlias: ReadonlyMap<string, PiSkillMetadata>): string[] {
+  return [...new Set([...skillMetadataByAlias.values()].map((metadata) => metadata.skillId))]
+    .filter((value) => value.trim().length > 0)
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function skillToolParametersSchema(): Record<string, unknown> {
+  return {
+    type: "object",
+    properties: {
+      name: {
+        type: "string",
+        description: "Skill id or skill name to invoke.",
+      },
+      args: {
+        type: "string",
+        description: "Optional follow-up instructions appended after the invoked skill content.",
+      },
+    },
+    required: ["name"],
+    additionalProperties: false,
+  };
+}
+
+function createPiSkillToolDefinition(
+  skillMetadataByAlias: ReadonlyMap<string, PiSkillMetadata>,
+  skillWideningState: PiSkillWideningState,
+  workspaceBoundaryPolicy: PiWorkspaceBoundaryPolicy
+): ToolDefinition {
+  return {
+    name: "skill",
+    label: "Skill",
+    description: "Load a workspace skill by id or name and return its canonical skill block.",
+    parameters: skillToolParametersSchema() as never,
+    execute: async (_toolCallId, toolParams, signal) => {
+      if (signal?.aborted) {
+        throw new Error("Skill invocation aborted before execution");
+      }
+      const params = isRecord(toolParams) ? toolParams : {};
+      const requestedName = optionalTrimmedString(params.name);
+      if (!requestedName) {
+        throw new Error("Skill invocation requires a non-empty `name` argument");
+      }
+      const resolvedSkill = resolveSkillMetadata(skillMetadataByAlias, requestedName);
+      if (!resolvedSkill) {
+        const availableSkills = uniqueSkillIds(skillMetadataByAlias);
+        throw new Error(
+          availableSkills.length > 0
+            ? `Skill "${requestedName}" was not found. Available skills: ${availableSkills.join(", ")}`
+            : `Skill "${requestedName}" was not found. No skills are currently available.`
+        );
+      }
+      let body: string;
+      try {
+        body = stripMarkdownFrontmatter(fs.readFileSync(resolvedSkill.filePath, "utf8")).trim();
+      } catch (error) {
+        throw new Error(
+          `Failed to load skill "${resolvedSkill.skillId}" from ${resolvedSkill.filePath}: ${sdkErrorMessage(
+            error,
+            "file read failed"
+          )}`
+        );
+      }
+
+      const skillBlock = `<skill name="${resolvedSkill.skillName}" location="${resolvedSkill.filePath}">\nReferences are relative to ${resolvedSkill.baseDir}.\n\n${body}\n</skill>`;
+      const args = optionalTrimmedString(params.args);
+      const wideningGrant = applySkillWideningGrants(skillWideningState, resolvedSkill);
+      return {
+        content: [{ type: "text", text: args ? `${skillBlock}\n\n${args}` : skillBlock }],
+        details: {
+          invocation_type: "skill",
+          requested_name: requestedName,
+          skill_id: resolvedSkill.skillId,
+          skill_name: resolvedSkill.skillName,
+          skill_file_path: resolvedSkill.filePath,
+          skill_base_dir: resolvedSkill.baseDir,
+          args: args ?? null,
+          policy_widening: {
+            scope: skillWideningState.scope,
+            managed_tools: [...skillWideningState.managedToolNames].sort((left, right) => left.localeCompare(right)),
+            granted_tools: wideningGrant.grantedTools,
+            active_granted_tools: activeGrantedTools(skillWideningState),
+            managed_commands: [...skillWideningState.managedCommandIds].sort((left, right) => left.localeCompare(right)),
+            granted_commands: wideningGrant.grantedCommands,
+            active_granted_commands: activeGrantedCommands(skillWideningState),
+            workspace_boundary_override: workspaceBoundaryPolicy.overrideRequested,
+          },
+        },
+      };
+    },
+  };
+}
+
+function wrapToolWithSkillWidening<TTool extends { name: string; execute: (...args: any[]) => Promise<any> }>(
+  tool: TTool,
+  state: PiSkillWideningState
+): TTool {
+  const normalizedName = tool.name.trim().toLowerCase();
+  if (!state.managedToolNames.has(normalizedName)) {
+    return tool;
+  }
+
+  const originalExecute = tool.execute.bind(tool);
+  const wrapped: TTool = {
+    ...tool,
+    execute: (async (...args: any[]) => {
+      if (!state.grantedToolNames.has(normalizedName)) {
+        const requiredSkills = requiredSkillIdsForTool(state, normalizedName);
+        const requiredSegment =
+          requiredSkills.length > 0 ? ` by invoking one of: ${requiredSkills.join(", ")}` : "";
+        throw new Error(
+          `permission denied by skill policy: tool "${tool.name}" is gated and must be widened${requiredSegment}`
+        );
+      }
+      return await originalExecute(...args);
+    }) as TTool["execute"],
+  };
+  return wrapped;
+}
+
+function wrapToolWithWorkspaceBoundary<TTool extends { name: string; execute: (...args: any[]) => Promise<any> }>(
+  tool: TTool,
+  policy: PiWorkspaceBoundaryPolicy
+): TTool {
+  const originalExecute = tool.execute.bind(tool);
+  const wrapped: TTool = {
+    ...tool,
+    execute: (async (...args: any[]) => {
+      const toolParams = args[1];
+      const violation = workspaceBoundaryViolationForToolCall({
+        toolName: tool.name,
+        toolParams,
+        policy,
+      });
+      if (violation) {
+        throw new Error(
+          `permission denied by workspace boundary policy: ${violation}. Ask the user to explicitly insist if outside-workspace access is required.`
+        );
+      }
+      return await originalExecute(...args);
+    }) as TTool["execute"],
+  };
+  return wrapped;
 }
 
 function resolveRequestedSessionFile(request: HarnessHostPiRequest): string | null {
@@ -980,22 +2092,24 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     defaultThinkingLevel: "medium",
   });
   const skillDirs = resolvePiSkillDirs(request);
-  const browserExtensionFactory = request.browser_tools_enabled
-    ? await resolvePiDesktopBrowserExtensionFactory({
+  const loadedSkills = loadPiSkills(skillDirs);
+  const skillMetadataByAlias = buildPiSkillMetadataByAlias(loadedSkills.skills);
+  const browserTools = request.browser_tools_enabled
+    ? await resolvePiDesktopBrowserToolDefinitions({
         runtimeApiBaseUrl: request.runtime_api_base_url,
         workspaceId: request.workspace_id,
       })
-    : null;
+    : [];
   const resourceLoader = new DefaultResourceLoader({
     cwd: request.workspace_dir,
     agentDir: stateDir,
     settingsManager,
-    extensionFactories: browserExtensionFactory ? [browserExtensionFactory] : [],
+    extensionFactories: [],
     noExtensions: true,
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,
-    skillsOverride: () => loadPiSkills(skillDirs),
+    skillsOverride: () => loadedSkills,
     systemPromptOverride: () => request.system_prompt,
   });
   await resourceLoader.reload();
@@ -1009,6 +2123,38 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     runtimeApiBaseUrl: request.runtime_api_base_url,
     workspaceId: request.workspace_id,
   });
+  const webSearchTools = await resolvePiWebSearchToolDefinitions();
+  const baseTools = [
+    ...createCodingTools(request.workspace_dir),
+    createGrepTool(request.workspace_dir),
+    createFindTool(request.workspace_dir),
+    createLsTool(request.workspace_dir),
+  ];
+  const nonSkillCustomTools: ToolDefinition[] = [...browserTools, ...runtimeTools, ...webSearchTools, ...mcpToolset.customTools];
+  const availableToolNames = [...baseTools, ...nonSkillCustomTools].map((tool) => tool.name);
+  const availableCommandIds = workspaceCommandIdsFromRunStartedPayload(request.run_started_payload);
+  const workspaceBoundaryPolicy = createWorkspaceBoundaryPolicy(
+    request.workspace_dir,
+    workspaceBoundaryOverrideRequested(request.instruction)
+  );
+  const skillWideningState = createPiSkillWideningState(
+    skillMetadataByAlias,
+    [...availableToolNames, "skill"],
+    availableCommandIds
+  );
+  const skillTools =
+    skillMetadataByAlias.size > 0
+      ? [createPiSkillToolDefinition(skillMetadataByAlias, skillWideningState, workspaceBoundaryPolicy)]
+      : [];
+  const tools = baseTools.map((tool) =>
+    wrapToolWithWorkspaceBoundary(wrapToolWithSkillWidening(tool, skillWideningState), workspaceBoundaryPolicy)
+  );
+  const customTools = [
+    ...nonSkillCustomTools.map((tool) =>
+      wrapToolWithWorkspaceBoundary(wrapToolWithSkillWidening(tool, skillWideningState), workspaceBoundaryPolicy)
+    ),
+    ...skillTools.map((tool) => wrapToolWithWorkspaceBoundary(tool, workspaceBoundaryPolicy)),
+  ];
 
   let session: AgentSession;
   try {
@@ -1021,13 +2167,8 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
       resourceLoader,
       sessionManager,
       settingsManager,
-      tools: [
-        ...createCodingTools(request.workspace_dir),
-        createGrepTool(request.workspace_dir),
-        createFindTool(request.workspace_dir),
-        createLsTool(request.workspace_dir),
-      ],
-      customTools: [...runtimeTools, ...mcpToolset.customTools],
+      tools,
+      customTools,
     }));
   } catch (error) {
     await mcpToolset.runtime?.close();
@@ -1045,6 +2186,7 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     session,
     sessionFile,
     mcpToolMetadata: mcpToolset.mcpToolMetadata,
+    skillMetadataByAlias,
     dispose: async () => {
       session.dispose();
       await mcpToolset.runtime?.close();
@@ -1057,6 +2199,120 @@ function toolCallId(event: AgentSessionEvent): string {
     return event.toolCallId;
   }
   return "";
+}
+
+function isSkillToolName(toolName: unknown): boolean {
+  return typeof toolName === "string" && toolName.trim().toLowerCase() === "skill";
+}
+
+function skillInvocationArgs(value: unknown): { requestedName: string | null; args: string | null } {
+  if (!isRecord(value)) {
+    return { requestedName: null, args: null };
+  }
+  return {
+    requestedName: optionalTrimmedString(value.name),
+    args: optionalTrimmedString(value.args),
+  };
+}
+
+function skillInvocationResultDetails(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  return isRecord(value.details) ? value.details : null;
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => optionalTrimmedString(item))
+    .filter((item): item is string => Boolean(item));
+}
+
+function maybeMapSkillInvocationStart(event: AgentSessionEvent, state: PiEventMapperState): PiMappedEvent | null {
+  if (event.type !== "tool_execution_start" || !isSkillToolName(event.toolName)) {
+    return null;
+  }
+  const invocationArgs = skillInvocationArgs(event.args);
+  const resolvedSkill = resolveSkillMetadata(state.skillMetadataByAlias, invocationArgs.requestedName);
+  return {
+    event_type: "skill_invocation",
+    payload: {
+      phase: "started",
+      requested_name: invocationArgs.requestedName,
+      skill_id: resolvedSkill?.skillId ?? null,
+      skill_name: resolvedSkill?.skillName ?? invocationArgs.requestedName,
+      skill_location: resolvedSkill?.filePath ?? null,
+      granted_tools_expected: resolvedSkill?.grantedTools ?? [],
+      granted_commands_expected: resolvedSkill?.grantedCommands ?? [],
+      args: invocationArgs.args,
+      error: false,
+      event: "tool_execution_start",
+      source: "pi",
+      call_id: event.toolCallId,
+    },
+  };
+}
+
+function maybeMapSkillInvocationEnd(
+  event: AgentSessionEvent,
+  toolArgs: JsonValue | null,
+  state: PiEventMapperState
+): PiMappedEvent | null {
+  if (event.type !== "tool_execution_end" || !isSkillToolName(event.toolName)) {
+    return null;
+  }
+  const invocationArgs = skillInvocationArgs(toolArgs);
+  const resolvedSkill = resolveSkillMetadata(state.skillMetadataByAlias, invocationArgs.requestedName);
+  const details = skillInvocationResultDetails(event.result);
+  const skillId = firstNonEmptyString(details?.skill_id, resolvedSkill?.skillId) ?? null;
+  const skillName = firstNonEmptyString(details?.skill_name, resolvedSkill?.skillName, invocationArgs.requestedName) ?? null;
+  const skillLocation = firstNonEmptyString(details?.skill_file_path, resolvedSkill?.filePath) ?? null;
+  const policyWidening = isRecord(details?.policy_widening) ? details?.policy_widening : null;
+  const wideningScope = optionalTrimmedString(policyWidening?.scope);
+  const managedTools = stringList(policyWidening?.managed_tools);
+  const grantedTools = stringList(policyWidening?.granted_tools);
+  const activeGrantedToolsSnapshot = stringList(policyWidening?.active_granted_tools);
+  const managedCommands = stringList(policyWidening?.managed_commands);
+  const grantedCommands = stringList(policyWidening?.granted_commands);
+  const activeGrantedCommandsSnapshot = stringList(policyWidening?.active_granted_commands);
+  const workspaceBoundaryOverride =
+    typeof policyWidening?.workspace_boundary_override === "boolean"
+      ? policyWidening.workspace_boundary_override
+      : null;
+  const resultMessage = firstNonEmptyString(
+    details?.message,
+    details?.error_message,
+    isRecord(event.result) ? event.result.message : undefined,
+    isRecord(event.result) ? event.result.error : undefined,
+    typeof event.result === "string" ? event.result : undefined
+  );
+  return {
+    event_type: "skill_invocation",
+    payload: {
+      phase: "completed",
+      requested_name: invocationArgs.requestedName,
+      skill_id: skillId,
+      skill_name: skillName,
+      skill_location: skillLocation,
+      widening_scope: wideningScope,
+      managed_tools: managedTools,
+      granted_tools: grantedTools,
+      active_granted_tools: activeGrantedToolsSnapshot,
+      managed_commands: managedCommands,
+      granted_commands: grantedCommands,
+      active_granted_commands: activeGrantedCommandsSnapshot,
+      workspace_boundary_override: workspaceBoundaryOverride,
+      args: invocationArgs.args,
+      error: Boolean(event.isError),
+      error_message: Boolean(event.isError) ? resultMessage ?? null : null,
+      event: "tool_execution_end",
+      source: "pi",
+      call_id: toolCallId(event),
+    },
+  };
 }
 
 function mapPiEvent(
@@ -1098,7 +2354,7 @@ function mapPiEvent(
     case "tool_execution_start": {
       state.toolArgsByCallId.set(event.toolCallId, jsonValue(event.args));
       const metadata = state.mcpToolMetadata.get(event.toolName);
-      return [
+      const mapped: PiMappedEvent[] = [
         {
           event_type: "tool_call",
           payload: {
@@ -1120,13 +2376,18 @@ function mapPiEvent(
           },
         },
       ];
+      const skillMapped = maybeMapSkillInvocationStart(event, state);
+      if (skillMapped) {
+        mapped.push(skillMapped);
+      }
+      return mapped;
     }
     case "tool_execution_end": {
       const callId = toolCallId(event);
       const args = state.toolArgsByCallId.get(callId) ?? null;
       state.toolArgsByCallId.delete(callId);
       const metadata = state.mcpToolMetadata.get(event.toolName);
-      return [
+      const mapped: PiMappedEvent[] = [
         {
           event_type: "tool_call",
           payload: {
@@ -1148,6 +2409,11 @@ function mapPiEvent(
           },
         },
       ];
+      const skillMapped = maybeMapSkillInvocationEnd(event, args, state);
+      if (skillMapped) {
+        mapped.push(skillMapped);
+      }
+      return mapped;
     }
     case "auto_compaction_start":
       return [
@@ -1191,10 +2457,14 @@ function mapPiEvent(
   }
 }
 
-export function createPiEventMapperState(mcpToolMetadata: ReadonlyMap<string, PiMcpToolMetadata> = new Map()): PiEventMapperState {
+export function createPiEventMapperState(
+  mcpToolMetadata: ReadonlyMap<string, PiMcpToolMetadata> = new Map(),
+  skillMetadataByAlias: ReadonlyMap<string, PiSkillMetadata> = new Map()
+): PiEventMapperState {
   return {
     toolArgsByCallId: new Map(),
     mcpToolMetadata,
+    skillMetadataByAlias,
   };
 }
 
@@ -1216,7 +2486,7 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
   };
 
   const handle = await deps.createSession(request);
-  const state = createPiEventMapperState(handle.mcpToolMetadata);
+  const state = createPiEventMapperState(handle.mcpToolMetadata, handle.skillMetadataByAlias);
   let terminalEmitted = false;
   const unsubscribe = handle.session.subscribe((event) => {
     for (const mapped of mapPiEvent(event, handle.sessionFile, state)) {

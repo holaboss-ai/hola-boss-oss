@@ -39,15 +39,58 @@ function toWorkspaceRecord(record: ReturnType<RuntimeStateStore["getWorkspace"]>
   };
 }
 
-function toSessionArtifactRecord(record: ReturnType<RuntimeStateStore["listSessionArtifacts"]>[number]) {
+function outputTypeForArtifactType(artifactType: string) {
+  switch (artifactType) {
+    case "draft":
+      return "post";
+    case "image":
+      return "file";
+    case "html":
+      return "html";
+    case "document":
+    default:
+      return "document";
+  }
+}
+
+function artifactTypeFromOutputRecord(record: ReturnType<RuntimeStateStore["listOutputs"]>[number]) {
+  const metadataArtifactType =
+    typeof record.metadata.artifact_type === "string" ? record.metadata.artifact_type.trim() : "";
+  if (metadataArtifactType) {
+    return metadataArtifactType;
+  }
+  if (record.outputType === "post") {
+    return "draft";
+  }
+  if (record.outputType === "html") {
+    return "html";
+  }
+  const category = typeof record.metadata.category === "string" ? record.metadata.category.trim() : "";
+  if (category === "image") {
+    return "image";
+  }
+  return "document";
+}
+
+function externalIdFromOutputRecord(record: ReturnType<RuntimeStateStore["listOutputs"]>[number]) {
+  const metadataExternalId =
+    typeof record.metadata.external_id === "string" ? record.metadata.external_id.trim() : "";
+  if (metadataExternalId) {
+    return metadataExternalId;
+  }
+  return record.moduleResourceId ?? record.filePath ?? record.artifactId ?? record.id;
+}
+
+function toSessionArtifactRecord(record: ReturnType<RuntimeStateStore["listOutputs"]>[number]) {
   return {
-    id: record.id,
+    id: record.artifactId ?? record.id,
     session_id: record.sessionId,
     workspace_id: record.workspaceId,
-    artifact_type: record.artifactType,
-    external_id: record.externalId,
+    input_id: record.inputId,
+    artifact_type: artifactTypeFromOutputRecord(record),
+    external_id: externalIdFromOutputRecord(record),
     platform: record.platform,
-    title: record.title,
+    title: record.title || null,
     metadata: record.metadata as JsonObject,
     created_at: record.createdAt
   };
@@ -76,6 +119,7 @@ function toOutputRecord(record: ReturnType<RuntimeStateStore["listOutputs"]>[num
     file_path: record.filePath,
     html_content: record.htmlContent,
     session_id: record.sessionId,
+    input_id: record.inputId,
     artifact_id: record.artifactId,
     folder_id: record.folderId,
     platform: record.platform,
@@ -431,31 +475,78 @@ export function handleRequest(operation: string, envelope: RequestEnvelope): Jso
           .map((record) => toOutputEventRecord(record));
       case "create-session-artifact":
         return toSessionArtifactRecord(
-          store.createSessionArtifact({
-            sessionId: String(envelope.session_id),
+          store.createOutput({
             workspaceId: String(envelope.workspace_id),
-            artifactType: String(envelope.artifact_type),
-            externalId: String(envelope.external_id),
-            platform: typeof envelope.platform === "string" ? envelope.platform : null,
-            title: typeof envelope.title === "string" ? envelope.title : null,
-            metadata: (envelope.metadata as JsonObject | undefined) ?? {},
+            outputType: outputTypeForArtifactType(String(envelope.artifact_type)),
+            title: typeof envelope.title === "string" ? envelope.title : "",
+            status: "completed",
+            moduleId: typeof envelope.module_id === "string" ? envelope.module_id : null,
+            moduleResourceId:
+              typeof envelope.module_resource_id === "string"
+                ? envelope.module_resource_id
+                : String(envelope.external_id),
+            sessionId: String(envelope.session_id),
+            inputId: typeof envelope.input_id === "string" ? envelope.input_id : null,
             artifactId: typeof envelope.artifact_id === "string" ? envelope.artifact_id : undefined,
-            createdAt: typeof envelope.created_at === "string" ? envelope.created_at : undefined
+            platform: typeof envelope.platform === "string" ? envelope.platform : null,
+            metadata: {
+              ...((envelope.metadata as JsonObject | undefined) ?? {}),
+              origin_type: "app",
+              change_type: typeof envelope.change_type === "string" ? envelope.change_type : "created",
+              artifact_type: String(envelope.artifact_type),
+              external_id: String(envelope.external_id),
+            },
           })
         );
       case "list-session-artifacts":
         return store
-          .listSessionArtifacts({
+          .listOutputs({
+            workspaceId: String(envelope.workspace_id),
             sessionId: String(envelope.session_id),
-            workspaceId: typeof envelope.workspace_id === "string" ? envelope.workspace_id : undefined
+            limit: typeof envelope.limit === "number" ? envelope.limit : 500,
+            offset: typeof envelope.offset === "number" ? envelope.offset : 0
           })
           .map((record) => toSessionArtifactRecord(record));
-      case "list-sessions-with-artifacts":
-        return store.listSessionsWithArtifacts({
-          workspaceId: String(envelope.workspace_id),
-          limit: typeof envelope.limit === "number" ? envelope.limit : 20,
-          offset: typeof envelope.offset === "number" ? envelope.offset : 0
-        }) as JsonValue;
+      case "list-sessions-with-artifacts": {
+        const workspaceId = String(envelope.workspace_id);
+        const limit = typeof envelope.limit === "number" ? envelope.limit : 20;
+        const offset = typeof envelope.offset === "number" ? envelope.offset : 0;
+        const outputs = store.listOutputs({
+          workspaceId,
+          limit: 1000,
+          offset: 0,
+        }).sort((left, right) => {
+          const leftTime = Date.parse(left.createdAt ?? "") || 0;
+          const rightTime = Date.parse(right.createdAt ?? "") || 0;
+          if (leftTime !== rightTime) {
+            return leftTime - rightTime;
+          }
+          return left.id.localeCompare(right.id);
+        });
+        const artifactsBySession = new Map<string, ReturnType<typeof toSessionArtifactRecord>[]>();
+        for (const output of outputs) {
+          const sessionId = output.sessionId ?? "";
+          if (!sessionId) {
+            continue;
+          }
+          const existing = artifactsBySession.get(sessionId);
+          if (existing) {
+            existing.push(toSessionArtifactRecord(output));
+          } else {
+            artifactsBySession.set(sessionId, [toSessionArtifactRecord(output)]);
+          }
+        }
+        return store
+          .listRuntimeStates(workspaceId)
+          .slice(offset, offset + limit)
+          .map((record) => ({
+            session_id: record.sessionId,
+            status: record.status,
+            created_at: record.createdAt,
+            updated_at: record.updatedAt,
+            artifacts: artifactsBySession.get(record.sessionId) ?? []
+          })) as JsonValue;
+      }
       case "create-output-folder":
         return toOutputFolderRecord(
           store.createOutputFolder({
@@ -487,11 +578,13 @@ export function handleRequest(operation: string, envelope: RequestEnvelope): Jso
             workspaceId: String(envelope.workspace_id),
             outputType: String(envelope.output_type),
             title: typeof envelope.title === "string" ? envelope.title : "",
+            status: typeof envelope.status === "string" ? envelope.status : undefined,
             moduleId: typeof envelope.module_id === "string" ? envelope.module_id : null,
             moduleResourceId: typeof envelope.module_resource_id === "string" ? envelope.module_resource_id : null,
             filePath: typeof envelope.file_path === "string" ? envelope.file_path : null,
             htmlContent: typeof envelope.html_content === "string" ? envelope.html_content : null,
             sessionId: typeof envelope.session_id === "string" ? envelope.session_id : null,
+            inputId: typeof envelope.input_id === "string" ? envelope.input_id : null,
             artifactId: typeof envelope.artifact_id === "string" ? envelope.artifact_id : null,
             folderId: typeof envelope.folder_id === "string" ? envelope.folder_id : null,
             platform: typeof envelope.platform === "string" ? envelope.platform : null,
@@ -507,6 +600,8 @@ export function handleRequest(operation: string, envelope: RequestEnvelope): Jso
             status: typeof envelope.status === "string" ? envelope.status : null,
             platform: typeof envelope.platform === "string" ? envelope.platform : null,
             folderId: typeof envelope.folder_id === "string" ? envelope.folder_id : null,
+            sessionId: typeof envelope.session_id === "string" ? envelope.session_id : null,
+            inputId: typeof envelope.input_id === "string" ? envelope.input_id : null,
             limit: typeof envelope.limit === "number" ? envelope.limit : 50,
             offset: typeof envelope.offset === "number" ? envelope.offset : 0
           })
