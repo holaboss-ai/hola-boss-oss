@@ -212,6 +212,9 @@ test("claimed input persists runner events, assistant text, and idle state on su
       "skill_invocation",
       "tool_call",
       "output_delta",
+      "compaction_start",
+      "compaction_boundary_written",
+      "compaction_end",
       "run_completed",
     ]
   );
@@ -270,6 +273,17 @@ test("claimed input persists runner events, assistant text, and idle state on su
     }
   ]);
   assert.deepEqual(turnResult.tokenUsage, { input_tokens: 12, output_tokens: 34 });
+  const compactionStartEvent = events.find((event) => event.eventType === "compaction_start");
+  const compactionBoundaryEvent = events.find((event) => event.eventType === "compaction_boundary_written");
+  const compactionEndEvent = events.find((event) => event.eventType === "compaction_end");
+  assert.ok(compactionStartEvent);
+  assert.ok(compactionBoundaryEvent);
+  assert.ok(compactionEndEvent);
+  assert.equal(compactionStartEvent?.payload.source, "executor_post_turn");
+  assert.equal(compactionBoundaryEvent?.payload.boundary_id, `compaction:${queued.inputId}`);
+  assert.equal(compactionBoundaryEvent?.payload.boundary_type, "executor_post_turn");
+  assert.equal(compactionEndEvent?.payload.status, "completed");
+  assert.equal(compactionEndEvent?.payload.boundary_id, `compaction:${queued.inputId}`);
   assert.equal(memoryUpserts.length, 9);
   assert.deepEqual(
     memoryUpserts.slice(0, 5).map((payload) => payload.path),

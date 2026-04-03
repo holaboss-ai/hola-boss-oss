@@ -644,6 +644,94 @@ function phaseTraceStepFromEvent(eventType: string, payload: Record<string, unkn
     };
   }
 
+  if (eventType === "compaction_start") {
+    const source = typeof payload.source === "string" ? payload.source.trim() : "";
+    if (source) {
+      details.push(`Source: ${source}`);
+    }
+    return {
+      id: "phase:post-turn-compaction",
+      kind: "phase",
+      title: "Finalizing run context",
+      status: "running",
+      details: details.length > 0 ? details : ["Persisting post-turn continuity and memory artifacts."],
+      order
+    };
+  }
+
+  if (eventType === "compaction_boundary_written") {
+    const boundaryId = typeof payload.boundary_id === "string" ? payload.boundary_id.trim() : "";
+    const boundaryType = typeof payload.boundary_type === "string" ? payload.boundary_type.trim() : "";
+    const restoredMemoryPathCount =
+      typeof payload.restored_memory_path_count === "number" ? payload.restored_memory_path_count : null;
+    if (boundaryId) {
+      details.push(`Boundary: ${boundaryId}`);
+    }
+    if (boundaryType) {
+      details.push(`Boundary type: ${boundaryType}`);
+    }
+    if (restoredMemoryPathCount !== null) {
+      details.push(`Restored memory paths: ${restoredMemoryPathCount}`);
+    }
+    return {
+      id: "phase:post-turn-compaction",
+      kind: "phase",
+      title: "Compaction boundary saved",
+      status: "running",
+      details: details.length > 0 ? details : ["Compaction boundary written."],
+      order
+    };
+  }
+
+  if (eventType === "compaction_end") {
+    const status = typeof payload.status === "string" ? payload.status.trim().toLowerCase() : "";
+    const durationMs = typeof payload.duration_ms === "number" ? payload.duration_ms : null;
+    const boundaryId = typeof payload.boundary_id === "string" ? payload.boundary_id.trim() : "";
+    const errorMessage = typeof payload.error_message === "string" ? payload.error_message.trim() : "";
+    if (boundaryId) {
+      details.push(`Boundary: ${boundaryId}`);
+    }
+    if (durationMs !== null) {
+      details.push(`Duration: ${durationMs} ms`);
+    }
+    if (errorMessage) {
+      details.push(`Error: ${summarizeUnknown(errorMessage, 120)}`);
+    }
+    return {
+      id: "phase:post-turn-compaction",
+      kind: "phase",
+      title: status === "failed" ? "Compaction failed" : "Run context finalized",
+      status: status === "failed" ? "error" : "completed",
+      details,
+      order
+    };
+  }
+
+  if (eventType === "compaction_restored") {
+    const boundaryId = typeof payload.boundary_id === "string" ? payload.boundary_id.trim() : "";
+    const source = typeof payload.source === "string" ? payload.source.trim() : "";
+    const restoredMemoryPaths = Array.isArray(payload.restored_memory_paths)
+      ? payload.restored_memory_paths.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : [];
+    if (boundaryId) {
+      details.push(`Boundary: ${boundaryId}`);
+    }
+    if (source) {
+      details.push(`Source: ${source}`);
+    }
+    if (restoredMemoryPaths.length > 0) {
+      details.push(`Restored memory paths: ${restoredMemoryPaths.length}`);
+    }
+    return {
+      id: "phase:compaction-restored",
+      kind: "phase",
+      title: "Restored compacted context",
+      status: "completed",
+      details: details.length > 0 ? details : ["Resume context restored from a previous compaction boundary."],
+      order
+    };
+  }
+
   if (eventType === "run_waiting_user" || eventType === "awaiting_user_input") {
     return {
       id: "phase:awaiting-user",
@@ -1731,6 +1819,18 @@ export function ChatPane({
         setLiveAgentStatus("Compacting context...");
       } else if (eventType === "auto_compaction_end") {
         setLiveAgentStatus(eventPayload.will_retry === true ? "Retrying after compaction..." : "Continuing after compaction...");
+      } else if (eventType === "compaction_restored") {
+        setLiveAgentStatus("Restored prior context...");
+      } else if (eventType === "compaction_start") {
+        setLiveAgentStatus("Finalizing turn context...");
+      } else if (eventType === "compaction_boundary_written") {
+        setLiveAgentStatus("Saving compaction boundary...");
+      } else if (eventType === "compaction_end") {
+        setLiveAgentStatus(
+          typeof eventPayload.status === "string" && eventPayload.status.trim().toLowerCase() === "failed"
+            ? "Compaction failed."
+            : "Turn context finalized."
+        );
       } else if (eventType === "run_waiting_user" || eventType === "awaiting_user_input") {
         setLiveAgentStatus("Waiting for your input...");
       }

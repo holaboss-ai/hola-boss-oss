@@ -1125,6 +1125,103 @@ test("runTsRunnerCli restores resume context from the latest prior compaction bo
   );
 });
 
+test("runTsRunnerCli emits compaction_restored before harness run events when resume boundary exists", async () => {
+  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-compaction-restored-event-"));
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  const workspaceRoot = path.join(sandboxRoot, "workspace");
+  const store = new RuntimeStateStore({
+    workspaceRoot,
+    sandboxRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-1",
+  });
+  store.upsertCompactionBoundary({
+    boundaryId: "compaction:input-0",
+    workspaceId: "workspace-1",
+    sessionId: "session-1",
+    inputId: "input-0",
+    summary: "Resume from compacted deploy attempt.",
+    restorationContext: {
+      compaction_source: "executor_post_turn",
+      restoration_order: ["boundary_summary", "session_resume_context"],
+      session_resume_context: {
+        recent_turns: [
+          {
+            input_id: "input-0",
+            status: "waiting_user",
+            stop_reason: "waiting_user",
+            summary: "Deploy paused waiting for confirmation.",
+            completed_at: "2026-01-01T00:00:05.000Z",
+          },
+        ],
+        recent_user_messages: [
+          "Continue after confirmation once the deploy is approved.",
+        ],
+      },
+      restored_memory_paths: [
+        "workspace/workspace-1/runtime/latest-turn.md",
+      ],
+    },
+    preservedTurnInputIds: ["input-0"],
+  });
+  store.close();
+
+  const output: string[] = [];
+  const exitCode = await runTsRunnerCli(
+    ["--request-base64", encodeRequest(baseRequest())],
+    {
+      deps: testDeps({
+        harnessEvents: [
+          {
+            session_id: "session-1",
+            input_id: "input-1",
+            sequence: 1,
+            event_type: "run_started",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            payload: { phase: "running" },
+          },
+          {
+            session_id: "session-1",
+            input_id: "input-1",
+            sequence: 2,
+            event_type: "run_completed",
+            timestamp: "2026-01-01T00:00:01.000Z",
+            payload: { status: "success" },
+          },
+        ],
+      }),
+      io: {
+        stdout: {
+          write(chunk: string | Uint8Array) {
+            output.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+            return true;
+          },
+        } as unknown as NodeJS.WritableStream,
+        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream,
+      },
+    }
+  );
+
+  assert.equal(exitCode, 0);
+  const lines = output
+    .join("")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as TsRunnerEvent);
+
+  assert.equal(lines[0].event_type, "run_claimed");
+  assert.equal(lines[1].event_type, "compaction_restored");
+  assert.equal(lines[1].payload.boundary_id, "compaction:input-0");
+  assert.equal(lines[2].event_type, "run_started");
+  assert.equal(lines[3].event_type, "run_completed");
+});
+
 test("runTsRunnerCli derives recalled durable memory from indexed memory entries", async () => {
   const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-recalled-memory-"));
   process.env.HB_SANDBOX_ROOT = sandboxRoot;

@@ -20,6 +20,7 @@ export type TsRunnerEventType =
   | "skill_invocation"
   | "auto_compaction_start"
   | "auto_compaction_end"
+  | "compaction_restored"
   | "run_completed"
   | "run_failed";
 

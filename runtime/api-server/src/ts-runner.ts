@@ -1286,6 +1286,7 @@ export async function executeTsRunnerRequest(
   const bootstrapStartedAtMs = Date.now();
   const bootstrapStartedAt = new Date(bootstrapStartedAtMs).toISOString();
   const bootstrapStageTimingsMs: BootstrapStageTimingMap = {};
+  let syntheticSequence = 0;
 
   await relayTsRunnerEvent({
     emitEvent: options.emitEvent,
@@ -1295,7 +1296,7 @@ export async function executeTsRunnerRequest(
     event: buildTsRunnerEvent({
       sessionId: request.session_id,
       inputId: request.input_id,
-      sequence: 1,
+      sequence: ++syntheticSequence,
       eventType: "run_claimed",
       payload: {
         instruction_preview: request.instruction.slice(0, 120)
@@ -1428,6 +1429,26 @@ export async function executeTsRunnerRequest(
         logger,
       })
     );
+    if (sessionResumeContext?.compaction_boundary_id) {
+      await relayTsRunnerEvent({
+        emitEvent: options.emitEvent,
+        harness: bootstrap.harness,
+        workspaceDir: bootstrap.workspaceDir,
+        logger,
+        event: buildTsRunnerEvent({
+          sessionId: request.session_id,
+          inputId: request.input_id,
+          sequence: ++syntheticSequence,
+          eventType: "compaction_restored",
+          payload: {
+            source: sessionResumeContext.compaction_source ?? "executor_post_turn",
+            boundary_id: sessionResumeContext.compaction_boundary_id,
+            restoration_order: sessionResumeContext.restoration_order ?? [],
+            restored_memory_paths: sessionResumeContext.restored_memory_paths ?? [],
+          },
+        }),
+      });
+    }
     const recalledMemoryContext = await measureBootstrapStageAsync(
       bootstrapStageTimingsMs,
       "load_recalled_memory_context",
