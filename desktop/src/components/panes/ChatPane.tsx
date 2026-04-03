@@ -2465,7 +2465,7 @@ export function ChatPane({
               {hasMessages ? (
                 <div
                   ref={messagesContentRef}
-                  className="mx-auto flex w-full max-w-[860px] flex-col gap-7 pb-3 pl-4 pr-10 pt-5 sm:pl-5 sm:pr-11"
+                  className="mx-auto flex w-full max-w-[800px] flex-col gap-7 px-6 pb-3 pt-5"
                 >
                   {messages.map((message) =>
                     message.role === "user" ? (
@@ -2581,8 +2581,8 @@ export function ChatPane({
           ) : null}
 
           {hasMessages ? (
-            <div ref={composerBlockRef} className="shrink-0 px-4 pb-4 pt-3 sm:px-5 sm:pb-5">
-              <form onSubmit={onSubmit} className="mx-auto max-w-[760px]">
+            <div ref={composerBlockRef} className="shrink-0 px-6 pb-5 pt-3">
+              <form onSubmit={onSubmit} className="mx-auto max-w-[800px]">
                 <Composer
                   input={input}
                   attachments={pendingAttachmentItems}
