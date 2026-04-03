@@ -594,7 +594,6 @@ function AppShellContent() {
   const [runtimeOutputEntries, setRuntimeOutputEntries] = useState<
     OperationsOutputEntry[]
   >([]);
-  const [selectedOutputId, setSelectedOutputId] = useState<string | null>(null);
   const outputRefreshTimerRef = useRef<number | null>(null);
   const utilityPaneHostRef = useRef<HTMLDivElement | null>(null);
   const utilityPaneResizeStateRef = useRef<UtilityPaneResizeState | null>(null);
@@ -1018,7 +1017,6 @@ function AppShellContent() {
       ...entry,
     };
     setOutputEntries((previous) => [nextEntry, ...previous].slice(0, 16));
-    setSelectedOutputId(nextEntry.id);
   };
 
   useEffect(() => {
@@ -1966,8 +1964,6 @@ function AppShellContent() {
                   proposalAction={proposalAction}
                   outputs={combinedOutputEntries}
                   installedApps={installedApps}
-                  selectedOutputId={selectedOutputId}
-                  onSelectOutput={setSelectedOutputId}
                   onOpenOutput={handleOpenOutput}
                   onRefreshProposals={() =>
                     void refreshTaskProposals({ logErrors: true })
