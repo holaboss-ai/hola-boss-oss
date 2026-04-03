@@ -3,6 +3,7 @@ import { Activity, Globe, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import { getWorkspaceAppDefinition, type WorkspaceAppDefinition, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
+import { resolveAppSurfacePath } from "./appSurfaceRoute";
 
 interface AppSurfacePaneProps {
   appId: string;
@@ -58,14 +59,15 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
     }
   }
 
+  // Navigate BrowserView when app is ready and appId/resourceId/view changes.
   useEffect(() => {
     if (!ready || !selectedWorkspaceId) return;
-    const urlPath = resourceId ? `/posts/${resourceId}` : "/";
+    const urlPath = resolveAppSurfacePath({ view, resourceId });
     void window.electronAPI.appSurface.navigate(selectedWorkspaceId, appId, urlPath);
     return () => {
       void window.electronAPI.appSurface.destroy(appId);
     };
-  }, [appId, ready, selectedWorkspaceId, resourceId]);
+  }, [appId, ready, selectedWorkspaceId, resourceId, view]);
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
