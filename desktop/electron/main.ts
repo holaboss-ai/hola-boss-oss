@@ -8145,7 +8145,7 @@ async function deleteWorkspace(
         harness: null,
         main_session_id: null,
         error_message: null,
-        onboarding_status: null,
+        onboarding_status: "not_required",
         onboarding_session_id: null,
         onboarding_completed_at: null,
         onboarding_completion_summary: null,
