@@ -2794,7 +2794,7 @@ function TraceStepGroup({
       <button
         type="button"
         onClick={() => setGroupExpanded((v) => !v)}
-        className="flex items-center gap-2 rounded-lg py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60"
+        className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 -ml-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60"
       >
         {runningCount > 0 ? (
           <Loader2 size={13} className="animate-spin text-muted-foreground" />
