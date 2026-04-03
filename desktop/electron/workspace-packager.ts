@@ -329,7 +329,8 @@ export async function packageWorkspace(
  */
 export async function uploadToPresignedUrl(
   url: string,
-  data: Buffer
+  data: Buffer,
+  timeoutMs = 120_000,
 ): Promise<void> {
   const parsed = new URL(url);
   const isHttps = parsed.protocol === "https:";
@@ -344,6 +345,7 @@ export async function uploadToPresignedUrl(
           "Content-Type": "application/zip",
           "Content-Length": data.byteLength,
         },
+        timeout: timeoutMs,
       },
       (res) => {
         // Drain response body
@@ -364,6 +366,9 @@ export async function uploadToPresignedUrl(
       }
     );
 
+    req.on("timeout", () => {
+      req.destroy(new Error(`Upload timed out after ${timeoutMs}ms`));
+    });
     req.on("error", reject);
     req.write(data);
     req.end();

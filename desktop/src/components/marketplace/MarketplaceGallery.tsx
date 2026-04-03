@@ -73,9 +73,6 @@ export function MarketplaceGallery({
             </p>
           </div>
         ) : null}
-        <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
-          {branding.showLogo ? "Workspace setup" : branding.eyebrow}
-        </p>
         <h2 className="mt-1 text-xl font-semibold tracking-tight text-foreground">
           {branding.title}
         </h2>
@@ -99,7 +96,7 @@ export function MarketplaceGallery({
         />
       </div>
 
-      <div className="mt-4 min-h-0 flex-1 overflow-auto">
+      <div className="mt-4 min-h-80 flex-1 overflow-auto">
         {showLoading ? (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {Array.from({ length: 4 }).map((_, i) => (
@@ -119,7 +116,7 @@ export function MarketplaceGallery({
             ))}
           </div>
         ) : showError ? (
-          <div className="flex min-h-[200px] items-center justify-center">
+          <div className="flex min-h-50 items-center justify-center">
             <div className="w-full max-w-sm rounded-xl border border-destructive/25 bg-destructive/5 px-6 py-5 text-center">
               <p className="text-sm font-medium text-foreground">
                 Could not load templates

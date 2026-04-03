@@ -2678,7 +2678,28 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const params = request.params as { workspaceId: string };
     const workspace = store.getWorkspace(params.workspaceId, { includeDeleted: true });
     if (!workspace || workspace.deletedAtUtc) {
-      return sendError(reply, 404, "workspace not found");
+      // Idempotent: workspace already gone or never existed — treat as success
+      const workspaceDir = store.workspaceDir(params.workspaceId);
+      fs.rmSync(workspaceDir, { recursive: true, force: true });
+      return {
+        workspace: {
+          id: params.workspaceId,
+          name: workspace?.name ?? params.workspaceId,
+          status: "deleted",
+          harness: workspace?.harness ?? null,
+          main_session_id: workspace?.mainSessionId ?? null,
+          error_message: null,
+          onboarding_status: null,
+          onboarding_session_id: null,
+          onboarding_completed_at: null,
+          onboarding_completion_summary: null,
+          onboarding_requested_at: null,
+          onboarding_requested_by: null,
+          created_at: workspace?.createdAt ?? null,
+          updated_at: workspace?.updatedAt ?? null,
+          deleted_at_utc: workspace?.deletedAtUtc ?? new Date().toISOString()
+        }
+      };
     }
     const workspaceDir = store.workspaceDir(params.workspaceId);
     try {

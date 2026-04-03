@@ -1,28 +1,63 @@
-import { useRef } from "react";
-import { User2 } from "lucide-react";
+import { BookOpen, Home, Settings, User2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export function OnboardingUserButton() {
-  const ref = useRef<HTMLButtonElement | null>(null);
-
   return (
-    <Button
-      ref={ref}
-      variant="outline"
-      size="icon"
-      aria-label="Open account menu"
-      onClick={() => {
-        if (!ref.current) return;
-        const rect = ref.current.getBoundingClientRect();
-        void window.electronAPI.auth.togglePopup({
-          x: rect.left,
-          y: rect.top,
-          width: rect.width,
-          height: rect.height,
-        });
-      }}
-    >
-      <User2 size={14} />
-    </Button>
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button variant="outline" size="icon-lg" />}>
+        <User2 />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" sideOffset={8} className="w-56">
+        <DropdownMenuGroup>
+          <DropdownMenuItem
+            onClick={() =>
+              void window.electronAPI.ui.openSettingsPane("account")
+            }
+          >
+            <User2 />
+            Account
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={() =>
+              void window.electronAPI.ui.openSettingsPane("settings")
+            }
+          >
+            <Settings />
+            Settings
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuItem
+            onClick={() =>
+              void window.electronAPI.ui.openExternalUrl(
+                "https://holaboss.ai",
+              )
+            }
+          >
+            <Home />
+            Homepage
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={() =>
+              void window.electronAPI.ui.openExternalUrl(
+                "https://docs.holaboss.ai",
+              )
+            }
+          >
+            <BookOpen />
+            Docs
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

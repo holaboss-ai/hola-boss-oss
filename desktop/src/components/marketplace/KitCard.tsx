@@ -9,6 +9,7 @@ interface KitCardProps {
 
 export function KitCard({ template, onClick, selected = false }: KitCardProps) {
   const isComingSoon = template.is_coming_soon;
+  const displayName = template.name.replaceAll("_", " ");
 
   return (
     <button
@@ -28,7 +29,7 @@ export function KitCard({ template, onClick, selected = false }: KitCardProps) {
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-semibold text-foreground">
-              {template.name}
+              {displayName}
             </span>
             {isComingSoon ? (
               <Badge variant="secondary" className="shrink-0 text-[9px]">
