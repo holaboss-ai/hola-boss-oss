@@ -480,7 +480,6 @@ interface EnqueueSessionInputResponsePayload {
 interface HolabossClientConfigPayload {
   projectsUrl: string;
   marketplaceUrl: string;
-  hasApiKey: boolean;
 }
 
 interface DesktopBillingOverviewPayload {

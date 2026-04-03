@@ -742,9 +742,6 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
 
   const statusSummary = useMemo(() => {
     const parts = [];
-    if (clientConfig) {
-      parts.push(clientConfig.hasApiKey ? "backend key ready" : "backend key missing");
-    }
     if (runtimeConfig) {
       parts.push(runtimeConfig.authTokenPresent ? "runtime binding ready" : "runtime binding missing");
     }
