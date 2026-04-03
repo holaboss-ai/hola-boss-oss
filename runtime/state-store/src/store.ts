@@ -249,6 +249,7 @@ export interface OutputRecord {
   filePath: string | null;
   htmlContent: string | null;
   sessionId: string | null;
+  inputId: string | null;
   artifactId: string | null;
   folderId: string | null;
   platform: string | null;
@@ -2313,11 +2314,13 @@ export class RuntimeStateStore {
     workspaceId: string;
     outputType: string;
     title?: string;
+    status?: string;
     moduleId?: string | null;
     moduleResourceId?: string | null;
     filePath?: string | null;
     htmlContent?: string | null;
     sessionId?: string | null;
+    inputId?: string | null;
     artifactId?: string | null;
     folderId?: string | null;
     platform?: string | null;
@@ -2330,19 +2333,21 @@ export class RuntimeStateStore {
       .prepare(`
         INSERT INTO outputs (
             id, workspace_id, output_type, title, status, module_id, module_resource_id, file_path,
-            html_content, session_id, artifact_id, folder_id, platform, metadata, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            html_content, session_id, input_id, artifact_id, folder_id, platform, metadata, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         resolvedId,
         params.workspaceId,
         params.outputType,
         params.title ?? "",
+        params.status ?? "draft",
         params.moduleId ?? null,
         params.moduleResourceId ?? null,
         params.filePath ?? null,
         params.htmlContent ?? null,
         params.sessionId ?? null,
+        params.inputId ?? null,
         params.artifactId ?? null,
         params.folderId ?? null,
         params.platform ?? null,
@@ -2363,6 +2368,8 @@ export class RuntimeStateStore {
     status?: string | null;
     platform?: string | null;
     folderId?: string | null;
+    sessionId?: string | null;
+    inputId?: string | null;
     limit?: number;
     offset?: number;
   }): OutputRecord[] {
@@ -2383,6 +2390,14 @@ export class RuntimeStateStore {
     if (params.folderId) {
       query += " AND folder_id = ?";
       values.push(params.folderId);
+    }
+    if (params.sessionId) {
+      query += " AND session_id = ?";
+      values.push(params.sessionId);
+    }
+    if (params.inputId) {
+      query += " AND input_id = ?";
+      values.push(params.inputId);
     }
     query += " ORDER BY datetime(created_at) DESC LIMIT ? OFFSET ?";
     values.push(params.limit ?? 50, params.offset ?? 0);
@@ -2855,6 +2870,7 @@ export class RuntimeStateStore {
     this.ensureWorkspacesTableSchema(db);
     this.ensureTaskProposalsTableSchema(db);
     this.ensureTurnArtifactsSchema(db);
+    this.ensureOutputsTableSchema(db);
     this.migrateSandboxRunTokensTable(db);
     db.exec(`
       CREATE TABLE IF NOT EXISTS workspaces (
@@ -3189,6 +3205,7 @@ export class RuntimeStateStore {
           file_path TEXT,
           html_content TEXT,
           session_id TEXT,
+          input_id TEXT,
           artifact_id TEXT,
           folder_id TEXT,
           platform TEXT,
@@ -3202,6 +3219,9 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_outputs_workspace_folder_created
           ON outputs (workspace_id, folder_id, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_outputs_session_input_created
+          ON outputs (session_id, input_id, created_at DESC);
 
       CREATE TABLE IF NOT EXISTS app_builds (
           workspace_id TEXT NOT NULL,
@@ -3444,6 +3464,24 @@ export class RuntimeStateStore {
       CREATE INDEX IF NOT EXISTS idx_compaction_boundaries_workspace_session_updated
           ON compaction_boundaries (workspace_id, session_id, updated_at DESC, created_at DESC);
     `);
+  }
+
+  private ensureOutputsTableSchema(db: Database.Database): void {
+    const tableNames = new Set<string>(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
+        (row) => row.name
+      )
+    );
+    if (!tableNames.has("outputs")) {
+      return;
+    }
+
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(outputs)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+    if (!columns.has("input_id")) {
+      db.exec("ALTER TABLE outputs ADD COLUMN input_id TEXT;");
+    }
   }
 
   private ensureWorkspacesTableSchema(db: Database.Database): void {
@@ -4052,6 +4090,7 @@ export class RuntimeStateStore {
       filePath: row.file_path == null ? null : String(row.file_path),
       htmlContent: row.html_content == null ? null : String(row.html_content),
       sessionId: row.session_id == null ? null : String(row.session_id),
+      inputId: row.input_id == null ? null : String(row.input_id),
       artifactId: row.artifact_id == null ? null : String(row.artifact_id),
       folderId: row.folder_id == null ? null : String(row.folder_id),
       platform: row.platform == null ? null : String(row.platform),

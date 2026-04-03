@@ -619,12 +619,25 @@ declare global {
     file_path: string | null;
     html_content: string | null;
     session_id: string | null;
+    input_id: string | null;
     artifact_id: string | null;
     folder_id: string | null;
     platform: string | null;
     metadata: Record<string, unknown>;
     created_at: string;
     updated_at: string;
+  }
+
+  interface WorkspaceOutputListRequestPayload {
+    workspaceId: string;
+    outputType?: string | null;
+    status?: string | null;
+    platform?: string | null;
+    folderId?: string | null;
+    sessionId?: string | null;
+    inputId?: string | null;
+    limit?: number;
+    offset?: number;
   }
 
   interface WorkspaceOutputListResponsePayload {
@@ -954,7 +967,7 @@ declare global {
       activateWorkspace: (workspaceId: string) => Promise<WorkspaceLifecyclePayload>;
       listInstalledApps: (workspaceId: string) => Promise<InstalledWorkspaceAppListResponsePayload>;
       removeInstalledApp: (workspaceId: string, appId: string) => Promise<void>;
-      listOutputs: (workspaceId: string) => Promise<WorkspaceOutputListResponsePayload>;
+      listOutputs: (payload: string | WorkspaceOutputListRequestPayload) => Promise<WorkspaceOutputListResponsePayload>;
       listSkills: (workspaceId: string) => Promise<WorkspaceSkillListResponsePayload>;
       getWorkspaceRoot: (workspaceId: string) => Promise<string>;
       createWorkspace: (payload: HolabossCreateWorkspacePayload) => Promise<WorkspaceResponsePayload>;

@@ -1932,6 +1932,18 @@ interface HolabossStreamSessionOutputsPayload {
   stopOnTerminal?: boolean;
 }
 
+interface HolabossListOutputsPayload {
+  workspaceId: string;
+  outputType?: string | null;
+  status?: string | null;
+  platform?: string | null;
+  folderId?: string | null;
+  sessionId?: string | null;
+  inputId?: string | null;
+  limit?: number;
+  offset?: number;
+}
+
 interface HolabossSessionStreamHandlePayload {
   streamId: string;
 }
@@ -7343,14 +7355,25 @@ async function getWorkspaceLifecycleViaRuntime(
 }
 
 async function listOutputs(
-  workspaceId: string,
+  payload: string | HolabossListOutputsPayload,
 ): Promise<WorkspaceOutputListResponsePayload> {
+  const requestPayload =
+    typeof payload === "string"
+      ? { workspaceId: payload }
+      : payload;
   return requestRuntimeJson<WorkspaceOutputListResponsePayload>({
     method: "GET",
     path: "/api/v1/outputs",
     params: {
-      workspace_id: workspaceId,
-      limit: 50,
+      workspace_id: requestPayload.workspaceId,
+      output_type: requestPayload.outputType ?? undefined,
+      status: requestPayload.status ?? undefined,
+      platform: requestPayload.platform ?? undefined,
+      folder_id: requestPayload.folderId ?? undefined,
+      session_id: requestPayload.sessionId ?? undefined,
+      input_id: requestPayload.inputId ?? undefined,
+      limit: requestPayload.limit ?? 50,
+      offset: requestPayload.offset ?? 0,
     },
   });
 }
@@ -12421,7 +12444,7 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "workspace:listOutputs",
     ["main"],
-    async (_event, workspaceId: string) => listOutputs(workspaceId),
+    async (_event, payload: string | HolabossListOutputsPayload) => listOutputs(payload),
   );
   handleTrustedIpc(
     "workspace:listSkills",

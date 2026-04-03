@@ -8,6 +8,7 @@ import { resolveProductRuntimeConfig } from "./runtime-config.js";
 import { normalizeHarnessId, resolveRuntimeHarnessAdapter } from "./harness-registry.js";
 import type { MemoryServiceLike } from "./memory.js";
 import { writeTurnMemory, type TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
+import { collectWorkspaceFileManifest, detectWorkspaceFileOutputs, type WorkspaceFileManifest } from "./turn-output-capture.js";
 
 const ONBOARD_PROMPT_HEADER = "[Holaboss Workspace Onboarding v1]";
 const RUNTIME_EXEC_CONTEXT_KEY = "_sandbox_runtime_exec_v1";
@@ -595,6 +596,7 @@ export async function processClaimedInput(params: {
   }
 
   const harness = normalizeHarnessId(workspace.harness ?? selectedHarness());
+  const workspaceDir = store.workspaceDir(record.workspaceId);
   const session = store.getSession({
     workspaceId: record.workspaceId,
     sessionId: record.sessionId
@@ -692,6 +694,13 @@ export async function processClaimedInput(params: {
   const skillInvocationsById = new Map<string, SkillInvocationSummaryEntry>();
   const wideningAudit = createSkillWideningAudit();
   const permissionDenials: Array<Record<string, unknown>> = [];
+  let workspaceFileManifestBefore: WorkspaceFileManifest | null = null;
+
+  try {
+    workspaceFileManifestBefore = collectWorkspaceFileManifest(workspaceDir);
+  } catch {
+    workspaceFileManifestBefore = null;
+  }
 
   try {
     const executeRunner = params.executeRunnerRequestFn ?? executeRunnerRequest;
@@ -912,8 +921,39 @@ export async function processClaimedInput(params: {
       lastError
     });
 
+    if (workspaceFileManifestBefore) {
+      try {
+        const fileOutputs = detectWorkspaceFileOutputs({
+          workspaceDir,
+          before: workspaceFileManifestBefore
+        });
+        for (const output of fileOutputs) {
+          store.createOutput({
+            workspaceId: record.workspaceId,
+            outputType: output.outputType,
+            title: output.title,
+            status: "completed",
+            filePath: output.filePath,
+            sessionId: record.sessionId,
+            inputId: record.inputId,
+            metadata: output.metadata
+          });
+        }
+      } catch {
+        // Output capture is best-effort and should not fail the turn.
+      }
+    }
+
     const assistantText = assistantParts.join("").trim();
-    if (assistantText) {
+    const hasPersistedOutputs =
+      store.listOutputs({
+        workspaceId: record.workspaceId,
+        sessionId: record.sessionId,
+        inputId: record.inputId,
+        limit: 1,
+        offset: 0
+      }).length > 0;
+    if (assistantText || hasPersistedOutputs) {
       store.insertSessionMessage({
         workspaceId: record.workspaceId,
         sessionId: record.sessionId,

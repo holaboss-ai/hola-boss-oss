@@ -25,6 +25,7 @@ interface ChatMessage {
   attachments?: ChatAttachment[];
   thinkingText?: string;
   traceSteps?: ChatTraceStep[];
+  outputs?: WorkspaceOutputRecordPayload[];
 }
 
 type ChatTraceStepStatus = "running" | "completed" | "error" | "waiting";
@@ -78,6 +79,8 @@ interface StreamTelemetryEntry {
   action: string;
   detail: string;
 }
+
+type ArtifactBrowserFilter = "all" | "documents" | "images" | "code" | "links" | "apps";
 
 const STREAM_ATTACH_PENDING = "__stream_attach_pending__";
 const STREAM_TELEMETRY_LIMIT = 240;
@@ -231,6 +234,15 @@ function hasRenderableMessageContent(text: string, attachments: ChatAttachment[]
   return Boolean(text.trim()) || attachments.length > 0;
 }
 
+function hasRenderableAssistantTurn(message: ChatMessage) {
+  return (
+    hasRenderableMessageContent(message.text, message.attachments ?? []) ||
+    Boolean(message.thinkingText) ||
+    (message.traceSteps?.length ?? 0) > 0 ||
+    (message.outputs?.length ?? 0) > 0
+  );
+}
+
 function formatAttachmentSize(sizeBytes: number) {
   if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
     return "";
@@ -242,6 +254,87 @@ function formatAttachmentSize(sizeBytes: number) {
     return `${Math.round(sizeBytes / 1024)} KB`;
   }
   return `${sizeBytes} B`;
+}
+
+function outputMetadataString(output: WorkspaceOutputRecordPayload, key: string) {
+  const value = output.metadata[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function outputMetadataNumber(output: WorkspaceOutputRecordPayload, key: string) {
+  const value = output.metadata[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function outputBrowserFilterForOutput(output: WorkspaceOutputRecordPayload): ArtifactBrowserFilter {
+  if (outputMetadataString(output, "origin_type") === "app") {
+    return "apps";
+  }
+  const category = outputMetadataString(output, "category");
+  if (category === "image") {
+    return "images";
+  }
+  if (category === "code") {
+    return "code";
+  }
+  if (category === "link") {
+    return "links";
+  }
+  return "documents";
+}
+
+function outputKindLabel(output: WorkspaceOutputRecordPayload) {
+  if (outputMetadataString(output, "origin_type") === "app") {
+    return output.platform?.trim() || "App artifact";
+  }
+  const category = outputMetadataString(output, "category");
+  if (category === "image") {
+    return "Image";
+  }
+  if (category === "code") {
+    return "Code file";
+  }
+  if (category === "link") {
+    return "Link";
+  }
+  if (category === "spreadsheet") {
+    return "Spreadsheet";
+  }
+  if (category === "document") {
+    return "Document";
+  }
+  return output.output_type === "document" ? "Document" : "File";
+}
+
+function outputChangeLabel(output: WorkspaceOutputRecordPayload) {
+  const changeType = outputMetadataString(output, "change_type");
+  if (changeType === "created") {
+    return "Created";
+  }
+  if (changeType === "modified") {
+    return "Updated";
+  }
+  return "";
+}
+
+function outputSecondaryLabel(output: WorkspaceOutputRecordPayload) {
+  const parts = [outputKindLabel(output)];
+  const sizeLabel = formatAttachmentSize(outputMetadataNumber(output, "size_bytes") ?? 0);
+  if (sizeLabel) {
+    parts.push(sizeLabel);
+  }
+  return parts.join(" · ");
+}
+
+function sortOutputs(outputs: WorkspaceOutputRecordPayload[]) {
+  return [...outputs].sort((left, right) => {
+    const leftTime = Date.parse(left.created_at || "") || 0;
+    const rightTime = Date.parse(right.created_at || "") || 0;
+    if (leftTime !== rightTime) {
+      return leftTime - rightTime;
+    }
+    return left.title.localeCompare(right.title);
+  });
 }
 
 function attachmentButtonLabel(attachment: { name: string; size_bytes: number }) {
@@ -664,10 +757,12 @@ function isNearChatBottom(container: HTMLDivElement) {
 
 export function ChatPane({
   onOutputsChanged,
+  onOpenOutput,
   focusRequestKey = 0,
   variant = "default"
 }: {
   onOutputsChanged?: () => void;
+  onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
   focusRequestKey?: number;
   variant?: ChatPaneVariant;
 }) {
@@ -690,6 +785,7 @@ export function ChatPane({
     refreshWorkspaceData
   } = useWorkspaceDesktop();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [sessionOutputs, setSessionOutputs] = useState<WorkspaceOutputRecordPayload[]>([]);
   const [liveAssistantText, setLiveAssistantText] = useState("");
   const [liveThinkingText, setLiveThinkingText] = useState("");
   const [liveThinkingExpanded, setLiveThinkingExpanded] = useState(false);
@@ -711,6 +807,8 @@ export function ChatPane({
     clientHeight: 0
   });
   const [streamTelemetry, setStreamTelemetry] = useState<StreamTelemetryEntry[]>([]);
+  const [artifactBrowserOpen, setArtifactBrowserOpen] = useState(false);
+  const [artifactBrowserFilter, setArtifactBrowserFilter] = useState<ArtifactBrowserFilter>("all");
   const messagesRef = useRef<HTMLDivElement>(null);
   const messagesContentRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -785,6 +883,9 @@ export function ChatPane({
 
   function clearSessionView() {
     setMessages([]);
+    setSessionOutputs([]);
+    setArtifactBrowserOpen(false);
+    setArtifactBrowserFilter("all");
     resetLiveTurn();
     setCollapsedThinkingByMessageId({});
     setCollapsedTraceByStepId({});
@@ -793,9 +894,11 @@ export function ChatPane({
 
   function historyMessagesFromSessionState(
     historyMessages: SessionHistoryMessagePayload[],
-    outputEvents: SessionOutputEventPayload[]
+    outputEvents: SessionOutputEventPayload[],
+    outputs: WorkspaceOutputRecordPayload[]
   ): ChatMessage[] {
     const outputEventsByInputId = new Map<string, SessionOutputEventPayload[]>();
+    const outputsByInputId = new Map<string, WorkspaceOutputRecordPayload[]>();
     for (const event of outputEvents) {
       const inputId = event.input_id.trim();
       if (!inputId) {
@@ -806,6 +909,18 @@ export function ChatPane({
         existing.push(event);
       } else {
         outputEventsByInputId.set(inputId, [event]);
+      }
+    }
+    for (const output of outputs) {
+      const inputId = (output.input_id || "").trim();
+      if (!inputId) {
+        continue;
+      }
+      const existing = outputsByInputId.get(inputId);
+      if (existing) {
+        existing.push(output);
+      } else {
+        outputsByInputId.set(inputId, [output]);
       }
     }
 
@@ -823,11 +938,15 @@ export function ChatPane({
           const inputId = inputIdFromMessageId(nextMessage.id, "assistant");
           if (inputId) {
             const restoredAssistantState = assistantHistoryStateFromOutputEvents(outputEventsByInputId.get(inputId) ?? []);
+            const turnOutputs = sortOutputs(outputsByInputId.get(inputId) ?? []);
             if (restoredAssistantState.thinkingText) {
               nextMessage.thinkingText = restoredAssistantState.thinkingText;
             }
             if (restoredAssistantState.traceSteps) {
               nextMessage.traceSteps = restoredAssistantState.traceSteps;
+            }
+            if (turnOutputs.length > 0) {
+              nextMessage.outputs = turnOutputs;
             }
           }
         }
@@ -837,7 +956,9 @@ export function ChatPane({
       .filter(
         (message) =>
           (message.role === "user" || message.role === "assistant") &&
-          hasRenderableMessageContent(message.text, message.attachments ?? [])
+          (message.role === "assistant"
+            ? hasRenderableAssistantTurn(message)
+            : hasRenderableMessageContent(message.text, message.attachments ?? []))
       );
   }
 
@@ -859,20 +980,27 @@ export function ChatPane({
       return;
     }
 
-    const [history, outputEventHistory] = await Promise.all([
+    const [history, outputEventHistory, outputList] = await Promise.all([
       window.electronAPI.workspace.getSessionHistory({
         sessionId: nextSessionId,
         workspaceId
       }),
       window.electronAPI.workspace.getSessionOutputEvents({
         sessionId: nextSessionId
+      }),
+      window.electronAPI.workspace.listOutputs({
+        workspaceId,
+        sessionId: nextSessionId,
+        limit: 200,
       })
     ]);
     if (cancelled()) {
       return;
     }
 
-    const nextMessages = historyMessagesFromSessionState(history.messages, outputEventHistory.items);
+    const nextOutputs = sortOutputs(outputList.items);
+    const nextMessages = historyMessagesFromSessionState(history.messages, outputEventHistory.items, nextOutputs);
+    setSessionOutputs(nextOutputs);
     setMessages(nextMessages);
     resetLiveTurn();
 
@@ -992,6 +1120,32 @@ export function ChatPane({
       [messageId]: true
     }));
     resetLiveTurn();
+  }
+
+  function scheduleConversationRefresh(sessionId: string | null, workspaceId: string | null | undefined) {
+    const normalizedSessionId = (sessionId || "").trim();
+    const normalizedWorkspaceId = (workspaceId || "").trim();
+    if (!normalizedSessionId || !normalizedWorkspaceId) {
+      return;
+    }
+
+    const delays = [150, 500];
+    for (const delayMs of delays) {
+      window.setTimeout(() => {
+        if (activeSessionIdRef.current !== normalizedSessionId || selectedWorkspaceId !== normalizedWorkspaceId) {
+          return;
+        }
+        void window.electronAPI.workspace
+          .listRuntimeStates(normalizedWorkspaceId)
+          .then((runtimeStates) =>
+            loadSessionConversation(normalizedSessionId, normalizedWorkspaceId, runtimeStates.items, {
+              cancelled: () =>
+                activeSessionIdRef.current !== normalizedSessionId || selectedWorkspaceId !== normalizedWorkspaceId
+            })
+          )
+          .catch(() => undefined);
+      }, delayMs);
+    }
   }
 
   function toggleThinkingPanel(messageId: string) {
@@ -1499,7 +1653,9 @@ export function ChatPane({
           return;
         }
 
-        const assistantMessageId = activeAssistantMessageIdRef.current ?? `assistant-${Date.now()}`;
+        const assistantMessageId =
+          activeAssistantMessageIdRef.current ??
+          (eventInputId ? `assistant-${eventInputId}` : `assistant-${Date.now()}`);
         activeAssistantMessageIdRef.current = assistantMessageId;
         appendLiveAssistantDelta(delta);
         appendStreamTelemetry({
@@ -1570,6 +1726,7 @@ export function ChatPane({
           action: "applied_run_failed",
           detail
         });
+        scheduleConversationRefresh(eventSessionId, selectedWorkspaceId);
         return;
       }
 
@@ -1589,6 +1746,7 @@ export function ChatPane({
           action: "applied_run_completed",
           detail: "run completed"
         });
+        scheduleConversationRefresh(eventSessionId, selectedWorkspaceId);
         void refreshWorkspaceData().catch(() => undefined);
         onOutputsChanged?.();
       }
@@ -1597,7 +1755,7 @@ export function ChatPane({
     return () => {
       unsubscribe();
     };
-  }, [onOutputsChanged, refreshWorkspaceData]);
+  }, [onOutputsChanged, refreshWorkspaceData, selectedWorkspaceId]);
 
   useEffect(() => {
     if (!isResponding || !selectedWorkspaceId || !activeSessionId) {
@@ -2364,6 +2522,13 @@ export function ChatPane({
                         thinkingCollapsed={collapsedThinkingByMessageId[message.id] ?? true}
                         onToggleThinking={() => toggleThinkingPanel(message.id)}
                         traceSteps={message.traceSteps ?? []}
+                        outputs={message.outputs ?? []}
+                        sessionOutputs={sessionOutputs}
+                        onOpenOutput={onOpenOutput}
+                        onOpenAllArtifacts={() => {
+                          setArtifactBrowserFilter("all");
+                          setArtifactBrowserOpen(true);
+                        }}
                         collapsedTraceByStepId={collapsedTraceByStepId}
                         onToggleTraceStep={toggleTraceStep}
                       />
@@ -2383,6 +2548,13 @@ export function ChatPane({
                         setLiveThinkingExpanded(next);
                       }}
                       traceSteps={liveTraceSteps}
+                      outputs={[]}
+                      sessionOutputs={sessionOutputs}
+                      onOpenOutput={onOpenOutput}
+                      onOpenAllArtifacts={() => {
+                        setArtifactBrowserFilter("all");
+                        setArtifactBrowserOpen(true);
+                      }}
                       collapsedTraceByStepId={collapsedTraceByStepId}
                       onToggleTraceStep={toggleTraceStep}
                       live
@@ -2491,6 +2663,15 @@ export function ChatPane({
               </form>
             </div>
           ) : null}
+
+          <ArtifactBrowserModal
+            open={artifactBrowserOpen}
+            filter={artifactBrowserFilter}
+            outputs={sessionOutputs}
+            onClose={() => setArtifactBrowserOpen(false)}
+            onFilterChange={setArtifactBrowserFilter}
+            onOpenOutput={onOpenOutput}
+          />
         </div>
       </div>
     </PaneCard>
@@ -2569,6 +2750,10 @@ function AssistantTurn({
   thinkingCollapsed,
   onToggleThinking,
   traceSteps,
+  outputs,
+  sessionOutputs,
+  onOpenOutput,
+  onOpenAllArtifacts,
   collapsedTraceByStepId,
   onToggleTraceStep,
   status = "",
@@ -2581,6 +2766,10 @@ function AssistantTurn({
   thinkingCollapsed: boolean;
   onToggleThinking: () => void;
   traceSteps: ChatTraceStep[];
+  outputs: WorkspaceOutputRecordPayload[];
+  sessionOutputs: WorkspaceOutputRecordPayload[];
+  onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
+  onOpenAllArtifacts: () => void;
   collapsedTraceByStepId: Record<string, boolean>;
   onToggleTraceStep: (stepId: string) => void;
   status?: string;
@@ -2632,9 +2821,188 @@ function AssistantTurn({
                 {text}
               </SimpleMarkdown>
             ) : null}
+
+            {outputs.length > 0 ? (
+              <AssistantTurnOutputs
+                outputs={outputs}
+                sessionOutputs={sessionOutputs}
+                onOpenOutput={onOpenOutput}
+                onOpenAllArtifacts={onOpenAllArtifacts}
+              />
+            ) : null}
           </div>
         </div>
       </article>
+    </div>
+  );
+}
+
+function OutputArtifactIcon({ output }: { output: WorkspaceOutputRecordPayload }) {
+  const filter = outputBrowserFilterForOutput(output);
+  if (filter === "images") {
+    return <ImageIcon size={16} className="shrink-0 text-primary/72" />;
+  }
+  if (filter === "apps") {
+    return <Waypoints size={16} className="shrink-0 text-primary/72" />;
+  }
+  return <FileText size={16} className="shrink-0 text-primary/72" />;
+}
+
+function AssistantTurnOutputs({
+  outputs,
+  sessionOutputs,
+  onOpenOutput,
+  onOpenAllArtifacts
+}: {
+  outputs: WorkspaceOutputRecordPayload[];
+  sessionOutputs: WorkspaceOutputRecordPayload[];
+  onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
+  onOpenAllArtifacts: () => void;
+}) {
+  return (
+    <div className="mt-4 flex flex-wrap gap-3">
+      {outputs.map((output) => (
+        <button
+          key={output.id}
+          type="button"
+          onClick={() => onOpenOutput?.(output)}
+          className="bg-muted flex min-w-[240px] max-w-full flex-1 items-center gap-3 rounded-[20px] border border-border/35 px-4 py-3 text-left transition hover:border-border/55 hover:bg-card/70 disabled:cursor-default disabled:hover:border-border/35 disabled:hover:bg-muted"
+          disabled={!onOpenOutput}
+        >
+          <OutputArtifactIcon output={output} />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[14px] font-medium text-foreground">{output.title || "Untitled artifact"}</div>
+            <div className="truncate text-[12px] text-muted-foreground">{outputSecondaryLabel(output)}</div>
+            {outputChangeLabel(output) ? (
+              <div className="mt-1 text-[11px] uppercase tracking-[0.12em] text-muted-foreground/70">{outputChangeLabel(output)}</div>
+            ) : null}
+          </div>
+        </button>
+      ))}
+
+      {sessionOutputs.length > 0 ? (
+        <button
+          type="button"
+          onClick={onOpenAllArtifacts}
+          className="bg-card flex min-w-[240px] max-w-full flex-1 items-center gap-3 rounded-[20px] border border-border/35 px-4 py-3 text-left transition hover:border-border/55 hover:bg-card/80"
+        >
+          <FileText size={16} className="shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[14px] font-medium text-foreground">View all artifacts in this session</div>
+            <div className="truncate text-[12px] text-muted-foreground">
+              {sessionOutputs.length} artifact{sessionOutputs.length === 1 ? "" : "s"}
+            </div>
+          </div>
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function ArtifactBrowserModal({
+  open,
+  filter,
+  outputs,
+  onClose,
+  onFilterChange,
+  onOpenOutput,
+}: {
+  open: boolean;
+  filter: ArtifactBrowserFilter;
+  outputs: WorkspaceOutputRecordPayload[];
+  onClose: () => void;
+  onFilterChange: (nextFilter: ArtifactBrowserFilter) => void;
+  onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  const filterLabels: Array<{ id: ArtifactBrowserFilter; label: string }> = [
+    { id: "all", label: "All" },
+    { id: "documents", label: "Documents" },
+    { id: "images", label: "Images" },
+    { id: "code", label: "Code files" },
+    { id: "links", label: "Links" },
+    { id: "apps", label: "Apps" },
+  ];
+  const filteredOutputs =
+    filter === "all" ? outputs : outputs.filter((output) => outputBrowserFilterForOutput(output) === filter);
+
+  return (
+    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/45 px-4 py-6 backdrop-blur-[2px]">
+      <div className="bg-background flex h-full max-h-[720px] w-full max-w-[760px] flex-col rounded-[28px] border border-border/50 shadow-2xl">
+        <div className="flex items-center justify-between gap-4 border-b border-border/35 px-5 py-4">
+          <div>
+            <div className="text-[24px] font-semibold tracking-[-0.03em] text-foreground">All artifacts in this session</div>
+            <div className="mt-1 text-[12px] text-muted-foreground">
+              {outputs.length} artifact{outputs.length === 1 ? "" : "s"}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid h-9 w-9 place-items-center rounded-full border border-border/45 text-muted-foreground transition hover:border-border/70 hover:text-foreground"
+            aria-label="Close artifacts browser"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="flex flex-wrap gap-2 px-5 py-4">
+          {filterLabels.map((item) => {
+            const active = filter === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onFilterChange(item.id)}
+                className={`rounded-full border px-3 py-1.5 text-[12px] transition ${
+                  active
+                    ? "border-foreground bg-foreground text-background"
+                    : "border-border/45 text-muted-foreground hover:border-border/70 hover:text-foreground"
+                }`}
+              >
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+          {filteredOutputs.length === 0 ? (
+            <div className="flex h-full items-center justify-center rounded-[24px] border border-dashed border-border/45 text-[13px] text-muted-foreground">
+              No artifacts match this filter.
+            </div>
+          ) : (
+            <div className="grid gap-2">
+              {filteredOutputs.map((output) => (
+                <button
+                  key={output.id}
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenOutput?.(output);
+                  }}
+                  disabled={!onOpenOutput}
+                  className="flex items-center gap-3 rounded-[18px] border border-border/35 px-4 py-3 text-left transition hover:border-border/60 hover:bg-muted/45 disabled:cursor-default disabled:hover:border-border/35 disabled:hover:bg-transparent"
+                >
+                  <OutputArtifactIcon output={output} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[14px] font-medium text-foreground">{output.title || "Untitled artifact"}</div>
+                    <div className="truncate text-[12px] text-muted-foreground">{outputSecondaryLabel(output)}</div>
+                  </div>
+                  {outputChangeLabel(output) ? (
+                    <div className="rounded-full border border-border/45 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                      {outputChangeLabel(output)}
+                    </div>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

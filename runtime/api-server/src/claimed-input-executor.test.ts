@@ -378,6 +378,79 @@ test("claimed input ignores waiting_user terminal status for harnesses that do n
   store.close();
 });
 
+test("claimed input captures file outputs and persists an assistant turn for output-only runs", async () => {
+  const store = makeStore("hb-claimed-input-file-output-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "create a report file" }
+  });
+
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      const workspaceDir = store.workspaceDir(workspace.id);
+      fs.mkdirSync(workspaceDir, { recursive: true });
+      fs.writeFileSync(path.join(workspaceDir, "report.md"), "# Report\n");
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {}
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "run_completed",
+        payload: { status: "ok" }
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true
+      };
+    }
+  });
+
+  const outputs = store.listOutputs({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: queued.inputId,
+    limit: 20,
+    offset: 0
+  });
+  const messages = store.listSessionMessages({
+    workspaceId: workspace.id,
+    sessionId: "session-main"
+  });
+
+  assert.equal(outputs.length, 1);
+  assert.equal(outputs[0].title, "report.md");
+  assert.equal(outputs[0].filePath, "report.md");
+  assert.equal(outputs[0].status, "completed");
+  assert.equal(outputs[0].metadata.origin_type, "file");
+  assert.equal(outputs[0].metadata.change_type, "created");
+  assert.equal(outputs[0].metadata.category, "document");
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].id, `assistant-${queued.inputId}`);
+  assert.equal(messages[0].role, "assistant");
+  assert.equal(messages[0].text, "");
+
+  store.close();
+});
+
 test("claimed input records skill-policy denial audit in tool usage summary", async () => {
   const store = makeStore("hb-claimed-input-skill-policy-denial-");
   const workspace = store.createWorkspace({

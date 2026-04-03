@@ -559,6 +559,18 @@ interface HolabossStreamSessionOutputsPayload {
   stopOnTerminal?: boolean;
 }
 
+interface HolabossListOutputsPayload {
+  workspaceId: string;
+  outputType?: string | null;
+  status?: string | null;
+  platform?: string | null;
+  folderId?: string | null;
+  sessionId?: string | null;
+  inputId?: string | null;
+  limit?: number;
+  offset?: number;
+}
+
 interface HolabossSessionStreamHandlePayload {
   streamId: string;
 }
@@ -867,8 +879,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:listInstalledApps", workspaceId) as Promise<InstalledWorkspaceAppListResponsePayload>,
     removeInstalledApp: (workspaceId: string, appId: string) =>
       ipcRenderer.invoke("workspace:removeInstalledApp", workspaceId, appId) as Promise<void>,
-    listOutputs: (workspaceId: string) =>
-      ipcRenderer.invoke("workspace:listOutputs", workspaceId) as Promise<WorkspaceOutputListResponsePayload>,
+    listOutputs: (payload: string | HolabossListOutputsPayload) =>
+      ipcRenderer.invoke("workspace:listOutputs", payload) as Promise<WorkspaceOutputListResponsePayload>,
     listSkills: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listSkills", workspaceId) as Promise<WorkspaceSkillListResponsePayload>,
     getWorkspaceRoot: (workspaceId: string) => ipcRenderer.invoke("workspace:getWorkspaceRoot", workspaceId) as Promise<string>,

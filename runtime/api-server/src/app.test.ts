@@ -1321,6 +1321,12 @@ test("outputs, folders, and artifacts routes preserve local payload shape", asyn
     status: "active",
     mainSessionId: "session-main"
   });
+  store.ensureRuntimeState({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    status: "BUSY",
+    currentInputId: "input-1",
+  });
 
   const folderResp = await app.inject({
     method: "POST",
@@ -1338,11 +1344,14 @@ test("outputs, folders, and artifacts routes preserve local payload shape", asyn
       output_type: "document",
       title: "Spec Draft",
       folder_id: folder.id,
-      session_id: "session-main"
+      session_id: "session-main",
+      input_id: "input-1",
+      status: "completed",
     }
   });
   assert.equal(outputResp.statusCode, 200);
   assert.equal(outputResp.json().output.folder_id, folder.id);
+  assert.equal(outputResp.json().output.input_id, "input-1");
 
   const artifactResp = await app.inject({
     method: "POST",
@@ -1361,6 +1370,10 @@ test("outputs, folders, and artifacts routes preserve local payload shape", asyn
     method: "GET",
     url: `/api/v1/outputs?workspace_id=${workspace.id}`
   });
+  const filteredOutputsResp = await app.inject({
+    method: "GET",
+    url: `/api/v1/outputs?workspace_id=${workspace.id}&session_id=session-main&input_id=input-1`
+  });
   const countsResp = await app.inject({
     method: "GET",
     url: `/api/v1/outputs/counts?workspace_id=${workspace.id}`
@@ -1375,10 +1388,16 @@ test("outputs, folders, and artifacts routes preserve local payload shape", asyn
   });
 
   assert.equal(outputsResp.statusCode, 200);
+  assert.equal(filteredOutputsResp.statusCode, 200);
   assert.equal(countsResp.statusCode, 200);
   assert.equal(artifactsResp.statusCode, 200);
   assert.equal(withArtifactsResp.statusCode, 200);
   assert.equal(outputsResp.json().items.length, 2);
+  assert.equal(filteredOutputsResp.json().items.length, 2);
+  assert.deepEqual(
+    filteredOutputsResp.json().items.map((item: { input_id: string | null }) => item.input_id),
+    ["input-1", "input-1"]
+  );
   assert.equal(countsResp.json().total, 2);
   assert.equal(artifactsResp.json().count, 1);
   assert.equal(withArtifactsResp.json().items[0].artifacts[0].external_id, "doc-1");

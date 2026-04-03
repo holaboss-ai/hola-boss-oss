@@ -1448,11 +1448,17 @@ function AppShellContent() {
       return onboardingModeActive ? (
         <OnboardingPane
           onOutputsChanged={() => void refreshRuntimeOutputs()}
+          onOpenOutput={(output) =>
+            handleOpenOutput(runtimeOutputToEntry(output, new Set(installedApps.map((app) => app.id))))
+          }
           focusRequestKey={chatFocusRequestKey}
         />
       ) : (
         <ChatPane
           onOutputsChanged={() => void refreshRuntimeOutputs()}
+          onOpenOutput={(output) =>
+            handleOpenOutput(runtimeOutputToEntry(output, new Set(installedApps.map((app) => app.id))))
+          }
           focusRequestKey={chatFocusRequestKey}
         />
       );

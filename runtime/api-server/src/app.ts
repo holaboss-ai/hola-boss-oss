@@ -578,6 +578,7 @@ function outputPayload(record: OutputRecord): Record<string, unknown> {
     file_path: record.filePath,
     html_content: record.htmlContent,
     session_id: record.sessionId,
+    input_id: record.inputId,
     artifact_id: record.artifactId,
     folder_id: record.folderId,
     platform: record.platform,
@@ -655,6 +656,23 @@ function outputTypeForArtifact(artifactType: string): string {
     default:
       return "document";
   }
+}
+
+function resolveOutputInputId(params: {
+  store: RuntimeStateStore;
+  workspaceId: string;
+  sessionId: string;
+  inputId?: string | null;
+}): string | null {
+  const requestedInputId = (params.inputId ?? "").trim();
+  if (requestedInputId) {
+    return requestedInputId;
+  }
+  const runtimeState = params.store.getRuntimeState({
+    workspaceId: params.workspaceId,
+    sessionId: params.sessionId,
+  });
+  return runtimeState?.currentInputId?.trim() || null;
 }
 
 function resolveQueueSessionId(requestedSessionId: string | undefined, workspace: WorkspaceRecord): string {
@@ -3527,6 +3545,13 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
     const params = request.params as { sessionId: string };
     const workspaceId = requiredString(request.body.workspace_id, "workspace_id");
+    const inputId = resolveOutputInputId({
+      store,
+      workspaceId,
+      sessionId: params.sessionId,
+      inputId: nullableString(request.body.input_id),
+    });
+    const metadata = optionalDict(request.body.metadata) ?? {};
     store.ensureRuntimeState({
       workspaceId,
       sessionId: params.sessionId,
@@ -3539,16 +3564,26 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       externalId: requiredString(request.body.external_id, "external_id"),
       platform: nullableString(request.body.platform) ?? null,
       title: nullableString(request.body.title) ?? null,
-      metadata: optionalDict(request.body.metadata) ?? {}
+      metadata
     });
     store.createOutput({
       workspaceId,
       outputType: outputTypeForArtifact(artifact.artifactType),
       title: artifact.title ?? "",
+      status: "completed",
+      moduleId: nullableString(request.body.module_id) ?? null,
+      moduleResourceId: nullableString(request.body.module_resource_id) ?? artifact.externalId,
       sessionId: params.sessionId,
+      inputId,
       artifactId: artifact.id,
       platform: artifact.platform,
-      metadata: artifact.metadata
+      metadata: {
+        ...artifact.metadata,
+        origin_type: "app",
+        change_type: optionalString(request.body.change_type) ?? "created",
+        artifact_type: artifact.artifactType,
+        external_id: artifact.externalId,
+      }
     });
     return reply.send({ artifact: sessionArtifactPayload(artifact) });
   });
@@ -3648,6 +3683,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       status: optionalString(query.status) ?? null,
       platform: optionalString(query.platform) ?? null,
       folderId: optionalString(query.folder_id) ?? null,
+      sessionId: optionalString(query.session_id) ?? null,
+      inputId: optionalString(query.input_id) ?? null,
       limit: Math.max(1, Math.min(200, optionalInteger(query.limit, 50))),
       offset: Math.max(0, optionalInteger(query.offset, 0))
     });
@@ -3680,11 +3717,13 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       workspaceId: requiredString(request.body.workspace_id, "workspace_id"),
       outputType: requiredString(request.body.output_type, "output_type"),
       title: optionalString(request.body.title) ?? "",
+      status: optionalString(request.body.status) ?? "draft",
       moduleId: nullableString(request.body.module_id) ?? null,
       moduleResourceId: nullableString(request.body.module_resource_id) ?? null,
       filePath: nullableString(request.body.file_path) ?? null,
       htmlContent: nullableString(request.body.html_content) ?? null,
       sessionId: nullableString(request.body.session_id) ?? null,
+      inputId: nullableString(request.body.input_id) ?? null,
       artifactId: nullableString(request.body.artifact_id) ?? null,
       folderId: nullableString(request.body.folder_id) ?? null,
       platform: nullableString(request.body.platform) ?? null,
