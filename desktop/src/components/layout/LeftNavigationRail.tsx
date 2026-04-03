@@ -1,10 +1,10 @@
 import {
-  LayoutGrid,
   MessageSquareText,
   Sparkles,
   Workflow,
 } from "lucide-react";
 import type { WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
+import { providerIcon } from "@/components/onboarding/constants";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
 export type LeftRailItem =
@@ -104,17 +104,17 @@ export function LeftNavigationRail({
                             aria-label={app.label}
                             title={app.label}
                             onClick={() => onSelectApp?.(app.id)}
-                            className={`relative flex size-10 items-center justify-center rounded-lg border text-[10px] font-semibold uppercase tracking-wider transition-colors ${
+                            className={`relative flex size-10 items-center justify-center rounded-xl transition-colors ${
                               isActive
-                                ? "border-primary/40 bg-primary/12 text-foreground"
-                                : "border-border/50 bg-card/60 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                                ? `${app.accentClassName} text-slate-950`
+                                : "bg-muted/60 text-muted-foreground hover:bg-muted"
                             }`}
                           >
-                            <span
-                              className={`flex size-6 items-center justify-center rounded-full text-[9px] font-semibold text-slate-950 ${app.accentClassName}`}
-                            >
-                              {appInitials(app.label)}
-                            </span>
+                            {providerIcon(app.id, 18) ?? (
+                              <span className="text-[11px] font-semibold uppercase tracking-wide">
+                                {appInitials(app.label)}
+                              </span>
+                            )}
                             <span
                               className={`absolute -right-0.5 -top-0.5 size-2.5 rounded-full border-2 border-card ${
                                 hasError

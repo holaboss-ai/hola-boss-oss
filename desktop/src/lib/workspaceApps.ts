@@ -36,6 +36,18 @@ const APP_CATALOG: Record<string, WorkspaceAppDefinition> = {
     label: "Reddit",
     summary: "Thread, post, and community response drafting in the workspace app surface.",
     accentClassName: "bg-orange-300/80"
+  },
+  sheets: {
+    id: "sheets",
+    label: "Google Sheets",
+    summary: "Spreadsheet data management. Use the agent to query rows, update cells, and manage CRM contacts.",
+    accentClassName: "bg-emerald-400/80"
+  },
+  github: {
+    id: "github",
+    label: "GitHub",
+    summary: "Repository activity tracking and PR triage inside the workspace.",
+    accentClassName: "bg-neutral-400/80"
   }
 };
 
