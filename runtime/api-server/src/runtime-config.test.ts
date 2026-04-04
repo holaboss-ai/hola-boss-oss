@@ -84,8 +84,12 @@ test("file runtime config service updates runtime config without writing harness
   assert.equal(ensureCalls, 0);
 
   const configDocument = JSON.parse(fs.readFileSync(path.join(root, "state", "runtime-config.json"), "utf8"));
+  assert.equal(configDocument.runtime.sandbox_id, "sandbox-1");
   assert.equal(configDocument.runtime.default_model, "openai/gpt-5.4");
+  assert.equal(configDocument.providers.holaboss_model_proxy.api_key, "token-1");
   assert.equal(configDocument.providers.holaboss_model_proxy.base_url, "https://runtime.example/api/v1/model-proxy");
+  assert.equal(configDocument.integrations.holaboss.auth_token, "token-1");
+  assert.equal(configDocument.integrations.holaboss.sandbox_id, "sandbox-1");
   assert.equal(configDocument.integrations.holaboss.user_id, "user-1");
   assert.equal(configDocument.capabilities.desktop_browser.url, "http://127.0.0.1:8787/api/v1/browser");
   assert.equal(configDocument.capabilities.desktop_browser.auth_token, "browser-token");
@@ -234,5 +238,40 @@ test("runtime config headers reuse the shared runtime config parser", () => {
     "X-API-Key": "token-1",
     "X-Holaboss-User-Id": "user-1",
     "X-Holaboss-Sandbox-Id": "sandbox-1"
+  });
+});
+
+test("runtime config headers prefer the bound Holaboss sandbox id when runtime sandbox state is stale", () => {
+  const root = makeTempDir("hb-runtime-config-");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = path.join(root, "state", "runtime-config.json");
+
+  fs.mkdirSync(path.join(root, "state"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "state", "runtime-config.json"),
+    `${JSON.stringify({
+      runtime: {
+        sandbox_id: "sandbox-stale"
+      },
+      providers: {
+        holaboss_model_proxy: {
+          api_key: "token-1"
+        }
+      },
+      integrations: {
+        holaboss: {
+          auth_token: "token-1",
+          user_id: "user-1",
+          sandbox_id: "sandbox-bound"
+        }
+      }
+    }, null, 2)}\n`,
+    "utf8"
+  );
+
+  assert.deepEqual(runtimeConfigHeaders({ requireAuth: true, requireUser: false }), {
+    "X-API-Key": "token-1",
+    "X-Holaboss-User-Id": "user-1",
+    "X-Holaboss-Sandbox-Id": "sandbox-bound"
   });
 });

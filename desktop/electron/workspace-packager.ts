@@ -377,19 +377,41 @@ export async function uploadToPresignedUrl(
     controller.abort(new Error(`Upload timed out after ${timeoutMs}ms`));
   }, timeoutMs);
 
-  try {
-    const response = await fetch(url, {
-      method: "PUT",
-      headers: buildPresignedUploadHeaders(url, data.byteLength),
-      body: new Uint8Array(data),
-      signal: controller.signal,
-    });
+  await new Promise<void>((resolve, reject) => {
+    const req = requester(
+      url,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/zip",
+          "Content-Length": data.byteLength,
+        },
+        timeout: timeoutMs,
+      },
+      (res) => {
+        // Drain response body
+        res.resume();
+        res.on("end", () => {
+          const status = res.statusCode ?? 0;
+          if (status >= 200 && status < 300) {
+            resolve();
+          } else {
+            reject(
+              new Error(
+                `Presigned URL upload failed with status ${status}`
+              )
+            );
+          }
+        });
+        res.on("error", reject);
+      }
+    );
 
-    if (!response.ok) {
-      const responseBody = await response.text().catch(() => "");
-      throw new Error(buildPresignedUploadError(url, response.status, responseBody));
-    }
-  } finally {
-    clearTimeout(timeout);
-  }
+    req.on("timeout", () => {
+      req.destroy(new Error(`Upload timed out after ${timeoutMs}ms`));
+    });
+    req.on("error", reject);
+    req.write(data);
+    req.end();
+  });
 }

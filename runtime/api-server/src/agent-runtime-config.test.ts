@@ -1,7 +1,59 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { afterEach } from "node:test";
 
 import { projectAgentRuntimeConfig } from "./agent-runtime-config.js";
+
+const tempDirs: string[] = [];
+const envNames = [
+  "HB_SANDBOX_ROOT",
+  "HOLABOSS_MODEL_PROXY_BASE_URL",
+  "HOLABOSS_RUNTIME_CONFIG_PATH",
+  "HOLABOSS_SANDBOX_AUTH_TOKEN",
+  "HOLABOSS_USER_ID",
+  "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_BASE_URL",
+  "OPENROUTER_API_KEY",
+  "OPENROUTER_BASE_URL",
+  "SANDBOX_MODEL_PROXY_ENABLE_DIRECT_OPENAI_FALLBACK",
+] as const;
+const envSnapshot = new Map<string, string | undefined>();
+
+for (const name of envNames) {
+  envSnapshot.set(name, process.env[name]);
+}
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  for (const name of envNames) {
+    const value = envSnapshot.get(name);
+    if (value === undefined) {
+      delete process.env[name];
+    } else {
+      process.env[name] = value;
+    }
+  }
+});
+
+function makeTempDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function writeRuntimeConfigDocument(root: string, document: Record<string, unknown>): string {
+  const configPath = path.join(root, "state", "runtime-config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify(document, null, 2)}\n`, "utf8");
+  return configPath;
+}
 
 function renderedRuntimeConfigPrompt(
   promptLayers: Array<{ apply_at: string; content: string }>
@@ -459,4 +511,151 @@ test("projectAgentRuntimeConfig includes recalled durable memory in context mess
   } finally {
     delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
   }
+});
+
+test("projectAgentRuntimeConfig bypasses runtime proxy credentials for configured direct OpenAI providers", () => {
+  const root = makeTempDir("hb-agent-runtime-config-");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
+    runtime: {
+      sandbox_id: "sandbox-from-runtime",
+      default_provider: "openai_direct"
+    },
+    providers: {
+      holaboss_model_proxy: {
+        kind: "holaboss_proxy",
+        base_url: "https://proxy.example/api/v1/model-proxy",
+        api_key: "hb-token"
+      },
+      openai_direct: {
+        kind: "openai_compatible",
+        base_url: "https://api.openai.com/v1",
+        api_key: "sk-direct-openai"
+      }
+    },
+    integrations: {
+      holaboss: {
+        enabled: true,
+        auth_token: "hb-token",
+        sandbox_id: "sandbox-from-binding",
+        user_id: "user-1"
+      }
+    },
+    models: {
+      "openai_direct/gpt-5.4": {
+        provider_id: "openai_direct",
+        model_id: "gpt-5.4"
+      }
+    }
+  });
+
+  const result = projectAgentRuntimeConfig({
+    session_id: "session-1",
+    workspace_id: "workspace-1",
+    input_id: "input-1",
+    session_kind: "workspace_session",
+    harness_id: "pi",
+    browser_tools_available: false,
+    browser_tool_ids: [],
+    runtime_tool_ids: [],
+    workspace_command_ids: [],
+    runtime_exec_model_proxy_api_key: "hb-runtime-token",
+    runtime_exec_sandbox_id: "sandbox-from-exec-context",
+    runtime_exec_run_id: "run-1",
+    selected_model: "openai_direct/gpt-5.4",
+    default_provider_id: "holaboss_model_proxy",
+    session_mode: "code",
+    workspace_config_checksum: "checksum-1",
+    workspace_skill_ids: [],
+    default_tools: ["read"],
+    extra_tools: [],
+    resolved_mcp_tool_refs: [],
+    resolved_output_schemas: {},
+    agent: {
+      id: "workspace.general",
+      model: "gpt-5.2",
+      prompt: "You are concise."
+    }
+  });
+
+  assert.equal(result.provider_id, "openai_direct");
+  assert.equal(result.model_client.api_key, "sk-direct-openai");
+  assert.equal(result.model_client.base_url, "https://api.openai.com/v1");
+  assert.equal(result.model_client.default_headers, null);
+});
+
+test("projectAgentRuntimeConfig keeps direct OpenRouter providers on the provider endpoint", () => {
+  const root = makeTempDir("hb-agent-runtime-config-");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
+    runtime: {
+      sandbox_id: "sandbox-from-runtime",
+      default_provider: "openrouter"
+    },
+    providers: {
+      holaboss_model_proxy: {
+        kind: "holaboss_proxy",
+        base_url: "https://proxy.example/api/v1/model-proxy",
+        api_key: "hb-token"
+      },
+      openrouter: {
+        kind: "openrouter",
+        base_url: "https://openrouter.ai/api/v1",
+        api_key: "or-key",
+        headers: {
+          "HTTP-Referer": "https://holaboss.ai"
+        }
+      }
+    },
+    integrations: {
+      holaboss: {
+        enabled: true,
+        auth_token: "hb-token",
+        sandbox_id: "sandbox-from-binding",
+        user_id: "user-1"
+      }
+    },
+    models: {
+      "openrouter/openai/gpt-5.4": {
+        provider_id: "openrouter",
+        model_id: "openai/gpt-5.4"
+      }
+    }
+  });
+
+  const result = projectAgentRuntimeConfig({
+    session_id: "session-1",
+    workspace_id: "workspace-1",
+    input_id: "input-1",
+    session_kind: "workspace_session",
+    harness_id: "pi",
+    browser_tools_available: false,
+    browser_tool_ids: [],
+    runtime_tool_ids: [],
+    workspace_command_ids: [],
+    runtime_exec_model_proxy_api_key: "hb-runtime-token",
+    runtime_exec_sandbox_id: "sandbox-from-exec-context",
+    runtime_exec_run_id: "run-1",
+    selected_model: "openrouter/openai/gpt-5.4",
+    default_provider_id: "holaboss_model_proxy",
+    session_mode: "code",
+    workspace_config_checksum: "checksum-1",
+    workspace_skill_ids: [],
+    default_tools: ["read"],
+    extra_tools: [],
+    resolved_mcp_tool_refs: [],
+    resolved_output_schemas: {},
+    agent: {
+      id: "workspace.general",
+      model: "gpt-5.2",
+      prompt: "You are concise."
+    }
+  });
+
+  assert.equal(result.provider_id, "openrouter");
+  assert.equal(result.model_client.api_key, "or-key");
+  assert.equal(result.model_client.base_url, "https://openrouter.ai/api/v1");
+  assert.deepEqual(result.model_client.default_headers, {
+    "HTTP-Referer": "https://holaboss.ai"
+  });
 });

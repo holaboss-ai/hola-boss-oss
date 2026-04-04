@@ -28,6 +28,19 @@ test("chat pane shows provider setup CTA when no chat models are available", asy
   assert.doesNotMatch(source, /if \(!resolvedUserId\) \{/);
 });
 
+test("chat pane groups configured models under provider headings", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /const availableChatModelOptionGroups: ChatModelOptionGroup\[] = hasConfiguredProviderCatalog/);
+  assert.match(source, /selectedLabel: needsProviderPrefix \? `\$\{providerGroup\.providerLabel\} · \$\{modelLabel\}` : modelLabel/);
+  assert.match(source, /searchText: `\$\{providerGroup\.providerLabel\} \$\{modelLabel\} \$\{model\.token\}`/);
+  assert.match(source, /const filteredOptionGroups = useMemo\(/);
+  assert.match(source, /modelOptionGroups\.length > 0 \? modelOptionGroups : \[\{ label: "", options: modelOptions }\]/);
+  assert.match(source, /group\.label \? \(/);
+  assert.match(source, /text-\[10px\] font-semibold uppercase tracking-\[0\.16em\] text-muted-foreground\/70/);
+  assert.doesNotMatch(source, /filteredOptions\.map/);
+});
+
 test("chat pane exposes a return path from sub-sessions back to the main session", async () => {
   const source = await readFile(sourcePath, "utf8");
 
@@ -74,7 +87,7 @@ test("chat turns render markdown and keep long content wrapped inside the bubble
   assert.match(source, /onOpenLinkInBrowser\?: \(url: string\) => void;/);
   assert.match(source, /onLinkClick=\{onOpenLinkInBrowser\}/);
   assert.match(source, /<SimpleMarkdown className="chat-markdown chat-user-markdown max-w-full" onLinkClick=\{onLinkClick\}>[\s\S]*\{text\}[\s\S]*<\/SimpleMarkdown>/);
-  assert.match(source, /<SimpleMarkdown[\s\S]*className="chat-markdown chat-assistant-markdown mt-4 max-w-full text-foreground"[\s\S]*onLinkClick=\{onLinkClick\}[\s\S]*\{text\}[\s\S]*<\/SimpleMarkdown>/);
+  assert.match(source, /<SimpleMarkdown[\s\S]*className="chat-markdown chat-assistant-markdown mt-2 max-w-full text-foreground"[\s\S]*onLinkClick=\{onLinkClick\}[\s\S]*\{text\}[\s\S]*<\/SimpleMarkdown>/);
   assert.match(source, /theme-chat-user-bubble inline-flex min-w-0 max-w-full/);
 });
 
