@@ -64,6 +64,8 @@ type PendingAttachment = PendingLocalAttachmentFile | PendingExplorerAttachmentF
 interface ChatModelOption {
   value: string;
   label: string;
+  selectedLabel?: string;
+  searchText?: string;
 }
 
 interface ChatModelOptionGroup {
@@ -2523,7 +2525,9 @@ export function ChatPane({
             (providerModelLabelCounts.get(modelLabel) ?? 0) > 1;
           return {
             value: model.token,
-            label: needsProviderPrefix ? `${providerGroup.providerLabel} · ${modelLabel}` : modelLabel
+            label: modelLabel,
+            selectedLabel: needsProviderPrefix ? `${providerGroup.providerLabel} · ${modelLabel}` : modelLabel,
+            searchText: `${providerGroup.providerLabel} ${modelLabel} ${model.token}`
           };
         })
       }))
@@ -3722,35 +3726,83 @@ function ModelCombobox({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
 
-  const allOptions = useMemo(() => {
-    const items: ChatModelOption[] = [];
-    if (runtimeDefaultModelAvailable) {
-      items.push({ value: CHAT_MODEL_USE_RUNTIME_DEFAULT, label: `Auto (${runtimeDefaultModelLabel})` });
-    }
-    if (modelOptionGroups.length > 0) {
-      for (const group of modelOptionGroups) {
-        for (const option of group.options) {
-          items.push(option);
-        }
-      }
-    } else {
-      for (const option of modelOptions) {
-        items.push(option);
-      }
-    }
-    return items;
-  }, [modelOptionGroups, modelOptions, runtimeDefaultModelAvailable, runtimeDefaultModelLabel]);
+  const autoOption = useMemo(
+    () =>
+      runtimeDefaultModelAvailable
+        ? ({ value: CHAT_MODEL_USE_RUNTIME_DEFAULT, label: `Auto (${runtimeDefaultModelLabel})` } satisfies ChatModelOption)
+        : null,
+    [runtimeDefaultModelAvailable, runtimeDefaultModelLabel]
+  );
 
-  const filteredOptions = useMemo(() => {
+  const filteredAutoOption = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return allOptions;
-    return allOptions.filter((o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q));
-  }, [allOptions, query]);
+    if (!autoOption) {
+      return null;
+    }
+    if (!q) {
+      return autoOption;
+    }
+    return autoOption.label.toLowerCase().includes(q) || autoOption.value.toLowerCase().includes(q)
+      ? autoOption
+      : null;
+  }, [autoOption, query]);
+
+  const filteredOptionGroups = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const sourceGroups =
+      modelOptionGroups.length > 0 ? modelOptionGroups : [{ label: "", options: modelOptions }];
+    return sourceGroups
+      .map((group) => ({
+        ...group,
+        options: q
+          ? group.options.filter((option) => {
+              const haystack = [
+                option.label,
+                option.selectedLabel,
+                option.searchText,
+                option.value,
+                group.label,
+              ]
+                .filter(Boolean)
+                .join(" ")
+                .toLowerCase();
+              return haystack.includes(q);
+            })
+          : group.options,
+      }))
+      .filter((group) => group.options.length > 0);
+  }, [modelOptionGroups, modelOptions, query]);
 
   const displayLabel =
     selectedModel === CHAT_MODEL_USE_RUNTIME_DEFAULT
       ? `Auto (${runtimeDefaultModelLabel})`
       : selectedModelLabel;
+
+  const hasFilteredOptions =
+    Boolean(filteredAutoOption) || filteredOptionGroups.some((group) => group.options.length > 0);
+
+  const renderOption = (option: ChatModelOption) => {
+    const active = option.value === selectedModel;
+    return (
+      <button
+        key={option.value}
+        type="button"
+        onClick={() => {
+          onModelChange(option.value);
+          setOpen(false);
+          setQuery("");
+        }}
+        className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs transition-colors ${
+          active
+            ? "bg-accent text-accent-foreground"
+            : "text-foreground hover:bg-accent/50"
+        }`}
+      >
+        <span className="truncate">{option.label}</span>
+        {active ? <Check size={13} className="shrink-0 text-primary" /> : null}
+      </button>
+    );
+  };
 
   return (
     <Popover
@@ -3792,31 +3844,24 @@ function ModelCombobox({
           </div>
         </div>
         <div className="max-h-[240px] overflow-y-auto py-1">
-          {filteredOptions.length === 0 ? (
+          {!hasFilteredOptions ? (
             <div className="px-3 py-4 text-center text-xs text-muted-foreground">No models found</div>
           ) : (
-            filteredOptions.map((option) => {
-              const active = option.value === selectedModel;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => {
-                    onModelChange(option.value);
-                    setOpen(false);
-                    setQuery("");
-                  }}
-                  className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs transition-colors ${
-                    active
-                      ? "bg-accent text-accent-foreground"
-                      : "text-foreground hover:bg-accent/50"
-                  }`}
-                >
-                  <span className="truncate">{option.label}</span>
-                  {active ? <Check size={13} className="shrink-0 text-primary" /> : null}
-                </button>
-              );
-            })
+            <>
+              {filteredAutoOption ? (
+                <div className="pb-1">{renderOption(filteredAutoOption)}</div>
+              ) : null}
+              {filteredOptionGroups.map((group) => (
+                <div key={group.label || "models"} className="py-1">
+                  {group.label ? (
+                    <div className="px-3 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/70">
+                      {group.label}
+                    </div>
+                  ) : null}
+                  {group.options.map((option) => renderOption(option))}
+                </div>
+              ))}
+            </>
           )}
         </div>
       </PopoverContent>
@@ -3856,7 +3901,9 @@ function Composer({
   const noAvailableModels = !runtimeDefaultModelAvailable && modelOptions.length === 0;
   const inputDisabled = disabled || isResponding;
   const selectedModelOptionLabel =
-    modelOptions.find((option) => option.value === selectedModel)?.label ?? resolvedModelLabel;
+    modelOptions.find((option) => option.value === selectedModel)?.selectedLabel ??
+    modelOptions.find((option) => option.value === selectedModel)?.label ??
+    resolvedModelLabel;
 
   const allowAttachmentDrop = (dataTransfer: DataTransfer | null) => {
     if (!dataTransfer || disabled || isResponding) {
