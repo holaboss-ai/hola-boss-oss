@@ -1,16 +1,21 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
-  Bell,
   Check,
-  Clock3,
+  Clock,
+  FolderOpen,
+  Inbox as InboxIcon,
   Loader2,
   LogIn,
   RefreshCcw,
   Sparkles,
   X,
+  Bell,
+  Clock3,
 } from "lucide-react";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import {
   Tooltip,
   TooltipContent,
@@ -540,7 +545,7 @@ function InboxPanel({
                   </div>
 
                   <div className="mt-3 text-xs text-muted-foreground/78">
-                    {formatTimestamp(proposal.created_at)}
+                    {relativeTime(proposal.created_at)}
                   </div>
 
                   <div className="mt-4 flex flex-wrap gap-2">
@@ -677,7 +682,7 @@ function RunningPanel({
                 </div>
 
                 <div className="mt-3 text-xs text-muted-foreground/82">
-                  Updated {formatTimestamp(session.updatedAt)}
+                  Updated {relativeTime(session.updatedAt)}
                 </div>
 
                 {session.lastError ? (
@@ -724,10 +729,23 @@ function EmptyNotice({ message }: { message: string }) {
   );
 }
 
-function formatTimestamp(value: string): string {
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
+function relativeTime(value: string): string {
+  const ms = Date.now() - Date.parse(value);
+  if (Number.isNaN(ms)) {
     return value;
   }
-  return new Date(timestamp).toLocaleString();
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) {
+    return "just now";
+  }
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours}h ago`;
+  }
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
