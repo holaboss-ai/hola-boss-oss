@@ -219,21 +219,10 @@ export function OperationsDrawer({
             isSignedIn={isSignedIn}
             onRequestSignIn={onRequestSignIn}
             proposals={proposals}
-            proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
-            isUpdatingProactiveTaskProposalsEnabled={
-              isUpdatingProactiveTaskProposalsEnabled
-            }
             proactiveTaskProposalsError={proactiveTaskProposalsError}
             isLoadingProposals={isLoadingProposals}
-            isTriggeringProposal={isTriggeringProposal}
-            proposalStatusMessage={proposalStatusMessage}
             proposalAction={proposalAction}
             hasWorkspace={hasWorkspace}
-            onRefreshProposals={onRefreshProposals}
-            onTriggerProposal={onTriggerProposal}
-            onProactiveTaskProposalsEnabledChange={
-              onProactiveTaskProposalsEnabledChange
-            }
             onAcceptProposal={onAcceptProposal}
             onDismissProposal={onDismissProposal}
           />
@@ -487,37 +476,23 @@ function InboxPanel({
   isSignedIn,
   onRequestSignIn,
   proposals,
-  proactiveTaskProposalsEnabled,
-  isUpdatingProactiveTaskProposalsEnabled,
   proactiveTaskProposalsError,
   isLoadingProposals,
-  isTriggeringProposal,
-  proposalStatusMessage,
   proposalAction,
   hasWorkspace,
-  onRefreshProposals,
-  onTriggerProposal,
-  onProactiveTaskProposalsEnabledChange,
   onAcceptProposal,
   onDismissProposal,
 }: {
   isSignedIn: boolean;
   onRequestSignIn: () => void;
   proposals: TaskProposalRecordPayload[];
-  proactiveTaskProposalsEnabled: boolean;
-  isUpdatingProactiveTaskProposalsEnabled: boolean;
   proactiveTaskProposalsError: string;
   isLoadingProposals: boolean;
-  isTriggeringProposal: boolean;
-  proposalStatusMessage: string;
   proposalAction: {
     proposalId: string;
     action: "accept" | "dismiss";
   } | null;
   hasWorkspace: boolean;
-  onRefreshProposals: () => void;
-  onTriggerProposal: () => void;
-  onProactiveTaskProposalsEnabledChange: (enabled: boolean) => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
 }) {
@@ -615,7 +590,7 @@ function InboxPanel({
                   <div className="line-clamp-2 px-3 text-sm leading-relaxed text-muted-foreground">
                     {proposal.task_prompt}
                   </div>
-                  <div className="px-3 text-xs text-muted-foreground/70">
+                  <div className="px-3 text-xs text-muted-foreground">
                     {relativeTime(proposal.created_at)}
                   </div>
                 </Card>
@@ -719,7 +694,7 @@ function RunningPanel({
                     {session.status}
                   </Badge>
                 </div>
-                <div className="mt-1 text-xs text-muted-foreground/70">
+                <div className="mt-1 text-xs text-muted-foreground">
                   {relativeTime(session.updatedAt)}
                 </div>
                 {session.lastError ? (
