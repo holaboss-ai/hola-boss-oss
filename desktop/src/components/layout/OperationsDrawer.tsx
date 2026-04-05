@@ -81,6 +81,13 @@ export function OperationsDrawer({
   selectedWorkspaceId,
   mainSessionId,
 }: OperationsDrawerProps) {
+  const { data: authSession, isPending: isAuthPending, requestAuth } =
+    useDesktopAuthSession();
+  const isSignedIn = Boolean(authSession?.user?.id);
+  const onRequestSignIn = () => {
+    void requestAuth();
+  };
+
   const [runningSessions, setRunningSessions] = useState<RunningSessionEntry[]>(
     [],
   );
@@ -174,8 +181,8 @@ export function OperationsDrawer({
 
   return (
     <aside className="theme-shell neon-border relative flex h-full min-h-0 min-w-[360px] max-w-[420px] flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
-      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-primary/15 bg-card px-4 py-3">
-        <div className="flex items-center gap-2">
+      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border/40 px-3 py-2">
+        <div className="flex items-center gap-1.5">
           <DrawerTabButton
             active={activeTab === "inbox"}
             icon={<Bell size={14} />}
@@ -189,11 +196,28 @@ export function OperationsDrawer({
             onClick={() => onTabChange("running")}
           />
         </div>
+        {activeTab === "inbox" ? (
+          <InboxHeaderActions
+            isSignedIn={isSignedIn}
+            isAuthPending={isAuthPending}
+            hasWorkspace={hasWorkspace}
+            proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
+            isUpdatingProactiveTaskProposalsEnabled={isUpdatingProactiveTaskProposalsEnabled}
+            isTriggeringProposal={isTriggeringProposal}
+            isLoadingProposals={isLoadingProposals}
+            onRequestSignIn={onRequestSignIn}
+            onTriggerProposal={onTriggerProposal}
+            onProactiveTaskProposalsEnabledChange={onProactiveTaskProposalsEnabledChange}
+            onRefreshProposals={onRefreshProposals}
+          />
+        ) : null}
       </header>
 
       <div className="min-h-0 flex-1 overflow-hidden">
         {activeTab === "inbox" ? (
           <InboxPanel
+            isSignedIn={isSignedIn}
+            onRequestSignIn={onRequestSignIn}
             proposals={proposals}
             proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
             isUpdatingProactiveTaskProposalsEnabled={
@@ -344,7 +368,123 @@ function DrawerTabButton({
   );
 }
 
+function InboxHeaderActions({
+  isSignedIn,
+  isAuthPending,
+  hasWorkspace,
+  proactiveTaskProposalsEnabled,
+  isUpdatingProactiveTaskProposalsEnabled,
+  isTriggeringProposal,
+  isLoadingProposals,
+  onRequestSignIn,
+  onTriggerProposal,
+  onProactiveTaskProposalsEnabledChange,
+  onRefreshProposals,
+}: {
+  isSignedIn: boolean;
+  isAuthPending: boolean;
+  hasWorkspace: boolean;
+  proactiveTaskProposalsEnabled: boolean;
+  isUpdatingProactiveTaskProposalsEnabled: boolean;
+  isTriggeringProposal: boolean;
+  isLoadingProposals: boolean;
+  onRequestSignIn: () => void;
+  onTriggerProposal: () => void;
+  onProactiveTaskProposalsEnabledChange: (enabled: boolean) => void;
+  onRefreshProposals: () => void;
+}) {
+  if (!isSignedIn) {
+    return (
+      <Button
+        type="button"
+        size="sm"
+        onClick={onRequestSignIn}
+        disabled={isAuthPending}
+      >
+        {isAuthPending ? (
+          <Loader2 size={12} className="animate-spin" />
+        ) : (
+          <LogIn size={12} />
+        )}
+        <span>Sign in</span>
+      </Button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <Badge
+        variant="outline"
+        className={`cursor-pointer select-none gap-1.5 transition-colors ${
+          isUpdatingProactiveTaskProposalsEnabled
+            ? "cursor-wait opacity-75"
+            : "hover:bg-muted"
+        }`}
+        onClick={() =>
+          !isUpdatingProactiveTaskProposalsEnabled &&
+          onProactiveTaskProposalsEnabledChange(!proactiveTaskProposalsEnabled)
+        }
+      >
+        {isUpdatingProactiveTaskProposalsEnabled ? (
+          <Loader2 size={8} className="animate-spin" />
+        ) : (
+          <span
+            className={`inline-block size-1.5 rounded-full ${
+              proactiveTaskProposalsEnabled ? "bg-emerald-500" : "bg-amber-500"
+            }`}
+          />
+        )}
+        <span>{proactiveTaskProposalsEnabled ? "Enabled" : "Paused"}</span>
+      </Badge>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Trigger proposal"
+              onClick={onTriggerProposal}
+              disabled={!hasWorkspace || isTriggeringProposal}
+            />
+          }
+        >
+          {isTriggeringProposal ? (
+            <Loader2 size={12} className="animate-spin" />
+          ) : (
+            <Sparkles size={12} />
+          )}
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Trigger proposal</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Refresh proposals"
+              onClick={onRefreshProposals}
+              disabled={!hasWorkspace || isLoadingProposals}
+            />
+          }
+        >
+          {isLoadingProposals ? (
+            <Loader2 size={12} className="animate-spin" />
+          ) : (
+            <RefreshCcw size={12} />
+          )}
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Refresh</TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
 function InboxPanel({
+  isSignedIn,
+  onRequestSignIn,
   proposals,
   proactiveTaskProposalsEnabled,
   isUpdatingProactiveTaskProposalsEnabled,
@@ -360,6 +500,8 @@ function InboxPanel({
   onAcceptProposal,
   onDismissProposal,
 }: {
+  isSignedIn: boolean;
+  onRequestSignIn: () => void;
   proposals: TaskProposalRecordPayload[];
   proactiveTaskProposalsEnabled: boolean;
   isUpdatingProactiveTaskProposalsEnabled: boolean;
@@ -378,136 +520,15 @@ function InboxPanel({
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
 }) {
-  const { data: session, isPending: isAuthPending, requestAuth } =
-    useDesktopAuthSession();
-  const isSignedIn = Boolean(session?.user?.id);
-  const onRequestSignIn = () => {
-    void requestAuth();
-  };
-
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-border/35 px-4 py-4">
-        <div className="grid gap-3">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="flex flex-wrap flex-1 items-center justify-end gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant={isSignedIn ? "ghost" : "default"}
-                onClick={isSignedIn ? onTriggerProposal : onRequestSignIn}
-                disabled={
-                  isSignedIn ? !hasWorkspace || isTriggeringProposal : isAuthPending
-                }
-                className={
-                  isSignedIn
-                  ? "rounded-2xl bg-primary/10 text-primary hover:bg-primary/14 hover:text-primary"
-                  : "rounded-2xl"
-                }
-              >
-                {isSignedIn && isTriggeringProposal ? (
-                  <Loader2 size={12} className="animate-spin" />
-                ) : !isSignedIn && isAuthPending ? (
-                  <Loader2 size={12} className="animate-spin" />
-                ) : !isSignedIn ? (
-                  <LogIn size={12} />
-                ) : (
-                  <Sparkles size={12} />
-                )}
-                <span>{isSignedIn ? "Trigger" : "Sign in"}</span>
-              </Button>
-              {isSignedIn ? (
-                <>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    aria-label="Toggle proactive task proposals"
-                    aria-pressed={proactiveTaskProposalsEnabled}
-                    disabled={isUpdatingProactiveTaskProposalsEnabled}
-                    onClick={() =>
-                      onProactiveTaskProposalsEnabledChange(
-                        !proactiveTaskProposalsEnabled,
-                      )
-                    }
-                    className={`rounded-full text-xs uppercase tracking-widest ${
-                      proactiveTaskProposalsEnabled
-                        ? "bg-primary/12 text-primary hover:bg-primary/16 hover:text-primary"
-                        : "bg-amber-500/12 text-amber-300 hover:bg-amber-500/16 hover:text-amber-200 dark:text-amber-200"
-                    } ${
-                    isUpdatingProactiveTaskProposalsEnabled
-                        ? "cursor-wait opacity-75"
-                        : ""
-                    }`}
-                  >
-                    {isUpdatingProactiveTaskProposalsEnabled ? (
-                      <Loader2 size={12} className="animate-spin" />
-                    ) : null}
-                    <span>
-                      {proactiveTaskProposalsEnabled ? "Enabled" : "Paused"}
-                    </span>
-                  </Button>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          type="button"
-                          size="icon-sm"
-                          variant="ghost"
-                          aria-label="Refresh proposals"
-                          onClick={onRefreshProposals}
-                          disabled={!hasWorkspace || isLoadingProposals}
-                          className="rounded-2xl bg-muted/55 text-muted-foreground hover:bg-accent hover:text-foreground"
-                        />
-                      }
-                    >
-                      {isLoadingProposals ? (
-                        <Loader2 size={14} className="animate-spin" />
-                      ) : (
-                        <RefreshCcw size={14} />
-                      )}
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      Refresh proposals
-                    </TooltipContent>
-                  </Tooltip>
-                </>
-              ) : null}
-            </div>
-          </div>
-          <div className="grid gap-2">
-            <div
-              className={`rounded-2xl px-3 py-2 text-sm ${
-                !isSignedIn
-                  ? "bg-amber-500/12 text-amber-200"
-                  : proactiveTaskProposalsEnabled
-                  ? "bg-muted/35 text-muted-foreground"
-                  : "bg-amber-500/10 text-amber-300 dark:text-amber-200"
-              }`}
-            >
-              {!isSignedIn
-                ? "Sign in to sync remote task proposals into this inbox."
-                : proactiveTaskProposalsEnabled
-                ? "Automatic proposals are enabled for this inbox."
-                : "Automatic proposals are paused. Use Refresh or Trigger manually."}
-            </div>
-
-            {proactiveTaskProposalsError ? (
-              <div className="rounded-2xl bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {proactiveTaskProposalsError}
-              </div>
-            ) : null}
-
-            {proposalStatusMessage ? (
-              <div className="theme-subtle-surface rounded-2xl px-3 py-2 text-sm text-muted-foreground">
-                {proposalStatusMessage}
-              </div>
-            ) : null}
-          </div>
+      {proactiveTaskProposalsError ? (
+        <div className="shrink-0 border-b border-destructive/20 px-3 py-2 text-xs text-destructive">
+          {proactiveTaskProposalsError}
         </div>
-      </div>
+      ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
         {!isSignedIn ? (
           <SignedOutInboxNotice onRequestSignIn={onRequestSignIn} />
         ) : !hasWorkspace ? (
