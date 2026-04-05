@@ -2,6 +2,9 @@ import archiver from "archiver";
 import { existsSync, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import { createWriteStream } from "node:fs";
+import { request as httpsRequest } from "node:https";
+import { request as httpRequest } from "node:http";
+import type { IncomingMessage } from "node:http";
 import path from "node:path";
 import { Writable } from "node:stream";
 
@@ -377,6 +380,8 @@ export async function uploadToPresignedUrl(
     controller.abort(new Error(`Upload timed out after ${timeoutMs}ms`));
   }, timeoutMs);
 
+  const requester = url.startsWith("https") ? httpsRequest : httpRequest;
+
   await new Promise<void>((resolve, reject) => {
     const req = requester(
       url,
@@ -388,7 +393,7 @@ export async function uploadToPresignedUrl(
         },
         timeout: timeoutMs,
       },
-      (res) => {
+      (res: IncomingMessage) => {
         // Drain response body
         res.resume();
         res.on("end", () => {
