@@ -532,13 +532,21 @@ function InboxPanel({
         {!isSignedIn ? (
           <SignedOutInboxNotice onRequestSignIn={onRequestSignIn} />
         ) : !hasWorkspace ? (
-          <EmptyNotice message="Select a workspace to review incoming task proposals." />
+          <EmptyNotice
+            icon={<FolderOpen size={24} strokeWidth={1.5} />}
+            message="Select a workspace to review proposals."
+          />
         ) : proposals.length === 0 ? (
           <EmptyNotice
+            icon={
+              isLoadingProposals ? (
+                <Loader2 size={24} strokeWidth={1.5} className="animate-spin" />
+              ) : (
+                <InboxIcon size={24} strokeWidth={1.5} />
+              )
+            }
             message={
-              isLoadingProposals
-                ? "Loading task proposals..."
-                : "No unreviewed proposals for this workspace yet."
+              isLoadingProposals ? "Loading proposals..." : "No proposals yet."
             }
           />
         ) : (
@@ -677,13 +685,25 @@ function RunningPanel({
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {!hasWorkspace ? (
-          <CenteredNotice message="Choose a workspace to inspect runtime sessions." />
+          <EmptyNotice
+            icon={<FolderOpen size={24} strokeWidth={1.5} />}
+            message="Choose a workspace to inspect sessions."
+          />
         ) : errorMessage ? (
-          <CenteredNotice message={errorMessage} tone="error" />
+          <EmptyNotice
+            icon={<X size={24} strokeWidth={1.5} className="text-destructive" />}
+            message={errorMessage}
+          />
         ) : isLoading && sessions.length === 0 ? (
-          <CenteredNotice message="Loading runtime sessions..." />
+          <EmptyNotice
+            icon={<Loader2 size={24} strokeWidth={1.5} className="animate-spin" />}
+            message="Loading sessions..."
+          />
         ) : sessions.length === 0 ? (
-          <CenteredNotice message="No runtime sessions right now." />
+          <EmptyNotice
+            icon={<Clock size={24} strokeWidth={1.5} />}
+            message="No background sessions."
+          />
         ) : (
           <div className="grid gap-3">
             {sessions.map((session) => (
@@ -732,32 +752,17 @@ function RunningPanel({
   );
 }
 
-function CenteredNotice({
+function EmptyNotice({
+  icon,
   message,
-  tone = "default",
 }: {
+  icon: ReactNode;
   message: string;
-  tone?: "default" | "error";
 }) {
   return (
-    <div className="flex items-center justify-center p-6">
-      <div
-        className={`theme-subtle-surface max-w-[280px] rounded-[20px] border px-5 py-5 text-center ${
-          tone === "error"
-            ? "border-destructive/25 text-destructive"
-            : "border-border/35"
-        }`}
-      >
-        <div className="text-sm leading-6">{message}</div>
-      </div>
-    </div>
-  );
-}
-
-function EmptyNotice({ message }: { message: string }) {
-  return (
-    <div className="theme-subtle-surface rounded-[22px] border border-border/35 px-4 py-5 text-sm leading-6 text-muted-foreground/78">
-      {message}
+    <div className="flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground">
+      {icon}
+      <span className="text-sm">{message}</span>
     </div>
   );
 }
