@@ -324,18 +324,19 @@ function compareRunningSessionEntries(
   return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
 }
 
-function runningStatusClasses(status: string): string {
+function runningStatusBadgeVariant(
+  status: string,
+): "default" | "secondary" | "destructive" | "outline" {
   switch (status) {
     case "BUSY":
-      return "border-primary/45 bg-primary/10 text-primary";
     case "QUEUED":
-      return "border-primary/35 bg-primary/8 text-primary";
+      return "default";
     case "WAITING_USER":
-      return "border-border/45 bg-muted text-foreground/82";
+      return "secondary";
     case "ERROR":
-      return "border-destructive/35 bg-destructive/10 text-destructive";
+      return "destructive";
     default:
-      return "border-border/45 bg-muted text-muted-foreground";
+      return "outline";
   }
 }
 
@@ -672,17 +673,6 @@ function RunningPanel({
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-border/35 px-4 py-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="text-xs uppercase tracking-widest text-primary/76">
-            Running
-          </div>
-          <div className="rounded-full bg-muted/55 px-3 py-1 text-xs text-muted-foreground">
-            Idle and cronjob sessions
-          </div>
-        </div>
-      </div>
-
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {!hasWorkspace ? (
           <EmptyNotice
@@ -705,41 +695,35 @@ function RunningPanel({
             message="No background sessions."
           />
         ) : (
-          <div className="grid gap-3">
+          <div className="divide-y divide-border/30">
             {sessions.map((session) => (
               <button
                 key={session.sessionId}
                 type="button"
                 onClick={() => onOpenSession(session.sessionId)}
                 aria-label={`Open session ${session.title}`}
-                className={`theme-subtle-surface w-full rounded-[18px] border px-4 py-4 text-left transition ${
+                className={`w-full px-3 py-3 text-left transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/50 ${
                   activeSessionId === session.sessionId
-                    ? "border-primary/45"
-                    : "border-border/35 hover:border-primary/30"
+                    ? "border-l-2 border-l-primary bg-muted/30"
+                    : ""
                 }`}
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium text-foreground">
-                      {session.title}
-                    </div>
-                    <div className="mt-1 text-xs uppercase tracking-widest text-muted-foreground/76">
-                      {session.kind.replace(/_/g, " ")}
-                    </div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                    {session.title}
                   </div>
-                  <div
-                    className={`shrink-0 rounded-full border px-2 py-1 text-xs uppercase tracking-widest ${runningStatusClasses(session.status)}`}
+                  <Badge
+                    variant={runningStatusBadgeVariant(session.status)}
+                    className="shrink-0 text-[10px] uppercase"
                   >
                     {session.status}
-                  </div>
+                  </Badge>
                 </div>
-
-                <div className="mt-3 text-xs text-muted-foreground/82">
-                  Updated {relativeTime(session.updatedAt)}
+                <div className="mt-1 text-xs text-muted-foreground/70">
+                  {relativeTime(session.updatedAt)}
                 </div>
-
                 {session.lastError ? (
-                  <div className="mt-3 rounded-[14px] border border-destructive/25 bg-destructive/8 px-3 py-2 text-xs leading-5 text-destructive">
+                  <div className="mt-1.5 truncate text-xs text-destructive">
                     {session.lastError}
                   </div>
                 ) : null}
