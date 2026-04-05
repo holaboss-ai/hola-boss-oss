@@ -2,7 +2,6 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   Bell,
   Check,
-  ChevronRight,
   Clock3,
   Loader2,
   LogIn,
@@ -11,10 +10,6 @@ import {
   X,
 } from "lucide-react";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
-import {
-  getWorkspaceAppDefinition,
-  type WorkspaceInstalledAppDefinition,
-} from "@/lib/workspaceApps";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -22,34 +17,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
-export type OperationsDrawerTab = "inbox" | "running" | "outputs";
-
-export type OperationsOutputRenderer =
-  | {
-      type: "app";
-      appId: string;
-      resourceId?: string | null;
-      view?: string | null;
-    }
-  | {
-      type: "internal";
-      surface: "document" | "preview" | "file" | "event";
-      resourceId?: string | null;
-      htmlContent?: string | null;
-    };
-
-export interface OperationsOutputEntry {
-  id: string;
-  title: string;
-  detail: string;
-  createdAt: string;
-  tone: "info" | "success" | "error";
-  sessionId?: string | null;
-  contactKey?: string | null;
-  contactRowRef?: string | null;
-  primaryEmail?: string | null;
-  renderer: OperationsOutputRenderer;
-}
+export type OperationsDrawerTab = "inbox" | "running";
 
 interface OperationsDrawerProps {
   activeTab: OperationsDrawerTab;
@@ -65,9 +33,6 @@ interface OperationsDrawerProps {
     proposalId: string;
     action: "accept" | "dismiss";
   } | null;
-  outputs: OperationsOutputEntry[];
-  installedApps: WorkspaceInstalledAppDefinition[];
-  onOpenOutput: (entry: OperationsOutputEntry) => void;
   onRefreshProposals: () => void;
   onTriggerProposal: () => void;
   onProactiveTaskProposalsEnabledChange: (enabled: boolean) => void;
@@ -100,9 +65,6 @@ export function OperationsDrawer({
   isTriggeringProposal,
   proposalStatusMessage,
   proposalAction,
-  outputs,
-  installedApps,
-  onOpenOutput,
   onRefreshProposals,
   onTriggerProposal,
   onProactiveTaskProposalsEnabledChange,
@@ -221,12 +183,6 @@ export function OperationsDrawer({
             label="Running"
             onClick={() => onTabChange("running")}
           />
-          <DrawerTabButton
-            active={activeTab === "outputs"}
-            icon={<ChevronRight size={14} />}
-            label="Outputs"
-            onClick={() => onTabChange("outputs")}
-          />
         </div>
       </header>
 
@@ -262,14 +218,6 @@ export function OperationsDrawer({
             errorMessage={runningSessionsError}
             onOpenSession={onOpenRunningSession}
             activeSessionId={activeRunningSessionId}
-          />
-        ) : null}
-
-        {activeTab === "outputs" ? (
-          <OutputsPanel
-            outputs={outputs}
-            installedApps={installedApps}
-            onOpenOutput={onOpenOutput}
           />
         ) : null}
       </div>
@@ -746,155 +694,6 @@ function RunningPanel({
   );
 }
 
-function OutputsPanel({
-  outputs,
-  installedApps,
-  onOpenOutput,
-}: {
-  outputs: OperationsOutputEntry[];
-  installedApps: WorkspaceInstalledAppDefinition[];
-  onOpenOutput: (entry: OperationsOutputEntry) => void;
-}) {
-  return (
-    <div className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]">
-      <div className="shrink-0 border-b border-border/35 px-4 py-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="text-xs uppercase tracking-widest text-primary/76">
-            Outputs
-          </div>
-          <div className="rounded-full bg-muted/55 px-3 py-1 text-xs text-muted-foreground">
-            Recent events
-          </div>
-        </div>
-      </div>
-
-      {outputs.length === 0 ? (
-        <div className="flex items-center justify-center p-6">
-          <EmptyNotice message="No output events yet." />
-        </div>
-      ) : (
-        <div className="min-h-0 overflow-y-auto p-4">
-          <div className="grid gap-3">
-            {outputs.map((entry) => {
-              const relatedOutputs = findRelatedOutputs(entry, outputs);
-              const relatedCrmRecord = preferredRelatedCrmRecord(relatedOutputs);
-
-              return (
-                <article
-                  key={entry.id}
-                  className={`rounded-[20px] border px-4 py-3 shadow-sm ${outputToneClasses(entry.tone, false)}`}
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="text-xs uppercase tracking-widest text-muted-foreground/75">
-                      {entry.renderer.type === "app"
-                        ? "Workspace app output"
-                        : "Internal output"}
-                    </div>
-                    {entry.contactKey ? (
-                      <div className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                        CRM-linked
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="mt-1 text-sm font-medium text-foreground">
-                    {entry.title}
-                  </div>
-                  <div className="mt-2 whitespace-pre-wrap text-sm leading-5 text-foreground/86">
-                    {entry.detail}
-                  </div>
-                  {entry.contactKey ? (
-                    <div className="mt-3 space-y-2 rounded-[16px] border border-border/35 bg-background px-3 py-3">
-                      <div className="text-xs text-muted-foreground">
-                        {entry.primaryEmail || entry.contactKey}
-                      </div>
-                      {relatedOutputs.length > 0 ? (
-                        <div className="flex flex-wrap gap-2">
-                          {relatedOutputs.slice(0, 2).map((relatedOutput) => (
-                            <button
-                              key={relatedOutput.id}
-                              type="button"
-                              onClick={() => onOpenOutput(relatedOutput)}
-                              className="rounded-2xl border border-border/45 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                            >
-                              {relatedOutput.renderer.type === "app"
-                                ? openOutputLabel(relatedOutput, installedApps)
-                                : relatedOutput.title}
-                            </button>
-                          ))}
-                          {relatedCrmRecord ? (
-                            <button
-                              type="button"
-                              onClick={() => onOpenOutput(relatedCrmRecord)}
-                              className="rounded-2xl border border-primary/30 bg-primary/10 px-3 py-1.5 text-xs text-primary transition-colors hover:bg-primary/14"
-                            >
-                              Open related CRM record
-                            </button>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-xs text-muted-foreground/78">
-                      {formatTimestamp(entry.createdAt)}
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => onOpenOutput(entry)}
-                      className="rounded-2xl bg-primary/10 text-primary hover:bg-primary/14 hover:text-primary"
-                    >
-                      <ChevronRight size={12} />
-                      <span>{openOutputLabel(entry, installedApps)}</span>
-                    </Button>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function normalizeContactKey(value: string | null | undefined): string {
-  return (value || "").trim().toLowerCase();
-}
-
-function findRelatedOutputs(
-  entry: OperationsOutputEntry,
-  outputs: OperationsOutputEntry[],
-): OperationsOutputEntry[] {
-  const contactKey = normalizeContactKey(entry.contactKey);
-  if (!contactKey) {
-    return [];
-  }
-
-  return outputs.filter((candidate) => {
-    if (candidate.id === entry.id) {
-      return false;
-    }
-    return normalizeContactKey(candidate.contactKey) === contactKey;
-  });
-}
-
-function preferredRelatedCrmRecord(
-  relatedOutputs: OperationsOutputEntry[],
-): OperationsOutputEntry | null {
-  for (const relatedOutput of relatedOutputs) {
-    if (
-      relatedOutput.renderer.type === "app" &&
-      relatedOutput.renderer.appId === "sheets"
-    ) {
-      return relatedOutput;
-    }
-  }
-
-  return relatedOutputs[0] ?? null;
-}
-
 function CenteredNotice({
   message,
   tone = "default",
@@ -917,27 +716,6 @@ function CenteredNotice({
   );
 }
 
-function openOutputLabel(
-  entry: OperationsOutputEntry,
-  installedApps: WorkspaceInstalledAppDefinition[],
-): string {
-  if (entry.renderer.type === "app") {
-    const app = getWorkspaceAppDefinition(entry.renderer.appId, installedApps);
-    return `Open in ${app?.label ?? entry.renderer.appId}`;
-  }
-
-  if (entry.renderer.surface === "document") {
-    return "Open document";
-  }
-  if (entry.renderer.surface === "preview") {
-    return "Open preview";
-  }
-  if (entry.renderer.surface === "file") {
-    return "Open file view";
-  }
-  return "Open detail";
-}
-
 function EmptyNotice({ message }: { message: string }) {
   return (
     <div className="theme-subtle-surface rounded-[22px] border border-border/35 px-4 py-5 text-sm leading-6 text-muted-foreground/78">
@@ -952,23 +730,4 @@ function formatTimestamp(value: string): string {
     return value;
   }
   return new Date(timestamp).toLocaleString();
-}
-
-function outputToneClasses(
-  tone: OperationsOutputEntry["tone"],
-  compact: boolean,
-): string {
-  if (tone === "success") {
-    return compact
-      ? "border-primary/40 bg-primary/10 text-primary"
-      : "border-primary/30 bg-primary/10";
-  }
-  if (tone === "error") {
-    return compact
-      ? "border-[rgba(255,153,102,0.28)] bg-[rgba(255,153,102,0.08)] text-[rgba(255,212,189,0.96)]"
-      : "border-[rgba(255,153,102,0.24)] bg-[rgba(255,153,102,0.08)]";
-  }
-  return compact
-    ? "border-border/45 bg-muted text-foreground/88"
-    : "border-border/35 bg-muted";
 }

@@ -1054,7 +1054,6 @@ interface ChatPaneSessionOpenRequest {
 }
 
 interface ChatPaneProps {
-  onOutputsChanged?: () => void;
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
   focusRequestKey?: number;
   variant?: ChatPaneVariant;
@@ -1066,7 +1065,6 @@ interface ChatPaneProps {
 }
 
 export function ChatPane({
-  onOutputsChanged,
   onOpenOutput,
   focusRequestKey = 0,
   variant = "default",
@@ -2436,7 +2434,6 @@ export function ChatPane({
           });
           scheduleConversationRefresh(eventSessionId, selectedWorkspaceId);
           void refreshWorkspaceData().catch(() => undefined);
-          onOutputsChanged?.();
         }
       },
     );
@@ -2444,7 +2441,7 @@ export function ChatPane({
     return () => {
       unsubscribe();
     };
-  }, [onOutputsChanged, refreshWorkspaceData, selectedWorkspaceId]);
+  }, [refreshWorkspaceData, selectedWorkspaceId]);
 
   useEffect(() => {
     if (!isResponding || !selectedWorkspaceId || !activeSessionId) {

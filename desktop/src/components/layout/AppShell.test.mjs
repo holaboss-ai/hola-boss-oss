@@ -9,7 +9,11 @@ test("app shell routes file outputs into the file explorer while keeping chat ac
 
   assert.match(
     source,
-    /if \(\s*\(entry\.renderer\.surface === "document" \|\|\s*entry\.renderer\.surface === "file"\) &&\s*entry\.renderer\.resourceId\?\.trim\(\)\s*\) \{/
+    /const target = workspaceOutputNavigationTarget\(output, installedAppIds\);/
+  );
+  assert.match(
+    source,
+    /if \(\s*\(target\.surface === "document" \|\|\s*target\.surface === "file"\) &&\s*target\.resourceId\?\.trim\(\)\s*\) \{/
   );
   assert.match(
     source,
@@ -18,7 +22,7 @@ test("app shell routes file outputs into the file explorer while keeping chat ac
   assert.match(source, /setAgentView\(\{ type: "chat" \}\);/);
   assert.match(
     source,
-    /setFileExplorerFocusRequest\(\{\s*path: entry\.renderer\.resourceId,\s*requestKey: Date\.now\(\),\s*\}\);/
+    /setFileExplorerFocusRequest\(\{\s*path: target\.resourceId,\s*requestKey: Date\.now\(\),\s*\}\);/
   );
 });
 
@@ -30,4 +34,10 @@ test("app shell clears a consumed file explorer focus request", async () => {
     source,
     /onFocusRequestConsumed=\{\(requestKey\) => \{\s*setFileExplorerFocusRequest\(\(current\) =>\s*current\?\.requestKey === requestKey \? null : current,\s*\);\s*\}\}/
   );
+});
+
+test("app shell removes the outputs quick action", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.doesNotMatch(source, /aria-label="Open outputs panel"/);
 });
