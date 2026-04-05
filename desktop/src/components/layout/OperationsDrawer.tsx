@@ -81,8 +81,11 @@ export function OperationsDrawer({
   selectedWorkspaceId,
   mainSessionId,
 }: OperationsDrawerProps) {
-  const { data: authSession, isPending: isAuthPending, requestAuth } =
-    useDesktopAuthSession();
+  const {
+    data: authSession,
+    isPending: isAuthPending,
+    requestAuth,
+  } = useDesktopAuthSession();
   const isSignedIn = Boolean(authSession?.user?.id);
   const onRequestSignIn = () => {
     void requestAuth();
@@ -133,9 +136,7 @@ export function OperationsDrawer({
             ) {
               return false;
             }
-            const sessionKind = (
-              sessionById.get(state.session_id)?.kind || ""
-            )
+            const sessionKind = (sessionById.get(state.session_id)?.kind || "")
               .trim()
               .toLowerCase();
             return sessionKind !== "main";
@@ -202,12 +203,16 @@ export function OperationsDrawer({
             isAuthPending={isAuthPending}
             hasWorkspace={hasWorkspace}
             proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
-            isUpdatingProactiveTaskProposalsEnabled={isUpdatingProactiveTaskProposalsEnabled}
+            isUpdatingProactiveTaskProposalsEnabled={
+              isUpdatingProactiveTaskProposalsEnabled
+            }
             isTriggeringProposal={isTriggeringProposal}
             isLoadingProposals={isLoadingProposals}
             onRequestSignIn={onRequestSignIn}
             onTriggerProposal={onTriggerProposal}
-            onProactiveTaskProposalsEnabledChange={onProactiveTaskProposalsEnabledChange}
+            onProactiveTaskProposalsEnabledChange={
+              onProactiveTaskProposalsEnabledChange
+            }
             onRefreshProposals={onRefreshProposals}
           />
         ) : null}
@@ -587,7 +592,7 @@ function InboxPanel({
                       </Tooltip>
                     </div>
                   </div>
-                  <div className="line-clamp-2 px-3 text-sm leading-relaxed text-muted-foreground">
+                  <div className="line-clamp-2 px-3 text-xs leading-relaxed text-muted-foreground">
                     {proposal.task_prompt}
                   </div>
                   <div className="px-3 text-xs text-muted-foreground">
@@ -656,12 +661,16 @@ function RunningPanel({
           />
         ) : errorMessage ? (
           <EmptyNotice
-            icon={<X size={24} strokeWidth={1.5} className="text-destructive" />}
+            icon={
+              <X size={24} strokeWidth={1.5} className="text-destructive" />
+            }
             message={errorMessage}
           />
         ) : isLoading && sessions.length === 0 ? (
           <EmptyNotice
-            icon={<Loader2 size={24} strokeWidth={1.5} className="animate-spin" />}
+            icon={
+              <Loader2 size={24} strokeWidth={1.5} className="animate-spin" />
+            }
             message="Loading sessions..."
           />
         ) : sessions.length === 0 ? (
@@ -711,13 +720,7 @@ function RunningPanel({
   );
 }
 
-function EmptyNotice({
-  icon,
-  message,
-}: {
-  icon: ReactNode;
-  message: string;
-}) {
+function EmptyNotice({ icon, message }: { icon: ReactNode; message: string }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground">
       {icon}
