@@ -282,7 +282,14 @@ function spaceResizeHandleSpec(
 }
 
 function normalizeErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Request failed.";
+  if (!(error instanceof Error)) {
+    return "Request failed.";
+  }
+  // Strip Electron IPC wrapper: "Error invoking remote method '...': Error: <actual>"
+  const ipcMatch = error.message.match(
+    /^Error invoking remote method '[^']+': Error: (.+)$/s,
+  );
+  return ipcMatch ? ipcMatch[1] : error.message;
 }
 
 function inferInternalSurfaceFromOutputType(
