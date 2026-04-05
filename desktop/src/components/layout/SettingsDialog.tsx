@@ -64,7 +64,7 @@ const ABOUT_LINKS = [
     id: "home",
     label: "Homepage",
     icon: Globe,
-    href: "https://holaboss.ai",
+    href: "https://www.holaboss.ai",
   },
   {
     id: "docs",
