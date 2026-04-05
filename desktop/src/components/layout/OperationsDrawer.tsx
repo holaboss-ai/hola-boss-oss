@@ -542,62 +542,74 @@ function InboxPanel({
             }
           />
         ) : (
-          <div className="grid gap-3">
+          <div className="grid gap-2">
             {proposals.map((proposal) => {
               const isActing =
                 proposalAction?.proposalId === proposal.proposal_id;
               return (
-                <article
+                <Card
                   key={proposal.proposal_id}
-                  className="theme-subtle-surface rounded-[22px] border border-border/35 px-4 py-4 shadow-sm"
+                  size="sm"
+                  className="gap-2 py-3 ring-border/40"
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium text-foreground">
-                        {proposal.task_name}
-                      </div>
-                      <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
-                        {proposal.task_prompt}
-                      </div>
+                  <div className="flex items-start justify-between gap-2 px-3">
+                    <div className="min-w-0 flex-1 text-sm font-medium text-foreground">
+                      {proposal.task_name}
                     </div>
-                    <div className="shrink-0 rounded-full border border-border/45 px-2.5 py-1 text-xs uppercase tracking-widest text-muted-foreground">
-                      {proposal.state}
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              type="button"
+                              size="icon-xs"
+                              variant="ghost"
+                              aria-label="Accept proposal"
+                              onClick={() => onAcceptProposal(proposal)}
+                              disabled={isActing}
+                              className="text-muted-foreground hover:text-primary"
+                            />
+                          }
+                        >
+                          {isActing && proposalAction?.action === "accept" ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <Check size={12} />
+                          )}
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom">Accept</TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              type="button"
+                              size="icon-xs"
+                              variant="ghost"
+                              aria-label="Dismiss proposal"
+                              onClick={() => onDismissProposal(proposal)}
+                              disabled={isActing}
+                              className="text-muted-foreground hover:text-foreground"
+                            />
+                          }
+                        >
+                          {isActing && proposalAction?.action === "dismiss" ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <X size={12} />
+                          )}
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom">Dismiss</TooltipContent>
+                      </Tooltip>
                     </div>
                   </div>
-
-                  <div className="mt-3 text-xs text-muted-foreground/78">
+                  <div className="line-clamp-2 px-3 text-sm leading-relaxed text-muted-foreground">
+                    {proposal.task_prompt}
+                  </div>
+                  <div className="px-3 text-xs text-muted-foreground/70">
                     {relativeTime(proposal.created_at)}
                   </div>
-
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => onAcceptProposal(proposal)}
-                      disabled={isActing}
-                      className="inline-flex h-9 items-center justify-center gap-2 rounded-2xl border border-primary/40 bg-primary/10 px-3 text-sm text-primary transition hover:bg-primary/14 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {isActing && proposalAction?.action === "accept" ? (
-                        <Loader2 size={12} className="animate-spin" />
-                      ) : (
-                        <Check size={12} />
-                      )}
-                      <span>Accept</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onDismissProposal(proposal)}
-                      disabled={isActing}
-                      className="inline-flex h-9 items-center justify-center gap-2 rounded-2xl border border-border/45 px-3 text-sm text-muted-foreground transition hover:border-primary/28 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {isActing && proposalAction?.action === "dismiss" ? (
-                        <Loader2 size={12} className="animate-spin" />
-                      ) : (
-                        <X size={12} />
-                      )}
-                      <span>Dismiss</span>
-                    </button>
-                  </div>
-                </article>
+                </Card>
               );
             })}
           </div>
