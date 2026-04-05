@@ -5963,12 +5963,24 @@ async function enqueueRemoteDemoTaskProposal(
   await ensureRuntimeBindingReadyForWorkspaceFlow("remote_demo_task_proposal", {
     forceRefresh: true,
   });
-  return requestControlPlaneJson<DemoTaskProposalEnqueueResponsePayload>({
-    service: "proactive",
-    method: "POST",
-    path: "/api/v1/proactive/bridge/demo/task-proposal",
-    payload,
-  });
+  try {
+    return await requestControlPlaneJson<DemoTaskProposalEnqueueResponsePayload>(
+      {
+        service: "proactive",
+        method: "POST",
+        path: "/api/v1/proactive/bridge/demo/task-proposal",
+        payload,
+      },
+    );
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes("Service not found") || msg.includes("fetch failed")) {
+      throw new Error(
+        "Proactive service is not reachable. Check your network or backend configuration.",
+      );
+    }
+    throw error;
+  }
 }
 
 async function proactivePreferenceScopeFromRuntimeConfig(): Promise<{
@@ -6011,20 +6023,33 @@ async function setProactiveTaskProposalPreference(
   payload: ProactiveTaskProposalPreferenceUpdatePayload,
 ): Promise<ProactiveTaskProposalPreferencePayload> {
   const scope = await proactivePreferenceScopeFromRuntimeConfig();
-  const response =
-    await requestControlPlaneJson<ProactiveTaskProposalPreferencePayload>({
-      service: "proactive",
-      method: "POST",
-      path: "/api/v1/proactive/preferences/task-proposals",
-      payload: {
+  try {
+    const response =
+      await requestControlPlaneJson<ProactiveTaskProposalPreferencePayload>({
+        service: "proactive",
+        method: "POST",
+        path: "/api/v1/proactive/preferences/task-proposals",
+        payload: {
+          enabled: payload.enabled !== false,
+          holaboss_user_id:
+            payload.holaboss_user_id?.trim() || scope.holabossUserId,
+          sandbox_id: payload.sandbox_id?.trim() || scope.sandboxId,
+        },
+      });
+    assertProactivePreferenceScopedToInstance(response, scope);
+    return response;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes("Service not found") || msg.includes("fetch failed")) {
+      console.warn("[proactive] preference update unavailable:", msg);
+      return {
         enabled: payload.enabled !== false,
-        holaboss_user_id:
-          payload.holaboss_user_id?.trim() || scope.holabossUserId,
-        sandbox_id: payload.sandbox_id?.trim() || scope.sandboxId,
-      },
-    });
-  assertProactivePreferenceScopedToInstance(response, scope);
-  return response;
+        holaboss_user_id: scope.holabossUserId,
+        sandbox_id: scope.sandboxId,
+      };
+    }
+    throw error;
+  }
 }
 
 async function getProactiveTaskProposalPreference(): Promise<ProactiveTaskProposalPreferencePayload> {
@@ -6044,8 +6069,15 @@ async function getProactiveTaskProposalPreference(): Promise<ProactiveTaskPropos
     return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (!message.includes("Proactive auth is missing")) {
+    const isExpectedUnavailable =
+      message.includes("Proactive auth is missing") ||
+      message.includes("Service not found") ||
+      message.includes("fetch failed");
+    if (!isExpectedUnavailable) {
       throw error;
+    }
+    if (message.includes("Service not found") || message.includes("fetch failed")) {
+      console.warn("[proactive] preference fetch unavailable:", message);
     }
     const runtimeConfig = await readRuntimeConfigFile();
     const holabossUserId =
