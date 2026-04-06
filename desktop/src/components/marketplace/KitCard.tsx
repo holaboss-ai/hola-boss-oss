@@ -9,7 +9,7 @@ interface KitCardProps {
 
 export function KitCard({ template, onClick, selected = false }: KitCardProps) {
   const isComingSoon = template.is_coming_soon;
-  const displayName = template.name.replaceAll("_", " ");
+  const displayName = template.display_name ?? template.name.replaceAll("_", " ");
 
   return (
     <button

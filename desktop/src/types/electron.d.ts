@@ -235,6 +235,7 @@ declare global {
     long_description: string | null;
     agents: TemplateAgentInfoPayload[];
     views: TemplateViewInfoPayload[];
+    display_name?: string | null;
     install_count?: number;
     source?: string;
     verified?: boolean;
@@ -313,9 +314,9 @@ declare global {
     proposal_count: number;
     heartbeat: ProactiveStatusSnapshotPayload;
     bridge: ProactiveStatusSnapshotPayload;
-    delivery_state: string;
-    delivery_summary: string;
-    delivery_detail: string | null;
+    lifecycle_state: string;
+    lifecycle_summary: string;
+    lifecycle_detail: string | null;
   }
 
   interface RemoteTaskProposalGenerationRequestPayload {

@@ -14,6 +14,7 @@ function emojiUrl(name: string): string {
 export const FALLBACK_TEMPLATES: TemplateMetadataPayload[] = [
   {
     name: "social_operator",
+    display_name: "Social Operator",
     repo: "",
     path: "",
     default_ref: "main",
@@ -28,7 +29,7 @@ export const FALLBACK_TEMPLATES: TemplateMetadataPayload[] = [
     tags: ["social media", "automation", "content"],
     category: "marketing",
     long_description:
-      "A complete social media operations worker. Creates content, schedules posts across platforms, and tracks engagement — you set the direction and review results.",
+      "A complete social media operations template. Creates content, schedules posts across platforms, and tracks engagement — you set the direction and review results.",
     agents: [],
     views: [
       { name: "Content Calendar", description: "Timeline of all scheduled content" },
@@ -38,6 +39,7 @@ export const FALLBACK_TEMPLATES: TemplateMetadataPayload[] = [
   },
   {
     name: "inbox_worker",
+    display_name: "Inbox",
     repo: "",
     path: "",
     default_ref: "main",
@@ -52,7 +54,7 @@ export const FALLBACK_TEMPLATES: TemplateMetadataPayload[] = [
     tags: ["gmail", "email", "mcp"],
     category: "productivity",
     long_description:
-      "A Gmail-first workspace worker with AI-powered inbox management. Searches threads, reads conversations, and creates email drafts — you just review and send.",
+      "A Gmail-first workspace template with AI-powered inbox management. Searches threads, reads conversations, and creates email drafts — you just review and send.",
     agents: [],
     views: [
       { name: "Inbox", description: "Search and inspect Gmail threads" },
@@ -61,6 +63,7 @@ export const FALLBACK_TEMPLATES: TemplateMetadataPayload[] = [
   },
   {
     name: "devrel_worker",
+    display_name: "DevRel",
     repo: "",
     path: "",
     default_ref: "main",
@@ -84,6 +87,7 @@ export const FALLBACK_TEMPLATES: TemplateMetadataPayload[] = [
   },
   {
     name: "starter",
+    display_name: "Starter",
     repo: "",
     path: "",
     default_ref: "main",
@@ -103,6 +107,7 @@ export const FALLBACK_TEMPLATES: TemplateMetadataPayload[] = [
   },
   {
     name: "sales_worker",
+    display_name: "Sales CRM",
     repo: "",
     path: "",
     default_ref: "main",
@@ -116,7 +121,7 @@ export const FALLBACK_TEMPLATES: TemplateMetadataPayload[] = [
     tags: ["crm", "email", "contacts"],
     category: "productivity",
     long_description:
-      "A lightweight CRM worker that uses Google Sheets as your contact database and Gmail for email conversations. Syncs contacts, reads email threads for context, drafts personalized follow-ups, and tracks your pipeline — all through natural conversation.",
+      "A lightweight CRM template that uses Google Sheets as your contact database and Gmail for email conversations. Syncs contacts, reads email threads for context, drafts personalized follow-ups, and tracks your pipeline — all through natural conversation.",
     agents: [],
     views: [
       { name: "Contacts", description: "Contact list with pipeline stages" },

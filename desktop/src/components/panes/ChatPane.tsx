@@ -153,7 +153,6 @@ const CHAT_MODEL_PRESETS = [
   "openai/gpt-5.1",
   "openai/gpt-5",
   "openai/gpt-5.2",
-  "claude-sonnet-4-5",
 ] as const;
 
 function sessionUserId(
@@ -175,6 +174,13 @@ function isHolabossProxyModel(model: string) {
   );
 }
 
+function isClaudeChatModel(model: string) {
+  const normalized = model.trim().toLowerCase();
+  return /^((openai|anthropic|holaboss|holaboss_model_proxy)\/)*claude-/.test(
+    normalized,
+  );
+}
+
 function isHolabossProviderId(providerId: string) {
   const normalized = providerId.trim().toLowerCase();
   return (
@@ -182,6 +188,10 @@ function isHolabossProviderId(providerId: string) {
     normalized === "holaboss" ||
     normalized.includes("holaboss")
   );
+}
+
+function isUnsupportedHolabossProxyModel(providerId: string, model: string) {
+  return isHolabossProviderId(providerId) && isClaudeChatModel(model);
 }
 
 function isDeprecatedChatModel(model: string) {
@@ -569,6 +579,33 @@ function summarizeUnknown(value: unknown, maxLength = 140): string {
   return String(value);
 }
 
+function runFailedContextLabel(payload: Record<string, unknown>): string {
+  const provider =
+    typeof payload.provider === "string" ? payload.provider.trim() : "";
+  const model = typeof payload.model === "string" ? payload.model.trim() : "";
+  if (provider && model) {
+    return `${provider}/${model}`;
+  }
+  return provider || model;
+}
+
+function runFailedDetail(payload: Record<string, unknown>): string {
+  const detail =
+    typeof payload.error === "string"
+      ? payload.error.trim()
+      : typeof payload.message === "string"
+        ? payload.message.trim()
+        : "";
+  const contextLabel = runFailedContextLabel(payload);
+  if (!contextLabel) {
+    return detail || "The run failed.";
+  }
+  if (!detail) {
+    return `${contextLabel} failed.`;
+  }
+  return detail.startsWith(contextLabel) ? detail : `${contextLabel}: ${detail}`;
+}
+
 function assistantMetaLabel(
   harness: string | null | undefined,
   model: string | null | undefined,
@@ -935,12 +972,7 @@ function phaseTraceStepFromEvent(
   }
 
   if (eventType === "run_failed") {
-    const errorText =
-      typeof payload.error === "string"
-        ? payload.error
-        : typeof payload.message === "string"
-          ? payload.message
-          : "";
+    const errorText = runFailedDetail(payload);
     if (errorText) {
       details.push(`Error: ${summarizeUnknown(errorText, 120)}`);
     }
@@ -2413,12 +2445,7 @@ export function ChatPane({
         }
 
         if (eventType === "run_failed") {
-          const detail =
-            typeof eventPayload.error === "string"
-              ? eventPayload.error
-              : typeof eventPayload.message === "string"
-                ? eventPayload.message
-                : "The run failed.";
+          const detail = runFailedDetail(eventPayload);
           setChatErrorMessage(detail);
           finalizeLiveTraceSteps("error");
           if (
@@ -2945,6 +2972,14 @@ export function ChatPane({
         if (!normalizedToken || isDeprecatedChatModel(normalizedToken)) {
           return false;
         }
+        if (
+          isUnsupportedHolabossProxyModel(
+            providerGroup.providerId,
+            model.modelId || normalizedToken,
+          )
+        ) {
+          return false;
+        }
         if (holabossProxyModelsAvailable) {
           return true;
         }
@@ -2971,6 +3006,7 @@ export function ChatPane({
   const runtimeDefaultModelAvailable =
     !requiresModelProviderSetup &&
     !hasConfiguredProviderCatalog &&
+    !isClaudeChatModel(runtimeDefaultModel) &&
     (holabossProxyModelsAvailable ||
       !isHolabossProxyModel(runtimeDefaultModel));
   const availableChatModelOptionGroups: ChatModelOptionGroup[] =
@@ -3011,7 +3047,8 @@ export function ChatPane({
           .filter((model) => !isDeprecatedChatModel(model))
           .filter(
             (model) =>
-              holabossProxyModelsAvailable || !isHolabossProxyModel(model),
+              !isClaudeChatModel(model) &&
+              (holabossProxyModelsAvailable || !isHolabossProxyModel(model)),
           )
           .map((model) => ({
             value: model,

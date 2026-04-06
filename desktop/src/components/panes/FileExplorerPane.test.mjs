@@ -70,9 +70,22 @@ test("file explorer accepts one-shot focus requests for artifact files", async (
 
   assert.match(source, /export type FileExplorerFocusRequest = \{\s*path: string;\s*requestKey: number;\s*\};/);
   assert.match(source, /interface FileExplorerPaneProps \{\s*focusRequest\?: FileExplorerFocusRequest \| null;\s*onFocusRequestConsumed\?: \(requestKey: number\) => void;\s*\}/);
-  assert.match(source, /if \(lastProcessedFocusRequestKeyRef\.current === focusRequest\.requestKey\) \{\s*return;\s*\}/);
+  assert.match(source, /const request = focusRequest;\s*if \(lastProcessedFocusRequestKeyRef\.current === request\.requestKey\) \{\s*return;\s*\}/);
   assert.match(source, /const workspaceRoot =\s*workspaceRootPath \?\?\s*\(await window\.electronAPI\.workspace\.getWorkspaceRoot\(selectedWorkspaceId\)\);/);
   assert.match(source, /targetPath = resolveWorkspaceTargetPath\(workspaceRoot, targetPath\);/);
   assert.match(source, /await openFilePreview\(targetPath, \{ syncDirectory: true \}\);/);
-  assert.match(source, /onFocusRequestConsumed\?\.\(focusRequest\.requestKey\);/);
+  assert.match(source, /onFocusRequestConsumed\?\.\(request\.requestKey\);/);
+});
+
+test("file explorer assigns richer icons for common file types", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /FileBadge2,[\s\S]*FileSpreadsheet,[\s\S]*FileVideoCamera,[\s\S]*Shield,/);
+  assert.match(source, /const SPECIAL_POLICY_FILENAMES = new Set\(\[\s*"agents\.md"\s*\]\);/);
+  assert.match(source, /const normalizedFileName = getComparableFileName\(targetName\);/);
+  assert.match(source, /if \(SPECIAL_POLICY_FILENAMES\.has\(normalizedFileName\)\) \{\s*return \{\s*Icon: Shield,/);
+  assert.match(source, /if \(SPREADSHEET_EXTENSIONS\.has\(extension\)\) \{\s*return \{\s*Icon: FileSpreadsheet,/);
+  assert.match(source, /if \(extension === ".pdf"\) \{\s*return \{\s*Icon: FileBadge2,/);
+  assert.match(source, /if \(JSON_EXTENSIONS\.has\(extension\)\) \{\s*return \{\s*Icon: FileJson,/);
+  assert.match(source, /const \{ Icon, className \} = getExplorerIconDescriptor\(\s*entry\.name,\s*entry\.isDirectory\s*\);/);
 });

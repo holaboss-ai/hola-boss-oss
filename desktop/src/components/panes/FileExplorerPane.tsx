@@ -4,14 +4,25 @@ import {
   ArrowLeft,
   ArrowUp,
   Eye,
+  FileArchive,
+  FileAudio2,
+  FileBadge2,
+  FileCode2,
+  FileCog,
+  FileImage,
+  FileJson,
+  FileSpreadsheet,
   FileText,
+  FileVideoCamera,
   Folder,
   Forward,
   Home,
   PencilLine,
   Save,
   Search,
+  Shield,
   Star,
+  type LucideIcon,
   Undo2
 } from "lucide-react";
 import { IconButton } from "@/components/ui/IconButton";
@@ -69,6 +80,213 @@ const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   ".env": "bash",
   ".csv": "plaintext"
 };
+
+const SPREADSHEET_EXTENSIONS = new Set([
+  ".csv",
+  ".tsv",
+  ".xls",
+  ".xlsx",
+  ".xlsm",
+  ".ods"
+]);
+
+const IMAGE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".svg",
+  ".bmp",
+  ".ico",
+  ".avif",
+  ".heic"
+]);
+
+const ARCHIVE_EXTENSIONS = new Set([
+  ".zip",
+  ".tar",
+  ".gz",
+  ".tgz",
+  ".bz2",
+  ".xz",
+  ".7z",
+  ".rar"
+]);
+
+const AUDIO_EXTENSIONS = new Set([
+  ".mp3",
+  ".wav",
+  ".m4a",
+  ".aac",
+  ".ogg",
+  ".flac"
+]);
+
+const VIDEO_EXTENSIONS = new Set([
+  ".mp4",
+  ".mov",
+  ".avi",
+  ".mkv",
+  ".webm",
+  ".m4v"
+]);
+
+const JSON_EXTENSIONS = new Set([
+  ".json",
+  ".jsonl"
+]);
+
+const CODE_EXTENSIONS = new Set([
+  ".js",
+  ".jsx",
+  ".ts",
+  ".tsx",
+  ".css",
+  ".scss",
+  ".html",
+  ".xml",
+  ".py",
+  ".sh",
+  ".sql",
+  ".go",
+  ".rs",
+  ".java",
+  ".kt",
+  ".php",
+  ".swift",
+  ".c",
+  ".cc",
+  ".cpp",
+  ".h",
+  ".hpp"
+]);
+
+const CONFIG_EXTENSIONS = new Set([
+  ".yml",
+  ".yaml",
+  ".toml",
+  ".ini"
+]);
+
+const SPECIAL_CODE_FILENAMES = new Set([
+  "dockerfile",
+  "makefile"
+]);
+
+const SPECIAL_POLICY_FILENAMES = new Set([
+  "agents.md"
+]);
+
+type ExplorerIconDescriptor = {
+  Icon: LucideIcon;
+  className: string;
+};
+
+function getComparableFileName(targetName: string) {
+  const normalized = targetName.trim().toLowerCase().replace(/[\\/]+$/, "");
+  const parts = normalized.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || normalized;
+}
+
+function getFileExtension(fileName: string) {
+  const normalized = fileName.trim().toLowerCase();
+  const lastDotIndex = normalized.lastIndexOf(".");
+  if (lastDotIndex <= 0) {
+    return "";
+  }
+  return normalized.slice(lastDotIndex);
+}
+
+function getExplorerIconDescriptor(targetName: string, isDirectory: boolean): ExplorerIconDescriptor {
+  if (isDirectory) {
+    return {
+      Icon: Folder,
+      className: "text-primary"
+    };
+  }
+
+  const normalizedFileName = getComparableFileName(targetName);
+  const extension = getFileExtension(normalizedFileName);
+
+  if (SPECIAL_POLICY_FILENAMES.has(normalizedFileName)) {
+    return {
+      Icon: Shield,
+      className: "text-cyan-700 dark:text-cyan-300"
+    };
+  }
+
+  if (SPREADSHEET_EXTENSIONS.has(extension)) {
+    return {
+      Icon: FileSpreadsheet,
+      className: "text-emerald-600 dark:text-emerald-400"
+    };
+  }
+
+  if (extension === ".pdf") {
+    return {
+      Icon: FileBadge2,
+      className: "text-rose-600 dark:text-rose-400"
+    };
+  }
+
+  if (IMAGE_EXTENSIONS.has(extension)) {
+    return {
+      Icon: FileImage,
+      className: "text-sky-600 dark:text-sky-400"
+    };
+  }
+
+  if (ARCHIVE_EXTENSIONS.has(extension)) {
+    return {
+      Icon: FileArchive,
+      className: "text-amber-600 dark:text-amber-400"
+    };
+  }
+
+  if (AUDIO_EXTENSIONS.has(extension)) {
+    return {
+      Icon: FileAudio2,
+      className: "text-teal-600 dark:text-teal-400"
+    };
+  }
+
+  if (VIDEO_EXTENSIONS.has(extension)) {
+    return {
+      Icon: FileVideoCamera,
+      className: "text-orange-600 dark:text-orange-400"
+    };
+  }
+
+  if (JSON_EXTENSIONS.has(extension)) {
+    return {
+      Icon: FileJson,
+      className: "text-amber-700 dark:text-amber-300"
+    };
+  }
+
+  if (
+    CODE_EXTENSIONS.has(extension) ||
+    SPECIAL_CODE_FILENAMES.has(normalizedFileName)
+  ) {
+    return {
+      Icon: FileCode2,
+      className: "text-sky-700 dark:text-sky-300"
+    };
+  }
+
+  if (CONFIG_EXTENSIONS.has(extension) || normalizedFileName.startsWith(".env")) {
+    return {
+      Icon: FileCog,
+      className: "text-slate-600 dark:text-slate-400"
+    };
+  }
+
+  return {
+    Icon: FileText,
+    className: "text-muted-foreground"
+  };
+}
 
 function getFolderName(targetPath: string) {
   const normalized = targetPath.replace(/[\\/]+$/, "");
@@ -875,7 +1093,10 @@ export function FileExplorerPane({
               <div className="chat-scrollbar-hidden flex min-h-0 flex-1 flex-col items-center gap-1 overflow-x-hidden overflow-y-auto px-1">
                 {fileBookmarks.map((bookmark) => {
                   const isActive = activeBookmarkId === bookmark.targetPath;
-                  const Icon = bookmark.isDirectory ? Folder : FileText;
+                  const { Icon, className } = getExplorerIconDescriptor(
+                    bookmark.targetPath,
+                    bookmark.isDirectory
+                  );
                   return (
                     <button
                       key={bookmark.id}
@@ -888,7 +1109,7 @@ export function FileExplorerPane({
                           : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                       }`}
                     >
-                      <Icon size={14} />
+                      <Icon size={14} className={className} />
                     </button>
                   );
                 })}
@@ -959,6 +1180,10 @@ export function FileExplorerPane({
 
               {!loading && !error
                 ? filteredEntries.map((entry) => {
+                    const { Icon, className } = getExplorerIconDescriptor(
+                      entry.name,
+                      entry.isDirectory
+                    );
                     const selected = selectedPath === entry.absolutePath;
                     return (
                       <button
@@ -1014,11 +1239,7 @@ export function FileExplorerPane({
                         {isCompact ? (
                           <span className="flex min-w-0 flex-col gap-0.5">
                             <span className="flex min-w-0 items-center gap-2">
-                              {entry.isDirectory ? (
-                                <Folder size={14} className="shrink-0 text-primary" />
-                              ) : (
-                                <FileText size={14} className="shrink-0 text-muted-foreground" />
-                              )}
+                              <Icon size={14} className={`shrink-0 ${className}`} />
                               <span className="truncate text-xs font-medium">{entry.name}</span>
                             </span>
                             <span className="flex min-w-0 items-center gap-2 pl-6 text-[11px] text-muted-foreground">
@@ -1029,11 +1250,7 @@ export function FileExplorerPane({
                         ) : (
                           <span className="grid min-w-0 grid-cols-[minmax(0,1fr)_110px] items-center lg:grid-cols-[minmax(0,1fr)_140px_90px]">
                             <span className="flex min-w-0 items-center gap-2">
-                              {entry.isDirectory ? (
-                                <Folder size={14} className="text-primary" />
-                              ) : (
-                                <FileText size={14} className="text-muted-foreground" />
-                              )}
+                              <Icon size={14} className={className} />
                               <span className="truncate text-xs font-medium">{entry.name}</span>
                             </span>
                             <span className="truncate text-[11px] text-muted-foreground">

@@ -55,6 +55,7 @@ interface TopTabsBarProps {
   onNotificationCenterOpenChange?: (open: boolean) => void;
   onMarkNotificationRead?: (notificationId: string) => void;
   onDismissNotification?: (notificationId: string) => void;
+  onClearAllNotifications?: () => void;
 }
 
 export function TopTabsBar({
@@ -73,6 +74,7 @@ export function TopTabsBar({
   onNotificationCenterOpenChange,
   onMarkNotificationRead,
   onDismissNotification,
+  onClearAllNotifications,
 }: TopTabsBarProps) {
   const { isAvailable: isBillingAvailable, overview, isLoading: isBillingLoading, isLowBalance } =
     useDesktopBilling();
@@ -302,6 +304,7 @@ export function TopTabsBar({
             onOpenChange={onNotificationCenterOpenChange}
             onMarkRead={(notificationId) => onMarkNotificationRead?.(notificationId)}
             onDismiss={(notificationId) => onDismissNotification?.(notificationId)}
+            onClearAll={() => onClearAllNotifications?.()}
           />
           <DropdownMenu>
             <DropdownMenuTrigger

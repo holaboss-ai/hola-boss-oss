@@ -8,10 +8,13 @@ test("proactive status card keeps controls inside the compact lifecycle card", a
   const source = await readFile(CARD_PATH, "utf8");
 
   assert.doesNotMatch(source, /Suggestions/);
+  assert.doesNotMatch(source, /delivery_state/);
   assert.doesNotMatch(source, /linear-gradient/);
   assert.doesNotMatch(source, /theme-subtle-surface/);
   assert.doesNotMatch(source, /theme-shell/);
   assert.match(source, /rounded-\[20px\] border border-border\/40 bg-card/);
+  assert.match(source, /lifecycle_state/);
+  assert.match(source, /Claimed/);
   assert.match(source, /Run proactive analysis/);
   assert.match(source, /Enabled/);
   assert.match(source, /Paused/);

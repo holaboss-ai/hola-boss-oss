@@ -14,3 +14,12 @@ test("operations drawer inbox surfaces lifecycle status and trigger feedback", a
   assert.doesNotMatch(source, /label="Running"/);
   assert.doesNotMatch(source, /InboxHeaderActions/);
 });
+
+test("operations drawer sub-session rows expose pointer cursor affordance", async () => {
+  const source = await readFile(OPERATIONS_DRAWER_PATH, "utf8");
+
+  assert.match(
+    source,
+    /aria-label=\{`Open session \$\{session\.title\}`\}[\s\S]*className=\{`w-full cursor-pointer px-3 py-3 text-left transition-colors/,
+  );
+});

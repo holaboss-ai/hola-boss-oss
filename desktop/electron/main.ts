@@ -57,7 +57,8 @@ const OVERFLOW_POPUP_WIDTH = 220;
 const OVERFLOW_POPUP_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MIN_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MAX_HEIGHT = 320;
-const MAIN_WINDOW_CLOSED_LISTENER_BUFFER = 16;
+const MAIN_WINDOW_CLOSED_LISTENER_BUFFER = 8;
+const MAIN_WINDOW_MIN_LISTENER_BUDGET = 32;
 const APP_THEMES = new Set([
   "holaboss",
   "emerald",
@@ -93,8 +94,6 @@ const RUNTIME_HOLABOSS_LEGACY_PROXY_MODELS = [
   "gpt-5.4",
   "gpt-5.4-mini",
   "gpt-5.3-codex",
-  "claude-sonnet-4-5",
-  "claude-opus-4-1",
 ] as const;
 const RUNTIME_DEPRECATED_MODEL_IDS = new Set([
   "gpt-5.1",
@@ -102,6 +101,15 @@ const RUNTIME_DEPRECATED_MODEL_IDS = new Set([
   "gpt-5.1-codex-mini",
   "gpt-5.1-codex-max",
 ]);
+const RUNTIME_LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string>> = {
+  anthropic_direct: {
+    "claude-sonnet-4-5": "claude-sonnet-4-6",
+  },
+  gemini_direct: {
+    "gemini-3.1-pro-preview": "gemini-2.5-pro",
+    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite",
+  },
+};
 
 function configureChromiumLoggingPolicy() {
   if (verboseTelemetryEnabled || chromiumStderrLoggingEnabled) {
@@ -409,6 +417,8 @@ let downloadsPopupWindow: BrowserWindow | null = null;
 let historyPopupWindow: BrowserWindow | null = null;
 let overflowPopupWindow: BrowserWindow | null = null;
 let addressSuggestionsPopupWindow: BrowserWindow | null = null;
+let attachedBrowserTabView: BrowserView | null = null;
+let attachedAppSurfaceView: BrowserView | null = null;
 let currentTheme = "holaboss";
 let browserBounds: BrowserBoundsPayload = { x: 0, y: 0, width: 0, height: 0 };
 let overflowAnchorBounds: BrowserAnchorBoundsPayload | null = null;
@@ -1538,6 +1548,10 @@ interface RemoteTaskProposalGenerationResponsePayload {
   accepted_count: number;
   event_count: number;
   correlation_id: string;
+}
+
+interface ProactiveContextCaptureResponsePayload {
+  context: Record<string, unknown>;
 }
 
 interface ProactiveTaskProposalPreferenceUpdatePayload {
@@ -3389,6 +3403,40 @@ function normalizeLegacyRuntimeModelToken(token: string): string {
   return token.trim();
 }
 
+function normalizeRuntimeProviderModelId(
+  providerId: string,
+  modelId: string,
+): string {
+  const normalizedProviderId = providerId.trim().toLowerCase();
+  const normalizedModelId = modelId.trim();
+  if (!normalizedProviderId || !normalizedModelId) {
+    return normalizedModelId;
+  }
+  return (
+    RUNTIME_LEGACY_DIRECT_PROVIDER_MODEL_ALIASES[normalizedProviderId]?.[
+      normalizedModelId
+    ] ?? normalizedModelId
+  );
+}
+
+function normalizeRuntimeProviderModelToken(
+  providerId: string,
+  token: string,
+  modelId: string,
+): string {
+  const normalizedProviderId = canonicalRuntimeProviderId(providerId);
+  const normalizedModelId = normalizeRuntimeProviderModelId(
+    normalizedProviderId,
+    modelId,
+  );
+  const normalizedToken = token.trim();
+  const providerPrefix = `${normalizedProviderId}/`;
+  if (!normalizedToken.startsWith(providerPrefix)) {
+    return normalizedToken || providerPrefix + normalizedModelId;
+  }
+  return `${providerPrefix}${normalizedModelId}`;
+}
+
 function runtimeProviderLabel(providerId: string): string {
   const normalized = providerId.trim().toLowerCase();
   if (normalized === "openai" || normalized.includes("openai")) {
@@ -3484,6 +3532,25 @@ function isDeprecatedRuntimeModelId(modelId: string): boolean {
   return RUNTIME_DEPRECATED_MODEL_IDS.has(normalized);
 }
 
+function isClaudeRuntimeModelId(modelId: string): boolean {
+  const normalized = modelId.trim().toLowerCase();
+  return /^((openai|anthropic|holaboss|holaboss_model_proxy)\/)*claude-/.test(
+    normalized,
+  );
+}
+
+function isUnsupportedHolabossRuntimeModel(
+  providerId: string,
+  modelId: string,
+): boolean {
+  const normalizedProviderId = canonicalRuntimeProviderId(providerId);
+  return (
+    RUNTIME_HOLABOSS_PROVIDER_ALIASES.some(
+      (alias) => alias === normalizedProviderId,
+    ) && isClaudeRuntimeModelId(modelId)
+  );
+}
+
 function runtimeProviderModelGroups(
   document: Record<string, unknown>,
   loadedLegacy: Record<string, string>,
@@ -3572,17 +3639,28 @@ function runtimeProviderModelGroups(
   };
   const addModel = (providerId: string, token: string, modelId: string) => {
     const normalizedProviderId = canonicalRuntimeProviderId(providerId);
-    const normalizedModelId = modelId.trim();
+    const normalizedModelId = normalizeRuntimeProviderModelId(
+      normalizedProviderId,
+      modelId,
+    );
     if (
       !normalizedProviderId ||
       !normalizedModelId ||
+      isUnsupportedHolabossRuntimeModel(
+        normalizedProviderId,
+        normalizedModelId,
+      ) ||
       isDeprecatedRuntimeModelId(normalizedModelId)
     ) {
       return;
     }
     const normalizedToken = canonicalRuntimeModelToken(
       normalizedProviderId,
-      token,
+      normalizeRuntimeProviderModelToken(
+        normalizedProviderId,
+        token,
+        normalizedModelId,
+      ),
       normalizedModelId,
     );
     if (isDeprecatedRuntimeModelId(normalizedToken)) {
@@ -5125,6 +5203,14 @@ async function ingestWorkspaceHeartbeat(params: {
   });
 
   try {
+    const bundledContext = await requestRuntimeJson<ProactiveContextCaptureResponsePayload>({
+      method: "POST",
+      path: "/api/v1/proactive/context/capture",
+      payload: {
+        workspace_id: workspaceId,
+      },
+      retryTransientErrors: true,
+    });
     const results = await requestControlPlaneJson<
       ProactiveIngestItemResultPayload[]
     >({
@@ -5147,6 +5233,7 @@ async function ingestWorkspaceHeartbeat(params: {
             source_refs: [params.sourceRef],
             window: "24h",
             proposal_scope: "window",
+            captured_context: bundledContext.context,
           },
         ],
       },
@@ -5412,9 +5499,9 @@ async function getProactiveStatus(
       proposal_count: 0,
       heartbeat: fallbackHeartbeat,
       bridge: fallbackBridge,
-      delivery_state: "idle",
-      delivery_summary: "Select a workspace to inspect proactive status.",
-      delivery_detail: null,
+      lifecycle_state: "idle",
+      lifecycle_summary: "Select a workspace to inspect proactive status.",
+      lifecycle_detail: null,
     };
   }
 
@@ -5517,52 +5604,42 @@ async function getProactiveStatus(
     };
   }
 
-  let deliveryState = "idle";
-  let deliverySummary = "No suggestions right now.";
-  let deliveryDetail: string | null = null;
+  let lifecycleState = "idle";
+  let lifecycleSummary = "Idle.";
+  let lifecycleDetail: string | null = null;
   const heartbeatAgeSeconds = secondsSinceIso(heartbeat.recorded_at);
   const heartbeatJustClaimed =
     heartbeatAgeSeconds !== null && heartbeatAgeSeconds < 10;
   const heartbeatSettled =
     heartbeatAgeSeconds !== null && heartbeatAgeSeconds >= 120;
-  if (proposalCount > 0) {
-    deliveryState = "ready";
-    deliverySummary = `${proposalCount} suggestion${proposalCount === 1 ? "" : "s"} ready.`;
-  } else if (heartbeat.state === "published" && bridge.state === "error") {
-    deliveryState = "unavailable";
-    deliverySummary = "Suggestions are unavailable right now.";
-    deliveryDetail = bridge.detail;
-  } else if (heartbeat.state === "pending") {
-    deliveryState = "sent";
-    deliverySummary = "Request sent.";
-    deliveryDetail = "Waiting for the workspace to pick it up.";
+  if (heartbeat.state === "pending") {
+    lifecycleState = "sent";
+    lifecycleSummary = "Sent.";
+    lifecycleDetail = "Waiting for the proactive agent to claim this run.";
   } else if (heartbeat.state === "published" && heartbeatJustClaimed) {
-    deliveryState = "claimed";
-    deliverySummary = "Request picked up.";
-    deliveryDetail = "Preparing suggestions for this workspace.";
+    lifecycleState = "claimed";
+    lifecycleSummary = "Claimed.";
+    lifecycleDetail = "The proactive agent has started working on this run.";
   } else if (heartbeat.state === "published" && !heartbeatSettled) {
-    deliveryState = "analyzing";
-    deliverySummary = "Analyzing workspace.";
-    deliveryDetail = "Looking for useful suggestions.";
-  } else if (heartbeat.state === "published") {
-    deliveryState = "idle";
-    deliverySummary = "No suggestions right now.";
+    lifecycleState = "analyzing";
+    lifecycleSummary = "Analyzing.";
+    lifecycleDetail = "Looking for useful suggestions.";
   } else if (heartbeat.state === "failed") {
-    deliveryState = "error";
-    deliverySummary = "Couldn't generate suggestions.";
-    deliveryDetail = heartbeat.detail;
+    lifecycleState = "error";
+    lifecycleSummary = "Error.";
+    lifecycleDetail = heartbeat.detail;
   } else if (heartbeat.state === "skipped") {
-    deliveryState = "unavailable";
-    deliverySummary = "Suggestions are unavailable right now.";
-    deliveryDetail = heartbeat.detail;
-  } else if (bridge.state === "error") {
-    deliveryState = "unavailable";
-    deliverySummary = "Suggestions are unavailable right now.";
-    deliveryDetail = bridge.detail;
-  } else if (bridge.state === "inactive") {
-    deliveryState = "unavailable";
-    deliverySummary = "Suggestions are unavailable right now.";
-    deliveryDetail = bridge.detail;
+    lifecycleState = "unavailable";
+    lifecycleSummary = "Unavailable.";
+    lifecycleDetail = heartbeat.detail;
+  } else if (
+    bridge.state === "error" ||
+    bridge.state === "inactive" ||
+    bridge.state === "pending"
+  ) {
+    lifecycleState = "unavailable";
+    lifecycleSummary = "Unavailable.";
+    lifecycleDetail = bridge.detail;
   }
 
   return {
@@ -5570,9 +5647,9 @@ async function getProactiveStatus(
     proposal_count: proposalCount,
     heartbeat,
     bridge,
-    delivery_state: deliveryState,
-    delivery_summary: deliverySummary,
-    delivery_detail: deliveryDetail,
+    lifecycle_state: lifecycleState,
+    lifecycle_summary: lifecycleSummary,
+    lifecycle_detail: lifecycleDetail,
   };
 }
 
@@ -9457,21 +9534,28 @@ function updateAttachedAppSurfaceView(): void {
     appSurfaceBounds.width <= 0 ||
     appSurfaceBounds.height <= 0
   ) {
-    for (const view of appSurfaceViews.values()) {
-      mainWindow.removeBrowserView(view);
+    if (attachedAppSurfaceView) {
+      mainWindow.removeBrowserView(attachedAppSurfaceView);
+      attachedAppSurfaceView = null;
     }
     return;
   }
   const view = appSurfaceViews.get(activeAppSurfaceId);
   if (!view) {
+    if (attachedAppSurfaceView) {
+      mainWindow.removeBrowserView(attachedAppSurfaceView);
+      attachedAppSurfaceView = null;
+    }
     return;
   }
-  for (const [id, v] of appSurfaceViews) {
-    if (id !== activeAppSurfaceId) {
-      mainWindow.removeBrowserView(v);
+  if (attachedAppSurfaceView !== view) {
+    if (attachedAppSurfaceView) {
+      mainWindow.removeBrowserView(attachedAppSurfaceView);
     }
+    reserveMainWindowClosedListenerBudget(1);
+    mainWindow.addBrowserView(view);
+    attachedAppSurfaceView = view;
   }
-  mainWindow.addBrowserView(view);
   view.setBounds(appSurfaceBounds);
 }
 
@@ -9517,6 +9601,9 @@ function destroyAppSurfaceView(appId: string): void {
   }
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.removeBrowserView(view);
+  }
+  if (attachedAppSurfaceView === view) {
+    attachedAppSurfaceView = null;
   }
   try {
     (view.webContents as unknown as { destroy?: () => void }).destroy?.();
@@ -10667,21 +10754,21 @@ function getActiveBrowserTab(
   return workspace.tabs.get(workspace.activeTabId) ?? null;
 }
 
-function syncMainWindowClosedListenerBudget() {
+function reserveMainWindowClosedListenerBudget(
+  additionalClosedListeners = 0,
+) {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
   }
 
-  let tabCount = 0;
-  for (const workspace of browserWorkspaces.values()) {
-    tabCount += workspace.tabs.size;
-  }
-
-  // The desktop browser keeps many tab views alive at once, so the window needs
-  // a higher close-listener budget than Node's default warning threshold.
+  // Electron's deprecated BrowserView compatibility layer adds a fresh
+  // BrowserWindow "closed" listener every time a view is attached, and those
+  // listeners are not released when the view is detached.
   const desiredBudget = Math.max(
-    10,
-    tabCount + MAIN_WINDOW_CLOSED_LISTENER_BUFFER,
+    MAIN_WINDOW_MIN_LISTENER_BUDGET,
+    mainWindow.listenerCount("closed") +
+      additionalClosedListeners +
+      MAIN_WINDOW_CLOSED_LISTENER_BUFFER,
   );
   if (mainWindow.getMaxListeners() < desiredBudget) {
     mainWindow.setMaxListeners(desiredBudget);
@@ -10795,10 +10882,17 @@ function updateAttachedBrowserView() {
   }
   const activeTab = getActiveBrowserTab(activeBrowserWorkspaceId);
   if (!activeTab || !hasVisibleBrowserBounds()) {
-    mainWindow.setBrowserView(null);
+    if (attachedBrowserTabView) {
+      mainWindow.setBrowserView(null);
+      attachedBrowserTabView = null;
+    }
     return;
   }
-  mainWindow.setBrowserView(activeTab.view);
+  if (attachedBrowserTabView !== activeTab.view) {
+    reserveMainWindowClosedListenerBudget(1);
+    mainWindow.setBrowserView(activeTab.view);
+    attachedBrowserTabView = activeTab.view;
+  }
   applyBoundsToTab(activeBrowserWorkspaceId, activeTab.state.id);
 }
 
@@ -10900,7 +10994,6 @@ function createBrowserTab(
     initialized: !hasInitialUrl,
   });
   workspace.tabs.set(tabId, { view, state });
-  syncMainWindowClosedListenerBudget();
 
   view.setBounds(browserBounds);
   view.setAutoResize({
@@ -11274,6 +11367,7 @@ function setBrowserBounds(bounds: BrowserBoundsPayload) {
   const workspace = activeBrowserWorkspace();
   if (!workspace || !workspace.activeTabId || !hasVisibleBrowserBounds()) {
     mainWindow?.setBrowserView(null);
+    attachedBrowserTabView = null;
     return;
   }
   updateAttachedBrowserView();
@@ -12362,7 +12456,9 @@ function createMainWindow() {
   });
 
   mainWindow = win;
-  syncMainWindowClosedListenerBudget();
+  attachedBrowserTabView = null;
+  attachedAppSurfaceView = null;
+  reserveMainWindowClosedListenerBudget();
   browserBounds = { x: 0, y: 0, width: 0, height: 0 };
   activeBrowserWorkspaceId = "";
   for (const workspaceId of Array.from(browserWorkspaces.keys())) {
@@ -12424,6 +12520,8 @@ function createMainWindow() {
       destroyBrowserWorkspace(workspaceId);
     }
     activeBrowserWorkspaceId = "";
+    attachedBrowserTabView = null;
+    attachedAppSurfaceView = null;
     mainWindow = null;
   });
 }
