@@ -1,13 +1,13 @@
-# Holaboss - AI Worker Desktop for Business
+# Holaboss - AI Workspace Desktop for Business
 
 <p align="center">
   <img src="desktop/public/logo.svg" alt="Holaboss logo" width="132" />
 </p>
 
-<p align="center"><strong>Build, run, and package AI workers with a desktop workspace and portable runtime.</strong></p>
+<p align="center"><strong>Build, run, and package AI workspaces and workspace templates with a desktop app and portable runtime.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/holaboss-ai/hola-boss-oss/actions/workflows/oss-ci.yml"><img src="https://github.com/holaboss-ai/hola-boss-oss/actions/workflows/oss-ci.yml/badge.svg" alt="OSS CI" /></a>
+  <a href="https://github.com/holaboss-ai/holaboss-ai/actions/workflows/oss-ci.yml"><img src="https://github.com/holaboss-ai/holaboss-ai/actions/workflows/oss-ci.yml/badge.svg" alt="OSS CI" /></a>
   <img src="https://img.shields.io/badge/node-22%2B-43853d" alt="Node 22+" />
   <img src="https://img.shields.io/badge/platform-macOS%20supported,%20Windows%20%26%20Linux%20in%20progress-f28c28" alt="macOS supported, Windows and Linux in progress" />
   <img src="https://img.shields.io/badge/desktop-Electron-47848f" alt="Electron desktop" />
@@ -19,10 +19,10 @@
   <a href="https://www.holaboss.ai/?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_nav_website">Website</a> ·
   <a href="https://www.holaboss.ai/docs?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_nav_docs">Docs</a> ·
   <a href="https://www.holaboss.ai/signin?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_nav_signin">Sign in</a> ·
-  <a href="https://www.holaboss.ai/signin?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_nav_signin">Getting Started</a>
+  <a href="#getting-started">Getting Started</a>
 </p>
 
-Holaboss enables you to build AI workers that go beyond one-off task execution—they operate continuously, taking initiative to drive real business outcomes. You can easily manage and coordinate multiple AI workers, each with its own dedicated workspace tailored to specific roles and responsibilities. These work environments are fully portable, meaning the AI workers you train—along with their context, tools, and skills—can be packaged and shared with others, unlocking true scalability and collaboration.
+Holaboss enables you to build AI workspaces that go beyond one-off task execution. Each workspace packages instructions, tools, apps, memory, and runtime state for sustained long-horizon operation. You can manage multiple workspaces in parallel, and because workspaces and workspace templates are portable, they can be packaged, shared, resumed, and reused across the Holaboss ecosystem.
 
 ## Marketplace Experience
 
@@ -40,8 +40,6 @@ Holaboss enables you to build AI workers that go beyond one-off task execution�
 
 ## Table of Contents
 
-- [Marketplace Experience](#marketplace-experience)
-- [Desktop Workspace](#desktop-workspace)
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
   - [One-Line Agent Setup](#one-line-agent-setup)
@@ -50,10 +48,7 @@ Holaboss enables you to build AI workers that go beyond one-off task execution�
   - [Execution And Continuity](#execution-and-continuity)
   - [Current Workspace Structure](#current-workspace-structure)
   - [Memory](#memory)
-- [AI Labour Market](#ai-labour-market)
-- [Capability Hub](#capability-hub)
-  - [Apps and Integrations](#apps-and-integrations)
-  - [Skills and MCP](#skills-and-mcp)
+- [Workspace Marketplace](#workspace-marketplace)
 - [Hosted Features](#hosted-features)
   - [What works in OSS](#what-works-in-oss)
   - [What may require Holaboss backend access](#what-may-require-holaboss-backend-access)
@@ -67,11 +62,6 @@ Holaboss enables you to build AI workers that go beyond one-off task execution�
   - [macOS](#macos)
   - [Notes](#notes)
 - [OSS Release Notes](#oss-release-notes)
-- [macOS DMG Bundling](#macos-dmg-bundling)
-  - [Local DMG For Testing (Ad-Hoc Signed, Not Notarized)](#local-dmg-for-testing-ad-hoc-signed-not-notarized)
-  - [Local Production Signing And Notarization (Mac)](#local-production-signing-and-notarization-mac)
-  - [Signed And Notarized Product DMG (GitHub Actions)](#signed-and-notarized-product-dmg-github-actions)
-  - [Validate A Signed Build](#validate-a-signed-build)
 
 ## Getting Started
 
@@ -136,36 +126,185 @@ npm run desktop:prepare-runtime
 
 ## Architecture Overview
 
-Holaboss is split into three cooperating layers:
+At its core, Holaboss is built to support long-horizon agent operation. The design target is not isolated task execution, but role-holding work that has to persist across many runs inside the same workspace. In that setting, the agent has to preserve objectives, operating policy, reusable procedures, recent execution state, blockers, and durable user context without letting prompt cost grow without bound. Continuity therefore does not live only inside an ever-growing transcript. The runtime externalizes it into explicit runtime artifacts, bounded durable memory, and a structured workspace contract so the system can keep context over time while controlling token growth, preserving inspectability, and keeping workspaces portable across the Holaboss ecosystem.
 
-- `desktop/` provides the operator UI, workspace management, and the local packaged-runtime experience
-- `runtime/` owns agent execution, queueing, harness integration, apps, MCP orchestration, runtime APIs, and durable state
-- the sandbox root stores the live workspace tree, runtime state, request artifacts, and memory bodies used by the runtime
+### Long-Horizon Design At A Glance
 
-Those layers are intentionally separated by authority:
+The architectural distinction is between a run-centric agent and a workspace-centric system that can keep holding the same work over time. Holaboss supports that by separating state by authority instead of mixing everything into chat history:
 
-- human-authored workspace policy lives in files like `AGENTS.md`, `workspace.yaml`, skills, and app manifests
-- runtime-owned execution truth lives in `state/runtime.db` plus streamed output events
-- runtime-owned operator profile data lives in `state/runtime.db`
-- durable memory bodies live under `memory/`, while their governance and recall metadata live in `state/runtime.db`
+| Concern | Run-Centric Agent | Holaboss |
+| --- | --- | --- |
+| Workspace policy | Hidden inside prompt text or prior chat | Kept in authored files such as `AGENTS.md`, `workspace.yaml`, `skills/`, and `apps/` |
+| Runtime continuity | Rebuilt by replaying more history | Restored from `turn_results`, compaction boundaries, request snapshots, and `session-memory` |
+| Long-lived knowledge | Buried in old messages | Promoted into governed durable memory under `memory/workspace/`, `preference/`, and `identity/` |
+| Prompt growth | Tends to grow with session length | Split into stable and volatile prompt sections with a `prompt_cache_profile` |
+| Execution surface | Implied from prompt text | Projected per run as a capability manifest before the harness sees it |
+| Portability | Usually a chat export or opaque backend state | A structured workspace package with a stable filesystem contract |
 
-Two runtime control surfaces also stay explicit rather than being flattened away:
+That split is deliberate. Long-horizon support depends on keeping different kinds of context in the right system surfaces instead of mixing them together. `workspace.yaml` stays machine-readable as the runtime plan, while `AGENTS.md` stays the root human-authored instruction surface. The runtime compiler rejects inline prompt bodies in `workspace.yaml` and expects workspace instructions to come from `AGENTS.md`, which prevents the workspace plan from turning into an unstructured prompt blob.
 
-- capability evaluation is a pipeline from static registry, to model-visible projection, to permission, to execution readiness; the current runtime only exposes callable tools today, but the typed registry already reserves future non-tool surfaces such as MCP resources, MCP prompt or command surfaces, and trust-sensitive plugin or local capabilities
-- prompt assembly is section-based and channel-aware; the runtime keeps explicit section ids, precedence bands, volatility, and channel metadata, then renders compatibility outputs back to `system_prompt` and ordered `context_messages` for the active harness
+Durable memory is also intentionally scoped. The memory service only allows durable paths under:
 
-At a high level, one run follows this path:
+- `workspace/<workspace-id>/*`
+- `preference/*`
+- `identity/*`
 
-1. the desktop or API queues work for a workspace session
-2. the runtime resolves the workspace plan, capability surface, prompt sections, and request snapshot
-   - prompt sections keep base runtime doctrine, session policy, capability policy, workspace policy, and runtime continuity context distinct even when the harness ultimately receives only `system_prompt` plus `context_messages`
-3. the selected harness executes the run and streams output events
-4. the runtime persists normalized turn artifacts, updates compaction continuity, writes session/runtime memory projections, and performs durable memory writeback
-5. future runs restore continuity from durable runtime artifacts first (including the session-memory projection), then add a small recalled durable-memory context selected from markdown memory manifests
+Within those scopes, memory entries are governed by type rather than treated as generic notes:
 
-### Execution And Continuity
+- `preference` and `identity` memories are treated as stable user context
+- `fact`, `procedure`, and `blocker` memories are treated as workspace-sensitive operational knowledge
+- `reference` memories are treated as time-sensitive and usually need reconfirmation before action
 
-The runtime keeps four different kinds of state on purpose:
+That is what allows Holaboss to support role-holding work across long sessions without flattening all prior interaction into one undifferentiated transcript.
+
+### Memory As A File System
+
+Holaboss treats durable memory as a navigable filesystem surface rather than as an opaque vector store or a pile of hidden chat excerpts. The durable memory model is built from markdown files, stable paths, and lightweight indexes:
+
+| File System Concept | Holaboss Memory Surface |
+| --- | --- |
+| root index | `memory/MEMORY.md` |
+| workspace-local durable namespace | `memory/workspace/<workspace-id>/knowledge/` |
+| user-scoped durable namespace | `memory/preference/` and `memory/identity/` |
+| directories | memory classes such as `facts/`, `procedures/`, `blockers/`, and `reference/` |
+| file | the canonical markdown body for one durable memory entry |
+| file metadata | frontmatter fields such as scope, memory type, summary, tags, freshness, and verification hints |
+| directory listing | `MEMORY.md` indexes plus the bounded recall manifest built at query time |
+| runtime scratch area | `memory/workspace/<workspace-id>/runtime/`, intentionally excluded from durable recall |
+
+This matters because it makes memory inspectable, portable, and path-addressable. Durable workspace knowledge is not trapped inside a database-only retrieval layer. It lives in readable markdown files that can be indexed, packaged, diffed, and moved with the workspace, while the runtime still keeps governance, freshness, and recall selection explicit.
+
+At a high level, the memory tree looks like this:
+
+```text
+memory/
+  MEMORY.md
+  workspace/
+    <workspace-id>/
+      MEMORY.md
+      knowledge/
+        facts/
+        procedures/
+        blockers/
+        reference/
+      runtime/
+        latest-turn.md
+        recent-turns/
+        session-memory/
+  preference/
+    MEMORY.md
+    *.md
+  identity/
+    *.md
+```
+
+The recall path follows that structure. At query time, the runtime scans durable markdown memory files, reads frontmatter and compact summaries, builds a bounded manifest, and selects only a small relevant subset. In other words, the filesystem layout is not just storage convenience; it is part of how Holaboss keeps long-horizon memory legible and token-efficient.
+
+### One Run Lifecycle
+
+One run follows a bounded lifecycle:
+
+1. The desktop or API queues work for a workspace session.
+2. The runtime compiles the workspace from `workspace.yaml` plus referenced files such as `AGENTS.md`, app manifests, and workspace-local skill surfaces.
+3. The runtime evaluates the capability surface for that run, builds prompt sections, computes a `prompt_cache_profile`, and writes a sanitized request snapshot fingerprint.
+4. The harness receives a reduced execution package containing the selected model, `system_prompt`, ordered `context_messages`, prompt layers, capability manifest, and workspace checksum.
+5. After the run, the runtime persists `turn_results`, token usage, request snapshots, compaction boundaries, `session-memory`, runtime projections, and durable-memory candidates.
+6. On the next run, continuity is restored from the latest prior compaction boundary, a bounded `session-memory` excerpt, and a small recalled-memory subset instead of replaying the full transcript.
+
+```mermaid
+graph TD;
+    A["User, Desktop, or API"] --> B["Queue workspace session"];
+    B --> C["Compile runtime plan"];
+    C --> D["Project run-specific capabilities"];
+    D --> E["Assemble prompt package"];
+    E --> F["Execute in harness"];
+    F --> G["Stream events and tool activity"];
+    G --> H["Persist turn results and request snapshots"];
+    H --> I["Write compaction boundary"];
+    H --> J["Write runtime projections"];
+    H --> K["Promote durable memory"];
+    I --> L["Restore next run"];
+    J --> L;
+    K --> L;
+    L --> M["Restore bounded continuity"];
+    M --> C;
+```
+
+### Why Token Usage Stays Bounded
+
+The long-horizon claim depends on concrete mechanisms, not just stored history:
+
+| Mechanism | Runtime Artifact | Why It Matters |
+| --- | --- | --- |
+| Section-based prompts | `prompt_sections`, `prompt_layers` | Keeps workspace policy, resume context, recalled memory, and capability policy separate instead of flattening everything into one prompt body |
+| Stable vs volatile prompt separation | `prompt_cache_profile` with `cacheable_section_ids`, `volatile_section_ids`, `cacheable_fingerprint`, `volatile_fingerprint` | Lets stable runtime and workspace instructions stay reusable while only run-volatile context changes |
+| Durable compaction handoff | compaction boundaries | Stores compact summaries, restoration order, preserved turn ids, restored memory paths, and request snapshot fingerprints |
+| Session continuity snapshot | `memory/workspace/<workspace-id>/runtime/session-memory/` | Provides a compact operational summary of recent state, user requests, progress, and errors |
+| Bounded durable recall | manifest-based recall from durable markdown memory only | Caps manifest size, clips snippets, excludes `/runtime/` files, and selects only a small relevant subset |
+| Per-run visibility | prompt ids, capability fingerprint, request snapshot fingerprint, token usage | Makes long-horizon cost and continuity inspectable instead of hidden inside raw transcript logs |
+
+Compaction boundaries are central to that design. A boundary is more than a summary. It records:
+
+- a compact boundary summary
+- recent runtime context
+- restoration order
+- preserved turn ids
+- restored memory paths
+- the request snapshot fingerprint associated with the run
+
+On the next run, the runtime restores continuity from the latest prior compaction boundary first, then adds a bounded `session-memory` excerpt rather than replaying the full transcript. If no prior boundary exists, it falls back to a bounded set of recent turn results and session messages. The `session-memory` snapshot itself is intentionally compact: it captures current state, recent user requests, recent runtime progress, and recent errors or permission denials without forcing the next run to ingest the full historical conversation again.
+
+### Harness And Capability Discipline
+
+Before a run reaches the harness, the runtime decides what the harness is allowed to see and do:
+
+| Runtime Decision | Result Passed To Harness |
+| --- | --- |
+| selected provider and model target | model client config plus provider/model ids |
+| prompt section assembly | composed `system_prompt`, ordered `context_messages`, and prompt layers |
+| cache behavior | `prompt_cache_profile` |
+| visible and callable capabilities | capability manifest plus reduced tool map |
+| workspace versioning boundary | `workspace_config_checksum` |
+| run-specific scope | session kind, browser/runtime tools, workspace skills, MCP tool visibility, and workspace commands |
+
+Capability visibility is therefore decided per run rather than inferred implicitly from workspace contents. The runtime determines which tools, skills, MCP surfaces, and workspace commands are visible, permitted, and executable for that run, and the harness receives only that projected surface. In the PI harness, workspace-root path checks keep resolved paths inside the workspace by default, which makes long-horizon execution safer and more reproducible.
+
+### The Workspace Hierarchy Is Part Of The Optimization Story
+
+The workspace tree is not just a packaging detail. It gives the runtime stable places to store different classes of state:
+
+- `AGENTS.md` for human-authored workspace policy
+- `workspace.yaml` for the runtime plan
+- `skills/` for workspace-local reusable skills
+- `apps/` for packaged app modules
+- `.holaboss/` for runtime-managed session and attachment state
+- `memory/` for durable recall surfaces
+- `state/runtime.db` for runtime continuity and metadata
+
+By keeping authored policy, runtime continuity, and durable memory separate, Holaboss avoids transient execution artifacts polluting reusable workspace definition. That makes workspaces easier to resume, inspect, and evolve over long horizons.
+
+### Portability Is A Product Property, Not A Marketing Claim
+
+Workspaces can be created from:
+
+- an empty scaffold
+- a local template folder
+- a marketplace template
+
+All of those paths materialize into the same workspace structure. The desktop creation path materializes templates locally, ensures required files such as `workspace.yaml` exist, and initializes each workspace as its own local git repository for agent-managed checkpoints and recovery.
+
+Packaging is filtered intentionally. Workspace exports omit runtime state, `.holaboss`, common build outputs, `node_modules`, `.env*`, logs, database files, obviously sensitive filenames, and non-selected apps. What travels is the reusable operating unit:
+
+- workspace plan and instruction surface
+- selected apps and skills
+- template metadata
+- durable workspace definition
+
+In practice, a Holaboss workspace is not just a prompt bundle or a chat log. It is a portable operating environment for long-horizon AI execution.
+
+### Runtime Continuity Artifacts
+
+The runtime keeps several different state surfaces on purpose:
 
 - raw streamed events for replay and live UI updates
 - normalized turn artifacts for querying, debugging, and continuity
@@ -177,7 +316,7 @@ The most important runtime continuity artifacts are:
 - `turn_results`
   - one normalized record per run with status, stop reason, token usage, prompt-section ids, request fingerprint, capability fingerprint, and assistant output
 - compaction boundaries
-  - durable handoff artifacts that summarize a run boundary, record recent runtime context, preserve selected turn ids, and define explicit restoration ordering
+  - durable handoff artifacts that summarize a run boundary, record recent runtime context, preserve selected turn ids, restored memory paths, request snapshot fingerprints, and define explicit restoration ordering
 - session-memory projections
   - per-session markdown continuity snapshots under `memory/workspace/<workspace-id>/runtime/session-memory/` used for fast resume context in later runs
 - request snapshots
@@ -185,11 +324,11 @@ The most important runtime continuity artifacts are:
 - runtime user profile
   - canonical operator identity fields such as the persisted display name used by the runtime and agent prompt context
 
-This split avoids overloading transcript history with too many jobs. Raw history is still the replay truth, but resume, compaction, and memory promotion work from durable higher-level artifacts rather than repeatedly scraping prior messages.
+This split avoids overloading transcript history with too many jobs. Raw history still supports replay, but resume, compaction, and memory promotion operate from durable higher-level artifacts rather than repeatedly scraping prior messages.
 
 ### Current Workspace Structure
 
-Holaboss workspaces live under the runtime sandbox root. In the desktop app, that root is the local `sandbox-host` data directory; in standalone runtime deploys it defaults to `/holaboss`.
+Holaboss workspaces live under the runtime sandbox root. In the desktop app, that root is the local `sandbox-host` data directory; in standalone runtime deploys it defaults to `/holaboss`. The file tree below is the concrete expression of the policy/runtime/memory split described above.
 
 ```text
 <sandbox-root>/
@@ -239,9 +378,11 @@ Holaboss workspaces live under the runtime sandbox root. In the desktop app, tha
           facts/
           procedures/
           blockers/
-          references/
+          reference/
     preference/
       MEMORY.md
+      *.md
+    identity/
       *.md
 ```
 
@@ -253,11 +394,11 @@ Holaboss workspaces live under the runtime sandbox root. In the desktop app, tha
 - `<workspace-id>/.holaboss/` stores runtime-managed workspace state such as the identity marker, persisted harness session mapping, staged input attachments, and Pi harness state.
 - `workspace/.holaboss/` is separate from the per-workspace `.holaboss/` directory. It stores shared workspace-root state for MCP sidecars and their logs.
 - `state/runtime.db` is the durable runtime registry for workspaces, sessions, bindings, queue state, turn results, compaction boundaries, request snapshots, and durable memory catalog metadata. The `workspace_id` file exists mainly as an on-disk identity marker for workspace discovery and migration.
-- `memory/` is sandbox-global, not inside a single workspace directory. It stores workspace-scoped and user-scoped markdown memory files used by the runtime memory service.
+- `memory/` is sandbox-global, not inside a single workspace directory. It stores workspace-scoped and user-scoped markdown memory files used by the runtime memory service, including `preference/` and `identity/` user scopes.
 
 ### Memory
 
-The memory system is intentionally split by purpose and by authority. Human-authored workspace instructions stay in `AGENTS.md`, runtime-owned continuity stays in `state/runtime.db`, and durable memory bodies stay in markdown under `memory/`.
+The overview above explains why the runtime splits continuity, durable recall, and human-authored policy. The rest of this section explains the concrete memory layers, source-of-truth boundaries, and writeback flow that make that split work.
 
 #### Memory Layers
 
@@ -266,7 +407,7 @@ Holaboss currently has four memory layers:
 - session continuity lives in runtime-owned artifacts such as `turn_results` and compaction boundaries in `state/runtime.db`
 - session-memory continuity projections live under `memory/workspace/<workspace-id>/runtime/session-memory/`
 - operational projections live under `memory/workspace/<workspace-id>/runtime/`
-- durable recalled memory lives under `memory/workspace/<workspace-id>/knowledge/` and `memory/preference/`
+- durable recalled memory lives under `memory/workspace/<workspace-id>/knowledge/`, `memory/preference/`, and `memory/identity/`
 
 Alongside those layers, the runtime also keeps a canonical operator profile in `state/runtime.db`. That profile is not treated as markdown memory. It is runtime-owned identity state used first for things like the current user's name, with auth-provided identity only acting as a non-destructive fallback when the local profile is empty.
 
@@ -278,13 +419,15 @@ Compaction boundaries are the durable handoff point for session continuity. Each
 
 `runtime/` memory files are volatile operational snapshots. They describe the latest turn, recent turns, active blockers, and permission blockers. They are useful for inspection and debugging, but they are not treated as durable knowledge.
 
-`knowledge/` and `preference/` are the durable memory surfaces. These files are indexed by `MEMORY.md` files:
+`knowledge/`, `preference/`, and `identity/` are the durable memory surfaces. The runtime maintains these durable-memory indexes:
 
 - `memory/MEMORY.md` is the root durable-memory index
 - `memory/workspace/<workspace-id>/MEMORY.md` indexes durable workspace knowledge
 - `memory/preference/MEMORY.md` indexes durable user preference memory
 
-Runtime files are intentionally excluded from the `MEMORY.md` indexes. The runtime recalls durable memory from the indexed knowledge and preference files, while resume or compaction context comes from runtime-owned session artifacts instead of from markdown memory alone.
+Identity memories live under `memory/identity/` and are discovered directly at recall time. There is no dedicated `identity/MEMORY.md` index today.
+
+Runtime files are intentionally excluded from the `MEMORY.md` indexes. The runtime recalls durable memory from workspace knowledge plus user-scoped preference and identity files, while resume or compaction context comes from runtime-owned session artifacts instead of from markdown memory alone.
 
 #### Source Of Truth
 
@@ -370,39 +513,28 @@ Use these rules of thumb when reasoning about the system:
   - durable workspace memory that may be recalled in later runs
 - `memory/preference/`
   - durable user preference memory
+- `memory/identity/`
+  - durable user identity facts beyond the canonical runtime profile
 
 If a piece of information is only needed to resume the latest session, it belongs in runtime continuity. If it is the canonical current-user identity used by the runtime, it belongs in the runtime profile. If it should be recalled later without replaying the full session, it belongs in durable memory. If it is a standing workspace rule, it belongs in `AGENTS.md`.
 
-## AI Labour Market
+## Workspace Marketplace
 
-The richer labour-market and marketplace experience lives in the Holaboss product after login, but the OSS desktop already includes a browsable kit gallery and local fallback templates so you can understand the model.
+The richer workspace marketplace experience lives in the Holaboss product after login, with workspace templates such as:
 
-| Worker | Description |
+| Workspace Template | Description |
 | --- | --- |
-| Social Operator | AI social media content creation and scheduling across X, LinkedIn, and Reddit. |
-| Gmail Assistant | Minimal Gmail workspace for inbox search, thread reading, and draft creation via MCP. |
-| Build in Public | Turns GitHub activity into social posts automatically. |
-| Starter Workspace | A minimal blank canvas for building your own workflows from scratch. |
+| Social Operator | Workspace for planning, scheduling, and tracking social content across Twitter, LinkedIn, and Reddit. |
+| Inbox | Gmail-focused workspace template for thread search, conversation review, and draft preparation. |
+| DevRel | GitHub-and-social workspace template for turning commits, releases, and issues into posts ready for review. |
+| Starter | Minimal blank workspace for building your own AI workflow from scratch. |
+| Sales | Gmail-and-Sheets workspace template for managing contacts, follow-ups, and pipeline activity. |
 
-<p align="center"><strong>Ready to publish your worker or explore the hosted marketplace?</strong></p>
+<p align="center"><strong>Ready to publish your workspace or explore the hosted marketplace?</strong></p>
 
 <p align="center">
   <a href="https://www.holaboss.ai/signin?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_publish_badge"><img src="https://img.shields.io/badge/Open%20Holaboss-Sign%20in%20to%20publish%20or%20browse-e08a6b?style=for-the-badge" alt="Open Holaboss: sign in to publish or browse" /></a>
 </p>
-
-## Capability Hub
-
-### Apps and Integrations
-
-- Workspace apps can be installed, started, stopped, set up, and kept running through the runtime API.
-- Integration endpoints cover catalog browsing, connections, bindings, OAuth flows, and broker proxy/token helpers.
-- Browser capability endpoints let workers operate on a browser surface when that capability is enabled.
-
-### Skills and MCP
-
-- Workspace skills are staged from workspace directories and merged with embedded runtime skills.
-- Workspace and app MCP servers can be prepared and exposed to agent runs through sidecars and resolved tool references.
-- Runtime tools already expose onboarding and cronjob helpers to the agent layer.
 
 ## Hosted Features
 
@@ -510,7 +642,7 @@ npm run runtime:test
 The app ships with a default model setup. In most cases, you do not need to edit `runtime-config.json` by hand.
 
 - default model: `openai/gpt-5.4`
-- default provider id for unprefixed models: `openai`
+- built-in fallback provider id when no configured default provider applies: `openai`
 
 ### In-App Setup
 
@@ -525,11 +657,12 @@ Holaboss already provides model configuration in the desktop app.
 
 #### Provider Configurations
 
-You can route the runtime directly to a provider endpoint (for example OpenAI) without a model-proxy rewriter.
+You can configure the runtime in either of these modes:
 
-- set `model_proxy_base_url` to the provider API base, for example `https://api.openai.com/v1`
-- set `auth_token` to your provider API key
-- set `default_model`, for example `openai/gpt-5.4` or `anthropic/claude-sonnet-4-20250514`
+- legacy/proxy shorthand: set `model_proxy_base_url`, `auth_token`, and `default_model`
+- structured provider catalog: define `providers` and `models` entries, then set `runtime.default_provider` and `runtime.default_model`
+
+For the legacy/proxy shorthand, `auth_token` is sent as `X-API-Key` on proxy requests. For direct providers, store credentials under `providers.<id>.api_key` and `providers.<id>.base_url`.
 
 Runtime URL behavior:
 
@@ -556,17 +689,21 @@ You can override that path with:
 ### Important Settings
 
 - `model_proxy_base_url`
-  - base URL root for your proxy, for example `https://your-proxy.example/api/v1/model-proxy`
+  - legacy/proxy base URL root, for example `https://your-proxy.example/api/v1/model-proxy`
 - `auth_token`
-  - token sent as `X-API-Key`
+  - legacy Holaboss/proxy token sent as `X-API-Key` on proxy requests
+- `providers.<id>.base_url`
+  - direct provider endpoint, for example `https://api.openai.com/v1`
+- `providers.<id>.api_key`
+  - direct provider credential for that configured provider
 - `sandbox_id`
   - sandbox identifier propagated into runtime execution context and proxy headers
-- `default_model`
+- `runtime.default_provider`
+  - default configured provider used for unprefixed model ids when one is set
+- `runtime.default_model`
   - default model selection, for example `openai/gpt-5.4`
 - `HOLABOSS_DEFAULT_MODEL`
-  - environment override for `default_model`
-- `SANDBOX_AGENT_DEFAULT_MODEL`
-  - fallback env if `HOLABOSS_DEFAULT_MODEL` is not set
+  - environment override for the default model
 
 ### Model String Format
 
@@ -580,7 +717,7 @@ The runtime also treats unprefixed `claude...` model ids as Anthropic models:
 
 - `claude-sonnet-4-20250514`
 
-If a model id is unprefixed and does not start with `claude`, the runtime treats it as `openai/<model>`.
+If a model id is unprefixed and does not start with `claude`, the runtime first tries the configured default provider. If no configured default provider applies, it falls back to `openai/<model>`.
 
 ### `runtime-config.json` Universal Provider Example
 
@@ -670,7 +807,7 @@ ollama pull qwen2.5:0.5b
 ```
 
 3. Launch the desktop app.
-4. Open `Settings -> Models`.
+4. Open `Settings -> Model Providers`.
 5. Connect `Ollama` with:
    - base URL: `http://localhost:11434/v1`
    - API key: `ollama`
@@ -724,7 +861,6 @@ The launcher environment should stay consistent with how the desktop app starts 
 - `SANDBOX_AGENT_BIND_HOST`: runtime API bind host
 - `SANDBOX_AGENT_BIND_PORT`: runtime API bind port
 - `SANDBOX_AGENT_HARNESS`: harness selector, defaults to `pi`
-- `HOLABOSS_RUNTIME_WORKFLOW_BACKEND`: workflow backend selector, desktop uses `remote_api`
 - `HOLABOSS_RUNTIME_DB_PATH`: SQLite runtime DB path
 - `PROACTIVE_ENABLE_REMOTE_BRIDGE`: desktop enables this with `1`
 - `PROACTIVE_BRIDGE_BASE_URL`: remote bridge base URL when bridge flows are enabled
@@ -760,7 +896,6 @@ HB_SANDBOX_ROOT=/var/lib/holaboss \
 SANDBOX_AGENT_BIND_HOST=127.0.0.1 \
 SANDBOX_AGENT_BIND_PORT=8080 \
 SANDBOX_AGENT_HARNESS=pi \
-HOLABOSS_RUNTIME_WORKFLOW_BACKEND=remote_api \
 HOLABOSS_RUNTIME_DB_PATH=/var/lib/holaboss/state/runtime.db \
 PROACTIVE_ENABLE_REMOTE_BRIDGE=1 \
 PROACTIVE_BRIDGE_BASE_URL=https://your-bridge.example \
@@ -794,7 +929,6 @@ HB_SANDBOX_ROOT="$HOME/Library/Application Support/HolabossRuntime" \
 SANDBOX_AGENT_BIND_HOST=127.0.0.1 \
 SANDBOX_AGENT_BIND_PORT=8080 \
 SANDBOX_AGENT_HARNESS=pi \
-HOLABOSS_RUNTIME_WORKFLOW_BACKEND=remote_api \
 HOLABOSS_RUNTIME_DB_PATH="$HOME/Library/Application Support/HolabossRuntime/state/runtime.db" \
 PROACTIVE_ENABLE_REMOTE_BRIDGE=1 \
 PROACTIVE_BRIDGE_BASE_URL=https://your-bridge.example \
@@ -804,103 +938,10 @@ holaboss-runtime
 ### Notes
 
 - The packaged bundle includes the runtime app and its packaged runtime dependencies.
-- The packaged runtime bundle includes a Node binary under `node-runtime/node_modules/.bin/node` that matches the packaging environment and starts it automatically.
+- By default, the packaged runtime bundle includes a Node binary under `node-runtime/node_modules/.bin/node` and uses it automatically when that bundled binary is present.
 - The desktop app launches the same `bin/sandbox-runtime` entrypoint and passes the same bind host, bind port, sandbox root, and workflow-related environment variables.
 
 ## OSS Release Notes
 
 - License: MIT. See `LICENSE`.
 - Security issues: report privately to `security@holaboss.ai`. See `SECURITY.md`.
-
-## macOS DMG Bundling
-
-This section is the canonical flow for producing Holaboss macOS DMG installers.
-
-### Local DMG For Testing (Ad-Hoc Signed, Not Notarized)
-
-Run from the repository root:
-
-```bash
-npm run desktop:install
-GITHUB_TOKEN="$(gh auth token)" npm --prefix desktop run dist:mac:dmg
-```
-
-If you want to package an unreleased runtime built from your local source tree instead of downloading the latest released runtime:
-
-```bash
-npm run desktop:install
-npm --prefix desktop run dist:mac:dmg:local
-```
-
-Output location:
-
-- `desktop/out/release/*.dmg`
-
-Notes:
-
-- Local DMG commands force ad-hoc signing via `--config.mac.identity=-`.
-- Local artifacts are intended for smoke tests and are not notarized for distribution.
-
-### Local Production Signing And Notarization (Mac)
-
-If you want to ship a DMG built locally on your Mac with Developer ID signing and Apple notarization, run:
-
-```bash
-npm run desktop:install
-npm --prefix desktop run prepare:runtime:local
-npm --prefix desktop run prepare:packaged-config
-npm --prefix desktop run build
-
-CSC_LINK="file:///absolute/path/to/Certificates.p12" \
-CSC_KEY_PASSWORD="your_p12_password" \
-APPLE_ID="your_apple_id_email" \
-APPLE_APP_SPECIFIC_PASSWORD="your_app_specific_password" \
-APPLE_TEAM_ID="YOURTEAMID" \
-npm --prefix desktop exec -- node scripts/run-electron-builder.mjs --mac dmg --arm64
-```
-
-Behavior:
-
-- with `CSC_LINK` + `CSC_KEY_PASSWORD`, the app is signed with your Developer ID certificate
-- with `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`, electron-builder submits for notarization and staples the result
-- if you omit `APPLE_*`, signing can still happen but notarization does not
-
-### Signed And Notarized Product DMG (GitHub Actions)
-
-Use the manual workflow `.github/workflows/release-macos-desktop.yml` (`Release macOS Desktop`).
-
-Required GitHub repository secrets:
-
-- `MAC_CERTIFICATE` (base64-encoded Developer ID Application `.p12`)
-- `MAC_CERTIFICATE_PASSWORD`
-- `APPLE_ID`
-- `APPLE_APP_SPECIFIC_PASSWORD`
-- `APPLE_TEAM_ID`
-
-Trigger the release from the GitHub UI or with GitHub CLI:
-
-```bash
-gh workflow run "Release macOS Desktop" \
-  --ref main \
-  -f ref=main \
-  -f release_tag=holaboss-desktop-v0.1.0 \
-  -f release_title="Holaboss Desktop v0.1.0" \
-  -f prerelease=false
-```
-
-What this workflow does:
-
-- creates or updates the specified GitHub release and tag
-- builds the matching macOS runtime bundle from the selected ref
-- builds, signs, and notarizes the desktop DMG
-- uploads `Holaboss-macos-arm64.dmg` to the release
-
-### Validate A Signed Build
-
-After downloading the built app, run:
-
-```bash
-codesign --verify --deep --strict --verbose=2 /path/to/Holaboss.app
-spctl -a -vv -t exec /path/to/Holaboss.app
-xcrun stapler validate /path/to/Holaboss.app
-```

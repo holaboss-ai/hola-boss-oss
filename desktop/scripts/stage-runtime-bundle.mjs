@@ -33,7 +33,7 @@ const runtimePlatform = resolveRuntimePlatform();
 const stageParentDir = path.join(repoRoot, "out");
 const stageDir = path.join(stageParentDir, `runtime-${runtimePlatform}`);
 const defaultLocalRuntimeDir = `/tmp/holaboss-runtime-${runtimePlatform}-full`;
-const sourceRepo = process.env.HOLABOSS_RUNTIME_SOURCE_REPO?.trim() || "holaboss-ai/hola-boss-oss";
+const sourceRepo = process.env.HOLABOSS_RUNTIME_SOURCE_REPO?.trim() || "holaboss-ai/holaboss-ai";
 const latestReleaseAssetPrefix = `holaboss-runtime-${runtimePlatform}-`;
 
 function log(message) {

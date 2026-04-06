@@ -71,7 +71,7 @@ const APP_THEMES = new Set([
   "graphite",
 ]);
 const GITHUB_RELEASES_OWNER = "holaboss-ai";
-const GITHUB_RELEASES_REPO = "hola-boss-oss";
+const GITHUB_RELEASES_REPO = "holaboss-ai";
 const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const APP_UPDATE_REQUEST_TIMEOUT_MS = 15000;
 const APP_UPDATE_MACOS_ASSET_NAME = "Holaboss-macos-arm64.dmg";
