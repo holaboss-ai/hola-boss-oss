@@ -1,16 +1,21 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
-  Bell,
   Check,
-  Clock3,
+  Clock,
+  FolderOpen,
+  Inbox as InboxIcon,
   Loader2,
   LogIn,
   RefreshCcw,
   Sparkles,
   X,
+  Bell,
+  Clock3,
 } from "lucide-react";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import {
   Tooltip,
   TooltipContent,
@@ -76,6 +81,16 @@ export function OperationsDrawer({
   selectedWorkspaceId,
   mainSessionId,
 }: OperationsDrawerProps) {
+  const {
+    data: authSession,
+    isPending: isAuthPending,
+    requestAuth,
+  } = useDesktopAuthSession();
+  const isSignedIn = Boolean(authSession?.user?.id);
+  const onRequestSignIn = () => {
+    void requestAuth();
+  };
+
   const [runningSessions, setRunningSessions] = useState<RunningSessionEntry[]>(
     [],
   );
@@ -121,9 +136,7 @@ export function OperationsDrawer({
             ) {
               return false;
             }
-            const sessionKind = (
-              sessionById.get(state.session_id)?.kind || ""
-            )
+            const sessionKind = (sessionById.get(state.session_id)?.kind || "")
               .trim()
               .toLowerCase();
             return sessionKind !== "main";
@@ -169,8 +182,8 @@ export function OperationsDrawer({
 
   return (
     <aside className="theme-shell neon-border relative flex h-full min-h-0 min-w-[360px] max-w-[420px] flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
-      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-primary/15 bg-card px-4 py-3">
-        <div className="flex items-center gap-2">
+      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border/40 px-3 py-2">
+        <div className="flex items-center gap-1.5">
           <DrawerTabButton
             active={activeTab === "inbox"}
             icon={<Bell size={14} />}
@@ -184,27 +197,37 @@ export function OperationsDrawer({
             onClick={() => onTabChange("running")}
           />
         </div>
+        {activeTab === "inbox" ? (
+          <InboxHeaderActions
+            isSignedIn={isSignedIn}
+            isAuthPending={isAuthPending}
+            hasWorkspace={hasWorkspace}
+            proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
+            isUpdatingProactiveTaskProposalsEnabled={
+              isUpdatingProactiveTaskProposalsEnabled
+            }
+            isTriggeringProposal={isTriggeringProposal}
+            isLoadingProposals={isLoadingProposals}
+            onRequestSignIn={onRequestSignIn}
+            onTriggerProposal={onTriggerProposal}
+            onProactiveTaskProposalsEnabledChange={
+              onProactiveTaskProposalsEnabledChange
+            }
+            onRefreshProposals={onRefreshProposals}
+          />
+        ) : null}
       </header>
 
       <div className="min-h-0 flex-1 overflow-hidden">
         {activeTab === "inbox" ? (
           <InboxPanel
+            isSignedIn={isSignedIn}
+            onRequestSignIn={onRequestSignIn}
             proposals={proposals}
-            proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
-            isUpdatingProactiveTaskProposalsEnabled={
-              isUpdatingProactiveTaskProposalsEnabled
-            }
             proactiveTaskProposalsError={proactiveTaskProposalsError}
             isLoadingProposals={isLoadingProposals}
-            isTriggeringProposal={isTriggeringProposal}
-            proposalStatusMessage={proposalStatusMessage}
             proposalAction={proposalAction}
             hasWorkspace={hasWorkspace}
-            onRefreshProposals={onRefreshProposals}
-            onTriggerProposal={onTriggerProposal}
-            onProactiveTaskProposalsEnabledChange={
-              onProactiveTaskProposalsEnabledChange
-            }
             onAcceptProposal={onAcceptProposal}
             onDismissProposal={onDismissProposal}
           />
@@ -295,18 +318,19 @@ function compareRunningSessionEntries(
   return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
 }
 
-function runningStatusClasses(status: string): string {
+function runningStatusBadgeVariant(
+  status: string,
+): "default" | "secondary" | "destructive" | "outline" {
   switch (status) {
     case "BUSY":
-      return "border-primary/45 bg-primary/10 text-primary";
     case "QUEUED":
-      return "border-primary/35 bg-primary/8 text-primary";
+      return "default";
     case "WAITING_USER":
-      return "border-border/45 bg-muted text-foreground/82";
+      return "secondary";
     case "ERROR":
-      return "border-destructive/35 bg-destructive/10 text-destructive";
+      return "destructive";
     default:
-      return "border-border/45 bg-muted text-muted-foreground";
+      return "outline";
   }
 }
 
@@ -339,239 +363,242 @@ function DrawerTabButton({
   );
 }
 
-function InboxPanel({
-  proposals,
+function InboxHeaderActions({
+  isSignedIn,
+  isAuthPending,
+  hasWorkspace,
   proactiveTaskProposalsEnabled,
   isUpdatingProactiveTaskProposalsEnabled,
-  proactiveTaskProposalsError,
-  isLoadingProposals,
   isTriggeringProposal,
-  proposalStatusMessage,
-  proposalAction,
-  hasWorkspace,
-  onRefreshProposals,
+  isLoadingProposals,
+  onRequestSignIn,
   onTriggerProposal,
   onProactiveTaskProposalsEnabledChange,
+  onRefreshProposals,
+}: {
+  isSignedIn: boolean;
+  isAuthPending: boolean;
+  hasWorkspace: boolean;
+  proactiveTaskProposalsEnabled: boolean;
+  isUpdatingProactiveTaskProposalsEnabled: boolean;
+  isTriggeringProposal: boolean;
+  isLoadingProposals: boolean;
+  onRequestSignIn: () => void;
+  onTriggerProposal: () => void;
+  onProactiveTaskProposalsEnabledChange: (enabled: boolean) => void;
+  onRefreshProposals: () => void;
+}) {
+  if (!isSignedIn) {
+    return (
+      <Button
+        type="button"
+        size="sm"
+        onClick={onRequestSignIn}
+        disabled={isAuthPending}
+      >
+        {isAuthPending ? (
+          <Loader2 size={12} className="animate-spin" />
+        ) : (
+          <LogIn size={12} />
+        )}
+        <span>Sign in</span>
+      </Button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <Badge
+        variant="outline"
+        className={`cursor-pointer select-none gap-1.5 transition-colors ${
+          isUpdatingProactiveTaskProposalsEnabled
+            ? "cursor-wait opacity-75"
+            : "hover:bg-muted"
+        }`}
+        onClick={() =>
+          !isUpdatingProactiveTaskProposalsEnabled &&
+          onProactiveTaskProposalsEnabledChange(!proactiveTaskProposalsEnabled)
+        }
+      >
+        {isUpdatingProactiveTaskProposalsEnabled ? (
+          <Loader2 size={8} className="animate-spin" />
+        ) : (
+          <span
+            className={`inline-block size-1.5 rounded-full ${
+              proactiveTaskProposalsEnabled ? "bg-emerald-500" : "bg-amber-500"
+            }`}
+          />
+        )}
+        <span>{proactiveTaskProposalsEnabled ? "Enabled" : "Paused"}</span>
+      </Badge>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Trigger proposal"
+              onClick={onTriggerProposal}
+              disabled={!hasWorkspace || isTriggeringProposal}
+            />
+          }
+        >
+          {isTriggeringProposal ? (
+            <Loader2 size={12} className="animate-spin" />
+          ) : (
+            <Sparkles size={12} />
+          )}
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Trigger proposal</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Refresh proposals"
+              onClick={onRefreshProposals}
+              disabled={!hasWorkspace || isLoadingProposals}
+            />
+          }
+        >
+          {isLoadingProposals ? (
+            <Loader2 size={12} className="animate-spin" />
+          ) : (
+            <RefreshCcw size={12} />
+          )}
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Refresh</TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
+function InboxPanel({
+  isSignedIn,
+  onRequestSignIn,
+  proposals,
+  proactiveTaskProposalsError,
+  isLoadingProposals,
+  proposalAction,
+  hasWorkspace,
   onAcceptProposal,
   onDismissProposal,
 }: {
+  isSignedIn: boolean;
+  onRequestSignIn: () => void;
   proposals: TaskProposalRecordPayload[];
-  proactiveTaskProposalsEnabled: boolean;
-  isUpdatingProactiveTaskProposalsEnabled: boolean;
   proactiveTaskProposalsError: string;
   isLoadingProposals: boolean;
-  isTriggeringProposal: boolean;
-  proposalStatusMessage: string;
   proposalAction: {
     proposalId: string;
     action: "accept" | "dismiss";
   } | null;
   hasWorkspace: boolean;
-  onRefreshProposals: () => void;
-  onTriggerProposal: () => void;
-  onProactiveTaskProposalsEnabledChange: (enabled: boolean) => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
 }) {
-  const { data: session, isPending: isAuthPending, requestAuth } =
-    useDesktopAuthSession();
-  const isSignedIn = Boolean(session?.user?.id);
-  const onRequestSignIn = () => {
-    void requestAuth();
-  };
-
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-border/35 px-4 py-4">
-        <div className="grid gap-3">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="flex flex-wrap flex-1 items-center justify-end gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant={isSignedIn ? "ghost" : "default"}
-                onClick={isSignedIn ? onTriggerProposal : onRequestSignIn}
-                disabled={
-                  isSignedIn ? !hasWorkspace || isTriggeringProposal : isAuthPending
-                }
-                className={
-                  isSignedIn
-                  ? "rounded-2xl bg-primary/10 text-primary hover:bg-primary/14 hover:text-primary"
-                  : "rounded-2xl"
-                }
-              >
-                {isSignedIn && isTriggeringProposal ? (
-                  <Loader2 size={12} className="animate-spin" />
-                ) : !isSignedIn && isAuthPending ? (
-                  <Loader2 size={12} className="animate-spin" />
-                ) : !isSignedIn ? (
-                  <LogIn size={12} />
-                ) : (
-                  <Sparkles size={12} />
-                )}
-                <span>{isSignedIn ? "Trigger" : "Sign in"}</span>
-              </Button>
-              {isSignedIn ? (
-                <>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    aria-label="Toggle proactive task proposals"
-                    aria-pressed={proactiveTaskProposalsEnabled}
-                    disabled={isUpdatingProactiveTaskProposalsEnabled}
-                    onClick={() =>
-                      onProactiveTaskProposalsEnabledChange(
-                        !proactiveTaskProposalsEnabled,
-                      )
-                    }
-                    className={`rounded-full text-xs uppercase tracking-widest ${
-                      proactiveTaskProposalsEnabled
-                        ? "bg-primary/12 text-primary hover:bg-primary/16 hover:text-primary"
-                        : "bg-amber-500/12 text-amber-300 hover:bg-amber-500/16 hover:text-amber-200 dark:text-amber-200"
-                    } ${
-                    isUpdatingProactiveTaskProposalsEnabled
-                        ? "cursor-wait opacity-75"
-                        : ""
-                    }`}
-                  >
-                    {isUpdatingProactiveTaskProposalsEnabled ? (
-                      <Loader2 size={12} className="animate-spin" />
-                    ) : null}
-                    <span>
-                      {proactiveTaskProposalsEnabled ? "Enabled" : "Paused"}
-                    </span>
-                  </Button>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          type="button"
-                          size="icon-sm"
-                          variant="ghost"
-                          aria-label="Refresh proposals"
-                          onClick={onRefreshProposals}
-                          disabled={!hasWorkspace || isLoadingProposals}
-                          className="rounded-2xl bg-muted/55 text-muted-foreground hover:bg-accent hover:text-foreground"
-                        />
-                      }
-                    >
-                      {isLoadingProposals ? (
-                        <Loader2 size={14} className="animate-spin" />
-                      ) : (
-                        <RefreshCcw size={14} />
-                      )}
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      Refresh proposals
-                    </TooltipContent>
-                  </Tooltip>
-                </>
-              ) : null}
-            </div>
-          </div>
-          <div className="grid gap-2">
-            <div
-              className={`rounded-2xl px-3 py-2 text-sm ${
-                !isSignedIn
-                  ? "bg-amber-500/12 text-amber-200"
-                  : proactiveTaskProposalsEnabled
-                  ? "bg-muted/35 text-muted-foreground"
-                  : "bg-amber-500/10 text-amber-300 dark:text-amber-200"
-              }`}
-            >
-              {!isSignedIn
-                ? "Sign in to sync remote task proposals into this inbox."
-                : proactiveTaskProposalsEnabled
-                ? "Automatic proposals are enabled for this inbox."
-                : "Automatic proposals are paused. Use Refresh or Trigger manually."}
-            </div>
-
-            {proactiveTaskProposalsError ? (
-              <div className="rounded-2xl bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                {proactiveTaskProposalsError}
-              </div>
-            ) : null}
-
-            {proposalStatusMessage ? (
-              <div className="theme-subtle-surface rounded-2xl px-3 py-2 text-sm text-muted-foreground">
-                {proposalStatusMessage}
-              </div>
-            ) : null}
-          </div>
+      {proactiveTaskProposalsError ? (
+        <div className="shrink-0 border-b border-destructive/20 px-3 py-2 text-xs text-destructive">
+          {proactiveTaskProposalsError}
         </div>
-      </div>
+      ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
         {!isSignedIn ? (
           <SignedOutInboxNotice onRequestSignIn={onRequestSignIn} />
         ) : !hasWorkspace ? (
-          <EmptyNotice message="Select a workspace to review incoming task proposals." />
+          <EmptyNotice
+            icon={<FolderOpen size={24} strokeWidth={1.5} />}
+            message="Select a workspace to review proposals."
+          />
         ) : proposals.length === 0 ? (
           <EmptyNotice
+            icon={
+              isLoadingProposals ? (
+                <Loader2 size={24} strokeWidth={1.5} className="animate-spin" />
+              ) : (
+                <InboxIcon size={24} strokeWidth={1.5} />
+              )
+            }
             message={
-              isLoadingProposals
-                ? "Loading task proposals..."
-                : "No unreviewed proposals for this workspace yet."
+              isLoadingProposals ? "Loading proposals..." : "No proposals yet."
             }
           />
         ) : (
-          <div className="grid gap-3">
+          <div className="grid gap-2">
             {proposals.map((proposal) => {
               const isActing =
                 proposalAction?.proposalId === proposal.proposal_id;
               return (
-                <article
+                <Card
                   key={proposal.proposal_id}
-                  className="theme-subtle-surface rounded-[22px] border border-border/35 px-4 py-4 shadow-sm"
+                  size="sm"
+                  className="gap-2 py-3 ring-border/40"
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium text-foreground">
-                        {proposal.task_name}
-                      </div>
-                      <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
-                        {proposal.task_prompt}
-                      </div>
+                  <div className="flex items-start justify-between gap-2 px-3">
+                    <div className="min-w-0 flex-1 text-sm font-medium text-foreground">
+                      {proposal.task_name}
                     </div>
-                    <div className="shrink-0 rounded-full border border-border/45 px-2.5 py-1 text-xs uppercase tracking-widest text-muted-foreground">
-                      {proposal.state}
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              type="button"
+                              size="icon-xs"
+                              variant="ghost"
+                              aria-label="Accept proposal"
+                              onClick={() => onAcceptProposal(proposal)}
+                              disabled={isActing}
+                              className="text-muted-foreground hover:text-primary"
+                            />
+                          }
+                        >
+                          {isActing && proposalAction?.action === "accept" ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <Check size={12} />
+                          )}
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom">Accept</TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              type="button"
+                              size="icon-xs"
+                              variant="ghost"
+                              aria-label="Dismiss proposal"
+                              onClick={() => onDismissProposal(proposal)}
+                              disabled={isActing}
+                              className="text-muted-foreground hover:text-foreground"
+                            />
+                          }
+                        >
+                          {isActing && proposalAction?.action === "dismiss" ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <X size={12} />
+                          )}
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom">Dismiss</TooltipContent>
+                      </Tooltip>
                     </div>
                   </div>
-
-                  <div className="mt-3 text-xs text-muted-foreground/78">
-                    {formatTimestamp(proposal.created_at)}
+                  <div className="line-clamp-2 px-3 text-xs leading-relaxed text-muted-foreground">
+                    {proposal.task_prompt}
                   </div>
-
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => onAcceptProposal(proposal)}
-                      disabled={isActing}
-                      className="inline-flex h-9 items-center justify-center gap-2 rounded-2xl border border-primary/40 bg-primary/10 px-3 text-sm text-primary transition hover:bg-primary/14 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {isActing && proposalAction?.action === "accept" ? (
-                        <Loader2 size={12} className="animate-spin" />
-                      ) : (
-                        <Check size={12} />
-                      )}
-                      <span>Accept</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onDismissProposal(proposal)}
-                      disabled={isActing}
-                      className="inline-flex h-9 items-center justify-center gap-2 rounded-2xl border border-border/45 px-3 text-sm text-muted-foreground transition hover:border-primary/28 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {isActing && proposalAction?.action === "dismiss" ? (
-                        <Loader2 size={12} className="animate-spin" />
-                      ) : (
-                        <X size={12} />
-                      )}
-                      <span>Dismiss</span>
-                    </button>
+                  <div className="px-3 text-xs text-muted-foreground">
+                    {relativeTime(proposal.created_at)}
                   </div>
-                </article>
+                </Card>
               );
             })}
           </div>
@@ -626,62 +653,61 @@ function RunningPanel({
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-border/35 px-4 py-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="text-xs uppercase tracking-widest text-primary/76">
-            Running
-          </div>
-          <div className="rounded-full bg-muted/55 px-3 py-1 text-xs text-muted-foreground">
-            Idle and cronjob sessions
-          </div>
-        </div>
-      </div>
-
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {!hasWorkspace ? (
-          <CenteredNotice message="Choose a workspace to inspect runtime sessions." />
+          <EmptyNotice
+            icon={<FolderOpen size={24} strokeWidth={1.5} />}
+            message="Choose a workspace to inspect sessions."
+          />
         ) : errorMessage ? (
-          <CenteredNotice message={errorMessage} tone="error" />
+          <EmptyNotice
+            icon={
+              <X size={24} strokeWidth={1.5} className="text-destructive" />
+            }
+            message={errorMessage}
+          />
         ) : isLoading && sessions.length === 0 ? (
-          <CenteredNotice message="Loading runtime sessions..." />
+          <EmptyNotice
+            icon={
+              <Loader2 size={24} strokeWidth={1.5} className="animate-spin" />
+            }
+            message="Loading sessions..."
+          />
         ) : sessions.length === 0 ? (
-          <CenteredNotice message="No runtime sessions right now." />
+          <EmptyNotice
+            icon={<Clock size={24} strokeWidth={1.5} />}
+            message="No background sessions."
+          />
         ) : (
-          <div className="grid gap-3">
+          <div className="divide-y divide-border/30">
             {sessions.map((session) => (
               <button
                 key={session.sessionId}
                 type="button"
                 onClick={() => onOpenSession(session.sessionId)}
                 aria-label={`Open session ${session.title}`}
-                className={`theme-subtle-surface w-full rounded-[18px] border px-4 py-4 text-left transition ${
+                className={`w-full px-3 py-3 text-left transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/50 ${
                   activeSessionId === session.sessionId
-                    ? "border-primary/45"
-                    : "border-border/35 hover:border-primary/30"
+                    ? "border-l-2 border-l-primary bg-muted/30"
+                    : ""
                 }`}
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium text-foreground">
-                      {session.title}
-                    </div>
-                    <div className="mt-1 text-xs uppercase tracking-widest text-muted-foreground/76">
-                      {session.kind.replace(/_/g, " ")}
-                    </div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                    {session.title}
                   </div>
-                  <div
-                    className={`shrink-0 rounded-full border px-2 py-1 text-xs uppercase tracking-widest ${runningStatusClasses(session.status)}`}
+                  <Badge
+                    variant={runningStatusBadgeVariant(session.status)}
+                    className="shrink-0 text-[10px] uppercase"
                   >
                     {session.status}
-                  </div>
+                  </Badge>
                 </div>
-
-                <div className="mt-3 text-xs text-muted-foreground/82">
-                  Updated {formatTimestamp(session.updatedAt)}
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {relativeTime(session.updatedAt)}
                 </div>
-
                 {session.lastError ? (
-                  <div className="mt-3 rounded-[14px] border border-destructive/25 bg-destructive/8 px-3 py-2 text-xs leading-5 text-destructive">
+                  <div className="mt-1.5 truncate text-xs text-destructive">
                     {session.lastError}
                   </div>
                 ) : null}
@@ -694,40 +720,32 @@ function RunningPanel({
   );
 }
 
-function CenteredNotice({
-  message,
-  tone = "default",
-}: {
-  message: string;
-  tone?: "default" | "error";
-}) {
+function EmptyNotice({ icon, message }: { icon: ReactNode; message: string }) {
   return (
-    <div className="flex items-center justify-center p-6">
-      <div
-        className={`theme-subtle-surface max-w-[280px] rounded-[20px] border px-5 py-5 text-center ${
-          tone === "error"
-            ? "border-destructive/25 text-destructive"
-            : "border-border/35"
-        }`}
-      >
-        <div className="text-sm leading-6">{message}</div>
-      </div>
+    <div className="flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground">
+      {icon}
+      <span className="text-sm">{message}</span>
     </div>
   );
 }
 
-function EmptyNotice({ message }: { message: string }) {
-  return (
-    <div className="theme-subtle-surface rounded-[22px] border border-border/35 px-4 py-5 text-sm leading-6 text-muted-foreground/78">
-      {message}
-    </div>
-  );
-}
-
-function formatTimestamp(value: string): string {
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
+function relativeTime(value: string): string {
+  const ms = Date.now() - Date.parse(value);
+  if (Number.isNaN(ms)) {
     return value;
   }
-  return new Date(timestamp).toLocaleString();
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) {
+    return "just now";
+  }
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours}h ago`;
+  }
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }

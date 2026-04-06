@@ -25,6 +25,10 @@
     "runtime:api-server:test": "npm --prefix runtime/api-server run test",
     "runtime:api-server:typecheck": "npm --prefix runtime/api-server run typecheck",
     "runtime:clean": "rm -rf out/runtime-macos out/runtime-root runtime/out",
-    "runtime:test": "npm run runtime:state-store:test && npm run runtime:harness-host:test && npm run runtime:api-server:test"
+    "runtime:test": "npm run runtime:state-store:test && npm run runtime:harness-host:test && npm run runtime:api-server:test",
+    "sdk:bridge:install": "bun install --cwd sdk/bridge",
+    "sdk:bridge:build": "bun --cwd sdk/bridge run build",
+    "sdk:bridge:test": "bun --cwd sdk/bridge test",
+    "sdk:bridge:typecheck": "bun --cwd sdk/bridge run typecheck"
   }
 }

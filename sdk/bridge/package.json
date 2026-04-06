@@ -1,0 +1,50 @@
+{
+  "name": "@holaboss/bridge",
+  "version": "0.1.0",
+  "description": "Holaboss Bridge SDK — integration proxy and workspace output helpers for module apps",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsdown && node -e \"const fs=require('fs'),p=require('path'),d='dist';for(const f of fs.readdirSync(d)){const m=f.match(/^index-[^.]+(\\.d\\.[cm]?ts(?:\\.map)?)$/);if(m)fs.renameSync(p.join(d,f),p.join(d,'index'+m[1]))}\"",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run build"
+  },
+  "keywords": [
+    "holaboss",
+    "bridge",
+    "sdk",
+    "mcp",
+    "workspace"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/holaboss-ai/hola-boss-oss",
+    "directory": "sdk/bridge"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "tsdown": "^0.12",
+    "typescript": "^5.8"
+  }
+}

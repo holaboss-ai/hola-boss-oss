@@ -1,56 +1,56 @@
 import {
-  LeftNavigationRail,
-  type LeftRailItem,
+    LeftNavigationRail,
+    type LeftRailItem,
 } from "@/components/layout/LeftNavigationRail";
 import {
-  OperationsDrawer,
-  type OperationsDrawerTab,
+    OperationsDrawer,
+    type OperationsDrawerTab,
 } from "@/components/layout/OperationsDrawer";
-import { appShellMainGridClassName } from "@/components/layout/appShellLayout";
-import { PublishDialog } from "@/components/publish/PublishDialog";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
+import { appShellMainGridClassName } from "@/components/layout/appShellLayout";
 import { FirstWorkspacePane } from "@/components/onboarding";
 import { AppSurfacePane } from "@/components/panes/AppSurfacePane";
 import { AutomationsPane } from "@/components/panes/AutomationsPane";
 import { BrowserPane } from "@/components/panes/BrowserPane";
 import { ChatPane } from "@/components/panes/ChatPane";
 import {
-  FileExplorerPane,
-  type FileExplorerFocusRequest,
+    FileExplorerPane,
+    type FileExplorerFocusRequest,
 } from "@/components/panes/FileExplorerPane";
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { MarketplacePane } from "@/components/panes/MarketplacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
 import { SkillsPane } from "@/components/panes/SkillsPane";
+import { PublishDialog } from "@/components/publish/PublishDialog";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
-import { getWorkspaceAppDefinition } from "@/lib/workspaceApps";
 import { DesktopBillingProvider } from "@/lib/billing/useDesktopBilling";
+import { getWorkspaceAppDefinition } from "@/lib/workspaceApps";
 import {
-  useWorkspaceDesktop,
-  WorkspaceDesktopProvider,
+    useWorkspaceDesktop,
+    WorkspaceDesktopProvider,
 } from "@/lib/workspaceDesktop";
 import {
-  useWorkspaceSelection,
-  WorkspaceSelectionProvider,
+    useWorkspaceSelection,
+    WorkspaceSelectionProvider,
 } from "@/lib/workspaceSelection";
 import {
-  Bell,
-  CircleCheck,
-  Clock3,
-  Loader2,
-  PanelRightClose,
-  PanelRightOpen,
-  TriangleAlert,
-  XCircle,
+    Bell,
+    CircleCheck,
+    Clock3,
+    Loader2,
+    PanelRightClose,
+    PanelRightOpen,
+    TriangleAlert,
+    XCircle,
 } from "lucide-react";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+    type PointerEvent as ReactPointerEvent,
 } from "react";
 
 const THEME_STORAGE_KEY = "holaboss-theme-v1";
@@ -282,7 +282,14 @@ function spaceResizeHandleSpec(
 }
 
 function normalizeErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Request failed.";
+  if (!(error instanceof Error)) {
+    return "Request failed.";
+  }
+  // Strip Electron IPC wrapper: "Error invoking remote method '...': Error: <actual>"
+  const ipcMatch = error.message.match(
+    /^Error invoking remote method '[^']+': Error: (.+)$/s,
+  );
+  return ipcMatch ? ipcMatch[1] : error.message;
 }
 
 function inferInternalSurfaceFromOutputType(
@@ -321,7 +328,9 @@ function workspaceOutputNavigationTarget(
         hasAppPresentation && presentation?.path
           ? presentation.path
           : output.module_resource_id || output.artifact_id || output.id,
-      view: hasAppPresentation ? presentation.view : output.output_type || "home",
+      view: hasAppPresentation
+        ? presentation.view
+        : output.output_type || "home",
     };
   }
 
@@ -801,7 +810,9 @@ function AppShellContent() {
         if (requestedUrl) {
           openBrowserPane();
           void window.electronAPI.browser
-            .setActiveWorkspace(payload.workspaceId ?? selectedWorkspaceId ?? null)
+            .setActiveWorkspace(
+              payload.workspaceId ?? selectedWorkspaceId ?? null,
+            )
             .then(() => window.electronAPI.browser.navigate(requestedUrl))
             .catch(() => undefined);
           return;
@@ -1852,9 +1863,7 @@ function AppShellContent() {
                   isTriggeringProposal={isTriggeringTaskProposal}
                   proposalStatusMessage={taskProposalStatusMessage}
                   proposalAction={proposalAction}
-                  onRefreshProposals={() =>
-                    void refreshTaskProposals()
-                  }
+                  onRefreshProposals={() => void refreshTaskProposals()}
                   onTriggerProposal={() => void triggerRemoteTaskProposal()}
                   onProactiveTaskProposalsEnabledChange={(enabled) =>
                     void handleProactiveTaskProposalsEnabledChange(enabled)

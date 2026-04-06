@@ -1,0 +1,176 @@
+name: Publish SDK
+
+on:
+  push:
+    tags:
+      - "@holaboss/bridge@*"
+
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Package to publish"
+        required: true
+        type: choice
+        options:
+          - bridge
+      dry_run:
+        description: "Dry run (skip actual publish)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-sdk-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    outputs:
+      package_name: ${{ steps.resolve.outputs.package_name }}
+      package_dir: ${{ steps.resolve.outputs.package_dir }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve package
+        id: resolve
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            # Extract package name: @holaboss/bridge@1.0.0 -> bridge
+            PACKAGE=$(echo "$TAG" | sed 's/@holaboss\///' | sed 's/@.*//')
+            VERSION=$(echo "$TAG" | grep -oP '@[^@]+$' | sed 's/@//')
+          else
+            PACKAGE="${{ inputs.package }}"
+            VERSION=$(node -p "require('./sdk/${PACKAGE}/package.json').version")
+          fi
+
+          echo "package_name=$PACKAGE" >> "$GITHUB_OUTPUT"
+          echo "package_dir=sdk/$PACKAGE" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "📦 Package: @holaboss/$PACKAGE@$VERSION"
+
+      - name: Verify package exists
+        run: |
+          if [ ! -f "${{ steps.resolve.outputs.package_dir }}/package.json" ]; then
+            echo "❌ Package directory not found: ${{ steps.resolve.outputs.package_dir }}"
+            exit 1
+          fi
+
+  test:
+    name: Test
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --cwd ${{ needs.validate.outputs.package_dir }}
+
+      - name: Run tests
+        run: bun --cwd ${{ needs.validate.outputs.package_dir }} test
+
+  build:
+    name: Build
+    needs: [validate, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: bun install --cwd ${{ needs.validate.outputs.package_dir }}
+
+      - name: Build
+        run: bun --cwd ${{ needs.validate.outputs.package_dir }} run build
+
+      - name: Verify dist contents
+        run: |
+          DIR="${{ needs.validate.outputs.package_dir }}/dist"
+          echo "📁 Build output:"
+          ls -la "$DIR"
+
+          for f in index.js index.cjs index.d.ts index.d.cts; do
+            if [ ! -f "$DIR/$f" ]; then
+              echo "❌ Missing expected file: $f"
+              exit 1
+            fi
+          done
+          echo "✅ All expected files present"
+
+      - name: Pack and inspect
+        working-directory: ${{ needs.validate.outputs.package_dir }}
+        run: |
+          npm pack --dry-run 2>&1
+          echo ""
+          echo "📦 Package contents above — verify before publish"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-${{ needs.validate.outputs.package_name }}-dist
+          path: ${{ needs.validate.outputs.package_dir }}/dist/
+          retention-days: 7
+
+  publish:
+    name: Publish to npm
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: bun install --cwd ${{ needs.validate.outputs.package_dir }}
+
+      - name: Build
+        run: bun --cwd ${{ needs.validate.outputs.package_dir }} run build
+
+      - name: Publish
+        working-directory: ${{ needs.validate.outputs.package_dir }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+            echo "🏜️ Dry run — skipping publish"
+            npm pack --dry-run
+          else
+            npm publish --access public --provenance
+            echo "✅ Published @holaboss/${{ needs.validate.outputs.package_name }}@${{ needs.validate.outputs.version }}"
+          fi

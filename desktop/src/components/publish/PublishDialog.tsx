@@ -13,7 +13,11 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -156,19 +160,19 @@ export function PublishDialog({
   const handleGenerate = async (type: "onboarding" | "readme") => {
     const setter =
       type === "onboarding" ? setIsGeneratingOnboarding : setIsGeneratingReadme;
-    const contentSetter =
-      type === "onboarding" ? setOnboardingMd : setReadmeMd;
+    const contentSetter = type === "onboarding" ? setOnboardingMd : setReadmeMd;
     setter(true);
     try {
-      const result =
-        await window.electronAPI.workspace.generateTemplateContent({
+      const result = await window.electronAPI.workspace.generateTemplateContent(
+        {
           contentType: type,
           name,
           description,
           category,
           tags: tagArray,
           apps: [...selectedApps],
-        });
+        },
+      );
       contentSetter(result.content);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Generation failed");
@@ -198,17 +202,16 @@ export function PublishDialog({
       const appsArray = [...selectedApps];
 
       // Step 1: Create submission
-      const submission =
-        await window.electronAPI.workspace.createSubmission({
-          workspaceId,
-          name,
-          description,
-          category,
-          tags: tagArray,
-          apps: appsArray,
-          onboardingMd: onboardingMd || null,
-          readmeMd: readmeMd || null,
-        });
+      const submission = await window.electronAPI.workspace.createSubmission({
+        workspaceId,
+        name,
+        description,
+        category,
+        tags: tagArray,
+        apps: appsArray,
+        onboardingMd: onboardingMd || null,
+        readmeMd: readmeMd || null,
+      });
 
       // Step 2: Package & upload locally
       await window.electronAPI.workspace.packageAndUploadWorkspace({
@@ -236,9 +239,7 @@ export function PublishDialog({
 
       setSuccess(true);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Failed to publish",
-      );
+      setError(err instanceof Error ? err.message : "Failed to publish");
     } finally {
       setIsSubmitting(false);
     }
@@ -326,19 +327,13 @@ export function PublishDialog({
                       <span
                         className={cn(
                           "flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-medium transition-colors",
-                          isCompleted &&
-                            "bg-primary text-primary-foreground",
-                          isCurrent &&
-                            "bg-primary text-primary-foreground",
+                          isCompleted && "bg-primary text-primary-foreground",
+                          isCurrent && "bg-primary text-primary-foreground",
                           !(isCompleted || isCurrent) &&
                             "bg-border/60 text-muted-foreground",
                         )}
                       >
-                        {isCompleted ? (
-                          <Check className="size-3.5" />
-                        ) : (
-                          stepNum
-                        )}
+                        {isCompleted ? <Check className="size-3.5" /> : stepNum}
                       </span>
 
                       <span
@@ -628,9 +623,7 @@ export function PublishDialog({
                       label="Onboarding"
                       onEdit={() => setStep(3)}
                       title={
-                        onboardingMd.trim()
-                          ? "Custom onboarding"
-                          : "Skipped"
+                        onboardingMd.trim() ? "Custom onboarding" : "Skipped"
                       }
                     />
                     <ReviewCard
@@ -641,11 +634,7 @@ export function PublishDialog({
                       }
                       label="README"
                       onEdit={() => setStep(4)}
-                      title={
-                        readmeMd.trim()
-                          ? "Custom README"
-                          : "Skipped"
-                      }
+                      title={readmeMd.trim() ? "Custom README" : "Skipped"}
                     />
                   </div>
 
@@ -660,11 +649,11 @@ export function PublishDialog({
               {/* Success state */}
               {success && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center px-8">
-                  <div className="mb-5 flex size-16 items-center justify-center rounded-full bg-emerald-50 dark:bg-emerald-950/40">
-                    <Check className="size-7 text-emerald-600 dark:text-emerald-400" />
+                  <div className="mb-5 flex size-20 items-center justify-center rounded-full bg-emerald-50 dark:bg-emerald-950/40">
+                    <Check className="size-10 text-emerald-600 dark:text-emerald-400" />
                   </div>
 
-                  <h3 className="mb-2 text-lg font-semibold tracking-tight">
+                  <h3 className="mb-2 text-xl font-semibold tracking-tight">
                     Template Submitted
                   </h3>
                   <p className="mx-auto max-w-xs text-center text-sm leading-relaxed text-muted-foreground">
@@ -674,11 +663,7 @@ export function PublishDialog({
                   </p>
 
                   <div className="mt-6 flex items-center gap-3">
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={() => onOpenChange(false)}
-                    >
+                    <Button type="button" onClick={() => onOpenChange(false)}>
                       Done
                     </Button>
                   </div>

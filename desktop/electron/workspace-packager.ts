@@ -2,6 +2,9 @@ import archiver from "archiver";
 import { existsSync, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import { createWriteStream } from "node:fs";
+import { request as httpRequest } from "node:http";
+import type { IncomingMessage } from "node:http";
+import { request as httpsRequest } from "node:https";
 import path from "node:path";
 import { Writable } from "node:stream";
 
@@ -374,24 +377,47 @@ export async function uploadToPresignedUrl(
   data: Buffer,
   timeoutMs = 120_000,
 ): Promise<void> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    controller.abort(new Error(`Upload timed out after ${timeoutMs}ms`));
-  }, timeoutMs);
+  const requester = url.startsWith("https") ? httpsRequest : httpRequest;
 
-  try {
-    const response = await fetch(url, {
-      method: "PUT",
-      headers: buildPresignedUploadHeaders(url, data.byteLength),
-      body: new Uint8Array(data),
-      signal: controller.signal,
+  await new Promise<void>((resolve, reject) => {
+    const req = requester(
+      url,
+      {
+        method: "PUT",
+        headers: buildPresignedUploadHeaders(url, data.byteLength),
+        timeout: timeoutMs,
+      },
+      (res: IncomingMessage) => {
+        const responseChunks: string[] = [];
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => {
+          responseChunks.push(chunk);
+        });
+        res.on("end", () => {
+          const status = res.statusCode ?? 0;
+          if (status >= 200 && status < 300) {
+            resolve();
+          } else {
+            reject(
+              new Error(
+                buildPresignedUploadError(
+                  url,
+                  status,
+                  responseChunks.join(""),
+                ),
+              ),
+            );
+          }
+        });
+        res.on("error", reject);
+      },
+    );
+
+    req.on("timeout", () => {
+      req.destroy(new Error(`Upload timed out after ${timeoutMs}ms`));
     });
-
-    if (!response.ok) {
-      const responseBody = await response.text().catch(() => "");
-      throw new Error(buildPresignedUploadError(url, response.status, responseBody));
-    }
-  } finally {
-    clearTimeout(timeout);
-  }
+    req.on("error", reject);
+    req.write(data);
+    req.end();
+  });
 }

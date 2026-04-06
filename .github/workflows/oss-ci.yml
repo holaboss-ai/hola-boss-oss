@@ -61,6 +61,26 @@ jobs:
       - name: Runtime harness host tests
         run: npm run runtime:harness-host:test
 
+  sdk-bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --cwd sdk/bridge
+
+      - name: Run tests
+        run: bun --cwd sdk/bridge test
+
+      - name: Build
+        run: bun --cwd sdk/bridge run build
+
   runtime-api-server:
     runs-on: ubuntu-latest
     steps:
