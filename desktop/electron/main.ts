@@ -5415,9 +5415,9 @@ async function getProactiveStatus(
       proposal_count: 0,
       heartbeat: fallbackHeartbeat,
       bridge: fallbackBridge,
-      delivery_state: "idle",
-      delivery_summary: "Select a workspace to inspect proactive status.",
-      delivery_detail: null,
+      lifecycle_state: "idle",
+      lifecycle_summary: "Select a workspace to inspect proactive status.",
+      lifecycle_detail: null,
     };
   }
 
@@ -5520,52 +5520,42 @@ async function getProactiveStatus(
     };
   }
 
-  let deliveryState = "idle";
-  let deliverySummary = "No suggestions right now.";
-  let deliveryDetail: string | null = null;
+  let lifecycleState = "idle";
+  let lifecycleSummary = "Idle.";
+  let lifecycleDetail: string | null = null;
   const heartbeatAgeSeconds = secondsSinceIso(heartbeat.recorded_at);
   const heartbeatJustClaimed =
     heartbeatAgeSeconds !== null && heartbeatAgeSeconds < 10;
   const heartbeatSettled =
     heartbeatAgeSeconds !== null && heartbeatAgeSeconds >= 120;
-  if (proposalCount > 0) {
-    deliveryState = "ready";
-    deliverySummary = `${proposalCount} suggestion${proposalCount === 1 ? "" : "s"} ready.`;
-  } else if (heartbeat.state === "published" && bridge.state === "error") {
-    deliveryState = "unavailable";
-    deliverySummary = "Suggestions are unavailable right now.";
-    deliveryDetail = bridge.detail;
-  } else if (heartbeat.state === "pending") {
-    deliveryState = "sent";
-    deliverySummary = "Request sent.";
-    deliveryDetail = "Waiting for the workspace to pick it up.";
+  if (heartbeat.state === "pending") {
+    lifecycleState = "sent";
+    lifecycleSummary = "Sent.";
+    lifecycleDetail = "Waiting for the proactive agent to claim this run.";
   } else if (heartbeat.state === "published" && heartbeatJustClaimed) {
-    deliveryState = "claimed";
-    deliverySummary = "Request picked up.";
-    deliveryDetail = "Preparing suggestions for this workspace.";
+    lifecycleState = "claimed";
+    lifecycleSummary = "Claimed.";
+    lifecycleDetail = "The proactive agent has started working on this run.";
   } else if (heartbeat.state === "published" && !heartbeatSettled) {
-    deliveryState = "analyzing";
-    deliverySummary = "Analyzing workspace.";
-    deliveryDetail = "Looking for useful suggestions.";
-  } else if (heartbeat.state === "published") {
-    deliveryState = "idle";
-    deliverySummary = "No suggestions right now.";
+    lifecycleState = "analyzing";
+    lifecycleSummary = "Analyzing.";
+    lifecycleDetail = "Looking for useful suggestions.";
   } else if (heartbeat.state === "failed") {
-    deliveryState = "error";
-    deliverySummary = "Couldn't generate suggestions.";
-    deliveryDetail = heartbeat.detail;
+    lifecycleState = "error";
+    lifecycleSummary = "Error.";
+    lifecycleDetail = heartbeat.detail;
   } else if (heartbeat.state === "skipped") {
-    deliveryState = "unavailable";
-    deliverySummary = "Suggestions are unavailable right now.";
-    deliveryDetail = heartbeat.detail;
-  } else if (bridge.state === "error") {
-    deliveryState = "unavailable";
-    deliverySummary = "Suggestions are unavailable right now.";
-    deliveryDetail = bridge.detail;
-  } else if (bridge.state === "inactive") {
-    deliveryState = "unavailable";
-    deliverySummary = "Suggestions are unavailable right now.";
-    deliveryDetail = bridge.detail;
+    lifecycleState = "unavailable";
+    lifecycleSummary = "Unavailable.";
+    lifecycleDetail = heartbeat.detail;
+  } else if (
+    bridge.state === "error" ||
+    bridge.state === "inactive" ||
+    bridge.state === "pending"
+  ) {
+    lifecycleState = "unavailable";
+    lifecycleSummary = "Unavailable.";
+    lifecycleDetail = bridge.detail;
   }
 
   return {
@@ -5573,9 +5563,9 @@ async function getProactiveStatus(
     proposal_count: proposalCount,
     heartbeat,
     bridge,
-    delivery_state: deliveryState,
-    delivery_summary: deliverySummary,
-    delivery_detail: deliveryDetail,
+    lifecycle_state: lifecycleState,
+    lifecycle_summary: lifecycleSummary,
+    lifecycle_detail: lifecycleDetail,
   };
 }
 

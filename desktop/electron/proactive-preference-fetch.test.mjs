@@ -21,3 +21,15 @@ test("manual task proposal trigger uses proactive heartbeat ingest", async () =>
   assert.match(source, /workspace_id=\$\{workspaceId\} source=\$\{params\.sourceRef\}/);
   assert.doesNotMatch(source, /\/api\/v1\/proactive\/bridge\/demo\/task-proposal/);
 });
+
+test("proactive status lifecycle is driven by agent progress rather than proposal count", async () => {
+  const source = await readFile(MAIN_PATH, "utf8");
+
+  assert.match(source, /lifecycle_state: "idle"/);
+  assert.match(source, /let lifecycleState = "idle";/);
+  assert.match(source, /lifecycleState = "sent";/);
+  assert.match(source, /lifecycleState = "claimed";/);
+  assert.match(source, /lifecycleState = "analyzing";/);
+  assert.doesNotMatch(source, /if \(proposalCount > 0\) \{[\s\S]*?ready/);
+  assert.doesNotMatch(source, /delivery_state:/);
+});
