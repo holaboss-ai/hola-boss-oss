@@ -174,8 +174,10 @@ function isHbIgnored(relPath: string, hbPatterns: string[]): boolean {
 }
 
 function parseSignedHeaderNames(url: string): string[] {
-  const signedHeaders = new URL(url).searchParams.get("X-Amz-SignedHeaders") ??
-    new URL(url).searchParams.get("x-amz-signedheaders") ??
+  const params = new URL(url).searchParams;
+  const signedHeaders =
+    params.get("X-Amz-SignedHeaders") ??
+    params.get("x-amz-signedheaders") ??
     "";
   return signedHeaders
     .split(";")

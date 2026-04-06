@@ -157,10 +157,13 @@ function loadRuntimeConfigPayload(): {
     normalizeString(legacyPayload.auth_token) ||
     normalizeString(legacyPayload.model_proxy_api_key);
   const userId = normalizeString(holabossIntegration.user_id) || normalizeString(legacyPayload.user_id);
-  const sandboxId =
-    normalizeString(runtimePayload.sandbox_id) ||
+  const bindingSandboxId =
     normalizeString(holabossIntegration.sandbox_id) ||
     normalizeString(legacyPayload.sandbox_id);
+  const sandboxId =
+    (authToken && bindingSandboxId) ||
+    normalizeString(runtimePayload.sandbox_id) ||
+    bindingSandboxId;
   const modelProxyBaseUrl =
     normalizeString(holabossProvider.base_url) || normalizeString(legacyPayload.model_proxy_base_url);
   const defaultModelValue =

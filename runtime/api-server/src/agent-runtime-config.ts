@@ -770,6 +770,28 @@ function configuredProviderProxyRoute(provider: ConfiguredRuntimeProvider, model
   return `${normalizedBase}${normalizedRoute}`;
 }
 
+function configuredDirectProviderBaseUrl(provider: ConfiguredRuntimeProvider, modelProxyProvider: string, baseRoot: string): string {
+  const normalizedProvider = normalizeModelProxyProvider(modelProxyProvider);
+  if (provider.kind === PROVIDER_KIND_OPENROUTER) {
+    return normalizeDirectProviderBaseUrl(baseRoot);
+  }
+  return baseUrlForProvider(baseRoot, normalizedProvider);
+}
+
+function configuredProviderMissingFieldsMessage(
+  provider: ConfiguredRuntimeProvider,
+  credentials: { apiKey: string; baseRoot: string }
+): string {
+  const missing: string[] = [];
+  if (!credentials.apiKey) {
+    missing.push("api_key");
+  }
+  if (!credentials.baseRoot) {
+    missing.push("base_url");
+  }
+  return `Direct provider '${provider.id}' is not fully configured (missing: ${missing.join(", ")}).`;
+}
+
 function resolveModelClientConfig(request: AgentRuntimeConfigCliRequest, target: ResolvedRuntimeModelTarget): {
   model_proxy_provider: string;
   api_key: string;
@@ -785,6 +807,21 @@ function resolveModelClientConfig(request: AgentRuntimeConfigCliRequest, target:
       `resolved model proxy provider=${target.modelProxyProvider} is unsupported; expected one of: ` +
         `${MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE}, ${MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE}`
     );
+  }
+
+  const configuredProvider = target.configuredProvider;
+  if (configuredProvider && configuredProvider.kind !== PROVIDER_KIND_HOLABOSS_PROXY) {
+    const credentials = configuredProviderFallbackCredentials(configuredProvider, normalizedProvider);
+    if (!credentials.apiKey || !credentials.baseRoot) {
+      throw new Error(configuredProviderMissingFieldsMessage(configuredProvider, credentials));
+    }
+    const configuredHeaders = Object.keys(configuredProvider.headers).length > 0 ? { ...configuredProvider.headers } : null;
+    return {
+      model_proxy_provider: normalizedProvider,
+      api_key: credentials.apiKey,
+      base_url: configuredDirectProviderBaseUrl(configuredProvider, normalizedProvider, credentials.baseRoot),
+      default_headers: configuredHeaders
+    };
   }
 
   const proxyApiKey = request.runtime_exec_model_proxy_api_key?.trim() ?? "";
@@ -809,7 +846,6 @@ function resolveModelClientConfig(request: AgentRuntimeConfigCliRequest, target:
     };
   }
 
-  const configuredProvider = target.configuredProvider;
   if (configuredProvider) {
     const credentials = configuredProviderFallbackCredentials(configuredProvider, normalizedProvider);
     if (credentials.apiKey && credentials.baseRoot) {

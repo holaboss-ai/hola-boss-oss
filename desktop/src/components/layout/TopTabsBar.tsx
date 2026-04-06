@@ -332,14 +332,14 @@ export function TopTabsBar({
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
                 <DropdownMenuItem
-                  onClick={() => onOpenExternalUrl?.("https://holaboss.ai")}
+                  onClick={() => onOpenExternalUrl?.("https://www.holaboss.ai")}
                 >
                   <Home />
                   Homepage
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() =>
-                    onOpenExternalUrl?.("https://docs.holaboss.ai")
+                    onOpenExternalUrl?.("https://www.holaboss.ai/docs")
                   }
                 >
                   <BookOpen />

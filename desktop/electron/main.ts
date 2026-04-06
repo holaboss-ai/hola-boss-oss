@@ -76,7 +76,7 @@ const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const APP_UPDATE_REQUEST_TIMEOUT_MS = 15000;
 const APP_UPDATE_MACOS_ASSET_NAME = "Holaboss-macos-arm64.dmg";
 const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
-const HOLABOSS_HOME_URL = "https://holaboss.ai";
+const HOLABOSS_HOME_URL = "https://www.holaboss.ai";
 const HOLABOSS_DOCS_URL = `https://github.com/${GITHUB_RELEASES_OWNER}/${GITHUB_RELEASES_REPO}`;
 const HOLABOSS_HELP_URL = `${HOLABOSS_DOCS_URL}/issues`;
 const APP_DISPLAY_NAME = "Holaboss";
@@ -2694,11 +2694,17 @@ async function readRuntimeConfigFile(): Promise<Record<string, string>> {
       holabossIntegration.user_id as string | undefined,
       legacyPayload.user_id as string | undefined,
     );
-    const sandboxId = runtimeFirstNonEmptyString(
-      runtimePayload.sandbox_id as string | undefined,
+    const bindingSandboxId = runtimeFirstNonEmptyString(
       holabossIntegration.sandbox_id as string | undefined,
       legacyPayload.sandbox_id as string | undefined,
     );
+    const sandboxId =
+      authToken && bindingSandboxId
+        ? bindingSandboxId
+        : runtimeFirstNonEmptyString(
+            runtimePayload.sandbox_id as string | undefined,
+            bindingSandboxId,
+          );
     const modelProxyBaseUrl = runtimeFirstNonEmptyString(
       holabossProvider.base_url as string | undefined,
       legacyPayload.model_proxy_base_url as string | undefined,
@@ -3215,6 +3221,13 @@ function canUsePersistedRuntimeBindingWithoutAuth(
 async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
   const current = await readRuntimeConfigFile();
   const currentDocument = await readRuntimeConfigDocument();
+  const runtimePayload = runtimeConfigObject(currentDocument.runtime);
+  const providersPayload = runtimeConfigObject(currentDocument.providers);
+  const integrationsPayload = runtimeConfigObject(currentDocument.integrations);
+  const holabossIntegration = runtimeConfigObject(integrationsPayload.holaboss);
+  const holabossProvider = runtimeConfigObject(
+    providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID],
+  );
   const next = { ...current };
   const entries: Array<[keyof RuntimeConfigUpdatePayload, string]> = [
     ["authToken", "auth_token"],
@@ -3248,10 +3261,51 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
     delete next.model_proxy_api_key;
   }
 
+  const assignOrDelete = (
+    target: Record<string, unknown>,
+    key: string,
+    value: string | undefined,
+  ) => {
+    const normalized = runtimeConfigField(value);
+    if (normalized) {
+      target[key] = normalized;
+    } else {
+      delete target[key];
+    }
+  };
+
+  assignOrDelete(holabossIntegration, "auth_token", next.auth_token);
+  assignOrDelete(holabossIntegration, "user_id", next.user_id);
+  assignOrDelete(holabossIntegration, "sandbox_id", next.sandbox_id);
+  assignOrDelete(holabossProvider, "api_key", next.auth_token);
+  assignOrDelete(holabossProvider, "base_url", next.model_proxy_base_url);
+  assignOrDelete(runtimePayload, "sandbox_id", next.sandbox_id);
+  assignOrDelete(runtimePayload, "default_model", next.default_model);
+
+  if (
+    Object.keys(holabossProvider).length > 0 &&
+    !runtimeConfigField(holabossProvider.kind as string | undefined)
+  ) {
+    holabossProvider.kind = RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY;
+  }
+  if (Object.keys(holabossIntegration).length > 0) {
+    integrationsPayload.holaboss = holabossIntegration;
+  } else {
+    delete integrationsPayload.holaboss;
+  }
+  if (Object.keys(holabossProvider).length > 0) {
+    providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID] = holabossProvider;
+  } else {
+    delete providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID];
+  }
+
   const configPath = runtimeConfigPath();
   await fs.mkdir(path.dirname(configPath), { recursive: true });
   const nextDocument = {
     ...currentDocument,
+    runtime: runtimePayload,
+    providers: providersPayload,
+    integrations: integrationsPayload,
     holaboss: next,
   };
   await fs.writeFile(
@@ -8191,6 +8245,44 @@ async function createWorkspace(
 async function deleteWorkspace(
   workspaceId: string,
 ): Promise<WorkspaceResponsePayload> {
+  const holabossUserId = await controlPlaneWorkspaceUserId();
+  if (holabossUserId) {
+    // Delete via control plane — soft-deletes in the backend DB.
+    // Returns 204 on success; we synthesize the expected payload shape.
+    await requestControlPlaneJson<null>({
+      service: "projects",
+      method: "DELETE",
+      path: `/api/v1/projects/workspaces/${encodeURIComponent(workspaceId)}`,
+    }).catch((err: unknown) => {
+      console.warn("[deleteWorkspace] control-plane delete failed (may already be gone):", err);
+    });
+    // Also try cleaning up local runtime state (best-effort).
+    await requestRuntimeJson<WorkspaceResponsePayload>({
+      method: "DELETE",
+      path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`,
+    }).catch((err: unknown) => {
+      console.warn("[deleteWorkspace] local runtime delete failed (may not exist locally):", err);
+    });
+    return {
+      workspace: {
+        id: workspaceId,
+        name: workspaceId,
+        status: "deleted",
+        harness: null,
+        main_session_id: null,
+        error_message: null,
+        onboarding_status: "not_required",
+        onboarding_session_id: null,
+        onboarding_completed_at: null,
+        onboarding_completion_summary: null,
+        onboarding_requested_at: null,
+        onboarding_requested_by: null,
+        created_at: null,
+        updated_at: null,
+        deleted_at_utc: new Date().toISOString(),
+      } as WorkspaceRecordPayload,
+    };
+  }
   return requestRuntimeJson<WorkspaceResponsePayload>({
     method: "DELETE",
     path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`,

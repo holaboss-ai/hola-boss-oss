@@ -2689,7 +2689,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
           harness: workspace?.harness ?? null,
           main_session_id: workspace?.mainSessionId ?? null,
           error_message: null,
-          onboarding_status: null,
+          onboarding_status: workspace?.onboardingStatus ?? "not_required",
           onboarding_session_id: null,
           onboarding_completed_at: null,
           onboarding_completion_summary: null,

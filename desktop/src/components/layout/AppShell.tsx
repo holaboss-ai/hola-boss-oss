@@ -5,7 +5,6 @@ import {
 import {
   OperationsDrawer,
   type OperationsDrawerTab,
-  type OperationsOutputEntry,
 } from "@/components/layout/OperationsDrawer";
 import { appShellMainGridClassName } from "@/components/layout/appShellLayout";
 import { PublishDialog } from "@/components/publish/PublishDialog";
@@ -25,10 +24,7 @@ import { MarketplacePane } from "@/components/panes/MarketplacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
 import { SkillsPane } from "@/components/panes/SkillsPane";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
-import {
-  getWorkspaceAppDefinition,
-  inferInstalledWorkspaceAppIdFromText,
-} from "@/lib/workspaceApps";
+import { getWorkspaceAppDefinition } from "@/lib/workspaceApps";
 import { DesktopBillingProvider } from "@/lib/billing/useDesktopBilling";
 import {
   useWorkspaceDesktop,
@@ -40,7 +36,6 @@ import {
 } from "@/lib/workspaceSelection";
 import {
   Bell,
-  ChevronRight,
   CircleCheck,
   Clock3,
   Loader2,
@@ -153,6 +148,20 @@ type ChatSessionOpenRequest = {
   requestKey: number;
 };
 
+type WorkspaceOutputNavigationTarget =
+  | {
+      type: "app";
+      appId: string;
+      resourceId?: string | null;
+      view?: string | null;
+    }
+  | {
+      type: "internal";
+      surface: "document" | "preview" | "file" | "event";
+      resourceId?: string | null;
+      htmlContent?: string | null;
+    };
+
 function loadSpaceVisibility(): SpaceVisibilityState {
   return DEFAULT_SPACE_VISIBILITY;
 }
@@ -210,14 +219,14 @@ function loadOperationsDrawerOpen(): boolean {
 function loadOperationsDrawerTab(): OperationsDrawerTab {
   try {
     const raw = localStorage.getItem(OPERATIONS_DRAWER_TAB_STORAGE_KEY);
-    if (raw === "inbox" || raw === "running" || raw === "outputs") {
+    if (raw === "inbox" || raw === "running") {
       return raw;
     }
   } catch {
     // ignore
   }
 
-  return "outputs";
+  return "inbox";
 }
 
 function loadTheme(): AppTheme {
@@ -292,116 +301,35 @@ function inferInternalSurfaceFromOutputType(
   return "event";
 }
 
-function runtimeOutputTone(status: string): OperationsOutputEntry["tone"] {
-  const normalized = status.trim().toLowerCase();
-  if (normalized === "failed" || normalized === "error") {
-    return "error";
-  }
-  if (
-    normalized === "completed" ||
-    normalized === "ready" ||
-    normalized === "active"
-  ) {
-    return "success";
-  }
-  return "info";
-}
-
-function normalizeContactKey(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const normalized = value.trim().toLowerCase();
-  return normalized || null;
-}
-
-function normalizeContactRowRef(value: unknown): string | null {
-  if (typeof value === "string") {
-    return value.trim() || null;
-  }
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const ref = value as {
-    spreadsheet_id?: unknown;
-    sheet_name?: unknown;
-    row_number?: unknown;
-  };
-  const spreadsheetId =
-    typeof ref.spreadsheet_id === "string" ? ref.spreadsheet_id.trim() : "";
-  const sheetName =
-    typeof ref.sheet_name === "string" ? ref.sheet_name.trim() : "";
-  const rowNumber =
-    typeof ref.row_number === "number" || typeof ref.row_number === "string"
-      ? String(ref.row_number).trim()
-      : "";
-
-  if (!spreadsheetId || !rowNumber) {
-    return null;
-  }
-
-  return `${spreadsheetId}:${sheetName}:${rowNumber}`;
-}
-
-function runtimeOutputToEntry(
+function workspaceOutputNavigationTarget(
   output: WorkspaceOutputRecordPayload,
   installedAppIds: Set<string>,
-): OperationsOutputEntry {
+): WorkspaceOutputNavigationTarget {
   const moduleId = (output.module_id || "").trim().toLowerCase();
-  const title =
-    output.title.trim() || output.output_type.trim() || "Workspace output";
-  const detailParts = [
-    output.status ? `Status: ${output.status}` : "",
-    output.file_path ? `File: ${output.file_path}` : "",
-    output.platform ? `Platform: ${output.platform}` : "",
-  ].filter(Boolean);
-
-  // Read presentation protocol from metadata when available
   const metadata = (output.metadata ?? {}) as Record<string, unknown>;
-  const crm = (metadata.crm ?? null) as Record<string, unknown> | null;
   const presentation = metadata.presentation as
     | { kind?: string; view?: string; path?: string }
     | undefined;
   const hasAppPresentation =
     presentation?.kind === "app_resource" && presentation.view;
 
-  const presentationView = hasAppPresentation
-    ? presentation!.view!
-    : output.output_type || "home";
-  const presentationResourceId =
-    hasAppPresentation && presentation!.path
-      ? presentation!.path
-      : output.module_resource_id || output.artifact_id || output.id;
+  if (moduleId && installedAppIds.has(moduleId)) {
+    return {
+      type: "app",
+      appId: moduleId,
+      resourceId:
+        hasAppPresentation && presentation?.path
+          ? presentation.path
+          : output.module_resource_id || output.artifact_id || output.id,
+      view: hasAppPresentation ? presentation.view : output.output_type || "home",
+    };
+  }
 
   return {
-    id: `runtime-output:${output.id}`,
-    title,
-    detail:
-      detailParts.join(" | ") || "Runtime output generated for this workspace.",
-    createdAt: output.created_at,
-    tone: runtimeOutputTone(output.status),
-    sessionId: output.session_id,
-    contactKey: normalizeContactKey(crm?.contact_key),
-    contactRowRef: normalizeContactRowRef(crm?.contact_row_ref),
-    primaryEmail:
-      typeof crm?.primary_email === "string" && crm.primary_email.trim()
-        ? crm.primary_email.trim()
-        : null,
-    renderer:
-      moduleId && installedAppIds.has(moduleId)
-        ? {
-            type: "app",
-            appId: moduleId,
-            resourceId: presentationResourceId,
-            view: presentationView,
-          }
-        : {
-            type: "internal",
-            surface: inferInternalSurfaceFromOutputType(output.output_type),
-            resourceId: output.file_path || output.artifact_id || output.id,
-            htmlContent: output.html_content,
-          },
+    type: "internal",
+    surface: inferInternalSurfaceFromOutputType(output.output_type),
+    resourceId: output.file_path || output.artifact_id || output.id,
+    htmlContent: output.html_content,
   };
 }
 
@@ -567,20 +495,15 @@ function WorkspaceStartupErrorPane({ message }: { message: string }) {
 }
 
 function WorkspaceOnboardingTakeover({
-  onOutputsChanged,
   focusRequestKey,
 }: {
-  onOutputsChanged: () => void;
   focusRequestKey: number;
 }) {
   return (
     <section className="relative flex h-full min-h-0 min-w-0 overflow-hidden">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_16%,rgba(247,90,84,0.1),transparent_28%),radial-gradient(circle_at_88%_10%,rgba(247,170,126,0.08),transparent_24%),radial-gradient(circle_at_50%_100%,rgba(247,90,84,0.06),transparent_34%)]" />
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-        <OnboardingPane
-          onOutputsChanged={onOutputsChanged}
-          focusRequestKey={focusRequestKey}
-        />
+        <OnboardingPane focusRequestKey={focusRequestKey} />
       </div>
     </section>
   );
@@ -599,9 +522,6 @@ function AppShellContent() {
     workspaceErrorMessage,
     onboardingModeActive,
   } = useWorkspaceDesktop();
-  const selectedWorkspaceExists = Boolean(
-    selectedWorkspaceId && selectedWorkspace,
-  );
   const [theme, setTheme] = useState<AppTheme>(loadTheme);
   const [runtimeStatus, setRuntimeStatus] =
     useState<RuntimeStatusPayload | null>(null);
@@ -672,13 +592,6 @@ function AppShellContent() {
     proposalId: string;
     action: "accept" | "dismiss";
   } | null>(null);
-  const [outputEntries, setOutputEntries] = useState<OperationsOutputEntry[]>(
-    [],
-  );
-  const [runtimeOutputEntries, setRuntimeOutputEntries] = useState<
-    OperationsOutputEntry[]
-  >([]);
-  const outputRefreshTimerRef = useRef<number | null>(null);
   const utilityPaneHostRef = useRef<HTMLDivElement | null>(null);
   const utilityPaneResizeStateRef = useRef<UtilityPaneResizeState | null>(null);
   const filesPaneWidthRef = useRef(filesPaneWidth);
@@ -820,93 +733,6 @@ function AppShellContent() {
     },
     [],
   );
-
-  const refreshRuntimeOutputs = useCallback(async () => {
-    if (
-      !selectedWorkspaceId ||
-      !selectedWorkspaceExists ||
-      runtimeStatus?.status !== "running"
-    ) {
-      setRuntimeOutputEntries([]);
-      return;
-    }
-    try {
-      const response =
-        await window.electronAPI.workspace.listOutputs(selectedWorkspaceId);
-      const installedAppIds = new Set(installedApps.map((app) => app.id));
-      setRuntimeOutputEntries(
-        response.items.map((item) =>
-          runtimeOutputToEntry(item, installedAppIds),
-        ),
-      );
-    } catch {
-      setRuntimeOutputEntries([]);
-    }
-  }, [
-    installedApps,
-    runtimeStatus?.status,
-    selectedWorkspaceExists,
-    selectedWorkspaceId,
-  ]);
-
-  useEffect(() => {
-    if (
-      !selectedWorkspaceId ||
-      !selectedWorkspaceExists ||
-      runtimeStatus?.status !== "running"
-    ) {
-      setRuntimeOutputEntries([]);
-      return;
-    }
-
-    void refreshRuntimeOutputs();
-  }, [
-    refreshRuntimeOutputs,
-    runtimeStatus?.status,
-    selectedWorkspaceExists,
-    selectedWorkspaceId,
-  ]);
-
-  useEffect(() => {
-    const unsubscribe = window.electronAPI.workspace.onSessionStreamEvent(
-      (payload) => {
-        if (payload.type !== "event") {
-          return;
-        }
-        const data =
-          payload.event?.data &&
-          typeof payload.event.data === "object" &&
-          !Array.isArray(payload.event.data)
-            ? (payload.event.data as {
-                event_type?: string;
-                session_id?: string;
-              })
-            : null;
-        const eventType =
-          typeof data?.event_type === "string"
-            ? data.event_type
-            : payload.event?.event || "";
-        if (eventType === "output_delta" || eventType === "thinking_delta") {
-          return;
-        }
-        if (outputRefreshTimerRef.current !== null) {
-          window.clearTimeout(outputRefreshTimerRef.current);
-        }
-        outputRefreshTimerRef.current = window.setTimeout(() => {
-          outputRefreshTimerRef.current = null;
-          void refreshRuntimeOutputs();
-        }, 250);
-      },
-    );
-
-    return () => {
-      if (outputRefreshTimerRef.current !== null) {
-        window.clearTimeout(outputRefreshTimerRef.current);
-        outputRefreshTimerRef.current = null;
-      }
-      unsubscribe();
-    };
-  }, [refreshRuntimeOutputs]);
 
   useEffect(() => {
     if (!window.electronAPI) {
@@ -1157,17 +983,6 @@ function AppShellContent() {
     setActiveChatSessionId(null);
   }, [selectedWorkspaceId]);
 
-  const appendOutputEntry = (
-    entry: Omit<OperationsOutputEntry, "id" | "createdAt">,
-  ) => {
-    const nextEntry: OperationsOutputEntry = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      createdAt: new Date().toISOString(),
-      ...entry,
-    };
-    setOutputEntries((previous) => [nextEntry, ...previous].slice(0, 16));
-  };
-
   useEffect(() => {
     let cancelled = false;
     const loadPreference = async () => {
@@ -1206,39 +1021,15 @@ function AppShellContent() {
         await window.electronAPI.workspace.setProactiveTaskProposalPreference({
           enabled,
         });
-      const nextEnabled = preference.enabled !== false;
-      setProactiveTaskProposalsEnabled(nextEnabled);
-      appendOutputEntry({
-        title: nextEnabled
-          ? "Proactive polling enabled"
-          : "Proactive polling paused",
-        detail: nextEnabled
-          ? "Automatic proactive proposal polling resumed."
-          : "Automatic proactive proposal polling paused. Manual proposal trigger remains available.",
-        tone: "info",
-        renderer: {
-          type: "internal",
-          surface: "event",
-        },
-      });
+      setProactiveTaskProposalsEnabled(preference.enabled !== false);
     } catch (error) {
-      const message = normalizeErrorMessage(error);
-      setProactiveTaskProposalsError(message);
-      appendOutputEntry({
-        title: "Failed to update proactive polling setting",
-        detail: message,
-        tone: "error",
-        renderer: {
-          type: "internal",
-          surface: "event",
-        },
-      });
+      setProactiveTaskProposalsError(normalizeErrorMessage(error));
     } finally {
       setIsUpdatingProactiveTaskProposalsEnabled(false);
     }
   }
 
-  async function refreshTaskProposals(options?: { logErrors?: boolean }) {
+  async function refreshTaskProposals() {
     if (!selectedWorkspaceId || !selectedWorkspace) {
       setTaskProposals([]);
       setTaskProposalStatusMessage("");
@@ -1253,19 +1044,7 @@ function AppShellContent() {
       );
       setTaskProposals(response.proposals);
     } catch (error) {
-      const message = normalizeErrorMessage(error);
-      setTaskProposalStatusMessage(message);
-      if (options?.logErrors) {
-        appendOutputEntry({
-          title: "Proposal refresh failed",
-          detail: message,
-          tone: "error",
-          renderer: {
-            type: "internal",
-            surface: "event",
-          },
-        });
-      }
+      setTaskProposalStatusMessage(normalizeErrorMessage(error));
     } finally {
       setIsLoadingTaskProposals(false);
     }
@@ -1284,32 +1063,11 @@ function AppShellContent() {
         });
       const detail = `Remote proactive job queued. Pending cloud jobs: ${response.pending_count}.`;
       setTaskProposalStatusMessage(detail);
-      appendOutputEntry({
-        title: "Remote task proposal queued",
-        detail,
-        tone: "success",
-        renderer: {
-          type: "internal",
-          surface: "event",
-        },
-      });
-      void refreshRuntimeOutputs();
       window.setTimeout(() => {
         void refreshTaskProposals();
       }, 1500);
     } catch (error) {
-      const message = normalizeErrorMessage(error);
-      setTaskProposalStatusMessage(message);
-      appendOutputEntry({
-        title: "Remote task proposal failed",
-        detail: message,
-        tone: "error",
-        renderer: {
-          type: "internal",
-          surface: "event",
-        },
-      });
-      void refreshRuntimeOutputs();
+      setTaskProposalStatusMessage(normalizeErrorMessage(error));
     } finally {
       setIsTriggeringTaskProposal(false);
     }
@@ -1337,43 +1095,10 @@ function AppShellContent() {
       const targetSessionId = accepted.session.session_id;
 
       const detail = `Queued "${proposal.task_name}" into session ${targetSessionId}.`;
-      const inferredAppId = inferInstalledWorkspaceAppIdFromText(
-        `${proposal.task_name}\n${proposal.task_prompt}`,
-        installedApps,
-      );
       setTaskProposalStatusMessage(detail);
-      appendOutputEntry({
-        title: `Accepted: ${proposal.task_name}`,
-        detail,
-        tone: "success",
-        sessionId: targetSessionId,
-        renderer: inferredAppId
-          ? {
-              type: "app",
-              appId: inferredAppId,
-              resourceId: proposal.proposal_id,
-              view: "editor",
-            }
-          : {
-              type: "internal",
-              surface: "event",
-            },
-      });
-      void refreshRuntimeOutputs();
       await refreshTaskProposals();
     } catch (error) {
-      const message = normalizeErrorMessage(error);
-      setTaskProposalStatusMessage(message);
-      appendOutputEntry({
-        title: `Accept failed: ${proposal.task_name}`,
-        detail: message,
-        tone: "error",
-        renderer: {
-          type: "internal",
-          surface: "event",
-        },
-      });
-      void refreshRuntimeOutputs();
+      setTaskProposalStatusMessage(normalizeErrorMessage(error));
     } finally {
       setProposalAction(null);
     }
@@ -1389,30 +1114,9 @@ function AppShellContent() {
       );
       const detail = `Dismissed "${proposal.task_name}" and persisted the update back to the backend.`;
       setTaskProposalStatusMessage(detail);
-      appendOutputEntry({
-        title: `Dismissed: ${proposal.task_name}`,
-        detail,
-        tone: "info",
-        renderer: {
-          type: "internal",
-          surface: "event",
-        },
-      });
-      void refreshRuntimeOutputs();
       await refreshTaskProposals();
     } catch (error) {
-      const message = normalizeErrorMessage(error);
-      setTaskProposalStatusMessage(message);
-      appendOutputEntry({
-        title: `Dismiss failed: ${proposal.task_name}`,
-        detail: message,
-        tone: "error",
-        renderer: {
-          type: "internal",
-          surface: "event",
-        },
-      });
-      void refreshRuntimeOutputs();
+      setTaskProposalStatusMessage(normalizeErrorMessage(error));
     } finally {
       setProposalAction(null);
     }
@@ -1494,6 +1198,11 @@ function AppShellContent() {
     setOperationsDrawerOpen(true);
   };
 
+  const installedAppIds = useMemo(
+    () => new Set(installedApps.map((app) => app.id)),
+    [installedApps],
+  );
+
   const handleLeftRailSelect = (item: LeftRailItem) => {
     if (item === "space") {
       setActiveLeftRailItem("space");
@@ -1533,49 +1242,52 @@ function AppShellContent() {
     setChatFocusRequestKey((current) => current + 1);
   }, []);
 
-  const handleOpenOutput = (entry: OperationsOutputEntry) => {
-    if (entry.renderer.type === "app") {
-      setActiveLeftRailItem("app");
-      setAgentView({
-        type: "app",
-        appId: entry.renderer.appId,
-        resourceId: entry.renderer.resourceId,
-        view: entry.renderer.view,
-      });
-      return;
-    }
+  const handleOpenWorkspaceOutput = useCallback(
+    (output: WorkspaceOutputRecordPayload) => {
+      const target = workspaceOutputNavigationTarget(output, installedAppIds);
+      if (target.type === "app") {
+        setActiveLeftRailItem("app");
+        setAgentView({
+          type: "app",
+          appId: target.appId,
+          resourceId: target.resourceId,
+          view: target.view,
+        });
+        return;
+      }
 
-    if (
-      (entry.renderer.surface === "document" ||
-        entry.renderer.surface === "file") &&
-      entry.renderer.resourceId?.trim()
-    ) {
+      if (
+        (target.surface === "document" || target.surface === "file") &&
+        target.resourceId?.trim()
+      ) {
+        setActiveLeftRailItem("space");
+        setSpaceVisibility((previous) => ({
+          ...previous,
+          agent: true,
+          files: true,
+        }));
+        setAgentView({ type: "chat" });
+        setFileExplorerFocusRequest({
+          path: target.resourceId,
+          requestKey: Date.now(),
+        });
+        return;
+      }
+
       setActiveLeftRailItem("space");
       setSpaceVisibility((previous) => ({
         ...previous,
         agent: true,
-        files: true,
       }));
-      setAgentView({ type: "chat" });
-      setFileExplorerFocusRequest({
-        path: entry.renderer.resourceId,
-        requestKey: Date.now(),
+      setAgentView({
+        type: "internal",
+        surface: target.surface,
+        resourceId: target.resourceId ?? output.id,
+        htmlContent: target.htmlContent,
       });
-      return;
-    }
-
-    setActiveLeftRailItem("space");
-    setSpaceVisibility((previous) => ({
-      ...previous,
-      agent: true,
-    }));
-    setAgentView({
-      type: "internal",
-      surface: entry.renderer.surface,
-      resourceId: entry.renderer.resourceId ?? entry.id,
-      htmlContent: entry.renderer.htmlContent,
-    });
-  };
+    },
+    [installedAppIds],
+  );
 
   const handleOpenRunningSession = (sessionId: string) => {
     const normalizedSessionId = sessionId.trim();
@@ -1602,10 +1314,6 @@ function AppShellContent() {
   const activeApp = getWorkspaceAppDefinition(activeAppId, installedApps);
   const hasWorkspaces = workspaces.length > 0;
   const hasSelectedWorkspace = Boolean(selectedWorkspace);
-  const allAppsReady =
-    installedApps.length === 0 || installedApps.every((app) => app.ready);
-  const showInitializingGate =
-    hasSelectedWorkspace && installedApps.length > 0 && !allAppsReady;
 
   const visibleSpacePaneIds =
     hasWorkspaces && spaceMode
@@ -1642,17 +1350,6 @@ function AppShellContent() {
     hasWorkspaces &&
     hasSelectedWorkspace &&
     onboardingModeActive;
-  const combinedOutputEntries = useMemo(() => {
-    const merged = [...runtimeOutputEntries, ...outputEntries];
-    const seen = new Set<string>();
-    return merged.filter((entry) => {
-      if (seen.has(entry.id)) {
-        return false;
-      }
-      seen.add(entry.id);
-      return true;
-    });
-  }, [outputEntries, runtimeOutputEntries]);
 
   const agentContent = useMemo(() => {
     if (!hasSelectedWorkspace) {
@@ -1662,18 +1359,12 @@ function AppShellContent() {
     if (agentView.type === "chat") {
       return onboardingModeActive ? (
         <OnboardingPane
-          onOutputsChanged={() => void refreshRuntimeOutputs()}
-          onOpenOutput={(output) =>
-            handleOpenOutput(runtimeOutputToEntry(output, new Set(installedApps.map((app) => app.id))))
-          }
+          onOpenOutput={handleOpenWorkspaceOutput}
           focusRequestKey={chatFocusRequestKey}
         />
       ) : (
         <ChatPane
-          onOutputsChanged={() => void refreshRuntimeOutputs()}
-          onOpenOutput={(output) =>
-            handleOpenOutput(runtimeOutputToEntry(output, new Set(installedApps.map((app) => app.id))))
-          }
+          onOpenOutput={handleOpenWorkspaceOutput}
           focusRequestKey={chatFocusRequestKey}
           onOpenLinkInBrowser={handleOpenLinkInAppBrowser}
           sessionJumpSessionId={chatSessionJumpRequest?.sessionId ?? null}
@@ -1712,11 +1403,10 @@ function AppShellContent() {
     agentView,
     chatSessionJumpRequest,
     chatFocusRequestKey,
+    handleOpenWorkspaceOutput,
     hasSelectedWorkspace,
     handleOpenLinkInAppBrowser,
-    installedApps,
     onboardingModeActive,
-    refreshRuntimeOutputs,
   ]);
 
   const spacePanes = useMemo(
@@ -1970,10 +1660,7 @@ function AppShellContent() {
         ) : hydratedRuntimeErrorMessage ? (
           <WorkspaceStartupErrorPane message={hydratedRuntimeErrorMessage} />
         ) : showOnboardingTakeover ? (
-          <WorkspaceOnboardingTakeover
-            onOutputsChanged={() => void refreshRuntimeOutputs()}
-            focusRequestKey={chatFocusRequestKey}
-          />
+          <WorkspaceOnboardingTakeover focusRequestKey={chatFocusRequestKey} />
         ) : (
           <div
             className={`relative grid h-full min-h-0 gap-y-3 overflow-hidden transition-[grid-template-columns,column-gap] duration-300 ease-in-out ${
@@ -2137,14 +1824,6 @@ function AppShellContent() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => openOperationsDrawerTab("outputs")}
-                        aria-label="Open outputs panel"
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-border/45 text-muted-foreground transition-all duration-200 hover:border-primary/45 hover:text-primary active:scale-95"
-                      >
-                        <ChevronRight size={13} />
-                      </button>
-                      <button
-                        type="button"
                         onClick={() => toggleOperationsDrawer()}
                         aria-label="Show right panel"
                         className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-border/45 text-muted-foreground transition-all duration-200 hover:border-primary/45 hover:text-primary active:scale-95"
@@ -2173,11 +1852,8 @@ function AppShellContent() {
                   isTriggeringProposal={isTriggeringTaskProposal}
                   proposalStatusMessage={taskProposalStatusMessage}
                   proposalAction={proposalAction}
-                  outputs={combinedOutputEntries}
-                  installedApps={installedApps}
-                  onOpenOutput={handleOpenOutput}
                   onRefreshProposals={() =>
-                    void refreshTaskProposals({ logErrors: true })
+                    void refreshTaskProposals()
                   }
                   onTriggerProposal={() => void triggerRemoteTaskProposal()}
                   onProactiveTaskProposalsEnabledChange={(enabled) =>
