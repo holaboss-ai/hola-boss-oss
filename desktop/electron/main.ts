@@ -3454,6 +3454,9 @@ function runtimeProviderLabel(providerId: string): string {
   if (normalized.includes("ollama")) {
     return "Ollama";
   }
+  if (normalized.includes("minimax")) {
+    return "MiniMax";
+  }
   if (
     normalized === RUNTIME_HOLABOSS_PROVIDER_ID ||
     normalized === "holaboss" ||
@@ -3520,7 +3523,8 @@ function runtimeModelIdFromToken(token: string): string {
     normalizedPrefix.includes("openrouter") ||
     normalizedPrefix.includes("gemini") ||
     normalizedPrefix.includes("google") ||
-    normalizedPrefix.includes("ollama")
+    normalizedPrefix.includes("ollama") ||
+    normalizedPrefix.includes("minimax")
   ) {
     return rest.join("/").trim();
   }

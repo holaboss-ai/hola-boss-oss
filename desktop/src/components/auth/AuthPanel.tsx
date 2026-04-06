@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import anthropicLogo from "@/assets/providers/anthropic.svg";
 import geminiLogo from "@/assets/providers/gemini.svg";
+import minimaxLogo from "@/assets/providers/minimax.svg";
 import ollamaLogo from "@/assets/providers/ollama.svg";
 import openaiLogo from "@/assets/providers/openai.svg";
 import openrouterLogo from "@/assets/providers/openrouter.svg";
@@ -16,7 +17,7 @@ interface AuthPanelProps {
   view?: AuthPanelView;
 }
 
-const KNOWN_PROVIDER_ORDER = ["holaboss", "openai_direct", "anthropic_direct", "openrouter_direct", "gemini_direct", "ollama_direct"] as const;
+const KNOWN_PROVIDER_ORDER = ["holaboss", "openai_direct", "anthropic_direct", "openrouter_direct", "gemini_direct", "ollama_direct", "minimax_direct"] as const;
 type KnownProviderId = (typeof KNOWN_PROVIDER_ORDER)[number];
 const PROVIDER_AUTOSAVE_DELAY_MS = 800;
 const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string>> = {
@@ -102,6 +103,15 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     defaultBaseUrl: "http://localhost:11434/v1",
     defaultModels: ["llama3.1:8b", "qwen3:8b", "gpt-oss:20b"],
     apiKeyPlaceholder: "Optional. Use 'ollama' for strict OpenAI SDK compatibility."
+  },
+  minimax_direct: {
+    id: "minimax_direct",
+    label: "MiniMax",
+    description: "MiniMax OpenAI-compatible endpoint with your own API key.",
+    kind: "openai_compatible",
+    defaultBaseUrl: "https://api.minimax.io/v1",
+    defaultModels: ["MiniMax-M2.7", "MiniMax-M2.7-highspeed"],
+    apiKeyPlaceholder: "sk-your-minimax-api-key"
   }
 };
 
@@ -146,6 +156,12 @@ function createDefaultProviderDrafts(): ProviderDraftMap {
       baseUrl: KNOWN_PROVIDER_TEMPLATES.ollama_direct.defaultBaseUrl,
       apiKey: "",
       modelsText: KNOWN_PROVIDER_TEMPLATES.ollama_direct.defaultModels.join(", ")
+    },
+    minimax_direct: {
+      enabled: false,
+      baseUrl: KNOWN_PROVIDER_TEMPLATES.minimax_direct.defaultBaseUrl,
+      apiKey: "",
+      modelsText: KNOWN_PROVIDER_TEMPLATES.minimax_direct.defaultModels.join(", ")
     }
   };
 }
@@ -232,6 +248,9 @@ function ProviderBrandIcon({ providerId }: { providerId: KnownProviderId }) {
   }
   if (providerId === "ollama_direct") {
     return <img src={ollamaLogo} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
+  }
+  if (providerId === "minimax_direct") {
+    return <img src={minimaxLogo} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
   }
   return null;
 }
