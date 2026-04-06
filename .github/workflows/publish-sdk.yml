@@ -78,10 +78,12 @@ jobs:
           bun-version: latest
 
       - name: Install dependencies
-        run: bun install --cwd ${{ needs.validate.outputs.package_dir }}
+        working-directory: ${{ needs.validate.outputs.package_dir }}
+        run: bun install
 
       - name: Run tests
-        run: bun --cwd ${{ needs.validate.outputs.package_dir }} test
+        working-directory: ${{ needs.validate.outputs.package_dir }}
+        run: bun test
 
   build:
     name: Build
@@ -103,19 +105,21 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
-        run: bun install --cwd ${{ needs.validate.outputs.package_dir }}
+        working-directory: ${{ needs.validate.outputs.package_dir }}
+        run: bun install
 
       - name: Build
-        run: bun --cwd ${{ needs.validate.outputs.package_dir }} run build
+        working-directory: ${{ needs.validate.outputs.package_dir }}
+        run: bun run build
 
       - name: Verify dist contents
+        working-directory: ${{ needs.validate.outputs.package_dir }}
         run: |
-          DIR="${{ needs.validate.outputs.package_dir }}/dist"
           echo "📁 Build output:"
-          ls -la "$DIR"
+          ls -la dist
 
           for f in index.js index.cjs index.d.ts index.d.cts; do
-            if [ ! -f "$DIR/$f" ]; then
+            if [ ! -f "dist/$f" ]; then
               echo "❌ Missing expected file: $f"
               exit 1
             fi
@@ -157,10 +161,12 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
-        run: bun install --cwd ${{ needs.validate.outputs.package_dir }}
+        working-directory: ${{ needs.validate.outputs.package_dir }}
+        run: bun install
 
       - name: Build
-        run: bun --cwd ${{ needs.validate.outputs.package_dir }} run build
+        working-directory: ${{ needs.validate.outputs.package_dir }}
+        run: bun run build
 
       - name: Publish
         working-directory: ${{ needs.validate.outputs.package_dir }}

@@ -7,7 +7,6 @@ import {
   Loader2,
   LogIn,
   X,
-  Bell,
   Clock3,
 } from "lucide-react";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
@@ -189,7 +188,7 @@ export function OperationsDrawer({
         <div className="flex items-center gap-1.5">
           <DrawerTabButton
             active={activeTab === "inbox"}
-            icon={<Bell size={14} />}
+            icon={<InboxIcon size={14} />}
             label="Inbox"
             onClick={() => onTabChange("inbox")}
           />

@@ -5615,6 +5615,32 @@ async function deleteCronjob(jobId: string): Promise<{ success: boolean }> {
   });
 }
 
+async function listNotifications(
+  workspaceId?: string | null,
+  includeDismissed = false,
+): Promise<RuntimeNotificationListResponsePayload> {
+  return requestRuntimeJson<RuntimeNotificationListResponsePayload>({
+    method: "GET",
+    path: "/api/v1/notifications",
+    params: {
+      workspace_id: workspaceId ?? undefined,
+      include_dismissed: includeDismissed,
+      limit: 50,
+    },
+  });
+}
+
+async function updateNotification(
+  notificationId: string,
+  payload: RuntimeNotificationUpdatePayload,
+): Promise<RuntimeNotificationRecordPayload> {
+  return requestRuntimeJson<RuntimeNotificationRecordPayload>({
+    method: "PATCH",
+    path: `/api/v1/notifications/${encodeURIComponent(notificationId)}`,
+    payload,
+  });
+}
+
 async function listIntegrationCatalog(): Promise<IntegrationCatalogResponsePayload> {
   return requestRuntimeJson<IntegrationCatalogResponsePayload>({
     method: "GET",
@@ -12857,6 +12883,24 @@ app.whenReady().then(async () => {
     "workspace:deleteCronjob",
     ["main"],
     async (_event, jobId: string) => deleteCronjob(jobId),
+  );
+  handleTrustedIpc(
+    "workspace:listNotifications",
+    ["main"],
+    async (
+      _event,
+      workspaceId?: string | null,
+      includeDismissed?: boolean,
+    ) => listNotifications(workspaceId, includeDismissed),
+  );
+  handleTrustedIpc(
+    "workspace:updateNotification",
+    ["main"],
+    async (
+      _event,
+      notificationId: string,
+      payload: RuntimeNotificationUpdatePayload,
+    ) => updateNotification(notificationId, payload),
   );
   handleTrustedIpc(
     "workspace:listTaskProposals",

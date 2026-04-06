@@ -3,7 +3,11 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import { CronExpressionParser } from "cron-parser";
 
-import { type CronjobRecord, type RuntimeStateStore } from "@holaboss/runtime-state-store";
+import {
+  type CronjobRecord,
+  type RuntimeNotificationLevel,
+  type RuntimeStateStore
+} from "@holaboss/runtime-state-store";
 
 import type { QueueWorkerLike } from "./queue-worker.js";
 
@@ -16,6 +20,42 @@ type LoggerLike = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizedString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function titleCaseWords(value: string): string {
+  return value.replace(/\b([a-z])/g, (match) => match.toUpperCase());
+}
+
+function cronjobNotificationTitle(job: CronjobRecord, metadata: Record<string, unknown>): string {
+  const explicitTitle = normalizedString(metadata.notification_title);
+  if (explicitTitle) {
+    return explicitTitle;
+  }
+  const name = normalizedString(job.name);
+  if (name) {
+    return titleCaseWords(name.replace(/[_-]+/g, " ").replace(/\s+/g, " "));
+  }
+  return "Reminder";
+}
+
+function cronjobNotificationMessage(job: CronjobRecord, metadata: Record<string, unknown>): string {
+  const explicitMessage = normalizedString(metadata.notification_message);
+  if (explicitMessage) {
+    return explicitMessage;
+  }
+  return normalizedString(job.description) || cronjobNotificationTitle(job, metadata);
+}
+
+function cronjobNotificationLevel(metadata: Record<string, unknown>): RuntimeNotificationLevel {
+  const explicitLevel = normalizedString(metadata.notification_level || metadata.level).toLowerCase();
+  if (explicitLevel === "success" || explicitLevel === "warning" || explicitLevel === "error") {
+    return explicitLevel;
+  }
+  return "info";
 }
 
 export function cronjobCheckIntervalMs(): number {
@@ -148,6 +188,31 @@ export function queueLocalCronjobRun(
   wakeQueueWorker?.();
 }
 
+export function deliverLocalCronjobNotification(store: RuntimeStateStore, job: CronjobRecord): void {
+  const workspace = store.getWorkspace(job.workspaceId);
+  if (!workspace) {
+    throw new Error(`workspace not found for cronjob ${job.id}`);
+  }
+
+  const metadata = isRecord(job.metadata) ? job.metadata : {};
+  store.createRuntimeNotification({
+    workspaceId: job.workspaceId,
+    cronjobId: job.id,
+    sourceType: "cronjob",
+    sourceLabel: workspace.name.trim() || null,
+    title: cronjobNotificationTitle(job, metadata),
+    message: cronjobNotificationMessage(job, metadata),
+    level: cronjobNotificationLevel(metadata),
+    metadata: {
+      cronjob_id: job.id,
+      cronjob_name: job.name,
+      cronjob_description: job.description,
+      delivery: job.delivery,
+      cronjob_metadata: metadata
+    }
+  });
+}
+
 export interface CronWorkerLike {
   start(): Promise<void>;
   close(): Promise<void>;
@@ -209,9 +274,10 @@ export class RuntimeCronWorker implements CronWorkerLike {
         if (channel === "session_run") {
           queueLocalCronjobRun(this.#store, job, now, () => this.#queueWorker?.wake());
         } else if (channel === "system_notification") {
-          this.#logger?.info?.("Cronjob system_notification delivery is currently a no-op placeholder", {
+          deliverLocalCronjobNotification(this.#store, job);
+          this.#logger?.info?.("Cronjob notification delivered", {
             event: "cronjob.delivery.system_notification",
-            outcome: "noop",
+            outcome: "success",
             cronjob_id: job.id,
             workspace_id: job.workspaceId
           });

@@ -2,6 +2,7 @@ import {
     LeftNavigationRail,
     type LeftRailItem,
 } from "@/components/layout/LeftNavigationRail";
+import { NotificationToastStack } from "@/components/layout/NotificationToastStack";
 import {
     OperationsDrawer,
     type OperationsDrawerTab,
@@ -35,9 +36,9 @@ import {
     WorkspaceSelectionProvider,
 } from "@/lib/workspaceSelection";
 import {
-    Bell,
     CircleCheck,
     Clock3,
+    Inbox as InboxIcon,
     Loader2,
     PanelRightClose,
     PanelRightOpen,
@@ -612,15 +613,29 @@ function AppShellContent() {
     proposalId: string;
     action: "accept" | "dismiss";
   } | null>(null);
+  const [notifications, setNotifications] = useState<
+    RuntimeNotificationRecordPayload[]
+  >([]);
+  const [toastNotifications, setToastNotifications] = useState<
+    RuntimeNotificationRecordPayload[]
+  >([]);
   const utilityPaneHostRef = useRef<HTMLDivElement | null>(null);
   const utilityPaneResizeStateRef = useRef<UtilityPaneResizeState | null>(null);
   const filesPaneWidthRef = useRef(filesPaneWidth);
   const browserPaneWidthRef = useRef(browserPaneWidth);
   const spaceVisibilityRef = useRef(spaceVisibility);
+  const notificationsHydratedRef = useRef(false);
+  const seenNotificationIdsRef = useRef(new Set<string>());
+  const notificationToastTimeoutsRef = useRef(new Map<string, number>());
 
   filesPaneWidthRef.current = filesPaneWidth;
   browserPaneWidthRef.current = browserPaneWidth;
   spaceVisibilityRef.current = spaceVisibility;
+
+  const notificationUnreadCount = useMemo(
+    () => notifications.filter((item) => item.state === "unread").length,
+    [notifications],
+  );
 
   const clampUtilityPaneWidth = useCallback(
     (
@@ -888,6 +903,138 @@ function AppShellContent() {
     localStorage.setItem(THEME_STORAGE_KEY, theme);
     void window.electronAPI.ui.setTheme(theme);
   }, [theme]);
+
+  const dismissNotificationToast = useCallback((notificationId: string) => {
+    const timeoutId = notificationToastTimeoutsRef.current.get(notificationId);
+    if (timeoutId !== undefined) {
+      window.clearTimeout(timeoutId);
+      notificationToastTimeoutsRef.current.delete(notificationId);
+    }
+    setToastNotifications((current) =>
+      current.filter((item) => item.id !== notificationId),
+    );
+  }, []);
+
+  const refreshNotifications = useCallback(async () => {
+    if (!window.electronAPI) {
+      return;
+    }
+
+    try {
+      const response = await window.electronAPI.workspace.listNotifications(
+        null,
+        false,
+      );
+      setNotifications(response.items);
+
+      if (!notificationsHydratedRef.current) {
+        notificationsHydratedRef.current = true;
+        for (const item of response.items) {
+          seenNotificationIdsRef.current.add(item.id);
+        }
+        return;
+      }
+
+      for (const item of response.items) {
+        if (
+          item.state !== "unread" ||
+          seenNotificationIdsRef.current.has(item.id)
+        ) {
+          continue;
+        }
+        seenNotificationIdsRef.current.add(item.id);
+        setToastNotifications((current) => {
+          if (current.some((existing) => existing.id === item.id)) {
+            return current;
+          }
+          return [item, ...current].slice(0, 4);
+        });
+        if (!notificationToastTimeoutsRef.current.has(item.id)) {
+          const timeoutId = window.setTimeout(() => {
+            dismissNotificationToast(item.id);
+          }, 7000);
+          notificationToastTimeoutsRef.current.set(item.id, timeoutId);
+        }
+      }
+    } catch {
+      // Notification polling should stay silent when the runtime is restarting.
+    }
+  }, [dismissNotificationToast]);
+
+  const handleMarkNotificationRead = useCallback(
+    async (notificationId: string) => {
+      if (!window.electronAPI) {
+        return;
+      }
+      try {
+        dismissNotificationToast(notificationId);
+        await window.electronAPI.workspace.updateNotification(notificationId, {
+          state: "read",
+        });
+        await refreshNotifications();
+      } catch {
+        // Ignore transient notification update failures in the shell.
+      }
+    },
+    [dismissNotificationToast, refreshNotifications],
+  );
+
+  const handleDismissNotification = useCallback(
+    async (notificationId: string) => {
+      if (!window.electronAPI) {
+        return;
+      }
+      try {
+        dismissNotificationToast(notificationId);
+        await window.electronAPI.workspace.updateNotification(notificationId, {
+          state: "dismissed",
+        });
+        await refreshNotifications();
+      } catch {
+        // Ignore transient notification update failures in the shell.
+      }
+    },
+    [dismissNotificationToast, refreshNotifications],
+  );
+
+  const handleNotificationCenterOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open || !window.electronAPI) {
+        return;
+      }
+      const unreadIds = notifications
+        .filter((item) => item.state === "unread")
+        .map((item) => item.id);
+      if (unreadIds.length === 0) {
+        return;
+      }
+      for (const notificationId of unreadIds) {
+        dismissNotificationToast(notificationId);
+      }
+      void Promise.allSettled(
+        unreadIds.map((notificationId) =>
+          window.electronAPI.workspace.updateNotification(notificationId, {
+            state: "read",
+          }),
+        ),
+      ).then(() => refreshNotifications());
+    },
+    [dismissNotificationToast, notifications, refreshNotifications],
+  );
+
+  useEffect(() => {
+    void refreshNotifications();
+    const intervalId = window.setInterval(() => {
+      void refreshNotifications();
+    }, 3000);
+    return () => {
+      window.clearInterval(intervalId);
+      for (const timeoutId of notificationToastTimeoutsRef.current.values()) {
+        window.clearTimeout(timeoutId);
+      }
+      notificationToastTimeoutsRef.current.clear();
+    };
+  }, [refreshNotifications]);
 
   const handleThemeChange = useCallback((nextTheme: string) => {
     if (isAppTheme(nextTheme)) {
@@ -1748,6 +1895,13 @@ function AppShellContent() {
             onDownload={handleDownloadUpdate}
           />
         ) : null}
+        <NotificationToastStack
+          notifications={toastNotifications}
+          onCloseToast={dismissNotificationToast}
+          onActivateNotification={(notificationId) => {
+            void handleMarkNotificationRead(notificationId);
+          }}
+        />
 
         {hasWorkspaces ? (
           <div className="relative min-w-0">
@@ -1771,6 +1925,17 @@ function AppShellContent() {
               }}
               onOpenExternalUrl={handleOpenExternalUrl}
               onPublish={() => setPublishOpen(true)}
+              notifications={notifications}
+              notificationUnreadCount={notificationUnreadCount}
+              onNotificationCenterOpenChange={
+                handleNotificationCenterOpenChange
+              }
+              onMarkNotificationRead={(notificationId) => {
+                void handleMarkNotificationRead(notificationId);
+              }}
+              onDismissNotification={(notificationId) => {
+                void handleDismissNotification(notificationId);
+              }}
             />
           </div>
         ) : null}
@@ -1939,7 +2104,7 @@ function AppShellContent() {
                         aria-label="Open inbox panel"
                         className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-border/45 text-muted-foreground transition-all duration-200 hover:border-primary/45 hover:text-primary active:scale-95"
                       >
-                        <Bell size={13} />
+                        <InboxIcon size={13} />
                       </button>
                       <button
                         type="button"

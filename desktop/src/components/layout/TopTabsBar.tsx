@@ -22,6 +22,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { CreditsPill } from "@/components/billing/CreditsPill";
+import { NotificationCenter } from "@/components/layout/NotificationCenter";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -49,6 +50,11 @@ interface TopTabsBarProps {
   onOpenBilling?: () => void;
   onOpenExternalUrl?: (url: string) => void;
   onPublish?: () => void;
+  notifications?: RuntimeNotificationRecordPayload[];
+  notificationUnreadCount?: number;
+  onNotificationCenterOpenChange?: (open: boolean) => void;
+  onMarkNotificationRead?: (notificationId: string) => void;
+  onDismissNotification?: (notificationId: string) => void;
 }
 
 export function TopTabsBar({
@@ -62,6 +68,11 @@ export function TopTabsBar({
   onOpenBilling,
   onOpenExternalUrl,
   onPublish,
+  notifications = [],
+  notificationUnreadCount = 0,
+  onNotificationCenterOpenChange,
+  onMarkNotificationRead,
+  onDismissNotification,
 }: TopTabsBarProps) {
   const { isAvailable: isBillingAvailable, overview, isLoading: isBillingLoading, isLowBalance } =
     useDesktopBilling();
@@ -284,6 +295,14 @@ export function TopTabsBar({
               onClick={() => onOpenBilling?.()}
             />
           ) : null}
+          <NotificationCenter
+            notifications={notifications}
+            unreadCount={notificationUnreadCount}
+            integratedTitleBar={integratedTitleBar}
+            onOpenChange={onNotificationCenterOpenChange}
+            onMarkRead={(notificationId) => onMarkNotificationRead?.(notificationId)}
+            onDismiss={(notificationId) => onDismissNotification?.(notificationId)}
+          />
           <DropdownMenu>
             <DropdownMenuTrigger
               ref={userButtonRef}

@@ -1113,6 +1113,53 @@ test("cronjobs round trip supports create, list, update, get, and delete", () =>
   store.close();
 });
 
+test("runtime notifications round trip supports create, list, update, get, and dismiss", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const created = store.createRuntimeNotification({
+    workspaceId: "workspace-1",
+    cronjobId: "cronjob-1",
+    sourceType: "cronjob",
+    sourceLabel: "Workspace 1",
+    title: "Drink Water",
+    message: "Time to drink water.",
+    level: "info"
+  });
+  const listed = store.listRuntimeNotifications({ workspaceId: "workspace-1" });
+  const fetched = store.getRuntimeNotification(created.id);
+  const updated = store.updateRuntimeNotification({
+    notificationId: created.id,
+    state: "read"
+  });
+  const dismissed = store.updateRuntimeNotification({
+    notificationId: created.id,
+    state: "dismissed"
+  });
+  const listedWithoutDismissed = store.listRuntimeNotifications({
+    workspaceId: "workspace-1"
+  });
+  const listedIncludingDismissed = store.listRuntimeNotifications({
+    workspaceId: "workspace-1",
+    includeDismissed: true
+  });
+
+  assert.equal(listed.length, 1);
+  assert.ok(fetched);
+  assert.ok(updated);
+  assert.equal(updated.state, "read");
+  assert.ok(updated.readAt);
+  assert.ok(dismissed);
+  assert.equal(dismissed.state, "dismissed");
+  assert.ok(dismissed.dismissedAt);
+  assert.equal(listedWithoutDismissed.length, 0);
+  assert.equal(listedIncludingDismissed.length, 1);
+  store.close();
+});
+
 test("task proposals round trip supports create, list, unreviewed, get, and state update", () => {
   const root = makeTempDir("hb-state-store-");
   const store = new RuntimeStateStore({
