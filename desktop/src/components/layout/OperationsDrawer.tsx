@@ -632,7 +632,7 @@ function RunningPanel({
                 type="button"
                 onClick={() => onOpenSession(session.sessionId)}
                 aria-label={`Open session ${session.title}`}
-                className={`w-full px-3 py-3 text-left transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/50 ${
+                className={`w-full cursor-pointer px-3 py-3 text-left transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/50 ${
                   activeSessionId === session.sessionId
                     ? "border-l-2 border-l-primary bg-muted/30"
                     : ""

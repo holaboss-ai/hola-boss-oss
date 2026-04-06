@@ -997,6 +997,30 @@ function AppShellContent() {
     [dismissNotificationToast, refreshNotifications],
   );
 
+  const handleClearAllNotifications = useCallback(async () => {
+    if (!window.electronAPI || notifications.length === 0) {
+      return;
+    }
+
+    const notificationIds = notifications.map((item) => item.id);
+    for (const notificationId of notificationIds) {
+      dismissNotificationToast(notificationId);
+    }
+
+    try {
+      await Promise.allSettled(
+        notificationIds.map((notificationId) =>
+          window.electronAPI.workspace.updateNotification(notificationId, {
+            state: "dismissed",
+          }),
+        ),
+      );
+      await refreshNotifications();
+    } catch {
+      // Ignore transient notification update failures in the shell.
+    }
+  }, [dismissNotificationToast, notifications, refreshNotifications]);
+
   const handleNotificationCenterOpenChange = useCallback(
     (open: boolean) => {
       if (!open || !window.electronAPI) {
@@ -1935,6 +1959,9 @@ function AppShellContent() {
               }}
               onDismissNotification={(notificationId) => {
                 void handleDismissNotification(notificationId);
+              }}
+              onClearAllNotifications={() => {
+                void handleClearAllNotifications();
               }}
             />
           </div>

@@ -57,7 +57,8 @@ const OVERFLOW_POPUP_WIDTH = 220;
 const OVERFLOW_POPUP_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MIN_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MAX_HEIGHT = 320;
-const MAIN_WINDOW_CLOSED_LISTENER_BUFFER = 16;
+const MAIN_WINDOW_CLOSED_LISTENER_BUFFER = 8;
+const MAIN_WINDOW_MIN_LISTENER_BUDGET = 32;
 const APP_THEMES = new Set([
   "holaboss",
   "emerald",
@@ -71,7 +72,7 @@ const APP_THEMES = new Set([
   "graphite",
 ]);
 const GITHUB_RELEASES_OWNER = "holaboss-ai";
-const GITHUB_RELEASES_REPO = "hola-boss-oss";
+const GITHUB_RELEASES_REPO = "holaboss-ai";
 const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const APP_UPDATE_REQUEST_TIMEOUT_MS = 15000;
 const APP_UPDATE_MACOS_ASSET_NAME = "Holaboss-macos-arm64.dmg";
@@ -409,6 +410,8 @@ let downloadsPopupWindow: BrowserWindow | null = null;
 let historyPopupWindow: BrowserWindow | null = null;
 let overflowPopupWindow: BrowserWindow | null = null;
 let addressSuggestionsPopupWindow: BrowserWindow | null = null;
+let attachedBrowserTabView: BrowserView | null = null;
+let attachedAppSurfaceView: BrowserView | null = null;
 let currentTheme = "holaboss";
 let browserBounds: BrowserBoundsPayload = { x: 0, y: 0, width: 0, height: 0 };
 let overflowAnchorBounds: BrowserAnchorBoundsPayload | null = null;
@@ -9457,21 +9460,28 @@ function updateAttachedAppSurfaceView(): void {
     appSurfaceBounds.width <= 0 ||
     appSurfaceBounds.height <= 0
   ) {
-    for (const view of appSurfaceViews.values()) {
-      mainWindow.removeBrowserView(view);
+    if (attachedAppSurfaceView) {
+      mainWindow.removeBrowserView(attachedAppSurfaceView);
+      attachedAppSurfaceView = null;
     }
     return;
   }
   const view = appSurfaceViews.get(activeAppSurfaceId);
   if (!view) {
+    if (attachedAppSurfaceView) {
+      mainWindow.removeBrowserView(attachedAppSurfaceView);
+      attachedAppSurfaceView = null;
+    }
     return;
   }
-  for (const [id, v] of appSurfaceViews) {
-    if (id !== activeAppSurfaceId) {
-      mainWindow.removeBrowserView(v);
+  if (attachedAppSurfaceView !== view) {
+    if (attachedAppSurfaceView) {
+      mainWindow.removeBrowserView(attachedAppSurfaceView);
     }
+    reserveMainWindowClosedListenerBudget(1);
+    mainWindow.addBrowserView(view);
+    attachedAppSurfaceView = view;
   }
-  mainWindow.addBrowserView(view);
   view.setBounds(appSurfaceBounds);
 }
 
@@ -9517,6 +9527,9 @@ function destroyAppSurfaceView(appId: string): void {
   }
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.removeBrowserView(view);
+  }
+  if (attachedAppSurfaceView === view) {
+    attachedAppSurfaceView = null;
   }
   try {
     (view.webContents as unknown as { destroy?: () => void }).destroy?.();
@@ -10667,21 +10680,21 @@ function getActiveBrowserTab(
   return workspace.tabs.get(workspace.activeTabId) ?? null;
 }
 
-function syncMainWindowClosedListenerBudget() {
+function reserveMainWindowClosedListenerBudget(
+  additionalClosedListeners = 0,
+) {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
   }
 
-  let tabCount = 0;
-  for (const workspace of browserWorkspaces.values()) {
-    tabCount += workspace.tabs.size;
-  }
-
-  // The desktop browser keeps many tab views alive at once, so the window needs
-  // a higher close-listener budget than Node's default warning threshold.
+  // Electron's deprecated BrowserView compatibility layer adds a fresh
+  // BrowserWindow "closed" listener every time a view is attached, and those
+  // listeners are not released when the view is detached.
   const desiredBudget = Math.max(
-    10,
-    tabCount + MAIN_WINDOW_CLOSED_LISTENER_BUFFER,
+    MAIN_WINDOW_MIN_LISTENER_BUDGET,
+    mainWindow.listenerCount("closed") +
+      additionalClosedListeners +
+      MAIN_WINDOW_CLOSED_LISTENER_BUFFER,
   );
   if (mainWindow.getMaxListeners() < desiredBudget) {
     mainWindow.setMaxListeners(desiredBudget);
@@ -10795,10 +10808,17 @@ function updateAttachedBrowserView() {
   }
   const activeTab = getActiveBrowserTab(activeBrowserWorkspaceId);
   if (!activeTab || !hasVisibleBrowserBounds()) {
-    mainWindow.setBrowserView(null);
+    if (attachedBrowserTabView) {
+      mainWindow.setBrowserView(null);
+      attachedBrowserTabView = null;
+    }
     return;
   }
-  mainWindow.setBrowserView(activeTab.view);
+  if (attachedBrowserTabView !== activeTab.view) {
+    reserveMainWindowClosedListenerBudget(1);
+    mainWindow.setBrowserView(activeTab.view);
+    attachedBrowserTabView = activeTab.view;
+  }
   applyBoundsToTab(activeBrowserWorkspaceId, activeTab.state.id);
 }
 
@@ -10900,7 +10920,6 @@ function createBrowserTab(
     initialized: !hasInitialUrl,
   });
   workspace.tabs.set(tabId, { view, state });
-  syncMainWindowClosedListenerBudget();
 
   view.setBounds(browserBounds);
   view.setAutoResize({
@@ -12362,7 +12381,9 @@ function createMainWindow() {
   });
 
   mainWindow = win;
-  syncMainWindowClosedListenerBudget();
+  attachedBrowserTabView = null;
+  attachedAppSurfaceView = null;
+  reserveMainWindowClosedListenerBudget();
   browserBounds = { x: 0, y: 0, width: 0, height: 0 };
   activeBrowserWorkspaceId = "";
   for (const workspaceId of Array.from(browserWorkspaces.keys())) {
@@ -12424,6 +12445,8 @@ function createMainWindow() {
       destroyBrowserWorkspace(workspaceId);
     }
     activeBrowserWorkspaceId = "";
+    attachedBrowserTabView = null;
+    attachedAppSurfaceView = null;
     mainWindow = null;
   });
 }

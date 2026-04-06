@@ -50,6 +50,13 @@ test("app shell polls runtime notifications and renders the toast stack", async 
   assert.match(source, /notificationUnreadCount=\{notificationUnreadCount\}/);
 });
 
+test("app shell wires clear-all notifications through a bulk dismiss handler", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /const handleClearAllNotifications = useCallback\(async \(\) => \{/);
+  assert.match(source, /notificationIds\.map\(\(notificationId\) =>\s*window\.electronAPI\.workspace\.updateNotification\(notificationId,\s*\{\s*state: "dismissed",\s*\}\),/);
+  assert.match(source, /onClearAllNotifications=\{\(\) => \{\s*void handleClearAllNotifications\(\);\s*\}\}/);
+});
 test("app shell requests remote task proposal generation without a separate success banner", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 

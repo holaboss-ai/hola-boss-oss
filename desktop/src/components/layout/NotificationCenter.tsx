@@ -16,6 +16,7 @@ interface NotificationCenterProps {
   onOpenChange?: (open: boolean) => void;
   onMarkRead: (notificationId: string) => void;
   onDismiss: (notificationId: string) => void;
+  onClearAll?: () => void;
 }
 
 function relativeTimeLabel(value: string): string {
@@ -66,6 +67,7 @@ export function NotificationCenter({
   onOpenChange,
   onMarkRead,
   onDismiss,
+  onClearAll,
 }: NotificationCenterProps) {
   return (
     <Popover onOpenChange={onOpenChange}>
@@ -101,13 +103,26 @@ export function NotificationCenter({
             <PopoverTitle className="text-sm font-semibold">
               Notifications
             </PopoverTitle>
-            <span className="text-xs text-muted-foreground">
-              {unreadCount > 0
-                ? `${unreadCount} unread`
-                : notifications.length > 0
-                  ? `${notifications.length} total`
-                  : "No new items"}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">
+                {unreadCount > 0
+                  ? `${unreadCount} unread`
+                  : notifications.length > 0
+                    ? `${notifications.length} total`
+                    : "No new items"}
+              </span>
+              {notifications.length > 0 && onClearAll ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={onClearAll}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  Clear all
+                </Button>
+              ) : null}
+            </div>
           </div>
         </PopoverHeader>
 

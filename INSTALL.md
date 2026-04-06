@@ -11,7 +11,7 @@ Clone the Holaboss OSS repository and complete the same baseline desktop setup f
 Use this repository URL:
 
 ```bash
-https://github.com/holaboss-ai/hola-boss-oss.git
+https://github.com/holaboss-ai/holaboss-ai.git
 ```
 
 ## Prerequisites
@@ -37,14 +37,14 @@ If `node --version` reports a major version lower than `22`, stop and upgrade No
 If the repository is not already present locally, clone it:
 
 ```bash
-git clone https://github.com/holaboss-ai/hola-boss-oss.git
-cd hola-boss-oss
+git clone https://github.com/holaboss-ai/holaboss-ai.git
+cd holaboss-ai
 ```
 
 If the repository already exists locally, enter the repository root instead:
 
 ```bash
-cd hola-boss-oss
+cd holaboss-ai
 ```
 
 All commands below must be run from the repository root.
@@ -137,8 +137,8 @@ Important:
 For a standard fresh setup, the expected command sequence is:
 
 ```bash
-git clone https://github.com/holaboss-ai/hola-boss-oss.git
-cd hola-boss-oss
+git clone https://github.com/holaboss-ai/holaboss-ai.git
+cd holaboss-ai
 npm run desktop:install
 cp desktop/.env.example desktop/.env
 npm run desktop:typecheck
