@@ -809,8 +809,8 @@ holaboss-runtime
 
 ## OSS Release Notes
 
-- License: MIT. See `LICENSE`.
-- Security issues: report privately to `security@holaboss.ai`. See `SECURITY.md`.
+- License: MIT. See [LICENSE](LICENSE).
+- Security issues: report privately to `admin@holaboss.ai`. See [SECURITY.md](SECURITY.md).
 
 ## macOS DMG Bundling
 
