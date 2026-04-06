@@ -41,3 +41,45 @@ test("app shell removes the outputs quick action", async () => {
 
   assert.doesNotMatch(source, /aria-label="Open outputs panel"/);
 });
+
+test("app shell requests remote task proposal generation without a separate success banner", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /requestRemoteTaskProposalGeneration\(/);
+  assert.match(source, /Suggestions are unavailable right now\./);
+  assert.doesNotMatch(source, /Remote heartbeat accepted/);
+  assert.doesNotMatch(source, /Pending cloud jobs/);
+});
+
+test("app shell polls proactive status for the selected workspace", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /const \[proactiveStatus, setProactiveStatus\]/);
+  assert.match(source, /workspace\.getProactiveStatus\(\s*selectedWorkspace\.id,/);
+  assert.match(source, /proactiveStatus=\{proactiveStatus\}/);
+  assert.match(source, /isLoadingProactiveStatus=\{isLoadingProactiveStatus\}/);
+});
+
+test("app shell renames the running panel button to sub-sessions", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /aria-label="Open sub-sessions panel"/);
+  assert.doesNotMatch(source, /aria-label="Open running panel"/);
+});
+
+test("app shell can route new schedule creation into a prefilled workspace chat", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /const \[chatComposerPrefillRequest, setChatComposerPrefillRequest\] =\s*useState<ChatComposerPrefillRequest \| null>\(null\);/);
+  assert.match(source, /const handleCreateScheduleInChat = useCallback\(\(\) => \{/);
+  assert.match(source, /const mainSessionId = \(selectedWorkspace\?\.main_session_id \|\| ""\)\.trim\(\);/);
+  assert.match(source, /setActiveLeftRailItem\("space"\);/);
+  assert.match(source, /setSpaceVisibility\(\(previous\) => \(\{\s*\.\.\.previous,\s*agent: true,\s*\}\)\);/);
+  assert.match(source, /setAgentView\(\{ type: "chat" \}\);/);
+  assert.match(source, /setChatSessionJumpRequest\(null\);/);
+  assert.match(source, /setChatSessionOpenRequest\(\(previous\) =>\s*mainSessionId\s*\?\s*\{\s*sessionId: mainSessionId,\s*requestKey: \(previous\?\.requestKey \?\? 0\) \+ 1,\s*\}\s*:\s*null,\s*\);/);
+  assert.match(source, /setChatComposerPrefillRequest\(\(previous\) => \(\{\s*text: "Create a cronjob for ",\s*requestKey: \(previous\?\.requestKey \?\? 0\) \+ 1,\s*\}\)\);/);
+  assert.match(source, /composerPrefillRequest=\{chatComposerPrefillRequest\}/);
+  assert.match(source, /onComposerPrefillConsumed=\{handleChatComposerPrefillConsumed\}/);
+  assert.match(source, /onCreateSchedule=\{handleCreateScheduleInChat\}/);
+});

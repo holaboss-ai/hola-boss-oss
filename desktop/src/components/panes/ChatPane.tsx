@@ -1053,6 +1053,11 @@ interface ChatPaneSessionOpenRequest {
   requestKey: number;
 }
 
+interface ChatPaneComposerPrefillRequest {
+  text: string;
+  requestKey: number;
+}
+
 interface ChatPaneProps {
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
   focusRequestKey?: number;
@@ -1061,6 +1066,8 @@ interface ChatPaneProps {
   sessionJumpSessionId?: string | null;
   sessionJumpRequestKey?: number;
   sessionOpenRequest?: ChatPaneSessionOpenRequest | null;
+  composerPrefillRequest?: ChatPaneComposerPrefillRequest | null;
+  onComposerPrefillConsumed?: (requestKey: number) => void;
   onActiveSessionIdChange?: (sessionId: string | null) => void;
 }
 
@@ -1072,6 +1079,8 @@ export function ChatPane({
   sessionJumpSessionId = null,
   sessionJumpRequestKey = 0,
   sessionOpenRequest = null,
+  composerPrefillRequest = null,
+  onComposerPrefillConsumed,
   onActiveSessionIdChange,
 }: ChatPaneProps) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
@@ -1155,6 +1164,7 @@ export function ChatPane({
   const isOnboardingVariant = variant === "onboarding";
   const pendingFocusRequestKeyRef = useRef<number | null>(focusRequestKey);
   const lastHandledSessionJumpRequestKeyRef = useRef(0);
+  const lastHandledComposerPrefillRequestKeyRef = useRef(0);
   const liveAssistantTextRef = useRef("");
   const liveThinkingTextRef = useRef("");
   const liveThinkingExpandedRef = useRef(false);
@@ -1741,6 +1751,25 @@ export function ChatPane({
   useEffect(() => {
     setPendingAttachments([]);
   }, [selectedWorkspaceId]);
+
+  useEffect(() => {
+    const requestKey = composerPrefillRequest?.requestKey ?? 0;
+    if (
+      requestKey <= 0 ||
+      requestKey === lastHandledComposerPrefillRequestKeyRef.current
+    ) {
+      return;
+    }
+
+    lastHandledComposerPrefillRequestKeyRef.current = requestKey;
+    setInput(composerPrefillRequest?.text ?? "");
+    setPendingAttachments([]);
+    onComposerPrefillConsumed?.(requestKey);
+  }, [
+    composerPrefillRequest?.requestKey,
+    composerPrefillRequest?.text,
+    onComposerPrefillConsumed,
+  ]);
 
   useEffect(() => {
     const normalizedPreference =
@@ -3311,12 +3340,12 @@ export function ChatPane({
                 );
                 syncChatScrollMetrics(event.currentTarget);
               }}
-              className={`chat-scrollbar-hidden h-full min-h-0 overflow-y-auto ${hasMessages ? "" : "flex items-center justify-center"}`}
+              className={`chat-scrollbar-hidden h-full min-h-0 overflow-x-hidden overflow-y-auto ${hasMessages ? "" : "flex items-center justify-center"}`}
             >
               {hasMessages ? (
                 <div
                   ref={messagesContentRef}
-                  className="mx-auto flex w-full max-w-[800px] flex-col gap-7 px-6 pb-3 pt-5"
+                  className="flex min-w-0 w-full flex-col gap-7 px-6 pb-3 pt-5"
                 >
                   {messages.map((message) =>
                     message.role === "user" ? (
@@ -3435,7 +3464,7 @@ export function ChatPane({
                         : "Pick a template, create a workspace, and then send the first instruction."}
                     </div>
                   </div>
-                  <form onSubmit={onSubmit} className="mx-auto max-w-[760px]">
+                  <form onSubmit={onSubmit} className="w-full">
                     <Composer
                       input={input}
                       attachments={pendingAttachmentItems}
@@ -3496,7 +3525,7 @@ export function ChatPane({
 
           {hasMessages ? (
             <div ref={composerBlockRef} className="shrink-0 px-6 pb-5 pt-3">
-              <form onSubmit={onSubmit} className="mx-auto max-w-[800px]">
+              <form onSubmit={onSubmit} className="w-full">
                 <Composer
                   input={input}
                   attachments={pendingAttachmentItems}
@@ -3600,8 +3629,8 @@ function UserTurn({
   onLinkClick?: (url: string) => void;
 }) {
   return (
-    <div className="flex justify-end">
-      <div className="flex max-w-[420px] flex-col items-end gap-2">
+    <div className="flex min-w-0 justify-end">
+      <div className="flex min-w-0 max-w-[420px] flex-col items-end gap-2 sm:max-w-[560px] lg:max-w-[680px]">
         {text ? (
           <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full rounded-[18px] border px-4 py-3 text-foreground/95">
             <SimpleMarkdown
@@ -3677,8 +3706,8 @@ function AssistantTurn({
   live?: boolean;
 }) {
   return (
-    <div className="flex justify-start">
-      <article className="max-w-[760px]">
+    <div className="flex min-w-0 justify-start">
+      <article className="min-w-0 flex-1">
         {status && !text ? (
           <div className="text-[13px] leading-7 text-muted-foreground">
             {status}

@@ -299,16 +299,15 @@ interface ProactiveAgentStatusPayload {
   delivery_detail: string | null;
 }
 
-interface DemoTaskProposalRequestPayload {
+interface RemoteTaskProposalGenerationRequestPayload {
   workspace_id: string;
-  task_name?: string;
-  task_prompt?: string;
-  task_generation_rationale?: string;
 }
 
-interface DemoTaskProposalEnqueueResponsePayload {
+interface RemoteTaskProposalGenerationResponsePayload {
   accepted: boolean;
-  pending_count: number;
+  accepted_count: number;
+  event_count: number;
+  correlation_id: string;
 }
 
 interface ProactiveTaskProposalPreferenceUpdatePayload {
@@ -973,8 +972,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ) as Promise<ProactiveTaskProposalPreferencePayload>,
     updateTaskProposalState: (proposalId: string, state: string) =>
       ipcRenderer.invoke("workspace:updateTaskProposalState", proposalId, state) as Promise<TaskProposalStateUpdatePayload>,
-    enqueueRemoteDemoTaskProposal: (payload: DemoTaskProposalRequestPayload) =>
-      ipcRenderer.invoke("workspace:enqueueRemoteDemoTaskProposal", payload) as Promise<DemoTaskProposalEnqueueResponsePayload>,
+    requestRemoteTaskProposalGeneration: (
+      payload: RemoteTaskProposalGenerationRequestPayload,
+    ) =>
+      ipcRenderer.invoke(
+        "workspace:requestRemoteTaskProposalGeneration",
+        payload,
+      ) as Promise<RemoteTaskProposalGenerationResponsePayload>,
     listAgentSessions: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listAgentSessions", workspaceId) as Promise<AgentSessionListResponsePayload>,
     listRuntimeStates: (workspaceId: string) =>

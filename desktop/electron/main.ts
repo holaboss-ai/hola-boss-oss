@@ -1529,16 +1529,15 @@ interface MemoryUpdateProposalDismissResponsePayload {
   proposal: MemoryUpdateProposalRecordPayload;
 }
 
-interface DemoTaskProposalRequestPayload {
+interface RemoteTaskProposalGenerationRequestPayload {
   workspace_id: string;
-  task_name?: string;
-  task_prompt?: string;
-  task_generation_rationale?: string;
 }
 
-interface DemoTaskProposalEnqueueResponsePayload {
+interface RemoteTaskProposalGenerationResponsePayload {
   accepted: boolean;
-  pending_count: number;
+  accepted_count: number;
+  event_count: number;
+  correlation_id: string;
 }
 
 interface ProactiveTaskProposalPreferenceUpdatePayload {
@@ -5100,26 +5099,29 @@ async function requestControlPlaneJson<T>({
   }
 }
 
-async function emitWorkspaceReadyHeartbeat(params: {
+async function ingestWorkspaceHeartbeat(params: {
   workspaceId: string;
-  holabossUserId: string;
-}): Promise<void> {
+  actorId: string;
+  sourceRef: string;
+  correlationId: string;
+}): Promise<RemoteTaskProposalGenerationResponsePayload> {
   const workspaceId = params.workspaceId.trim();
-  const holabossUserId = params.holabossUserId.trim();
-  if (
-    !workspaceId ||
-    !holabossUserId ||
-    holabossUserId === LOCAL_OSS_TEMPLATE_USER_ID
-  ) {
-    return;
+  if (!workspaceId) {
+    throw new Error("workspace_id is required to ingest a heartbeat event.");
   }
 
-  const correlationId = `workspace-ready-${workspaceId}`;
+  const correlationId = params.correlationId.trim();
+  if (!correlationId) {
+    throw new Error("correlation_id is required to ingest a heartbeat event.");
+  }
+
   appendRuntimeEventLog({
     category: "workspace",
     event: "workspace.heartbeat.emit",
     outcome: "start",
-    detail: correlationId,
+    detail:
+      `workspace_id=${workspaceId} source=${params.sourceRef} ` +
+      `correlation_id=${correlationId}`,
   });
 
   try {
@@ -5137,12 +5139,12 @@ async function emitWorkspaceReadyHeartbeat(params: {
             workspace_id: workspaceId,
             actor: {
               type: "system",
-              id: "desktop_workspace_create",
+              id: params.actorId,
             },
             correlation_id: correlationId,
             origin: "system",
             timestamp: utcNowIso(),
-            source_refs: ["workspace-created:ready"],
+            source_refs: [params.sourceRef],
             window: "24h",
             proposal_scope: "window",
           },
@@ -5156,16 +5158,49 @@ async function emitWorkspaceReadyHeartbeat(params: {
       category: "workspace",
       event: "workspace.heartbeat.emit",
       outcome: "success",
-      detail: `workspace_id=${workspaceId} accepted=${acceptedCount}/${results.length}`,
+      detail:
+        `workspace_id=${workspaceId} source=${params.sourceRef} ` +
+        `correlation_id=${correlationId} accepted=${acceptedCount}/${results.length}`,
     });
+    return {
+      accepted: acceptedCount > 0,
+      accepted_count: acceptedCount,
+      event_count: results.length,
+      correlation_id: correlationId,
+    };
   } catch (error) {
     appendRuntimeEventLog({
       category: "workspace",
       event: "workspace.heartbeat.emit",
       outcome: "error",
-      detail: error instanceof Error ? error.message : String(error),
+      detail:
+        `workspace_id=${workspaceId} source=${params.sourceRef} ` +
+        `correlation_id=${correlationId} error=${error instanceof Error ? error.message : String(error)}`,
     });
+    throw error;
   }
+}
+
+async function emitWorkspaceReadyHeartbeat(params: {
+  workspaceId: string;
+  holabossUserId: string;
+}): Promise<void> {
+  const workspaceId = params.workspaceId.trim();
+  const holabossUserId = params.holabossUserId.trim();
+  if (
+    !workspaceId ||
+    !holabossUserId ||
+    holabossUserId === LOCAL_OSS_TEMPLATE_USER_ID
+  ) {
+    return;
+  }
+
+  await ingestWorkspaceHeartbeat({
+    workspaceId,
+    actorId: "desktop_workspace_create",
+    sourceRef: "workspace-created:ready",
+    correlationId: `workspace-ready-${workspaceId}`,
+  });
 }
 
 function getHolabossClientConfig(): HolabossClientConfigPayload {
@@ -5483,45 +5518,51 @@ async function getProactiveStatus(
   }
 
   let deliveryState = "idle";
-  let deliverySummary = "No proactive activity recorded yet.";
+  let deliverySummary = "No suggestions right now.";
   let deliveryDetail: string | null = null;
   const heartbeatAgeSeconds = secondsSinceIso(heartbeat.recorded_at);
+  const heartbeatJustClaimed =
+    heartbeatAgeSeconds !== null && heartbeatAgeSeconds < 10;
   const heartbeatSettled =
     heartbeatAgeSeconds !== null && heartbeatAgeSeconds >= 120;
   if (proposalCount > 0) {
-    deliveryState = "delivered";
-    deliverySummary = `${proposalCount} proactive proposal${proposalCount === 1 ? "" : "s"} available in this runtime.`;
+    deliveryState = "ready";
+    deliverySummary = `${proposalCount} suggestion${proposalCount === 1 ? "" : "s"} ready.`;
   } else if (heartbeat.state === "published" && bridge.state === "error") {
-    deliveryState = "blocked";
-    deliverySummary =
-      "Heartbeat was sent, but proposal delivery into this runtime is blocked.";
+    deliveryState = "unavailable";
+    deliverySummary = "Suggestions are unavailable right now.";
     deliveryDetail = bridge.detail;
+  } else if (heartbeat.state === "pending") {
+    deliveryState = "sent";
+    deliverySummary = "Request sent.";
+    deliveryDetail = "Waiting for the workspace to pick it up.";
+  } else if (heartbeat.state === "published" && heartbeatJustClaimed) {
+    deliveryState = "claimed";
+    deliverySummary = "Request picked up.";
+    deliveryDetail = "Preparing suggestions for this workspace.";
   } else if (heartbeat.state === "published" && !heartbeatSettled) {
     deliveryState = "analyzing";
-    deliverySummary =
-      "Heartbeat was sent. Remote proactive analysis is still in progress.";
+    deliverySummary = "Analyzing workspace.";
+    deliveryDetail = "Looking for useful suggestions.";
   } else if (heartbeat.state === "published") {
-    deliveryState = "no_proposal";
-    deliverySummary =
-      "No proposal has been delivered since the last heartbeat.";
-    deliveryDetail =
-      "A heartbeat only asks the remote proactive agent to analyze the workspace. It may decide not to create a proposal.";
+    deliveryState = "idle";
+    deliverySummary = "No suggestions right now.";
   } else if (heartbeat.state === "failed") {
     deliveryState = "error";
-    deliverySummary =
-      "Workspace creation finished, but the proactive heartbeat failed.";
+    deliverySummary = "Couldn't generate suggestions.";
     deliveryDetail = heartbeat.detail;
   } else if (heartbeat.state === "skipped") {
-    deliveryState = "inactive";
-    deliverySummary = "Proactive delivery is disabled for this workspace.";
+    deliveryState = "unavailable";
+    deliverySummary = "Suggestions are unavailable right now.";
     deliveryDetail = heartbeat.detail;
   } else if (bridge.state === "error") {
-    deliveryState = "blocked";
-    deliverySummary = "The runtime cannot currently receive proactive jobs.";
+    deliveryState = "unavailable";
+    deliverySummary = "Suggestions are unavailable right now.";
     deliveryDetail = bridge.detail;
   } else if (bridge.state === "inactive") {
-    deliveryState = "inactive";
-    deliverySummary = bridge.detail || "Proactive delivery is inactive.";
+    deliveryState = "unavailable";
+    deliverySummary = "Suggestions are unavailable right now.";
+    deliveryDetail = bridge.detail;
   }
 
   return {
@@ -5957,21 +5998,24 @@ async function resolveTemplateIntegrations(
   };
 }
 
-async function enqueueRemoteDemoTaskProposal(
-  payload: DemoTaskProposalRequestPayload,
-): Promise<DemoTaskProposalEnqueueResponsePayload> {
-  await ensureRuntimeBindingReadyForWorkspaceFlow("remote_demo_task_proposal", {
-    forceRefresh: true,
-  });
+async function requestRemoteTaskProposalGeneration(
+  payload: RemoteTaskProposalGenerationRequestPayload,
+): Promise<RemoteTaskProposalGenerationResponsePayload> {
+  await ensureRuntimeBindingReadyForWorkspaceFlow(
+    "remote_task_proposal_generation",
+    {
+      forceRefresh: true,
+    },
+  );
+  const workspaceId = payload.workspace_id.trim();
+  const correlationId = `manual-heartbeat-${workspaceId}-${Date.now()}`;
   try {
-    return await requestControlPlaneJson<DemoTaskProposalEnqueueResponsePayload>(
-      {
-        service: "proactive",
-        method: "POST",
-        path: "/api/v1/proactive/bridge/demo/task-proposal",
-        payload,
-      },
-    );
+    return await ingestWorkspaceHeartbeat({
+      workspaceId,
+      actorId: "desktop_manual_heartbeat",
+      sourceRef: "desktop:manual-heartbeat",
+      correlationId,
+    });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.includes("Service not found") || msg.includes("fetch failed")) {
@@ -12855,10 +12899,10 @@ app.whenReady().then(async () => {
       updateTaskProposalState(proposalId, state),
   );
   handleTrustedIpc(
-    "workspace:enqueueRemoteDemoTaskProposal",
+    "workspace:requestRemoteTaskProposalGeneration",
     ["main"],
-    async (_event, payload: DemoTaskProposalRequestPayload) =>
-      enqueueRemoteDemoTaskProposal(payload),
+    async (_event, payload: RemoteTaskProposalGenerationRequestPayload) =>
+      requestRemoteTaskProposalGeneration(payload),
   );
   handleTrustedIpc(
     "workspace:setProactiveTaskProposalPreference",

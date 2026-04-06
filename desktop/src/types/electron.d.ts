@@ -318,16 +318,15 @@ declare global {
     delivery_detail: string | null;
   }
 
-  interface DemoTaskProposalRequestPayload {
+  interface RemoteTaskProposalGenerationRequestPayload {
     workspace_id: string;
-    task_name?: string;
-    task_prompt?: string;
-    task_generation_rationale?: string;
   }
 
-  interface DemoTaskProposalEnqueueResponsePayload {
+  interface RemoteTaskProposalGenerationResponsePayload {
     accepted: boolean;
-    pending_count: number;
+    accepted_count: number;
+    event_count: number;
+    correlation_id: string;
   }
 
   interface ProactiveTaskProposalPreferenceUpdatePayload {
@@ -1065,9 +1064,9 @@ declare global {
         payload: ProactiveTaskProposalPreferenceUpdatePayload
       ) => Promise<ProactiveTaskProposalPreferencePayload>;
       updateTaskProposalState: (proposalId: string, state: string) => Promise<TaskProposalStateUpdatePayload>;
-      enqueueRemoteDemoTaskProposal: (
-        payload: DemoTaskProposalRequestPayload
-      ) => Promise<DemoTaskProposalEnqueueResponsePayload>;
+      requestRemoteTaskProposalGeneration: (
+        payload: RemoteTaskProposalGenerationRequestPayload
+      ) => Promise<RemoteTaskProposalGenerationResponsePayload>;
       listAgentSessions: (workspaceId: string) => Promise<AgentSessionListResponsePayload>;
       listRuntimeStates: (workspaceId: string) => Promise<SessionRuntimeStateListResponsePayload>;
       getSessionHistory: (payload: { sessionId: string; workspaceId: string }) => Promise<SessionHistoryResponsePayload>;
