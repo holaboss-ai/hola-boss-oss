@@ -667,8 +667,10 @@ For the legacy/proxy shorthand, `auth_token` is sent as `X-API-Key` on proxy req
 Runtime URL behavior:
 
 - if `model_proxy_base_url` is a proxy root, runtime appends provider routes (`/openai/v1`, `/anthropic/v1`)
-- direct mode is enabled when you provide a provider endpoint (recommended: include `/v1`, for example `https://api.openai.com/v1`)
-- known provider hosts `api.openai.com` and `api.anthropic.com` also work without an explicit path; runtime normalizes them to `/v1`
+- direct mode is enabled when you provide a provider endpoint
+- OpenAI-compatible direct providers typically use a `/v1` endpoint, for example `https://api.openai.com/v1`
+- Anthropic native direct providers should use the root host, for example `https://api.anthropic.com`
+- known provider hosts normalize as needed: `api.openai.com` to `/v1`, `api.anthropic.com` to the root host, and Gemini host roots to `/v1beta/openai`
 
 ### Where The Runtime Reads Model Config
 
@@ -741,13 +743,18 @@ If a model id is unprefixed and does not start with `claude`, the runtime first 
     },
     "anthropic_direct": {
       "kind": "anthropic_native",
-      "base_url": "https://api.anthropic.com/v1",
+      "base_url": "https://api.anthropic.com",
       "api_key": "sk-ant-your-anthropic-key"
     },
     "openrouter_direct": {
       "kind": "openrouter",
       "base_url": "https://openrouter.ai/api/v1",
       "api_key": "sk-or-your-openrouter-key"
+    },
+    "gemini_direct": {
+      "kind": "openai_compatible",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "api_key": "AIza...your-gemini-api-key"
     },
     "ollama_direct": {
       "kind": "openai_compatible",
@@ -759,15 +766,17 @@ If a model id is unprefixed and does not start with `claude`, the runtime first 
     "holaboss/gpt-5.2": { "provider": "holaboss", "model": "gpt-5.2" },
     "holaboss/gpt-5-mini": { "provider": "holaboss", "model": "gpt-5-mini" },
     "holaboss/gpt-4.1-mini": { "provider": "holaboss", "model": "gpt-4.1-mini" },
-    "holaboss/claude-sonnet-4-5": { "provider": "holaboss", "model": "claude-sonnet-4-5" },
-    "holaboss/claude-opus-4-1": { "provider": "holaboss", "model": "claude-opus-4-1" },
     "openai_direct/gpt-5.2": { "provider": "openai_direct", "model": "gpt-5.2" },
     "openai_direct/gpt-5-mini": { "provider": "openai_direct", "model": "gpt-5-mini" },
     "openai_direct/gpt-5-nano": { "provider": "openai_direct", "model": "gpt-5-nano" },
     "openai_direct/gpt-4.1": { "provider": "openai_direct", "model": "gpt-4.1" },
     "openai_direct/gpt-4.1-mini": { "provider": "openai_direct", "model": "gpt-4.1-mini" },
-    "anthropic_direct/claude-sonnet-4-5": { "provider": "anthropic_direct", "model": "claude-sonnet-4-5" },
-    "anthropic_direct/claude-opus-4-1": { "provider": "anthropic_direct", "model": "claude-opus-4-1" },
+    "anthropic_direct/claude-sonnet-4-6": { "provider": "anthropic_direct", "model": "claude-sonnet-4-6" },
+    "anthropic_direct/claude-opus-4-6": { "provider": "anthropic_direct", "model": "claude-opus-4-6" },
+    "anthropic_direct/claude-haiku-4-5": { "provider": "anthropic_direct", "model": "claude-haiku-4-5" },
+    "gemini_direct/gemini-2.5-pro": { "provider": "gemini_direct", "model": "gemini-2.5-pro" },
+    "gemini_direct/gemini-2.5-flash": { "provider": "gemini_direct", "model": "gemini-2.5-flash" },
+    "gemini_direct/gemini-2.5-flash-lite": { "provider": "gemini_direct", "model": "gemini-2.5-flash-lite" },
     "openrouter_direct/deepseek/deepseek-chat-v3-0324": {
       "provider": "openrouter_direct",
       "model": "deepseek/deepseek-chat-v3-0324"

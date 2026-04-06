@@ -16,7 +16,9 @@ test("manual task proposal trigger uses proactive heartbeat ingest", async () =>
   const source = await readFile(MAIN_PATH, "utf8");
 
   assert.match(source, /async function requestRemoteTaskProposalGeneration\(/);
+  assert.match(source, /path: "\/api\/v1\/proactive\/context\/capture"/);
   assert.match(source, /path: "\/api\/v1\/proactive\/ingest"/);
+  assert.match(source, /captured_context: bundledContext\.context/);
   assert.match(source, /sourceRef: "desktop:manual-heartbeat"/);
   assert.match(source, /workspace_id=\$\{workspaceId\} source=\$\{params\.sourceRef\}/);
   assert.doesNotMatch(source, /\/api\/v1\/proactive\/bridge\/demo\/task-proposal/);

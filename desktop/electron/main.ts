@@ -94,8 +94,6 @@ const RUNTIME_HOLABOSS_LEGACY_PROXY_MODELS = [
   "gpt-5.4",
   "gpt-5.4-mini",
   "gpt-5.3-codex",
-  "claude-sonnet-4-5",
-  "claude-opus-4-1",
 ] as const;
 const RUNTIME_DEPRECATED_MODEL_IDS = new Set([
   "gpt-5.1",
@@ -103,6 +101,15 @@ const RUNTIME_DEPRECATED_MODEL_IDS = new Set([
   "gpt-5.1-codex-mini",
   "gpt-5.1-codex-max",
 ]);
+const RUNTIME_LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string>> = {
+  anthropic_direct: {
+    "claude-sonnet-4-5": "claude-sonnet-4-6",
+  },
+  gemini_direct: {
+    "gemini-3.1-pro-preview": "gemini-2.5-pro",
+    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite",
+  },
+};
 
 function configureChromiumLoggingPolicy() {
   if (verboseTelemetryEnabled || chromiumStderrLoggingEnabled) {
@@ -1541,6 +1548,10 @@ interface RemoteTaskProposalGenerationResponsePayload {
   accepted_count: number;
   event_count: number;
   correlation_id: string;
+}
+
+interface ProactiveContextCaptureResponsePayload {
+  context: Record<string, unknown>;
 }
 
 interface ProactiveTaskProposalPreferenceUpdatePayload {
@@ -3392,6 +3403,40 @@ function normalizeLegacyRuntimeModelToken(token: string): string {
   return token.trim();
 }
 
+function normalizeRuntimeProviderModelId(
+  providerId: string,
+  modelId: string,
+): string {
+  const normalizedProviderId = providerId.trim().toLowerCase();
+  const normalizedModelId = modelId.trim();
+  if (!normalizedProviderId || !normalizedModelId) {
+    return normalizedModelId;
+  }
+  return (
+    RUNTIME_LEGACY_DIRECT_PROVIDER_MODEL_ALIASES[normalizedProviderId]?.[
+      normalizedModelId
+    ] ?? normalizedModelId
+  );
+}
+
+function normalizeRuntimeProviderModelToken(
+  providerId: string,
+  token: string,
+  modelId: string,
+): string {
+  const normalizedProviderId = canonicalRuntimeProviderId(providerId);
+  const normalizedModelId = normalizeRuntimeProviderModelId(
+    normalizedProviderId,
+    modelId,
+  );
+  const normalizedToken = token.trim();
+  const providerPrefix = `${normalizedProviderId}/`;
+  if (!normalizedToken.startsWith(providerPrefix)) {
+    return normalizedToken || providerPrefix + normalizedModelId;
+  }
+  return `${providerPrefix}${normalizedModelId}`;
+}
+
 function runtimeProviderLabel(providerId: string): string {
   const normalized = providerId.trim().toLowerCase();
   if (normalized === "openai" || normalized.includes("openai")) {
@@ -3487,6 +3532,25 @@ function isDeprecatedRuntimeModelId(modelId: string): boolean {
   return RUNTIME_DEPRECATED_MODEL_IDS.has(normalized);
 }
 
+function isClaudeRuntimeModelId(modelId: string): boolean {
+  const normalized = modelId.trim().toLowerCase();
+  return /^((openai|anthropic|holaboss|holaboss_model_proxy)\/)*claude-/.test(
+    normalized,
+  );
+}
+
+function isUnsupportedHolabossRuntimeModel(
+  providerId: string,
+  modelId: string,
+): boolean {
+  const normalizedProviderId = canonicalRuntimeProviderId(providerId);
+  return (
+    RUNTIME_HOLABOSS_PROVIDER_ALIASES.some(
+      (alias) => alias === normalizedProviderId,
+    ) && isClaudeRuntimeModelId(modelId)
+  );
+}
+
 function runtimeProviderModelGroups(
   document: Record<string, unknown>,
   loadedLegacy: Record<string, string>,
@@ -3575,17 +3639,28 @@ function runtimeProviderModelGroups(
   };
   const addModel = (providerId: string, token: string, modelId: string) => {
     const normalizedProviderId = canonicalRuntimeProviderId(providerId);
-    const normalizedModelId = modelId.trim();
+    const normalizedModelId = normalizeRuntimeProviderModelId(
+      normalizedProviderId,
+      modelId,
+    );
     if (
       !normalizedProviderId ||
       !normalizedModelId ||
+      isUnsupportedHolabossRuntimeModel(
+        normalizedProviderId,
+        normalizedModelId,
+      ) ||
       isDeprecatedRuntimeModelId(normalizedModelId)
     ) {
       return;
     }
     const normalizedToken = canonicalRuntimeModelToken(
       normalizedProviderId,
-      token,
+      normalizeRuntimeProviderModelToken(
+        normalizedProviderId,
+        token,
+        normalizedModelId,
+      ),
       normalizedModelId,
     );
     if (isDeprecatedRuntimeModelId(normalizedToken)) {
@@ -5128,6 +5203,14 @@ async function ingestWorkspaceHeartbeat(params: {
   });
 
   try {
+    const bundledContext = await requestRuntimeJson<ProactiveContextCaptureResponsePayload>({
+      method: "POST",
+      path: "/api/v1/proactive/context/capture",
+      payload: {
+        workspace_id: workspaceId,
+      },
+      retryTransientErrors: true,
+    });
     const results = await requestControlPlaneJson<
       ProactiveIngestItemResultPayload[]
     >({
@@ -5150,6 +5233,7 @@ async function ingestWorkspaceHeartbeat(params: {
             source_refs: [params.sourceRef],
             window: "24h",
             proposal_scope: "window",
+            captured_context: bundledContext.context,
           },
         ],
       },
@@ -11283,6 +11367,7 @@ function setBrowserBounds(bounds: BrowserBoundsPayload) {
   const workspace = activeBrowserWorkspace();
   if (!workspace || !workspace.activeTabId || !hasVisibleBrowserBounds()) {
     mainWindow?.setBrowserView(null);
+    attachedBrowserTabView = null;
     return;
   }
   updateAttachedBrowserView();

@@ -153,7 +153,6 @@ const CHAT_MODEL_PRESETS = [
   "openai/gpt-5.1",
   "openai/gpt-5",
   "openai/gpt-5.2",
-  "claude-sonnet-4-5",
 ] as const;
 
 function sessionUserId(
@@ -175,6 +174,13 @@ function isHolabossProxyModel(model: string) {
   );
 }
 
+function isClaudeChatModel(model: string) {
+  const normalized = model.trim().toLowerCase();
+  return /^((openai|anthropic|holaboss|holaboss_model_proxy)\/)*claude-/.test(
+    normalized,
+  );
+}
+
 function isHolabossProviderId(providerId: string) {
   const normalized = providerId.trim().toLowerCase();
   return (
@@ -182,6 +188,10 @@ function isHolabossProviderId(providerId: string) {
     normalized === "holaboss" ||
     normalized.includes("holaboss")
   );
+}
+
+function isUnsupportedHolabossProxyModel(providerId: string, model: string) {
+  return isHolabossProviderId(providerId) && isClaudeChatModel(model);
 }
 
 function isDeprecatedChatModel(model: string) {
@@ -2945,6 +2955,14 @@ export function ChatPane({
         if (!normalizedToken || isDeprecatedChatModel(normalizedToken)) {
           return false;
         }
+        if (
+          isUnsupportedHolabossProxyModel(
+            providerGroup.providerId,
+            model.modelId || normalizedToken,
+          )
+        ) {
+          return false;
+        }
         if (holabossProxyModelsAvailable) {
           return true;
         }
@@ -2971,6 +2989,7 @@ export function ChatPane({
   const runtimeDefaultModelAvailable =
     !requiresModelProviderSetup &&
     !hasConfiguredProviderCatalog &&
+    !isClaudeChatModel(runtimeDefaultModel) &&
     (holabossProxyModelsAvailable ||
       !isHolabossProxyModel(runtimeDefaultModel));
   const availableChatModelOptionGroups: ChatModelOptionGroup[] =
@@ -3011,7 +3030,8 @@ export function ChatPane({
           .filter((model) => !isDeprecatedChatModel(model))
           .filter(
             (model) =>
-              holabossProxyModelsAvailable || !isHolabossProxyModel(model),
+              !isClaudeChatModel(model) &&
+              (holabossProxyModelsAvailable || !isHolabossProxyModel(model)),
           )
           .map((model) => ({
             value: model,

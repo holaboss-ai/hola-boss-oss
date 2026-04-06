@@ -48,6 +48,7 @@ export type PiEventMapperState = {
   toolArgsByCallId: Map<string, JsonValue>;
   mcpToolMetadata: ReadonlyMap<string, PiMcpToolMetadata>;
   skillMetadataByAlias: ReadonlyMap<string, PiSkillMetadata>;
+  terminalState: "completed" | "failed" | null;
 };
 
 export interface PiSessionHandle {
@@ -2315,6 +2316,64 @@ function maybeMapSkillInvocationEnd(
   };
 }
 
+function assistantMessageText(content: unknown): string {
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .map((block) => {
+      if (!isRecord(block) || block.type !== "text" || typeof block.text !== "string") {
+        return "";
+      }
+      return block.text;
+    })
+    .join("")
+    .trim();
+}
+
+function maybeMapAssistantTerminalFailure(
+  event: AgentSessionEvent,
+  sessionFile: string,
+  state: PiEventMapperState
+): PiMappedEvent[] | null {
+  if (event.type !== "message_end" && event.type !== "turn_end") {
+    return null;
+  }
+  if (state.terminalState === "failed") {
+    return [];
+  }
+  const message = isRecord(event.message) ? event.message : null;
+  if (!message || message.role !== "assistant") {
+    return [];
+  }
+  const stopReason = optionalTrimmedString(message.stopReason);
+  if (stopReason !== "error" && stopReason !== "aborted") {
+    return [];
+  }
+  state.terminalState = "failed";
+  const failureMessage =
+    firstNonEmptyString(
+      message.errorMessage,
+      assistantMessageText(message.content),
+      `Assistant message ended with stop reason ${stopReason}`
+    ) ?? `Assistant message ended with stop reason ${stopReason}`;
+  return [
+    {
+      event_type: "run_failed",
+      payload: {
+        type: stopReason === "aborted" ? "AbortError" : "ProviderError",
+        message: failureMessage,
+        stop_reason: stopReason,
+        provider: optionalTrimmedString(message.provider) ?? null,
+        model: optionalTrimmedString(message.model) ?? null,
+        event: event.type,
+        source: "pi",
+        harness_session_id: sessionFile,
+      },
+    },
+  ];
+}
+
 function mapPiEvent(
   event: AgentSessionEvent,
   sessionFile: string,
@@ -2351,6 +2410,9 @@ function mapPiEvent(
         ];
       }
       return [];
+    case "message_end":
+    case "turn_end":
+      return maybeMapAssistantTerminalFailure(event, sessionFile, state) ?? [];
     case "tool_execution_start": {
       state.toolArgsByCallId.set(event.toolCallId, jsonValue(event.args));
       const metadata = state.mcpToolMetadata.get(event.toolName);
@@ -2441,6 +2503,10 @@ function mapPiEvent(
         },
       ];
     case "agent_end":
+      if (state.terminalState === "failed") {
+        return [];
+      }
+      state.terminalState = "completed";
       return [
         {
           event_type: "run_completed",
@@ -2465,6 +2531,7 @@ export function createPiEventMapperState(
     toolArgsByCallId: new Map(),
     mcpToolMetadata,
     skillMetadataByAlias,
+    terminalState: null,
   };
 }
 

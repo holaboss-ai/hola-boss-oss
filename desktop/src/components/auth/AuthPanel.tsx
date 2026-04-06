@@ -19,6 +19,15 @@ interface AuthPanelProps {
 const KNOWN_PROVIDER_ORDER = ["holaboss", "openai_direct", "anthropic_direct", "openrouter_direct", "gemini_direct", "ollama_direct"] as const;
 type KnownProviderId = (typeof KNOWN_PROVIDER_ORDER)[number];
 const PROVIDER_AUTOSAVE_DELAY_MS = 800;
+const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string>> = {
+  anthropic_direct: {
+    "claude-sonnet-4-5": "claude-sonnet-4-6"
+  },
+  gemini_direct: {
+    "gemini-3.1-pro-preview": "gemini-2.5-pro",
+    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite"
+  }
+};
 
 interface KnownProviderTemplate {
   id: KnownProviderId;
@@ -46,7 +55,7 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     description: "Managed by your Holaboss account session and runtime binding.",
     kind: "holaboss_proxy",
     defaultBaseUrl: "",
-    defaultModels: ["gpt-5.2", "gpt-5-mini", "gpt-4.1-mini", "claude-sonnet-4-5", "claude-opus-4-1"],
+    defaultModels: ["gpt-5.2", "gpt-5-mini", "gpt-4.1-mini"],
     apiKeyPlaceholder: "hbrt.v1.your-proxy-token"
   },
   openai_direct: {
@@ -63,8 +72,8 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     label: "Anthropic",
     description: "Direct Anthropic native endpoint with your own API key.",
     kind: "anthropic_native",
-    defaultBaseUrl: "https://api.anthropic.com/v1",
-    defaultModels: ["claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"],
+    defaultBaseUrl: "https://api.anthropic.com",
+    defaultModels: ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
     apiKeyPlaceholder: "sk-ant-your-anthropic-key"
   },
   openrouter_direct: {
@@ -82,7 +91,7 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     description: "Google Gemini OpenAI-compatible endpoint with your own API key.",
     kind: "openai_compatible",
     defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-    defaultModels: ["gemini-3.1-pro-preview", "gemini-3.1-flash-lite-preview", "gemini-2.5-pro", "gemini-2.5-flash"],
+    defaultModels: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
     apiKeyPlaceholder: "AIza...your-gemini-api-key"
   },
   ollama_direct: {
@@ -190,6 +199,15 @@ function parseModelsText(value: string): string[] {
   );
 }
 
+function normalizeConfiguredProviderModelId(providerId: string, modelId: string): string {
+  const normalizedProviderId = providerId.trim().toLowerCase();
+  const normalizedModelId = modelId.trim();
+  if (!normalizedProviderId || !normalizedModelId) {
+    return normalizedModelId;
+  }
+  return LEGACY_DIRECT_PROVIDER_MODEL_ALIASES[normalizedProviderId]?.[normalizedModelId] ?? normalizedModelId;
+}
+
 function enabledProviderIdsForDrafts(providerDrafts: ProviderDraftMap, isSignedIn: boolean): KnownProviderId[] {
   return KNOWN_PROVIDER_ORDER.filter((providerId) =>
     providerId === "holaboss" ? isSignedIn : providerDrafts[providerId].enabled
@@ -273,7 +291,7 @@ function deriveProviderDraftsFromDocument(
         }
       }
       if (modelProvider === providerId && modelId.trim()) {
-        modelIds.push(modelId.trim());
+        modelIds.push(normalizeConfiguredProviderModelId(providerId, modelId));
       }
     }
     const normalizedModelIds = uniqueValues(modelIds);

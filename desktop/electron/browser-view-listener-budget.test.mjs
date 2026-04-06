@@ -35,4 +35,8 @@ test("desktop main process avoids reattaching the same BrowserView on browser ta
     source,
     /if \(attachedAppSurfaceView !== view\) \{\s*if \(attachedAppSurfaceView\) \{\s*mainWindow\.removeBrowserView\(attachedAppSurfaceView\);\s*\}\s*reserveMainWindowClosedListenerBudget\(1\);\s*mainWindow\.addBrowserView\(view\);\s*attachedAppSurfaceView = view;\s*\}/,
   );
+  assert.match(
+    source,
+    /if \(!workspace \|\| !workspace\.activeTabId \|\| !hasVisibleBrowserBounds\(\)\) \{\s*mainWindow\?\.setBrowserView\(null\);\s*attachedBrowserTabView = null;\s*return;\s*\}/,
+  );
 });
