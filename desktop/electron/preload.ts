@@ -948,6 +948,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:updateCronjob", jobId, payload) as Promise<CronjobRecordPayload>,
     deleteCronjob: (jobId: string) =>
       ipcRenderer.invoke("workspace:deleteCronjob", jobId) as Promise<{ success: boolean }>,
+    listNotifications: (workspaceId?: string | null, includeDismissed?: boolean) =>
+      ipcRenderer.invoke("workspace:listNotifications", workspaceId, includeDismissed) as Promise<RuntimeNotificationListResponsePayload>,
+    updateNotification: (notificationId: string, payload: RuntimeNotificationUpdatePayload) =>
+      ipcRenderer.invoke("workspace:updateNotification", notificationId, payload) as Promise<RuntimeNotificationRecordPayload>,
     listTaskProposals: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listTaskProposals", workspaceId) as Promise<TaskProposalListResponsePayload>,
     acceptTaskProposal: (payload: TaskProposalAcceptPayload) =>

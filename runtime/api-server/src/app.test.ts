@@ -1477,6 +1477,31 @@ test("cronjobs, task proposals, and session state routes preserve local payload 
   assert.equal(updatedJob.statusCode, 200);
   assert.equal(updatedJob.json().description, "Updated check");
 
+  const createdNotification = store.createRuntimeNotification({
+    workspaceId: workspace.id,
+    cronjobId: jobId,
+    sourceType: "cronjob",
+    sourceLabel: workspace.name,
+    title: "Drink Water",
+    message: "Time to drink water.",
+    level: "info"
+  });
+  const listedNotifications = await app.inject({
+    method: "GET",
+    url: `/api/v1/notifications?workspace_id=${workspace.id}`
+  });
+  const updatedNotification = await app.inject({
+    method: "PATCH",
+    url: `/api/v1/notifications/${createdNotification.id}`,
+    payload: { state: "read" }
+  });
+  assert.equal(listedNotifications.statusCode, 200);
+  assert.equal(listedNotifications.json().count, 1);
+  assert.equal(listedNotifications.json().items[0].title, "Drink Water");
+  assert.equal(updatedNotification.statusCode, 200);
+  assert.equal(updatedNotification.json().state, "read");
+  assert.ok(updatedNotification.json().read_at);
+
   const createdProposal = await app.inject({
     method: "POST",
     url: "/api/v1/task-proposals",

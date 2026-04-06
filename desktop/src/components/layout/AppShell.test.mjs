@@ -41,3 +41,11 @@ test("app shell removes the outputs quick action", async () => {
 
   assert.doesNotMatch(source, /aria-label="Open outputs panel"/);
 });
+
+test("app shell polls runtime notifications and renders the toast stack", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /window\.electronAPI\.workspace\.listNotifications\(\s*null,\s*false,\s*\)/);
+  assert.match(source, /<NotificationToastStack[\s\S]*notifications=\{toastNotifications\}/);
+  assert.match(source, /notificationUnreadCount=\{notificationUnreadCount\}/);
+});

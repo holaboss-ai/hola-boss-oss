@@ -298,6 +298,26 @@ export interface CronjobRecord {
   updatedAt: string;
 }
 
+export type RuntimeNotificationLevel = "info" | "success" | "warning" | "error";
+export type RuntimeNotificationState = "unread" | "read" | "dismissed";
+
+export interface RuntimeNotificationRecord {
+  id: string;
+  workspaceId: string;
+  cronjobId: string | null;
+  sourceType: string;
+  sourceLabel: string | null;
+  title: string;
+  message: string;
+  level: RuntimeNotificationLevel;
+  state: RuntimeNotificationState;
+  metadata: Record<string, unknown>;
+  readAt: string | null;
+  dismissedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface OAuthAppConfigRecord {
   providerId: string;
   clientId: string;
@@ -2750,6 +2770,162 @@ export class RuntimeStateStore {
     return result.changes > 0;
   }
 
+  createRuntimeNotification(params: {
+    workspaceId: string;
+    cronjobId?: string | null;
+    sourceType?: string | null;
+    sourceLabel?: string | null;
+    title: string;
+    message: string;
+    level?: RuntimeNotificationLevel | null;
+    state?: RuntimeNotificationState | null;
+    metadata?: Record<string, unknown> | null;
+    notificationId?: string;
+    createdAt?: string;
+    readAt?: string | null;
+    dismissedAt?: string | null;
+  }): RuntimeNotificationRecord {
+    const resolvedId = params.notificationId ?? randomUUID();
+    const now = params.createdAt ?? utcNowIso();
+    const level = this.normalizedNotificationLevel(params.level);
+    const state = this.normalizedNotificationState(params.state);
+    const readAt =
+      params.readAt !== undefined
+        ? params.readAt
+        : state === "read" || state === "dismissed"
+          ? now
+          : null;
+    const dismissedAt =
+      params.dismissedAt !== undefined ? params.dismissedAt : state === "dismissed" ? now : null;
+
+    this.db()
+      .prepare(`
+        INSERT INTO runtime_notifications (
+            id, workspace_id, cronjob_id, source_type, source_label, title, message, level, state,
+            metadata, read_at, dismissed_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        resolvedId,
+        params.workspaceId,
+        this.normalizedNullableText(params.cronjobId),
+        this.normalizedNullableText(params.sourceType) ?? "system",
+        this.normalizedNullableText(params.sourceLabel),
+        params.title.trim(),
+        params.message.trim(),
+        level,
+        state,
+        JSON.stringify(params.metadata ?? {}),
+        readAt,
+        dismissedAt,
+        now,
+        now
+      );
+
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>("SELECT * FROM runtime_notifications WHERE id = ? LIMIT 1")
+      .get(resolvedId);
+    if (!row) {
+      throw new Error("runtime notification row not found after insert");
+    }
+    return this.rowToRuntimeNotification(row);
+  }
+
+  getRuntimeNotification(notificationId: string): RuntimeNotificationRecord | null {
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>("SELECT * FROM runtime_notifications WHERE id = ? LIMIT 1")
+      .get(notificationId);
+    return row ? this.rowToRuntimeNotification(row) : null;
+  }
+
+  listRuntimeNotifications(params: {
+    workspaceId?: string | null;
+    includeDismissed?: boolean;
+    limit?: number | null;
+  }): RuntimeNotificationRecord[] {
+    let query = "SELECT * FROM runtime_notifications";
+    const filters: string[] = [];
+    const values: Array<string | number> = [];
+    if (params.workspaceId) {
+      filters.push("workspace_id = ?");
+      values.push(params.workspaceId);
+    }
+    if (!params.includeDismissed) {
+      filters.push("state != 'dismissed'");
+    }
+    if (filters.length > 0) {
+      query += ` WHERE ${filters.join(" AND ")}`;
+    }
+    query += " ORDER BY datetime(created_at) DESC, id DESC";
+    if (typeof params.limit === "number" && Number.isFinite(params.limit) && params.limit > 0) {
+      query += " LIMIT ?";
+      values.push(Math.floor(params.limit));
+    }
+    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToRuntimeNotification(row));
+  }
+
+  updateRuntimeNotification(params: {
+    notificationId: string;
+    title?: string | null;
+    message?: string | null;
+    level?: RuntimeNotificationLevel | null;
+    state?: RuntimeNotificationState | null;
+    metadata?: Record<string, unknown> | null;
+    readAt?: string | null;
+    dismissedAt?: string | null;
+    sourceLabel?: string | null;
+  }): RuntimeNotificationRecord | null {
+    const existing = this.getRuntimeNotification(params.notificationId);
+    if (!existing) {
+      return null;
+    }
+
+    const now = utcNowIso();
+    const nextState = params.state == null ? existing.state : this.normalizedNotificationState(params.state);
+    const nextReadAt =
+      params.readAt !== undefined
+        ? params.readAt
+        : nextState === "unread"
+          ? null
+          : existing.readAt ?? now;
+    const nextDismissedAt =
+      params.dismissedAt !== undefined
+        ? params.dismissedAt
+        : nextState === "dismissed"
+          ? existing.dismissedAt ?? now
+          : null;
+
+    this.db()
+      .prepare(`
+        UPDATE runtime_notifications
+        SET source_label = ?,
+            title = ?,
+            message = ?,
+            level = ?,
+            state = ?,
+            metadata = ?,
+            read_at = ?,
+            dismissed_at = ?,
+            updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        params.sourceLabel === undefined ? existing.sourceLabel : this.normalizedNullableText(params.sourceLabel),
+        params.title == null ? existing.title : params.title.trim(),
+        params.message == null ? existing.message : params.message.trim(),
+        params.level == null ? existing.level : this.normalizedNotificationLevel(params.level),
+        nextState,
+        JSON.stringify(params.metadata ?? existing.metadata),
+        nextReadAt,
+        nextDismissedAt,
+        now,
+        params.notificationId
+      );
+
+    return this.getRuntimeNotification(params.notificationId);
+  }
+
   createTaskProposal(params: {
     proposalId: string;
     workspaceId: string;
@@ -3391,6 +3567,29 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_cronjobs_enabled_next_run
           ON cronjobs (enabled, next_run_at);
+
+      CREATE TABLE IF NOT EXISTS runtime_notifications (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          cronjob_id TEXT,
+          source_type TEXT NOT NULL,
+          source_label TEXT,
+          title TEXT NOT NULL,
+          message TEXT NOT NULL,
+          level TEXT NOT NULL DEFAULT 'info',
+          state TEXT NOT NULL DEFAULT 'unread',
+          metadata TEXT NOT NULL DEFAULT '{}',
+          read_at TEXT,
+          dismissed_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_runtime_notifications_workspace_state_created
+          ON runtime_notifications (workspace_id, state, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_runtime_notifications_state_created
+          ON runtime_notifications (state, created_at DESC);
 
       CREATE TABLE IF NOT EXISTS oauth_app_configs (
           provider_id TEXT PRIMARY KEY,
@@ -4362,6 +4561,25 @@ export class RuntimeStateStore {
     };
   }
 
+  private rowToRuntimeNotification(row: Record<string, unknown>): RuntimeNotificationRecord {
+    return {
+      id: String(row.id),
+      workspaceId: String(row.workspace_id),
+      cronjobId: row.cronjob_id == null ? null : String(row.cronjob_id),
+      sourceType: String(row.source_type),
+      sourceLabel: row.source_label == null ? null : String(row.source_label),
+      title: String(row.title),
+      message: String(row.message),
+      level: this.normalizedNotificationLevel(row.level == null ? null : String(row.level)),
+      state: this.normalizedNotificationState(row.state == null ? null : String(row.state)),
+      metadata: this.parseJsonDict(row.metadata),
+      readAt: row.read_at == null ? null : String(row.read_at),
+      dismissedAt: row.dismissed_at == null ? null : String(row.dismissed_at),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at)
+    };
+  }
+
   private rowToTaskProposal(row: Record<string, unknown>): TaskProposalRecord {
     const sourceEventIds = this.parseJsonList(row.source_event_ids).filter((item): item is string => typeof item === "string");
     return {
@@ -4427,6 +4645,22 @@ export class RuntimeStateStore {
 
   private normalizedSessionKind(value: string | null | undefined): string {
     return this.normalizedNullableText(value) ?? "workspace_session";
+  }
+
+  private normalizedNotificationLevel(value: string | null | undefined): RuntimeNotificationLevel {
+    const normalized = this.normalizedNullableText(value)?.toLowerCase();
+    if (normalized === "success" || normalized === "warning" || normalized === "error") {
+      return normalized;
+    }
+    return "info";
+  }
+
+  private normalizedNotificationState(value: string | null | undefined): RuntimeNotificationState {
+    const normalized = this.normalizedNullableText(value)?.toLowerCase();
+    if (normalized === "read" || normalized === "dismissed") {
+      return normalized;
+    }
+    return "unread";
   }
 
   private requireSession(params: { workspaceId: string; sessionId: string }): AgentSessionRecord {

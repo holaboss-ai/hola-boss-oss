@@ -482,6 +482,35 @@ declare global {
     metadata?: Record<string, unknown>;
   }
 
+  type RuntimeNotificationLevel = "info" | "success" | "warning" | "error";
+  type RuntimeNotificationState = "unread" | "read" | "dismissed";
+
+  interface RuntimeNotificationRecordPayload {
+    id: string;
+    workspace_id: string;
+    cronjob_id: string | null;
+    source_type: string;
+    source_label: string | null;
+    title: string;
+    message: string;
+    level: RuntimeNotificationLevel;
+    state: RuntimeNotificationState;
+    metadata: Record<string, unknown>;
+    read_at: string | null;
+    dismissed_at: string | null;
+    created_at: string;
+    updated_at: string;
+  }
+
+  interface RuntimeNotificationListResponsePayload {
+    items: RuntimeNotificationRecordPayload[];
+    count: number;
+  }
+
+  interface RuntimeNotificationUpdatePayload {
+    state?: RuntimeNotificationState;
+  }
+
   interface SessionRuntimeRecordPayload {
     workspace_id: string;
     session_id: string;
@@ -1050,6 +1079,14 @@ declare global {
       createCronjob: (payload: CronjobCreatePayload) => Promise<CronjobRecordPayload>;
       updateCronjob: (jobId: string, payload: CronjobUpdatePayload) => Promise<CronjobRecordPayload>;
       deleteCronjob: (jobId: string) => Promise<{ success: boolean }>;
+      listNotifications: (
+        workspaceId?: string | null,
+        includeDismissed?: boolean
+      ) => Promise<RuntimeNotificationListResponsePayload>;
+      updateNotification: (
+        notificationId: string,
+        payload: RuntimeNotificationUpdatePayload
+      ) => Promise<RuntimeNotificationRecordPayload>;
       listTaskProposals: (workspaceId: string) => Promise<TaskProposalListResponsePayload>;
       acceptTaskProposal: (payload: TaskProposalAcceptPayload) => Promise<TaskProposalAcceptResponsePayload>;
       listMemoryUpdateProposals: (

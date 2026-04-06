@@ -119,6 +119,51 @@ test("runtime cron worker queues due session_run cronjobs and updates bookkeepin
   store.close();
 });
 
+test("runtime cron worker persists system_notification cronjobs as unread notifications", async () => {
+  const root = makeTempDir("hb-runtime-cron-worker-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  const job = store.createCronjob({
+    workspaceId: workspace.id,
+    initiatedBy: "workspace_agent",
+    name: "drink-water-minute",
+    cron: "0 9 * * *",
+    description: "Time to drink water.",
+    delivery: { channel: "system_notification" },
+    metadata: {
+      notification_title: "Drink Water",
+      notification_level: "warning"
+    }
+  });
+
+  const worker = new RuntimeCronWorker({ store });
+  const processed = await worker.processDueCronjobsOnce(new Date("2025-01-01T09:30:00Z"));
+  const notifications = store.listRuntimeNotifications({ workspaceId: workspace.id });
+  const updated = store.getCronjob(job.id);
+
+  assert.equal(processed, 1);
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0]?.title, "Drink Water");
+  assert.equal(notifications[0]?.message, "Time to drink water.");
+  assert.equal(notifications[0]?.level, "warning");
+  assert.equal(notifications[0]?.state, "unread");
+  assert.equal(notifications[0]?.cronjobId, job.id);
+  assert.ok(updated);
+  assert.equal(updated.lastStatus, "success");
+  assert.equal(updated.runCount, 1);
+
+  store.close();
+});
+
 test("runtime cron worker records failures for unsupported delivery channels", async () => {
   const root = makeTempDir("hb-runtime-cron-worker-");
   const store = new RuntimeStateStore({
