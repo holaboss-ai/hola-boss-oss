@@ -12,14 +12,29 @@ test("chat pane shows provider setup CTA when no chat models are available", asy
 
   assert.doesNotMatch(source, /Sign in or set a runtime user id first\./);
   assert.match(source, /No models available\. Configure a provider to start chatting\./);
-  assert.match(source, /const requiresModelProviderSetup = !hasConfiguredProviderCatalog && !holabossProxyModelsAvailable;/);
-  assert.match(source, /const availableChatModelOptions = hasConfiguredProviderCatalog[\s\S]*: requiresModelProviderSetup[\s\S]*\? \[]/);
-  assert.match(source, /onOpenModelProviders=\{\(\) => void window\.electronAPI\.ui\.openSettingsPane\("providers"\)\}/);
+  assert.match(
+    source,
+    /const requiresModelProviderSetup =\s*!hasConfiguredProviderCatalog && !holabossProxyModelsAvailable;/,
+  );
+  assert.match(
+    source,
+    /const availableChatModelOptions = hasConfiguredProviderCatalog[\s\S]*: requiresModelProviderSetup[\s\S]*\?\s*\[]/,
+  );
+  assert.match(
+    source,
+    /onOpenModelProviders=\{\(\) =>[\s\S]*window\.electronAPI\.ui\.openSettingsPane\("providers"\)[\s\S]*\}/,
+  );
   assert.match(source, /aria-label="Configure model providers"/);
   assert.match(source, />Set up providers</);
-  assert.match(source, /<Waypoints size=\{13\} className="shrink-0 text-muted-foreground" \/>/);
+  assert.match(
+    source,
+    /<Waypoints[\s\S]*size=\{13\}[\s\S]*className="shrink-0 text-muted-foreground"[\s\S]*\/>/,
+  );
   assert.match(source, /Open provider settings to connect a model\./);
-  assert.match(source, /className=\{noAvailableModels \? "min-w-0 flex flex-1 items-center gap-3" : "w-\[172px\] shrink-0 sm:w-\[208px\]"\}/);
+  assert.match(
+    source,
+    /className=\{[\s\S]*noAvailableModels[\s\S]*\? "min-w-0 flex flex-1 items-center gap-3"[\s\S]*: "w-\[172px\] shrink-0 sm:w-\[208px\]"[\s\S]*\}/,
+  );
   assert.doesNotMatch(source, /title=\{modelSelectionUnavailableReason\}/);
   assert.doesNotMatch(
     source,
@@ -31,24 +46,73 @@ test("chat pane shows provider setup CTA when no chat models are available", asy
 test("chat pane groups configured models under provider headings", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /const availableChatModelOptionGroups: ChatModelOptionGroup\[] = hasConfiguredProviderCatalog/);
-  assert.match(source, /selectedLabel: needsProviderPrefix \? `\$\{providerGroup\.providerLabel\} · \$\{modelLabel\}` : modelLabel/);
-  assert.match(source, /searchText: `\$\{providerGroup\.providerLabel\} \$\{modelLabel\} \$\{model\.token\}`/);
+  assert.match(
+    source,
+    /const availableChatModelOptionGroups: ChatModelOptionGroup\[] =[\s\S]*hasConfiguredProviderCatalog/,
+  );
+  assert.match(
+    source,
+    /selectedLabel: needsProviderPrefix[\s\S]*\? `\$\{providerGroup\.providerLabel\} · \$\{modelLabel\}`[\s\S]*: modelLabel/,
+  );
+  assert.match(
+    source,
+    /searchText: `\$\{providerGroup\.providerLabel\} \$\{modelLabel\} \$\{model\.token\}`/,
+  );
   assert.match(source, /const filteredOptionGroups = useMemo\(/);
-  assert.match(source, /modelOptionGroups\.length > 0 \? modelOptionGroups : \[\{ label: "", options: modelOptions }\]/);
+  assert.match(
+    source,
+    /modelOptionGroups\.length > 0[\s\S]*\? modelOptionGroups[\s\S]*: \[\{ label: "", options: modelOptions }\]/,
+  );
   assert.match(source, /group\.label \? \(/);
   assert.match(source, /text-\[10px\] font-semibold uppercase tracking-\[0\.16em\] text-muted-foreground\/70/);
   assert.doesNotMatch(source, /filteredOptions\.map/);
+});
+
+test("chat pane suppresses claude options for the holaboss proxy fallback path", async () => {
+  const source = await readFile(sourcePath, "utf8");
+  const presetBlock =
+    source.match(/const CHAT_MODEL_PRESETS = \[[\s\S]*?\] as const;/)?.[0] ?? "";
+
+  assert.doesNotMatch(presetBlock, /claude-/);
+  assert.match(source, /function isClaudeChatModel\(model: string\)/);
+  assert.match(
+    source,
+    /isUnsupportedHolabossProxyModel\(\s*providerGroup\.providerId,\s*model\.modelId \|\| normalizedToken,\s*\)/,
+  );
+  assert.match(source, /!isClaudeChatModel\(runtimeDefaultModel\)/);
+  assert.match(
+    source,
+    /!isClaudeChatModel\(model\) &&[\s\S]*holabossProxyModelsAvailable \|\| !isHolabossProxyModel\(model\)/,
+  );
+});
+
+test("chat pane prefixes run failures with provider and model context", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /function runFailedContextLabel\(payload: Record<string, unknown>\): string/);
+  assert.match(source, /function runFailedDetail\(payload: Record<string, unknown>\): string/);
+  assert.match(source, /return detail\.startsWith\(contextLabel\) \? detail : `\$\{contextLabel\}: \$\{detail\}`;/);
+  assert.match(source, /const errorText = runFailedDetail\(payload\);/);
+  assert.match(source, /const detail = runFailedDetail\(eventPayload\);/);
 });
 
 test("chat pane exposes a return path from sub-sessions back to the main session", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /const showMainSessionReturn =[\s\S]*activeSessionId !== mainSessionId;/);
-  assert.match(source, /You are viewing a separate run session\. Return to the main workspace chat to continue there\./);
+  assert.match(
+    source,
+    /You are viewing a separate run session\.[\s\S]*Return to the main[\s\S]*workspace chat to continue there\./,
+  );
   assert.match(source, /Back to main session/);
-  assert.match(source, /await loadSessionConversation\(mainSessionId, selectedWorkspaceId, runtimeStates\.items\);/);
-  assert.match(source, /const targetSessionId = activeSessionIdRef\.current \|\| preferredSessionId\(selectedWorkspace, \[\]\);/);
+  assert.match(
+    source,
+    /await loadSessionConversation\(\s*mainSessionId,\s*selectedWorkspaceId,\s*runtimeStates\.items,\s*\);/,
+  );
+  assert.match(
+    source,
+    /const targetSessionId =[\s\S]*activeSessionIdRef\.current \|\| preferredSessionId\(selectedWorkspace, \[\]\);/,
+  );
 });
 
 test("chat pane shows hosted billing warnings and blocks managed sends when credits are exhausted", async () => {
@@ -86,7 +150,10 @@ test("chat turns render markdown and keep long content wrapped inside the bubble
   assert.match(source, /import \{ SimpleMarkdown \} from "@\/components\/marketplace\/SimpleMarkdown";/);
   assert.match(source, /onOpenLinkInBrowser\?: \(url: string\) => void;/);
   assert.match(source, /onLinkClick=\{onOpenLinkInBrowser\}/);
-  assert.match(source, /<SimpleMarkdown className="chat-markdown chat-user-markdown max-w-full" onLinkClick=\{onLinkClick\}>[\s\S]*\{text\}[\s\S]*<\/SimpleMarkdown>/);
+  assert.match(
+    source,
+    /<SimpleMarkdown[\s\S]*className="chat-markdown chat-user-markdown max-w-full"[\s\S]*onLinkClick=\{onLinkClick\}[\s\S]*\{text\}[\s\S]*<\/SimpleMarkdown>/,
+  );
   assert.match(source, /<SimpleMarkdown[\s\S]*className="chat-markdown chat-assistant-markdown mt-2 max-w-full text-foreground"[\s\S]*onLinkClick=\{onLinkClick\}[\s\S]*\{text\}[\s\S]*<\/SimpleMarkdown>/);
   assert.match(source, /theme-chat-user-bubble inline-flex min-w-0 max-w-full/);
 });
@@ -111,7 +178,10 @@ test("chat pane renders run-scoped memory proposal cards with accept dismiss and
   assert.match(source, /nextMessage\.memoryProposals = turnMemoryProposals/);
   assert.match(source, /AssistantTurnMemoryProposals/);
   assert.match(source, /window\.electronAPI\.workspace\.acceptMemoryUpdateProposal\(\{/);
-  assert.match(source, /window\.electronAPI\.workspace\.dismissMemoryUpdateProposal\(proposal\.proposal_id\)/);
+  assert.match(
+    source,
+    /window\.electronAPI\.workspace\.dismissMemoryUpdateProposal\(\s*proposal\.proposal_id,\s*\)/,
+  );
   assert.match(source, /Edit memory proposal/);
 });
 
@@ -135,6 +205,6 @@ test("chat pane can jump to a requested sub-session run", async () => {
   );
   assert.match(
     source,
-    /const requestedOpenSessionId = \(sessionOpenRequest\?\.sessionId \|\| ""\)\.trim\(\);[\s\S]*const nextSessionId =[\s\S]*hasSessionJumpRequest && requestedSessionId[\s\S]*\? requestedSessionId[\s\S]*: requestedOpenSessionId\)[\s\S]*preferredSessionId\(selectedWorkspaceRef\.current, runtimeStates\.items\);/
+    /const requestedOpenSessionId =[\s\S]*sessionOpenRequest\?\.sessionId \|\| ""[\s\S]*\.trim\(\);[\s\S]*const nextSessionId =[\s\S]*hasSessionJumpRequest && requestedSessionId[\s\S]*\? requestedSessionId[\s\S]*: requestedOpenSessionId\)[\s\S]*preferredSessionId\(selectedWorkspaceRef\.current, runtimeStates\.items\);/,
   );
 });

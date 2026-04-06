@@ -115,6 +115,7 @@ import {
   persistDurableMemoryCandidate,
   refreshMemoryIndexes,
 } from "./turn-memory-writeback.js";
+import { captureWorkspaceContext } from "./proactive-context.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 50;
 const DEFAULT_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
@@ -2481,6 +2482,30 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 500, error instanceof Error ? error.message : "memory sync failed");
+    }
+  });
+
+  app.post("/api/v1/proactive/context/capture", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    let workspaceId = "";
+    try {
+      workspaceId = requiredString(request.body.workspace_id, "workspace_id");
+      return {
+        context: await captureWorkspaceContext({
+          store,
+          memoryService,
+          workspaceId,
+        }),
+      };
+    } catch (error) {
+      if (workspaceId) {
+        const message = error instanceof Error ? error.message : "workspace context capture failed";
+        const statusCode = /\bnot found\b/i.test(message) ? 404 : 500;
+        return sendError(reply, statusCode, message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "workspace_id is required");
     }
   });
 

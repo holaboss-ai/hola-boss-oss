@@ -584,6 +584,379 @@ test("projectAgentRuntimeConfig bypasses runtime proxy credentials for configure
   assert.equal(result.model_client.default_headers, null);
 });
 
+test("projectAgentRuntimeConfig keeps direct Anthropic providers on the native endpoint", () => {
+  const root = makeTempDir("hb-agent-runtime-config-");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
+    runtime: {
+      sandbox_id: "sandbox-from-runtime",
+      default_provider: "anthropic_direct"
+    },
+    providers: {
+      holaboss_model_proxy: {
+        kind: "holaboss_proxy",
+        base_url: "https://proxy.example/api/v1/model-proxy",
+        api_key: "hb-token"
+      },
+      anthropic_direct: {
+        kind: "anthropic_native",
+        base_url: "https://api.anthropic.com/v1",
+        api_key: "sk-ant-direct"
+      }
+    },
+    integrations: {
+      holaboss: {
+        enabled: true,
+        auth_token: "hb-token",
+        sandbox_id: "sandbox-from-binding",
+        user_id: "user-1"
+      }
+    },
+    models: {
+      "anthropic_direct/claude-sonnet-4-6": {
+        provider_id: "anthropic_direct",
+        model_id: "claude-sonnet-4-6"
+      }
+    }
+  });
+
+  const result = projectAgentRuntimeConfig({
+    session_id: "session-1",
+    workspace_id: "workspace-1",
+    input_id: "input-1",
+    session_kind: "workspace_session",
+    harness_id: "pi",
+    browser_tools_available: false,
+    browser_tool_ids: [],
+    runtime_tool_ids: [],
+    workspace_command_ids: [],
+    runtime_exec_model_proxy_api_key: "hb-runtime-token",
+    runtime_exec_sandbox_id: "sandbox-from-exec-context",
+    runtime_exec_run_id: "run-1",
+    selected_model: "anthropic_direct/claude-sonnet-4-6",
+    default_provider_id: "holaboss_model_proxy",
+    session_mode: "code",
+    workspace_config_checksum: "checksum-1",
+    workspace_skill_ids: [],
+    default_tools: ["read"],
+    extra_tools: [],
+    resolved_mcp_tool_refs: [],
+    resolved_output_schemas: {},
+    agent: {
+      id: "workspace.general",
+      model: "gpt-5.2",
+      prompt: "You are concise."
+    }
+  });
+
+  assert.equal(result.provider_id, "anthropic_direct");
+  assert.equal(result.model_client.model_proxy_provider, "anthropic_native");
+  assert.equal(result.model_client.api_key, "sk-ant-direct");
+  assert.equal(result.model_client.base_url, "https://api.anthropic.com");
+  assert.equal(result.model_client.default_headers, null);
+});
+
+test("projectAgentRuntimeConfig normalizes legacy Anthropic direct model aliases from persisted configs", () => {
+  const root = makeTempDir("hb-agent-runtime-config-");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
+    runtime: {
+      sandbox_id: "sandbox-from-runtime",
+      default_provider: "anthropic_direct"
+    },
+    providers: {
+      anthropic_direct: {
+        kind: "anthropic_native",
+        base_url: "https://api.anthropic.com/v1",
+        api_key: "sk-ant-direct"
+      }
+    },
+    models: {
+      "anthropic_direct/claude-sonnet-4-5": {
+        provider_id: "anthropic_direct",
+        model_id: "claude-sonnet-4-5"
+      }
+    }
+  });
+
+  const result = projectAgentRuntimeConfig({
+    session_id: "session-1",
+    workspace_id: "workspace-1",
+    input_id: "input-1",
+    session_kind: "workspace_session",
+    harness_id: "pi",
+    browser_tools_available: false,
+    browser_tool_ids: [],
+    runtime_tool_ids: [],
+    workspace_command_ids: [],
+    runtime_exec_model_proxy_api_key: "hb-runtime-token",
+    runtime_exec_sandbox_id: "sandbox-from-exec-context",
+    runtime_exec_run_id: "run-1",
+    selected_model: "anthropic_direct/claude-sonnet-4-5",
+    default_provider_id: "holaboss_model_proxy",
+    session_mode: "code",
+    workspace_config_checksum: "checksum-1",
+    workspace_skill_ids: [],
+    default_tools: ["read"],
+    extra_tools: [],
+    resolved_mcp_tool_refs: [],
+    resolved_output_schemas: {},
+    agent: {
+      id: "workspace.general",
+      model: "gpt-5.2",
+      prompt: "You are concise."
+    }
+  });
+
+  assert.equal(result.provider_id, "anthropic_direct");
+  assert.equal(result.model_id, "claude-sonnet-4-6");
+  assert.equal(result.model_client.base_url, "https://api.anthropic.com");
+});
+
+test("projectAgentRuntimeConfig keeps direct Gemini providers on the OpenAI-compatible endpoint", () => {
+  const root = makeTempDir("hb-agent-runtime-config-");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
+    runtime: {
+      sandbox_id: "sandbox-from-runtime",
+      default_provider: "gemini_direct"
+    },
+    providers: {
+      holaboss_model_proxy: {
+        kind: "holaboss_proxy",
+        base_url: "https://proxy.example/api/v1/model-proxy",
+        api_key: "hb-token"
+      },
+      gemini_direct: {
+        kind: "openai_compatible",
+        base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+        api_key: "gm-direct-key"
+      }
+    },
+    integrations: {
+      holaboss: {
+        enabled: true,
+        auth_token: "hb-token",
+        sandbox_id: "sandbox-from-binding",
+        user_id: "user-1"
+      }
+    },
+    models: {
+      "gemini_direct/gemini-2.5-flash": {
+        provider_id: "gemini_direct",
+        model_id: "gemini-2.5-flash"
+      }
+    }
+  });
+
+  const result = projectAgentRuntimeConfig({
+    session_id: "session-1",
+    workspace_id: "workspace-1",
+    input_id: "input-1",
+    session_kind: "workspace_session",
+    harness_id: "pi",
+    browser_tools_available: false,
+    browser_tool_ids: [],
+    runtime_tool_ids: [],
+    workspace_command_ids: [],
+    runtime_exec_model_proxy_api_key: "hb-runtime-token",
+    runtime_exec_sandbox_id: "sandbox-from-exec-context",
+    runtime_exec_run_id: "run-1",
+    selected_model: "gemini_direct/gemini-2.5-flash",
+    default_provider_id: "holaboss_model_proxy",
+    session_mode: "code",
+    workspace_config_checksum: "checksum-1",
+    workspace_skill_ids: [],
+    default_tools: ["read"],
+    extra_tools: [],
+    resolved_mcp_tool_refs: [],
+    resolved_output_schemas: {},
+    agent: {
+      id: "workspace.general",
+      model: "gpt-5.2",
+      prompt: "You are concise."
+    }
+  });
+
+  assert.equal(result.provider_id, "gemini_direct");
+  assert.equal(result.model_client.model_proxy_provider, "openai_compatible");
+  assert.equal(result.model_client.api_key, "gm-direct-key");
+  assert.equal(result.model_client.base_url, "https://generativelanguage.googleapis.com/v1beta/openai");
+  assert.equal(result.model_client.default_headers, null);
+});
+
+test("projectAgentRuntimeConfig normalizes legacy Gemini direct model aliases from persisted configs", () => {
+  const root = makeTempDir("hb-agent-runtime-config-");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
+    runtime: {
+      sandbox_id: "sandbox-from-runtime",
+      default_provider: "gemini_direct"
+    },
+    providers: {
+      gemini_direct: {
+        kind: "openai_compatible",
+        base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+        api_key: "gm-direct-key"
+      }
+    },
+    models: {
+      "gemini_direct/gemini-3.1-pro-preview": {
+        provider_id: "gemini_direct",
+        model_id: "gemini-3.1-pro-preview"
+      }
+    }
+  });
+
+  const result = projectAgentRuntimeConfig({
+    session_id: "session-1",
+    workspace_id: "workspace-1",
+    input_id: "input-1",
+    session_kind: "workspace_session",
+    harness_id: "pi",
+    browser_tools_available: false,
+    browser_tool_ids: [],
+    runtime_tool_ids: [],
+    workspace_command_ids: [],
+    runtime_exec_model_proxy_api_key: "hb-runtime-token",
+    runtime_exec_sandbox_id: "sandbox-from-exec-context",
+    runtime_exec_run_id: "run-1",
+    selected_model: "gemini_direct/gemini-3.1-pro-preview",
+    default_provider_id: "holaboss_model_proxy",
+    session_mode: "code",
+    workspace_config_checksum: "checksum-1",
+    workspace_skill_ids: [],
+    default_tools: ["read"],
+    extra_tools: [],
+    resolved_mcp_tool_refs: [],
+    resolved_output_schemas: {},
+    agent: {
+      id: "workspace.general",
+      model: "gpt-5.2",
+      prompt: "You are concise."
+    }
+  });
+
+  assert.equal(result.provider_id, "gemini_direct");
+  assert.equal(result.model_id, "gemini-2.5-pro");
+  assert.equal(result.model_client.base_url, "https://generativelanguage.googleapis.com/v1beta/openai");
+});
+
+test("projectAgentRuntimeConfig normalizes Gemini host roots to the OpenAI-compatible endpoint", () => {
+  const root = makeTempDir("hb-agent-runtime-config-");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
+    runtime: {
+      sandbox_id: "sandbox-from-runtime",
+      default_provider: "gemini_direct"
+    },
+    providers: {
+      gemini_direct: {
+        kind: "openai_compatible",
+        base_url: "https://generativelanguage.googleapis.com",
+        api_key: "gm-direct-key"
+      }
+    },
+    models: {
+      "gemini_direct/gemini-2.5-pro": {
+        provider_id: "gemini_direct",
+        model_id: "gemini-2.5-pro"
+      }
+    }
+  });
+
+  const result = projectAgentRuntimeConfig({
+    session_id: "session-1",
+    workspace_id: "workspace-1",
+    input_id: "input-1",
+    session_kind: "workspace_session",
+    harness_id: "pi",
+    browser_tools_available: false,
+    browser_tool_ids: [],
+    runtime_tool_ids: [],
+    workspace_command_ids: [],
+    runtime_exec_model_proxy_api_key: "hb-runtime-token",
+    runtime_exec_sandbox_id: "sandbox-from-exec-context",
+    runtime_exec_run_id: "run-1",
+    selected_model: "gemini_direct/gemini-2.5-pro",
+    default_provider_id: "holaboss_model_proxy",
+    session_mode: "code",
+    workspace_config_checksum: "checksum-1",
+    workspace_skill_ids: [],
+    default_tools: ["read"],
+    extra_tools: [],
+    resolved_mcp_tool_refs: [],
+    resolved_output_schemas: {},
+    agent: {
+      id: "workspace.general",
+      model: "gpt-5.2",
+      prompt: "You are concise."
+    }
+  });
+
+  assert.equal(result.model_client.base_url, "https://generativelanguage.googleapis.com/v1beta/openai");
+});
+
+test("projectAgentRuntimeConfig keeps direct Ollama providers on the local OpenAI-compatible endpoint", () => {
+  const root = makeTempDir("hb-agent-runtime-config-");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
+    runtime: {
+      sandbox_id: "sandbox-from-runtime",
+      default_provider: "ollama_direct"
+    },
+    providers: {
+      ollama_direct: {
+        kind: "openai_compatible",
+        base_url: "http://localhost:11434/v1",
+        api_key: "ollama"
+      }
+    },
+    models: {
+      "ollama_direct/qwen2.5:0.5b": {
+        provider_id: "ollama_direct",
+        model_id: "qwen2.5:0.5b"
+      }
+    }
+  });
+
+  const result = projectAgentRuntimeConfig({
+    session_id: "session-1",
+    workspace_id: "workspace-1",
+    input_id: "input-1",
+    session_kind: "workspace_session",
+    harness_id: "pi",
+    browser_tools_available: false,
+    browser_tool_ids: [],
+    runtime_tool_ids: [],
+    workspace_command_ids: [],
+    runtime_exec_model_proxy_api_key: "hb-runtime-token",
+    runtime_exec_sandbox_id: "sandbox-from-exec-context",
+    runtime_exec_run_id: "run-1",
+    selected_model: "ollama_direct/qwen2.5:0.5b",
+    default_provider_id: "holaboss_model_proxy",
+    session_mode: "code",
+    workspace_config_checksum: "checksum-1",
+    workspace_skill_ids: [],
+    default_tools: ["read"],
+    extra_tools: [],
+    resolved_mcp_tool_refs: [],
+    resolved_output_schemas: {},
+    agent: {
+      id: "workspace.general",
+      model: "gpt-5.2",
+      prompt: "You are concise."
+    }
+  });
+
+  assert.equal(result.provider_id, "ollama_direct");
+  assert.equal(result.model_id, "qwen2.5:0.5b");
+  assert.equal(result.model_client.model_proxy_provider, "openai_compatible");
+  assert.equal(result.model_client.api_key, "ollama");
+  assert.equal(result.model_client.base_url, "http://localhost:11434/v1");
+  assert.equal(result.model_client.default_headers, null);
+});
+
 test("projectAgentRuntimeConfig keeps direct OpenRouter providers on the provider endpoint", () => {
   const root = makeTempDir("hb-agent-runtime-config-");
   process.env.HB_SANDBOX_ROOT = root;

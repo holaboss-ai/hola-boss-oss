@@ -23,6 +23,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import type { Api, ImageContent, Model, TextContent } from "@mariozechner/pi-ai";
 import type { ResourceDiagnostic } from "@mariozechner/pi-coding-agent";
+import { APIError as OpenAIApiError } from "openai";
 import * as XLSX from "xlsx";
 import { createCallResult, createRuntime, type Runtime as McporterRuntime, type ServerDefinition, type ServerToolInfo } from "mcporter";
 
@@ -48,6 +49,7 @@ export type PiEventMapperState = {
   toolArgsByCallId: Map<string, JsonValue>;
   mcpToolMetadata: ReadonlyMap<string, PiMcpToolMetadata>;
   skillMetadataByAlias: ReadonlyMap<string, PiSkillMetadata>;
+  terminalState: "completed" | "failed" | null;
 };
 
 export interface PiSessionHandle {
@@ -548,6 +550,35 @@ function emitRunnerEvent(
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
+
+function normalizeOpenAiCompatErrorResponse(errorResponse: unknown): Object | undefined {
+  if (isRecord(errorResponse)) {
+    return errorResponse;
+  }
+  if (!Array.isArray(errorResponse)) {
+    return undefined;
+  }
+  for (const item of errorResponse) {
+    if (isRecord(item) && isRecord(item.error)) {
+      return item;
+    }
+  }
+  return undefined;
+}
+
+let openAiApiErrorGeneratePatched = false;
+
+function patchOpenAiApiErrorGenerate(): void {
+  if (openAiApiErrorGeneratePatched) {
+    return;
+  }
+  const originalGenerate = OpenAIApiError.generate.bind(OpenAIApiError);
+  OpenAIApiError.generate = ((status, errorResponse, message, headers) =>
+    originalGenerate(status, normalizeOpenAiCompatErrorResponse(errorResponse), message, headers)) as typeof OpenAIApiError.generate;
+  openAiApiErrorGeneratePatched = true;
+}
+
+patchOpenAiApiErrorGenerate();
 
 function firstNonEmptyString(...values: unknown[]): string | undefined {
   for (const value of values) {
@@ -2315,6 +2346,64 @@ function maybeMapSkillInvocationEnd(
   };
 }
 
+function assistantMessageText(content: unknown): string {
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .map((block) => {
+      if (!isRecord(block) || block.type !== "text" || typeof block.text !== "string") {
+        return "";
+      }
+      return block.text;
+    })
+    .join("")
+    .trim();
+}
+
+function maybeMapAssistantTerminalFailure(
+  event: AgentSessionEvent,
+  sessionFile: string,
+  state: PiEventMapperState
+): PiMappedEvent[] | null {
+  if (event.type !== "message_end" && event.type !== "turn_end") {
+    return null;
+  }
+  if (state.terminalState === "failed") {
+    return [];
+  }
+  const message = isRecord(event.message) ? event.message : null;
+  if (!message || message.role !== "assistant") {
+    return [];
+  }
+  const stopReason = optionalTrimmedString(message.stopReason);
+  if (stopReason !== "error" && stopReason !== "aborted") {
+    return [];
+  }
+  state.terminalState = "failed";
+  const failureMessage =
+    firstNonEmptyString(
+      message.errorMessage,
+      assistantMessageText(message.content),
+      `Assistant message ended with stop reason ${stopReason}`
+    ) ?? `Assistant message ended with stop reason ${stopReason}`;
+  return [
+    {
+      event_type: "run_failed",
+      payload: {
+        type: stopReason === "aborted" ? "AbortError" : "ProviderError",
+        message: failureMessage,
+        stop_reason: stopReason,
+        provider: optionalTrimmedString(message.provider) ?? null,
+        model: optionalTrimmedString(message.model) ?? null,
+        event: event.type,
+        source: "pi",
+        harness_session_id: sessionFile,
+      },
+    },
+  ];
+}
+
 function mapPiEvent(
   event: AgentSessionEvent,
   sessionFile: string,
@@ -2351,6 +2440,9 @@ function mapPiEvent(
         ];
       }
       return [];
+    case "message_end":
+    case "turn_end":
+      return maybeMapAssistantTerminalFailure(event, sessionFile, state) ?? [];
     case "tool_execution_start": {
       state.toolArgsByCallId.set(event.toolCallId, jsonValue(event.args));
       const metadata = state.mcpToolMetadata.get(event.toolName);
@@ -2441,6 +2533,10 @@ function mapPiEvent(
         },
       ];
     case "agent_end":
+      if (state.terminalState === "failed") {
+        return [];
+      }
+      state.terminalState = "completed";
       return [
         {
           event_type: "run_completed",
@@ -2465,6 +2561,7 @@ export function createPiEventMapperState(
     toolArgsByCallId: new Map(),
     mcpToolMetadata,
     skillMetadataByAlias,
+    terminalState: null,
   };
 }
 

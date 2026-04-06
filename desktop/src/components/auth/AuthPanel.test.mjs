@@ -43,3 +43,40 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.doesNotMatch(source, /Connection details/);
   assert.doesNotMatch(source, /Recommended models configured/);
 });
+
+test("holaboss proxy defaults only advertise managed gpt models", async () => {
+  const source = await readFile(AUTH_PANEL_PATH, "utf8");
+  const holabossTemplate =
+    source.match(/holaboss:\s*\{[\s\S]*?apiKeyPlaceholder: "hbrt\.v1\.your-proxy-token"[\s\S]*?\n\s*}/)?.[0] ?? "";
+
+  assert.match(
+    holabossTemplate,
+    /defaultModels: \["gpt-5\.2", "gpt-5-mini", "gpt-4\.1-mini"\]/,
+  );
+  assert.doesNotMatch(holabossTemplate, /claude-/);
+});
+
+test("direct Anthropic and Gemini defaults advertise current provider model ids", async () => {
+  const source = await readFile(AUTH_PANEL_PATH, "utf8");
+  const providerTemplatesBlock =
+    source.match(/const KNOWN_PROVIDER_TEMPLATES:[\s\S]*?function isKnownProviderId/)?.[0] ?? "";
+  const anthropicTemplate =
+    providerTemplatesBlock.match(/anthropic_direct:\s*\{[\s\S]*?apiKeyPlaceholder: "sk-ant-your-anthropic-key"[\s\S]*?\n\s*}/)?.[0] ?? "";
+  const geminiTemplate =
+    providerTemplatesBlock.match(/gemini_direct:\s*\{[\s\S]*?apiKeyPlaceholder: "AIza\.\.\.your-gemini-api-key"[\s\S]*?\n\s*}/)?.[0] ?? "";
+
+  assert.match(
+    anthropicTemplate,
+    /defaultModels: \["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"\]/,
+  );
+  assert.match(anthropicTemplate, /defaultBaseUrl: "https:\/\/api\.anthropic\.com"/);
+  assert.doesNotMatch(anthropicTemplate, /defaultBaseUrl: "https:\/\/api\.anthropic\.com\/v1"/);
+  assert.doesNotMatch(anthropicTemplate, /claude-sonnet-4-5/);
+
+  assert.match(
+    geminiTemplate,
+    /defaultModels: \["gemini-2\.5-pro", "gemini-2\.5-flash", "gemini-2\.5-flash-lite"\]/,
+  );
+  assert.doesNotMatch(geminiTemplate, /gemini-3\.1-pro-preview/);
+  assert.doesNotMatch(geminiTemplate, /gemini-3\.1-flash-lite-preview/);
+});
