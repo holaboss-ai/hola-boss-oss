@@ -57,7 +57,8 @@ const OVERFLOW_POPUP_WIDTH = 220;
 const OVERFLOW_POPUP_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MIN_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MAX_HEIGHT = 320;
-const MAIN_WINDOW_CLOSED_LISTENER_BUFFER = 16;
+const MAIN_WINDOW_CLOSED_LISTENER_BUFFER = 8;
+const MAIN_WINDOW_MIN_LISTENER_BUDGET = 32;
 const APP_THEMES = new Set([
   "holaboss",
   "emerald",
@@ -71,7 +72,7 @@ const APP_THEMES = new Set([
   "graphite",
 ]);
 const GITHUB_RELEASES_OWNER = "holaboss-ai";
-const GITHUB_RELEASES_REPO = "hola-boss-oss";
+const GITHUB_RELEASES_REPO = "holaboss-ai";
 const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const APP_UPDATE_REQUEST_TIMEOUT_MS = 15000;
 const APP_UPDATE_MACOS_ASSET_NAME = "Holaboss-macos-arm64.dmg";
@@ -409,6 +410,8 @@ let downloadsPopupWindow: BrowserWindow | null = null;
 let historyPopupWindow: BrowserWindow | null = null;
 let overflowPopupWindow: BrowserWindow | null = null;
 let addressSuggestionsPopupWindow: BrowserWindow | null = null;
+let attachedBrowserTabView: BrowserView | null = null;
+let attachedAppSurfaceView: BrowserView | null = null;
 let currentTheme = "holaboss";
 let browserBounds: BrowserBoundsPayload = { x: 0, y: 0, width: 0, height: 0 };
 let overflowAnchorBounds: BrowserAnchorBoundsPayload | null = null;
@@ -1529,16 +1532,15 @@ interface MemoryUpdateProposalDismissResponsePayload {
   proposal: MemoryUpdateProposalRecordPayload;
 }
 
-interface DemoTaskProposalRequestPayload {
+interface RemoteTaskProposalGenerationRequestPayload {
   workspace_id: string;
-  task_name?: string;
-  task_prompt?: string;
-  task_generation_rationale?: string;
 }
 
-interface DemoTaskProposalEnqueueResponsePayload {
+interface RemoteTaskProposalGenerationResponsePayload {
   accepted: boolean;
-  pending_count: number;
+  accepted_count: number;
+  event_count: number;
+  correlation_id: string;
 }
 
 interface ProactiveTaskProposalPreferenceUpdatePayload {
@@ -5100,26 +5102,29 @@ async function requestControlPlaneJson<T>({
   }
 }
 
-async function emitWorkspaceReadyHeartbeat(params: {
+async function ingestWorkspaceHeartbeat(params: {
   workspaceId: string;
-  holabossUserId: string;
-}): Promise<void> {
+  actorId: string;
+  sourceRef: string;
+  correlationId: string;
+}): Promise<RemoteTaskProposalGenerationResponsePayload> {
   const workspaceId = params.workspaceId.trim();
-  const holabossUserId = params.holabossUserId.trim();
-  if (
-    !workspaceId ||
-    !holabossUserId ||
-    holabossUserId === LOCAL_OSS_TEMPLATE_USER_ID
-  ) {
-    return;
+  if (!workspaceId) {
+    throw new Error("workspace_id is required to ingest a heartbeat event.");
   }
 
-  const correlationId = `workspace-ready-${workspaceId}`;
+  const correlationId = params.correlationId.trim();
+  if (!correlationId) {
+    throw new Error("correlation_id is required to ingest a heartbeat event.");
+  }
+
   appendRuntimeEventLog({
     category: "workspace",
     event: "workspace.heartbeat.emit",
     outcome: "start",
-    detail: correlationId,
+    detail:
+      `workspace_id=${workspaceId} source=${params.sourceRef} ` +
+      `correlation_id=${correlationId}`,
   });
 
   try {
@@ -5137,12 +5142,12 @@ async function emitWorkspaceReadyHeartbeat(params: {
             workspace_id: workspaceId,
             actor: {
               type: "system",
-              id: "desktop_workspace_create",
+              id: params.actorId,
             },
             correlation_id: correlationId,
             origin: "system",
             timestamp: utcNowIso(),
-            source_refs: ["workspace-created:ready"],
+            source_refs: [params.sourceRef],
             window: "24h",
             proposal_scope: "window",
           },
@@ -5156,16 +5161,49 @@ async function emitWorkspaceReadyHeartbeat(params: {
       category: "workspace",
       event: "workspace.heartbeat.emit",
       outcome: "success",
-      detail: `workspace_id=${workspaceId} accepted=${acceptedCount}/${results.length}`,
+      detail:
+        `workspace_id=${workspaceId} source=${params.sourceRef} ` +
+        `correlation_id=${correlationId} accepted=${acceptedCount}/${results.length}`,
     });
+    return {
+      accepted: acceptedCount > 0,
+      accepted_count: acceptedCount,
+      event_count: results.length,
+      correlation_id: correlationId,
+    };
   } catch (error) {
     appendRuntimeEventLog({
       category: "workspace",
       event: "workspace.heartbeat.emit",
       outcome: "error",
-      detail: error instanceof Error ? error.message : String(error),
+      detail:
+        `workspace_id=${workspaceId} source=${params.sourceRef} ` +
+        `correlation_id=${correlationId} error=${error instanceof Error ? error.message : String(error)}`,
     });
+    throw error;
   }
+}
+
+async function emitWorkspaceReadyHeartbeat(params: {
+  workspaceId: string;
+  holabossUserId: string;
+}): Promise<void> {
+  const workspaceId = params.workspaceId.trim();
+  const holabossUserId = params.holabossUserId.trim();
+  if (
+    !workspaceId ||
+    !holabossUserId ||
+    holabossUserId === LOCAL_OSS_TEMPLATE_USER_ID
+  ) {
+    return;
+  }
+
+  await ingestWorkspaceHeartbeat({
+    workspaceId,
+    actorId: "desktop_workspace_create",
+    sourceRef: "workspace-created:ready",
+    correlationId: `workspace-ready-${workspaceId}`,
+  });
 }
 
 function getHolabossClientConfig(): HolabossClientConfigPayload {
@@ -5483,45 +5521,51 @@ async function getProactiveStatus(
   }
 
   let deliveryState = "idle";
-  let deliverySummary = "No proactive activity recorded yet.";
+  let deliverySummary = "No suggestions right now.";
   let deliveryDetail: string | null = null;
   const heartbeatAgeSeconds = secondsSinceIso(heartbeat.recorded_at);
+  const heartbeatJustClaimed =
+    heartbeatAgeSeconds !== null && heartbeatAgeSeconds < 10;
   const heartbeatSettled =
     heartbeatAgeSeconds !== null && heartbeatAgeSeconds >= 120;
   if (proposalCount > 0) {
-    deliveryState = "delivered";
-    deliverySummary = `${proposalCount} proactive proposal${proposalCount === 1 ? "" : "s"} available in this runtime.`;
+    deliveryState = "ready";
+    deliverySummary = `${proposalCount} suggestion${proposalCount === 1 ? "" : "s"} ready.`;
   } else if (heartbeat.state === "published" && bridge.state === "error") {
-    deliveryState = "blocked";
-    deliverySummary =
-      "Heartbeat was sent, but proposal delivery into this runtime is blocked.";
+    deliveryState = "unavailable";
+    deliverySummary = "Suggestions are unavailable right now.";
     deliveryDetail = bridge.detail;
+  } else if (heartbeat.state === "pending") {
+    deliveryState = "sent";
+    deliverySummary = "Request sent.";
+    deliveryDetail = "Waiting for the workspace to pick it up.";
+  } else if (heartbeat.state === "published" && heartbeatJustClaimed) {
+    deliveryState = "claimed";
+    deliverySummary = "Request picked up.";
+    deliveryDetail = "Preparing suggestions for this workspace.";
   } else if (heartbeat.state === "published" && !heartbeatSettled) {
     deliveryState = "analyzing";
-    deliverySummary =
-      "Heartbeat was sent. Remote proactive analysis is still in progress.";
+    deliverySummary = "Analyzing workspace.";
+    deliveryDetail = "Looking for useful suggestions.";
   } else if (heartbeat.state === "published") {
-    deliveryState = "no_proposal";
-    deliverySummary =
-      "No proposal has been delivered since the last heartbeat.";
-    deliveryDetail =
-      "A heartbeat only asks the remote proactive agent to analyze the workspace. It may decide not to create a proposal.";
+    deliveryState = "idle";
+    deliverySummary = "No suggestions right now.";
   } else if (heartbeat.state === "failed") {
     deliveryState = "error";
-    deliverySummary =
-      "Workspace creation finished, but the proactive heartbeat failed.";
+    deliverySummary = "Couldn't generate suggestions.";
     deliveryDetail = heartbeat.detail;
   } else if (heartbeat.state === "skipped") {
-    deliveryState = "inactive";
-    deliverySummary = "Proactive delivery is disabled for this workspace.";
+    deliveryState = "unavailable";
+    deliverySummary = "Suggestions are unavailable right now.";
     deliveryDetail = heartbeat.detail;
   } else if (bridge.state === "error") {
-    deliveryState = "blocked";
-    deliverySummary = "The runtime cannot currently receive proactive jobs.";
+    deliveryState = "unavailable";
+    deliverySummary = "Suggestions are unavailable right now.";
     deliveryDetail = bridge.detail;
   } else if (bridge.state === "inactive") {
-    deliveryState = "inactive";
-    deliverySummary = bridge.detail || "Proactive delivery is inactive.";
+    deliveryState = "unavailable";
+    deliverySummary = "Suggestions are unavailable right now.";
+    deliveryDetail = bridge.detail;
   }
 
   return {
@@ -5571,6 +5615,32 @@ async function deleteCronjob(jobId: string): Promise<{ success: boolean }> {
   return requestRuntimeJson<{ success: boolean }>({
     method: "DELETE",
     path: `/api/v1/cronjobs/${encodeURIComponent(jobId)}`,
+  });
+}
+
+async function listNotifications(
+  workspaceId?: string | null,
+  includeDismissed = false,
+): Promise<RuntimeNotificationListResponsePayload> {
+  return requestRuntimeJson<RuntimeNotificationListResponsePayload>({
+    method: "GET",
+    path: "/api/v1/notifications",
+    params: {
+      workspace_id: workspaceId ?? undefined,
+      include_dismissed: includeDismissed,
+      limit: 50,
+    },
+  });
+}
+
+async function updateNotification(
+  notificationId: string,
+  payload: RuntimeNotificationUpdatePayload,
+): Promise<RuntimeNotificationRecordPayload> {
+  return requestRuntimeJson<RuntimeNotificationRecordPayload>({
+    method: "PATCH",
+    path: `/api/v1/notifications/${encodeURIComponent(notificationId)}`,
+    payload,
   });
 }
 
@@ -5957,21 +6027,24 @@ async function resolveTemplateIntegrations(
   };
 }
 
-async function enqueueRemoteDemoTaskProposal(
-  payload: DemoTaskProposalRequestPayload,
-): Promise<DemoTaskProposalEnqueueResponsePayload> {
-  await ensureRuntimeBindingReadyForWorkspaceFlow("remote_demo_task_proposal", {
-    forceRefresh: true,
-  });
+async function requestRemoteTaskProposalGeneration(
+  payload: RemoteTaskProposalGenerationRequestPayload,
+): Promise<RemoteTaskProposalGenerationResponsePayload> {
+  await ensureRuntimeBindingReadyForWorkspaceFlow(
+    "remote_task_proposal_generation",
+    {
+      forceRefresh: true,
+    },
+  );
+  const workspaceId = payload.workspace_id.trim();
+  const correlationId = `manual-heartbeat-${workspaceId}-${Date.now()}`;
   try {
-    return await requestControlPlaneJson<DemoTaskProposalEnqueueResponsePayload>(
-      {
-        service: "proactive",
-        method: "POST",
-        path: "/api/v1/proactive/bridge/demo/task-proposal",
-        payload,
-      },
-    );
+    return await ingestWorkspaceHeartbeat({
+      workspaceId,
+      actorId: "desktop_manual_heartbeat",
+      sourceRef: "desktop:manual-heartbeat",
+      correlationId,
+    });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.includes("Service not found") || msg.includes("fetch failed")) {
@@ -9387,21 +9460,28 @@ function updateAttachedAppSurfaceView(): void {
     appSurfaceBounds.width <= 0 ||
     appSurfaceBounds.height <= 0
   ) {
-    for (const view of appSurfaceViews.values()) {
-      mainWindow.removeBrowserView(view);
+    if (attachedAppSurfaceView) {
+      mainWindow.removeBrowserView(attachedAppSurfaceView);
+      attachedAppSurfaceView = null;
     }
     return;
   }
   const view = appSurfaceViews.get(activeAppSurfaceId);
   if (!view) {
+    if (attachedAppSurfaceView) {
+      mainWindow.removeBrowserView(attachedAppSurfaceView);
+      attachedAppSurfaceView = null;
+    }
     return;
   }
-  for (const [id, v] of appSurfaceViews) {
-    if (id !== activeAppSurfaceId) {
-      mainWindow.removeBrowserView(v);
+  if (attachedAppSurfaceView !== view) {
+    if (attachedAppSurfaceView) {
+      mainWindow.removeBrowserView(attachedAppSurfaceView);
     }
+    reserveMainWindowClosedListenerBudget(1);
+    mainWindow.addBrowserView(view);
+    attachedAppSurfaceView = view;
   }
-  mainWindow.addBrowserView(view);
   view.setBounds(appSurfaceBounds);
 }
 
@@ -9447,6 +9527,9 @@ function destroyAppSurfaceView(appId: string): void {
   }
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.removeBrowserView(view);
+  }
+  if (attachedAppSurfaceView === view) {
+    attachedAppSurfaceView = null;
   }
   try {
     (view.webContents as unknown as { destroy?: () => void }).destroy?.();
@@ -10597,21 +10680,21 @@ function getActiveBrowserTab(
   return workspace.tabs.get(workspace.activeTabId) ?? null;
 }
 
-function syncMainWindowClosedListenerBudget() {
+function reserveMainWindowClosedListenerBudget(
+  additionalClosedListeners = 0,
+) {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
   }
 
-  let tabCount = 0;
-  for (const workspace of browserWorkspaces.values()) {
-    tabCount += workspace.tabs.size;
-  }
-
-  // The desktop browser keeps many tab views alive at once, so the window needs
-  // a higher close-listener budget than Node's default warning threshold.
+  // Electron's deprecated BrowserView compatibility layer adds a fresh
+  // BrowserWindow "closed" listener every time a view is attached, and those
+  // listeners are not released when the view is detached.
   const desiredBudget = Math.max(
-    10,
-    tabCount + MAIN_WINDOW_CLOSED_LISTENER_BUFFER,
+    MAIN_WINDOW_MIN_LISTENER_BUDGET,
+    mainWindow.listenerCount("closed") +
+      additionalClosedListeners +
+      MAIN_WINDOW_CLOSED_LISTENER_BUFFER,
   );
   if (mainWindow.getMaxListeners() < desiredBudget) {
     mainWindow.setMaxListeners(desiredBudget);
@@ -10725,10 +10808,17 @@ function updateAttachedBrowserView() {
   }
   const activeTab = getActiveBrowserTab(activeBrowserWorkspaceId);
   if (!activeTab || !hasVisibleBrowserBounds()) {
-    mainWindow.setBrowserView(null);
+    if (attachedBrowserTabView) {
+      mainWindow.setBrowserView(null);
+      attachedBrowserTabView = null;
+    }
     return;
   }
-  mainWindow.setBrowserView(activeTab.view);
+  if (attachedBrowserTabView !== activeTab.view) {
+    reserveMainWindowClosedListenerBudget(1);
+    mainWindow.setBrowserView(activeTab.view);
+    attachedBrowserTabView = activeTab.view;
+  }
   applyBoundsToTab(activeBrowserWorkspaceId, activeTab.state.id);
 }
 
@@ -10830,7 +10920,6 @@ function createBrowserTab(
     initialized: !hasInitialUrl,
   });
   workspace.tabs.set(tabId, { view, state });
-  syncMainWindowClosedListenerBudget();
 
   view.setBounds(browserBounds);
   view.setAutoResize({
@@ -12292,7 +12381,9 @@ function createMainWindow() {
   });
 
   mainWindow = win;
-  syncMainWindowClosedListenerBudget();
+  attachedBrowserTabView = null;
+  attachedAppSurfaceView = null;
+  reserveMainWindowClosedListenerBudget();
   browserBounds = { x: 0, y: 0, width: 0, height: 0 };
   activeBrowserWorkspaceId = "";
   for (const workspaceId of Array.from(browserWorkspaces.keys())) {
@@ -12354,6 +12445,8 @@ function createMainWindow() {
       destroyBrowserWorkspace(workspaceId);
     }
     activeBrowserWorkspaceId = "";
+    attachedBrowserTabView = null;
+    attachedAppSurfaceView = null;
     mainWindow = null;
   });
 }
@@ -12815,6 +12908,24 @@ app.whenReady().then(async () => {
     async (_event, jobId: string) => deleteCronjob(jobId),
   );
   handleTrustedIpc(
+    "workspace:listNotifications",
+    ["main"],
+    async (
+      _event,
+      workspaceId?: string | null,
+      includeDismissed?: boolean,
+    ) => listNotifications(workspaceId, includeDismissed),
+  );
+  handleTrustedIpc(
+    "workspace:updateNotification",
+    ["main"],
+    async (
+      _event,
+      notificationId: string,
+      payload: RuntimeNotificationUpdatePayload,
+    ) => updateNotification(notificationId, payload),
+  );
+  handleTrustedIpc(
     "workspace:listTaskProposals",
     ["main"],
     async (_event, workspaceId: string) => listTaskProposals(workspaceId),
@@ -12855,10 +12966,10 @@ app.whenReady().then(async () => {
       updateTaskProposalState(proposalId, state),
   );
   handleTrustedIpc(
-    "workspace:enqueueRemoteDemoTaskProposal",
+    "workspace:requestRemoteTaskProposalGeneration",
     ["main"],
-    async (_event, payload: DemoTaskProposalRequestPayload) =>
-      enqueueRemoteDemoTaskProposal(payload),
+    async (_event, payload: RemoteTaskProposalGenerationRequestPayload) =>
+      requestRemoteTaskProposalGeneration(payload),
   );
   handleTrustedIpc(
     "workspace:setProactiveTaskProposalPreference",

@@ -91,6 +91,18 @@ test("chat turns render markdown and keep long content wrapped inside the bubble
   assert.match(source, /theme-chat-user-bubble inline-flex min-w-0 max-w-full/);
 });
 
+test("chat thread uses the full pane width for normal messages", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /className=\{`chat-scrollbar-hidden h-full min-h-0 overflow-x-hidden overflow-y-auto \$\{hasMessages \? "" : "flex items-center justify-center"\}`\}/);
+  assert.match(source, /messagesContentRef\}[\s\S]*className="flex min-w-0 w-full flex-col gap-7 px-6 pb-3 pt-5"/);
+  assert.match(source, /<form onSubmit=\{onSubmit\} className="w-full">/);
+  assert.match(source, /<div className="flex min-w-0 justify-start">[\s\S]*<article className="min-w-0 flex-1">/);
+  assert.match(source, /<div className="flex min-w-0 justify-end">[\s\S]*max-w-\[420px\][\s\S]*sm:max-w-\[560px\][\s\S]*lg:max-w-\[680px\]/);
+  assert.doesNotMatch(source, /messagesContentRef\}[\s\S]*max-w-\[800px\]/);
+  assert.doesNotMatch(source, /<article className="max-w-\[760px\]">/);
+});
+
 test("chat pane renders run-scoped memory proposal cards with accept dismiss and edit actions", async () => {
   const source = await readFile(sourcePath, "utf8");
 
