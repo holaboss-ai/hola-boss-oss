@@ -58,7 +58,7 @@
 
 /* Fallback radius — themes override everything else via [data-theme] */
 :root {
-  --radius: 0.875rem;
+  --radius: 0.675rem;
 }
 
 @layer base {
