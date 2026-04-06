@@ -276,7 +276,7 @@ jobs:
           fi
 
       - name: Download signed macOS app bundle artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: holaboss-desktop-signed-macos-app
           path: out/downloaded-signed-app
@@ -402,7 +402,7 @@ jobs:
         run: npm run desktop:install
 
       - name: Download notarized macOS app bundle artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: holaboss-desktop-notarized-macos-app
           path: out/downloaded-notarized-app
