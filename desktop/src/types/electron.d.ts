@@ -235,6 +235,7 @@ declare global {
     long_description: string | null;
     agents: TemplateAgentInfoPayload[];
     views: TemplateViewInfoPayload[];
+    display_name?: string | null;
     install_count?: number;
     source?: string;
     verified?: boolean;

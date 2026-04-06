@@ -91,7 +91,7 @@ export function MarketplaceGallery({
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search workers by name or tag"
+          placeholder="Search templates by name or tag"
           className="h-9 pl-8"
         />
       </div>
@@ -137,8 +137,8 @@ export function MarketplaceGallery({
         ) : visibleTemplates.length === 0 ? (
           <div className="rounded-xl border border-border bg-muted/50 px-4 py-5 text-xs text-muted-foreground">
             {query.trim()
-              ? "No workers match your search."
-              : "No workers available yet."}
+              ? "No templates match your search."
+              : "No templates available yet."}
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">

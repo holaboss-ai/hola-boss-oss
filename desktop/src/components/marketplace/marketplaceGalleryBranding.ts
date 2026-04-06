@@ -2,7 +2,7 @@ export function marketplaceGalleryBranding(mode: "browse" | "pick") {
   if (mode === "pick") {
     return {
       eyebrow: "Welcome",
-      title: "Pick a worker to get started",
+      title: "Pick a template to get started",
       description: "Choose a workspace template, or start from scratch.",
       showLogo: true,
     };
@@ -10,7 +10,7 @@ export function marketplaceGalleryBranding(mode: "browse" | "pick") {
 
   return {
     eyebrow: "Marketplace",
-    title: "Explore workers",
+    title: "Explore templates",
     description: "",
     showLogo: false,
   };
