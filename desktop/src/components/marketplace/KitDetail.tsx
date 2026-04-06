@@ -19,13 +19,13 @@ export function KitDetail({
   template,
   onBack,
   onSelect,
-  selectLabel = "Use this worker",
+  selectLabel = "Use this template",
   selectDisabled = false,
   selectDisabledReason,
   onSignIn,
 }: KitDetailProps) {
   const readme = templateReadmes[template.name] || template.long_description;
-  const displayName = template.name.replaceAll("_", " ");
+  const displayName = template.display_name ?? template.name.replaceAll("_", " ");
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-auto">
@@ -37,7 +37,7 @@ export function KitDetail({
         className="mb-5 self-start"
       >
         <ArrowLeft size={13} />
-        Back to workers
+        Back to templates
       </Button>
 
       {/* Header */}

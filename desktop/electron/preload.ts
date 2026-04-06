@@ -294,21 +294,20 @@ interface ProactiveAgentStatusPayload {
   proposal_count: number;
   heartbeat: ProactiveStatusSnapshotPayload;
   bridge: ProactiveStatusSnapshotPayload;
-  delivery_state: string;
-  delivery_summary: string;
-  delivery_detail: string | null;
+  lifecycle_state: string;
+  lifecycle_summary: string;
+  lifecycle_detail: string | null;
 }
 
-interface DemoTaskProposalRequestPayload {
+interface RemoteTaskProposalGenerationRequestPayload {
   workspace_id: string;
-  task_name?: string;
-  task_prompt?: string;
-  task_generation_rationale?: string;
 }
 
-interface DemoTaskProposalEnqueueResponsePayload {
+interface RemoteTaskProposalGenerationResponsePayload {
   accepted: boolean;
-  pending_count: number;
+  accepted_count: number;
+  event_count: number;
+  correlation_id: string;
 }
 
 interface ProactiveTaskProposalPreferenceUpdatePayload {
@@ -948,6 +947,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:updateCronjob", jobId, payload) as Promise<CronjobRecordPayload>,
     deleteCronjob: (jobId: string) =>
       ipcRenderer.invoke("workspace:deleteCronjob", jobId) as Promise<{ success: boolean }>,
+    listNotifications: (workspaceId?: string | null, includeDismissed?: boolean) =>
+      ipcRenderer.invoke("workspace:listNotifications", workspaceId, includeDismissed) as Promise<RuntimeNotificationListResponsePayload>,
+    updateNotification: (notificationId: string, payload: RuntimeNotificationUpdatePayload) =>
+      ipcRenderer.invoke("workspace:updateNotification", notificationId, payload) as Promise<RuntimeNotificationRecordPayload>,
     listTaskProposals: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listTaskProposals", workspaceId) as Promise<TaskProposalListResponsePayload>,
     acceptTaskProposal: (payload: TaskProposalAcceptPayload) =>
@@ -973,8 +976,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ) as Promise<ProactiveTaskProposalPreferencePayload>,
     updateTaskProposalState: (proposalId: string, state: string) =>
       ipcRenderer.invoke("workspace:updateTaskProposalState", proposalId, state) as Promise<TaskProposalStateUpdatePayload>,
-    enqueueRemoteDemoTaskProposal: (payload: DemoTaskProposalRequestPayload) =>
-      ipcRenderer.invoke("workspace:enqueueRemoteDemoTaskProposal", payload) as Promise<DemoTaskProposalEnqueueResponsePayload>,
+    requestRemoteTaskProposalGeneration: (
+      payload: RemoteTaskProposalGenerationRequestPayload,
+    ) =>
+      ipcRenderer.invoke(
+        "workspace:requestRemoteTaskProposalGeneration",
+        payload,
+      ) as Promise<RemoteTaskProposalGenerationResponsePayload>,
     listAgentSessions: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listAgentSessions", workspaceId) as Promise<AgentSessionListResponsePayload>,
     listRuntimeStates: (workspaceId: string) =>

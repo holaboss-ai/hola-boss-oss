@@ -153,7 +153,6 @@ const CHAT_MODEL_PRESETS = [
   "openai/gpt-5.1",
   "openai/gpt-5",
   "openai/gpt-5.2",
-  "claude-sonnet-4-5",
 ] as const;
 
 function sessionUserId(
@@ -175,6 +174,13 @@ function isHolabossProxyModel(model: string) {
   );
 }
 
+function isClaudeChatModel(model: string) {
+  const normalized = model.trim().toLowerCase();
+  return /^((openai|anthropic|holaboss|holaboss_model_proxy)\/)*claude-/.test(
+    normalized,
+  );
+}
+
 function isHolabossProviderId(providerId: string) {
   const normalized = providerId.trim().toLowerCase();
   return (
@@ -182,6 +188,10 @@ function isHolabossProviderId(providerId: string) {
     normalized === "holaboss" ||
     normalized.includes("holaboss")
   );
+}
+
+function isUnsupportedHolabossProxyModel(providerId: string, model: string) {
+  return isHolabossProviderId(providerId) && isClaudeChatModel(model);
 }
 
 function isDeprecatedChatModel(model: string) {
@@ -569,6 +579,33 @@ function summarizeUnknown(value: unknown, maxLength = 140): string {
   return String(value);
 }
 
+function runFailedContextLabel(payload: Record<string, unknown>): string {
+  const provider =
+    typeof payload.provider === "string" ? payload.provider.trim() : "";
+  const model = typeof payload.model === "string" ? payload.model.trim() : "";
+  if (provider && model) {
+    return `${provider}/${model}`;
+  }
+  return provider || model;
+}
+
+function runFailedDetail(payload: Record<string, unknown>): string {
+  const detail =
+    typeof payload.error === "string"
+      ? payload.error.trim()
+      : typeof payload.message === "string"
+        ? payload.message.trim()
+        : "";
+  const contextLabel = runFailedContextLabel(payload);
+  if (!contextLabel) {
+    return detail || "The run failed.";
+  }
+  if (!detail) {
+    return `${contextLabel} failed.`;
+  }
+  return detail.startsWith(contextLabel) ? detail : `${contextLabel}: ${detail}`;
+}
+
 function assistantMetaLabel(
   harness: string | null | undefined,
   model: string | null | undefined,
@@ -935,12 +972,7 @@ function phaseTraceStepFromEvent(
   }
 
   if (eventType === "run_failed") {
-    const errorText =
-      typeof payload.error === "string"
-        ? payload.error
-        : typeof payload.message === "string"
-          ? payload.message
-          : "";
+    const errorText = runFailedDetail(payload);
     if (errorText) {
       details.push(`Error: ${summarizeUnknown(errorText, 120)}`);
     }
@@ -1053,6 +1085,11 @@ interface ChatPaneSessionOpenRequest {
   requestKey: number;
 }
 
+interface ChatPaneComposerPrefillRequest {
+  text: string;
+  requestKey: number;
+}
+
 interface ChatPaneProps {
   onOpenOutput?: (output: WorkspaceOutputRecordPayload) => void;
   focusRequestKey?: number;
@@ -1061,6 +1098,8 @@ interface ChatPaneProps {
   sessionJumpSessionId?: string | null;
   sessionJumpRequestKey?: number;
   sessionOpenRequest?: ChatPaneSessionOpenRequest | null;
+  composerPrefillRequest?: ChatPaneComposerPrefillRequest | null;
+  onComposerPrefillConsumed?: (requestKey: number) => void;
   onActiveSessionIdChange?: (sessionId: string | null) => void;
 }
 
@@ -1072,6 +1111,8 @@ export function ChatPane({
   sessionJumpSessionId = null,
   sessionJumpRequestKey = 0,
   sessionOpenRequest = null,
+  composerPrefillRequest = null,
+  onComposerPrefillConsumed,
   onActiveSessionIdChange,
 }: ChatPaneProps) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
@@ -1155,6 +1196,7 @@ export function ChatPane({
   const isOnboardingVariant = variant === "onboarding";
   const pendingFocusRequestKeyRef = useRef<number | null>(focusRequestKey);
   const lastHandledSessionJumpRequestKeyRef = useRef(0);
+  const lastHandledComposerPrefillRequestKeyRef = useRef(0);
   const liveAssistantTextRef = useRef("");
   const liveThinkingTextRef = useRef("");
   const liveThinkingExpandedRef = useRef(false);
@@ -1741,6 +1783,25 @@ export function ChatPane({
   useEffect(() => {
     setPendingAttachments([]);
   }, [selectedWorkspaceId]);
+
+  useEffect(() => {
+    const requestKey = composerPrefillRequest?.requestKey ?? 0;
+    if (
+      requestKey <= 0 ||
+      requestKey === lastHandledComposerPrefillRequestKeyRef.current
+    ) {
+      return;
+    }
+
+    lastHandledComposerPrefillRequestKeyRef.current = requestKey;
+    setInput(composerPrefillRequest?.text ?? "");
+    setPendingAttachments([]);
+    onComposerPrefillConsumed?.(requestKey);
+  }, [
+    composerPrefillRequest?.requestKey,
+    composerPrefillRequest?.text,
+    onComposerPrefillConsumed,
+  ]);
 
   useEffect(() => {
     const normalizedPreference =
@@ -2384,12 +2445,7 @@ export function ChatPane({
         }
 
         if (eventType === "run_failed") {
-          const detail =
-            typeof eventPayload.error === "string"
-              ? eventPayload.error
-              : typeof eventPayload.message === "string"
-                ? eventPayload.message
-                : "The run failed.";
+          const detail = runFailedDetail(eventPayload);
           setChatErrorMessage(detail);
           finalizeLiveTraceSteps("error");
           if (
@@ -2916,6 +2972,14 @@ export function ChatPane({
         if (!normalizedToken || isDeprecatedChatModel(normalizedToken)) {
           return false;
         }
+        if (
+          isUnsupportedHolabossProxyModel(
+            providerGroup.providerId,
+            model.modelId || normalizedToken,
+          )
+        ) {
+          return false;
+        }
         if (holabossProxyModelsAvailable) {
           return true;
         }
@@ -2942,6 +3006,7 @@ export function ChatPane({
   const runtimeDefaultModelAvailable =
     !requiresModelProviderSetup &&
     !hasConfiguredProviderCatalog &&
+    !isClaudeChatModel(runtimeDefaultModel) &&
     (holabossProxyModelsAvailable ||
       !isHolabossProxyModel(runtimeDefaultModel));
   const availableChatModelOptionGroups: ChatModelOptionGroup[] =
@@ -2982,7 +3047,8 @@ export function ChatPane({
           .filter((model) => !isDeprecatedChatModel(model))
           .filter(
             (model) =>
-              holabossProxyModelsAvailable || !isHolabossProxyModel(model),
+              !isClaudeChatModel(model) &&
+              (holabossProxyModelsAvailable || !isHolabossProxyModel(model)),
           )
           .map((model) => ({
             value: model,
@@ -3311,12 +3377,12 @@ export function ChatPane({
                 );
                 syncChatScrollMetrics(event.currentTarget);
               }}
-              className={`chat-scrollbar-hidden h-full min-h-0 overflow-y-auto ${hasMessages ? "" : "flex items-center justify-center"}`}
+              className={`chat-scrollbar-hidden h-full min-h-0 overflow-x-hidden overflow-y-auto ${hasMessages ? "" : "flex items-center justify-center"}`}
             >
               {hasMessages ? (
                 <div
                   ref={messagesContentRef}
-                  className="mx-auto flex w-full max-w-[800px] flex-col gap-7 px-6 pb-3 pt-5"
+                  className="flex min-w-0 w-full flex-col gap-7 px-6 pb-3 pt-5"
                 >
                   {messages.map((message) =>
                     message.role === "user" ? (
@@ -3435,7 +3501,7 @@ export function ChatPane({
                         : "Pick a template, create a workspace, and then send the first instruction."}
                     </div>
                   </div>
-                  <form onSubmit={onSubmit} className="mx-auto max-w-[760px]">
+                  <form onSubmit={onSubmit} className="w-full">
                     <Composer
                       input={input}
                       attachments={pendingAttachmentItems}
@@ -3496,7 +3562,7 @@ export function ChatPane({
 
           {hasMessages ? (
             <div ref={composerBlockRef} className="shrink-0 px-6 pb-5 pt-3">
-              <form onSubmit={onSubmit} className="mx-auto max-w-[800px]">
+              <form onSubmit={onSubmit} className="w-full">
                 <Composer
                   input={input}
                   attachments={pendingAttachmentItems}
@@ -3600,8 +3666,8 @@ function UserTurn({
   onLinkClick?: (url: string) => void;
 }) {
   return (
-    <div className="flex justify-end">
-      <div className="flex max-w-[420px] flex-col items-end gap-2">
+    <div className="flex min-w-0 justify-end">
+      <div className="flex min-w-0 max-w-[420px] flex-col items-end gap-2 sm:max-w-[560px] lg:max-w-[680px]">
         {text ? (
           <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full rounded-[18px] border px-4 py-3 text-foreground/95">
             <SimpleMarkdown
@@ -3677,8 +3743,8 @@ function AssistantTurn({
   live?: boolean;
 }) {
   return (
-    <div className="flex justify-start">
-      <article className="max-w-[760px]">
+    <div className="flex min-w-0 justify-start">
+      <article className="min-w-0 flex-1">
         {status && !text ? (
           <div className="text-[13px] leading-7 text-muted-foreground">
             {status}

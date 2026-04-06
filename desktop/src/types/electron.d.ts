@@ -235,6 +235,7 @@ declare global {
     long_description: string | null;
     agents: TemplateAgentInfoPayload[];
     views: TemplateViewInfoPayload[];
+    display_name?: string | null;
     install_count?: number;
     source?: string;
     verified?: boolean;
@@ -313,21 +314,20 @@ declare global {
     proposal_count: number;
     heartbeat: ProactiveStatusSnapshotPayload;
     bridge: ProactiveStatusSnapshotPayload;
-    delivery_state: string;
-    delivery_summary: string;
-    delivery_detail: string | null;
+    lifecycle_state: string;
+    lifecycle_summary: string;
+    lifecycle_detail: string | null;
   }
 
-  interface DemoTaskProposalRequestPayload {
+  interface RemoteTaskProposalGenerationRequestPayload {
     workspace_id: string;
-    task_name?: string;
-    task_prompt?: string;
-    task_generation_rationale?: string;
   }
 
-  interface DemoTaskProposalEnqueueResponsePayload {
+  interface RemoteTaskProposalGenerationResponsePayload {
     accepted: boolean;
-    pending_count: number;
+    accepted_count: number;
+    event_count: number;
+    correlation_id: string;
   }
 
   interface ProactiveTaskProposalPreferenceUpdatePayload {
@@ -480,6 +480,35 @@ declare global {
     enabled?: boolean;
     delivery?: CronjobDeliveryPayload;
     metadata?: Record<string, unknown>;
+  }
+
+  type RuntimeNotificationLevel = "info" | "success" | "warning" | "error";
+  type RuntimeNotificationState = "unread" | "read" | "dismissed";
+
+  interface RuntimeNotificationRecordPayload {
+    id: string;
+    workspace_id: string;
+    cronjob_id: string | null;
+    source_type: string;
+    source_label: string | null;
+    title: string;
+    message: string;
+    level: RuntimeNotificationLevel;
+    state: RuntimeNotificationState;
+    metadata: Record<string, unknown>;
+    read_at: string | null;
+    dismissed_at: string | null;
+    created_at: string;
+    updated_at: string;
+  }
+
+  interface RuntimeNotificationListResponsePayload {
+    items: RuntimeNotificationRecordPayload[];
+    count: number;
+  }
+
+  interface RuntimeNotificationUpdatePayload {
+    state?: RuntimeNotificationState;
   }
 
   interface SessionRuntimeRecordPayload {
@@ -1050,6 +1079,14 @@ declare global {
       createCronjob: (payload: CronjobCreatePayload) => Promise<CronjobRecordPayload>;
       updateCronjob: (jobId: string, payload: CronjobUpdatePayload) => Promise<CronjobRecordPayload>;
       deleteCronjob: (jobId: string) => Promise<{ success: boolean }>;
+      listNotifications: (
+        workspaceId?: string | null,
+        includeDismissed?: boolean
+      ) => Promise<RuntimeNotificationListResponsePayload>;
+      updateNotification: (
+        notificationId: string,
+        payload: RuntimeNotificationUpdatePayload
+      ) => Promise<RuntimeNotificationRecordPayload>;
       listTaskProposals: (workspaceId: string) => Promise<TaskProposalListResponsePayload>;
       acceptTaskProposal: (payload: TaskProposalAcceptPayload) => Promise<TaskProposalAcceptResponsePayload>;
       listMemoryUpdateProposals: (
@@ -1065,9 +1102,9 @@ declare global {
         payload: ProactiveTaskProposalPreferenceUpdatePayload
       ) => Promise<ProactiveTaskProposalPreferencePayload>;
       updateTaskProposalState: (proposalId: string, state: string) => Promise<TaskProposalStateUpdatePayload>;
-      enqueueRemoteDemoTaskProposal: (
-        payload: DemoTaskProposalRequestPayload
-      ) => Promise<DemoTaskProposalEnqueueResponsePayload>;
+      requestRemoteTaskProposalGeneration: (
+        payload: RemoteTaskProposalGenerationRequestPayload
+      ) => Promise<RemoteTaskProposalGenerationResponsePayload>;
       listAgentSessions: (workspaceId: string) => Promise<AgentSessionListResponsePayload>;
       listRuntimeStates: (workspaceId: string) => Promise<SessionRuntimeStateListResponsePayload>;
       getSessionHistory: (payload: { sessionId: string; workspaceId: string }) => Promise<SessionHistoryResponsePayload>;

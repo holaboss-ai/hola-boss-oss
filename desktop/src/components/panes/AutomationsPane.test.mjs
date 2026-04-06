@@ -25,6 +25,24 @@ test("scheduled tab toggle updates cronjob enabled state", async () => {
   assert.match(source, /aria-label=\{job\.enabled \? "Disable schedule" : "Enable schedule"\}/);
 });
 
+test("scheduled rows label whether an automation is a notification or task run", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /function jobDeliveryChannel\(job: CronjobRecordPayload\): string \{/);
+  assert.match(source, /if \(channel === "system_notification"\) \{\s*return "Notification";/);
+  assert.match(source, /if \(channel === "session_run"\) \{\s*return "Task run";/);
+  assert.match(source, /jobKindClassName\(job\)/);
+  assert.match(source, /jobKindLabel\(job\)/);
+});
+
+test("new schedule button can route creation into the workspace chat", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /interface AutomationsPaneProps \{\s*onOpenRunSession\?: \(sessionId: string\) => void;\s*onCreateSchedule\?: \(\) => void;\s*\}/);
+  assert.match(source, /if \(onCreateSchedule\) \{\s*onCreateSchedule\(\);\s*return;\s*\}/);
+  assert.match(source, /onClick=\{handleNewSchedule\}/);
+});
+
 test("completed runs open the corresponding sub-session when clicked", async () => {
   const source = await readFile(sourcePath, "utf8");
 

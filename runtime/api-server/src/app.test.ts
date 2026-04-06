@@ -751,6 +751,68 @@ test("memory routes delegate to the memory service and preserve payloads", async
   store.close();
 });
 
+test("proactive context capture route returns the bundled workspace context", async () => {
+  const previousUserId = process.env.HOLABOSS_USER_ID;
+  process.env.HOLABOSS_USER_ID = "user-1";
+
+  const root = makeTempDir("hb-runtime-api-proactive-context-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace One",
+    harness: "pi",
+    status: "active"
+  });
+  const workspaceDir = store.workspaceDir("workspace-1");
+  fs.writeFileSync(
+    path.join(workspaceDir, "workspace.yaml"),
+    [
+      "applications:",
+      "  - app_id: twitter",
+      "mcp_registry:",
+      "  allowlist:",
+      "    tool_ids:",
+      "      - twitter.performance",
+    ].join("\n"),
+    "utf8"
+  );
+
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/proactive/context/capture",
+      payload: {
+        workspace_id: "workspace-1"
+      }
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = response.json() as { context: Record<string, unknown> };
+    const context = body.context;
+    const workspace = context.workspace as Record<string, unknown>;
+    const snapshot = context.snapshot as Record<string, unknown>;
+    assert.equal(workspace.id, "workspace-1");
+    assert.equal(workspace.holaboss_user_id, "user-1");
+    assert.equal(snapshot.workspace_id, "workspace-1");
+    assert.deepEqual(snapshot.applications, ["twitter"]);
+    assert.deepEqual(snapshot.mcp_tool_ids, ["twitter.performance"]);
+    assert.equal(typeof context.captured_at, "string");
+  } finally {
+    await app.close();
+    store.close();
+    if (previousUserId === undefined) {
+      delete process.env.HOLABOSS_USER_ID;
+    } else {
+      process.env.HOLABOSS_USER_ID = previousUserId;
+    }
+  }
+});
+
 test("workspace CRUD routes preserve local payload shape", async () => {
   const root = makeTempDir("hb-runtime-api-");
   const store = new RuntimeStateStore({
@@ -1476,6 +1538,31 @@ test("cronjobs, task proposals, and session state routes preserve local payload 
   assert.equal(listedJobs.json().count, 1);
   assert.equal(updatedJob.statusCode, 200);
   assert.equal(updatedJob.json().description, "Updated check");
+
+  const createdNotification = store.createRuntimeNotification({
+    workspaceId: workspace.id,
+    cronjobId: jobId,
+    sourceType: "cronjob",
+    sourceLabel: workspace.name,
+    title: "Drink Water",
+    message: "Time to drink water.",
+    level: "info"
+  });
+  const listedNotifications = await app.inject({
+    method: "GET",
+    url: `/api/v1/notifications?workspace_id=${workspace.id}`
+  });
+  const updatedNotification = await app.inject({
+    method: "PATCH",
+    url: `/api/v1/notifications/${createdNotification.id}`,
+    payload: { state: "read" }
+  });
+  assert.equal(listedNotifications.statusCode, 200);
+  assert.equal(listedNotifications.json().count, 1);
+  assert.equal(listedNotifications.json().items[0].title, "Drink Water");
+  assert.equal(updatedNotification.statusCode, 200);
+  assert.equal(updatedNotification.json().state, "read");
+  assert.ok(updatedNotification.json().read_at);
 
   const createdProposal = await app.inject({
     method: "POST",

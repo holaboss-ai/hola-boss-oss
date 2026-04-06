@@ -20,6 +20,7 @@ interface CompletedAutomationRun {
 
 interface AutomationsPaneProps {
   onOpenRunSession?: (sessionId: string) => void;
+  onCreateSchedule?: () => void;
 }
 
 function normalizeErrorMessage(error: unknown) {
@@ -80,6 +81,32 @@ function jobTitle(job: CronjobRecordPayload): string {
   return job.name?.trim() || job.description?.trim() || "Untitled schedule";
 }
 
+function jobDeliveryChannel(job: CronjobRecordPayload): string {
+  return job.delivery?.channel?.trim().toLowerCase() || "";
+}
+
+function jobKindLabel(job: CronjobRecordPayload): string {
+  const channel = jobDeliveryChannel(job);
+  if (channel === "system_notification") {
+    return "Notification";
+  }
+  if (channel === "session_run") {
+    return "Task run";
+  }
+  return "Automation";
+}
+
+function jobKindClassName(job: CronjobRecordPayload): string {
+  const channel = jobDeliveryChannel(job);
+  if (channel === "system_notification") {
+    return "border-[rgba(192,158,93,0.32)] bg-[rgba(250,244,227,0.92)] text-[rgba(114,86,34,0.96)]";
+  }
+  if (channel === "session_run") {
+    return "border-primary/25 bg-primary/10 text-primary";
+  }
+  return "border-border/50 bg-muted/65 text-muted-foreground";
+}
+
 function runtimeStateErrorMessage(
   value: Record<string, unknown> | null | undefined,
 ): string {
@@ -128,7 +155,10 @@ function completedStatusClassName(status: string): string {
   return "border-primary/30 bg-primary/10 text-primary";
 }
 
-export function AutomationsPane({ onOpenRunSession }: AutomationsPaneProps) {
+export function AutomationsPane({
+  onOpenRunSession,
+  onCreateSchedule,
+}: AutomationsPaneProps) {
   const [activeTab, setActiveTab] = useState<"scheduled" | "completed">(
     "scheduled",
   );
@@ -265,6 +295,10 @@ export function AutomationsPane({ onOpenRunSession }: AutomationsPaneProps) {
   };
 
   const handleNewSchedule = () => {
+    if (onCreateSchedule) {
+      onCreateSchedule();
+      return;
+    }
     setInfoMessage(
       "Schedule creation is not wired in this pane yet. Use the cronjob API/runtime route for creation.",
     );
@@ -361,6 +395,13 @@ export function AutomationsPane({ onOpenRunSession }: AutomationsPaneProps) {
                           <div className="min-w-0">
                             <div className="truncate text-sm font-medium text-foreground">
                               {jobTitle(job)}
+                            </div>
+                            <div className="mt-1">
+                              <span
+                                className={`inline-flex h-5 items-center rounded-full border px-2 text-[10px] font-medium uppercase tracking-[0.12em] ${jobKindClassName(job)}`}
+                              >
+                                {jobKindLabel(job)}
+                              </span>
                             </div>
                           </div>
 

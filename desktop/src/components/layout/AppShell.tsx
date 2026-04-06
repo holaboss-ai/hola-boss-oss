@@ -2,6 +2,7 @@ import {
     LeftNavigationRail,
     type LeftRailItem,
 } from "@/components/layout/LeftNavigationRail";
+import { NotificationToastStack } from "@/components/layout/NotificationToastStack";
 import {
     OperationsDrawer,
     type OperationsDrawerTab,
@@ -35,9 +36,9 @@ import {
     WorkspaceSelectionProvider,
 } from "@/lib/workspaceSelection";
 import {
-    Bell,
     CircleCheck,
     Clock3,
+    Inbox as InboxIcon,
     Loader2,
     PanelRightClose,
     PanelRightOpen,
@@ -145,6 +146,11 @@ type AgentView =
 
 type ChatSessionOpenRequest = {
   sessionId: string;
+  requestKey: number;
+};
+
+type ChatComposerPrefillRequest = {
+  text: string;
   requestKey: number;
 };
 
@@ -556,6 +562,8 @@ function AppShellContent() {
   } | null>(null);
   const [chatSessionOpenRequest, setChatSessionOpenRequest] =
     useState<ChatSessionOpenRequest | null>(null);
+  const [chatComposerPrefillRequest, setChatComposerPrefillRequest] =
+    useState<ChatComposerPrefillRequest | null>(null);
   const [fileExplorerFocusRequest, setFileExplorerFocusRequest] =
     useState<FileExplorerFocusRequest | null>(null);
   const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(
@@ -597,19 +605,37 @@ function AppShellContent() {
   ] = useState(false);
   const [proactiveTaskProposalsError, setProactiveTaskProposalsError] =
     useState("");
+  const [proactiveStatus, setProactiveStatus] =
+    useState<ProactiveAgentStatusPayload | null>(null);
+  const [isLoadingProactiveStatus, setIsLoadingProactiveStatus] =
+    useState(false);
   const [proposalAction, setProposalAction] = useState<{
     proposalId: string;
     action: "accept" | "dismiss";
   } | null>(null);
+  const [notifications, setNotifications] = useState<
+    RuntimeNotificationRecordPayload[]
+  >([]);
+  const [toastNotifications, setToastNotifications] = useState<
+    RuntimeNotificationRecordPayload[]
+  >([]);
   const utilityPaneHostRef = useRef<HTMLDivElement | null>(null);
   const utilityPaneResizeStateRef = useRef<UtilityPaneResizeState | null>(null);
   const filesPaneWidthRef = useRef(filesPaneWidth);
   const browserPaneWidthRef = useRef(browserPaneWidth);
   const spaceVisibilityRef = useRef(spaceVisibility);
+  const notificationsHydratedRef = useRef(false);
+  const seenNotificationIdsRef = useRef(new Set<string>());
+  const notificationToastTimeoutsRef = useRef(new Map<string, number>());
 
   filesPaneWidthRef.current = filesPaneWidth;
   browserPaneWidthRef.current = browserPaneWidth;
   spaceVisibilityRef.current = spaceVisibility;
+
+  const notificationUnreadCount = useMemo(
+    () => notifications.filter((item) => item.state === "unread").length,
+    [notifications],
+  );
 
   const clampUtilityPaneWidth = useCallback(
     (
@@ -878,6 +904,162 @@ function AppShellContent() {
     void window.electronAPI.ui.setTheme(theme);
   }, [theme]);
 
+  const dismissNotificationToast = useCallback((notificationId: string) => {
+    const timeoutId = notificationToastTimeoutsRef.current.get(notificationId);
+    if (timeoutId !== undefined) {
+      window.clearTimeout(timeoutId);
+      notificationToastTimeoutsRef.current.delete(notificationId);
+    }
+    setToastNotifications((current) =>
+      current.filter((item) => item.id !== notificationId),
+    );
+  }, []);
+
+  const refreshNotifications = useCallback(async () => {
+    if (!window.electronAPI) {
+      return;
+    }
+
+    try {
+      const response = await window.electronAPI.workspace.listNotifications(
+        null,
+        false,
+      );
+      setNotifications(response.items);
+
+      if (!notificationsHydratedRef.current) {
+        notificationsHydratedRef.current = true;
+        for (const item of response.items) {
+          seenNotificationIdsRef.current.add(item.id);
+        }
+        return;
+      }
+
+      for (const item of response.items) {
+        if (
+          item.state !== "unread" ||
+          seenNotificationIdsRef.current.has(item.id)
+        ) {
+          continue;
+        }
+        seenNotificationIdsRef.current.add(item.id);
+        setToastNotifications((current) => {
+          if (current.some((existing) => existing.id === item.id)) {
+            return current;
+          }
+          return [item, ...current].slice(0, 4);
+        });
+        if (!notificationToastTimeoutsRef.current.has(item.id)) {
+          const timeoutId = window.setTimeout(() => {
+            dismissNotificationToast(item.id);
+          }, 7000);
+          notificationToastTimeoutsRef.current.set(item.id, timeoutId);
+        }
+      }
+    } catch {
+      // Notification polling should stay silent when the runtime is restarting.
+    }
+  }, [dismissNotificationToast]);
+
+  const handleMarkNotificationRead = useCallback(
+    async (notificationId: string) => {
+      if (!window.electronAPI) {
+        return;
+      }
+      try {
+        dismissNotificationToast(notificationId);
+        await window.electronAPI.workspace.updateNotification(notificationId, {
+          state: "read",
+        });
+        await refreshNotifications();
+      } catch {
+        // Ignore transient notification update failures in the shell.
+      }
+    },
+    [dismissNotificationToast, refreshNotifications],
+  );
+
+  const handleDismissNotification = useCallback(
+    async (notificationId: string) => {
+      if (!window.electronAPI) {
+        return;
+      }
+      try {
+        dismissNotificationToast(notificationId);
+        await window.electronAPI.workspace.updateNotification(notificationId, {
+          state: "dismissed",
+        });
+        await refreshNotifications();
+      } catch {
+        // Ignore transient notification update failures in the shell.
+      }
+    },
+    [dismissNotificationToast, refreshNotifications],
+  );
+
+  const handleClearAllNotifications = useCallback(async () => {
+    if (!window.electronAPI || notifications.length === 0) {
+      return;
+    }
+
+    const notificationIds = notifications.map((item) => item.id);
+    for (const notificationId of notificationIds) {
+      dismissNotificationToast(notificationId);
+    }
+
+    try {
+      await Promise.allSettled(
+        notificationIds.map((notificationId) =>
+          window.electronAPI.workspace.updateNotification(notificationId, {
+            state: "dismissed",
+          }),
+        ),
+      );
+      await refreshNotifications();
+    } catch {
+      // Ignore transient notification update failures in the shell.
+    }
+  }, [dismissNotificationToast, notifications, refreshNotifications]);
+
+  const handleNotificationCenterOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open || !window.electronAPI) {
+        return;
+      }
+      const unreadIds = notifications
+        .filter((item) => item.state === "unread")
+        .map((item) => item.id);
+      if (unreadIds.length === 0) {
+        return;
+      }
+      for (const notificationId of unreadIds) {
+        dismissNotificationToast(notificationId);
+      }
+      void Promise.allSettled(
+        unreadIds.map((notificationId) =>
+          window.electronAPI.workspace.updateNotification(notificationId, {
+            state: "read",
+          }),
+        ),
+      ).then(() => refreshNotifications());
+    },
+    [dismissNotificationToast, notifications, refreshNotifications],
+  );
+
+  useEffect(() => {
+    void refreshNotifications();
+    const intervalId = window.setInterval(() => {
+      void refreshNotifications();
+    }, 3000);
+    return () => {
+      window.clearInterval(intervalId);
+      for (const timeoutId of notificationToastTimeoutsRef.current.values()) {
+        window.clearTimeout(timeoutId);
+      }
+      notificationToastTimeoutsRef.current.clear();
+    };
+  }, [refreshNotifications]);
+
   const handleThemeChange = useCallback((nextTheme: string) => {
     if (isAppTheme(nextTheme)) {
       setTheme(nextTheme);
@@ -1061,6 +1243,32 @@ function AppShellContent() {
     }
   }
 
+  async function refreshProactiveStatus(options?: { silent?: boolean }) {
+    if (!selectedWorkspaceId || !selectedWorkspace) {
+      setProactiveStatus(null);
+      setIsLoadingProactiveStatus(false);
+      return;
+    }
+
+    if (!options?.silent) {
+      setIsLoadingProactiveStatus(true);
+    }
+    try {
+      const response = await window.electronAPI.workspace.getProactiveStatus(
+        selectedWorkspace.id,
+      );
+      setProactiveStatus(response);
+    } catch (error) {
+      if (!options?.silent) {
+        setTaskProposalStatusMessage(normalizeErrorMessage(error));
+      }
+    } finally {
+      if (!options?.silent) {
+        setIsLoadingProactiveStatus(false);
+      }
+    }
+  }
+
   async function triggerRemoteTaskProposal() {
     if (!selectedWorkspaceId) {
       return;
@@ -1069,13 +1277,16 @@ function AppShellContent() {
     setTaskProposalStatusMessage("");
     try {
       const response =
-        await window.electronAPI.workspace.enqueueRemoteDemoTaskProposal({
+        await window.electronAPI.workspace.requestRemoteTaskProposalGeneration({
           workspace_id: selectedWorkspaceId,
         });
-      const detail = `Remote proactive job queued. Pending cloud jobs: ${response.pending_count}.`;
-      setTaskProposalStatusMessage(detail);
+      setTaskProposalStatusMessage(
+        response.accepted ? "" : "Suggestions are unavailable right now.",
+      );
+      void refreshProactiveStatus();
       window.setTimeout(() => {
         void refreshTaskProposals();
+        void refreshProactiveStatus({ silent: true });
       }, 1500);
     } catch (error) {
       setTaskProposalStatusMessage(normalizeErrorMessage(error));
@@ -1190,6 +1401,48 @@ function AppShellContent() {
     selectedWorkspaceId,
   ]);
 
+  useEffect(() => {
+    if (!selectedWorkspaceId || !selectedWorkspace) {
+      setProactiveStatus(null);
+      setIsLoadingProactiveStatus(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const load = async (options?: { silent?: boolean }) => {
+      if (!options?.silent && !cancelled) {
+        setIsLoadingProactiveStatus(true);
+      }
+      try {
+        const response = await window.electronAPI.workspace.getProactiveStatus(
+          selectedWorkspace.id,
+        );
+        if (!cancelled) {
+          setProactiveStatus(response);
+        }
+      } catch (error) {
+        if (!cancelled && !options?.silent) {
+          setTaskProposalStatusMessage(normalizeErrorMessage(error));
+        }
+      } finally {
+        if (!cancelled && !options?.silent) {
+          setIsLoadingProactiveStatus(false);
+        }
+      }
+    };
+
+    void load();
+    const timer = window.setInterval(() => {
+      void load({ silent: true });
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [selectedWorkspace, selectedWorkspaceId]);
+
   const handleDismissUpdate = () => {
     void window.electronAPI.appUpdate.dismiss(
       appUpdateStatus?.releaseTag ?? null,
@@ -1251,6 +1504,37 @@ function AppShellContent() {
       requestKey: Date.now(),
     });
     setChatFocusRequestKey((current) => current + 1);
+  }, []);
+
+  const handleCreateScheduleInChat = useCallback(() => {
+    const mainSessionId = (selectedWorkspace?.main_session_id || "").trim();
+
+    setActiveLeftRailItem("space");
+    setSpaceVisibility((previous) => ({
+      ...previous,
+      agent: true,
+    }));
+    setAgentView({ type: "chat" });
+    setChatSessionJumpRequest(null);
+    setChatSessionOpenRequest((previous) =>
+      mainSessionId
+        ? {
+            sessionId: mainSessionId,
+            requestKey: (previous?.requestKey ?? 0) + 1,
+          }
+        : null,
+    );
+    setChatComposerPrefillRequest((previous) => ({
+      text: "Create a cronjob for ",
+      requestKey: (previous?.requestKey ?? 0) + 1,
+    }));
+    setChatFocusRequestKey((current) => current + 1);
+  }, [selectedWorkspace?.main_session_id]);
+
+  const handleChatComposerPrefillConsumed = useCallback((requestKey: number) => {
+    setChatComposerPrefillRequest((current) =>
+      current?.requestKey === requestKey ? null : current,
+    );
   }, []);
 
   const handleOpenWorkspaceOutput = useCallback(
@@ -1381,6 +1665,8 @@ function AppShellContent() {
           sessionJumpSessionId={chatSessionJumpRequest?.sessionId ?? null}
           sessionJumpRequestKey={chatSessionJumpRequest?.requestKey ?? 0}
           sessionOpenRequest={chatSessionOpenRequest}
+          composerPrefillRequest={chatComposerPrefillRequest}
+          onComposerPrefillConsumed={handleChatComposerPrefillConsumed}
           onActiveSessionIdChange={setActiveChatSessionId}
         />
       );
@@ -1633,6 +1919,13 @@ function AppShellContent() {
             onDownload={handleDownloadUpdate}
           />
         ) : null}
+        <NotificationToastStack
+          notifications={toastNotifications}
+          onCloseToast={dismissNotificationToast}
+          onActivateNotification={(notificationId) => {
+            void handleMarkNotificationRead(notificationId);
+          }}
+        />
 
         {hasWorkspaces ? (
           <div className="relative min-w-0">
@@ -1656,6 +1949,20 @@ function AppShellContent() {
               }}
               onOpenExternalUrl={handleOpenExternalUrl}
               onPublish={() => setPublishOpen(true)}
+              notifications={notifications}
+              notificationUnreadCount={notificationUnreadCount}
+              onNotificationCenterOpenChange={
+                handleNotificationCenterOpenChange
+              }
+              onMarkNotificationRead={(notificationId) => {
+                void handleMarkNotificationRead(notificationId);
+              }}
+              onDismissNotification={(notificationId) => {
+                void handleDismissNotification(notificationId);
+              }}
+              onClearAllNotifications={() => {
+                void handleClearAllNotifications();
+              }}
             />
           </div>
         ) : null}
@@ -1789,6 +2096,7 @@ function AppShellContent() {
                   <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
                     <AutomationsPane
                       onOpenRunSession={handleOpenAutomationRunSession}
+                      onCreateSchedule={handleCreateScheduleInChat}
                     />
                   </div>
                 ) : activeLeftRailItem === "marketplace" ? (
@@ -1823,12 +2131,12 @@ function AppShellContent() {
                         aria-label="Open inbox panel"
                         className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-border/45 text-muted-foreground transition-all duration-200 hover:border-primary/45 hover:text-primary active:scale-95"
                       >
-                        <Bell size={13} />
+                        <InboxIcon size={13} />
                       </button>
                       <button
                         type="button"
                         onClick={() => openOperationsDrawerTab("running")}
-                        aria-label="Open running panel"
+                        aria-label="Open sub-sessions panel"
                         className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-border/45 text-muted-foreground transition-all duration-200 hover:border-primary/45 hover:text-primary active:scale-95"
                       >
                         <Clock3 size={13} />
@@ -1853,6 +2161,8 @@ function AppShellContent() {
                   activeTab={activeOperationsTab}
                   onTabChange={setActiveOperationsTab}
                   proposals={taskProposals}
+                  proactiveStatus={proactiveStatus}
+                  isLoadingProactiveStatus={isLoadingProactiveStatus}
                   proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
                   isUpdatingProactiveTaskProposalsEnabled={
                     isLoadingProactiveTaskProposalsEnabled ||
@@ -1863,7 +2173,6 @@ function AppShellContent() {
                   isTriggeringProposal={isTriggeringTaskProposal}
                   proposalStatusMessage={taskProposalStatusMessage}
                   proposalAction={proposalAction}
-                  onRefreshProposals={() => void refreshTaskProposals()}
                   onTriggerProposal={() => void triggerRemoteTaskProposal()}
                   onProactiveTaskProposalsEnabledChange={(enabled) =>
                     void handleProactiveTaskProposalsEnabledChange(enabled)
@@ -1878,6 +2187,7 @@ function AppShellContent() {
                   activeRunningSessionId={activeChatSessionId}
                   hasWorkspace={hasSelectedWorkspace}
                   selectedWorkspaceId={selectedWorkspaceId}
+                  selectedWorkspaceName={selectedWorkspace?.name || null}
                   mainSessionId={
                     (selectedWorkspace?.main_session_id || "").trim() || null
                   }

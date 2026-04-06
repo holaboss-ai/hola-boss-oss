@@ -18,6 +18,7 @@ import {
   type MemoryUpdateProposalRecord,
   type OutputFolderRecord,
   type OutputRecord,
+  type RuntimeNotificationRecord,
   type SessionMessageRecord,
   type SessionRuntimeStateRecord,
   type TaskProposalRecord,
@@ -114,6 +115,7 @@ import {
   persistDurableMemoryCandidate,
   refreshMemoryIndexes,
 } from "./turn-memory-writeback.js";
+import { captureWorkspaceContext } from "./proactive-context.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 50;
 const DEFAULT_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
@@ -642,6 +644,25 @@ function cronjobPayload(record: CronjobRecord): Record<string, unknown> {
     run_count: record.runCount,
     last_status: record.lastStatus,
     last_error: record.lastError,
+    created_at: record.createdAt,
+    updated_at: record.updatedAt
+  };
+}
+
+function runtimeNotificationPayload(record: RuntimeNotificationRecord): Record<string, unknown> {
+  return {
+    id: record.id,
+    workspace_id: record.workspaceId,
+    cronjob_id: record.cronjobId,
+    source_type: record.sourceType,
+    source_label: record.sourceLabel,
+    title: record.title,
+    message: record.message,
+    level: record.level,
+    state: record.state,
+    metadata: record.metadata,
+    read_at: record.readAt,
+    dismissed_at: record.dismissedAt,
     created_at: record.createdAt,
     updated_at: record.updatedAt
   };
@@ -2464,6 +2485,30 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     }
   });
 
+  app.post("/api/v1/proactive/context/capture", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    let workspaceId = "";
+    try {
+      workspaceId = requiredString(request.body.workspace_id, "workspace_id");
+      return {
+        context: await captureWorkspaceContext({
+          store,
+          memoryService,
+          workspaceId,
+        }),
+      };
+    } catch (error) {
+      if (workspaceId) {
+        const message = error instanceof Error ? error.message : "workspace context capture failed";
+        const statusCode = /\bnot found\b/i.test(message) ? 404 : 500;
+        return sendError(reply, statusCode, message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "workspace_id is required");
+    }
+  });
+
   app.post("/api/v1/agent-runs", async (request, reply) => {
     if (!isRecord(request.body)) {
       return sendError(reply, 400, "request body must be an object");
@@ -4009,6 +4054,35 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 404, "Output not found");
     }
     return { deleted: true };
+  });
+
+  app.get("/api/v1/notifications", async (request, reply) => {
+    const query = isRecord(request.query) ? request.query : {};
+    const workspaceId = optionalString(query.workspace_id);
+    const limit = optionalInteger(query.limit, 50);
+    const items = store
+      .listRuntimeNotifications({
+        workspaceId: workspaceId ?? null,
+        includeDismissed: optionalBoolean(query.include_dismissed, false),
+        limit
+      })
+      .map((item) => runtimeNotificationPayload(item));
+    return { items, count: items.length };
+  });
+
+  app.patch("/api/v1/notifications/:notificationId", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { notificationId: string };
+    const updated = store.updateRuntimeNotification({
+      notificationId: requiredString(params.notificationId, "notificationId"),
+      state: nullableString(request.body.state) as "unread" | "read" | "dismissed" | null | undefined
+    });
+    if (!updated) {
+      return sendError(reply, 404, "Notification not found");
+    }
+    return runtimeNotificationPayload(updated);
   });
 
   app.get("/api/v1/cronjobs", async (request, reply) => {
