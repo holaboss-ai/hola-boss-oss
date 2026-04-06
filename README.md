@@ -157,49 +157,6 @@ Within those scopes, memory entries are governed by type rather than treated as 
 
 That is what allows Holaboss to support role-holding work across long sessions without flattening all prior interaction into one undifferentiated transcript.
 
-### Memory As A File System
-
-Holaboss treats durable memory as a navigable filesystem surface rather than as an opaque vector store or a pile of hidden chat excerpts. The durable memory model is built from markdown files, stable paths, and lightweight indexes:
-
-| File System Concept | Holaboss Memory Surface |
-| --- | --- |
-| root index | `memory/MEMORY.md` |
-| workspace-local durable namespace | `memory/workspace/<workspace-id>/knowledge/` |
-| user-scoped durable namespace | `memory/preference/` and `memory/identity/` |
-| directories | memory classes such as `facts/`, `procedures/`, `blockers/`, and `reference/` |
-| file | the canonical markdown body for one durable memory entry |
-| file metadata | frontmatter fields such as scope, memory type, summary, tags, freshness, and verification hints |
-| directory listing | `MEMORY.md` indexes plus the bounded recall manifest built at query time |
-| runtime scratch area | `memory/workspace/<workspace-id>/runtime/`, intentionally excluded from durable recall |
-
-This matters because it makes memory inspectable, portable, and path-addressable. Durable workspace knowledge is not trapped inside a database-only retrieval layer. It lives in readable markdown files that can be indexed, packaged, diffed, and moved with the workspace, while the runtime still keeps governance, freshness, and recall selection explicit.
-
-At a high level, the memory tree looks like this:
-
-```text
-memory/
-  MEMORY.md
-  workspace/
-    <workspace-id>/
-      MEMORY.md
-      knowledge/
-        facts/
-        procedures/
-        blockers/
-        reference/
-      runtime/
-        latest-turn.md
-        recent-turns/
-        session-memory/
-  preference/
-    MEMORY.md
-    *.md
-  identity/
-    *.md
-```
-
-The recall path follows that structure. At query time, the runtime scans durable markdown memory files, reads frontmatter and compact summaries, builds a bounded manifest, and selects only a small relevant subset. In other words, the filesystem layout is not just storage convenience; it is part of how Holaboss keeps long-horizon memory legible and token-efficient.
-
 ### One Run Lifecycle
 
 One run follows a bounded lifecycle:
@@ -399,6 +356,49 @@ Holaboss workspaces live under the runtime sandbox root. In the desktop app, tha
 ### Memory
 
 The overview above explains why the runtime splits continuity, durable recall, and human-authored policy. The rest of this section explains the concrete memory layers, source-of-truth boundaries, and writeback flow that make that split work.
+
+#### Memory As A File System
+
+Holaboss treats durable memory as a navigable filesystem surface rather than as an opaque vector store or a pile of hidden chat excerpts. The durable memory model is built from markdown files, stable paths, and lightweight indexes:
+
+| File System Concept | Holaboss Memory Surface |
+| --- | --- |
+| root index | `memory/MEMORY.md` |
+| workspace-local durable namespace | `memory/workspace/<workspace-id>/knowledge/` |
+| user-scoped durable namespace | `memory/preference/` and `memory/identity/` |
+| directories | memory classes such as `facts/`, `procedures/`, `blockers/`, and `reference/` |
+| file | the canonical markdown body for one durable memory entry |
+| file metadata | frontmatter fields such as scope, memory type, summary, tags, freshness, and verification hints |
+| directory listing | `MEMORY.md` indexes plus the bounded recall manifest built at query time |
+| runtime scratch area | `memory/workspace/<workspace-id>/runtime/`, intentionally excluded from durable recall |
+
+This matters because it makes memory inspectable, portable, and path-addressable. Durable workspace knowledge is not trapped inside a database-only retrieval layer. It lives in readable markdown files that can be indexed, packaged, diffed, and moved with the workspace, while the runtime still keeps governance, freshness, and recall selection explicit.
+
+At a high level, the memory tree looks like this:
+
+```text
+memory/
+  MEMORY.md
+  workspace/
+    <workspace-id>/
+      MEMORY.md
+      knowledge/
+        facts/
+        procedures/
+        blockers/
+        reference/
+      runtime/
+        latest-turn.md
+        recent-turns/
+        session-memory/
+  preference/
+    MEMORY.md
+    *.md
+  identity/
+    *.md
+```
+
+The recall path follows that structure. At query time, the runtime scans durable markdown memory files, reads frontmatter and compact summaries, builds a bounded manifest, and selects only a small relevant subset. In other words, the filesystem layout is not just storage convenience; it is part of how Holaboss keeps long-horizon memory legible and token-efficient.
 
 #### Memory Layers
 
