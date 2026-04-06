@@ -63,7 +63,7 @@ export const FALLBACK_TEMPLATES: TemplateMetadataPayload[] = [
   },
   {
     name: "devrel_worker",
-    display_name: "Build in Public",
+    display_name: "DevRel",
     repo: "",
     path: "",
     default_ref: "main",
