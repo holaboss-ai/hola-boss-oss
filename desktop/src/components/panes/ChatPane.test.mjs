@@ -86,6 +86,16 @@ test("chat pane suppresses claude options for the holaboss proxy fallback path",
   );
 });
 
+test("chat pane prefixes run failures with provider and model context", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /function runFailedContextLabel\(payload: Record<string, unknown>\): string/);
+  assert.match(source, /function runFailedDetail\(payload: Record<string, unknown>\): string/);
+  assert.match(source, /return detail\.startsWith\(contextLabel\) \? detail : `\$\{contextLabel\}: \$\{detail\}`;/);
+  assert.match(source, /const errorText = runFailedDetail\(payload\);/);
+  assert.match(source, /const detail = runFailedDetail\(eventPayload\);/);
+});
+
 test("chat pane exposes a return path from sub-sessions back to the main session", async () => {
   const source = await readFile(sourcePath, "utf8");
 

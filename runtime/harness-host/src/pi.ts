@@ -23,6 +23,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import type { Api, ImageContent, Model, TextContent } from "@mariozechner/pi-ai";
 import type { ResourceDiagnostic } from "@mariozechner/pi-coding-agent";
+import { APIError as OpenAIApiError } from "openai";
 import * as XLSX from "xlsx";
 import { createCallResult, createRuntime, type Runtime as McporterRuntime, type ServerDefinition, type ServerToolInfo } from "mcporter";
 
@@ -549,6 +550,35 @@ function emitRunnerEvent(
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
+
+function normalizeOpenAiCompatErrorResponse(errorResponse: unknown): Object | undefined {
+  if (isRecord(errorResponse)) {
+    return errorResponse;
+  }
+  if (!Array.isArray(errorResponse)) {
+    return undefined;
+  }
+  for (const item of errorResponse) {
+    if (isRecord(item) && isRecord(item.error)) {
+      return item;
+    }
+  }
+  return undefined;
+}
+
+let openAiApiErrorGeneratePatched = false;
+
+function patchOpenAiApiErrorGenerate(): void {
+  if (openAiApiErrorGeneratePatched) {
+    return;
+  }
+  const originalGenerate = OpenAIApiError.generate.bind(OpenAIApiError);
+  OpenAIApiError.generate = ((status, errorResponse, message, headers) =>
+    originalGenerate(status, normalizeOpenAiCompatErrorResponse(errorResponse), message, headers)) as typeof OpenAIApiError.generate;
+  openAiApiErrorGeneratePatched = true;
+}
+
+patchOpenAiApiErrorGenerate();
 
 function firstNonEmptyString(...values: unknown[]): string | undefined {
   for (const value of values) {

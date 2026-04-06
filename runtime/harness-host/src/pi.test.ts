@@ -55,6 +55,31 @@ function baseRequest(): HarnessHostPiRequest {
   };
 }
 
+test("pi normalizes array-wrapped openai-compatible error bodies", async () => {
+  const { APIError } = await import("openai");
+  const error = APIError.generate(
+    400,
+    [
+      {
+        error: {
+          code: 400,
+          message: "User location is not supported for the API use.",
+          status: "FAILED_PRECONDITION",
+        },
+      },
+    ],
+    undefined,
+    new Headers()
+  );
+
+  assert.equal(error.message, "400 User location is not supported for the API use.");
+  assert.deepEqual(error.error, {
+    code: 400,
+    message: "User location is not supported for the API use.",
+    status: "FAILED_PRECONDITION",
+  });
+});
+
 async function createDocxBuffer(lines: string[]): Promise<Buffer> {
   const zip = new JSZip();
   const body = lines.map((line) => `<w:p><w:r><w:t>${line}</w:t></w:r></w:p>`).join("");

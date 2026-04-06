@@ -579,6 +579,33 @@ function summarizeUnknown(value: unknown, maxLength = 140): string {
   return String(value);
 }
 
+function runFailedContextLabel(payload: Record<string, unknown>): string {
+  const provider =
+    typeof payload.provider === "string" ? payload.provider.trim() : "";
+  const model = typeof payload.model === "string" ? payload.model.trim() : "";
+  if (provider && model) {
+    return `${provider}/${model}`;
+  }
+  return provider || model;
+}
+
+function runFailedDetail(payload: Record<string, unknown>): string {
+  const detail =
+    typeof payload.error === "string"
+      ? payload.error.trim()
+      : typeof payload.message === "string"
+        ? payload.message.trim()
+        : "";
+  const contextLabel = runFailedContextLabel(payload);
+  if (!contextLabel) {
+    return detail || "The run failed.";
+  }
+  if (!detail) {
+    return `${contextLabel} failed.`;
+  }
+  return detail.startsWith(contextLabel) ? detail : `${contextLabel}: ${detail}`;
+}
+
 function assistantMetaLabel(
   harness: string | null | undefined,
   model: string | null | undefined,
@@ -945,12 +972,7 @@ function phaseTraceStepFromEvent(
   }
 
   if (eventType === "run_failed") {
-    const errorText =
-      typeof payload.error === "string"
-        ? payload.error
-        : typeof payload.message === "string"
-          ? payload.message
-          : "";
+    const errorText = runFailedDetail(payload);
     if (errorText) {
       details.push(`Error: ${summarizeUnknown(errorText, 120)}`);
     }
@@ -2423,12 +2445,7 @@ export function ChatPane({
         }
 
         if (eventType === "run_failed") {
-          const detail =
-            typeof eventPayload.error === "string"
-              ? eventPayload.error
-              : typeof eventPayload.message === "string"
-                ? eventPayload.message
-                : "The run failed.";
+          const detail = runFailedDetail(eventPayload);
           setChatErrorMessage(detail);
           finalizeLiveTraceSteps("error");
           if (
