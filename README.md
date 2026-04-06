@@ -952,5 +952,98 @@ holaboss-runtime
 
 ## OSS Release Notes
 
-- License: MIT. See `LICENSE`.
-- Security issues: report privately to `security@holaboss.ai`. See `SECURITY.md`.
+- License: MIT. See [LICENSE](LICENSE).
+- Security issues: report privately to `admin@holaboss.ai`. See [SECURITY.md](SECURITY.md).
+
+## macOS DMG Bundling
+
+This section is the canonical flow for producing Holaboss macOS DMG installers.
+
+### Local DMG For Testing (Ad-Hoc Signed, Not Notarized)
+
+Run from the repository root:
+
+```bash
+npm run desktop:install
+GITHUB_TOKEN="$(gh auth token)" npm --prefix desktop run dist:mac:dmg
+```
+
+If you want to package an unreleased runtime built from your local source tree instead of downloading the latest released runtime:
+
+```bash
+npm run desktop:install
+npm --prefix desktop run dist:mac:dmg:local
+```
+
+Output location:
+
+- `desktop/out/release/*.dmg`
+
+Notes:
+
+- Local DMG commands force ad-hoc signing via `--config.mac.identity=-`.
+- Local artifacts are intended for smoke tests and are not notarized for distribution.
+
+### Local Production Signing And Notarization (Mac)
+
+If you want to ship a DMG built locally on your Mac with Developer ID signing and Apple notarization, run:
+
+```bash
+npm run desktop:install
+npm --prefix desktop run prepare:runtime:local
+npm --prefix desktop run prepare:packaged-config
+npm --prefix desktop run build
+
+CSC_LINK="file:///absolute/path/to/Certificates.p12" \
+CSC_KEY_PASSWORD="your_p12_password" \
+APPLE_ID="your_apple_id_email" \
+APPLE_APP_SPECIFIC_PASSWORD="your_app_specific_password" \
+APPLE_TEAM_ID="YOURTEAMID" \
+npm --prefix desktop exec -- node scripts/run-electron-builder.mjs --mac dmg --arm64
+```
+
+Behavior:
+
+- with `CSC_LINK` + `CSC_KEY_PASSWORD`, the app is signed with your Developer ID certificate
+- with `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`, electron-builder submits for notarization and staples the result
+- if you omit `APPLE_*`, signing can still happen but notarization does not
+
+### Signed And Notarized Product DMG (GitHub Actions)
+
+Use the manual workflow `.github/workflows/release-macos-desktop.yml` (`Release macOS Desktop`).
+
+Required GitHub repository secrets:
+
+- `MAC_CERTIFICATE` (base64-encoded Developer ID Application `.p12`)
+- `MAC_CERTIFICATE_PASSWORD`
+- `APPLE_ID`
+- `APPLE_APP_SPECIFIC_PASSWORD`
+- `APPLE_TEAM_ID`
+
+Trigger the release from the GitHub UI or with GitHub CLI:
+
+```bash
+gh workflow run "Release macOS Desktop" \
+  --ref main \
+  -f ref=main \
+  -f release_tag=holaboss-desktop-v0.1.0 \
+  -f release_title="Holaboss Desktop v0.1.0" \
+  -f prerelease=false
+```
+
+What this workflow does:
+
+- creates or updates the specified GitHub release and tag
+- builds the matching macOS runtime bundle from the selected ref
+- builds, signs, and notarizes the desktop DMG
+- uploads `Holaboss-macos-arm64.dmg` to the release
+
+### Validate A Signed Build
+
+After downloading the built app, run:
+
+```bash
+codesign --verify --deep --strict --verbose=2 /path/to/Holaboss.app
+spctl -a -vv -t exec /path/to/Holaboss.app
+xcrun stapler validate /path/to/Holaboss.app
+```
