@@ -160,6 +160,9 @@ test("app shell polls proactive status for the selected workspace", async () => 
   assert.match(source, /workspace\.getProactiveStatus\(\s*selectedWorkspace\.id,/);
   assert.match(source, /proactiveStatus=\{proactiveStatus\}/);
   assert.match(source, /isLoadingProactiveStatus=\{isLoadingProactiveStatus\}/);
+  assert.match(source, /runtimeConfig\?\.authTokenPresent/);
+  assert.match(source, /runtimeConfig\?\.modelProxyBaseUrl/);
+  assert.match(source, /runtimeStatus\?\.status/);
 });
 
 test("app shell renames the running panel button to sub-sessions", async () => {

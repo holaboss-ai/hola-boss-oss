@@ -10,6 +10,7 @@ import {
   type AuthSession
 } from "@/lib/auth/authClient";
 import { holabossLogoUrl } from "@/lib/assetPaths";
+import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 
 type AuthPanelView = "full" | "account" | "runtime";
 
@@ -447,6 +448,7 @@ function sessionInitials(session: AuthSession | null): string {
 
 export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const sessionState = useDesktopAuthSession();
+  const { runtimeConfig: sharedRuntimeConfig } = useWorkspaceDesktop();
   const session = sessionState.data;
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigPayload | null>(null);
   const [runtimeConfigDocument, setRuntimeConfigDocument] = useState("");
@@ -463,6 +465,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const [failedAutosaveRevision, setFailedAutosaveRevision] = useState<number | null>(null);
   const [providerSaveStatus, setProviderSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const latestProviderDraftRevisionRef = useRef(0);
+  const effectiveRuntimeConfig = sharedRuntimeConfig ?? runtimeConfig;
 
   async function refreshRuntimeConfig() {
     if (!window.electronAPI) {
@@ -540,14 +543,21 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   }, [sessionState.error]);
 
   useEffect(() => {
-    const derived = deriveProviderDraftsFromDocument(parseRuntimeConfigDocument(runtimeConfigDocument), runtimeConfig);
-    setSandboxId(derived.sandboxId || `desktop:${crypto.randomUUID()}`);
+    const derived = deriveProviderDraftsFromDocument(
+      parseRuntimeConfigDocument(runtimeConfigDocument),
+      effectiveRuntimeConfig,
+    );
+    setSandboxId(
+      derived.sandboxId ||
+        effectiveRuntimeConfig?.sandboxId ||
+        `desktop:${crypto.randomUUID()}`,
+    );
     if (isProviderDraftDirty) {
       return;
     }
     setProviderDrafts(derived.drafts);
     setFailedAutosaveRevision(null);
-  }, [runtimeConfig, runtimeConfigDocument, isProviderDraftDirty]);
+  }, [effectiveRuntimeConfig, isProviderDraftDirty, runtimeConfigDocument]);
 
   const isSignedIn = Boolean(sessionUserId(session));
   const providerEnabled = (providerId: KnownProviderId) =>
@@ -559,9 +569,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const showRuntimeSection = view !== "account";
   const runtimeOnlyView = !showAccountSection && showRuntimeSection;
   const runtimeBindingReady =
-    Boolean(runtimeConfig?.authTokenPresent) &&
-    Boolean((runtimeConfig?.sandboxId || "").trim()) &&
-    Boolean((runtimeConfig?.modelProxyBaseUrl || "").trim());
+    Boolean(effectiveRuntimeConfig?.authTokenPresent) &&
+    Boolean((effectiveRuntimeConfig?.sandboxId || "").trim()) &&
+    Boolean((effectiveRuntimeConfig?.modelProxyBaseUrl || "").trim());
   const isFinishingSetup = isSignedIn && !runtimeBindingReady && !authError;
   const statusTone = authError ? "error" : runtimeBindingReady ? "ready" : isFinishingSetup ? "syncing" : "idle";
 

@@ -44,6 +44,16 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.doesNotMatch(source, /Recommended models configured/);
 });
 
+test("auth panel derives runtime readiness from the shared desktop runtime state", async () => {
+  const source = await readFile(AUTH_PANEL_PATH, "utf8");
+
+  assert.match(source, /import \{ useWorkspaceDesktop \} from "@\/lib\/workspaceDesktop";/);
+  assert.match(source, /const \{ runtimeConfig: sharedRuntimeConfig \} = useWorkspaceDesktop\(\);/);
+  assert.match(source, /const effectiveRuntimeConfig = sharedRuntimeConfig \?\? runtimeConfig;/);
+  assert.match(source, /Boolean\(effectiveRuntimeConfig\?\.authTokenPresent\)/);
+  assert.match(source, /deriveProviderDraftsFromDocument\(\s*parseRuntimeConfigDocument\(runtimeConfigDocument\),\s*effectiveRuntimeConfig,\s*\)/);
+});
+
 test("runtime auth panel keeps provider cards readable in dark themes", async () => {
   const source = await readFile(AUTH_PANEL_PATH, "utf8");
 

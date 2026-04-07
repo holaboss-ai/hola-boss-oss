@@ -6126,9 +6126,21 @@ async function getProactiveStatus(
     lifecycleSummary = "Error.";
     lifecycleDetail = heartbeat.detail;
   } else if (heartbeat.state === "skipped") {
-    lifecycleState = "unavailable";
-    lifecycleSummary = "Unavailable.";
-    lifecycleDetail = heartbeat.detail;
+    if (
+      bridge.state === "healthy" &&
+      (heartbeat.detail || "").includes("skipped=no_active_runtime_binding")
+    ) {
+      lifecycleState = proposalCount > 0 ? "analyzing" : "idle";
+      lifecycleSummary = proposalCount > 0 ? "Analyzing." : "Idle.";
+      lifecycleDetail =
+        proposalCount > 0
+          ? "Looking for useful suggestions."
+          : bridge.detail;
+    } else {
+      lifecycleState = "unavailable";
+      lifecycleSummary = "Unavailable.";
+      lifecycleDetail = heartbeat.detail;
+    }
   } else if (
     bridge.state === "error" ||
     bridge.state === "inactive" ||
@@ -10002,6 +10014,7 @@ async function startEmbeddedRuntime() {
         PROACTIVE_ENABLE_REMOTE_BRIDGE: "1",
         PROACTIVE_BRIDGE_BASE_URL: proactiveBaseUrl(),
         PYTHONDONTWRITEBYTECODE: "1",
+        HOLABOSS_AUTH_BASE_URL: AUTH_BASE_URL,
         HOLABOSS_AUTH_COOKIE: authCookieHeader() ?? "",
       },
       stdio: "pipe",

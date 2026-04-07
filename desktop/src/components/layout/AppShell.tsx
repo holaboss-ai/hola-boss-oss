@@ -1632,6 +1632,33 @@ function AppShellContent() {
     };
   }, [selectedWorkspace, selectedWorkspaceId]);
 
+  useEffect(() => {
+    if (!selectedWorkspaceId || !selectedWorkspace) {
+      return;
+    }
+
+    let cancelled = false;
+    void window.electronAPI.workspace
+      .getProactiveStatus(selectedWorkspace.id)
+      .then((response) => {
+        if (!cancelled) {
+          setProactiveStatus(response);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    runtimeConfig?.authTokenPresent,
+    runtimeConfig?.modelProxyBaseUrl,
+    runtimeConfig?.userId,
+    runtimeStatus?.status,
+    selectedWorkspace,
+    selectedWorkspaceId,
+  ]);
+
   const handleDismissUpdate = useCallback(() => {
     if (import.meta.env.DEV && devAppUpdatePreviewMode !== "off") {
       setDevAppUpdatePreviewMode("off");
