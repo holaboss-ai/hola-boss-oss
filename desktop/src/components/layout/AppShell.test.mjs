@@ -46,6 +46,7 @@ test("app shell polls runtime notifications and renders the toast stack", async 
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(source, /window\.electronAPI\.workspace\.listNotifications\(\s*null,\s*false,\s*\)/);
+  assert.match(source, /<NotificationToastStack[\s\S]*leadingToast=\{/);
   assert.match(source, /<NotificationToastStack[\s\S]*notifications=\{toastNotifications\}/);
   assert.match(source, /notifications=\{combinedNotifications\}/);
   assert.match(source, /notificationUnreadCount=\{notificationUnreadCount\}/);
@@ -64,8 +65,9 @@ test("app shell routes app updates through the shared notification system", asyn
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(source, /const appUpdateNotification = useMemo\(\(\) => \{/);
-  assert.match(source, /action_url: APP_UPDATE_NOTIFICATION_URL/);
-  assert.match(source, /activation_state: "dismissed"/);
+  assert.match(source, /function appUpdateChangelogUrl\(/);
+  assert.match(source, /action_url: actionUrl/);
+  assert.match(source, /activation_state: "read"/);
   assert.match(source, /await window\.electronAPI\.appUpdate\.dismiss\(/);
   assert.match(source, /await window\.electronAPI\.ui\.openExternalUrl\(targetUrl\);/);
   assert.match(source, /const combinedNotifications = useMemo\(\(\) => \{/);
@@ -97,7 +99,7 @@ test("app shell suspends the native browser view while the update reminder is vi
     /const shouldShowAppUpdateReminder = Boolean\([\s\S]*appUpdateStatus\.available \|\| appUpdateStatus\.downloaded[\s\S]*const shouldSuspendBrowserNativeView =/,
   );
   assert.match(source, /<BrowserPane[\s\S]*suspendNativeView=\{shouldSuspendBrowserNativeView\}/);
-  assert.match(source, /<UpdateReminder[\s\S]*onInstallNow=\{handleInstallUpdate\}/);
+  assert.match(source, /<NotificationToastStack[\s\S]*leadingToast=\{[\s\S]*<UpdateReminder[\s\S]*onInstallNow=\{handleInstallUpdate\}/);
 });
 
 test("app shell passes the app version label into the left rail", async () => {

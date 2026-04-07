@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 interface NotificationToastStackProps {
+  leadingToast?: React.ReactNode;
   notifications: RuntimeNotificationRecordPayload[];
   onCloseToast: (notificationId: string) => void;
   onActivateNotification: (notificationId: string) => void;
@@ -27,7 +28,7 @@ function toastAccentClassName(level: RuntimeNotificationLevel): string {
   return "bg-sky-500/15 text-sky-200 ring-sky-400/30";
 }
 
-function toastIcon(level: RuntimeNotificationLevel) {
+function toastIcon(level: RuntimeNotificationLevel): React.ReactNode {
   if (level === "success") {
     return <CircleCheck size={18} />;
   }
@@ -78,16 +79,18 @@ function priorityLabel(priority: RuntimeNotificationPriority): string {
 }
 
 export function NotificationToastStack({
+  leadingToast = null,
   notifications,
   onCloseToast,
   onActivateNotification,
 }: NotificationToastStackProps) {
-  if (notifications.length === 0) {
+  if (!leadingToast && notifications.length === 0) {
     return null;
   }
 
   return (
     <div className="pointer-events-none fixed bottom-4 left-4 z-[90] flex w-[min(380px,calc(100vw-2rem))] flex-col gap-3 sm:bottom-6 sm:left-6">
+      {leadingToast}
       {notifications.map((notification) => (
         <div
           key={notification.id}

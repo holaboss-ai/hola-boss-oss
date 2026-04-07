@@ -84,7 +84,8 @@ const DEFAULT_BROWSER_PANE_WIDTH = 460;
 const MIN_AGENT_CONTENT_WIDTH = 120;
 const UTILITY_PANE_RESIZER_WIDTH = 16;
 const APP_UPDATE_NOTIFICATION_SOURCE = "app_update";
-const APP_UPDATE_NOTIFICATION_URL = "https://www.holaboss.ai/explore";
+const APP_UPDATE_CHANGELOG_BASE_URL =
+  "https://github.com/holaboss-ai/holaboss-ai/releases/tag";
 const DEFAULT_NOTIFICATION_TOAST_DURATION_MS = 7_000;
 const CRITICAL_NOTIFICATION_TOAST_DURATION_MS = 12_000;
 
@@ -221,6 +222,16 @@ function appUpdateReleaseLabel(status: AppUpdateStatusPayload): string {
   return status.latestVersion || "latest";
 }
 
+function appUpdateChangelogUrl(
+  status: AppUpdateStatusPayload,
+): string | null {
+  const version = status.latestVersion?.trim();
+  if (!version) {
+    return null;
+  }
+  return `${APP_UPDATE_CHANGELOG_BASE_URL}/holaboss-${version}`;
+}
+
 function notificationMetadataString(
   notification: RuntimeNotificationRecordPayload,
   key: string,
@@ -274,6 +285,13 @@ function buildAppUpdateNotification(
   const releaseLabel = appUpdateReleaseLabel(status);
   const createdAt =
     status.publishedAt || status.lastCheckedAt || "1970-01-01T00:00:00.000Z";
+  const actionUrl = appUpdateChangelogUrl(status);
+  const title = status.downloaded
+    ? `Holaboss ${releaseLabel} ready to install`
+    : `Holaboss ${releaseLabel} is downloading`;
+  const message = status.downloaded
+    ? "Restart to install it now, or close later and let it apply on quit."
+    : "Background download in progress. Open the changelog for details.";
 
   return {
     id: appUpdateNotificationId(status),
@@ -281,15 +299,15 @@ function buildAppUpdateNotification(
     cronjob_id: null,
     source_type: APP_UPDATE_NOTIFICATION_SOURCE,
     source_label: "Desktop updates",
-    title: `Holaboss ${releaseLabel} is ready`,
-    message: `You are on ${status.currentVersion}. Click to download the newer stable desktop build.`,
+    title,
+    message,
     level: "info",
     priority: "critical",
     state,
     metadata: {
       notification_kind: APP_UPDATE_NOTIFICATION_SOURCE,
-      action_url: APP_UPDATE_NOTIFICATION_URL,
-      activation_state: "dismissed",
+      action_url: actionUrl,
+      activation_state: "read",
       update_release_tag: status.latestVersion ?? null,
     },
     read_at: state === "unread" ? null : createdAt,
@@ -766,7 +784,7 @@ function AppShellContent() {
   spaceVisibilityRef.current = spaceVisibility;
 
   const appUpdateNotification = useMemo(() => {
-    if (!appUpdateStatus?.available) {
+    if (!appUpdateStatus || (!appUpdateStatus.available && !appUpdateStatus.downloaded)) {
       return null;
     }
     const notificationId = appUpdateNotificationId(appUpdateStatus);
@@ -1137,28 +1155,6 @@ function AppShellContent() {
       // Notification polling should stay silent when the runtime is restarting.
     }
   }, [dismissNotificationToast]);
-
-  useEffect(() => {
-    if (!appUpdateNotification || appUpdateNotification.state !== "unread") {
-      return;
-    }
-    if (seenNotificationIdsRef.current.has(appUpdateNotification.id)) {
-      return;
-    }
-    seenNotificationIdsRef.current.add(appUpdateNotification.id);
-    setToastNotifications((current) => {
-      if (current.some((existing) => existing.id === appUpdateNotification.id)) {
-        return current;
-      }
-      return [appUpdateNotification, ...current].slice(0, 4);
-    });
-    if (!notificationToastTimeoutsRef.current.has(appUpdateNotification.id)) {
-      const timeoutId = window.setTimeout(() => {
-        dismissNotificationToast(appUpdateNotification.id);
-      }, notificationToastDurationMs(appUpdateNotification));
-      notificationToastTimeoutsRef.current.set(appUpdateNotification.id, timeoutId);
-    }
-  }, [appUpdateNotification, dismissNotificationToast]);
 
   useEffect(() => {
     const activeNotificationIds = new Set(
@@ -1770,6 +1766,17 @@ function AppShellContent() {
   const handleInstallUpdate = () => {
     void window.electronAPI.appUpdate.installNow();
   };
+
+  const handleOpenUpdateChangelog = useCallback(() => {
+    if (!appUpdateStatus) {
+      return;
+    }
+    const changelogUrl = appUpdateChangelogUrl(appUpdateStatus);
+    if (!changelogUrl) {
+      return;
+    }
+    void window.electronAPI.ui.openExternalUrl(changelogUrl);
+  }, [appUpdateStatus]);
   const toggleOperationsDrawer = () => {
     setOperationsDrawerOpen((open) => !open);
   };
@@ -2241,14 +2248,17 @@ function AppShellContent() {
         {isUtilityPaneResizing ? (
           <div className="absolute inset-0 z-30 cursor-col-resize" />
         ) : null}
-        {shouldShowAppUpdateReminder && appUpdateStatus ? (
-          <UpdateReminder
-            status={appUpdateStatus}
-            onDismiss={handleDismissUpdate}
-            onInstallNow={handleInstallUpdate}
-          />
-        ) : null}
         <NotificationToastStack
+          leadingToast={
+            shouldShowAppUpdateReminder && appUpdateStatus ? (
+              <UpdateReminder
+                status={appUpdateStatus}
+                onDismiss={handleDismissUpdate}
+                onInstallNow={handleInstallUpdate}
+                onOpenChangelog={handleOpenUpdateChangelog}
+              />
+            ) : null
+          }
           notifications={toastNotifications}
           onCloseToast={dismissNotificationToast}
           onActivateNotification={(notificationId) => {
