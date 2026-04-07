@@ -1427,6 +1427,7 @@ test("outputs, folders, and artifacts routes preserve local payload shape", asyn
     }
   });
   assert.equal(artifactResp.statusCode, 200);
+  assert.ok(typeof artifactResp.json().artifact.output_id === "string");
 
   const outputsResp = await app.inject({
     method: "GET",
@@ -2088,6 +2089,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
       httpPort: 18081,
       mcpPort: 13101,
       holabossUserId: "user-1",
+      workspaceId: "workspace-1",
       skipSetup: true,
       resolvedApp: {
         appId: "app-b",
@@ -2104,6 +2106,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
       action: "stop",
       appId: "app-b",
       appDir: path.join(workspaceDir, "apps", "app-b"),
+      workspaceId: "workspace-1",
       resolvedApp: {
         appId: "app-b",
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
@@ -2119,6 +2122,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
       action: "stop",
       appId: "app-b",
       appDir: path.join(workspaceDir, "apps", "app-b"),
+      workspaceId: "workspace-1",
       resolvedApp: {
         appId: "app-b",
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },

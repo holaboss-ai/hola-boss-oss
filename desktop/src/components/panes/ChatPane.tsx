@@ -368,7 +368,7 @@ function outputMetadataNumber(
 function outputBrowserFilterForOutput(
   output: WorkspaceOutputRecordPayload,
 ): ArtifactBrowserFilter {
-  if (outputMetadataString(output, "origin_type") === "app") {
+  if (outputMetadataString(output, "origin_type") === "app" || output.module_id) {
     return "apps";
   }
   const category = outputMetadataString(output, "category");
@@ -385,8 +385,12 @@ function outputBrowserFilterForOutput(
 }
 
 function outputKindLabel(output: WorkspaceOutputRecordPayload) {
-  if (outputMetadataString(output, "origin_type") === "app") {
-    return output.platform?.trim() || "App artifact";
+  if (outputMetadataString(output, "origin_type") === "app" || output.module_id) {
+    const artifactType = outputMetadataString(output, "artifact_type");
+    if (artifactType) {
+      return artifactType.charAt(0).toUpperCase() + artifactType.slice(1);
+    }
+    return "Artifact";
   }
   const category = outputMetadataString(output, "category");
   if (category === "image") {
@@ -3830,48 +3834,37 @@ function AssistantTurnOutputs({
   onOpenAllArtifacts: () => void;
 }) {
   return (
-    <div className="mt-4 flex flex-wrap gap-3">
+    <div className="mt-3 flex flex-col gap-2">
       {outputs.map((output) => (
         <button
           key={output.id}
           type="button"
           onClick={() => onOpenOutput?.(output)}
-          className="bg-muted flex min-w-[240px] max-w-full flex-1 items-center gap-3 rounded-[20px] border border-border/35 px-4 py-3 text-left transition hover:border-border/55 hover:bg-card/70 disabled:cursor-default disabled:hover:border-border/35 disabled:hover:bg-muted"
+          className="flex max-w-[360px] items-center gap-3 rounded-xl border border-border/50 bg-card px-3.5 py-2.5 text-left transition-colors hover:bg-accent disabled:cursor-default disabled:hover:bg-card"
           disabled={!onOpenOutput}
         >
           <OutputArtifactIcon output={output} />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[14px] font-medium text-foreground">
+            <div className="truncate text-[13px] font-medium text-foreground">
               {output.title || "Untitled artifact"}
             </div>
-            <div className="truncate text-[12px] text-muted-foreground">
-              {outputSecondaryLabel(output)}
+            <div className="text-[11px] text-muted-foreground">
+              {outputKindLabel(output)}
             </div>
-            {outputChangeLabel(output) ? (
-              <div className="mt-1 text-[11px] uppercase tracking-[0.12em] text-muted-foreground/70">
-                {outputChangeLabel(output)}
-              </div>
-            ) : null}
           </div>
         </button>
       ))}
 
-      {sessionOutputs.length > 0 ? (
+      {sessionOutputs.length > 1 ? (
         <button
           type="button"
           onClick={onOpenAllArtifacts}
-          className="bg-card flex min-w-[240px] max-w-full flex-1 items-center gap-3 rounded-[20px] border border-border/35 px-4 py-3 text-left transition hover:border-border/55 hover:bg-card/80"
+          className="flex max-w-[360px] items-center gap-3 rounded-xl border border-border/50 px-3.5 py-2.5 text-left text-muted-foreground transition-colors hover:bg-accent"
         >
-          <FileText size={16} className="shrink-0 text-muted-foreground" />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-[14px] font-medium text-foreground">
-              View all artifacts in this session
-            </div>
-            <div className="truncate text-[12px] text-muted-foreground">
-              {sessionOutputs.length} artifact
-              {sessionOutputs.length === 1 ? "" : "s"}
-            </div>
-          </div>
+          <FileText size={15} className="shrink-0" />
+          <span className="text-[13px]">
+            View all artifacts ({sessionOutputs.length})
+          </span>
         </button>
       ) : null}
     </div>

@@ -29,6 +29,7 @@ export interface AppLifecycleStartParams {
   httpPort?: number;
   mcpPort?: number;
   holabossUserId?: string;
+  workspaceId?: string;
   resolvedApp?: ResolvedApplicationRuntime;
   skipSetup?: boolean;
   spawnImpl?: SpawnLike;
@@ -45,6 +46,7 @@ export interface AppLifecycleExecutorLike {
   stopApp(params: {
     appId: string;
     appDir?: string;
+    workspaceId?: string;
     resolvedApp?: ResolvedApplicationRuntime;
   }): Promise<AppLifecycleActionResult>;
   shutdownAll(params?: LifecycleShutdownParams): Promise<LifecycleShutdownResult>;
@@ -67,6 +69,12 @@ type ShellLifecyclePorts = { http: number; mcp: number };
 const shellLifecycleProcesses = new Map<string, ChildLike>();
 const shellLifecyclePorts = new Map<string, ShellLifecyclePorts>();
 const appStartOperations = new Map<string, Promise<AppLifecycleActionResult>>();
+
+/** Build a composite key for the in-memory process/port maps so that
+ *  multiple workspaces running the same appId don't collide. */
+function lifecycleMapKey(workspaceId: string | undefined, appId: string): string {
+  return workspaceId ? `${workspaceId}:${appId}` : appId;
+}
 
 export function appBuildHasCompletedSetup(status: string | null | undefined): boolean {
   const normalized = (status ?? "").trim().toLowerCase();
@@ -247,6 +255,7 @@ function buildShellLifecycleEnv(
     httpPort?: number;
     mcpPort?: number;
     holabossUserId?: string;
+    workspaceId?: string;
     resolvedApp?: ResolvedApplicationRuntime;
     integrationEnv?: NodeJS.ProcessEnv;
   }
@@ -267,6 +276,14 @@ function buildShellLifecycleEnv(
     params.resolvedApp.envContract.includes("HOLABOSS_USER_ID")
   ) {
     env.HOLABOSS_USER_ID = params.holabossUserId;
+  }
+  if (
+    params.workspaceId &&
+    params.resolvedApp &&
+    params.resolvedApp.envContract.includes("HOLABOSS_WORKSPACE_ID") &&
+    !env.HOLABOSS_WORKSPACE_ID
+  ) {
+    env.HOLABOSS_WORKSPACE_ID = params.workspaceId;
   }
   return env;
 }
@@ -321,12 +338,22 @@ async function killTrackedProcess(proc: ChildLike, timeoutMs: number): Promise<v
 }
 
 async function killAllocatedPortListeners(appId: string, appDir: string, ports: ShellLifecyclePorts): Promise<void> {
-  const killTerms = [ports.http, ports.mcp].map((port) => `kill $(lsof -t -i :${port} 2>/dev/null) 2>/dev/null || true`);
+  await killPortListeners([ports.http, ports.mcp], appDir);
+  shellLifecyclePorts.delete(appId);
+}
+
+/** Kill any process listening on the given ports. Exported for use as a
+ *  safety net during workspace deletion and orphan cleanup. */
+export async function killPortListeners(ports: number[], cwd?: string): Promise<void> {
+  const validPorts = ports.filter((p) => p > 0);
+  if (validPorts.length === 0) {
+    return;
+  }
+  const killTerms = validPorts.map((port) => `kill $(lsof -t -i :${port} 2>/dev/null) 2>/dev/null || true`);
   await runSpawn(spawn, "/bin/bash", ["-lc", killTerms.join(" ; ")], {
-    cwd: appDir,
+    cwd: cwd ?? process.cwd(),
     env: process.env
   });
-  shellLifecyclePorts.delete(appId);
 }
 
 export async function findComposeCommand(spawnImpl: SpawnLike = spawn): Promise<string[] | null> {
@@ -551,6 +578,7 @@ export async function startShellLifecycleAppTarget(params: {
   httpPort: number;
   mcpPort: number;
   holabossUserId?: string;
+  workspaceId?: string;
   integrationEnv?: NodeJS.ProcessEnv;
   skipSetup?: boolean;
   spawnImpl?: SpawnLike;
@@ -576,14 +604,15 @@ export async function startShellLifecycleAppTarget(params: {
       await runLifecycleSetup(params);
     }
 
+    const mapKey = lifecycleMapKey(params.workspaceId, params.appId);
     const child = spawnImpl(lifecycleStart, [], {
       cwd: params.appDir,
       env: buildShellLifecycleEnv(params),
       shell: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
-    shellLifecycleProcesses.set(params.appId, child);
-    shellLifecyclePorts.set(params.appId, { http: params.httpPort, mcp: params.mcpPort });
+    shellLifecycleProcesses.set(mapKey, child);
+    shellLifecyclePorts.set(mapKey, { http: params.httpPort, mcp: params.mcpPort });
 
     await waitHealthy(params);
     return {
@@ -602,6 +631,7 @@ export async function startSubprocessAppTarget(params: {
   httpPort: number;
   mcpPort: number;
   holabossUserId?: string;
+  workspaceId?: string;
   integrationEnv?: NodeJS.ProcessEnv;
   skipSetup?: boolean;
   spawnImpl?: SpawnLike;
@@ -627,14 +657,15 @@ export async function startSubprocessAppTarget(params: {
       await runLifecycleSetup(params);
     }
 
+    const mapKey = lifecycleMapKey(params.workspaceId, params.appId);
     const child = spawnImpl(startCommand, [], {
       cwd: params.appDir,
       env: buildShellLifecycleEnv(params),
       shell: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
-    shellLifecycleProcesses.set(params.appId, child);
-    shellLifecyclePorts.set(params.appId, { http: params.httpPort, mcp: params.mcpPort });
+    shellLifecycleProcesses.set(mapKey, child);
+    shellLifecyclePorts.set(mapKey, { http: params.httpPort, mcp: params.mcpPort });
 
     await waitHealthy(params);
     return {
@@ -650,11 +681,13 @@ export async function stopShellLifecycleAppTarget(params: {
   appId: string;
   appDir: string;
   resolvedApp: ResolvedApplicationRuntime;
+  workspaceId?: string;
   spawnImpl?: SpawnLike;
 }): Promise<AppLifecycleActionResult> {
   const spawnImpl = params.spawnImpl ?? spawn;
   const lifecycleStop = params.resolvedApp.lifecycle.stop.trim();
-  const trackedProc = shellLifecycleProcesses.get(params.appId) ?? null;
+  const mapKey = lifecycleMapKey(params.workspaceId, params.appId);
+  const trackedProc = shellLifecycleProcesses.get(mapKey) ?? null;
   let stopError: Error | null = null;
 
   if (lifecycleStop) {
@@ -695,8 +728,8 @@ export async function stopShellLifecycleAppTarget(params: {
   if (trackedProc) {
     await killTrackedProcess(trackedProc, 10000);
   }
-  shellLifecycleProcesses.delete(params.appId);
-  const ports = shellLifecyclePorts.get(params.appId);
+  shellLifecycleProcesses.delete(mapKey);
+  const ports = shellLifecyclePorts.get(mapKey);
   if (ports) {
     await killAllocatedPortListeners(params.appId, params.appDir, ports);
   }
@@ -716,13 +749,15 @@ export async function stopShellLifecycleAppTarget(params: {
 export async function stopSubprocessAppTarget(params: {
   appId: string;
   appDir: string;
+  workspaceId?: string;
 }): Promise<AppLifecycleActionResult> {
-  const trackedProc = shellLifecycleProcesses.get(params.appId) ?? null;
+  const mapKey = lifecycleMapKey(params.workspaceId, params.appId);
+  const trackedProc = shellLifecycleProcesses.get(mapKey) ?? null;
   if (trackedProc) {
     await killTrackedProcess(trackedProc, 10000);
   }
-  shellLifecycleProcesses.delete(params.appId);
-  const ports = shellLifecyclePorts.get(params.appId);
+  shellLifecycleProcesses.delete(mapKey);
+  const ports = shellLifecyclePorts.get(mapKey);
   if (ports) {
     await killAllocatedPortListeners(params.appId, params.appDir, ports);
   }
@@ -835,6 +870,7 @@ export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
         httpPort: params.httpPort,
         mcpPort: params.mcpPort,
         holabossUserId: params.holabossUserId,
+        workspaceId: params.workspaceId,
         skipSetup: params.skipSetup,
         integrationEnv,
         spawnImpl,
@@ -852,6 +888,7 @@ export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
         httpPort: params.httpPort,
         mcpPort: params.mcpPort,
         holabossUserId: params.holabossUserId,
+        workspaceId: params.workspaceId,
         skipSetup: params.skipSetup,
         integrationEnv,
         spawnImpl,
@@ -864,6 +901,7 @@ export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
   async stopApp(params: {
     appId: string;
     appDir?: string;
+    workspaceId?: string;
     resolvedApp?: ResolvedApplicationRuntime;
   }): Promise<AppLifecycleActionResult> {
     if (hasNativeComposeLifecycle(params)) {
@@ -876,13 +914,15 @@ export class RuntimeAppLifecycleExecutor implements AppLifecycleExecutorLike {
       return await stopShellLifecycleAppTarget({
         appId: params.appId,
         appDir: params.appDir,
+        workspaceId: params.workspaceId,
         resolvedApp: params.resolvedApp
       });
     }
     if (hasNativeStartCommandLifecycle(params)) {
       return await stopSubprocessAppTarget({
         appId: params.appId,
-        appDir: params.appDir
+        appDir: params.appDir,
+        workspaceId: params.workspaceId
       });
     }
     return {

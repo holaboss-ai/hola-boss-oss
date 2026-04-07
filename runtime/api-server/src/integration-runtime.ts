@@ -122,6 +122,7 @@ export function resolveIntegrationRuntime(params: {
 
   env.HOLABOSS_INTEGRATION_BROKER_URL = brokerUrl;
   env.WORKSPACE_API_URL = workspaceApiUrl;
+  env.HOLABOSS_WORKSPACE_ID = workspaceId;
   env.HOLABOSS_APP_GRANT = createSignedGrant(workspaceId, params.appId);
 
   for (const requirement of requirements) {
