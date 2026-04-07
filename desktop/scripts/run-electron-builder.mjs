@@ -4,7 +4,12 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopRoot = path.resolve(scriptDir, "..");
-const electronBuilderBin = path.join(desktopRoot, "node_modules", ".bin", process.platform === "win32" ? "electron-builder.cmd" : "electron-builder");
+const electronBuilderCli = path.join(
+  desktopRoot,
+  "node_modules",
+  "electron-builder",
+  "cli.js",
+);
 const electronBuilderConfigPath = path.join(desktopRoot, "electron-builder.config.cjs");
 
 function inferRuntimePlatform(builderArgs) {
@@ -47,7 +52,7 @@ if (buildVersion) {
   process.stdout.write(`[electron-builder] using app version ${buildVersion}\n`);
 }
 
-const child = spawn(electronBuilderBin, builderArgs, {
+const child = spawn(process.execPath, [electronBuilderCli, ...builderArgs], {
   cwd: desktopRoot,
   env: {
     ...process.env,

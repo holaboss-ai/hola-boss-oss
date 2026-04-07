@@ -29,6 +29,9 @@ function resolveRuntimePlatform() {
 const runtimePlatform = resolveRuntimePlatform();
 const runtimeBundleDir = `runtime-${runtimePlatform}`;
 const runtimeBundlePath = path.join(__dirname, "out", runtimeBundleDir);
+const windowsSigningConfigured = Boolean(
+  (process.env.WIN_CSC_LINK || process.env.CSC_LINK || "").trim(),
+);
 
 module.exports = {
   appId: "com.holaboss.workspace",
@@ -85,7 +88,7 @@ module.exports = {
   ],
   win: {
     icon: "resources/icon.ico",
-    signAndEditExecutable: false,
+    signAndEditExecutable: windowsSigningConfigured,
     target: [
       {
         target: "nsis",

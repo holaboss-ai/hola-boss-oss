@@ -138,6 +138,10 @@ npm run dist:win:local
 
 Use `dist:win` with a staged or downloaded `out/runtime-windows/` bundle. Use `dist:win:local` on a Windows host to build and stage a native local runtime bundle first, then produce a Windows NSIS installer.
 
+Both Windows packaging commands also write `out/holaboss-config.json` from your configured desktop environment before building the installer.
+
+This produces a Windows NSIS installer `.exe` in `out/release/`.
+
 Output:
 - [Holaboss Workspace.app](/Users/jeffrey/Desktop/hola-boss-oss/desktop/out/release/mac-arm64/Holaboss%20Workspace.app)
 
@@ -191,6 +195,8 @@ Notes:
 ### Signed Product Release
 
 Signed macOS distribution is handled by the manual `.github/workflows/release-macos-desktop.yml` workflow. Normal pushes continue to run CI and publish runtime bundles separately; the signed DMG is only built when you explicitly trigger the desktop release workflow.
+
+Windows distribution is handled by the manual `.github/workflows/release-windows-desktop.yml` workflow. It builds the Windows installer on `windows-latest`, uploads the produced NSIS installer to the chosen GitHub release, and will sign the installer when `WINDOWS_CERTIFICATE` and `WINDOWS_CERTIFICATE_PASSWORD` secrets are configured. Without those secrets, the workflow still produces an unsigned installer.
 
 Release channel policy:
 - runtime-only bundle releases publish under `holaboss-runtime-*` and are treated as prereleases
