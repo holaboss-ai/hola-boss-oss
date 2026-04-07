@@ -16,6 +16,7 @@ interface LeftNavigationRailProps {
   installedApps?: WorkspaceInstalledAppDefinition[];
   activeAppId?: string | null;
   onSelectApp?: (appId: string) => void;
+  appVersionLabel?: string;
 }
 
 const PRIMARY_ITEMS: Array<{
@@ -45,6 +46,7 @@ export function LeftNavigationRail({
   installedApps = [],
   activeAppId = null,
   onSelectApp,
+  appVersionLabel = "",
 }: LeftNavigationRailProps) {
   return (
     <aside className="relative hidden h-full min-h-0 w-15 flex-col overflow-visible rounded-xl border border-border bg-card/80 px-2 py-3 shadow-md backdrop-blur-sm lg:flex">
@@ -130,6 +132,13 @@ export function LeftNavigationRail({
           </>
         ) : null}
       </div>
+      {appVersionLabel ? (
+        <div className="mt-2 flex w-full justify-center pt-1">
+          <div className="pointer-events-none select-none text-center text-[10px] font-medium tracking-[0.16em] text-muted-foreground/28">
+            v{appVersionLabel}
+          </div>
+        </div>
+      ) : null}
     </aside>
   );
 }

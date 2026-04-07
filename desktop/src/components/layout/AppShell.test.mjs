@@ -63,9 +63,18 @@ test("app shell suspends the native browser view while the update reminder is vi
 
   assert.match(
     source,
-    /const shouldSuspendBrowserNativeView =[\s\S]*Boolean\(appUpdateStatus\?\.available\);/,
+    /const shouldShowAppUpdateReminder = Boolean\([\s\S]*appUpdateStatus\.available \|\| appUpdateStatus\.downloaded[\s\S]*const shouldSuspendBrowserNativeView =/,
   );
   assert.match(source, /<BrowserPane[\s\S]*suspendNativeView=\{shouldSuspendBrowserNativeView\}/);
+  assert.match(source, /<UpdateReminder[\s\S]*onInstallNow=\{handleInstallUpdate\}/);
+});
+
+test("app shell passes the app version label into the left rail", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /const appVersionLabel = appUpdateStatus\?\.currentVersion\?\.trim\(\) \|\| "";/);
+  assert.match(source, /<LeftNavigationRail[\s\S]*appVersionLabel=\{appVersionLabel\}/);
+  assert.doesNotMatch(source, /absolute bottom-3 left-4/);
 });
 
 test("app shell requests remote task proposal generation without a separate success banner", async () => {
