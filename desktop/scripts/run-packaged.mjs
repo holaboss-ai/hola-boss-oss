@@ -28,7 +28,7 @@ const binaryPath = await firstExisting(candidates);
 
 if (!binaryPath) {
   console.error("No packaged app binary found.");
-  console.error("Run `npm run dist:mac` first, or set HOLABOSS_PACKAGED_APP_BIN to an executable path.");
+  console.error("Run `npm run dist:mac` or `npm run dist:win` first, or set HOLABOSS_PACKAGED_APP_BIN to an executable path.");
   process.exit(1);
 }
 

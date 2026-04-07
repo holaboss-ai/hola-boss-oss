@@ -1,17 +1,26 @@
 import { access, readdir, stat } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+import {
+  localRuntimePackagerFileNames,
+  resolveRuntimePlatform,
+  runtimeBundleDirName,
+  runtimeBundleRequiredPathGroups
+} from "./runtime-bundle.mjs";
+
 const desktopRoot = process.cwd();
 const repoRoot = path.resolve(desktopRoot, "..");
-const runtimeRoot = path.join(desktopRoot, "out", "runtime-macos");
-const requiredRuntimePaths = [
-  path.join(runtimeRoot, "bin", "sandbox-runtime"),
-  path.join(runtimeRoot, "package-metadata.json"),
-  path.join(runtimeRoot, "node-runtime", "node_modules", ".bin", "node"),
-  path.join(runtimeRoot, "runtime", "metadata.json"),
-  path.join(runtimeRoot, "runtime", "api-server", "dist", "index.mjs")
-];
+const runtimePlatform = resolveRuntimePlatform();
+const runtimeRoot = path.join(desktopRoot, "out", runtimeBundleDirName(runtimePlatform));
+const requiredRuntimePathGroups = runtimeBundleRequiredPathGroups(runtimePlatform).map((relativePaths) =>
+  relativePaths.map((relativePath) => path.join(runtimeRoot, relativePath))
+);
+const localPackagerPath = localRuntimePackagerFileNames(runtimePlatform)
+  .map((fileName) => path.join(repoRoot, "runtime", "deploy", fileName))
+  .find((candidatePath) => existsSync(candidatePath));
+const canPrepareLocalRuntime = Boolean(localPackagerPath);
 const runtimeSourceInputs = [
   path.join(repoRoot, "runtime", "api-server", "src"),
   path.join(repoRoot, "runtime", "api-server", "package.json"),
@@ -31,17 +40,33 @@ const runtimeSourceInputs = [
   path.join(repoRoot, "runtime", "harnesses", "src"),
   path.join(repoRoot, "runtime", "harnesses", "package.json"),
   path.join(repoRoot, "runtime", "deploy", "bootstrap"),
+  path.join(repoRoot, "runtime", "deploy", "build_runtime_root.mjs"),
   path.join(repoRoot, "runtime", "deploy", "build_runtime_root.sh"),
-  path.join(repoRoot, "runtime", "deploy", "package_macos_runtime.sh")
+  path.join(repoRoot, "runtime", "deploy", "prune_packaged_tree.mjs"),
+  path.join(repoRoot, "runtime", "deploy", "prune_packaged_tree.sh"),
+  path.join(repoRoot, "runtime", "deploy", "stage_python_runtime.mjs"),
+  localPackagerPath
 ];
 
-async function runtimeBundleExists() {
-  try {
-    await Promise.all(requiredRuntimePaths.map((targetPath) => access(targetPath)));
-    return true;
-  } catch {
-    return false;
+async function firstAccessiblePath(paths) {
+  for (const targetPath of paths) {
+    try {
+      await access(targetPath);
+      return targetPath;
+    } catch {
+      // Continue looking for a valid path in the requirement group.
+    }
   }
+  return null;
+}
+
+async function runtimeBundleExists() {
+  for (const requiredPaths of requiredRuntimePathGroups) {
+    if (!(await firstAccessiblePath(requiredPaths))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 async function newestMtime(targetPath) {
@@ -72,16 +97,20 @@ async function runtimeBundleIsStale() {
 }
 
 const bundleExists = await runtimeBundleExists();
-const bundleStale = bundleExists ? await runtimeBundleIsStale() : true;
+const bundleStale = canPrepareLocalRuntime && bundleExists ? await runtimeBundleIsStale() : false;
 
 if (!bundleExists || bundleStale) {
   if (bundleStale && bundleExists) {
     console.log("[ensure-runtime-bundle] runtime bundle is older than local runtime sources; rebuilding.");
   }
-  const result = spawnSync("npm", ["run", "prepare:runtime:local"], {
+  const prepareScript = canPrepareLocalRuntime ? "prepare:runtime:local" : "prepare:runtime";
+  const result = spawnSync("npm", ["run", prepareScript], {
     cwd: desktopRoot,
     stdio: "inherit",
-    env: process.env
+    env: {
+      ...process.env,
+      HOLABOSS_RUNTIME_PLATFORM: runtimePlatform,
+    }
   });
   process.exit(result.status ?? 1);
 }

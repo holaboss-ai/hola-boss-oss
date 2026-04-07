@@ -103,6 +103,8 @@ interface ChatModelOption {
   label: string;
   selectedLabel?: string;
   searchText?: string;
+  disabled?: boolean;
+  statusLabel?: string;
 }
 
 interface ChatModelOptionGroup {
@@ -656,6 +658,52 @@ function extractMcpErrorText(result: unknown): string {
   return "";
 }
 
+function extractToolResultText(result: unknown, maxLength = 200): string {
+  if (!isRecord(result)) {
+    return "";
+  }
+  const content = Array.isArray(result.content) ? result.content : [];
+  for (const part of content) {
+    if (
+      isRecord(part) &&
+      part.type === "text" &&
+      typeof part.text === "string"
+    ) {
+      const text = part.text.trim();
+      if (text) {
+        return summarizeUnknown(text, maxLength);
+      }
+    }
+  }
+  return "";
+}
+
+function extractToolErrorText(payload: Record<string, unknown>): string {
+  const mcpErrorText = extractMcpErrorText(payload.result);
+  if (mcpErrorText) {
+    return mcpErrorText;
+  }
+
+  const resultText = extractToolResultText(payload.result);
+  if (resultText) {
+    return resultText;
+  }
+
+  if (typeof payload.error === "string") {
+    const text = payload.error.trim();
+    if (text) {
+      return summarizeUnknown(text, 200);
+    }
+  }
+
+  const resultSummary = summarizeUnknown(payload.result, 200);
+  if (resultSummary && resultSummary !== "true" && resultSummary !== "false") {
+    return resultSummary;
+  }
+
+  return "";
+}
+
 function isIntegrationError(
   text: string,
 ): { provider: string; action: string } | null {
@@ -703,15 +751,15 @@ function toolTraceStepFromPayload(
   const argsSummary = summarizeUnknown(payload.tool_args);
   const resultSummary = summarizeUnknown(payload.result);
   const errorSummary = summarizeUnknown(payload.error);
-  const mcpErrorText = extractMcpErrorText(payload.result);
+  const toolErrorText = extractToolErrorText(payload);
 
   if (phase === "started") {
     if (argsSummary) {
       details.push(argsSummary);
     }
   } else if (TOOL_TRACE_TERMINAL_PHASES.has(phase)) {
-    if (isError && mcpErrorText) {
-      details.push(mcpErrorText);
+    if (isError && toolErrorText) {
+      details.push(toolErrorText);
     } else if (isError) {
       if (errorSummary && errorSummary !== "true" && errorSummary !== "false") {
         details.push(errorSummary);
@@ -1442,6 +1490,9 @@ export function ChatPane({
     const currentRuntimeStatus = runtimeStateStatus(
       currentRuntimeState?.status,
     );
+    const currentRuntimeInputId = (
+      currentRuntimeState?.current_input_id || ""
+    ).trim();
     const hasAssistantMessage = nextMessages.some(
       (message) => message.role === "assistant",
     );
@@ -1470,7 +1521,8 @@ export function ChatPane({
         {
           sessionId: nextSessionId,
           workspaceId,
-          includeHistory: true,
+          inputId: currentRuntimeInputId || undefined,
+          includeHistory: Boolean(currentRuntimeInputId),
           stopOnTerminal: true,
         },
       );
@@ -1495,8 +1547,8 @@ export function ChatPane({
           ? "stream_requested_onboarding_bootstrap"
           : "stream_requested_existing_run",
         detail: shouldAttachOnboardingBootstrapStream
-          ? "attached to in-flight onboarding opener"
-          : "attached to in-flight session run",
+          ? `attached to in-flight onboarding opener input=${currentRuntimeInputId || "latest"}`
+          : `attached to in-flight session run input=${currentRuntimeInputId || "latest"}`,
       });
     } else if (!activeStreamIdRef.current && !pendingInputIdRef.current) {
       setIsResponding(false);
@@ -2965,8 +3017,16 @@ export function ChatPane({
   const configuredProviderModelGroups =
     runtimeConfig?.providerModelGroups ?? [];
   const visibleConfiguredProviderModelGroups = configuredProviderModelGroups
+    .filter(
+      (providerGroup) =>
+        isSignedIn || !isHolabossProviderId(providerGroup.providerId),
+    )
     .map((providerGroup) => ({
       ...providerGroup,
+      pending:
+        isSignedIn &&
+        isHolabossProviderId(providerGroup.providerId) &&
+        !holabossProxyModelsAvailable,
       models: providerGroup.models.filter((model) => {
         const normalizedToken = model.token.trim();
         if (!normalizedToken || isDeprecatedChatModel(normalizedToken)) {
@@ -2980,15 +3040,16 @@ export function ChatPane({
         ) {
           return false;
         }
-        if (holabossProxyModelsAvailable) {
-          return true;
-        }
-        return !isHolabossProviderId(providerGroup.providerId);
+        return true;
       }),
     }))
     .filter((providerGroup) => providerGroup.models.length > 0);
   const hasConfiguredProviderCatalog =
     visibleConfiguredProviderModelGroups.length > 0;
+  const hasPendingConfiguredProviderCatalog =
+    visibleConfiguredProviderModelGroups.some(
+      (providerGroup) => providerGroup.pending,
+    );
   const providerModelLabelCounts = new Map<string, number>();
   for (const providerGroup of visibleConfiguredProviderModelGroups) {
     for (const model of providerGroup.models) {
@@ -3025,12 +3086,16 @@ export function ChatPane({
                 ? `${providerGroup.providerLabel} · ${modelLabel}`
                 : modelLabel,
               searchText: `${providerGroup.providerLabel} ${modelLabel} ${model.token}`,
+              disabled: providerGroup.pending,
+              statusLabel: providerGroup.pending ? "Pending" : undefined,
             };
           }),
         }))
       : [];
   const availableChatModelOptions = hasConfiguredProviderCatalog
-    ? availableChatModelOptionGroups.flatMap((group) => group.options)
+    ? availableChatModelOptionGroups.flatMap((group) =>
+        group.options.filter((option) => !option.disabled),
+      )
     : requiresModelProviderSetup
       ? []
       : Array.from(
@@ -3094,6 +3159,8 @@ export function ChatPane({
   const modelSelectionUnavailableReason =
     availableChatModelOptions.length > 0
       ? ""
+      : hasPendingConfiguredProviderCatalog
+        ? "Holaboss models are finishing setup. Refresh runtime binding or use another provider."
       : "No models available. Configure a provider to start chatting.";
   const composerBaseDisabledReason =
     baseComposerDisabledReason ||
@@ -3265,7 +3332,7 @@ export function ChatPane({
 
         {showMainSessionReturn ? (
           <div className="shrink-0 px-4 pt-3 sm:px-5">
-            <div className="bg-muted/72 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-border/55 px-3 py-2.5">
+            <div className="bg-muted/72 flex flex-col items-start gap-3 rounded-[16px] border border-border/55 px-3 py-2.5">
               <div className="min-w-0">
                 <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
                   Sub-session
@@ -3279,7 +3346,7 @@ export function ChatPane({
                 type="button"
                 onClick={() => void returnToMainSession()}
                 disabled={isLoadingHistory}
-                className="inline-flex shrink-0 items-center rounded-full border border-border/60 bg-background px-3 py-1.5 text-[12px] font-medium text-foreground transition hover:border-primary/35 hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex items-center rounded-full border border-border/60 bg-background px-3 py-1.5 text-[12px] font-medium text-foreground transition hover:border-primary/35 hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Back to main session
               </button>
@@ -4161,10 +4228,21 @@ function TraceStepGroup({
   onToggleStep: (stepId: string) => void;
 }) {
   const [groupExpanded, setGroupExpanded] = useState(false);
-  const completedCount = steps.filter((s) => s.status === "completed").length;
-  const errorCount = steps.filter((s) => s.status === "error").length;
   const runningCount = steps.filter((s) => s.status === "running").length;
-  const isAllDone = runningCount === 0 && steps.length > 0;
+  const terminalErrorCount = steps.filter(
+    (step) => step.kind === "phase" && step.status === "error",
+  ).length;
+  const recoveredErrorCount = steps.filter(
+    (step) => step.kind === "tool" && step.status === "error",
+  ).length;
+  const groupHasTerminalError = terminalErrorCount > 0;
+  const stepCount = steps.length;
+  const stepLabel = `${stepCount} step${stepCount === 1 ? "" : "s"}`;
+  const summarySuffix = groupHasTerminalError
+    ? ` (${terminalErrorCount} failed)`
+    : recoveredErrorCount > 0
+      ? ` (${recoveredErrorCount} recovered)`
+      : "";
 
   return (
     <div className="mt-3">
@@ -4175,16 +4253,16 @@ function TraceStepGroup({
       >
         {runningCount > 0 ? (
           <Loader2 size={13} className="animate-spin text-muted-foreground" />
-        ) : errorCount > 0 ? (
+        ) : groupHasTerminalError ? (
           <AlertTriangle size={13} className="text-destructive" />
         ) : (
           <Check size={13} className="text-emerald-500" />
         )}
         <span>
           {runningCount > 0
-            ? `Running ${steps.length} tool${steps.length === 1 ? "" : "s"}...`
-            : `Used ${steps.length} tool${steps.length === 1 ? "" : "s"}`}
-          {errorCount > 0 ? ` (${errorCount} failed)` : ""}
+            ? `Running ${stepLabel}...`
+            : `Used ${stepLabel}`}
+          {summarySuffix}
         </span>
         <ChevronDown
           size={12}
@@ -4431,7 +4509,7 @@ function ModelCombobox({
   const displayLabel =
     selectedModel === CHAT_MODEL_USE_RUNTIME_DEFAULT
       ? `Auto (${runtimeDefaultModelLabel})`
-      : selectedModelLabel;
+      : selectedModelLabel || "Select model";
 
   const hasFilteredOptions =
     Boolean(filteredAutoOption) ||
@@ -4439,11 +4517,16 @@ function ModelCombobox({
 
   const renderOption = (option: ChatModelOption) => {
     const active = option.value === selectedModel;
+    const optionDisabled = Boolean(option.disabled);
     return (
       <button
         key={option.value}
         type="button"
+        disabled={optionDisabled}
         onClick={() => {
+          if (optionDisabled) {
+            return;
+          }
           onModelChange(option.value);
           setOpen(false);
           setQuery("");
@@ -4451,11 +4534,19 @@ function ModelCombobox({
         className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs transition-colors ${
           active
             ? "bg-accent text-accent-foreground"
+            : optionDisabled
+              ? "cursor-not-allowed text-muted-foreground/70"
             : "text-foreground hover:bg-accent/50"
         }`}
       >
         <span className="truncate">{option.label}</span>
-        {active ? <Check size={13} className="shrink-0 text-primary" /> : null}
+        {active ? (
+          <Check size={13} className="shrink-0 text-primary" />
+        ) : option.statusLabel ? (
+          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/85">
+            {option.statusLabel}
+          </span>
+        ) : null}
       </button>
     );
   };
@@ -4560,9 +4651,15 @@ function Composer({
 }: ComposerProps) {
   const [isDragActive, setIsDragActive] = useState(false);
   const noAvailableModels =
-    !runtimeDefaultModelAvailable && modelOptions.length === 0;
+    !runtimeDefaultModelAvailable &&
+    modelOptions.length === 0 &&
+    modelOptionGroups.length === 0;
   const inputDisabled = disabled || isResponding;
+  const visibleModelOptions = modelOptionGroups.flatMap((group) => group.options);
   const selectedModelOptionLabel =
+    visibleModelOptions.find((option) => option.value === selectedModel)
+      ?.selectedLabel ??
+    visibleModelOptions.find((option) => option.value === selectedModel)?.label ??
     modelOptions.find((option) => option.value === selectedModel)
       ?.selectedLabel ??
     modelOptions.find((option) => option.value === selectedModel)?.label ??

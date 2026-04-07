@@ -1098,18 +1098,80 @@ test("cronjobs round trip supports create, list, update, get, and delete", () =>
     initiatedBy: "workspace_agent",
     cron: "0 9 * * *",
     description: "Daily check",
+    instruction: "Say hello",
     delivery: { mode: "announce", channel: "session_run", to: null }
   });
   const listed = store.listCronjobs({ workspaceId: "workspace-1" });
   const fetched = store.getCronjob(job.id);
-  const updated = store.updateCronjob({ jobId: job.id, description: "Updated check" });
+  const updated = store.updateCronjob({ jobId: job.id, description: "Updated check", instruction: "Say hello loudly" });
   const deleted = store.deleteCronjob(job.id);
 
   assert.equal(listed.length, 1);
   assert.ok(fetched);
+  assert.equal(fetched.instruction, "Say hello");
   assert.ok(updated);
   assert.equal(updated.description, "Updated check");
+  assert.equal(updated.instruction, "Say hello loudly");
   assert.equal(deleted, true);
+  store.close();
+});
+
+test("cronjob schema migration backfills instruction from legacy description", () => {
+  const root = makeTempDir("hb-state-store-");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceRoot = path.join(root, "workspace");
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  const db = new Database(dbPath);
+  db.exec(`
+    CREATE TABLE cronjobs (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        initiated_by TEXT NOT NULL,
+        name TEXT NOT NULL DEFAULT '',
+        cron TEXT NOT NULL,
+        description TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        delivery TEXT NOT NULL,
+        metadata TEXT NOT NULL DEFAULT '{}',
+        last_run_at TEXT,
+        next_run_at TEXT,
+        run_count INTEGER NOT NULL DEFAULT 0,
+        last_status TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+  `);
+  db.prepare(`
+    INSERT INTO cronjobs (
+      id, workspace_id, initiated_by, name, cron, description, enabled, delivery, metadata,
+      last_run_at, next_run_at, run_count, last_status, last_error, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    "job-1",
+    "workspace-1",
+    "workspace_agent",
+    "Greeting",
+    "*/5 * * * *",
+    "Say hello every 5 minutes.",
+    1,
+    JSON.stringify({ channel: "session_run" }),
+    "{}",
+    null,
+    null,
+    0,
+    null,
+    null,
+    "2026-01-01T00:00:00+00:00",
+    "2026-01-01T00:00:00+00:00"
+  );
+  db.close();
+
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+  const migrated = store.getCronjob("job-1");
+
+  assert.ok(migrated);
+  assert.equal(migrated.instruction, "Say hello every 5 minutes.");
   store.close();
 });
 
@@ -1127,7 +1189,8 @@ test("runtime notifications round trip supports create, list, update, get, and d
     sourceLabel: "Workspace 1",
     title: "Drink Water",
     message: "Time to drink water.",
-    level: "info"
+    level: "info",
+    priority: "high"
   });
   const listed = store.listRuntimeNotifications({ workspaceId: "workspace-1" });
   const fetched = store.getRuntimeNotification(created.id);
@@ -1149,6 +1212,7 @@ test("runtime notifications round trip supports create, list, update, get, and d
 
   assert.equal(listed.length, 1);
   assert.ok(fetched);
+  assert.equal(fetched.priority, "high");
   assert.ok(updated);
   assert.equal(updated.state, "read");
   assert.ok(updated.readAt);
@@ -1157,6 +1221,48 @@ test("runtime notifications round trip supports create, list, update, get, and d
   assert.ok(dismissed.dismissedAt);
   assert.equal(listedWithoutDismissed.length, 0);
   assert.equal(listedIncludingDismissed.length, 1);
+  store.close();
+});
+
+test("runtime notifications sort by priority before recency", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  store.createRuntimeNotification({
+    workspaceId: "workspace-1",
+    title: "Normal",
+    message: "Normal priority",
+    priority: "normal",
+    createdAt: "2026-01-01T10:00:00.000Z"
+  });
+  store.createRuntimeNotification({
+    workspaceId: "workspace-1",
+    title: "Critical",
+    message: "Critical priority",
+    priority: "critical",
+    createdAt: "2026-01-01T09:00:00.000Z"
+  });
+  store.createRuntimeNotification({
+    workspaceId: "workspace-1",
+    title: "High",
+    message: "High priority",
+    priority: "high",
+    createdAt: "2026-01-01T11:00:00.000Z"
+  });
+
+  const listed = store.listRuntimeNotifications({ workspaceId: "workspace-1" });
+
+  assert.deepEqual(
+    listed.map((item) => item.title),
+    ["Critical", "High", "Normal"]
+  );
+  assert.deepEqual(
+    listed.map((item) => item.priority),
+    ["critical", "high", "normal"]
+  );
   store.close();
 });
 

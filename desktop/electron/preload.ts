@@ -65,6 +65,12 @@ interface BrowserAnchorBoundsPayload {
 
 type UiSettingsPaneSection = "account" | "billing" | "providers" | "settings" | "about";
 
+interface DesktopWindowStatePayload {
+  isFullScreen: boolean;
+  isMaximized: boolean;
+  isMinimized: boolean;
+}
+
 interface BrowserStatePayload {
   id: string;
   url: string;
@@ -144,6 +150,7 @@ interface RuntimeConfigPayload {
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
   controlPlaneBaseUrl: string | null;
+  catalogVersion: string | null;
   providerModelGroups: RuntimeProviderModelGroupPayload[];
 }
 
@@ -173,13 +180,13 @@ interface AppUpdateStatusPayload {
   supported: boolean;
   checking: boolean;
   available: boolean;
+  downloaded: boolean;
+  downloadProgressPercent: number | null;
   currentVersion: string;
   latestVersion: string | null;
-  releaseTag: string | null;
-  releaseUrl: string | null;
-  downloadUrl: string | null;
+  releaseName: string | null;
   publishedAt: string | null;
-  dismissedReleaseTag: string | null;
+  dismissedVersion: string | null;
   lastCheckedAt: string | null;
   error: string;
 }
@@ -425,6 +432,7 @@ interface CronjobRecordPayload {
   name: string;
   cron: string;
   description: string;
+  instruction: string;
   enabled: boolean;
   delivery: CronjobDeliveryPayload;
   metadata: Record<string, unknown>;
@@ -448,6 +456,7 @@ interface CronjobCreatePayload {
   name?: string;
   cron: string;
   description: string;
+  instruction?: string;
   enabled?: boolean;
   delivery: CronjobDeliveryPayload;
   metadata?: Record<string, unknown>;
@@ -457,6 +466,7 @@ interface CronjobUpdatePayload {
   name?: string;
   cron?: string;
   description?: string;
+  instruction?: string;
   enabled?: boolean;
   delivery?: CronjobDeliveryPayload;
   metadata?: Record<string, unknown>;
@@ -860,10 +870,19 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   ui: {
     getTheme: () => ipcRenderer.invoke("ui:getTheme") as Promise<string>,
+    getWindowState: () =>
+      ipcRenderer.invoke("ui:getWindowState") as Promise<DesktopWindowStatePayload>,
+    minimizeWindow: () => ipcRenderer.invoke("ui:minimizeWindow") as Promise<void>,
     toggleWindowSize: () => ipcRenderer.invoke("ui:toggleWindowSize") as Promise<void>,
+    closeWindow: () => ipcRenderer.invoke("ui:closeWindow") as Promise<void>,
     setTheme: (theme: string) => ipcRenderer.invoke("ui:setTheme", theme) as Promise<void>,
     openSettingsPane: (section?: UiSettingsPaneSection) => ipcRenderer.invoke("ui:openSettingsPane", section) as Promise<void>,
     openExternalUrl: (url: string) => ipcRenderer.invoke("ui:openExternalUrl", url) as Promise<void>,
+    onWindowStateChange: (listener: (state: DesktopWindowStatePayload) => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, state: DesktopWindowStatePayload) => listener(state);
+      ipcRenderer.on("ui:windowState", wrapped);
+      return () => ipcRenderer.removeListener("ui:windowState", wrapped);
+    },
     onThemeChange: (listener: (theme: string) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, theme: string) => listener(theme);
       ipcRenderer.on("ui:themeChanged", wrapped);
@@ -886,8 +905,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   appUpdate: {
     getStatus: () => ipcRenderer.invoke("appUpdate:getStatus") as Promise<AppUpdateStatusPayload>,
     checkNow: () => ipcRenderer.invoke("appUpdate:checkNow") as Promise<AppUpdateStatusPayload>,
-    dismiss: (releaseTag?: string | null) => ipcRenderer.invoke("appUpdate:dismiss", releaseTag) as Promise<AppUpdateStatusPayload>,
-    openDownload: () => ipcRenderer.invoke("appUpdate:openDownload") as Promise<void>,
+    dismiss: (version?: string | null) => ipcRenderer.invoke("appUpdate:dismiss", version) as Promise<AppUpdateStatusPayload>,
+    installNow: () => ipcRenderer.invoke("appUpdate:installNow") as Promise<void>,
     onStateChange: (listener: (status: AppUpdateStatusPayload) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, status: AppUpdateStatusPayload) => listener(status);
       ipcRenderer.on("appUpdate:state", wrapped);
@@ -941,6 +960,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:deleteWorkspace", workspaceId) as Promise<WorkspaceResponsePayload>,
     listCronjobs: (workspaceId: string, enabledOnly?: boolean) =>
       ipcRenderer.invoke("workspace:listCronjobs", workspaceId, enabledOnly) as Promise<CronjobListResponsePayload>,
+    runCronjobNow: (jobId: string) =>
+      ipcRenderer.invoke("workspace:runCronjobNow", jobId) as Promise<CronjobRunResponsePayload>,
     createCronjob: (payload: CronjobCreatePayload) =>
       ipcRenderer.invoke("workspace:createCronjob", payload) as Promise<CronjobRecordPayload>,
     updateCronjob: (jobId: string, payload: CronjobUpdatePayload) =>

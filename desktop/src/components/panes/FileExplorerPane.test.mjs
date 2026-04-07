@@ -77,6 +77,32 @@ test("file explorer accepts one-shot focus requests for artifact files", async (
   assert.match(source, /onFocusRequestConsumed\?\.\(request\.requestKey\);/);
 });
 
+test("file explorer opens text files directly in the editor without a preview toggle", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.doesNotMatch(source, /type TextPreviewMode/);
+  assert.doesNotMatch(source, /textPreviewMode/);
+  assert.doesNotMatch(source, /getHighlightedHtml/);
+  assert.doesNotMatch(source, /Loading preview/);
+  assert.match(source, /title=\{preview \|\| previewLoading \|\| previewError \? "File" : ""\}/);
+  assert.match(source, /preview\?\.kind === "text" \? \(/);
+  assert.match(source, /readOnly=\{!preview\.isEditable\}/);
+  assert.match(source, /embedded-input focus:border-border\/70/);
+  assert.doesNotMatch(source, /focus:bg-background\/35/);
+  assert.match(source, /Save/);
+});
+
+test("file explorer warns users to save before leaving an unsaved file", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /You have unsaved changes\. Press Cancel to go back and save them, or OK to discard them\./,
+  );
+  assert.match(source, /if \(!skipConfirm && !confirmDiscardIfDirty\(\)\) \{\s*return;\s*\}/);
+  assert.match(source, /if \(!confirmDiscardIfDirty\(\)\) \{\s*return;\s*\}\s*setPreview\(null\);/);
+});
+
 test("file explorer assigns richer icons for common file types", async () => {
   const source = await readFile(sourcePath, "utf8");
 

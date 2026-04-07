@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import hljs from "highlight.js/lib/common";
 import {
   ArrowLeft,
   ArrowUp,
-  Eye,
   FileArchive,
   FileAudio2,
   FileBadge2,
@@ -17,7 +15,6 @@ import {
   Folder,
   Forward,
   Home,
-  PencilLine,
   Save,
   Search,
   Shield,
@@ -34,7 +31,6 @@ import {
 } from "@/lib/attachmentDrag";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
-type TextPreviewMode = "preview" | "edit";
 export type FileExplorerFocusRequest = {
   path: string;
   requestKey: number;
@@ -44,42 +40,6 @@ interface FileExplorerPaneProps {
   focusRequest?: FileExplorerFocusRequest | null;
   onFocusRequestConsumed?: (requestKey: number) => void;
 }
-
-const LANGUAGE_BY_EXTENSION: Record<string, string> = {
-  ".js": "javascript",
-  ".jsx": "javascript",
-  ".ts": "typescript",
-  ".tsx": "typescript",
-  ".json": "json",
-  ".css": "css",
-  ".scss": "scss",
-  ".html": "xml",
-  ".xml": "xml",
-  ".md": "markdown",
-  ".mdx": "markdown",
-  ".py": "python",
-  ".sh": "bash",
-  ".yml": "yaml",
-  ".yaml": "yaml",
-  ".sql": "sql",
-  ".go": "go",
-  ".rs": "rust",
-  ".java": "java",
-  ".kt": "kotlin",
-  ".php": "php",
-  ".swift": "swift",
-  ".c": "c",
-  ".cc": "cpp",
-  ".cpp": "cpp",
-  ".h": "cpp",
-  ".hpp": "cpp",
-  ".txt": "plaintext",
-  ".log": "plaintext",
-  ".toml": "ini",
-  ".ini": "ini",
-  ".env": "bash",
-  ".csv": "plaintext"
-};
 
 const SPREADSHEET_EXTENSIONS = new Set([
   ".csv",
@@ -423,21 +383,6 @@ function createAttachmentDragPreview(entry: LocalFileEntry) {
   return preview;
 }
 
-function getHighlightedHtml(preview: FilePreviewPayload | null, draft: string) {
-  if (!preview || preview.kind !== "text") {
-    return "";
-  }
-
-  const source = draft || "";
-  const language = LANGUAGE_BY_EXTENSION[preview.extension.toLowerCase()];
-
-  if (language && hljs.getLanguage(language)) {
-    return hljs.highlight(source, { language }).value;
-  }
-
-  return hljs.highlightAuto(source).value;
-}
-
 export function FileExplorerPane({
   focusRequest = null,
   onFocusRequestConsumed,
@@ -462,7 +407,6 @@ export function FileExplorerPane({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [textPreviewMode, setTextPreviewMode] = useState<TextPreviewMode>("preview");
   const [fileBookmarks, setFileBookmarks] = useState<FileBookmarkPayload[]>([]);
   const [containerWidth, setContainerWidth] = useState(0);
   const historyRef = useRef<string[]>([]);
@@ -660,7 +604,9 @@ export function FileExplorerPane({
       return true;
     }
 
-    return window.confirm("You have unsaved changes. Discard them?");
+    return window.confirm(
+      "You have unsaved changes. Press Cancel to go back and save them, or OK to discard them.",
+    );
   }, [isDirty]);
 
   useEffect(() => {
@@ -737,7 +683,6 @@ export function FileExplorerPane({
     setSelectedPath(targetPath);
     setPreviewLoading(true);
     setPreviewError("");
-    setTextPreviewMode("preview");
     setActiveTableSheetIndex(0);
 
     try {
@@ -763,7 +708,6 @@ export function FileExplorerPane({
     setActiveTableSheetIndex(0);
     setPreviewError("");
     setSaving(false);
-    setTextPreviewMode("preview");
   };
 
   const savePreview = async () => {
@@ -815,7 +759,6 @@ export function FileExplorerPane({
     await loadDirectory(targetPath, false);
   };
 
-  const highlightedHtml = useMemo(() => getHighlightedHtml(preview, previewDraft), [preview, previewDraft]);
   const previewTableSheets =
     preview?.kind === "table" && Array.isArray(preview.tableSheets)
       ? preview.tableSheets
@@ -907,7 +850,7 @@ export function FileExplorerPane({
 
   return (
     <PaneCard
-      title={preview || previewLoading || previewError ? "File Preview" : ""}
+      title={preview || previewLoading || previewError ? "File" : ""}
       actions={
         preview || previewLoading || previewError ? (
           <>
@@ -926,18 +869,6 @@ export function FileExplorerPane({
               onClick={() => void toggleBookmark()}
               disabled={!bookmarkTargetPath}
             />
-            {preview?.kind === "text" ? (
-              <button
-                type="button"
-                onClick={() => setTextPreviewMode((mode) => (mode === "preview" ? "edit" : "preview"))}
-                className="inline-flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/8 px-2 py-1 text-xs text-foreground transition-colors hover:bg-primary/15"
-              >
-                <span className="rounded-sm border border-border bg-muted px-1.5 py-px text-[10px] uppercase tracking-wider text-muted-foreground">
-                  {textPreviewMode}
-                </span>
-                {textPreviewMode === "preview" ? <PencilLine size={11} /> : <Eye size={11} />}
-              </button>
-            ) : null}
             {preview?.isEditable ? (
               <button
                 type="button"
@@ -970,24 +901,23 @@ export function FileExplorerPane({
           <div className="min-h-0 flex-1 overflow-hidden p-2.5">
             {previewLoading ? (
               <div className="grid h-full place-items-center rounded-lg border border-border bg-muted text-sm text-muted-foreground">
-                Loading preview...
+                Loading file...
               </div>
             ) : previewError ? (
               <div className="grid h-full place-items-center rounded-lg border border-destructive/30 bg-destructive/5 px-4 text-center text-sm text-destructive">
                 {previewError}
               </div>
-            ) : preview?.kind === "text" && textPreviewMode === "preview" ? (
-              <div className="h-full overflow-auto rounded-lg border border-border bg-muted">
-                <pre className="m-0 min-h-full overflow-auto p-4 font-mono text-xs leading-6 text-foreground">
-                  <code className="hljs" dangerouslySetInnerHTML={{ __html: highlightedHtml }} />
-                </pre>
-              </div>
             ) : preview?.kind === "text" ? (
               <textarea
                 value={previewDraft}
                 onChange={(event) => setPreviewDraft(event.target.value)}
+                readOnly={!preview.isEditable}
                 spellCheck={false}
-                className="h-full w-full resize-none rounded-lg border border-border bg-muted p-4 font-mono text-xs leading-6 text-foreground outline-none transition-colors focus:border-ring"
+                className={`h-full w-full resize-none rounded-lg border border-border bg-muted p-4 font-mono text-xs leading-6 text-foreground outline-none transition-colors ${
+                  preview.isEditable
+                    ? "embedded-input focus:border-border/70"
+                    : "cursor-default opacity-90"
+                }`}
               />
             ) : preview?.kind === "image" && preview.dataUrl ? (
               <div className="flex h-full items-center justify-center overflow-auto rounded-lg border border-border bg-muted p-3">

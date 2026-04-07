@@ -126,12 +126,12 @@ test("claimed input marks missing workspace failed and runtime error", async () 
 
 test("claimed input persists runner events, assistant text, and idle state on success", async () => {
   const store = makeStore("hb-claimed-input-success-");
-  const memoryUpserts: Array<Record<string, unknown>> = [];
+  let scheduledPostRunTasks = 0;
+  let eventTypesAtSchedule: string[] = [];
   const memoryService: MemoryServiceLike = {
     async search() { return { results: [] }; },
     async get() { return { path: "", text: "" }; },
     async upsert(payload: Record<string, unknown>) {
-      memoryUpserts.push({ ...payload });
       return { path: payload.path, text: payload.content };
     },
     async status() { return {}; },
@@ -176,6 +176,15 @@ test("claimed input persists runner events, assistant text, and idle state on su
     record: claimed[0],
     claimedBy: "sandbox-agent-ts-worker",
     memoryService,
+    schedulePostRunTasksFn: (options) => {
+      scheduledPostRunTasks += 1;
+      eventTypesAtSchedule = store
+        .listOutputEvents({
+          sessionId: options.record.sessionId,
+          inputId: options.record.inputId,
+        })
+        .map((event) => event.eventType);
+    },
   });
 
   const updated = store.getInput(queued.inputId);
@@ -212,12 +221,22 @@ test("claimed input persists runner events, assistant text, and idle state on su
       "skill_invocation",
       "tool_call",
       "output_delta",
-      "compaction_start",
-      "compaction_boundary_written",
-      "compaction_end",
       "run_completed",
     ]
   );
+  assert.equal(scheduledPostRunTasks, 1);
+  assert.deepEqual(eventTypesAtSchedule, [
+    "run_started",
+    "tool_call",
+    "tool_call",
+    "tool_call",
+    "skill_invocation",
+    "tool_call",
+    "skill_invocation",
+    "tool_call",
+    "output_delta",
+    "run_completed",
+  ]);
   assert.equal(messages.length, 1);
   assert.equal(messages[0].role, "assistant");
   assert.equal(messages[0].text, "Hello from TS");
@@ -225,7 +244,7 @@ test("claimed input persists runner events, assistant text, and idle state on su
   assert.equal(turnResult.status, "completed");
   assert.equal(turnResult.stopReason, "ok");
   assert.equal(turnResult.assistantText, "Hello from TS");
-  assert.equal(turnResult.compactedSummary, "Hello from TS");
+  assert.equal(turnResult.compactedSummary, null);
   assert.deepEqual(turnResult.promptSectionIds, [
     "runtime_core",
     "execution_policy",
@@ -237,7 +256,7 @@ test("claimed input persists runner events, assistant text, and idle state on su
     cacheable_section_ids: ["runtime_core", "execution_policy"],
     volatile_section_ids: ["capability_policy"],
   });
-  assert.equal(turnResult.compactionBoundaryId, `compaction:${queued.inputId}`);
+  assert.equal(turnResult.compactionBoundaryId, null);
   assert.deepEqual(turnResult.toolUsageSummary, {
     total_calls: 3,
     completed_calls: 2,
@@ -273,70 +292,9 @@ test("claimed input persists runner events, assistant text, and idle state on su
     }
   ]);
   assert.deepEqual(turnResult.tokenUsage, { input_tokens: 12, output_tokens: 34 });
-  const compactionStartEvent = events.find((event) => event.eventType === "compaction_start");
-  const compactionBoundaryEvent = events.find((event) => event.eventType === "compaction_boundary_written");
-  const compactionEndEvent = events.find((event) => event.eventType === "compaction_end");
-  assert.ok(compactionStartEvent);
-  assert.ok(compactionBoundaryEvent);
-  assert.ok(compactionEndEvent);
-  assert.equal(compactionStartEvent?.payload.source, "executor_post_turn");
-  assert.equal(compactionBoundaryEvent?.payload.boundary_id, `compaction:${queued.inputId}`);
-  assert.equal(compactionBoundaryEvent?.payload.boundary_type, "executor_post_turn");
-  assert.equal(compactionEndEvent?.payload.status, "completed");
-  assert.equal(compactionEndEvent?.payload.boundary_id, `compaction:${queued.inputId}`);
-  assert.equal(memoryUpserts.length, 9);
-  assert.deepEqual(
-    memoryUpserts.slice(0, 5).map((payload) => payload.path),
-    [
-      `workspace/${workspace.id}/runtime/session-state/session-main.md`,
-      `workspace/${workspace.id}/runtime/blockers/session-main.md`,
-      `workspace/${workspace.id}/runtime/latest-turn.md`,
-      `workspace/${workspace.id}/runtime/recent-turns/session-main.md`,
-      `workspace/${workspace.id}/runtime/session-memory/session-main.md`,
-    ]
-  );
-  assert.match(String(memoryUpserts[0].content), /Runtime Session Snapshot/);
-  assert.match(String(memoryUpserts[0].content), /Hello from TS/);
-  assert.match(String(memoryUpserts[0].content), /permission denied by policy/);
-  assert.match(String(memoryUpserts[1].content), /No active blocker in the latest turn/);
-  assert.match(String(memoryUpserts[2].content), /Latest Runtime Turn/);
-  assert.match(String(memoryUpserts[2].content), /Hello from TS/);
-  assert.match(String(memoryUpserts[3].content), /Recent Runtime Turns/);
-  assert.match(String(memoryUpserts[3].content), /Hello from TS/);
-  assert.match(String(memoryUpserts[4].content), /Session Memory/);
-  assert.match(String(memoryUpserts[4].content), /Recent Runtime Progress/);
-  assert.match(String(memoryUpserts[5].path), new RegExp(`workspace/${workspace.id}/runtime/permission-blockers/[a-f0-9]{16}\\.md$`));
-  assert.match(String(memoryUpserts[5].content), /Runtime Permission Blocker/);
-  assert.match(String(memoryUpserts[5].content), /workspace\.deploy/);
-  assert.deepEqual(
-    memoryUpserts
-      .slice(6)
-      .map((payload) => String(payload.path))
-      .sort((left, right) => left.localeCompare(right)),
-    [
-      "MEMORY.md",
-      "preference/MEMORY.md",
-      `workspace/${workspace.id}/MEMORY.md`,
-    ].sort((left, right) => left.localeCompare(right))
-  );
-  const rootMemoryIndex = memoryUpserts.find((payload) => payload.path === "MEMORY.md");
-  const preferenceMemoryIndex = memoryUpserts.find((payload) => payload.path === "preference/MEMORY.md");
-  const workspaceMemoryIndex = memoryUpserts.find(
-    (payload) => payload.path === `workspace/${workspace.id}/MEMORY.md`
-  );
-  assert.ok(rootMemoryIndex);
-  assert.ok(preferenceMemoryIndex);
-  assert.ok(workspaceMemoryIndex);
-  assert.match(String(rootMemoryIndex.content), /No durable memories indexed yet/);
-  assert.match(String(preferenceMemoryIndex.content), /No durable preference memories indexed yet/);
-  assert.match(String(workspaceMemoryIndex.content), /Workspace Durable Memory Index/);
-  assert.match(String(workspaceMemoryIndex.content), /Workspace ID: `workspace-1`/);
-  assert.match(String(workspaceMemoryIndex.content), /No durable workspace memories indexed yet/);
   const snapshot = store.getTurnRequestSnapshot({ inputId: queued.inputId });
-  const boundary = store.getCompactionBoundary({ boundaryId: `compaction:${queued.inputId}` });
   assert.equal(snapshot, null);
-  assert.ok(boundary);
-  assert.equal(boundary?.requestSnapshotFingerprint, "b".repeat(64));
+  assert.equal(store.getCompactionBoundary({ boundaryId: `compaction:${queued.inputId}` }), null);
 
   store.close();
 });

@@ -147,6 +147,7 @@ declare global {
     modelProxyBaseUrl: string | null;
     defaultModel: string | null;
     controlPlaneBaseUrl: string | null;
+    catalogVersion: string | null;
     providerModelGroups: RuntimeProviderModelGroupPayload[];
   }
 
@@ -192,15 +193,21 @@ declare global {
     supported: boolean;
     checking: boolean;
     available: boolean;
+    downloaded: boolean;
+    downloadProgressPercent: number | null;
     currentVersion: string;
     latestVersion: string | null;
-    releaseTag: string | null;
-    releaseUrl: string | null;
-    downloadUrl: string | null;
+    releaseName: string | null;
     publishedAt: string | null;
-    dismissedReleaseTag: string | null;
+    dismissedVersion: string | null;
     lastCheckedAt: string | null;
     error: string;
+  }
+
+  interface DesktopWindowStatePayload {
+    isFullScreen: boolean;
+    isMaximized: boolean;
+    isMinimized: boolean;
   }
 
   interface WorkbenchOpenBrowserPayload {
@@ -445,6 +452,7 @@ declare global {
     name: string;
     cron: string;
     description: string;
+    instruction: string;
     enabled: boolean;
     delivery: CronjobDeliveryPayload;
     metadata: Record<string, unknown>;
@@ -462,12 +470,20 @@ declare global {
     count: number;
   }
 
+  interface CronjobRunResponsePayload {
+    success: boolean;
+    cronjob: CronjobRecordPayload;
+    session_id: string | null;
+    notification_id: string | null;
+  }
+
   interface CronjobCreatePayload {
     workspace_id: string;
     initiated_by: string;
     name?: string;
     cron: string;
     description: string;
+    instruction?: string;
     enabled?: boolean;
     delivery: CronjobDeliveryPayload;
     metadata?: Record<string, unknown>;
@@ -477,12 +493,14 @@ declare global {
     name?: string;
     cron?: string;
     description?: string;
+    instruction?: string;
     enabled?: boolean;
     delivery?: CronjobDeliveryPayload;
     metadata?: Record<string, unknown>;
   }
 
   type RuntimeNotificationLevel = "info" | "success" | "warning" | "error";
+  type RuntimeNotificationPriority = "low" | "normal" | "high" | "critical";
   type RuntimeNotificationState = "unread" | "read" | "dismissed";
 
   interface RuntimeNotificationRecordPayload {
@@ -494,6 +512,7 @@ declare global {
     title: string;
     message: string;
     level: RuntimeNotificationLevel;
+    priority: RuntimeNotificationPriority;
     state: RuntimeNotificationState;
     metadata: Record<string, unknown>;
     read_at: string | null;
@@ -1031,10 +1050,14 @@ declare global {
     };
     ui: {
       getTheme: () => Promise<string>;
+      getWindowState: () => Promise<DesktopWindowStatePayload>;
+      minimizeWindow: () => Promise<void>;
       toggleWindowSize: () => Promise<void>;
+      closeWindow: () => Promise<void>;
       setTheme: (theme: string) => Promise<void>;
       openSettingsPane: (section?: UiSettingsPaneSection) => Promise<void>;
       openExternalUrl: (url: string) => Promise<void>;
+      onWindowStateChange: (listener: (state: DesktopWindowStatePayload) => void) => () => void;
       onThemeChange: (listener: (theme: string) => void) => () => void;
       onOpenSettingsPane: (listener: (section: UiSettingsPaneSection) => void) => () => void;
     };
@@ -1046,8 +1069,8 @@ declare global {
     appUpdate: {
       getStatus: () => Promise<AppUpdateStatusPayload>;
       checkNow: () => Promise<AppUpdateStatusPayload>;
-      dismiss: (releaseTag?: string | null) => Promise<AppUpdateStatusPayload>;
-      openDownload: () => Promise<void>;
+      dismiss: (version?: string | null) => Promise<AppUpdateStatusPayload>;
+      installNow: () => Promise<void>;
       onStateChange: (listener: (status: AppUpdateStatusPayload) => void) => () => void;
     };
     workbench: {
@@ -1076,6 +1099,7 @@ declare global {
       createWorkspace: (payload: HolabossCreateWorkspacePayload) => Promise<WorkspaceResponsePayload>;
       deleteWorkspace: (workspaceId: string) => Promise<WorkspaceResponsePayload>;
       listCronjobs: (workspaceId: string, enabledOnly?: boolean) => Promise<CronjobListResponsePayload>;
+      runCronjobNow: (jobId: string) => Promise<CronjobRunResponsePayload>;
       createCronjob: (payload: CronjobCreatePayload) => Promise<CronjobRecordPayload>;
       updateCronjob: (jobId: string, payload: CronjobUpdatePayload) => Promise<CronjobRecordPayload>;
       deleteCronjob: (jobId: string) => Promise<{ success: boolean }>;

@@ -286,6 +286,7 @@ export interface CronjobRecord {
   name: string;
   cron: string;
   description: string;
+  instruction: string;
   enabled: boolean;
   delivery: Record<string, unknown>;
   metadata: Record<string, unknown>;
@@ -299,6 +300,7 @@ export interface CronjobRecord {
 }
 
 export type RuntimeNotificationLevel = "info" | "success" | "warning" | "error";
+export type RuntimeNotificationPriority = "low" | "normal" | "high" | "critical";
 export type RuntimeNotificationState = "unread" | "read" | "dismissed";
 
 export interface RuntimeNotificationRecord {
@@ -310,6 +312,7 @@ export interface RuntimeNotificationRecord {
   title: string;
   message: string;
   level: RuntimeNotificationLevel;
+  priority: RuntimeNotificationPriority;
   state: RuntimeNotificationState;
   metadata: Record<string, unknown>;
   readAt: string | null;
@@ -2651,6 +2654,7 @@ export class RuntimeStateStore {
     initiatedBy: string;
     cron: string;
     description: string;
+    instruction?: string;
     delivery: Record<string, unknown>;
     enabled?: boolean;
     metadata?: Record<string, unknown> | null;
@@ -2663,9 +2667,9 @@ export class RuntimeStateStore {
     this.db()
       .prepare(`
         INSERT INTO cronjobs (
-            id, workspace_id, initiated_by, name, cron, description, enabled, delivery, metadata,
+            id, workspace_id, initiated_by, name, cron, description, instruction, enabled, delivery, metadata,
             last_run_at, next_run_at, run_count, last_status, last_error, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 0, NULL, NULL, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 0, NULL, NULL, ?, ?)
       `)
       .run(
         resolvedId,
@@ -2674,6 +2678,7 @@ export class RuntimeStateStore {
         params.name ?? "",
         params.cron,
         params.description,
+        params.instruction ?? params.description,
         params.enabled === false ? 0 : 1,
         JSON.stringify(params.delivery),
         JSON.stringify(params.metadata ?? {}),
@@ -2717,6 +2722,7 @@ export class RuntimeStateStore {
     name?: string | null;
     cron?: string | null;
     description?: string | null;
+    instruction?: string | null;
     enabled?: boolean | null;
     delivery?: Record<string, unknown> | null;
     metadata?: Record<string, unknown> | null;
@@ -2736,6 +2742,7 @@ export class RuntimeStateStore {
         SET name = ?,
             cron = ?,
             description = ?,
+            instruction = ?,
             enabled = ?,
             delivery = ?,
             metadata = ?,
@@ -2751,6 +2758,7 @@ export class RuntimeStateStore {
         params.name ?? existing.name,
         params.cron ?? existing.cron,
         params.description ?? existing.description,
+        params.instruction ?? existing.instruction,
         params.enabled == null ? (existing.enabled ? 1 : 0) : params.enabled ? 1 : 0,
         JSON.stringify(params.delivery ?? existing.delivery),
         JSON.stringify(params.metadata ?? existing.metadata),
@@ -2778,6 +2786,7 @@ export class RuntimeStateStore {
     title: string;
     message: string;
     level?: RuntimeNotificationLevel | null;
+    priority?: RuntimeNotificationPriority | null;
     state?: RuntimeNotificationState | null;
     metadata?: Record<string, unknown> | null;
     notificationId?: string;
@@ -2788,6 +2797,7 @@ export class RuntimeStateStore {
     const resolvedId = params.notificationId ?? randomUUID();
     const now = params.createdAt ?? utcNowIso();
     const level = this.normalizedNotificationLevel(params.level);
+    const priority = this.normalizedNotificationPriority(params.priority);
     const state = this.normalizedNotificationState(params.state);
     const readAt =
       params.readAt !== undefined
@@ -2801,9 +2811,9 @@ export class RuntimeStateStore {
     this.db()
       .prepare(`
         INSERT INTO runtime_notifications (
-            id, workspace_id, cronjob_id, source_type, source_label, title, message, level, state,
+            id, workspace_id, cronjob_id, source_type, source_label, title, message, level, priority, state,
             metadata, read_at, dismissed_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         resolvedId,
@@ -2814,6 +2824,7 @@ export class RuntimeStateStore {
         params.title.trim(),
         params.message.trim(),
         level,
+        priority,
         state,
         JSON.stringify(params.metadata ?? {}),
         readAt,
@@ -2856,7 +2867,7 @@ export class RuntimeStateStore {
     if (filters.length > 0) {
       query += ` WHERE ${filters.join(" AND ")}`;
     }
-    query += " ORDER BY datetime(created_at) DESC, id DESC";
+    query += ` ORDER BY ${this.notificationPrioritySortSql()} DESC, datetime(created_at) DESC, id DESC`;
     if (typeof params.limit === "number" && Number.isFinite(params.limit) && params.limit > 0) {
       query += " LIMIT ?";
       values.push(Math.floor(params.limit));
@@ -2870,6 +2881,7 @@ export class RuntimeStateStore {
     title?: string | null;
     message?: string | null;
     level?: RuntimeNotificationLevel | null;
+    priority?: RuntimeNotificationPriority | null;
     state?: RuntimeNotificationState | null;
     metadata?: Record<string, unknown> | null;
     readAt?: string | null;
@@ -2903,6 +2915,7 @@ export class RuntimeStateStore {
             title = ?,
             message = ?,
             level = ?,
+            priority = ?,
             state = ?,
             metadata = ?,
             read_at = ?,
@@ -2915,6 +2928,7 @@ export class RuntimeStateStore {
         params.title == null ? existing.title : params.title.trim(),
         params.message == null ? existing.message : params.message.trim(),
         params.level == null ? existing.level : this.normalizedNotificationLevel(params.level),
+        params.priority == null ? existing.priority : this.normalizedNotificationPriority(params.priority),
         nextState,
         JSON.stringify(params.metadata ?? existing.metadata),
         nextReadAt,
@@ -3550,6 +3564,7 @@ export class RuntimeStateStore {
           name TEXT NOT NULL DEFAULT '',
           cron TEXT NOT NULL,
           description TEXT NOT NULL,
+          instruction TEXT NOT NULL DEFAULT '',
           enabled INTEGER NOT NULL DEFAULT 1,
           delivery TEXT NOT NULL,
           metadata TEXT NOT NULL DEFAULT '{}',
@@ -3577,6 +3592,7 @@ export class RuntimeStateStore {
           title TEXT NOT NULL,
           message TEXT NOT NULL,
           level TEXT NOT NULL DEFAULT 'info',
+          priority TEXT NOT NULL DEFAULT 'normal',
           state TEXT NOT NULL DEFAULT 'unread',
           metadata TEXT NOT NULL DEFAULT '{}',
           read_at TEXT,
@@ -3604,6 +3620,27 @@ export class RuntimeStateStore {
       );
     `);
     this.migrateLegacySessionArtifactsToOutputs(db);
+    this.migrateRuntimeNotificationPriority(db);
+    this.migrateCronjobInstructions(db);
+  }
+
+  private migrateRuntimeNotificationPriority(db: Database.Database): void {
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(runtime_notifications)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+    if (!columns.has("priority")) {
+      db.exec("ALTER TABLE runtime_notifications ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal';");
+    }
+  }
+
+  private migrateCronjobInstructions(db: Database.Database): void {
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(cronjobs)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+    if (!columns.has("instruction")) {
+      db.exec("ALTER TABLE cronjobs ADD COLUMN instruction TEXT NOT NULL DEFAULT '';");
+    }
+    db.exec("UPDATE cronjobs SET instruction = description WHERE trim(coalesce(instruction, '')) = '';");
   }
 
   private migrateLegacySessionArtifactsToOutputs(db: Database.Database): void {
@@ -4548,6 +4585,7 @@ export class RuntimeStateStore {
       name: row.name == null ? "" : String(row.name),
       cron: String(row.cron),
       description: String(row.description),
+      instruction: row.instruction == null || String(row.instruction).trim().length === 0 ? String(row.description) : String(row.instruction),
       enabled: Boolean(Number(row.enabled)),
       delivery: this.parseJsonDict(row.delivery),
       metadata: this.parseJsonDict(row.metadata),
@@ -4571,6 +4609,7 @@ export class RuntimeStateStore {
       title: String(row.title),
       message: String(row.message),
       level: this.normalizedNotificationLevel(row.level == null ? null : String(row.level)),
+      priority: this.normalizedNotificationPriority(row.priority == null ? null : String(row.priority)),
       state: this.normalizedNotificationState(row.state == null ? null : String(row.state)),
       metadata: this.parseJsonDict(row.metadata),
       readAt: row.read_at == null ? null : String(row.read_at),
@@ -4653,6 +4692,19 @@ export class RuntimeStateStore {
       return normalized;
     }
     return "info";
+  }
+
+  private normalizedNotificationPriority(value: string | null | undefined): RuntimeNotificationPriority {
+    const normalized = this.normalizedNullableText(value)?.toLowerCase();
+    if (normalized === "low" || normalized === "high" || normalized === "critical") {
+      return normalized;
+    }
+    return "normal";
+  }
+
+  private notificationPrioritySortSql(tableAlias = ""): string {
+    const prefix = tableAlias ? `${tableAlias}.` : "";
+    return `CASE ${prefix}priority WHEN 'critical' THEN 3 WHEN 'high' THEN 2 WHEN 'normal' THEN 1 ELSE 0 END`;
   }
 
   private normalizedNotificationState(value: string | null | undefined): RuntimeNotificationState {

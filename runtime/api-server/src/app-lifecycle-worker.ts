@@ -6,6 +6,11 @@ import { type RuntimeStateStore } from "@holaboss/runtime-state-store";
 import { resolveIntegrationRuntime } from "./integration-runtime.js";
 import type { ResolvedApplicationRuntime, WorkspaceComposeShutdownTarget } from "./workspace-apps.js";
 import { buildAppSetupEnv } from "./app-setup-env.js";
+import {
+  buildPortListenerKillCommand,
+  killChildProcess,
+  spawnShellCommand,
+} from "./runtime-shell.js";
 
 export interface AppLifecycleActionResult {
   app_id: string;
@@ -304,7 +309,7 @@ async function killTrackedProcess(proc: ChildLike, timeoutMs: number): Promise<v
     return;
   }
   try {
-    proc.kill();
+    killChildProcess(proc);
     await Promise.race([
       waitForExit(proc),
       new Promise<void>((_, reject) => {
@@ -313,7 +318,7 @@ async function killTrackedProcess(proc: ChildLike, timeoutMs: number): Promise<v
     ]);
   } catch {
     try {
-      proc.kill();
+      killChildProcess(proc, "SIGKILL");
     } catch {
       // ignore
     }
@@ -321,11 +326,18 @@ async function killTrackedProcess(proc: ChildLike, timeoutMs: number): Promise<v
 }
 
 async function killAllocatedPortListeners(appId: string, appDir: string, ports: ShellLifecyclePorts): Promise<void> {
-  const killTerms = [ports.http, ports.mcp].map((port) => `kill $(lsof -t -i :${port} 2>/dev/null) 2>/dev/null || true`);
-  await runSpawn(spawn, "/bin/bash", ["-lc", killTerms.join(" ; ")], {
-    cwd: appDir,
-    env: process.env
-  });
+  const killCommand = buildPortListenerKillCommand([ports.http, ports.mcp]);
+  if (killCommand) {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawnShellCommand(spawn, killCommand, {
+        cwd: appDir,
+        env: process.env,
+        stdio: ["ignore", "ignore", "ignore"],
+      });
+      child.on("error", reject);
+      child.on("close", () => resolve());
+    });
+  }
   shellLifecyclePorts.delete(appId);
 }
 
@@ -678,7 +690,7 @@ export async function stopShellLifecycleAppTarget(params: {
       if (stopper.code !== 0) {
         if (stopper.code === 124) {
           try {
-            child.kill();
+            killChildProcess(child, "SIGKILL");
           } catch {
             // ignore
           }

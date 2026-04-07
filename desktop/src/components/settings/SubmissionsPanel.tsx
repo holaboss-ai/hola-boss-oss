@@ -4,10 +4,14 @@ import {
   CheckCircle2,
   Clock,
   Loader2,
+  LogIn,
   Package,
+  ShieldAlert,
   Trash2,
   XCircle,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useDesktopAuthSession } from "@/lib/auth/authClient";
 
 interface SubmissionItem {
   id: string;
@@ -70,10 +74,12 @@ function categoryFromManifest(
 }
 
 export function SubmissionsPanel() {
+  const authSessionState = useDesktopAuthSession();
   const [submissions, setSubmissions] = useState<SubmissionItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(authSessionState.isPending);
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const isSignedIn = Boolean(authSessionState.data?.user?.id?.trim());
 
   const fetchSubmissions = useCallback(async (signal?: { cancelled: boolean }) => {
     setLoading(true);
@@ -98,12 +104,24 @@ export function SubmissionsPanel() {
   }, []);
 
   useEffect(() => {
+    if (authSessionState.isPending) {
+      setLoading(true);
+      return;
+    }
+
+    if (!isSignedIn) {
+      setSubmissions([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
     const signal = { cancelled: false };
     void fetchSubmissions(signal);
     return () => {
       signal.cancelled = true;
     };
-  }, [fetchSubmissions]);
+  }, [authSessionState.isPending, fetchSubmissions, isSignedIn]);
 
   async function handleDelete(submission: SubmissionItem) {
     const confirmed = window.confirm(
@@ -138,6 +156,36 @@ export function SubmissionsPanel() {
         <div className="flex items-center gap-2.5">
           <AlertTriangle className="size-4 shrink-0 text-destructive" />
           <p className="text-sm text-destructive">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isSignedIn) {
+    return (
+      <div className="rounded-[24px] border border-border/40 bg-card/80 px-6 py-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+              <ShieldAlert className="size-3.5 text-primary" />
+              <span>Sign-In Required</span>
+            </div>
+            <p className="mt-2 text-sm font-medium text-foreground">
+              Your template submissions are only available after you sign in.
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              Connect this desktop app to your Holaboss account to review and
+              manage marketplace submissions.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void authSessionState.requestAuth()}
+          >
+            <LogIn className="size-3.5" />
+            Sign in
+          </Button>
         </div>
       </div>
     );

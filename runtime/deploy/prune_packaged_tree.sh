@@ -29,6 +29,7 @@ prune_common_runtime_files() {
       -name '*.map' -o \
       -name '*.md' -o \
       -name '*.markdown' -o \
+      -name '*.pdb' -o \
       -name '*.tsbuildinfo' -o \
       -name '*.exp' -o \
       -name '*.lib' \

@@ -2153,6 +2153,8 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
   const runtimeTools = await resolvePiRuntimeToolDefinitions({
     runtimeApiBaseUrl: request.runtime_api_base_url,
     workspaceId: request.workspace_id,
+    sessionId: request.session_id,
+    selectedModel: `${request.provider_id}/${request.model_id}`,
   });
   const webSearchTools = await resolvePiWebSearchToolDefinitions();
   const baseTools = [

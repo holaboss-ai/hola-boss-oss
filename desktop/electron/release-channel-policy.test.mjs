@@ -20,25 +20,29 @@ const publishRuntimeWorkflowPath = path.join(
   "workflows",
   "publish-runtime-bundles.yml",
 );
+const releaseMacosWorkflowPath = path.join(
+  __dirname,
+  "..",
+  "..",
+  ".github",
+  "workflows",
+  "release-macos-desktop.yml",
+);
 
-test("desktop updater filters GitHub releases to desktop-shippable releases", async () => {
+test("desktop updater uses electron-updater and exposes install-now state", async () => {
   const source = await readFile(mainSourcePath, "utf8");
 
-  assert.match(source, /const DESKTOP_RELEASE_TAG_PREFIX = "holaboss-";/);
-  assert.match(source, /const RUNTIME_RELEASE_TAG_PREFIX = "holaboss-runtime-";/);
-  assert.match(
-    source,
-    /function isDesktopReleaseTag\(tagName: string\): boolean \{[\s\S]*!tagName\.startsWith\(RUNTIME_RELEASE_TAG_PREFIX\)/,
-  );
-  assert.match(
-    source,
-    /function releaseMatchesDesktopChannel\(release: GithubReleasePayload\): boolean \{[\s\S]*release\.draft \|\| release\.prerelease[\s\S]*process\.platform === "darwin"[\s\S]*APP_UPDATE_MACOS_ASSET_NAME/,
-  );
-  assert.match(
-    source,
-    /https:\/\/api\.github\.com\/repos\/\$\{GITHUB_RELEASES_OWNER\}\/\$\{GITHUB_RELEASES_REPO\}\/releases\?per_page=\$\{GITHUB_RELEASE_LIST_PAGE_SIZE\}/,
-  );
-  assert.match(source, /const release = Array\.isArray\(releases\)\s*\?\s*selectLatestDesktopRelease\(releases\)\s*:\s*null;/);
+  assert.match(source, /import \{[\s\S]*autoUpdater,[\s\S]*\} from "electron-updater";/);
+  assert.match(source, /const APP_UPDATE_SUPPORTED_PLATFORMS = new Set\(\["darwin"\]\);/);
+  assert.match(source, /autoUpdater\.autoDownload = true;/);
+  assert.match(source, /autoUpdater\.autoInstallOnAppQuit = true;/);
+  assert.match(source, /autoUpdater\.allowPrerelease = false;/);
+  assert.match(source, /autoUpdater\.on\("update-available"/);
+  assert.match(source, /autoUpdater\.on\("download-progress"/);
+  assert.match(source, /autoUpdater\.on\("update-downloaded"/);
+  assert.match(source, /await autoUpdater\.checkForUpdates\(\);/);
+  assert.match(source, /handleTrustedIpc\("appUpdate:installNow", \["main"\], async \(\) => \{/);
+  assert.match(source, /autoUpdater\.quitAndInstall\(false, true\);/);
 });
 
 test("runtime staging searches the runtime release channel before any legacy fallback", async () => {
@@ -72,4 +76,15 @@ test("runtime workflow publishes runtime-only releases under a prerelease-only r
   assert.match(source, /release_pattern="holaboss-runtime-\$\{GITHUB_REF_NAME\}-\*"/);
   assert.match(source, /prerelease_flag=\(--prerelease\)/);
   assert.match(source, /gh release edit "\$\{RELEASE_TAG\}" \\\n\s+--prerelease \\/);
+});
+
+test("desktop release workflow uploads the macOS auto-update artifacts", async () => {
+  const source = await readFile(releaseMacosWorkflowPath, "utf8");
+
+  assert.match(source, /--mac dmg zip \\/);
+  assert.match(source, /latest-mac\.yml was not generated/);
+  assert.match(source, /desktop\/out\/release\/\*\.zip/);
+  assert.match(source, /desktop\/out\/release\/\*\.blockmap/);
+  assert.match(source, /desktop\/out\/release\/latest-mac\.yml/);
+  assert.match(source, /upload_paths=\([\s\S]*"\$\{manifest_path\}"/);
 });

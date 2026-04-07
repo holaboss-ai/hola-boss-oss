@@ -45,27 +45,103 @@ test("app shell removes the outputs quick action", async () => {
 test("app shell polls runtime notifications and renders the toast stack", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /window\.electronAPI\.workspace\.listNotifications\(\s*null,\s*false,\s*\)/);
+  assert.match(source, /window\.electronAPI\.workspace\.listNotifications\(\s*null\s*\)/);
+  assert.match(source, /<NotificationToastStack[\s\S]*leadingToast=\{/);
   assert.match(source, /<NotificationToastStack[\s\S]*notifications=\{toastNotifications\}/);
-  assert.match(source, /notificationUnreadCount=\{notificationUnreadCount\}/);
+  assert.match(source, /<NotificationToastStack[\s\S]*onCloseToast=\{\(notificationId\) => \{\s*void handleDismissNotification\(notificationId\);\s*\}\}/);
+  assert.match(source, /<NotificationToastStack[\s\S]*className=\{anchoredToastStackClassName\}/);
+  assert.match(source, /const runtimeNotificationById = useMemo\(/);
 });
 
-test("app shell wires clear-all notifications through a bulk dismiss handler", async () => {
+test("app shell keeps desktop updates separate from runtime notification state", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /const handleClearAllNotifications = useCallback\(async \(\) => \{/);
-  assert.match(source, /notificationIds\.map\(\(notificationId\) =>\s*window\.electronAPI\.workspace\.updateNotification\(notificationId,\s*\{\s*state: "dismissed",\s*\}\),/);
-  assert.match(source, /onClearAllNotifications=\{\(\) => \{\s*void handleClearAllNotifications\(\);\s*\}\}/);
+  assert.match(source, /function appUpdateChangelogUrl\(/);
+  assert.match(source, /const handleDismissUpdate = useCallback\(/);
+  assert.match(source, /void window\.electronAPI\.appUpdate\.dismiss\(/);
+  assert.match(source, /void window\.electronAPI\.ui\.openExternalUrl\(changelogUrl\);/);
+  assert.doesNotMatch(source, /combinedNotifications/);
+  assert.doesNotMatch(source, /syntheticNotificationStates/);
+  assert.match(source, /<BrowserPane[\s\S]*suspendNativeView=\{shouldSuspendBrowserNativeView\}/);
 });
 
-test("app shell suspends the native browser view while the update reminder is visible", async () => {
+test("app shell opens cronjob session-run notifications in the sub-session chat", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /function notificationTargetSessionId\(/);
+  assert.match(source, /const targetSessionId = notificationTargetSessionId\(notification\);/);
+  assert.match(source, /setSelectedWorkspaceId\(targetWorkspaceId\);/);
+  assert.match(source, /setChatSessionJumpRequest\(\{\s*sessionId: targetSessionId,\s*requestKey: Date\.now\(\),\s*\}\);/);
+  assert.match(source, /setChatFocusRequestKey\(\(current\) => current \+ 1\);/);
+});
+
+test("app shell exposes a dev-only app update preview hook", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /const DEV_APP_UPDATE_PREVIEW_STORAGE_KEY = "holaboss-dev-app-update-preview-v1";/);
+  assert.match(source, /type DevAppUpdatePreviewMode = "off" \| "downloading" \| "ready";/);
+  assert.match(source, /window\.__holabossDevUpdatePreview = \{/);
+  assert.match(source, /downloading: \(\) => updateMode\("downloading"\)/);
+  assert.match(source, /ready: \(\) => updateMode\("ready"\)/);
+  assert.match(source, /clear: \(\) => updateMode\("off"\)/);
+  assert.match(source, /buildDevAppUpdatePreviewStatus\(/);
+});
+
+test("app shell uses the integrated title bar path for macOS and Windows", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(
     source,
-    /const shouldSuspendBrowserNativeView =[\s\S]*Boolean\(appUpdateStatus\?\.available\);/,
+    /const hasIntegratedTitleBar =\s*desktopPlatform === "darwin" \|\| desktopPlatform === "win32";/,
+  );
+  assert.match(
+    source,
+    /const titleBarContainerClassName =\s*desktopPlatform === "win32"\s*\?\s*"relative min-w-0 -mx-2 -mt-2 sm:-mx-3 sm:-mt-2.5"/,
+  );
+  assert.match(
+    source,
+    /<TopTabsBar[\s\S]*integratedTitleBar=\{hasIntegratedTitleBar\}[\s\S]*desktopPlatform=\{desktopPlatform\}/,
+  );
+});
+
+test("app shell keeps update toasts inside the safe file pane region instead of suspending the browser", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const effectiveAppUpdateStatus = useMemo\(/,
+  );
+  assert.match(
+    source,
+    /const shouldUseSafeToastAnchor =[\s\S]*!spaceMode \|\| visibleSpacePaneIds\.includes\("files"\)/,
+  );
+  assert.match(source, /const LEFT_NAVIGATION_RAIL_WIDTH_PX = 60;/);
+  assert.match(source, /const APP_SHELL_SPACE_COLUMN_GAP_PX = 8;/);
+  assert.match(source, /const FIXED_SAFE_TOAST_REGION_WIDTH_PX =[\s\S]*MIN_FILES_PANE_WIDTH;/);
+  assert.match(source, /const anchoredToastStackClassName = shouldUseSafeToastAnchor[\s\S]*absolute bottom-4 left-0/);
+  assert.match(source, /const anchoredToastStackStyle = shouldUseSafeToastAnchor[\s\S]*width: FIXED_SAFE_TOAST_REGION_WIDTH_PX/);
+  assert.match(
+    source,
+    /const shouldSuspendBrowserNativeView =\s*isUtilityPaneResizing \|\|[\s\S]*workspaceSwitcherOpen \|\|[\s\S]*settingsDialogOpen \|\|[\s\S]*createWorkspacePanelOpen \|\|[\s\S]*publishOpen;/,
   );
   assert.match(source, /<BrowserPane[\s\S]*suspendNativeView=\{shouldSuspendBrowserNativeView\}/);
+});
+
+test("app shell uses a wider minimum for the file explorer than for the browser pane", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /const MIN_FILES_PANE_WIDTH = 320;/);
+  assert.match(source, /const MIN_BROWSER_PANE_WIDTH = 200;/);
+  assert.match(source, /const DEFAULT_FILES_PANE_WIDTH = MIN_FILES_PANE_WIDTH;/);
+  assert.match(source, /function utilityPaneMinWidth\(paneId: UtilityPaneId\): number \{/);
+});
+
+test("app shell passes the app version label into the left rail", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /const appVersionLabel =[\s\S]*effectiveAppUpdateStatus\?\.currentVersion\?\.trim\(\) \|\| "";/);
+  assert.match(source, /<LeftNavigationRail[\s\S]*appVersionLabel=\{appVersionLabel\}/);
+  assert.doesNotMatch(source, /absolute bottom-3 left-4/);
 });
 
 test("app shell requests remote task proposal generation without a separate success banner", async () => {

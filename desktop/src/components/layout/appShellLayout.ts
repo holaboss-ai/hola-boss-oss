@@ -1,9 +1,9 @@
 export function appShellMainGridClassName({
   hasWorkspaces,
-  isMacDesktop,
+  hasIntegratedTitleBar,
 }: {
   hasWorkspaces: boolean;
-  isMacDesktop: boolean;
+  hasIntegratedTitleBar: boolean;
 }): string {
   return [
     "relative",
@@ -16,6 +16,8 @@ export function appShellMainGridClassName({
       : "grid-rows-[minmax(0,1fr)]",
     "gap-2",
     "p-2",
-    isMacDesktop ? "sm:gap-2.5 sm:px-3 sm:pb-3 sm:pt-2.5" : "sm:gap-3 sm:p-3",
+    hasIntegratedTitleBar
+      ? "sm:gap-2.5 sm:px-3 sm:pb-3 sm:pt-2.5"
+      : "sm:gap-3 sm:p-3",
   ].join(" ");
 }
