@@ -165,8 +165,11 @@ One run follows a bounded lifecycle:
 2. The runtime compiles the workspace from `workspace.yaml` plus referenced files such as `AGENTS.md`, app manifests, and workspace-local skill surfaces.
 3. The runtime evaluates the capability surface for that run, builds prompt sections, computes a `prompt_cache_profile`, and writes a sanitized request snapshot fingerprint.
 4. The harness receives a reduced execution package containing the selected model, `system_prompt`, ordered `context_messages`, prompt layers, capability manifest, and workspace checksum.
-5. After the run, the runtime persists `turn_results`, token usage, request snapshots, compaction boundaries, `session-memory`, runtime projections, and durable-memory candidates.
-6. On the next run, continuity is restored from the latest prior compaction boundary, a bounded `session-memory` excerpt, and a small recalled-memory subset instead of replaying the full transcript.
+5. When the run finishes, the runtime persists the assistant turn, `turn_results`, token usage, and the terminal event immediately so the run can complete without waiting on follow-up writeback.
+6. Deferred post-run tasks may then persist request snapshots, compaction boundaries, `session-memory`, runtime projections, and durable-memory candidates off the critical path.
+7. On the next run, continuity is restored from the latest prior compaction boundary, a bounded `session-memory` excerpt, and a small recalled-memory subset instead of replaying the full transcript.
+
+That split is intentional. Post-run continuity work is valuable, but it is not allowed to hold the run open after the agent has already finished outputting. The foreground path ends at committed run state, while continuity-enhancement tasks continue asynchronously as best-effort follow-up work.
 
 ```mermaid
 graph TD;
@@ -176,15 +179,16 @@ graph TD;
     D --> E["Assemble prompt package"];
     E --> F["Execute in harness"];
     F --> G["Stream events and tool activity"];
-    G --> H["Persist turn results and request snapshots"];
-    H --> I["Write compaction boundary"];
-    H --> J["Write runtime projections"];
-    H --> K["Promote durable memory"];
-    I --> L["Restore next run"];
-    J --> L;
-    K --> L;
-    L --> M["Restore bounded continuity"];
-    M --> C;
+    G --> H["Persist turn result and terminal event"];
+    H --> I["Schedule post-run tasks"];
+    I --> J["Write request snapshots and compaction boundary"];
+    I --> K["Write runtime projections"];
+    I --> L["Promote durable memory"];
+    J --> M["Restore next run"];
+    K --> M;
+    L --> M;
+    M --> N["Restore bounded continuity"];
+    N --> C;
 ```
 
 ### Why Token Usage Stays Bounded
