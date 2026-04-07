@@ -49,6 +49,7 @@ test("app shell polls runtime notifications and renders the toast stack", async 
   assert.match(source, /<NotificationToastStack[\s\S]*leadingToast=\{/);
   assert.match(source, /<NotificationToastStack[\s\S]*notifications=\{toastNotifications\}/);
   assert.match(source, /<NotificationToastStack[\s\S]*onCloseToast=\{\(notificationId\) => \{\s*void handleDismissNotification\(notificationId\);\s*\}\}/);
+  assert.match(source, /<NotificationToastStack[\s\S]*className=\{anchoredToastStackClassName\}/);
   assert.match(source, /const runtimeNotificationById = useMemo\(/);
 });
 
@@ -103,7 +104,7 @@ test("app shell uses the integrated title bar path for macOS and Windows", async
   );
 });
 
-test("app shell suspends the native browser view while the update reminder is visible", async () => {
+test("app shell keeps update toasts inside the safe file pane region instead of suspending the browser", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(
@@ -112,10 +113,27 @@ test("app shell suspends the native browser view while the update reminder is vi
   );
   assert.match(
     source,
-    /const shouldShowAppUpdateReminder = Boolean\([\s\S]*effectiveAppUpdateStatus\.available \|\|[\s\S]*effectiveAppUpdateStatus\.downloaded[\s\S]*const shouldSuspendBrowserNativeView =/,
+    /const shouldUseSafeToastAnchor =[\s\S]*!spaceMode \|\| visibleSpacePaneIds\.includes\("files"\)/,
+  );
+  assert.match(source, /const LEFT_NAVIGATION_RAIL_WIDTH_PX = 60;/);
+  assert.match(source, /const APP_SHELL_SPACE_COLUMN_GAP_PX = 8;/);
+  assert.match(source, /const FIXED_SAFE_TOAST_REGION_WIDTH_PX =[\s\S]*MIN_FILES_PANE_WIDTH;/);
+  assert.match(source, /const anchoredToastStackClassName = shouldUseSafeToastAnchor[\s\S]*absolute bottom-4 left-0/);
+  assert.match(source, /const anchoredToastStackStyle = shouldUseSafeToastAnchor[\s\S]*width: FIXED_SAFE_TOAST_REGION_WIDTH_PX/);
+  assert.match(
+    source,
+    /const shouldSuspendBrowserNativeView =\s*isUtilityPaneResizing \|\|[\s\S]*workspaceSwitcherOpen \|\|[\s\S]*settingsDialogOpen \|\|[\s\S]*createWorkspacePanelOpen \|\|[\s\S]*publishOpen;/,
   );
   assert.match(source, /<BrowserPane[\s\S]*suspendNativeView=\{shouldSuspendBrowserNativeView\}/);
-  assert.match(source, /<NotificationToastStack[\s\S]*leadingToast=\{[\s\S]*<UpdateReminder[\s\S]*onInstallNow=\{handleInstallUpdate\}/);
+});
+
+test("app shell uses a wider minimum for the file explorer than for the browser pane", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /const MIN_FILES_PANE_WIDTH = 320;/);
+  assert.match(source, /const MIN_BROWSER_PANE_WIDTH = 200;/);
+  assert.match(source, /const DEFAULT_FILES_PANE_WIDTH = MIN_FILES_PANE_WIDTH;/);
+  assert.match(source, /function utilityPaneMinWidth\(paneId: UtilityPaneId\): number \{/);
 });
 
 test("app shell passes the app version label into the left rail", async () => {

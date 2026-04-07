@@ -42,6 +42,13 @@ test("cronjob helpers preserve legacy scheduling behavior", () => {
     cronjobInstruction("Daily check", { priority: 1, team: "growth" }),
     'Daily check\n\n[Cronjob Metadata]\n{"team":"growth"}'
   );
+  assert.equal(
+    cronjobInstruction("Remind me to drink water.", {
+      source_session_id: "session-main",
+      team: "growth"
+    }),
+    'Remind me to drink water.\n\n[Cronjob Metadata]\n{"team":"growth"}'
+  );
 
   const previous = process.env.CRONJOB_RUNNER_CHECK_INTERVAL_SECONDS;
   process.env.CRONJOB_RUNNER_CHECK_INTERVAL_SECONDS = "2";

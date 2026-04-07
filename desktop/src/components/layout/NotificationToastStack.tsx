@@ -14,6 +14,8 @@ interface NotificationToastStackProps {
   notifications: RuntimeNotificationRecordPayload[];
   onCloseToast: (notificationId: string) => void;
   onActivateNotification: (notificationId: string) => void;
+  className?: string;
+  style?: React.CSSProperties;
 }
 
 function toastAccentClassName(level: RuntimeNotificationLevel): string {
@@ -91,13 +93,21 @@ export function NotificationToastStack({
   notifications,
   onCloseToast,
   onActivateNotification,
+  className,
+  style,
 }: NotificationToastStackProps) {
   if (!leadingToast && notifications.length === 0) {
     return null;
   }
 
   return (
-    <div className="pointer-events-none fixed bottom-4 left-4 z-[90] flex w-[min(380px,calc(100vw-2rem))] flex-col gap-3 sm:bottom-6 sm:left-6">
+    <div
+      className={cn(
+        "pointer-events-none fixed bottom-4 left-4 z-[90] flex w-[min(340px,calc(100vw-2rem))] flex-col gap-3 sm:bottom-6 sm:left-6",
+        className,
+      )}
+      style={style}
+    >
       {leadingToast}
       {notifications.map((notification) => (
         (() => {

@@ -77,17 +77,24 @@ const THEMES = [
   "bubblegum-dark",
   "bubblegum-light",
 ] as const;
-const MIN_UTILITY_PANE_WIDTH = 200;
+const MIN_FILES_PANE_WIDTH = 320;
+const MIN_BROWSER_PANE_WIDTH = 200;
 const MAX_UTILITY_PANE_WIDTH = 720;
 const LEGACY_DEFAULT_FILES_PANE_WIDTH = 420;
-const DEFAULT_FILES_PANE_WIDTH = MIN_UTILITY_PANE_WIDTH;
+const DEFAULT_FILES_PANE_WIDTH = MIN_FILES_PANE_WIDTH;
 const DEFAULT_BROWSER_PANE_WIDTH = 460;
 const MIN_AGENT_CONTENT_WIDTH = 120;
 const UTILITY_PANE_RESIZER_WIDTH = 16;
+const LEFT_NAVIGATION_RAIL_WIDTH_PX = 60;
+const APP_SHELL_SPACE_COLUMN_GAP_PX = 8;
 const APP_UPDATE_CHANGELOG_BASE_URL =
   "https://github.com/holaboss-ai/holaboss-ai/releases/tag";
 const DEFAULT_NOTIFICATION_TOAST_DURATION_MS = 7_000;
 const CRITICAL_NOTIFICATION_TOAST_DURATION_MS = 12_000;
+const FIXED_SAFE_TOAST_REGION_WIDTH_PX =
+  LEFT_NAVIGATION_RAIL_WIDTH_PX +
+  APP_SHELL_SPACE_COLUMN_GAP_PX +
+  MIN_FILES_PANE_WIDTH;
 
 type SpaceComponentId = "agent" | "files" | "browser";
 type UtilityPaneId = "files" | "browser";
@@ -184,6 +191,12 @@ type WorkspaceOutputNavigationTarget =
       htmlContent?: string | null;
     };
 
+function utilityPaneMinWidth(paneId: UtilityPaneId): number {
+  return paneId === "files"
+    ? MIN_FILES_PANE_WIDTH
+    : MIN_BROWSER_PANE_WIDTH;
+}
+
 function notificationToastDurationMs(
   notification: RuntimeNotificationRecordPayload,
 ): number {
@@ -251,7 +264,7 @@ function loadFilesPaneWidth(): number {
         return DEFAULT_FILES_PANE_WIDTH;
       }
       return Math.max(
-        MIN_UTILITY_PANE_WIDTH,
+        MIN_FILES_PANE_WIDTH,
         Math.min(parsed, MAX_UTILITY_PANE_WIDTH),
       );
     }
@@ -268,7 +281,7 @@ function loadBrowserPaneWidth(): number {
     const parsed = Number(raw);
     if (Number.isFinite(parsed)) {
       return Math.max(
-        MIN_UTILITY_PANE_WIDTH,
+        MIN_BROWSER_PANE_WIDTH,
         Math.min(parsed, MAX_UTILITY_PANE_WIDTH),
       );
     }
@@ -804,13 +817,14 @@ function AppShellContent() {
       const minFlexibleWidth =
         flexPaneId === "agent"
           ? MIN_AGENT_CONTENT_WIDTH
-          : MIN_UTILITY_PANE_WIDTH;
+          : utilityPaneMinWidth(flexPaneId);
+      const minPaneWidth = utilityPaneMinWidth(paneId);
       const maxWidth =
         hostWidth > 0
           ? Math.min(
               MAX_UTILITY_PANE_WIDTH,
               Math.max(
-                MIN_UTILITY_PANE_WIDTH,
+                minPaneWidth,
                 hostWidth -
                   fixedOtherWidths -
                   minFlexibleWidth -
@@ -818,7 +832,7 @@ function AppShellContent() {
               ),
             )
           : MAX_UTILITY_PANE_WIDTH;
-      return Math.max(MIN_UTILITY_PANE_WIDTH, Math.min(width, maxWidth));
+      return Math.max(minPaneWidth, Math.min(width, maxWidth));
     },
     [],
   );
@@ -835,11 +849,11 @@ function AppShellContent() {
       if (hostWidth <= 0) {
         return {
           leftWidth: Math.max(
-            MIN_UTILITY_PANE_WIDTH,
+            utilityPaneMinWidth(leftPaneId),
             Math.min(leftWidth, MAX_UTILITY_PANE_WIDTH),
           ),
           rightWidth: Math.max(
-            MIN_UTILITY_PANE_WIDTH,
+            utilityPaneMinWidth(rightPaneId),
             Math.min(rightWidth, MAX_UTILITY_PANE_WIDTH),
           ),
         };
@@ -879,7 +893,7 @@ function AppShellContent() {
       const maxCombinedWidth = Math.min(
         MAX_UTILITY_PANE_WIDTH * 2,
         Math.max(
-          MIN_UTILITY_PANE_WIDTH * 2,
+          utilityPaneMinWidth(leftPaneId) + utilityPaneMinWidth(rightPaneId),
           hostWidth -
             fixedOtherWidths -
             MIN_AGENT_CONTENT_WIDTH -
@@ -888,8 +902,11 @@ function AppShellContent() {
       );
       const combinedWidth = Math.min(leftWidth + rightWidth, maxCombinedWidth);
       const nextLeftWidth = Math.max(
-        MIN_UTILITY_PANE_WIDTH,
-        Math.min(leftWidth, combinedWidth - MIN_UTILITY_PANE_WIDTH),
+        utilityPaneMinWidth(leftPaneId),
+        Math.min(
+          leftWidth,
+          combinedWidth - utilityPaneMinWidth(rightPaneId),
+        ),
       );
       return {
         leftWidth: nextLeftWidth,
@@ -1813,6 +1830,16 @@ function AppShellContent() {
     : (visibleSpacePaneIds[visibleSpacePaneIds.length - 1] ?? null);
   const showOperationsDrawer =
     spaceMode && spaceVisibility.agent && operationsDrawerOpen;
+  const shouldUseSafeToastAnchor =
+    hasWorkspaces && (!spaceMode || visibleSpacePaneIds.includes("files"));
+  const anchoredToastStackClassName = shouldUseSafeToastAnchor
+    ? "pointer-events-none absolute bottom-4 left-0 z-20 flex max-w-full flex-col gap-3 sm:bottom-6"
+    : undefined;
+  const anchoredToastStackStyle = shouldUseSafeToastAnchor
+    ? {
+        width: FIXED_SAFE_TOAST_REGION_WIDTH_PX,
+      }
+    : undefined;
   const shouldShowAppUpdateReminder = Boolean(
     effectiveAppUpdateStatus &&
       (effectiveAppUpdateStatus.available ||
@@ -1825,8 +1852,7 @@ function AppShellContent() {
     workspaceSwitcherOpen ||
     settingsDialogOpen ||
     createWorkspacePanelOpen ||
-    publishOpen ||
-    shouldShowAppUpdateReminder;
+    publishOpen;
   const bootstrapErrorMessage =
     !hasHydratedWorkspaceList && runtimeStatus?.status === "error"
       ? runtimeStatus.lastError.trim() ||
@@ -2139,6 +2165,8 @@ function AppShellContent() {
           onActivateNotification={(notificationId) => {
             void handleActivateNotification(notificationId);
           }}
+          className={anchoredToastStackClassName}
+          style={anchoredToastStackStyle}
         />
 
         {hasWorkspaces ? (
@@ -2198,7 +2226,7 @@ function AppShellContent() {
               appVersionLabel={appVersionLabel}
             />
 
-            <div className="flex h-full min-h-0 flex-col overflow-hidden">
+            <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
               <div className="min-h-0 flex-1 overflow-hidden">
                 {spaceMode ? (
                   <div className="relative flex h-full min-h-0 flex-col overflow-hidden">

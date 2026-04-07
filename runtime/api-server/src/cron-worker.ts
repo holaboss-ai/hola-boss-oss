@@ -167,7 +167,14 @@ export function cronjobInstruction(description: string, metadata: Record<string,
   const cleanedDescription = description.trim();
   const executionMetadata = Object.fromEntries(
     Object.entries(metadata ?? {}).filter(
-      ([key]) => !["model", "session_id", "priority", "idempotency_key"].includes(key)
+      ([key]) =>
+        ![
+          "model",
+          "session_id",
+          "source_session_id",
+          "priority",
+          "idempotency_key"
+        ].includes(key)
     )
   );
   if (Object.keys(executionMetadata).length === 0) {
