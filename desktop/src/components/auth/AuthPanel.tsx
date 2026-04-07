@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import anthropicLogo from "@/assets/providers/anthropic.svg";
-import geminiLogo from "@/assets/providers/gemini.svg";
-import minimaxLogo from "@/assets/providers/minimax.svg";
-import ollamaLogo from "@/assets/providers/ollama.svg";
-import openaiLogo from "@/assets/providers/openai.svg";
-import openrouterLogo from "@/assets/providers/openrouter.svg";
+import anthropicLogoMarkup from "@/assets/providers/anthropic.svg?raw";
+import geminiLogoMarkup from "@/assets/providers/gemini.svg?raw";
+import minimaxLogoMarkup from "@/assets/providers/minimax.svg?raw";
+import ollamaLogoMarkup from "@/assets/providers/ollama.svg?raw";
+import openaiLogoMarkup from "@/assets/providers/openai.svg?raw";
+import openrouterLogoMarkup from "@/assets/providers/openrouter.svg?raw";
 import {
   useDesktopAuthSession,
   type AuthSession
@@ -230,24 +230,24 @@ function enabledProviderIdsForDrafts(providerDrafts: ProviderDraftMap, isSignedI
   );
 }
 
-function providerBrandIconAsset(providerId: KnownProviderId): string | null {
+function providerBrandIconMarkup(providerId: KnownProviderId): string | null {
   if (providerId === "openai_direct") {
-    return openaiLogo;
+    return openaiLogoMarkup;
   }
   if (providerId === "anthropic_direct") {
-    return anthropicLogo;
+    return anthropicLogoMarkup;
   }
   if (providerId === "openrouter_direct") {
-    return openrouterLogo;
+    return openrouterLogoMarkup;
   }
   if (providerId === "gemini_direct") {
-    return geminiLogo;
+    return geminiLogoMarkup;
   }
   if (providerId === "ollama_direct") {
-    return ollamaLogo;
+    return ollamaLogoMarkup;
   }
   if (providerId === "minimax_direct") {
-    return minimaxLogo;
+    return minimaxLogoMarkup;
   }
   return null;
 }
@@ -256,22 +256,13 @@ function ProviderBrandIcon({ providerId }: { providerId: KnownProviderId }) {
   if (providerId === "holaboss") {
     return <img src={holabossLogoUrl} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
   }
-  const assetUrl = providerBrandIconAsset(providerId);
-  if (assetUrl) {
+  const iconMarkup = providerBrandIconMarkup(providerId);
+  if (iconMarkup) {
     return (
       <span
         aria-hidden="true"
-        className="block h-4 w-4 bg-foreground/92"
-        style={{
-          WebkitMaskImage: `url(${assetUrl})`,
-          maskImage: `url(${assetUrl})`,
-          WebkitMaskRepeat: "no-repeat",
-          maskRepeat: "no-repeat",
-          WebkitMaskPosition: "center",
-          maskPosition: "center",
-          WebkitMaskSize: "contain",
-          maskSize: "contain",
-        }}
+        className="block h-4 w-4 text-foreground/92 [&_svg]:h-full [&_svg]:w-full"
+        dangerouslySetInnerHTML={{ __html: iconMarkup }}
       />
     );
   }
