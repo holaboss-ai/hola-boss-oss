@@ -25,6 +25,15 @@ test("scheduled tab toggle updates cronjob enabled state", async () => {
   assert.match(source, /aria-label=\{job\.enabled \? "Disable schedule" : "Enable schedule"\}/);
 });
 
+test("scheduled rows expose a run-now action for each automation", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /const handleRunNow = async \(job: CronjobRecordPayload\) => \{/);
+  assert.match(source, /await window\.electronAPI\.workspace\.runCronjobNow\(job\.id\);/);
+  assert.match(source, /Run now/);
+  assert.match(source, /<Play size=\{14\} \/>/);
+});
+
 test("scheduled rows label whether an automation is a notification or task run", async () => {
   const source = await readFile(sourcePath, "utf8");
 

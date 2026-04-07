@@ -402,4 +402,6 @@ test("composeBaseAgentPrompt includes cronjob delivery routing guidance when cro
   assert.match(prompt.systemPrompt, /Cronjob delivery routing:/);
   assert.match(prompt.systemPrompt, /use `session_run` for recurring agent work/i);
   assert.match(prompt.systemPrompt, /Use `system_notification` only for lightweight reminders or notifications/i);
+  assert.match(prompt.systemPrompt, /put the executable task in `instruction`/i);
+  assert.match(prompt.systemPrompt, /Do not repeat schedule wording/i);
 });

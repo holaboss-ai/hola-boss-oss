@@ -1519,25 +1519,37 @@ test("cronjobs, task proposals, and session state routes preserve local payload 
       initiated_by: "workspace_agent",
       cron: "0 9 * * *",
       description: "Daily check",
+      instruction: "Say hello",
       delivery: { mode: "announce", channel: "session_run", to: null }
     }
   });
   assert.equal(createdJob.statusCode, 200);
+  assert.equal(createdJob.json().instruction, "Say hello");
   const jobId = createdJob.json().id as string;
 
   const listedJobs = await app.inject({
     method: "GET",
     url: `/api/v1/cronjobs?workspace_id=${workspace.id}`
   });
+  const runNowJob = await app.inject({
+    method: "POST",
+    url: `/api/v1/cronjobs/${jobId}/run`
+  });
   const updatedJob = await app.inject({
     method: "PATCH",
     url: `/api/v1/cronjobs/${jobId}`,
-    payload: { description: "Updated check" }
+    payload: { description: "Updated check", instruction: "Say hello louder" }
   });
   assert.equal(listedJobs.statusCode, 200);
   assert.equal(listedJobs.json().count, 1);
+  assert.equal(runNowJob.statusCode, 200);
+  assert.equal(runNowJob.json().success, true);
+  assert.equal(runNowJob.json().cronjob.id, jobId);
+  assert.equal(runNowJob.json().cronjob.instruction, "Say hello");
+  assert.ok(runNowJob.json().session_id);
   assert.equal(updatedJob.statusCode, 200);
   assert.equal(updatedJob.json().description, "Updated check");
+  assert.equal(updatedJob.json().instruction, "Say hello louder");
 
   const createdNotification = store.createRuntimeNotification({
     workspaceId: workspace.id,
@@ -1558,8 +1570,12 @@ test("cronjobs, task proposals, and session state routes preserve local payload 
     payload: { state: "read" }
   });
   assert.equal(listedNotifications.statusCode, 200);
-  assert.equal(listedNotifications.json().count, 1);
-  assert.equal(listedNotifications.json().items[0].title, "Drink Water");
+  assert.equal(listedNotifications.json().count, 2);
+  assert.ok(
+    listedNotifications
+      .json()
+      .items.some((item: { id: string; title: string }) => item.id === createdNotification.id && item.title === "Drink Water")
+  );
   assert.equal(updatedNotification.statusCode, 200);
   assert.equal(updatedNotification.json().state, "read");
   assert.ok(updatedNotification.json().read_at);

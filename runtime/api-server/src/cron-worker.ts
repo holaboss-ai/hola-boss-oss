@@ -123,7 +123,7 @@ export function queueLocalCronjobRun(
   job: CronjobRecord,
   now: Date,
   wakeQueueWorker: (() => void) | undefined
-): void {
+): string {
   const workspace = store.getWorkspace(job.workspaceId);
   if (!workspace) {
     throw new Error(`workspace not found for cronjob ${job.id}`);
@@ -158,14 +158,14 @@ export function queueLocalCronjobRun(
     status: "QUEUED"
   });
 
-  const instruction = cronjobInstruction(job.description, metadata);
+  const executableInstruction = cronjobInstruction(job.instruction, metadata);
   const record = store.enqueueInput({
     workspaceId: job.workspaceId,
     sessionId: resolvedSessionId,
     priority,
     idempotencyKey,
     payload: {
-      text: instruction,
+      text: executableInstruction,
       image_urls: [],
       model,
       context: {
@@ -179,7 +179,7 @@ export function queueLocalCronjobRun(
     workspaceId: job.workspaceId,
     sessionId: resolvedSessionId,
     role: "user",
-    text: instruction,
+    text: executableInstruction,
     messageId: `cronjob-${job.id}-${record.inputId}`
   });
 
@@ -195,16 +195,21 @@ export function queueLocalCronjobRun(
   });
 
   wakeQueueWorker?.();
+  return resolvedSessionId;
 }
 
-export function deliverLocalCronjobNotification(store: RuntimeStateStore, job: CronjobRecord): void {
+export function deliverLocalCronjobNotification(
+  store: RuntimeStateStore,
+  job: CronjobRecord,
+  options?: { sessionId?: string | null },
+): { id: string } {
   const workspace = store.getWorkspace(job.workspaceId);
   if (!workspace) {
     throw new Error(`workspace not found for cronjob ${job.id}`);
   }
 
   const metadata = isRecord(job.metadata) ? job.metadata : {};
-  store.createRuntimeNotification({
+  const notification = store.createRuntimeNotification({
     workspaceId: job.workspaceId,
     cronjobId: job.id,
     sourceType: "cronjob",
@@ -217,10 +222,52 @@ export function deliverLocalCronjobNotification(store: RuntimeStateStore, job: C
       cronjob_id: job.id,
       cronjob_name: job.name,
       cronjob_description: job.description,
+      cronjob_instruction: job.instruction,
+      session_id:
+        typeof options?.sessionId === "string" && options.sessionId.trim()
+          ? options.sessionId.trim()
+          : null,
       delivery: job.delivery,
       cronjob_metadata: metadata
     }
   });
+  return { id: notification.id };
+}
+
+export interface LocalCronjobDeliveryResult {
+  channel: string | null;
+  sessionId: string | null;
+  notificationId: string | null;
+}
+
+export function executeLocalCronjobDelivery(
+  store: RuntimeStateStore,
+  job: CronjobRecord,
+  now: Date,
+  wakeQueueWorker: (() => void) | undefined,
+): LocalCronjobDeliveryResult {
+  const delivery = isRecord(job.delivery) ? job.delivery : {};
+  const channel = typeof delivery.channel === "string" ? delivery.channel : null;
+  if (channel === "session_run") {
+    const sessionId = queueLocalCronjobRun(store, job, now, wakeQueueWorker);
+    const notification = deliverLocalCronjobNotification(store, job, {
+      sessionId,
+    });
+    return {
+      channel,
+      sessionId,
+      notificationId: notification.id,
+    };
+  }
+  if (channel === "system_notification") {
+    const notification = deliverLocalCronjobNotification(store, job);
+    return {
+      channel,
+      sessionId: null,
+      notificationId: notification.id,
+    };
+  }
+  throw new Error(`unsupported cronjob delivery channel: ${channel}`);
 }
 
 export interface CronWorkerLike {
@@ -279,20 +326,19 @@ export class RuntimeCronWorker implements CronWorkerLike {
       let status = "success";
       let error: string | null = null;
       try {
-        const delivery = isRecord(job.delivery) ? job.delivery : {};
-        const channel = typeof delivery.channel === "string" ? delivery.channel : null;
-        if (channel === "session_run") {
-          queueLocalCronjobRun(this.#store, job, now, () => this.#queueWorker?.wake());
-        } else if (channel === "system_notification") {
-          deliverLocalCronjobNotification(this.#store, job);
+        const result = executeLocalCronjobDelivery(
+          this.#store,
+          job,
+          now,
+          () => this.#queueWorker?.wake(),
+        );
+        if (result.channel === "system_notification") {
           this.#logger?.info?.("Cronjob notification delivered", {
             event: "cronjob.delivery.system_notification",
             outcome: "success",
             cronjob_id: job.id,
             workspace_id: job.workspaceId
           });
-        } else {
-          throw new Error(`unsupported cronjob delivery channel: ${channel}`);
         }
       } catch (caught) {
         status = "failed";

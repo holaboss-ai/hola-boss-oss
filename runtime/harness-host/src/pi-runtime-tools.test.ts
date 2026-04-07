@@ -89,6 +89,68 @@ test("Pi runtime tools execute through the local runtime capability API", async 
   assert.deepEqual(result.details, { tool_id: "holaboss_onboarding_complete" });
 });
 
+test("Pi runtime cronjob tools send instruction separately from description", async () => {
+  const requests: Array<{ method: string; url: string; workspaceId: string; body: string }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/capabilities/runtime-tools")) {
+      return new Response(JSON.stringify({ available: true }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+
+    const body = init?.body ? String(init.body) : "";
+    requests.push({
+      method: String(init?.method ?? "GET"),
+      url,
+      workspaceId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-workspace-id"] ?? ""),
+      body,
+    });
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+  };
+
+  const tools = await resolvePiRuntimeToolDefinitions({
+    runtimeApiBaseUrl: "http://127.0.0.1:5060",
+    workspaceId: "workspace-1",
+    fetchImpl,
+  });
+
+  const createTool = tools.find((tool) => tool.name === "holaboss_cronjobs_create");
+  assert.ok(createTool);
+
+  await createTool.execute(
+    "call-1",
+    {
+      cron: "*/5 * * * *",
+      description: "Say hello every 5 minutes.",
+      instruction: "Say hello.",
+      delivery_channel: "session_run",
+    },
+    undefined,
+    undefined,
+    {} as never
+  );
+
+  assert.deepEqual(requests, [
+    {
+      method: "POST",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/cronjobs",
+      workspaceId: "workspace-1",
+      body: JSON.stringify({
+        cron: "*/5 * * * *",
+        description: "Say hello every 5 minutes.",
+        instruction: "Say hello.",
+        delivery: { channel: "session_run" },
+      }),
+    },
+  ]);
+});
+
 test("Pi runtime tools fall back to node http when no fetch implementation is provided", async () => {
   const requests: Array<{ method: string; url: string; workspaceId: string; body: string }> = [];
   const server = http.createServer((request, response) => {

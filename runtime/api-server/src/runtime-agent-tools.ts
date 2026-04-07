@@ -25,6 +25,7 @@ export interface RuntimeAgentToolsCreateCronjobParams {
   name?: string | null;
   cron: string;
   description: string;
+  instruction?: string | null;
   enabled?: boolean;
   delivery?: {
     channel: string;
@@ -41,6 +42,7 @@ export interface RuntimeAgentToolsUpdateCronjobParams {
   name?: string | null;
   cron?: string | null;
   description?: string | null;
+  instruction?: string | null;
   enabled?: boolean | null;
   delivery?:
     | {
@@ -128,6 +130,20 @@ function metadataWithHolabossUserId(
   return nextMetadata;
 }
 
+function resolvedInstructionForCronjobUpdate(params: {
+  existing: CronjobRecord;
+  description: string | null;
+  instruction: string | null;
+}): string | null | undefined {
+  if (params.instruction !== null) {
+    return params.instruction;
+  }
+  if (params.description !== null && params.existing.instruction.trim() === params.existing.description.trim()) {
+    return params.description;
+  }
+  return undefined;
+}
+
 export function normalizeDelivery(params: {
   channel: string;
   mode?: string | null;
@@ -176,6 +192,7 @@ export function cronjobPayload(record: CronjobRecord): JsonObject {
     name: record.name,
     cron: record.cron,
     description: record.description,
+    instruction: record.instruction,
     enabled: record.enabled,
     delivery: record.delivery as JsonValue,
     metadata: record.metadata as JsonValue,
@@ -257,11 +274,15 @@ export class RuntimeAgentToolsService {
     this.requireWorkspace(params.workspaceId);
     const cron = normalizedString(params.cron);
     const description = normalizedString(params.description);
+    const instruction = normalizedString(params.instruction ?? params.description);
     if (!cron) {
       throw new RuntimeAgentToolsServiceError(400, "cronjob_cron_required", "cron is required");
     }
     if (!description) {
       throw new RuntimeAgentToolsServiceError(400, "cronjob_description_required", "description is required");
+    }
+    if (!instruction) {
+      throw new RuntimeAgentToolsServiceError(400, "cronjob_instruction_required", "instruction is required");
     }
     const created = this.store.createCronjob({
       workspaceId: params.workspaceId,
@@ -269,6 +290,7 @@ export class RuntimeAgentToolsService {
       name: normalizedString(params.name),
       cron,
       description,
+      instruction,
       enabled: params.enabled !== false,
       delivery: normalizeDelivery({
         channel: normalizedString(params.delivery?.channel ?? "session_run") || "session_run",
@@ -289,14 +311,19 @@ export class RuntimeAgentToolsService {
       throw new RuntimeAgentToolsServiceError(400, "cronjob_cron_required", "cron is required");
     }
     const description = params.description == null ? null : normalizedString(params.description);
+    const instruction = params.instruction == null ? null : normalizedString(params.instruction);
     if (params.description !== undefined && !description) {
       throw new RuntimeAgentToolsServiceError(400, "cronjob_description_required", "description is required");
+    }
+    if (params.instruction !== undefined && !instruction) {
+      throw new RuntimeAgentToolsServiceError(400, "cronjob_instruction_required", "instruction is required");
     }
     const updated = this.store.updateCronjob({
       jobId: params.jobId,
       name: params.name === undefined ? undefined : normalizedString(params.name),
       cron,
       description,
+      instruction: resolvedInstructionForCronjobUpdate({ existing, description, instruction }),
       enabled: params.enabled === undefined ? undefined : params.enabled,
       delivery:
         params.delivery === undefined || params.delivery === null

@@ -72,6 +72,7 @@ test("runtime cron worker queues due session_run cronjobs and updates bookkeepin
     name: "Daily",
     cron: "0 9 * * *",
     description: "Daily check",
+    instruction: "Say hello",
     delivery: { channel: "session_run" },
     metadata: {
       session_id: "session-cron",
@@ -99,6 +100,7 @@ test("runtime cron worker queues due session_run cronjobs and updates bookkeepin
   const runtimeState = store.getRuntimeState({ workspaceId: workspace.id, sessionId: "session-cron" });
   const queued = store.claimInputs({ limit: 10, claimedBy: "test", leaseSeconds: 300 });
   const history = store.listSessionMessages({ workspaceId: workspace.id, sessionId: "session-cron" });
+  const notifications = store.listRuntimeNotifications({ workspaceId: workspace.id });
 
   assert.equal(processed, 1);
   assert.equal(wakeCalls, 1);
@@ -114,7 +116,17 @@ test("runtime cron worker queues due session_run cronjobs and updates bookkeepin
   assert.equal(queued.length, 1);
   assert.equal(queued[0].payload.model, "gpt-5");
   assert.deepEqual(queued[0].payload.context, { source: "cronjob", cronjob_id: job.id });
+  assert.match(String(queued[0].payload.text), /^Say hello/);
   assert.match(String(queued[0].payload.text), /\[Cronjob Metadata\]/);
+  assert.match(String(history[0].text), /^Say hello/);
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0]?.title, "Daily");
+  assert.equal(notifications[0]?.message, "Daily check");
+  assert.equal(notifications[0]?.state, "unread");
+  assert.equal(notifications[0]?.cronjobId, job.id);
+  assert.equal(notifications[0]?.sourceType, "cronjob");
+  assert.equal(notifications[0]?.metadata.session_id, "session-cron");
+  assert.equal(notifications[0]?.metadata.cronjob_instruction, "Say hello");
 
   store.close();
 });

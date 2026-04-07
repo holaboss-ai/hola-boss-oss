@@ -1,5 +1,6 @@
 import {
   Download,
+  EyeOff,
   ExternalLink,
   RotateCcw,
   TriangleAlert,
@@ -54,16 +55,6 @@ function progressLabel(
   return `${progressPercent}% downloaded`;
 }
 
-function hintLabel(status: AppUpdateStatusPayload, hasError: boolean) {
-  if (hasError) {
-    return "Use a signed desktop build if you want to test the full update flow.";
-  }
-  if (status.downloaded) {
-    return "Restart now, or close later and Holaboss will install it on quit.";
-  }
-  return "Downloading quietly in the background.";
-}
-
 export function UpdateReminder({
   status,
   onDismiss,
@@ -87,15 +78,16 @@ export function UpdateReminder({
     : status.downloaded
       ? `${releaseLabel} ready to install`
       : `Downloading ${releaseLabel}`;
-  const hint = hintLabel(status, hasError);
   const errorHint = conciseErrorHint(status.error);
+  const shouldShowDismissIcon = status.downloaded || hasError;
+  const shouldShowBackgroundAction = !status.downloaded && !hasError;
 
   return (
     <div className="pointer-events-auto overflow-hidden rounded-[24px] border border-border/60 bg-popover/95 shadow-2xl ring-1 ring-foreground/5 backdrop-blur-xl animate-in fade-in-0 slide-in-from-top-2">
-      <div className="flex items-start gap-3 p-4">
+      <div className="flex items-start gap-3 px-3.5 py-3">
         <div
           className={cn(
-            "mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-2xl ring-1",
+            "mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-2xl ring-1",
             toneClassName,
           )}
         >
@@ -103,20 +95,30 @@ export function UpdateReminder({
         </div>
 
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-            <span>Desktop update</span>
-            <span className="rounded-full border border-border/50 px-2 py-0.5 text-[10px] font-semibold tracking-[0.14em] text-foreground/78">
-              {progressLabel(status, progressPercent, hasError)}
-            </span>
+          <div className="flex items-start justify-between gap-2">
+            <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+              <span>Desktop update</span>
+            </div>
+            {shouldShowDismissIcon ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Dismiss desktop update"
+                onClick={onDismiss}
+                className="-mr-1 -mt-0.5 shrink-0 text-muted-foreground hover:text-foreground"
+              >
+                <X size={14} />
+              </Button>
+            ) : null}
           </div>
 
-          <div className="mt-1 text-base font-semibold leading-tight text-foreground">
+          <div className="mt-0.5 text-base font-semibold leading-tight text-foreground">
             {title}
           </div>
-          <p className="mt-1 text-sm leading-5 text-foreground/85">{hint}</p>
 
           {!status.downloaded ? (
-            <div className="mt-3">
+            <div className="mt-2.5">
               <div className="h-1.5 overflow-hidden rounded-full bg-border/45">
                 <div
                   className={cn(
@@ -126,19 +128,19 @@ export function UpdateReminder({
                   style={{ width: progressWidth }}
                 />
               </div>
-              <div className="mt-1.5 text-[11px] text-muted-foreground/78">
+              <div className="mt-1 text-[11px] text-muted-foreground/78">
                 {progressLabel(status, progressPercent, hasError)}
               </div>
             </div>
           ) : null}
 
           {errorHint ? (
-            <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/8 px-3 py-2 text-[11px] leading-5 text-amber-700 dark:text-amber-200">
+            <div className="mt-2.5 rounded-2xl border border-amber-500/20 bg-amber-500/8 px-3 py-2 text-[11px] leading-5 text-amber-700 dark:text-amber-200">
               {errorHint}
             </div>
           ) : null}
 
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="mt-2.5 flex flex-wrap gap-2">
             {status.downloaded && !hasError ? (
               <Button type="button" size="sm" onClick={onInstallNow}>
                 <RotateCcw size={14} />
@@ -149,10 +151,12 @@ export function UpdateReminder({
               <ExternalLink size={14} />
               Changelog
             </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={onDismiss}>
-              <X size={14} />
-              Dismiss
-            </Button>
+            {shouldShowBackgroundAction ? (
+              <Button type="button" variant="ghost" size="sm" onClick={onDismiss}>
+                <EyeOff size={14} />
+                Run in background
+              </Button>
+            ) : null}
           </div>
         </div>
       </div>

@@ -1762,6 +1762,7 @@ interface CronjobRecordPayload {
   name: string;
   cron: string;
   description: string;
+  instruction: string;
   enabled: boolean;
   delivery: CronjobDeliveryPayload;
   metadata: Record<string, unknown>;
@@ -1785,6 +1786,7 @@ interface CronjobCreatePayload {
   name?: string;
   cron: string;
   description: string;
+  instruction?: string;
   enabled?: boolean;
   delivery: CronjobDeliveryPayload;
   metadata?: Record<string, unknown>;
@@ -1794,6 +1796,7 @@ interface CronjobUpdatePayload {
   name?: string;
   cron?: string;
   description?: string;
+  instruction?: string;
   enabled?: boolean;
   delivery?: CronjobDeliveryPayload;
   metadata?: Record<string, unknown>;
@@ -6155,6 +6158,15 @@ async function listCronjobs(
     method: "GET",
     path: "/api/v1/cronjobs",
     params: { workspace_id: workspaceId, enabled_only: enabledOnly },
+  });
+}
+
+async function runCronjobNow(
+  jobId: string,
+): Promise<CronjobRunResponsePayload> {
+  return requestRuntimeJson<CronjobRunResponsePayload>({
+    method: "POST",
+    path: `/api/v1/cronjobs/${encodeURIComponent(jobId)}/run`,
   });
 }
 
@@ -13689,6 +13701,11 @@ app.whenReady().then(async () => {
     "workspace:createCronjob",
     ["main"],
     async (_event, payload: CronjobCreatePayload) => createCronjob(payload),
+  );
+  handleTrustedIpc(
+    "workspace:runCronjobNow",
+    ["main"],
+    async (_event, jobId: string) => runCronjobNow(jobId),
   );
   handleTrustedIpc(
     "workspace:updateCronjob",

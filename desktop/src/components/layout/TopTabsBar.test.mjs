@@ -4,16 +4,14 @@ import test from "node:test";
 
 const TOP_TABS_BAR_PATH = new URL("./TopTabsBar.tsx", import.meta.url);
 
-test("top tabs bar renders the notification center before the profile menu", async () => {
+test("top tabs bar removes the notification center and keeps the profile menu", async () => {
   const source = await readFile(TOP_TABS_BAR_PATH, "utf8");
 
-  const notificationIndex = source.indexOf("<NotificationCenter");
   const profileMenuIndex = source.indexOf("<DropdownMenu>");
 
-  assert.notEqual(notificationIndex, -1);
   assert.notEqual(profileMenuIndex, -1);
-  assert.ok(notificationIndex < profileMenuIndex);
-  assert.match(source, /notificationUnreadCount = 0/);
+  assert.doesNotMatch(source, /<NotificationCenter/);
+  assert.doesNotMatch(source, /notificationUnreadCount/);
 });
 
 test("top tabs bar renders custom compact window controls for Windows title bar integration", async () => {
