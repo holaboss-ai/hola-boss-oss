@@ -237,12 +237,14 @@ test("handleRequest maps cronjobs and task proposals to snake_case payloads", ()
     initiated_by: "workspace_agent",
     cron: "0 9 * * *",
     description: "Daily check",
+    instruction: "Say hello",
     delivery: { mode: "announce", channel: "session_run", to: null }
   }) as Record<string, unknown>;
   const updatedJob = handleRequest("update-cronjob", {
     options,
     job_id: String(job.id),
-    description: "Updated check"
+    description: "Updated check",
+    instruction: "Say hello louder"
   }) as Record<string, unknown>;
   const proposal = handleRequest("create-task-proposal", {
     options,
@@ -261,7 +263,9 @@ test("handleRequest maps cronjobs and task proposals to snake_case payloads", ()
   }) as Record<string, unknown>;
 
   assert.equal(job.workspace_id, "workspace-1");
+  assert.equal(job.instruction, "Say hello");
   assert.equal(updatedJob.description, "Updated check");
+  assert.equal(updatedJob.instruction, "Say hello louder");
   assert.equal(proposal.source_event_ids instanceof Array, true);
   assert.equal(updatedProposal.state, "accepted");
 });

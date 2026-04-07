@@ -3336,7 +3336,7 @@ export function ChatPane({
 
         {showMainSessionReturn ? (
           <div className="shrink-0 px-4 pt-3 sm:px-5">
-            <div className="bg-muted/72 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-border/55 px-3 py-2.5">
+            <div className="bg-muted/72 flex flex-col items-start gap-3 rounded-[16px] border border-border/55 px-3 py-2.5">
               <div className="min-w-0">
                 <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
                   Sub-session
@@ -3350,7 +3350,7 @@ export function ChatPane({
                 type="button"
                 onClick={() => void returnToMainSession()}
                 disabled={isLoadingHistory}
-                className="inline-flex shrink-0 items-center rounded-full border border-border/60 bg-background px-3 py-1.5 text-[12px] font-medium text-foreground transition hover:border-primary/35 hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex items-center rounded-full border border-border/60 bg-background px-3 py-1.5 text-[12px] font-medium text-foreground transition hover:border-primary/35 hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Back to main session
               </button>

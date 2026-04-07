@@ -1,4 +1,5 @@
 import {
+  ArrowUpRight,
   Bell,
   CircleCheck,
   TriangleAlert,
@@ -13,6 +14,8 @@ interface NotificationToastStackProps {
   notifications: RuntimeNotificationRecordPayload[];
   onCloseToast: (notificationId: string) => void;
   onActivateNotification: (notificationId: string) => void;
+  className?: string;
+  style?: React.CSSProperties;
 }
 
 function toastAccentClassName(level: RuntimeNotificationLevel): string {
@@ -54,7 +57,7 @@ function toastTimeLabel(value: string): string {
 
 function priorityBadgeClassName(priority: RuntimeNotificationPriority): string {
   if (priority === "critical") {
-    return "border-rose-500/35 bg-rose-500/12 text-rose-200";
+    return "border-rose-500/55 bg-rose-500/16 text-rose-700 dark:text-rose-100";
   }
   if (priority === "high") {
     return "border-amber-400/35 bg-amber-400/12 text-amber-100";
@@ -78,38 +81,40 @@ function priorityLabel(priority: RuntimeNotificationPriority): string {
   return "Normal";
 }
 
+function notificationTargetSessionId(
+  notification: RuntimeNotificationRecordPayload,
+): string | null {
+  const raw = notification.metadata.session_id;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+
 export function NotificationToastStack({
   leadingToast = null,
   notifications,
   onCloseToast,
   onActivateNotification,
+  className,
+  style,
 }: NotificationToastStackProps) {
   if (!leadingToast && notifications.length === 0) {
     return null;
   }
 
   return (
-    <div className="pointer-events-none fixed bottom-4 left-4 z-[90] flex w-[min(380px,calc(100vw-2rem))] flex-col gap-3 sm:bottom-6 sm:left-6">
+    <div
+      className={cn(
+        "pointer-events-none fixed bottom-4 left-4 z-[90] flex w-[min(340px,calc(100vw-2rem))] flex-col gap-3 sm:bottom-6 sm:left-6",
+        className,
+      )}
+      style={style}
+    >
       {leadingToast}
       {notifications.map((notification) => (
-        <div
-          key={notification.id}
-          className="pointer-events-auto overflow-hidden rounded-[24px] border border-border/60 bg-popover/95 shadow-2xl ring-1 ring-foreground/5 backdrop-blur-xl animate-in fade-in-0 slide-in-from-top-2"
-        >
-          <div className="flex items-start gap-3 p-4">
-            <div
-              className={cn(
-                "mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-2xl ring-1",
-                toastAccentClassName(notification.level),
-              )}
-            >
-              {toastIcon(notification.level)}
-            </div>
-            <button
-              type="button"
-              onClick={() => onActivateNotification(notification.id)}
-              className="min-w-0 flex-1 text-left"
-            >
+        (() => {
+          const targetSessionId = notificationTargetSessionId(notification);
+          const isSessionTarget = Boolean(targetSessionId);
+          const content = (
+            <>
               <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
                 <span className="truncate">
                   {notification.source_label || "Notification"}
@@ -132,19 +137,63 @@ export function NotificationToastStack({
               <p className="mt-1 text-sm leading-5 text-foreground/85">
                 {notification.message}
               </p>
-            </button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              aria-label={`Hide notification ${notification.title}`}
-              onClick={() => onCloseToast(notification.id)}
-              className="mt-0.5 text-muted-foreground hover:text-foreground"
+            </>
+          );
+
+          return (
+            <div
+              key={notification.id}
+              className="pointer-events-auto overflow-hidden rounded-[24px] border border-border/60 bg-popover/95 shadow-2xl ring-1 ring-foreground/5 backdrop-blur-xl animate-in fade-in-0 slide-in-from-top-2"
             >
-              <X size={14} />
-            </Button>
-          </div>
-        </div>
+              <div className="flex items-start gap-3 p-4">
+                <div
+                  className={cn(
+                    "mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-2xl ring-1",
+                    toastAccentClassName(notification.level),
+                  )}
+                >
+                  {toastIcon(notification.level)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  {isSessionTarget ? (
+                    <div className="min-w-0 text-left">{content}</div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => onActivateNotification(notification.id)}
+                      className="min-w-0 text-left"
+                    >
+                      {content}
+                    </button>
+                  )}
+                  {isSessionTarget ? (
+                    <div className="mt-2.5">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onActivateNotification(notification.id)}
+                      >
+                        <ArrowUpRight size={14} />
+                        View session
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={`Dismiss notification ${notification.title}`}
+                  onClick={() => onCloseToast(notification.id)}
+                  className="mt-0.5 text-muted-foreground hover:text-foreground"
+                >
+                  <X size={14} />
+                </Button>
+              </div>
+            </div>
+          );
+        })()
       ))}
     </div>
   );

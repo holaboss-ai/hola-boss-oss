@@ -452,6 +452,7 @@ declare global {
     name: string;
     cron: string;
     description: string;
+    instruction: string;
     enabled: boolean;
     delivery: CronjobDeliveryPayload;
     metadata: Record<string, unknown>;
@@ -469,12 +470,20 @@ declare global {
     count: number;
   }
 
+  interface CronjobRunResponsePayload {
+    success: boolean;
+    cronjob: CronjobRecordPayload;
+    session_id: string | null;
+    notification_id: string | null;
+  }
+
   interface CronjobCreatePayload {
     workspace_id: string;
     initiated_by: string;
     name?: string;
     cron: string;
     description: string;
+    instruction?: string;
     enabled?: boolean;
     delivery: CronjobDeliveryPayload;
     metadata?: Record<string, unknown>;
@@ -484,6 +493,7 @@ declare global {
     name?: string;
     cron?: string;
     description?: string;
+    instruction?: string;
     enabled?: boolean;
     delivery?: CronjobDeliveryPayload;
     metadata?: Record<string, unknown>;
@@ -1089,6 +1099,7 @@ declare global {
       createWorkspace: (payload: HolabossCreateWorkspacePayload) => Promise<WorkspaceResponsePayload>;
       deleteWorkspace: (workspaceId: string) => Promise<WorkspaceResponsePayload>;
       listCronjobs: (workspaceId: string, enabledOnly?: boolean) => Promise<CronjobListResponsePayload>;
+      runCronjobNow: (jobId: string) => Promise<CronjobRunResponsePayload>;
       createCronjob: (payload: CronjobCreatePayload) => Promise<CronjobRecordPayload>;
       updateCronjob: (jobId: string, payload: CronjobUpdatePayload) => Promise<CronjobRecordPayload>;
       deleteCronjob: (jobId: string) => Promise<{ success: boolean }>;

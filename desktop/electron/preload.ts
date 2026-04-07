@@ -432,6 +432,7 @@ interface CronjobRecordPayload {
   name: string;
   cron: string;
   description: string;
+  instruction: string;
   enabled: boolean;
   delivery: CronjobDeliveryPayload;
   metadata: Record<string, unknown>;
@@ -455,6 +456,7 @@ interface CronjobCreatePayload {
   name?: string;
   cron: string;
   description: string;
+  instruction?: string;
   enabled?: boolean;
   delivery: CronjobDeliveryPayload;
   metadata?: Record<string, unknown>;
@@ -464,6 +466,7 @@ interface CronjobUpdatePayload {
   name?: string;
   cron?: string;
   description?: string;
+  instruction?: string;
   enabled?: boolean;
   delivery?: CronjobDeliveryPayload;
   metadata?: Record<string, unknown>;
@@ -957,6 +960,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:deleteWorkspace", workspaceId) as Promise<WorkspaceResponsePayload>,
     listCronjobs: (workspaceId: string, enabledOnly?: boolean) =>
       ipcRenderer.invoke("workspace:listCronjobs", workspaceId, enabledOnly) as Promise<CronjobListResponsePayload>,
+    runCronjobNow: (jobId: string) =>
+      ipcRenderer.invoke("workspace:runCronjobNow", jobId) as Promise<CronjobRunResponsePayload>,
     createCronjob: (payload: CronjobCreatePayload) =>
       ipcRenderer.invoke("workspace:createCronjob", payload) as Promise<CronjobRecordPayload>,
     updateCronjob: (jobId: string, payload: CronjobUpdatePayload) =>

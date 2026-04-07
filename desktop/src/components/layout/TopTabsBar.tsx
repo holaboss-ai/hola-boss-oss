@@ -26,7 +26,6 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { CreditsPill } from "@/components/billing/CreditsPill";
-import { NotificationCenter } from "@/components/layout/NotificationCenter";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -55,12 +54,6 @@ interface TopTabsBarProps {
   onOpenBilling?: () => void;
   onOpenExternalUrl?: (url: string) => void;
   onPublish?: () => void;
-  notifications?: RuntimeNotificationRecordPayload[];
-  notificationUnreadCount?: number;
-  onNotificationCenterOpenChange?: (open: boolean) => void;
-  onActivateNotification?: (notificationId: string) => void;
-  onDismissNotification?: (notificationId: string) => void;
-  onClearAllNotifications?: () => void;
 }
 
 export function TopTabsBar({
@@ -75,12 +68,6 @@ export function TopTabsBar({
   onOpenBilling,
   onOpenExternalUrl,
   onPublish,
-  notifications = [],
-  notificationUnreadCount = 0,
-  onNotificationCenterOpenChange,
-  onActivateNotification,
-  onDismissNotification,
-  onClearAllNotifications,
 }: TopTabsBarProps) {
   const isMacIntegratedTitleBar =
     integratedTitleBar && desktopPlatform === "darwin";
@@ -394,17 +381,6 @@ export function TopTabsBar({
               onClick={() => onOpenBilling?.()}
             />
           ) : null}
-          <NotificationCenter
-            notifications={notifications}
-            unreadCount={notificationUnreadCount}
-            integratedTitleBar={integratedTitleBar}
-            onOpenChange={onNotificationCenterOpenChange}
-            onActivateNotification={(notificationId) =>
-              onActivateNotification?.(notificationId)
-            }
-            onDismiss={(notificationId) => onDismissNotification?.(notificationId)}
-            onClearAll={() => onClearAllNotifications?.()}
-          />
           <DropdownMenu>
             <DropdownMenuTrigger
               ref={userButtonRef}

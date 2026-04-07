@@ -56,6 +56,7 @@ import {
 } from "react";
 
 const THEME_STORAGE_KEY = "holaboss-theme-v1";
+const DEV_APP_UPDATE_PREVIEW_STORAGE_KEY = "holaboss-dev-app-update-preview-v1";
 const OPERATIONS_DRAWER_OPEN_STORAGE_KEY = "holaboss-operations-drawer-open-v1";
 const OPERATIONS_DRAWER_TAB_STORAGE_KEY = "holaboss-operations-drawer-tab-v1";
 const FILES_PANE_WIDTH_STORAGE_KEY = "holaboss-files-pane-width-v1";
@@ -77,21 +78,28 @@ const THEMES = [
   "bubblegum-dark",
   "bubblegum-light",
 ] as const;
-const MIN_UTILITY_PANE_WIDTH = 200;
+const MIN_FILES_PANE_WIDTH = 320;
+const MIN_BROWSER_PANE_WIDTH = 200;
 const MAX_UTILITY_PANE_WIDTH = 720;
 const LEGACY_DEFAULT_FILES_PANE_WIDTH = 420;
-const DEFAULT_FILES_PANE_WIDTH = MIN_UTILITY_PANE_WIDTH;
+const DEFAULT_FILES_PANE_WIDTH = MIN_FILES_PANE_WIDTH;
 const DEFAULT_BROWSER_PANE_WIDTH = 460;
 const MIN_AGENT_CONTENT_WIDTH = 120;
 const UTILITY_PANE_RESIZER_WIDTH = 16;
-const APP_UPDATE_NOTIFICATION_SOURCE = "app_update";
+const LEFT_NAVIGATION_RAIL_WIDTH_PX = 60;
+const APP_SHELL_SPACE_COLUMN_GAP_PX = 8;
 const APP_UPDATE_CHANGELOG_BASE_URL =
   "https://github.com/holaboss-ai/holaboss-ai/releases/tag";
 const DEFAULT_NOTIFICATION_TOAST_DURATION_MS = 7_000;
 const CRITICAL_NOTIFICATION_TOAST_DURATION_MS = 12_000;
+const FIXED_SAFE_TOAST_REGION_WIDTH_PX =
+  LEFT_NAVIGATION_RAIL_WIDTH_PX +
+  APP_SHELL_SPACE_COLUMN_GAP_PX +
+  MIN_FILES_PANE_WIDTH;
 
 type SpaceComponentId = "agent" | "files" | "browser";
 type UtilityPaneId = "files" | "browser";
+type DevAppUpdatePreviewMode = "off" | "downloading" | "ready";
 
 type SpaceVisibilityState = Record<SpaceComponentId, boolean>;
 
@@ -118,6 +126,16 @@ const DEFAULT_SPACE_VISIBILITY: SpaceVisibilityState = {
   files: true,
   browser: true,
 };
+
+declare global {
+  interface Window {
+    __holabossDevUpdatePreview?: {
+      downloading: () => void;
+      ready: () => void;
+      clear: () => void;
+    };
+  }
+}
 
 export type AppTheme = (typeof THEMES)[number];
 
@@ -174,37 +192,10 @@ type WorkspaceOutputNavigationTarget =
       htmlContent?: string | null;
     };
 
-function notificationPriorityRank(priority: RuntimeNotificationPriority): number {
-  if (priority === "critical") {
-    return 3;
-  }
-  if (priority === "high") {
-    return 2;
-  }
-  if (priority === "low") {
-    return 0;
-  }
-  return 1;
-}
-
-function notificationSortComparator(
-  left: RuntimeNotificationRecordPayload,
-  right: RuntimeNotificationRecordPayload,
-): number {
-  const priorityDelta =
-    notificationPriorityRank(right.priority) -
-    notificationPriorityRank(left.priority);
-  if (priorityDelta !== 0) {
-    return priorityDelta;
-  }
-
-  const createdAtDelta =
-    Date.parse(right.created_at) - Date.parse(left.created_at);
-  if (Number.isFinite(createdAtDelta) && createdAtDelta !== 0) {
-    return createdAtDelta;
-  }
-
-  return right.id.localeCompare(left.id);
+function utilityPaneMinWidth(paneId: UtilityPaneId): number {
+  return paneId === "files"
+    ? MIN_FILES_PANE_WIDTH
+    : MIN_BROWSER_PANE_WIDTH;
 }
 
 function notificationToastDurationMs(
@@ -213,14 +204,6 @@ function notificationToastDurationMs(
   return notification.priority === "critical"
     ? CRITICAL_NOTIFICATION_TOAST_DURATION_MS
     : DEFAULT_NOTIFICATION_TOAST_DURATION_MS;
-}
-
-function appUpdateNotificationId(status: AppUpdateStatusPayload): string {
-  return `app-update:${status.latestVersion || status.publishedAt || "latest"}`;
-}
-
-function appUpdateReleaseLabel(status: AppUpdateStatusPayload): string {
-  return status.latestVersion || "latest";
 }
 
 function appUpdateChangelogUrl(
@@ -247,6 +230,12 @@ function notificationActionUrl(
   return notificationMetadataString(notification, "action_url");
 }
 
+function notificationTargetSessionId(
+  notification: RuntimeNotificationRecordPayload,
+): string | null {
+  return notificationMetadataString(notification, "session_id");
+}
+
 function notificationActivationState(
   notification: RuntimeNotificationRecordPayload,
 ): RuntimeNotificationState {
@@ -263,74 +252,6 @@ function notificationActivationState(
   return "read";
 }
 
-function notificationReleaseTag(
-  notification: RuntimeNotificationRecordPayload,
-): string | null {
-  return notificationMetadataString(notification, "update_release_tag");
-}
-
-function isAppUpdateNotification(
-  notification: RuntimeNotificationRecordPayload,
-): boolean {
-  return (
-    notification.source_type === APP_UPDATE_NOTIFICATION_SOURCE ||
-    notificationMetadataString(notification, "notification_kind") ===
-      APP_UPDATE_NOTIFICATION_SOURCE
-  );
-}
-
-function buildAppUpdateNotification(
-  status: AppUpdateStatusPayload,
-  state: RuntimeNotificationState,
-): RuntimeNotificationRecordPayload {
-  const releaseLabel = appUpdateReleaseLabel(status);
-  const createdAt =
-    status.publishedAt || status.lastCheckedAt || "1970-01-01T00:00:00.000Z";
-  const actionUrl = appUpdateChangelogUrl(status);
-  const title = status.downloaded
-    ? `Holaboss ${releaseLabel} ready to install`
-    : `Holaboss ${releaseLabel} is downloading`;
-  const message = status.downloaded
-    ? "Restart to install it now, or close later and let it apply on quit."
-    : "Background download in progress. Open the changelog for details.";
-
-  return {
-    id: appUpdateNotificationId(status),
-    workspace_id: "",
-    cronjob_id: null,
-    source_type: APP_UPDATE_NOTIFICATION_SOURCE,
-    source_label: "Desktop updates",
-    title,
-    message,
-    level: "info",
-    priority: "critical",
-    state,
-    metadata: {
-      notification_kind: APP_UPDATE_NOTIFICATION_SOURCE,
-      action_url: actionUrl,
-      activation_state: "read",
-      update_release_tag: status.latestVersion ?? null,
-    },
-    read_at: state === "unread" ? null : createdAt,
-    dismissed_at: null,
-    created_at: createdAt,
-    updated_at: status.lastCheckedAt || createdAt,
-  };
-}
-
-function dismissedNotificationRecord(
-  notification: RuntimeNotificationRecordPayload,
-): RuntimeNotificationRecordPayload {
-  const timestamp = new Date().toISOString();
-  return {
-    ...notification,
-    state: "dismissed",
-    read_at: notification.read_at || timestamp,
-    dismissed_at: notification.dismissed_at || timestamp,
-    updated_at: timestamp,
-  };
-}
-
 function loadSpaceVisibility(): SpaceVisibilityState {
   return DEFAULT_SPACE_VISIBILITY;
 }
@@ -344,7 +265,7 @@ function loadFilesPaneWidth(): number {
         return DEFAULT_FILES_PANE_WIDTH;
       }
       return Math.max(
-        MIN_UTILITY_PANE_WIDTH,
+        MIN_FILES_PANE_WIDTH,
         Math.min(parsed, MAX_UTILITY_PANE_WIDTH),
       );
     }
@@ -361,7 +282,7 @@ function loadBrowserPaneWidth(): number {
     const parsed = Number(raw);
     if (Number.isFinite(parsed)) {
       return Math.max(
-        MIN_UTILITY_PANE_WIDTH,
+        MIN_BROWSER_PANE_WIDTH,
         Math.min(parsed, MAX_UTILITY_PANE_WIDTH),
       );
     }
@@ -409,6 +330,56 @@ function loadTheme(): AppTheme {
   }
 
   return "amber-minimal-light";
+}
+
+function normalizeDevAppUpdatePreviewMode(
+  value: string | null | undefined,
+): DevAppUpdatePreviewMode {
+  if (value === "downloading" || value === "ready") {
+    return value;
+  }
+  return "off";
+}
+
+function loadDevAppUpdatePreviewMode(): DevAppUpdatePreviewMode {
+  if (!import.meta.env.DEV) {
+    return "off";
+  }
+
+  try {
+    return normalizeDevAppUpdatePreviewMode(
+      localStorage.getItem(DEV_APP_UPDATE_PREVIEW_STORAGE_KEY),
+    );
+  } catch {
+    return "off";
+  }
+}
+
+function buildDevAppUpdatePreviewStatus(
+  mode: DevAppUpdatePreviewMode,
+  currentVersion: string,
+): AppUpdateStatusPayload | null {
+  if (mode === "off") {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+  const latestVersion = "2026.4.99";
+
+  return {
+    supported: true,
+    checking: false,
+    available: mode === "downloading",
+    downloaded: mode === "ready",
+    downloadProgressPercent: mode === "downloading" ? 64 : 100,
+    currentVersion: currentVersion.trim() || "0.1.0",
+    latestVersion,
+    releaseName: `Holaboss ${latestVersion}`,
+    publishedAt: now,
+    dismissedVersion: null,
+    lastCheckedAt: now,
+    error: "",
+  };
 }
 
 function spaceComponentLabel(componentId: SpaceComponentId) {
@@ -688,7 +659,7 @@ function WorkspaceOnboardingTakeover({
 }
 
 function AppShellContent() {
-  const { selectedWorkspaceId } = useWorkspaceSelection();
+  const { selectedWorkspaceId, setSelectedWorkspaceId } = useWorkspaceSelection();
   const {
     runtimeConfig,
     workspaces,
@@ -705,6 +676,8 @@ function AppShellContent() {
     useState<RuntimeStatusPayload | null>(null);
   const [appUpdateStatus, setAppUpdateStatus] =
     useState<AppUpdateStatusPayload | null>(null);
+  const [devAppUpdatePreviewMode, setDevAppUpdatePreviewMode] =
+    useState<DevAppUpdatePreviewMode>(loadDevAppUpdatePreviewMode);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [settingsDialogSection, setSettingsDialogSection] =
     useState<UiSettingsPaneSection>("settings");
@@ -782,10 +755,6 @@ function AppShellContent() {
   const [toastNotifications, setToastNotifications] = useState<
     RuntimeNotificationRecordPayload[]
   >([]);
-  const [syntheticNotificationStates, setSyntheticNotificationStates] =
-    useState<Record<string, RuntimeNotificationState>>({});
-  const [dismissedSyntheticNotifications, setDismissedSyntheticNotifications] =
-    useState<Record<string, RuntimeNotificationRecordPayload>>({});
   const utilityPaneHostRef = useRef<HTMLDivElement | null>(null);
   const utilityPaneResizeStateRef = useRef<UtilityPaneResizeState | null>(null);
   const filesPaneWidthRef = useRef(filesPaneWidth);
@@ -799,43 +768,17 @@ function AppShellContent() {
   browserPaneWidthRef.current = browserPaneWidth;
   spaceVisibilityRef.current = spaceVisibility;
 
-  const appUpdateNotification = useMemo(() => {
-    if (!appUpdateStatus || (!appUpdateStatus.available && !appUpdateStatus.downloaded)) {
-      return null;
-    }
-    const notificationId = appUpdateNotificationId(appUpdateStatus);
-    return buildAppUpdateNotification(
-      appUpdateStatus,
-      syntheticNotificationStates[notificationId] ?? "unread",
-    );
-  }, [appUpdateStatus, syntheticNotificationStates]);
-
-  const combinedNotifications = useMemo(() => {
-    const activeNotificationIds = new Set<string>();
-    if (appUpdateNotification) {
-      activeNotificationIds.add(appUpdateNotification.id);
-    }
-    for (const notification of notifications) {
-      activeNotificationIds.add(notification.id);
-    }
-    const syntheticHistory = Object.values(dismissedSyntheticNotifications).filter(
-      (notification) => !activeNotificationIds.has(notification.id),
-    );
-    const items = appUpdateNotification
-      ? [appUpdateNotification, ...notifications, ...syntheticHistory]
-      : [...notifications, ...syntheticHistory];
-    return [...items].sort(notificationSortComparator);
-  }, [appUpdateNotification, dismissedSyntheticNotifications, notifications]);
-
-  const notificationById = useMemo(
+  const effectiveAppUpdateStatus = useMemo(
     () =>
-      new Map(combinedNotifications.map((notification) => [notification.id, notification])),
-    [combinedNotifications],
+      buildDevAppUpdatePreviewStatus(
+        devAppUpdatePreviewMode,
+        appUpdateStatus?.currentVersion || "",
+      ) ?? appUpdateStatus,
+    [appUpdateStatus, devAppUpdatePreviewMode],
   );
-
-  const notificationUnreadCount = useMemo(
-    () => combinedNotifications.filter((item) => item.state === "unread").length,
-    [combinedNotifications],
+  const runtimeNotificationById = useMemo(
+    () => new Map(notifications.map((notification) => [notification.id, notification])),
+    [notifications],
   );
 
   const clampUtilityPaneWidth = useCallback(
@@ -875,13 +818,14 @@ function AppShellContent() {
       const minFlexibleWidth =
         flexPaneId === "agent"
           ? MIN_AGENT_CONTENT_WIDTH
-          : MIN_UTILITY_PANE_WIDTH;
+          : utilityPaneMinWidth(flexPaneId);
+      const minPaneWidth = utilityPaneMinWidth(paneId);
       const maxWidth =
         hostWidth > 0
           ? Math.min(
               MAX_UTILITY_PANE_WIDTH,
               Math.max(
-                MIN_UTILITY_PANE_WIDTH,
+                minPaneWidth,
                 hostWidth -
                   fixedOtherWidths -
                   minFlexibleWidth -
@@ -889,7 +833,7 @@ function AppShellContent() {
               ),
             )
           : MAX_UTILITY_PANE_WIDTH;
-      return Math.max(MIN_UTILITY_PANE_WIDTH, Math.min(width, maxWidth));
+      return Math.max(minPaneWidth, Math.min(width, maxWidth));
     },
     [],
   );
@@ -906,11 +850,11 @@ function AppShellContent() {
       if (hostWidth <= 0) {
         return {
           leftWidth: Math.max(
-            MIN_UTILITY_PANE_WIDTH,
+            utilityPaneMinWidth(leftPaneId),
             Math.min(leftWidth, MAX_UTILITY_PANE_WIDTH),
           ),
           rightWidth: Math.max(
-            MIN_UTILITY_PANE_WIDTH,
+            utilityPaneMinWidth(rightPaneId),
             Math.min(rightWidth, MAX_UTILITY_PANE_WIDTH),
           ),
         };
@@ -950,7 +894,7 @@ function AppShellContent() {
       const maxCombinedWidth = Math.min(
         MAX_UTILITY_PANE_WIDTH * 2,
         Math.max(
-          MIN_UTILITY_PANE_WIDTH * 2,
+          utilityPaneMinWidth(leftPaneId) + utilityPaneMinWidth(rightPaneId),
           hostWidth -
             fixedOtherWidths -
             MIN_AGENT_CONTENT_WIDTH -
@@ -959,8 +903,11 @@ function AppShellContent() {
       );
       const combinedWidth = Math.min(leftWidth + rightWidth, maxCombinedWidth);
       const nextLeftWidth = Math.max(
-        MIN_UTILITY_PANE_WIDTH,
-        Math.min(leftWidth, combinedWidth - MIN_UTILITY_PANE_WIDTH),
+        utilityPaneMinWidth(leftPaneId),
+        Math.min(
+          leftWidth,
+          combinedWidth - utilityPaneMinWidth(rightPaneId),
+        ),
       );
       return {
         leftWidth: nextLeftWidth,
@@ -991,6 +938,35 @@ function AppShellContent() {
     return () => {
       mounted = false;
       unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) {
+      return;
+    }
+
+    const updateMode = (mode: DevAppUpdatePreviewMode) => {
+      setDevAppUpdatePreviewMode(mode);
+      try {
+        if (mode === "off") {
+          localStorage.removeItem(DEV_APP_UPDATE_PREVIEW_STORAGE_KEY);
+        } else {
+          localStorage.setItem(DEV_APP_UPDATE_PREVIEW_STORAGE_KEY, mode);
+        }
+      } catch {
+        // Ignore localStorage failures in dev preview mode.
+      }
+    };
+
+    window.__holabossDevUpdatePreview = {
+      downloading: () => updateMode("downloading"),
+      ready: () => updateMode("ready"),
+      clear: () => updateMode("off"),
+    };
+
+    return () => {
+      delete window.__holabossDevUpdatePreview;
     };
   }, []);
 
@@ -1116,49 +1092,13 @@ function AppShellContent() {
     );
   }, []);
 
-  const markSyntheticNotificationsRead = useCallback(
-    (notificationIds: string[]) => {
-      if (notificationIds.length === 0) {
-        return;
-      }
-      setSyntheticNotificationStates((current) => {
-        let changed = false;
-        const next = { ...current };
-        for (const notificationId of notificationIds) {
-          if (next[notificationId] !== "read") {
-            next[notificationId] = "read";
-            changed = true;
-          }
-        }
-        return changed ? next : current;
-      });
-    },
-    [],
-  );
-
-  const rememberDismissedSyntheticNotification = useCallback(
-    (notification: RuntimeNotificationRecordPayload) => {
-      if (!isAppUpdateNotification(notification)) {
-        return;
-      }
-      setDismissedSyntheticNotifications((current) => ({
-        ...current,
-        [notification.id]: dismissedNotificationRecord(notification),
-      }));
-    },
-    [],
-  );
-
   const refreshNotifications = useCallback(async () => {
     if (!window.electronAPI) {
       return;
     }
 
     try {
-      const response = await window.electronAPI.workspace.listNotifications(
-        null,
-        true,
-      );
+      const response = await window.electronAPI.workspace.listNotifications(null);
       setNotifications(response.items);
 
       if (!notificationsHydratedRef.current) {
@@ -1197,7 +1137,7 @@ function AppShellContent() {
 
   useEffect(() => {
     const activeNotificationIds = new Set(
-      combinedNotifications.map((notification) => notification.id),
+      notifications.map((notification) => notification.id),
     );
     setToastNotifications((current) => {
       const next = current.filter((item) => activeNotificationIds.has(item.id));
@@ -1210,43 +1150,22 @@ function AppShellContent() {
       window.clearTimeout(timeoutId);
       notificationToastTimeoutsRef.current.delete(notificationId);
     }
-  }, [combinedNotifications]);
+  }, [notifications]);
 
   const handleActivateNotification = useCallback(
     async (notificationId: string) => {
       if (!window.electronAPI) {
         return;
       }
-      const notification = notificationById.get(notificationId);
+      const notification = runtimeNotificationById.get(notificationId);
       if (!notification) {
         return;
       }
 
       dismissNotificationToast(notification.id);
       const targetUrl = notificationActionUrl(notification);
+      const targetSessionId = notificationTargetSessionId(notification);
       const nextState = notificationActivationState(notification);
-
-      if (isAppUpdateNotification(notification)) {
-        if (nextState === "dismissed") {
-          try {
-            await window.electronAPI.appUpdate.dismiss(
-              notificationReleaseTag(notification),
-            );
-          } catch {
-            // Ignore transient update-dismiss failures in the shell.
-          }
-        } else {
-          markSyntheticNotificationsRead([notification.id]);
-        }
-        if (targetUrl) {
-          try {
-            await window.electronAPI.ui.openExternalUrl(targetUrl);
-          } catch {
-            // Ignore transient shell URL open failures.
-          }
-        }
-        return;
-      }
 
       try {
         await window.electronAPI.workspace.updateNotification(notification.id, {
@@ -1255,6 +1174,24 @@ function AppShellContent() {
         await refreshNotifications();
       } catch {
         // Ignore transient notification update failures in the shell.
+      }
+      if (targetSessionId) {
+        const targetWorkspaceId = notification.workspace_id.trim();
+        if (targetWorkspaceId) {
+          setSelectedWorkspaceId(targetWorkspaceId);
+        }
+        setActiveLeftRailItem("space");
+        setSpaceVisibility((previous) => ({
+          ...previous,
+          agent: true,
+        }));
+        setAgentView({ type: "chat" });
+        setChatSessionJumpRequest({
+          sessionId: targetSessionId,
+          requestKey: Date.now(),
+        });
+        setChatFocusRequestKey((current) => current + 1);
+        return;
       }
       if (targetUrl) {
         try {
@@ -1266,9 +1203,9 @@ function AppShellContent() {
     },
     [
       dismissNotificationToast,
-      markSyntheticNotificationsRead,
-      notificationById,
+      runtimeNotificationById,
       refreshNotifications,
+      setSelectedWorkspaceId,
     ],
   );
 
@@ -1277,22 +1214,8 @@ function AppShellContent() {
       if (!window.electronAPI) {
         return;
       }
-      const notification = notificationById.get(notificationId);
+      const notification = runtimeNotificationById.get(notificationId);
       if (!notification) {
-        return;
-      }
-
-      if (isAppUpdateNotification(notification)) {
-        try {
-          dismissNotificationToast(notification.id);
-          markSyntheticNotificationsRead([notification.id]);
-          rememberDismissedSyntheticNotification(notification);
-          await window.electronAPI.appUpdate.dismiss(
-            notificationReleaseTag(notification),
-          );
-        } catch {
-          // Ignore transient notification update failures in the shell.
-        }
         return;
       }
 
@@ -1308,102 +1231,7 @@ function AppShellContent() {
     },
     [
       dismissNotificationToast,
-      markSyntheticNotificationsRead,
-      notificationById,
-      rememberDismissedSyntheticNotification,
-      refreshNotifications,
-    ],
-  );
-
-  const handleClearAllNotifications = useCallback(async () => {
-    const notificationsToDismiss = combinedNotifications.filter(
-      (notification) => notification.state !== "dismissed",
-    );
-    if (!window.electronAPI || notificationsToDismiss.length === 0) {
-      return;
-    }
-
-    for (const notification of notificationsToDismiss) {
-      dismissNotificationToast(notification.id);
-    }
-
-    try {
-      const runtimeNotificationIds = notificationsToDismiss
-        .filter((notification) => !isAppUpdateNotification(notification))
-        .map((notification) => notification.id);
-      const appUpdateNotifications = notificationsToDismiss.filter(
-        (notification) => isAppUpdateNotification(notification),
-      );
-      if (appUpdateNotifications.length > 0) {
-        markSyntheticNotificationsRead(
-          appUpdateNotifications.map((notification) => notification.id),
-        );
-        for (const notification of appUpdateNotifications) {
-          rememberDismissedSyntheticNotification(notification);
-        }
-      }
-      await Promise.allSettled([
-        ...runtimeNotificationIds.map((notificationId) =>
-          window.electronAPI.workspace.updateNotification(notificationId, {
-            state: "dismissed",
-          }),
-        ),
-        ...appUpdateNotifications.map((notification) =>
-          window.electronAPI.appUpdate.dismiss(notificationReleaseTag(notification)),
-        ),
-      ]);
-      if (runtimeNotificationIds.length > 0) {
-        await refreshNotifications();
-      }
-    } catch {
-      // Ignore transient notification update failures in the shell.
-    }
-  }, [
-    combinedNotifications,
-    dismissNotificationToast,
-    markSyntheticNotificationsRead,
-    rememberDismissedSyntheticNotification,
-    refreshNotifications,
-  ]);
-
-  const handleNotificationCenterOpenChange = useCallback(
-    (open: boolean) => {
-      if (!open || !window.electronAPI) {
-        return;
-      }
-      const unreadNotifications = combinedNotifications
-        .filter((item) => item.state === "unread")
-        .map((item) => item);
-      if (unreadNotifications.length === 0) {
-        return;
-      }
-      const syntheticUnreadIds = unreadNotifications
-        .filter((notification) => isAppUpdateNotification(notification))
-        .map((notification) => notification.id);
-      if (syntheticUnreadIds.length > 0) {
-        markSyntheticNotificationsRead(syntheticUnreadIds);
-      }
-      const runtimeUnreadIds = unreadNotifications
-        .filter((notification) => !isAppUpdateNotification(notification))
-        .map((notification) => notification.id);
-      for (const notification of unreadNotifications) {
-        dismissNotificationToast(notification.id);
-      }
-      if (runtimeUnreadIds.length === 0) {
-        return;
-      }
-      void Promise.allSettled(
-        runtimeUnreadIds.map((notificationId) =>
-          window.electronAPI.workspace.updateNotification(notificationId, {
-            state: "read",
-          }),
-        ),
-      ).then(() => refreshNotifications());
-    },
-    [
-      combinedNotifications,
-      dismissNotificationToast,
-      markSyntheticNotificationsRead,
+      runtimeNotificationById,
       refreshNotifications,
     ],
   );
@@ -1805,26 +1633,38 @@ function AppShellContent() {
     };
   }, [selectedWorkspace, selectedWorkspaceId]);
 
-  const handleDismissUpdate = () => {
+  const handleDismissUpdate = useCallback(() => {
+    if (import.meta.env.DEV && devAppUpdatePreviewMode !== "off") {
+      setDevAppUpdatePreviewMode("off");
+      try {
+        localStorage.removeItem(DEV_APP_UPDATE_PREVIEW_STORAGE_KEY);
+      } catch {
+        // Ignore localStorage failures in dev preview mode.
+      }
+      return;
+    }
     void window.electronAPI.appUpdate.dismiss(
-      appUpdateStatus?.latestVersion ?? null,
+      effectiveAppUpdateStatus?.latestVersion ?? null,
     );
-  };
+  }, [devAppUpdatePreviewMode, effectiveAppUpdateStatus]);
 
   const handleInstallUpdate = () => {
+    if (import.meta.env.DEV && devAppUpdatePreviewMode !== "off") {
+      return;
+    }
     void window.electronAPI.appUpdate.installNow();
   };
 
   const handleOpenUpdateChangelog = useCallback(() => {
-    if (!appUpdateStatus) {
+    if (!effectiveAppUpdateStatus) {
       return;
     }
-    const changelogUrl = appUpdateChangelogUrl(appUpdateStatus);
+    const changelogUrl = appUpdateChangelogUrl(effectiveAppUpdateStatus);
     if (!changelogUrl) {
       return;
     }
     void window.electronAPI.ui.openExternalUrl(changelogUrl);
-  }, [appUpdateStatus]);
+  }, [effectiveAppUpdateStatus]);
   const toggleOperationsDrawer = () => {
     setOperationsDrawerOpen((open) => !open);
   };
@@ -2012,17 +1852,29 @@ function AppShellContent() {
     : (visibleSpacePaneIds[visibleSpacePaneIds.length - 1] ?? null);
   const showOperationsDrawer =
     spaceMode && spaceVisibility.agent && operationsDrawerOpen;
+  const shouldUseSafeToastAnchor =
+    hasWorkspaces && (!spaceMode || visibleSpacePaneIds.includes("files"));
+  const anchoredToastStackClassName = shouldUseSafeToastAnchor
+    ? "pointer-events-none absolute bottom-4 left-0 z-20 flex max-w-full flex-col gap-3 sm:bottom-6"
+    : undefined;
+  const anchoredToastStackStyle = shouldUseSafeToastAnchor
+    ? {
+        width: FIXED_SAFE_TOAST_REGION_WIDTH_PX,
+      }
+    : undefined;
   const shouldShowAppUpdateReminder = Boolean(
-    appUpdateStatus && (appUpdateStatus.available || appUpdateStatus.downloaded),
+    effectiveAppUpdateStatus &&
+      (effectiveAppUpdateStatus.available ||
+        effectiveAppUpdateStatus.downloaded),
   );
-  const appVersionLabel = appUpdateStatus?.currentVersion?.trim() || "";
+  const appVersionLabel =
+    effectiveAppUpdateStatus?.currentVersion?.trim() || "";
   const shouldSuspendBrowserNativeView =
     isUtilityPaneResizing ||
     workspaceSwitcherOpen ||
     settingsDialogOpen ||
     createWorkspacePanelOpen ||
-    publishOpen ||
-    shouldShowAppUpdateReminder;
+    publishOpen;
   const bootstrapErrorMessage =
     !hasHydratedWorkspaceList && runtimeStatus?.status === "error"
       ? runtimeStatus.lastError.trim() ||
@@ -2319,9 +2171,9 @@ function AppShellContent() {
         ) : null}
         <NotificationToastStack
           leadingToast={
-            shouldShowAppUpdateReminder && appUpdateStatus ? (
+            shouldShowAppUpdateReminder && effectiveAppUpdateStatus ? (
               <UpdateReminder
-                status={appUpdateStatus}
+                status={effectiveAppUpdateStatus}
                 onDismiss={handleDismissUpdate}
                 onInstallNow={handleInstallUpdate}
                 onOpenChangelog={handleOpenUpdateChangelog}
@@ -2329,10 +2181,14 @@ function AppShellContent() {
             ) : null
           }
           notifications={toastNotifications}
-          onCloseToast={dismissNotificationToast}
+          onCloseToast={(notificationId) => {
+            void handleDismissNotification(notificationId);
+          }}
           onActivateNotification={(notificationId) => {
             void handleActivateNotification(notificationId);
           }}
+          className={anchoredToastStackClassName}
+          style={anchoredToastStackStyle}
         />
 
         {hasWorkspaces ? (
@@ -2358,20 +2214,6 @@ function AppShellContent() {
               }}
               onOpenExternalUrl={handleOpenExternalUrl}
               onPublish={() => setPublishOpen(true)}
-              notificationUnreadCount={notificationUnreadCount}
-              onNotificationCenterOpenChange={
-                handleNotificationCenterOpenChange
-              }
-              onActivateNotification={(notificationId) => {
-                void handleActivateNotification(notificationId);
-              }}
-              onDismissNotification={(notificationId) => {
-                void handleDismissNotification(notificationId);
-              }}
-              notifications={combinedNotifications}
-              onClearAllNotifications={() => {
-                void handleClearAllNotifications();
-              }}
             />
           </div>
         ) : null}
@@ -2406,7 +2248,7 @@ function AppShellContent() {
               appVersionLabel={appVersionLabel}
             />
 
-            <div className="flex h-full min-h-0 flex-col overflow-hidden">
+            <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
               <div className="min-h-0 flex-1 overflow-hidden">
                 {spaceMode ? (
                   <div className="relative flex h-full min-h-0 flex-col overflow-hidden">

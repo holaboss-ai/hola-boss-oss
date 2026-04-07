@@ -202,6 +202,10 @@ test("chat pane exposes a return path from sub-sessions back to the main session
   assert.match(source, /Back to main session/);
   assert.match(
     source,
+    /showMainSessionReturn \? \(\s*<div className="shrink-0 px-4 pt-3 sm:px-5">\s*<div className="bg-muted\/72 flex flex-col items-start gap-3/,
+  );
+  assert.match(
+    source,
     /await loadSessionConversation\(\s*mainSessionId,\s*selectedWorkspaceId,\s*runtimeStates\.items,\s*\);/,
   );
   assert.match(
