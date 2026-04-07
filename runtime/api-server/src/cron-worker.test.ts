@@ -131,6 +131,62 @@ test("runtime cron worker queues due session_run cronjobs and updates bookkeepin
   store.close();
 });
 
+test("runtime cron worker inherits the main-session model when cronjob metadata does not pin one", async () => {
+  const root = makeTempDir("hb-runtime-cron-worker-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  store.upsertTurnRequestSnapshot({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: "input-main",
+    snapshotKind: "harness_host_request",
+    fingerprint: "snapshot-main",
+    payload: {
+      runtime_config: {
+        provider_id: "openai",
+        model_id: "gpt-5.4"
+      }
+    }
+  });
+  const job = store.createCronjob({
+    workspaceId: workspace.id,
+    initiatedBy: "workspace_agent",
+    name: "Hello",
+    cron: "0 9 * * *",
+    description: "Say hello every day.",
+    instruction: "Say hello.",
+    delivery: { channel: "session_run" },
+    metadata: {}
+  });
+
+  const worker = new RuntimeCronWorker({
+    store,
+    queueWorker: {
+      async start() {},
+      wake() {},
+      async close() {}
+    }
+  });
+
+  const processed = await worker.processDueCronjobsOnce(new Date("2025-01-01T09:30:00Z"));
+  const queued = store.claimInputs({ limit: 10, claimedBy: "test", leaseSeconds: 300 });
+
+  assert.equal(processed, 1);
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0]?.payload.model, "openai/gpt-5.4");
+
+  store.close();
+});
+
 test("runtime cron worker persists system_notification cronjobs as unread notifications", async () => {
   const root = makeTempDir("hb-runtime-cron-worker-");
   const store = new RuntimeStateStore({

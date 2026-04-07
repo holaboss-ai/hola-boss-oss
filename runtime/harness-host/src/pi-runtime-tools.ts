@@ -19,6 +19,8 @@ const DEFAULT_RUNTIME_TOOL_TIMEOUT_MS = 30000;
 export interface PiRuntimeToolOptions {
   runtimeApiBaseUrl: string;
   workspaceId?: string | null;
+  sessionId?: string | null;
+  selectedModel?: string | null;
   fetchImpl?: typeof fetch;
 }
 
@@ -30,11 +32,24 @@ function normalizeRuntimeApiBaseUrl(value: unknown): string {
   return typeof value === "string" ? value.trim().replace(/\/+$/, "") : "";
 }
 
-function runtimeToolHeaders(workspaceId?: string | null): Record<string, string> {
+function runtimeToolHeaders(params: {
+  workspaceId?: string | null;
+  sessionId?: string | null;
+  selectedModel?: string | null;
+}): Record<string, string> {
   const headers: Record<string, string> = {};
-  const normalizedWorkspaceId = typeof workspaceId === "string" ? workspaceId.trim() : "";
+  const normalizedWorkspaceId = typeof params.workspaceId === "string" ? params.workspaceId.trim() : "";
   if (normalizedWorkspaceId) {
     headers["x-holaboss-workspace-id"] = normalizedWorkspaceId;
+  }
+  const normalizedSessionId = typeof params.sessionId === "string" ? params.sessionId.trim() : "";
+  if (normalizedSessionId) {
+    headers["x-holaboss-session-id"] = normalizedSessionId;
+  }
+  const normalizedSelectedModel =
+    typeof params.selectedModel === "string" ? params.selectedModel.trim() : "";
+  if (normalizedSelectedModel) {
+    headers["x-holaboss-selected-model"] = normalizedSelectedModel;
   }
   return headers;
 }
@@ -309,6 +324,8 @@ async function executeRuntimeTool(params: {
   toolParams: unknown;
   runtimeApiBaseUrl: string;
   workspaceId?: string | null;
+  sessionId?: string | null;
+  selectedModel?: string | null;
   fetchImpl?: typeof fetch;
   signal: AbortSignal | undefined;
 }) {
@@ -357,12 +374,16 @@ async function executeRuntimeTool(params: {
   const response = fetchImpl
     ? await (async () => {
         const raw = await fetchImpl(`${params.runtimeApiBaseUrl}${requestPath}`, {
-          method,
-          headers: {
-            "content-type": "application/json; charset=utf-8",
-            ...runtimeToolHeaders(params.workspaceId),
-          },
-          ...(body && method !== "GET" && method !== "DELETE" ? { body: JSON.stringify(body) } : {}),
+            method,
+            headers: {
+              "content-type": "application/json; charset=utf-8",
+              ...runtimeToolHeaders({
+                workspaceId: params.workspaceId,
+                sessionId: params.sessionId,
+                selectedModel: params.selectedModel,
+              }),
+            },
+            ...(body && method !== "GET" && method !== "DELETE" ? { body: JSON.stringify(body) } : {}),
           signal,
         });
         return {
@@ -376,7 +397,11 @@ async function executeRuntimeTool(params: {
         method,
         headers: {
           "content-type": "application/json; charset=utf-8",
-          ...runtimeToolHeaders(params.workspaceId),
+          ...runtimeToolHeaders({
+            workspaceId: params.workspaceId,
+            sessionId: params.sessionId,
+            selectedModel: params.selectedModel,
+          }),
         },
         ...(body && method !== "GET" && method !== "DELETE" ? { body: JSON.stringify(body) } : {}),
         signal,
@@ -415,6 +440,8 @@ export function createPiRuntimeToolDefinition(
         toolParams,
         runtimeApiBaseUrl: options.runtimeApiBaseUrl,
         workspaceId: options.workspaceId,
+        sessionId: options.sessionId,
+        selectedModel: options.selectedModel,
         fetchImpl,
         signal,
       }),
@@ -425,6 +452,8 @@ export async function resolvePiRuntimeToolDefinitions(
   options: {
     runtimeApiBaseUrl?: string | null;
     workspaceId?: string | null;
+    sessionId?: string | null;
+    selectedModel?: string | null;
     fetchImpl?: typeof fetch;
   } = {}
 ): Promise<ToolDefinition[]> {
@@ -439,7 +468,11 @@ export async function resolvePiRuntimeToolDefinitions(
       ? await (async () => {
           const raw = await fetchImpl(`${runtimeApiBaseUrl}${RUNTIME_TOOLS_CAPABILITY_STATUS_PATH}`, {
             method: "GET",
-            headers: runtimeToolHeaders(options.workspaceId),
+            headers: runtimeToolHeaders({
+              workspaceId: options.workspaceId,
+              sessionId: options.sessionId,
+              selectedModel: options.selectedModel,
+            }),
             signal: AbortSignal.timeout(2000),
           });
           return {
@@ -451,7 +484,11 @@ export async function resolvePiRuntimeToolDefinitions(
       : await nodeRequestJson({
           url: `${runtimeApiBaseUrl}${RUNTIME_TOOLS_CAPABILITY_STATUS_PATH}`,
           method: "GET",
-          headers: runtimeToolHeaders(options.workspaceId),
+          headers: runtimeToolHeaders({
+            workspaceId: options.workspaceId,
+            sessionId: options.sessionId,
+            selectedModel: options.selectedModel,
+          }),
           signal: AbortSignal.timeout(2000),
         });
     if (!response.ok || !isRecord(response.payload) || response.payload.available !== true) {
@@ -465,6 +502,8 @@ export async function resolvePiRuntimeToolDefinitions(
     createPiRuntimeToolDefinition(tool.id, tool.description, {
       runtimeApiBaseUrl,
       workspaceId: options.workspaceId,
+      sessionId: options.sessionId,
+      selectedModel: options.selectedModel,
       fetchImpl,
     })
   );

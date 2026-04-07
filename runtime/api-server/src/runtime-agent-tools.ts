@@ -22,6 +22,8 @@ export interface RuntimeAgentToolCapabilityPayload {
 export interface RuntimeAgentToolsCreateCronjobParams {
   workspaceId: string;
   initiatedBy?: string | null;
+  sessionId?: string | null;
+  selectedModel?: string | null;
   name?: string | null;
   cron: string;
   description: string;
@@ -118,14 +120,25 @@ function normalizedString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function metadataWithHolabossUserId(
-  metadata: Record<string, unknown> | null | undefined,
-  holabossUserId: string | null | undefined
+function metadataWithCronjobDefaults(params: {
+  metadata: Record<string, unknown> | null | undefined;
+  holabossUserId: string | null | undefined;
+  selectedModel?: string | null | undefined;
+  sourceSessionId?: string | null | undefined;
+}
 ): JsonObject {
-  const nextMetadata: JsonObject = { ...((metadata ?? {}) as JsonObject) };
-  const userId = normalizedString(holabossUserId);
+  const nextMetadata: JsonObject = { ...((params.metadata ?? {}) as JsonObject) };
+  const userId = normalizedString(params.holabossUserId);
   if (userId && typeof nextMetadata.holaboss_user_id !== "string") {
     nextMetadata.holaboss_user_id = userId;
+  }
+  const selectedModel = normalizedString(params.selectedModel);
+  if (selectedModel && typeof nextMetadata.model !== "string") {
+    nextMetadata.model = selectedModel;
+  }
+  const sourceSessionId = normalizedString(params.sourceSessionId);
+  if (sourceSessionId && typeof nextMetadata.source_session_id !== "string") {
+    nextMetadata.source_session_id = sourceSessionId;
   }
   return nextMetadata;
 }
@@ -297,7 +310,12 @@ export class RuntimeAgentToolsService {
         mode: params.delivery?.mode ?? "announce",
         to: params.delivery?.to
       }),
-      metadata: metadataWithHolabossUserId(params.metadata, params.holabossUserId),
+      metadata: metadataWithCronjobDefaults({
+        metadata: params.metadata,
+        holabossUserId: params.holabossUserId,
+        selectedModel: params.selectedModel,
+        sourceSessionId: params.sessionId,
+      }),
       nextRunAt: cronjobNextRunAt(cron, new Date())
     });
     return cronjobPayload(created);

@@ -320,6 +320,32 @@ function requiredCapabilityWorkspaceId(params: {
   return workspaceId;
 }
 
+function capabilitySessionId(params: {
+  headers: Record<string, unknown>;
+  query?: Record<string, unknown> | null;
+  body?: Record<string, unknown> | null;
+}): string {
+  return (
+    headerString(params.headers, "x-holaboss-session-id") ||
+    optionalString(params.query?.session_id) ||
+    optionalString(params.body?.session_id) ||
+    ""
+  );
+}
+
+function capabilitySelectedModel(params: {
+  headers: Record<string, unknown>;
+  query?: Record<string, unknown> | null;
+  body?: Record<string, unknown> | null;
+}): string {
+  return (
+    headerString(params.headers, "x-holaboss-selected-model") ||
+    optionalString(params.query?.selected_model) ||
+    optionalString(params.body?.selected_model) ||
+    ""
+  );
+}
+
 function requiredCronjobDeliveryInput(value: unknown): {
   channel: string;
   mode?: string;
@@ -2303,6 +2329,14 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     try {
       return runtimeAgentToolsService.createCronjob({
         workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body
+        }),
+        sessionId: capabilitySessionId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body
+        }),
+        selectedModel: capabilitySelectedModel({
           headers: request.headers as Record<string, unknown>,
           body: request.body
         }),

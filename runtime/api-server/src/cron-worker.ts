@@ -7,7 +7,8 @@ import {
   type CronjobRecord,
   type RuntimeNotificationLevel,
   type RuntimeNotificationPriority,
-  type RuntimeStateStore
+  type RuntimeStateStore,
+  type WorkspaceRecord
 } from "@holaboss/runtime-state-store";
 
 import type { QueueWorkerLike } from "./queue-worker.js";
@@ -65,6 +66,63 @@ function cronjobNotificationPriority(metadata: Record<string, unknown>): Runtime
     return explicitPriority;
   }
   return "normal";
+}
+
+function cronjobModelFromSnapshotPayload(payload: Record<string, unknown>): string | null {
+  const runtimeConfig = isRecord(payload.runtime_config) ? payload.runtime_config : null;
+  if (!runtimeConfig) {
+    return null;
+  }
+  const providerId = normalizedString(runtimeConfig.provider_id);
+  const modelId = normalizedString(runtimeConfig.model_id);
+  if (providerId && modelId) {
+    return `${providerId}/${modelId}`;
+  }
+  return modelId || null;
+}
+
+function inheritedCronjobModelFromSession(params: {
+  store: RuntimeStateStore;
+  workspace: WorkspaceRecord;
+  sessionId: string | null;
+}): string | null {
+  const sessionId = normalizedString(params.sessionId);
+  if (!sessionId) {
+    return null;
+  }
+  const snapshot = params.store.listTurnRequestSnapshots({
+    workspaceId: params.workspace.id,
+    sessionId,
+    limit: 1,
+  })[0];
+  if (!snapshot) {
+    return null;
+  }
+  return cronjobModelFromSnapshotPayload(snapshot.payload);
+}
+
+function resolvedCronjobModel(params: {
+  store: RuntimeStateStore;
+  workspace: WorkspaceRecord;
+  metadata: Record<string, unknown>;
+}): string | null {
+  const explicitModel = normalizedString(params.metadata.model);
+  if (explicitModel) {
+    return explicitModel;
+  }
+  return (
+    inheritedCronjobModelFromSession({
+      store: params.store,
+      workspace: params.workspace,
+      sessionId: params.workspace.mainSessionId,
+    }) ||
+    inheritedCronjobModelFromSession({
+      store: params.store,
+      workspace: params.workspace,
+      sessionId: params.workspace.onboardingSessionId,
+    }) ||
+    null
+  );
 }
 
 export function cronjobCheckIntervalMs(): number {
@@ -131,7 +189,7 @@ export function queueLocalCronjobRun(
   const metadata = isRecord(job.metadata) ? job.metadata : {};
   const resolvedSessionId =
     typeof metadata.session_id === "string" && metadata.session_id.trim() ? metadata.session_id.trim() : randomUUID();
-  const model = typeof metadata.model === "string" ? metadata.model : null;
+  const model = resolvedCronjobModel({ store, workspace, metadata });
   const priority = Number.isInteger(metadata.priority) ? (metadata.priority as number) : 0;
   const idempotencyKey = typeof metadata.idempotency_key === "string" ? metadata.idempotency_key : null;
 

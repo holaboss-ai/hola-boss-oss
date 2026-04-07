@@ -295,7 +295,9 @@ test("runtime tools capability routes expose local onboarding and cronjob action
     method: "POST",
     url: "/api/v1/capabilities/runtime-tools/cronjobs",
     headers: {
-      "x-holaboss-workspace-id": "workspace-1"
+      "x-holaboss-workspace-id": "workspace-1",
+      "x-holaboss-session-id": "session-main",
+      "x-holaboss-selected-model": "openai/gpt-5.4"
     },
     payload: {
       cron: "0 9 * * *",
@@ -309,6 +311,8 @@ test("runtime tools capability routes expose local onboarding and cronjob action
     channel: "session_run",
     to: null
   });
+  assert.equal(createdJob.json().metadata.model, "openai/gpt-5.4");
+  assert.equal(createdJob.json().metadata.source_session_id, "session-main");
 
   const listedJobs = await app.inject({
     method: "GET",
