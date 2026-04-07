@@ -528,14 +528,18 @@ function runtimeBundleNodeRelativePaths(
   runtimePlatform: "macos" | "linux" | "windows" = runtimePlatformFromProcessPlatform(),
 ): string[] {
   const base = path.join("node-runtime", "node_modules", ".bin", "node");
+  const packagedBin =
+    runtimePlatform === "windows"
+      ? path.join("node-runtime", "bin", "node.exe")
+      : path.join("node-runtime", "node_modules", "node", "bin", "node");
   return runtimePlatform === "windows"
     ? [
+        packagedBin,
         `${base}.exe`,
-        path.join("node-runtime", "node_modules", "node", "bin", "node.exe"),
         `${base}.cmd`,
         base,
       ]
-    : [base];
+    : [packagedBin, base];
 }
 
 function runtimeBundleNpmRelativePaths(
@@ -544,6 +548,8 @@ function runtimeBundleNpmRelativePaths(
   const base = path.join("node-runtime", "node_modules", ".bin", "npm");
   return runtimePlatform === "windows"
     ? [
+        path.join("node-runtime", "bin", "npm.cmd"),
+        path.join("node-runtime", "bin", "npm"),
         `${base}.cmd`,
         base,
         path.join("node-runtime", "node_modules", "npm", "bin", "npm-cli.js"),

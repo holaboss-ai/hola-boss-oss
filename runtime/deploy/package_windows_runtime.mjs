@@ -74,6 +74,7 @@ function firstExistingPath(paths) {
 
 function bundledNodeCandidates(outputRoot) {
   return [
+    path.join(outputRoot, "node-runtime", "bin", "node.exe"),
     path.join(outputRoot, "node-runtime", "node_modules", ".bin", "node.exe"),
     path.join(outputRoot, "node-runtime", "node_modules", "node", "bin", "node.exe"),
     path.join(outputRoot, "node-runtime", "node_modules", ".bin", "node.cmd")
@@ -82,6 +83,8 @@ function bundledNodeCandidates(outputRoot) {
 
 function bundledNpmCandidates(outputRoot) {
   return [
+    path.join(outputRoot, "node-runtime", "bin", "npm.cmd"),
+    path.join(outputRoot, "node-runtime", "bin", "npm"),
     path.join(outputRoot, "node-runtime", "node_modules", ".bin", "npm.cmd"),
     path.join(outputRoot, "node-runtime", "node_modules", ".bin", "npm"),
     path.join(outputRoot, "node-runtime", "node_modules", "npm", "bin", "npm-cli.js")
@@ -131,14 +134,71 @@ export function buildWindowsRuntimeCmdLauncherSource() {
 setlocal
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%..") do set "BUNDLE_ROOT=%%~fI"
-set "BUNDLED_NODE_BIN=%BUNDLE_ROOT%\\node-runtime\\node_modules\\.bin\\node.exe"
+set "BUNDLED_NODE_BIN=%BUNDLE_ROOT%\\node-runtime\\bin\\node.exe"
 if not exist "%BUNDLED_NODE_BIN%" set "BUNDLED_NODE_BIN=%BUNDLE_ROOT%\\node-runtime\\node_modules\\node\\bin\\node.exe"
+if not exist "%BUNDLED_NODE_BIN%" set "BUNDLED_NODE_BIN=%BUNDLE_ROOT%\\node-runtime\\node_modules\\.bin\\node.exe"
 if not exist "%BUNDLED_NODE_BIN%" (
   >&2 echo bundled node runtime not found under "%BUNDLE_ROOT%\\node-runtime"
   exit /b 1
 )
 "%BUNDLED_NODE_BIN%" "%SCRIPT_DIR%sandbox-runtime.mjs" %*
 `;
+}
+
+function buildWindowsPosixNodeLauncherSource() {
+  return `#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec "\${SCRIPT_DIR}/node.exe" "$@"
+`;
+}
+
+function buildWindowsPosixCliLauncherSource(cliRelativePath) {
+  const normalizedCliRelativePath = cliRelativePath.replaceAll("\\", "/");
+  return `#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec "\${SCRIPT_DIR}/node.exe" "\${SCRIPT_DIR}/${normalizedCliRelativePath}" "$@"
+`;
+}
+
+function buildWindowsCmdCliLauncherSource(cliRelativePath) {
+  const normalizedCliRelativePath = cliRelativePath.replaceAll("/", "\\");
+  return `@echo off
+setlocal
+set "SCRIPT_DIR=%~dp0"
+"%SCRIPT_DIR%node.exe" "%SCRIPT_DIR%${normalizedCliRelativePath}" %*
+`;
+}
+
+function stageWindowsNodeCommandLaunchers(outputRoot) {
+  const nodeBinDir = path.join(outputRoot, "node-runtime", "bin");
+  const bundledNodeExe = path.join(outputRoot, "node-runtime", "node_modules", "node", "bin", "node.exe");
+  if (!existsSync(bundledNodeExe)) {
+    return;
+  }
+
+  mkdirSync(nodeBinDir, { recursive: true });
+  cpSync(bundledNodeExe, path.join(nodeBinDir, "node.exe"));
+  writeFileSync(path.join(nodeBinDir, "node"), buildWindowsPosixNodeLauncherSource());
+  writeFileSync(
+    path.join(nodeBinDir, "npm"),
+    buildWindowsPosixCliLauncherSource("../node_modules/npm/bin/npm-cli.js"),
+  );
+  writeFileSync(
+    path.join(nodeBinDir, "npx"),
+    buildWindowsPosixCliLauncherSource("../node_modules/npm/bin/npx-cli.js"),
+  );
+  writeFileSync(
+    path.join(nodeBinDir, "npm.cmd"),
+    buildWindowsCmdCliLauncherSource("..\\node_modules\\npm\\bin\\npm-cli.js"),
+  );
+  writeFileSync(
+    path.join(nodeBinDir, "npx.cmd"),
+    buildWindowsCmdCliLauncherSource("..\\node_modules\\npm\\bin\\npx-cli.js"),
+  );
 }
 
 export async function packageWindowsRuntime(
@@ -173,6 +233,7 @@ export async function packageWindowsRuntime(
         env: process.env
       });
       prunePackagedTree(nodeRuntimeDir, "windows");
+      stageWindowsNodeCommandLaunchers(outputRoot);
     }
 
     const pythonStageResult = await stagePythonRuntime(outputRoot, "windows");

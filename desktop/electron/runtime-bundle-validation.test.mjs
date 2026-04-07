@@ -13,7 +13,7 @@ const runtimeBundlePath = path.join(__dirname, "..", "scripts", "runtime-bundle.
 test("desktop runtime validation requires the bundled node binary", async () => {
   const source = await readFile(mainPath, "utf8");
 
-  assert.match(source, /path\.join\("node-runtime", "node_modules", "\.bin", "node"\)/);
+  assert.match(source, /"node-runtime",\s*"bin",\s*"node\.exe"/);
   assert.match(source, /path\.join\("python-runtime", "bin", "python"\)/);
 });
 

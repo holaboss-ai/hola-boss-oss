@@ -78,8 +78,8 @@ export async function startWindowsRuntime(args = process.argv.slice(2), options 
   const runtimeApiEntry = firstExistingPath(runtimeApiEntryCandidates(runtimeAppRoot));
   const pathEntries = [
     ...runtimePythonPathEntries(bundleRoot),
-    path.join(bundleRoot, "node-runtime", "node_modules", ".bin"),
     path.join(bundleRoot, "node-runtime", "bin"),
+    path.join(bundleRoot, "node-runtime", "node_modules", ".bin"),
     process.env.PATH ?? ""
   ].filter((value) => value.length > 0);
 

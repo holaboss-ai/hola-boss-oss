@@ -343,13 +343,15 @@ test("build runner env prepends api-server local bin helpers", () => {
             path.join(bundleRoot, "python-runtime", "python"),
             path.join(bundleRoot, "python-runtime", "python", "Scripts"),
             path.join(bundleRoot, "python-runtime", "bin"),
+            path.join(bundleRoot, "node-runtime", "bin"),
+            path.join(bundleRoot, "node-runtime", "node_modules", ".bin"),
           ]
         : [
             path.join(bundleRoot, "python-runtime", "bin"),
             path.join(bundleRoot, "python-runtime", "python", "bin"),
+            path.join(bundleRoot, "node-runtime", "node_modules", ".bin"),
+            path.join(bundleRoot, "node-runtime", "node_modules", "node", "bin"),
           ]),
-      path.join(bundleRoot, "node-runtime", "node_modules", ".bin"),
-      path.join(bundleRoot, "node-runtime", "bin"),
       path.join(runtimeAppRoot, "api-server", "node_modules", ".bin"),
       "/usr/local/bin",
       "/usr/bin"

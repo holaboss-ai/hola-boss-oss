@@ -21,8 +21,8 @@ for (const targetPath of [macosPackagerPath, linuxPackagerPath]) {
 
     assert.match(source, /npm install --prefix "\$\{NODE_RUNTIME_DIR\}" "node@\$\{NODE_VERSION\}" "npm@\$\{NPM_VERSION\}"/);
     assert.match(source, new RegExp(`node "\\$\\{SCRIPT_DIR\\}/stage_python_runtime\\.mjs" "\\$\\{OUTPUT_ROOT\\}" "${targetPlatform}"`));
-    assert.match(source, /BUNDLED_NODE_BIN="\$\{BUNDLE_ROOT\}\/node-runtime\/node_modules\/\.bin\/node"/);
-    assert.match(source, /export PATH="\$\{BUNDLE_ROOT\}\/python-runtime\/bin:\$\{BUNDLE_ROOT\}\/python-runtime\/python\/bin:\$\{BUNDLE_ROOT\}\/node-runtime\/node_modules\/\.bin:\$\{BUNDLE_ROOT\}\/node-runtime\/bin:\$\{PATH\}"/);
+    assert.match(source, /BUNDLED_NODE_BIN="\$\{BUNDLE_ROOT\}\/node-runtime\/node_modules\/node\/bin\/node"/);
+    assert.match(source, /export PATH="\$\{BUNDLE_ROOT\}\/python-runtime\/bin:\$\{BUNDLE_ROOT\}\/python-runtime\/python\/bin:\$\{BUNDLE_ROOT\}\/node-runtime\/node_modules\/node\/bin:\$\{BUNDLE_ROOT\}\/node-runtime\/node_modules\/\.bin:\$\{PATH\}"/);
     assert.match(source, /export HOLABOSS_RUNTIME_NODE_BIN="\$\{BUNDLED_NODE_BIN\}"/);
     assert.match(source, /"bundled_npm_bin":/);
     assert.match(source, /"bundled_npm_version":/);
@@ -50,6 +50,6 @@ test("package_windows_runtime.mjs writes launchers that use the bundled node run
   assert.match(source, /bundled_python_target: pythonStageResult\.bundledPythonTarget/);
   assert.match(launcherSource, /startWindowsRuntime/);
   assert.match(launcherSource, /process\.exit/);
-  assert.match(cmdLauncherSource, /node-runtime\\node_modules\\\.bin\\node\.exe/);
+  assert.match(cmdLauncherSource, /node-runtime\\bin\\node\.exe/);
   assert.match(cmdLauncherSource, /sandbox-runtime\.mjs/);
 });

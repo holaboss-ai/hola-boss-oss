@@ -63,12 +63,23 @@ function runtimeNode(): string {
   return configured || "node";
 }
 
-export function bundledRuntimeNodeBinDir(): string {
-  return path.join(runtimeBundleRoot(), "node-runtime", "bin");
-}
-
 function bundledRuntimeNodeModulesBinDir(): string {
   return path.join(runtimeBundleRoot(), "node-runtime", "node_modules", ".bin");
+}
+
+export function bundledRuntimeNodeBinDir(platform: NodeJS.Platform = process.platform): string {
+  if (platform === "win32") {
+    return path.join(runtimeBundleRoot(), "node-runtime", "bin");
+  }
+  return path.join(runtimeBundleRoot(), "node-runtime", "node_modules", "node", "bin");
+}
+
+function bundledRuntimeNodePathEntries(platform: NodeJS.Platform = process.platform): string[] {
+  const nodeBinDir = bundledRuntimeNodeBinDir(platform);
+  const nodeModulesBinDir = bundledRuntimeNodeModulesBinDir();
+  return platform === "win32"
+    ? [nodeBinDir, nodeModulesBinDir]
+    : [nodeModulesBinDir, nodeBinDir];
 }
 
 function bundledRuntimePythonPathEntries(platform: NodeJS.Platform = process.platform): string[] {
@@ -186,8 +197,7 @@ export function buildRunnerEnv(): NodeJS.ProcessEnv {
   }
   env.PATH = prependPathEntries(env.PATH, [
     ...bundledRuntimePythonPathEntries(),
-    bundledRuntimeNodeModulesBinDir(),
-    bundledRuntimeNodeBinDir(),
+    ...bundledRuntimeNodePathEntries(),
     path.join(runtimeAppRoot(), "api-server", "node_modules", ".bin")
   ]);
   return env;

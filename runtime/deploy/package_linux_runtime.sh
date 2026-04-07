@@ -49,7 +49,7 @@ PYTHON_RUNTIME_DIR="${OUTPUT_ROOT}/python-runtime"
 BIN_DIR="${OUTPUT_ROOT}/bin"
 PACKAGE_METADATA_PATH="${OUTPUT_ROOT}/package-metadata.json"
 SKIP_NODE_DEPS="${HOLABOSS_SKIP_NODE_DEPS:-0}"
-LOCAL_NODE_BIN="${NODE_RUNTIME_DIR}/node_modules/.bin/node"
+LOCAL_NODE_BIN="${NODE_RUNTIME_DIR}/node_modules/node/bin/node"
 LOCAL_NPM_BIN="${NODE_RUNTIME_DIR}/node_modules/.bin/npm"
 LOCAL_PYTHON_BIN="${PYTHON_RUNTIME_DIR}/bin/python"
 
@@ -99,11 +99,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUNDLE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-BUNDLED_NODE_BIN="${BUNDLE_ROOT}/node-runtime/node_modules/.bin/node"
+BUNDLED_NODE_BIN="${BUNDLE_ROOT}/node-runtime/node_modules/node/bin/node"
 
 export HOLABOSS_RUNTIME_APP_ROOT="${BUNDLE_ROOT}/runtime"
 export HOLABOSS_RUNTIME_ROOT="${BUNDLE_ROOT}/runtime"
-export PATH="${BUNDLE_ROOT}/python-runtime/bin:${BUNDLE_ROOT}/python-runtime/python/bin:${BUNDLE_ROOT}/node-runtime/node_modules/.bin:${BUNDLE_ROOT}/node-runtime/bin:${PATH}"
+export PATH="${BUNDLE_ROOT}/python-runtime/bin:${BUNDLE_ROOT}/python-runtime/python/bin:${BUNDLE_ROOT}/node-runtime/node_modules/node/bin:${BUNDLE_ROOT}/node-runtime/node_modules/.bin:${PATH}"
 if [ -x "${BUNDLED_NODE_BIN}" ]; then
   export HOLABOSS_RUNTIME_NODE_BIN="${BUNDLED_NODE_BIN}"
 fi

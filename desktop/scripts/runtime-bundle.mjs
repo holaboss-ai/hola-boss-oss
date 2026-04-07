@@ -41,20 +41,26 @@ export function runtimeBundleExecutableRelativePaths(runtimePlatform = resolveRu
 
 export function runtimeBundleNodeRelativePaths(runtimePlatform = resolveRuntimePlatform()) {
   const base = path.join("node-runtime", "node_modules", ".bin", "node");
+  const packagedBin =
+    runtimePlatform === "windows"
+      ? path.join("node-runtime", "bin", "node.exe")
+      : path.join("node-runtime", "node_modules", "node", "bin", "node");
   return runtimePlatform === "windows"
     ? [
+        packagedBin,
         `${base}.exe`,
         `${base}.cmd`,
-        path.join("node-runtime", "node_modules", "node", "bin", "node.exe"),
         base
       ]
-    : [base];
+    : [packagedBin, base];
 }
 
 export function runtimeBundleNpmRelativePaths(runtimePlatform = resolveRuntimePlatform()) {
   const base = path.join("node-runtime", "node_modules", ".bin", "npm");
   return runtimePlatform === "windows"
     ? [
+        path.join("node-runtime", "bin", "npm.cmd"),
+        path.join("node-runtime", "bin", "npm"),
         `${base}.cmd`,
         base,
         path.join("node-runtime", "node_modules", "npm", "bin", "npm-cli.js")
