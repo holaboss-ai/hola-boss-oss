@@ -57,6 +57,17 @@ test("app shell wires clear-all notifications through a bulk dismiss handler", a
   assert.match(source, /notificationIds\.map\(\(notificationId\) =>\s*window\.electronAPI\.workspace\.updateNotification\(notificationId,\s*\{\s*state: "dismissed",\s*\}\),/);
   assert.match(source, /onClearAllNotifications=\{\(\) => \{\s*void handleClearAllNotifications\(\);\s*\}\}/);
 });
+
+test("app shell suspends the native browser view while the update reminder is visible", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const shouldSuspendBrowserNativeView =[\s\S]*Boolean\(appUpdateStatus\?\.available\);/,
+  );
+  assert.match(source, /<BrowserPane[\s\S]*suspendNativeView=\{shouldSuspendBrowserNativeView\}/);
+});
+
 test("app shell requests remote task proposal generation without a separate success banner", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 

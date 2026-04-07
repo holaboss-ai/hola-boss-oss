@@ -73,6 +73,9 @@ const APP_THEMES = new Set([
 ]);
 const GITHUB_RELEASES_OWNER = "holaboss-ai";
 const GITHUB_RELEASES_REPO = "holaboss-ai";
+const DESKTOP_RELEASE_TAG_PREFIX = "holaboss-";
+const RUNTIME_RELEASE_TAG_PREFIX = "holaboss-runtime-";
+const GITHUB_RELEASE_LIST_PAGE_SIZE = 30;
 const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
 const APP_UPDATE_REQUEST_TIMEOUT_MS = 15000;
 const APP_UPDATE_MACOS_ASSET_NAME = "Holaboss-macos-arm64.dmg";
@@ -745,6 +748,61 @@ function releaseDownloadUrl(release: GithubReleasePayload): string {
   return typeof release.html_url === "string" ? release.html_url.trim() : "";
 }
 
+function githubReleaseTagName(release: GithubReleasePayload): string {
+  return typeof release.tag_name === "string" ? release.tag_name.trim() : "";
+}
+
+function githubReleasePublishedAt(release: GithubReleasePayload): number {
+  const rawPublishedAt =
+    typeof release.published_at === "string" ? release.published_at.trim() : "";
+  if (!rawPublishedAt) {
+    return 0;
+  }
+  const publishedAt = Date.parse(rawPublishedAt);
+  return Number.isFinite(publishedAt) ? publishedAt : 0;
+}
+
+function githubReleaseHasAssetName(
+  release: GithubReleasePayload,
+  assetName: string,
+): boolean {
+  const assets = Array.isArray(release.assets) ? release.assets : [];
+  return assets.some((asset) => {
+    const name = typeof asset.name === "string" ? asset.name.trim() : "";
+    return name === assetName;
+  });
+}
+
+function isDesktopReleaseTag(tagName: string): boolean {
+  return (
+    tagName.startsWith(DESKTOP_RELEASE_TAG_PREFIX) &&
+    !tagName.startsWith(RUNTIME_RELEASE_TAG_PREFIX)
+  );
+}
+
+function releaseMatchesDesktopChannel(release: GithubReleasePayload): boolean {
+  const tagName = githubReleaseTagName(release);
+  if (!tagName || release.draft || release.prerelease || !isDesktopReleaseTag(tagName)) {
+    return false;
+  }
+  if (process.platform === "darwin") {
+    return githubReleaseHasAssetName(release, APP_UPDATE_MACOS_ASSET_NAME);
+  }
+  return true;
+}
+
+function selectLatestDesktopRelease(
+  releases: GithubReleasePayload[],
+): GithubReleasePayload | null {
+  const candidates = releases
+    .filter(releaseMatchesDesktopChannel)
+    .sort(
+      (left, right) =>
+        githubReleasePublishedAt(right) - githubReleasePublishedAt(left),
+    );
+  return candidates[0] ?? null;
+}
+
 async function requestJsonFromUrl<T>(targetUrl: URL): Promise<T> {
   const requestImpl =
     targetUrl.protocol === "https:" ? httpsRequest : httpRequest;
@@ -831,18 +889,38 @@ async function checkForAppUpdates(): Promise<AppUpdateStatusPayload> {
 
   appUpdateCheckPromise = (async () => {
     try {
-      const release = await requestJsonFromUrl<GithubReleasePayload>(
+      const releases = await requestJsonFromUrl<GithubReleasePayload[]>(
         new URL(
-          `https://api.github.com/repos/${GITHUB_RELEASES_OWNER}/${GITHUB_RELEASES_REPO}/releases/latest`,
+          `https://api.github.com/repos/${GITHUB_RELEASES_OWNER}/${GITHUB_RELEASES_REPO}/releases?per_page=${GITHUB_RELEASE_LIST_PAGE_SIZE}`,
         ),
       );
-
-      const releaseTag =
-        typeof release.tag_name === "string" ? release.tag_name.trim() : "";
-      const latestVersion = normalizeReleaseVersion(releaseTag);
-      const currentVersion = normalizeReleaseVersion(app.getVersion());
+      const release = Array.isArray(releases)
+        ? selectLatestDesktopRelease(releases)
+        : null;
       const dismissedReleaseTag =
         appUpdatePreferences.dismissedReleaseTag ?? null;
+      const currentVersion = normalizeReleaseVersion(app.getVersion());
+
+      if (!release) {
+        appUpdateStatus = {
+          supported: true,
+          checking: false,
+          available: false,
+          currentVersion,
+          latestVersion: null,
+          releaseTag: null,
+          releaseUrl: null,
+          downloadUrl: null,
+          publishedAt: null,
+          dismissedReleaseTag,
+          lastCheckedAt: new Date().toISOString(),
+          error: "",
+        };
+        return appUpdateStatus;
+      }
+
+      const releaseTag = githubReleaseTagName(release);
+      const latestVersion = normalizeReleaseVersion(releaseTag);
       const newerReleaseAvailable =
         Boolean(releaseTag) &&
         Boolean(latestVersion) &&
@@ -3454,6 +3532,9 @@ function runtimeProviderLabel(providerId: string): string {
   if (normalized.includes("ollama")) {
     return "Ollama";
   }
+  if (normalized.includes("minimax")) {
+    return "MiniMax";
+  }
   if (
     normalized === RUNTIME_HOLABOSS_PROVIDER_ID ||
     normalized === "holaboss" ||
@@ -3520,7 +3601,8 @@ function runtimeModelIdFromToken(token: string): string {
     normalizedPrefix.includes("openrouter") ||
     normalizedPrefix.includes("gemini") ||
     normalizedPrefix.includes("google") ||
-    normalizedPrefix.includes("ollama")
+    normalizedPrefix.includes("ollama") ||
+    normalizedPrefix.includes("minimax")
   ) {
     return rest.join("/").trim();
   }

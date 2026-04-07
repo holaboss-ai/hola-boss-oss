@@ -34,7 +34,10 @@ const stageParentDir = path.join(repoRoot, "out");
 const stageDir = path.join(stageParentDir, `runtime-${runtimePlatform}`);
 const defaultLocalRuntimeDir = `/tmp/holaboss-runtime-${runtimePlatform}-full`;
 const sourceRepo = process.env.HOLABOSS_RUNTIME_SOURCE_REPO?.trim() || "holaboss-ai/holaboss-ai";
-const latestReleaseAssetPrefix = `holaboss-runtime-${runtimePlatform}-`;
+const runtimeReleaseTagPrefix = "holaboss-runtime-";
+const legacyStableReleaseTagPrefix = "holaboss-";
+const runtimeReleaseAssetPrefix = `holaboss-runtime-${runtimePlatform}-`;
+const githubReleaseListPageSize = 50;
 
 function log(message) {
   process.stdout.write(`[stage-runtime] ${message}\n`);
@@ -111,6 +114,54 @@ async function githubApiFetchJson(url, token) {
   return response.json();
 }
 
+function normalizedReleaseTag(release) {
+  return typeof release?.tag_name === "string" ? release.tag_name.trim() : "";
+}
+
+function releasePublishedAt(release) {
+  const raw = typeof release?.published_at === "string" ? release.published_at.trim() : "";
+  if (!raw) {
+    return 0;
+  }
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function releaseAssets(release) {
+  return Array.isArray(release?.assets) ? release.assets : [];
+}
+
+function findRuntimeReleaseAsset(release) {
+  return releaseAssets(release).find((candidate) => {
+    return (
+      typeof candidate?.name === "string" &&
+      candidate.name.startsWith(runtimeReleaseAssetPrefix) &&
+      candidate.name.endsWith(".tar.gz")
+    );
+  }) ?? null;
+}
+
+function isRuntimeChannelRelease(release) {
+  const tag = normalizedReleaseTag(release);
+  return Boolean(tag) && !release?.draft && tag.startsWith(runtimeReleaseTagPrefix);
+}
+
+function isLegacyStableRuntimeRelease(release) {
+  const tag = normalizedReleaseTag(release);
+  return (
+    Boolean(tag) &&
+    !release?.draft &&
+    !tag.startsWith(runtimeReleaseTagPrefix) &&
+    tag.startsWith(legacyStableReleaseTagPrefix)
+  );
+}
+
+function sortReleasesByPublishedAtDescending(releases) {
+  return [...releases].sort(
+    (left, right) => releasePublishedAt(right) - releasePublishedAt(left),
+  );
+}
+
 async function downloadGithubReleaseAsset(url, destinationTarball, token) {
   const headers = {
     Accept: "application/octet-stream",
@@ -129,29 +180,43 @@ async function downloadGithubReleaseAsset(url, destinationTarball, token) {
   await pipeline(Readable.fromWeb(response.body), createWriteStream(destinationTarball));
 }
 
-async function stageFromLatestGithubRelease(token) {
+async function stageFromGithubReleaseSelection(token) {
   const [owner, repo] = sourceRepo.split("/");
-  const releaseUrl = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
-  const release = await githubApiFetchJson(releaseUrl, token);
-  const assets = Array.isArray(release.assets) ? release.assets : [];
-  const asset = assets.find((candidate) => {
-    return (
-      typeof candidate.name === "string" &&
-      candidate.name.startsWith(latestReleaseAssetPrefix) &&
-      candidate.name.endsWith(".tar.gz")
-    );
-  });
+  const releaseUrl =
+    `https://api.github.com/repos/${owner}/${repo}/releases?per_page=${githubReleaseListPageSize}`;
+  const releases = await githubApiFetchJson(releaseUrl, token);
 
-  if (!asset) {
+  if (!Array.isArray(releases)) {
+    throw new Error(`GitHub returned an invalid release list for ${sourceRepo}.`);
+  }
+
+  const runtimeRelease = sortReleasesByPublishedAtDescending(releases).find((release) => {
+    return isRuntimeChannelRelease(release) && findRuntimeReleaseAsset(release);
+  }) ?? null;
+
+  const legacyStableRelease = sortReleasesByPublishedAtDescending(releases).find((release) => {
+    return isLegacyStableRuntimeRelease(release) && findRuntimeReleaseAsset(release);
+  }) ?? null;
+
+  const release = runtimeRelease ?? legacyStableRelease;
+  const asset = release ? findRuntimeReleaseAsset(release) : null;
+
+  if (!release || !asset) {
     throw new Error(
-      `No latest release asset matching ${latestReleaseAssetPrefix}*.tar.gz found in ${sourceRepo}.`
+      `No runtime release asset matching ${runtimeReleaseAssetPrefix}*.tar.gz found in ${sourceRepo}.`
     );
   }
 
-  const releaseTag = typeof release.tag_name === "string" ? release.tag_name : "latest";
+  if (!runtimeRelease && legacyStableRelease) {
+    log(
+      `falling back to legacy stable runtime asset release ${normalizedReleaseTag(legacyStableRelease)} while runtime-channel releases are unavailable`,
+    );
+  }
+
+  const releaseTag = normalizedReleaseTag(release) || "latest";
   const downloadDir = await fs.mkdtemp(path.join(os.tmpdir(), "holaboss-runtime-release-"));
   const downloadPath = path.join(downloadDir, asset.name);
-  log(`downloading latest GitHub release asset ${asset.name} from release ${releaseTag}`);
+  log(`downloading runtime release asset ${asset.name} from release ${releaseTag}`);
   await downloadGithubReleaseAsset(asset.url, downloadPath, token);
   await extractRuntimeTarball(downloadPath);
 }
@@ -207,7 +272,7 @@ async function stageRuntimeBundle() {
   }
 
   try {
-    await stageFromLatestGithubRelease(githubToken);
+    await stageFromGithubReleaseSelection(githubToken);
     await validateStageDir();
     return;
   } catch (error) {

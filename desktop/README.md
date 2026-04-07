@@ -63,7 +63,7 @@ Before running `npm run dev`, copy `desktop/.env.example` to `desktop/.env` and 
 cp .env.example .env
 ```
 
-`prepare:runtime` downloads the latest runtime bundle for the current host platform from GitHub Releases and stages it into `out/runtime-<platform>/`.
+`prepare:runtime` downloads the latest runtime-channel bundle for the current host platform from GitHub Releases and stages it into `out/runtime-<platform>/`.
 
 ## Build
 
@@ -111,7 +111,7 @@ The staging script accepts one of:
 - `HOLABOSS_RUNTIME_DIR=/absolute/path/to/runtime-macos`
 - `HOLABOSS_RUNTIME_TARBALL=/absolute/path/to/holaboss-runtime-macos-<sha>.tar.gz`
 - `HOLABOSS_RUNTIME_BUNDLE_URL=https://.../holaboss-runtime-macos-<sha>.tar.gz`
-- `HOLABOSS_GITHUB_TOKEN=...` or `GITHUB_TOKEN=...` to fetch the latest release asset from GitHub Releases
+- `HOLABOSS_GITHUB_TOKEN=...` or `GITHUB_TOKEN=...` to fetch the latest runtime-channel release asset from GitHub Releases
 - `HOLABOSS_RUNTIME_PLATFORM=macos|linux|windows` to override the auto-detected target platform when needed
 
 If none are set, it falls back to `/tmp/holaboss-runtime-macos-full` when present.
@@ -179,6 +179,11 @@ Notes:
 ### Signed Product Release
 
 Signed macOS distribution is handled by the manual `.github/workflows/release-macos-desktop.yml` workflow. Normal pushes continue to run CI and publish runtime bundles separately; the signed DMG is only built when you explicitly trigger the desktop release workflow.
+
+Release channel policy:
+- runtime-only bundle releases publish under `holaboss-runtime-*` and are treated as prereleases
+- desktop-shippable stable releases stay under `holaboss-*`
+- the in-app desktop update notice is intended to track desktop-shippable releases, not runtime-only bundle releases
 
 The desktop release workflow requires these repository secrets and fails fast when any of them are missing:
 

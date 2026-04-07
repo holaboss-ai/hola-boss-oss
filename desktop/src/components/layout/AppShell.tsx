@@ -1619,6 +1619,13 @@ function AppShellContent() {
     : (visibleSpacePaneIds[visibleSpacePaneIds.length - 1] ?? null);
   const showOperationsDrawer =
     spaceMode && spaceVisibility.agent && operationsDrawerOpen;
+  const shouldSuspendBrowserNativeView =
+    isUtilityPaneResizing ||
+    workspaceSwitcherOpen ||
+    settingsDialogOpen ||
+    createWorkspacePanelOpen ||
+    publishOpen ||
+    Boolean(appUpdateStatus?.available);
   const bootstrapErrorMessage =
     !hasHydratedWorkspaceList && runtimeStatus?.status === "error"
       ? runtimeStatus.lastError.trim() ||
@@ -1731,13 +1738,7 @@ function AppShellContent() {
             />
           ) : (
             <BrowserPane
-              suspendNativeView={
-                isUtilityPaneResizing ||
-                workspaceSwitcherOpen ||
-                settingsDialogOpen ||
-                createWorkspacePanelOpen ||
-                publishOpen
-              }
+              suspendNativeView={shouldSuspendBrowserNativeView}
               layoutSyncKey={`${visibleSpacePaneIds.join("|")}:${filesPaneWidth}:${browserPaneWidth}:${showOperationsDrawer ? 1 : 0}`}
             />
           ),
@@ -1749,8 +1750,10 @@ function AppShellContent() {
       flexSpacePaneId,
       publishOpen,
       isUtilityPaneResizing,
+      appUpdateStatus,
       createWorkspacePanelOpen,
       settingsDialogOpen,
+      shouldSuspendBrowserNativeView,
       showOperationsDrawer,
       visibleSpacePaneIds,
       workspaceSwitcherOpen,

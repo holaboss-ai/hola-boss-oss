@@ -35,11 +35,11 @@ jobs:
         run: |
           release_date="$(date -u +'%Y.%-m.%-d')"
           if [ "${GITHUB_REF_NAME}" = "main" ]; then
-            release_tag="holaboss-${release_date}"
-            release_title="Holaboss ${release_date}"
+            release_tag="holaboss-runtime-${release_date}"
+            release_title="Holaboss Runtime ${release_date}"
           else
-            release_tag="holaboss-${GITHUB_REF_NAME}-${release_date}"
-            release_title="Holaboss ${GITHUB_REF_NAME} ${release_date}"
+            release_tag="holaboss-runtime-${GITHUB_REF_NAME}-${release_date}"
+            release_title="Holaboss Runtime ${GITHUB_REF_NAME} ${release_date}"
           fi
 
           {
@@ -57,9 +57,9 @@ jobs:
           trap 'rm -f "${notes_path}"' EXIT
 
           if [ "${GITHUB_REF_NAME}" = "main" ]; then
-            release_pattern='holaboss-[0-9]*'
+            release_pattern='holaboss-runtime-[0-9]*'
           else
-            release_pattern="holaboss-${GITHUB_REF_NAME}-*"
+            release_pattern="holaboss-runtime-${GITHUB_REF_NAME}-*"
           fi
 
           previous_tag="$(
@@ -81,10 +81,7 @@ jobs:
           if ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             gh api "${generate_notes_args[@]}" --jq '.body' > "${notes_path}"
 
-            prerelease_flag=()
-            if [ "${GITHUB_REF_NAME}" != "main" ]; then
-              prerelease_flag+=(--prerelease)
-            fi
+            prerelease_flag=(--prerelease)
             gh release create "${RELEASE_TAG}" \
               --title "${RELEASE_TITLE}" \
               --notes-file "${notes_path}" \
@@ -107,6 +104,7 @@ jobs:
             gh api "${generate_notes_args[@]}" --jq '.body' > "${notes_path}"
 
             gh release edit "${RELEASE_TAG}" \
+              --prerelease \
               --title "${RELEASE_TITLE}" \
               --notes-file "${notes_path}" \
               --target "${GITHUB_SHA}"
