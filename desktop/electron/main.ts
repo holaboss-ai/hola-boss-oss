@@ -395,6 +395,12 @@ interface AppUpdateStatusPayload {
   error: string;
 }
 
+interface DesktopWindowStatePayload {
+  isFullScreen: boolean;
+  isMaximized: boolean;
+  isMinimized: boolean;
+}
+
 interface GithubReleaseAssetPayload {
   name?: string;
   browser_download_url?: string;
@@ -521,8 +527,8 @@ function runtimeBundleNodeRelativePaths(
   return runtimePlatform === "windows"
     ? [
         `${base}.exe`,
-        `${base}.cmd`,
         path.join("node-runtime", "node_modules", "node", "bin", "node.exe"),
+        `${base}.cmd`,
         base,
       ]
     : [base];
@@ -3343,6 +3349,47 @@ function withDesktopBrowserStatus(
   };
 }
 
+function resolveTargetWindow(
+  senderWindow: BrowserWindow | null | undefined,
+): BrowserWindow | null {
+  if (senderWindow && !senderWindow.isDestroyed()) {
+    return senderWindow;
+  }
+  return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+}
+
+function desktopWindowStatePayload(
+  targetWindow: BrowserWindow | null | undefined = mainWindow,
+): DesktopWindowStatePayload {
+  if (!targetWindow || targetWindow.isDestroyed()) {
+    return {
+      isFullScreen: false,
+      isMaximized: false,
+      isMinimized: false,
+    };
+  }
+
+  return {
+    isFullScreen: targetWindow.isFullScreen(),
+    isMaximized: targetWindow.isMaximized(),
+    isMinimized: targetWindow.isMinimized(),
+  };
+}
+
+function emitWindowStateChanged(
+  targetWindow: BrowserWindow | null | undefined = mainWindow,
+) {
+  const resolvedWindow = resolveTargetWindow(targetWindow);
+  if (!resolvedWindow) {
+    return;
+  }
+
+  resolvedWindow.webContents.send(
+    "ui:windowState",
+    desktopWindowStatePayload(resolvedWindow),
+  );
+}
+
 function runtimeModelProxyApiKeyFromConfig(
   config: Record<string, string>,
 ): string {
@@ -4994,6 +5041,52 @@ function maybeAuthCallbackUrl(argument: string | undefined): string | null {
     normalized.startsWith(`${AUTH_CALLBACK_PROTOCOL}:/`)
     ? normalized
     : null;
+}
+
+function nearestPackageJsonDirectory(startDirectory: string): string | null {
+  let currentDirectory = path.resolve(startDirectory);
+
+  while (true) {
+    if (existsSync(path.join(currentDirectory, "package.json"))) {
+      return currentDirectory;
+    }
+    const parentDirectory = path.dirname(currentDirectory);
+    if (parentDirectory === currentDirectory) {
+      return null;
+    }
+    currentDirectory = parentDirectory;
+  }
+}
+
+function defaultAppProtocolClientArgs(): string[] {
+  const packageRoot = nearestPackageJsonDirectory(__dirname);
+  if (packageRoot) {
+    return [packageRoot];
+  }
+
+  const flagsWithSeparateValue = new Set(["--require", "-r"]);
+  for (let index = 1; index < process.argv.length; index += 1) {
+    const argument = process.argv[index]?.trim();
+    if (!argument) {
+      continue;
+    }
+    if (argument.startsWith("-")) {
+      if (
+        flagsWithSeparateValue.has(argument) &&
+        index + 1 < process.argv.length
+      ) {
+        index += 1;
+      }
+      continue;
+    }
+    if (maybeAuthCallbackUrl(argument)) {
+      continue;
+    }
+    return [path.resolve(argument)];
+  }
+
+  const appPath = app.getAppPath().trim();
+  return appPath ? [path.resolve(appPath)] : [];
 }
 
 function extractAuthToken(callbackUrl: string): string | null {
@@ -12736,12 +12829,16 @@ function toggleOverflowPopup(anchorBounds: BrowserAnchorBoundsPayload) {
 }
 
 function createMainWindow() {
-  const macTitleBarOptions =
+  const titleBarOptions =
     process.platform === "darwin"
       ? {
           titleBarStyle: "hiddenInset" as const,
           trafficLightPosition: { x: 14, y: 30 },
         }
+      : process.platform === "win32"
+        ? {
+            frame: false,
+          }
       : {};
 
   const appIcon = nativeImage.createFromPath(
@@ -12760,7 +12857,7 @@ function createMainWindow() {
     backgroundColor: "#050907",
     autoHideMenuBar: true,
     icon: appIcon,
-    ...macTitleBarOptions,
+    ...titleBarOptions,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -12787,6 +12884,7 @@ function createMainWindow() {
     emitBrowserState();
     emitPendingAuthState();
     emitAppUpdateState();
+    emitWindowStateChanged(win);
   });
 
   win.webContents.on("before-input-event", (event, input) => {
@@ -12812,11 +12910,38 @@ function createMainWindow() {
     void win.loadFile(path.join(__dirname, "../dist/index.html"));
   }
 
+  win.on("maximize", () => {
+    emitWindowStateChanged(win);
+  });
+  win.on("unmaximize", () => {
+    emitWindowStateChanged(win);
+  });
+  win.on("minimize", () => {
+    emitWindowStateChanged(win);
+  });
+  win.on("restore", () => {
+    emitWindowStateChanged(win);
+  });
+  win.on("enter-full-screen", () => {
+    emitWindowStateChanged(win);
+  });
+  win.on("leave-full-screen", () => {
+    emitWindowStateChanged(win);
+  });
+
   win.once("ready-to-show", () => {
+    if (process.platform === "win32") {
+      win.maximize();
+      win.show();
+      emitWindowStateChanged(win);
+      return;
+    }
+
     const display = screen.getDisplayMatching(win.getBounds());
     const { x, y, width, height } = display.workArea;
     win.setBounds({ x, y, width, height });
     win.show();
+    emitWindowStateChanged(win);
   });
 
   win.once("closed", () => {
@@ -12849,9 +12974,11 @@ if (!singleInstanceLock) {
   app.quit();
 } else {
   if (process.defaultApp && process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient(AUTH_CALLBACK_PROTOCOL, process.execPath, [
-      path.resolve(process.argv[1]!),
-    ]);
+    app.setAsDefaultProtocolClient(
+      AUTH_CALLBACK_PROTOCOL,
+      process.execPath,
+      defaultAppProtocolClientArgs(),
+    );
   } else {
     app.setAsDefaultProtocolClient(AUTH_CALLBACK_PROTOCOL);
   }
@@ -13100,11 +13227,25 @@ app.whenReady().then(async () => {
       await openExternalUrl(rawUrl);
     },
   );
+  handleTrustedIpc("ui:getWindowState", ["main"], async (event) => {
+    return desktopWindowStatePayload(
+      resolveTargetWindow(BrowserWindow.fromWebContents(event.sender)),
+    );
+  });
+  handleTrustedIpc("ui:minimizeWindow", ["main"], async (event) => {
+    const targetWindow = resolveTargetWindow(
+      BrowserWindow.fromWebContents(event.sender),
+    );
+    if (!targetWindow) {
+      return;
+    }
+    targetWindow.minimize();
+  });
   handleTrustedIpc("ui:toggleWindowSize", ["main"], async (event) => {
-    const senderWindow = BrowserWindow.fromWebContents(event.sender);
-    const targetWindow =
-      senderWindow && !senderWindow.isDestroyed() ? senderWindow : mainWindow;
-    if (!targetWindow || targetWindow.isDestroyed()) {
+    const targetWindow = resolveTargetWindow(
+      BrowserWindow.fromWebContents(event.sender),
+    );
+    if (!targetWindow) {
       return;
     }
 
@@ -13119,6 +13260,15 @@ app.whenReady().then(async () => {
     }
 
     targetWindow.maximize();
+  });
+  handleTrustedIpc("ui:closeWindow", ["main"], async (event) => {
+    const targetWindow = resolveTargetWindow(
+      BrowserWindow.fromWebContents(event.sender),
+    );
+    if (!targetWindow) {
+      return;
+    }
+    targetWindow.close();
   });
   handleTrustedIpc(
     "ui:setTheme",

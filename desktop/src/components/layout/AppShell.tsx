@@ -1950,10 +1950,16 @@ function AppShellContent() {
         workspaceErrorMessage ||
         "Embedded runtime failed to start."
       : "";
-  const isMacDesktop = window.electronAPI?.platform === "darwin";
+  const desktopPlatform = window.electronAPI?.platform ?? null;
+  const hasIntegratedTitleBar =
+    desktopPlatform === "darwin" || desktopPlatform === "win32";
+  const titleBarContainerClassName =
+    desktopPlatform === "win32"
+      ? "relative min-w-0 -mx-2 -mt-2 sm:-mx-3 sm:-mt-2.5"
+      : "relative min-w-0";
   const mainGridClassName = appShellMainGridClassName({
     hasWorkspaces,
-    isMacDesktop,
+    hasIntegratedTitleBar,
   });
   const showOnboardingTakeover =
     hasHydratedWorkspaceList &&
@@ -2231,9 +2237,10 @@ function AppShellContent() {
         />
 
         {hasWorkspaces ? (
-          <div className="relative min-w-0">
+          <div className={titleBarContainerClassName}>
             <TopTabsBar
-              integratedTitleBar={isMacDesktop}
+              integratedTitleBar={hasIntegratedTitleBar}
+              desktopPlatform={desktopPlatform}
               onWorkspaceSwitcherVisibilityChange={setWorkspaceSwitcherOpen}
               onOpenMarketplace={() => handleLeftRailSelect("marketplace")}
               isMarketplaceActive={activeLeftRailItem === "marketplace"}

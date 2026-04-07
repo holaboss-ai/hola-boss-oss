@@ -20,8 +20,40 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const runtimeRoot = path.resolve(scriptDir, "..");
 const repoRoot = path.resolve(runtimeRoot, "..");
 
-function npmCommand() {
-  return process.platform === "win32" ? "npm.cmd" : "npm";
+function resolveWindowsNpmCliPath() {
+  const envExecPath = process.env.npm_execpath?.trim();
+  if (envExecPath && existsSync(envExecPath)) {
+    return envExecPath;
+  }
+
+  const bundledCliPath = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+  if (existsSync(bundledCliPath)) {
+    return bundledCliPath;
+  }
+
+  throw new Error("failed to resolve npm CLI entrypoint on Windows");
+}
+
+function npmInvocation() {
+  if (process.platform === "win32") {
+    return {
+      command: process.execPath,
+      argsPrefix: [resolveWindowsNpmCliPath()]
+    };
+  }
+
+  return {
+    command: "npm",
+    argsPrefix: []
+  };
+}
+
+function runNpm(args, options = {}) {
+  const { command, argsPrefix } = npmInvocation();
+  return execFileSync(command, [...argsPrefix, ...args], {
+    env: process.env,
+    ...options
+  });
 }
 
 function assertWindowsHost() {
@@ -64,7 +96,7 @@ function resolveNpmVersion() {
   if (explicitVersion) {
     return explicitVersion;
   }
-  return execFileSync(npmCommand(), ["--version"], {
+  return runNpm(["--version"], {
     stdio: ["ignore", "pipe", "ignore"],
     encoding: "utf8"
   }).trim();
@@ -120,13 +152,13 @@ export function packageWindowsRuntime(
 
     rmSync(outputRoot, { recursive: true, force: true });
     mkdirSync(outputRoot, { recursive: true });
-    cpSync(runtimeStagingRoot, runtimeOutputRoot, { recursive: true });
+    cpSync(runtimeStagingRoot, runtimeOutputRoot, { recursive: true, dereference: true });
     prunePackagedTree(runtimeOutputRoot, "windows");
 
     mkdirSync(binDir, { recursive: true });
     if (!skipNodeDeps) {
       mkdirSync(nodeRuntimeDir, { recursive: true });
-      execFileSync(npmCommand(), ["install", "--prefix", nodeRuntimeDir, `node@${nodeVersion}`, `npm@${npmVersion}`], {
+      runNpm(["install", "--prefix", nodeRuntimeDir, `node@${nodeVersion}`, `npm@${npmVersion}`], {
         stdio: "inherit",
         env: process.env
       });

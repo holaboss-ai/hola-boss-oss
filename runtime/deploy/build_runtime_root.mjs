@@ -16,8 +16,32 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const runtimeRoot = path.resolve(scriptDir, "..");
 const repoRoot = path.resolve(runtimeRoot, "..");
 
-function npmCommand() {
-  return process.platform === "win32" ? "npm.cmd" : "npm";
+function resolveWindowsNpmCliPath() {
+  const envExecPath = process.env.npm_execpath?.trim();
+  if (envExecPath && existsSync(envExecPath)) {
+    return envExecPath;
+  }
+
+  const bundledCliPath = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+  if (existsSync(bundledCliPath)) {
+    return bundledCliPath;
+  }
+
+  throw new Error("failed to resolve npm CLI entrypoint on Windows");
+}
+
+function npmInvocation() {
+  if (process.platform === "win32") {
+    return {
+      command: process.execPath,
+      argsPrefix: [resolveWindowsNpmCliPath()]
+    };
+  }
+
+  return {
+    command: "npm",
+    argsPrefix: []
+  };
 }
 
 function copyIfPresent(sourcePath, destinationPath) {
@@ -33,6 +57,11 @@ function runCommand(command, args, options = {}) {
     env: process.env,
     ...options
   });
+}
+
+function runNpmCommand(args, options = {}) {
+  const { command, argsPrefix } = npmInvocation();
+  runCommand(command, [...argsPrefix, ...args], options);
 }
 
 export function resolveRuntimeVersion() {
@@ -69,9 +98,9 @@ function stageNodePackage(outputRoot, packageDir, outputName) {
   copyIfPresent(path.join(packageDir, "tsup.config.ts"), path.join(targetDir, "tsup.config.ts"));
   copyIfPresent(path.join(packageDir, "src"), path.join(targetDir, "src"));
 
-  runCommand(npmCommand(), ["ci"], { cwd: targetDir });
-  runCommand(npmCommand(), ["run", "build"], { cwd: targetDir });
-  runCommand(npmCommand(), ["prune", "--omit=dev"], { cwd: targetDir });
+  runNpmCommand(["ci"], { cwd: targetDir });
+  runNpmCommand(["run", "build"], { cwd: targetDir });
+  runNpmCommand(["prune", "--omit=dev"], { cwd: targetDir });
 
   rmSync(path.join(targetDir, "src"), { recursive: true, force: true });
   rmSync(path.join(targetDir, "tsconfig.json"), { force: true });

@@ -15,8 +15,8 @@ test("settings pane routing keeps the providers section available across Electro
     readFile(APP_SHELL_PATH, "utf8")
   ]);
 
-  assert.match(preloadSource, /type UiSettingsPaneSection = "account" \| "providers" \| "settings" \| "about";/);
-  assert.match(authPopupPreloadSource, /type UiSettingsPaneSection = "account" \| "providers" \| "settings" \| "about";/);
-  assert.match(mainSource, /type UiSettingsPaneSection = "account" \| "providers" \| "settings" \| "about";/);
-  assert.match(appShellSource, /return value === "account" \|\| value === "providers" \|\| value === "settings" \|\| value === "about";/);
+  assert.match(preloadSource, /type UiSettingsPaneSection = "account" \| "billing" \| "providers" \| "settings" \| "about";/);
+  assert.match(authPopupPreloadSource, /type UiSettingsPaneSection = "account" \| "billing" \| "providers" \| "settings" \| "about";/);
+  assert.match(mainSource, /type UiSettingsPaneSection =[\s\S]*"account"[\s\S]*"billing"[\s\S]*"providers"[\s\S]*"settings"[\s\S]*"about";/);
+  assert.match(appShellSource, /return \([\s\S]*value === "account"[\s\S]*value === "billing"[\s\S]*value === "providers"[\s\S]*value === "settings"[\s\S]*value === "about"[\s\S]*\);/);
 });

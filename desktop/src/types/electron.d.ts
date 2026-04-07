@@ -203,6 +203,12 @@ declare global {
     error: string;
   }
 
+  interface DesktopWindowStatePayload {
+    isFullScreen: boolean;
+    isMaximized: boolean;
+    isMinimized: boolean;
+  }
+
   interface WorkbenchOpenBrowserPayload {
     workspaceId?: string | null;
     url?: string | null;
@@ -1033,10 +1039,14 @@ declare global {
     };
     ui: {
       getTheme: () => Promise<string>;
+      getWindowState: () => Promise<DesktopWindowStatePayload>;
+      minimizeWindow: () => Promise<void>;
       toggleWindowSize: () => Promise<void>;
+      closeWindow: () => Promise<void>;
       setTheme: (theme: string) => Promise<void>;
       openSettingsPane: (section?: UiSettingsPaneSection) => Promise<void>;
       openExternalUrl: (url: string) => Promise<void>;
+      onWindowStateChange: (listener: (state: DesktopWindowStatePayload) => void) => () => void;
       onThemeChange: (listener: (theme: string) => void) => () => void;
       onOpenSettingsPane: (listener: (section: UiSettingsPaneSection) => void) => () => void;
     };

@@ -73,6 +73,23 @@ test("app shell routes app updates through the shared notification system", asyn
   assert.match(source, /<BrowserPane[\s\S]*suspendNativeView=\{shouldSuspendBrowserNativeView\}/);
 });
 
+test("app shell uses the integrated title bar path for macOS and Windows", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const hasIntegratedTitleBar =\s*desktopPlatform === "darwin" \|\| desktopPlatform === "win32";/,
+  );
+  assert.match(
+    source,
+    /const titleBarContainerClassName =\s*desktopPlatform === "win32"\s*\?\s*"relative min-w-0 -mx-2 -mt-2 sm:-mx-3 sm:-mt-2.5"/,
+  );
+  assert.match(
+    source,
+    /<TopTabsBar[\s\S]*integratedTitleBar=\{hasIntegratedTitleBar\}[\s\S]*desktopPlatform=\{desktopPlatform\}/,
+  );
+});
+
 test("app shell requests remote task proposal generation without a separate success banner", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
