@@ -6,6 +6,7 @@ import { CronExpressionParser } from "cron-parser";
 import {
   type CronjobRecord,
   type RuntimeNotificationLevel,
+  type RuntimeNotificationPriority,
   type RuntimeStateStore
 } from "@holaboss/runtime-state-store";
 
@@ -56,6 +57,14 @@ function cronjobNotificationLevel(metadata: Record<string, unknown>): RuntimeNot
     return explicitLevel;
   }
   return "info";
+}
+
+function cronjobNotificationPriority(metadata: Record<string, unknown>): RuntimeNotificationPriority {
+  const explicitPriority = normalizedString(metadata.notification_priority).toLowerCase();
+  if (explicitPriority === "low" || explicitPriority === "high" || explicitPriority === "critical") {
+    return explicitPriority;
+  }
+  return "normal";
 }
 
 export function cronjobCheckIntervalMs(): number {
@@ -203,6 +212,7 @@ export function deliverLocalCronjobNotification(store: RuntimeStateStore, job: C
     title: cronjobNotificationTitle(job, metadata),
     message: cronjobNotificationMessage(job, metadata),
     level: cronjobNotificationLevel(metadata),
+    priority: cronjobNotificationPriority(metadata),
     metadata: {
       cronjob_id: job.id,
       cronjob_name: job.name,

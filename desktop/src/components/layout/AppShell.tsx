@@ -84,6 +84,11 @@ const DEFAULT_FILES_PANE_WIDTH = MIN_UTILITY_PANE_WIDTH;
 const DEFAULT_BROWSER_PANE_WIDTH = 460;
 const MIN_AGENT_CONTENT_WIDTH = 120;
 const UTILITY_PANE_RESIZER_WIDTH = 16;
+const APP_UPDATE_NOTIFICATION_SOURCE = "app_update";
+const APP_UPDATE_CHANGELOG_BASE_URL =
+  "https://github.com/holaboss-ai/holaboss-ai/releases/tag";
+const DEFAULT_NOTIFICATION_TOAST_DURATION_MS = 7_000;
+const CRITICAL_NOTIFICATION_TOAST_DURATION_MS = 12_000;
 
 type SpaceComponentId = "agent" | "files" | "browser";
 type UtilityPaneId = "files" | "browser";
@@ -168,6 +173,150 @@ type WorkspaceOutputNavigationTarget =
       resourceId?: string | null;
       htmlContent?: string | null;
     };
+
+function notificationPriorityRank(priority: RuntimeNotificationPriority): number {
+  if (priority === "critical") {
+    return 3;
+  }
+  if (priority === "high") {
+    return 2;
+  }
+  if (priority === "low") {
+    return 0;
+  }
+  return 1;
+}
+
+function notificationSortComparator(
+  left: RuntimeNotificationRecordPayload,
+  right: RuntimeNotificationRecordPayload,
+): number {
+  const priorityDelta =
+    notificationPriorityRank(right.priority) -
+    notificationPriorityRank(left.priority);
+  if (priorityDelta !== 0) {
+    return priorityDelta;
+  }
+
+  const createdAtDelta =
+    Date.parse(right.created_at) - Date.parse(left.created_at);
+  if (Number.isFinite(createdAtDelta) && createdAtDelta !== 0) {
+    return createdAtDelta;
+  }
+
+  return right.id.localeCompare(left.id);
+}
+
+function notificationToastDurationMs(
+  notification: RuntimeNotificationRecordPayload,
+): number {
+  return notification.priority === "critical"
+    ? CRITICAL_NOTIFICATION_TOAST_DURATION_MS
+    : DEFAULT_NOTIFICATION_TOAST_DURATION_MS;
+}
+
+function appUpdateNotificationId(status: AppUpdateStatusPayload): string {
+  return `app-update:${status.latestVersion || status.publishedAt || "latest"}`;
+}
+
+function appUpdateReleaseLabel(status: AppUpdateStatusPayload): string {
+  return status.latestVersion || "latest";
+}
+
+function appUpdateChangelogUrl(
+  status: AppUpdateStatusPayload,
+): string | null {
+  const version = status.latestVersion?.trim();
+  if (!version) {
+    return null;
+  }
+  return `${APP_UPDATE_CHANGELOG_BASE_URL}/holaboss-${version}`;
+}
+
+function notificationMetadataString(
+  notification: RuntimeNotificationRecordPayload,
+  key: string,
+): string | null {
+  const raw = notification.metadata[key];
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+
+function notificationActionUrl(
+  notification: RuntimeNotificationRecordPayload,
+): string | null {
+  return notificationMetadataString(notification, "action_url");
+}
+
+function notificationActivationState(
+  notification: RuntimeNotificationRecordPayload,
+): RuntimeNotificationState {
+  const activationState = notificationMetadataString(
+    notification,
+    "activation_state",
+  )?.toLowerCase();
+  if (activationState === "dismissed") {
+    return "dismissed";
+  }
+  if (activationState === "read") {
+    return "read";
+  }
+  return "read";
+}
+
+function notificationReleaseTag(
+  notification: RuntimeNotificationRecordPayload,
+): string | null {
+  return notificationMetadataString(notification, "update_release_tag");
+}
+
+function isAppUpdateNotification(
+  notification: RuntimeNotificationRecordPayload,
+): boolean {
+  return (
+    notification.source_type === APP_UPDATE_NOTIFICATION_SOURCE ||
+    notificationMetadataString(notification, "notification_kind") ===
+      APP_UPDATE_NOTIFICATION_SOURCE
+  );
+}
+
+function buildAppUpdateNotification(
+  status: AppUpdateStatusPayload,
+  state: RuntimeNotificationState,
+): RuntimeNotificationRecordPayload {
+  const releaseLabel = appUpdateReleaseLabel(status);
+  const createdAt =
+    status.publishedAt || status.lastCheckedAt || "1970-01-01T00:00:00.000Z";
+  const actionUrl = appUpdateChangelogUrl(status);
+  const title = status.downloaded
+    ? `Holaboss ${releaseLabel} ready to install`
+    : `Holaboss ${releaseLabel} is downloading`;
+  const message = status.downloaded
+    ? "Restart to install it now, or close later and let it apply on quit."
+    : "Background download in progress. Open the changelog for details.";
+
+  return {
+    id: appUpdateNotificationId(status),
+    workspace_id: "",
+    cronjob_id: null,
+    source_type: APP_UPDATE_NOTIFICATION_SOURCE,
+    source_label: "Desktop updates",
+    title,
+    message,
+    level: "info",
+    priority: "critical",
+    state,
+    metadata: {
+      notification_kind: APP_UPDATE_NOTIFICATION_SOURCE,
+      action_url: actionUrl,
+      activation_state: "read",
+      update_release_tag: status.latestVersion ?? null,
+    },
+    read_at: state === "unread" ? null : createdAt,
+    dismissed_at: null,
+    created_at: createdAt,
+    updated_at: status.lastCheckedAt || createdAt,
+  };
+}
 
 function loadSpaceVisibility(): SpaceVisibilityState {
   return DEFAULT_SPACE_VISIBILITY;
@@ -620,6 +769,8 @@ function AppShellContent() {
   const [toastNotifications, setToastNotifications] = useState<
     RuntimeNotificationRecordPayload[]
   >([]);
+  const [syntheticNotificationStates, setSyntheticNotificationStates] =
+    useState<Record<string, RuntimeNotificationState>>({});
   const utilityPaneHostRef = useRef<HTMLDivElement | null>(null);
   const utilityPaneResizeStateRef = useRef<UtilityPaneResizeState | null>(null);
   const filesPaneWidthRef = useRef(filesPaneWidth);
@@ -633,9 +784,33 @@ function AppShellContent() {
   browserPaneWidthRef.current = browserPaneWidth;
   spaceVisibilityRef.current = spaceVisibility;
 
+  const appUpdateNotification = useMemo(() => {
+    if (!appUpdateStatus || (!appUpdateStatus.available && !appUpdateStatus.downloaded)) {
+      return null;
+    }
+    const notificationId = appUpdateNotificationId(appUpdateStatus);
+    return buildAppUpdateNotification(
+      appUpdateStatus,
+      syntheticNotificationStates[notificationId] ?? "unread",
+    );
+  }, [appUpdateStatus, syntheticNotificationStates]);
+
+  const combinedNotifications = useMemo(() => {
+    const items = appUpdateNotification
+      ? [appUpdateNotification, ...notifications]
+      : notifications;
+    return [...items].sort(notificationSortComparator);
+  }, [appUpdateNotification, notifications]);
+
+  const notificationById = useMemo(
+    () =>
+      new Map(combinedNotifications.map((notification) => [notification.id, notification])),
+    [combinedNotifications],
+  );
+
   const notificationUnreadCount = useMemo(
-    () => notifications.filter((item) => item.state === "unread").length,
-    [notifications],
+    () => combinedNotifications.filter((item) => item.state === "unread").length,
+    [combinedNotifications],
   );
 
   const clampUtilityPaneWidth = useCallback(
@@ -916,6 +1091,26 @@ function AppShellContent() {
     );
   }, []);
 
+  const markSyntheticNotificationsRead = useCallback(
+    (notificationIds: string[]) => {
+      if (notificationIds.length === 0) {
+        return;
+      }
+      setSyntheticNotificationStates((current) => {
+        let changed = false;
+        const next = { ...current };
+        for (const notificationId of notificationIds) {
+          if (next[notificationId] !== "read") {
+            next[notificationId] = "read";
+            changed = true;
+          }
+        }
+        return changed ? next : current;
+      });
+    },
+    [],
+  );
+
   const refreshNotifications = useCallback(async () => {
     if (!window.electronAPI) {
       return;
@@ -953,7 +1148,7 @@ function AppShellContent() {
         if (!notificationToastTimeoutsRef.current.has(item.id)) {
           const timeoutId = window.setTimeout(() => {
             dismissNotificationToast(item.id);
-          }, 7000);
+          }, notificationToastDurationMs(item));
           notificationToastTimeoutsRef.current.set(item.id, timeoutId);
         }
       }
@@ -962,22 +1157,81 @@ function AppShellContent() {
     }
   }, [dismissNotificationToast]);
 
-  const handleMarkNotificationRead = useCallback(
+  useEffect(() => {
+    const activeNotificationIds = new Set(
+      combinedNotifications.map((notification) => notification.id),
+    );
+    setToastNotifications((current) => {
+      const next = current.filter((item) => activeNotificationIds.has(item.id));
+      return next.length === current.length ? current : next;
+    });
+    for (const [notificationId, timeoutId] of notificationToastTimeoutsRef.current.entries()) {
+      if (activeNotificationIds.has(notificationId)) {
+        continue;
+      }
+      window.clearTimeout(timeoutId);
+      notificationToastTimeoutsRef.current.delete(notificationId);
+    }
+  }, [combinedNotifications]);
+
+  const handleActivateNotification = useCallback(
     async (notificationId: string) => {
       if (!window.electronAPI) {
         return;
       }
+      const notification = notificationById.get(notificationId);
+      if (!notification) {
+        return;
+      }
+
+      dismissNotificationToast(notification.id);
+      const targetUrl = notificationActionUrl(notification);
+      const nextState = notificationActivationState(notification);
+
+      if (isAppUpdateNotification(notification)) {
+        if (nextState === "dismissed") {
+          try {
+            await window.electronAPI.appUpdate.dismiss(
+              notificationReleaseTag(notification),
+            );
+          } catch {
+            // Ignore transient update-dismiss failures in the shell.
+          }
+        } else {
+          markSyntheticNotificationsRead([notification.id]);
+        }
+        if (targetUrl) {
+          try {
+            await window.electronAPI.ui.openExternalUrl(targetUrl);
+          } catch {
+            // Ignore transient shell URL open failures.
+          }
+        }
+        return;
+      }
+
       try {
-        dismissNotificationToast(notificationId);
-        await window.electronAPI.workspace.updateNotification(notificationId, {
-          state: "read",
+        await window.electronAPI.workspace.updateNotification(notification.id, {
+          state: nextState,
         });
         await refreshNotifications();
       } catch {
         // Ignore transient notification update failures in the shell.
       }
+      if (targetUrl) {
+        try {
+          await window.electronAPI.ui.openExternalUrl(targetUrl);
+        } catch {
+          // Ignore transient shell URL open failures.
+        }
+      }
     },
-    [dismissNotificationToast, refreshNotifications],
+    [
+      dismissNotificationToast,
+      markSyntheticNotificationsRead,
+      notificationById,
+      refreshNotifications,
+    ],
   );
 
   const handleDismissNotification = useCallback(
@@ -985,6 +1239,24 @@ function AppShellContent() {
       if (!window.electronAPI) {
         return;
       }
+      const notification = notificationById.get(notificationId);
+      if (!notification) {
+        return;
+      }
+
+      if (isAppUpdateNotification(notification)) {
+        try {
+          dismissNotificationToast(notification.id);
+          markSyntheticNotificationsRead([notification.id]);
+          await window.electronAPI.appUpdate.dismiss(
+            notificationReleaseTag(notification),
+          );
+        } catch {
+          // Ignore transient notification update failures in the shell.
+        }
+        return;
+      }
+
       try {
         dismissNotificationToast(notificationId);
         await window.electronAPI.workspace.updateNotification(notificationId, {
@@ -995,56 +1267,98 @@ function AppShellContent() {
         // Ignore transient notification update failures in the shell.
       }
     },
-    [dismissNotificationToast, refreshNotifications],
+    [
+      dismissNotificationToast,
+      markSyntheticNotificationsRead,
+      notificationById,
+      refreshNotifications,
+    ],
   );
 
   const handleClearAllNotifications = useCallback(async () => {
-    if (!window.electronAPI || notifications.length === 0) {
+    if (!window.electronAPI || combinedNotifications.length === 0) {
       return;
     }
 
-    const notificationIds = notifications.map((item) => item.id);
-    for (const notificationId of notificationIds) {
-      dismissNotificationToast(notificationId);
+    for (const notification of combinedNotifications) {
+      dismissNotificationToast(notification.id);
     }
 
     try {
-      await Promise.allSettled(
-        notificationIds.map((notificationId) =>
+      const runtimeNotificationIds = combinedNotifications
+        .filter((notification) => !isAppUpdateNotification(notification))
+        .map((notification) => notification.id);
+      const appUpdateNotifications = combinedNotifications.filter((notification) =>
+        isAppUpdateNotification(notification),
+      );
+      if (appUpdateNotifications.length > 0) {
+        markSyntheticNotificationsRead(
+          appUpdateNotifications.map((notification) => notification.id),
+        );
+      }
+      await Promise.allSettled([
+        ...runtimeNotificationIds.map((notificationId) =>
           window.electronAPI.workspace.updateNotification(notificationId, {
             state: "dismissed",
           }),
         ),
-      );
-      await refreshNotifications();
+        ...appUpdateNotifications.map((notification) =>
+          window.electronAPI.appUpdate.dismiss(notificationReleaseTag(notification)),
+        ),
+      ]);
+      if (runtimeNotificationIds.length > 0) {
+        await refreshNotifications();
+      }
     } catch {
       // Ignore transient notification update failures in the shell.
     }
-  }, [dismissNotificationToast, notifications, refreshNotifications]);
+  }, [
+    combinedNotifications,
+    dismissNotificationToast,
+    markSyntheticNotificationsRead,
+    refreshNotifications,
+  ]);
 
   const handleNotificationCenterOpenChange = useCallback(
     (open: boolean) => {
       if (!open || !window.electronAPI) {
         return;
       }
-      const unreadIds = notifications
+      const unreadNotifications = combinedNotifications
         .filter((item) => item.state === "unread")
-        .map((item) => item.id);
-      if (unreadIds.length === 0) {
+        .map((item) => item);
+      if (unreadNotifications.length === 0) {
         return;
       }
-      for (const notificationId of unreadIds) {
-        dismissNotificationToast(notificationId);
+      const syntheticUnreadIds = unreadNotifications
+        .filter((notification) => isAppUpdateNotification(notification))
+        .map((notification) => notification.id);
+      if (syntheticUnreadIds.length > 0) {
+        markSyntheticNotificationsRead(syntheticUnreadIds);
+      }
+      const runtimeUnreadIds = unreadNotifications
+        .filter((notification) => !isAppUpdateNotification(notification))
+        .map((notification) => notification.id);
+      for (const notification of unreadNotifications) {
+        dismissNotificationToast(notification.id);
+      }
+      if (runtimeUnreadIds.length === 0) {
+        return;
       }
       void Promise.allSettled(
-        unreadIds.map((notificationId) =>
+        runtimeUnreadIds.map((notificationId) =>
           window.electronAPI.workspace.updateNotification(notificationId, {
             state: "read",
           }),
         ),
       ).then(() => refreshNotifications());
     },
-    [dismissNotificationToast, notifications, refreshNotifications],
+    [
+      combinedNotifications,
+      dismissNotificationToast,
+      markSyntheticNotificationsRead,
+      refreshNotifications,
+    ],
   );
 
   useEffect(() => {
@@ -1454,6 +1768,16 @@ function AppShellContent() {
     void window.electronAPI.appUpdate.installNow();
   };
 
+  const handleOpenUpdateChangelog = useCallback(() => {
+    if (!appUpdateStatus) {
+      return;
+    }
+    const changelogUrl = appUpdateChangelogUrl(appUpdateStatus);
+    if (!changelogUrl) {
+      return;
+    }
+    void window.electronAPI.ui.openExternalUrl(changelogUrl);
+  }, [appUpdateStatus]);
   const toggleOperationsDrawer = () => {
     setOperationsDrawerOpen((open) => !open);
   };
@@ -1571,35 +1895,37 @@ function AppShellContent() {
         return;
       }
 
-      if (
-        (target.surface === "document" || target.surface === "file") &&
-        target.resourceId?.trim()
-      ) {
+      if (target.type === "internal") {
+        if (
+          (target.surface === "document" || target.surface === "file") &&
+          target.resourceId?.trim()
+        ) {
+          setActiveLeftRailItem("space");
+          setSpaceVisibility((previous) => ({
+            ...previous,
+            agent: true,
+            files: true,
+          }));
+          setAgentView({ type: "chat" });
+          setFileExplorerFocusRequest({
+            path: target.resourceId,
+            requestKey: Date.now(),
+          });
+          return;
+        }
+
         setActiveLeftRailItem("space");
         setSpaceVisibility((previous) => ({
           ...previous,
           agent: true,
-          files: true,
         }));
-        setAgentView({ type: "chat" });
-        setFileExplorerFocusRequest({
-          path: target.resourceId,
-          requestKey: Date.now(),
+        setAgentView({
+          type: "internal",
+          surface: target.surface,
+          resourceId: target.resourceId ?? output.id,
+          htmlContent: target.htmlContent,
         });
-        return;
       }
-
-      setActiveLeftRailItem("space");
-      setSpaceVisibility((previous) => ({
-        ...previous,
-        agent: true,
-      }));
-      setAgentView({
-        type: "internal",
-        surface: target.surface,
-        resourceId: target.resourceId ?? output.id,
-        htmlContent: target.htmlContent,
-      });
     },
     [installedAppIds, selectedWorkspaceId, revealBrowserPane],
   );
@@ -1666,10 +1992,16 @@ function AppShellContent() {
         workspaceErrorMessage ||
         "Embedded runtime failed to start."
       : "";
-  const isMacDesktop = window.electronAPI?.platform === "darwin";
+  const desktopPlatform = window.electronAPI?.platform ?? null;
+  const hasIntegratedTitleBar =
+    desktopPlatform === "darwin" || desktopPlatform === "win32";
+  const titleBarContainerClassName =
+    desktopPlatform === "win32"
+      ? "relative min-w-0 -mx-2 -mt-2 sm:-mx-3 sm:-mt-2.5"
+      : "relative min-w-0";
   const mainGridClassName = appShellMainGridClassName({
     hasWorkspaces,
-    isMacDesktop,
+    hasIntegratedTitleBar,
   });
   const showOnboardingTakeover =
     hasHydratedWorkspaceList &&
@@ -1774,7 +2106,6 @@ function AppShellContent() {
       flexSpacePaneId,
       publishOpen,
       isUtilityPaneResizing,
-      appUpdateStatus,
       createWorkspacePanelOpen,
       settingsDialogOpen,
       shouldSuspendBrowserNativeView,
@@ -1939,25 +2270,29 @@ function AppShellContent() {
         {isUtilityPaneResizing ? (
           <div className="absolute inset-0 z-30 cursor-col-resize" />
         ) : null}
-        {shouldShowAppUpdateReminder && appUpdateStatus ? (
-          <UpdateReminder
-            status={appUpdateStatus}
-            onDismiss={handleDismissUpdate}
-            onInstallNow={handleInstallUpdate}
-          />
-        ) : null}
         <NotificationToastStack
+          leadingToast={
+            shouldShowAppUpdateReminder && appUpdateStatus ? (
+              <UpdateReminder
+                status={appUpdateStatus}
+                onDismiss={handleDismissUpdate}
+                onInstallNow={handleInstallUpdate}
+                onOpenChangelog={handleOpenUpdateChangelog}
+              />
+            ) : null
+          }
           notifications={toastNotifications}
           onCloseToast={dismissNotificationToast}
           onActivateNotification={(notificationId) => {
-            void handleMarkNotificationRead(notificationId);
+            void handleActivateNotification(notificationId);
           }}
         />
 
         {hasWorkspaces ? (
-          <div className="relative min-w-0">
+          <div className={titleBarContainerClassName}>
             <TopTabsBar
-              integratedTitleBar={isMacDesktop}
+              integratedTitleBar={hasIntegratedTitleBar}
+              desktopPlatform={desktopPlatform}
               onWorkspaceSwitcherVisibilityChange={setWorkspaceSwitcherOpen}
               onOpenMarketplace={() => handleLeftRailSelect("marketplace")}
               isMarketplaceActive={activeLeftRailItem === "marketplace"}
@@ -1976,17 +2311,17 @@ function AppShellContent() {
               }}
               onOpenExternalUrl={handleOpenExternalUrl}
               onPublish={() => setPublishOpen(true)}
-              notifications={notifications}
               notificationUnreadCount={notificationUnreadCount}
               onNotificationCenterOpenChange={
                 handleNotificationCenterOpenChange
               }
-              onMarkNotificationRead={(notificationId) => {
-                void handleMarkNotificationRead(notificationId);
+              onActivateNotification={(notificationId) => {
+                void handleActivateNotification(notificationId);
               }}
               onDismissNotification={(notificationId) => {
                 void handleDismissNotification(notificationId);
               }}
+              notifications={combinedNotifications}
               onClearAllNotifications={() => {
                 void handleClearAllNotifications();
               }}

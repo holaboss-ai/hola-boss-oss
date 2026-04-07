@@ -64,6 +64,7 @@ cp .env.example .env
 ```
 
 `prepare:runtime` downloads the latest runtime-channel bundle for the current host platform from GitHub Releases and stages it into `out/runtime-<platform>/`.
+Each staged runtime bundle is self-contained and now carries the runtime API, bundled Node/npm, and bundled Python.
 
 ## Build
 
@@ -77,16 +78,18 @@ This creates:
 
 ## Runtime Bundle
 
-Production mac builds expect a staged runtime bundle at `out/runtime-macos/`. On macOS, you can stage it with:
+Packaged desktop builds expect a staged runtime bundle at `out/runtime-<platform>/`:
 
 ```bash
 npm run prepare:runtime
 ```
 
-On Linux, the same command stages `out/runtime-linux/` automatically. If you need to override the detected platform explicitly:
+That stages the bundle for the current host platform. If you need to target a specific platform explicitly:
 
 ```bash
-GITHUB_TOKEN="$(gh auth token)" HOLABOSS_RUNTIME_PLATFORM=linux npm run prepare:runtime
+GITHUB_TOKEN="$(gh auth token)" npm run prepare:runtime:macos
+GITHUB_TOKEN="$(gh auth token)" npm run prepare:runtime:linux
+GITHUB_TOKEN="$(gh auth token)" npm run prepare:runtime:windows
 ```
 
 For local development against unreleased `hola-boss-oss` runtime changes:
@@ -105,16 +108,23 @@ Or package directly with local runtime in one step:
 
 ```bash
 npm run dist:mac:local
+npm run dist:win:local
 ```
 
 The staging script accepts one of:
-- `HOLABOSS_RUNTIME_DIR=/absolute/path/to/runtime-macos`
-- `HOLABOSS_RUNTIME_TARBALL=/absolute/path/to/holaboss-runtime-macos-<sha>.tar.gz`
-- `HOLABOSS_RUNTIME_BUNDLE_URL=https://.../holaboss-runtime-macos-<sha>.tar.gz`
+- `HOLABOSS_RUNTIME_DIR=/absolute/path/to/runtime-<platform>`
+- `HOLABOSS_RUNTIME_TARBALL=/absolute/path/to/holaboss-runtime-<platform>-<sha>.tar.gz`
+- `HOLABOSS_RUNTIME_BUNDLE_URL=https://.../holaboss-runtime-<platform>-<sha>.tar.gz`
 - `HOLABOSS_GITHUB_TOKEN=...` or `GITHUB_TOKEN=...` to fetch the latest runtime-channel release asset from GitHub Releases
 - `HOLABOSS_RUNTIME_PLATFORM=macos|linux|windows` to override the auto-detected target platform when needed
 
-If none are set, it falls back to `/tmp/holaboss-runtime-macos-full` when present.
+Runtime packagers can also override the bundled Python source when needed:
+- `HOLABOSS_RUNTIME_PYTHON_DIR=/absolute/path/to/extracted/python`
+- `HOLABOSS_RUNTIME_PYTHON_TARBALL=/absolute/path/to/cpython-...tar.gz`
+- `HOLABOSS_RUNTIME_PYTHON_URL=https://.../cpython-...tar.gz`
+- `HOLABOSS_RUNTIME_PYTHON_VERSION`, `HOLABOSS_RUNTIME_PYTHON_RELEASE`, `HOLABOSS_RUNTIME_PYTHON_VARIANT`, and `HOLABOSS_RUNTIME_PYTHON_TARGET_TRIPLE`
+
+If none are set, it falls back to the host temp directory, for example `${TMPDIR:-/tmp}/holaboss-runtime-<platform>-full`.
 
 To build a mac app bundle with the runtime embedded in Electron resources:
 
@@ -125,6 +135,19 @@ GITHUB_TOKEN="$(gh auth token)" npm run dist:mac
 Use `dist:mac` when you want the latest released macOS runtime. Use `dist:mac:local` for local unreleased runtime code.
 
 This produces an unsigned local mac app bundle with `runtime-macos` embedded in `Contents/Resources/`.
+
+For Windows packaging:
+
+```bash
+GITHUB_TOKEN="$(gh auth token)" npm run dist:win
+npm run dist:win:local
+```
+
+Use `dist:win` with a staged or downloaded `out/runtime-windows/` bundle. Use `dist:win:local` on a Windows host to build and stage a native local runtime bundle first, then produce a Windows NSIS installer.
+
+Both Windows packaging commands also write `out/holaboss-config.json` from your configured desktop environment before building the installer.
+
+This produces a Windows NSIS installer `.exe` in `out/release/`.
 
 Output:
 - [Holaboss Workspace.app](/Users/jeffrey/Desktop/hola-boss-oss/desktop/out/release/mac-arm64/Holaboss%20Workspace.app)
@@ -179,6 +202,8 @@ Notes:
 ### Signed Product Release
 
 Signed macOS distribution is handled by the manual `.github/workflows/release-macos-desktop.yml` workflow. Normal pushes continue to run CI and publish runtime bundles separately; the signed DMG is only built when you explicitly trigger the desktop release workflow.
+
+Windows distribution is handled by the manual `.github/workflows/release-windows-desktop.yml` workflow. It builds the Windows installer on `windows-latest`, uploads the produced NSIS installer to the chosen GitHub release, and will sign the installer when `WINDOWS_CERTIFICATE` and `WINDOWS_CERTIFICATE_PASSWORD` secrets are configured. Without those secrets, the workflow still produces an unsigned installer.
 
 Release channel policy:
 - runtime-only bundle releases publish under `holaboss-runtime-*` and are treated as prereleases

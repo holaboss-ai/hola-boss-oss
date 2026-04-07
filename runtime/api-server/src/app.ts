@@ -97,6 +97,7 @@ import {
   RunnerExecutorError,
   type RunnerExecutorLike,
 } from "./runner-worker.js";
+import { killChildProcess, spawnShellCommand } from "./runtime-shell.js";
 import { startResolvedApplications } from "./resolved-app-bootstrap.js";
 import { buildAppSetupEnv } from "./app-setup-env.js";
 import { collectWorkspaceSnapshot } from "./workspace-snapshot.js";
@@ -661,6 +662,7 @@ function runtimeNotificationPayload(record: RuntimeNotificationRecord): Record<s
     title: record.title,
     message: record.message,
     level: record.level,
+    priority: record.priority,
     state: record.state,
     metadata: record.metadata,
     read_at: record.readAt,
@@ -1289,7 +1291,7 @@ async function runAppSetup(params: {
           return;
         }
         settled = true;
-        child.kill("SIGKILL");
+        killChildProcess(child, "SIGKILL");
         resolve({ code: null, timedOut: true, stderr });
       }, setupTimeoutMs);
 
@@ -1358,25 +1360,31 @@ async function executeWorkspaceCommand(command: string, cwd: string, timeoutSeco
   returncode: number;
 }> {
   return await new Promise((resolve, reject) => {
-    const child = spawn("/bin/bash", ["-lc", command], {
+    const child = spawnShellCommand(spawn, command, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"]
     });
+    const stdoutStream = child.stdout;
+    const stderrStream = child.stderr;
+    if (!stdoutStream || !stderrStream) {
+      reject(new Error("workspace exec subprocess streams were not initialized"));
+      return;
+    }
     let stdout = "";
     let stderr = "";
     let timedOut = false;
     const timeoutHandle = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
+      killChildProcess(child, "SIGKILL");
       reject(new Error("workspace exec timed out"));
     }, Math.max(1, timeoutSeconds) * 1000);
 
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
+    stdoutStream.setEncoding("utf8");
+    stderrStream.setEncoding("utf8");
+    stdoutStream.on("data", (chunk: string) => {
       stdout += chunk;
     });
-    child.stderr.on("data", (chunk: string) => {
+    stderrStream.on("data", (chunk: string) => {
       stderr += chunk;
     });
     child.on("error", (error) => {

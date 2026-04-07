@@ -26,7 +26,7 @@ import {
 } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import {
   createServer,
@@ -35,6 +35,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { URL } from "node:url";
 import * as XLSX from "xlsx";
@@ -92,11 +93,6 @@ const RUNTIME_HOLABOSS_PROVIDER_ID = "holaboss_model_proxy";
 const RUNTIME_HOLABOSS_PROVIDER_ALIASES = [
   "holaboss",
   RUNTIME_HOLABOSS_PROVIDER_ID,
-] as const;
-const RUNTIME_HOLABOSS_LEGACY_PROXY_MODELS = [
-  "gpt-5.4",
-  "gpt-5.4-mini",
-  "gpt-5.3-codex",
 ] as const;
 const RUNTIME_DEPRECATED_MODEL_IDS = new Set([
   "gpt-5.1",
@@ -319,6 +315,7 @@ interface RuntimeConfigPayload {
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
   controlPlaneBaseUrl: string | null;
+  catalogVersion: string | null;
   providerModelGroups: RuntimeProviderModelGroupPayload[];
 }
 
@@ -395,6 +392,11 @@ interface AppUpdateStatusPayload {
   error: string;
 }
 
+interface DesktopWindowStatePayload {
+  isFullScreen: boolean;
+  isMaximized: boolean;
+  isMinimized: boolean;
+}
 interface WorkbenchOpenBrowserPayload {
   workspaceId?: string | null;
   url?: string | null;
@@ -454,6 +456,14 @@ let appUpdateCheckTimer: NodeJS.Timeout | null = null;
 let appUpdateCheckPromise: Promise<AppUpdateStatusPayload> | null = null;
 let appUpdateEventsConfigured = false;
 let appUpdatePreferences: AppUpdatePreferencesPayload = {};
+let runtimeModelCatalogState: RuntimeModelCatalogPayload = {
+  catalogVersion: null,
+  providerModelGroups: [],
+  fetchedAt: null,
+};
+let runtimeModelCatalogRefreshPromise: Promise<void> | null = null;
+let lastRuntimeModelCatalogRefreshAtMs = 0;
+let lastRuntimeModelCatalogRefreshFailureAtMs = 0;
 let appUpdateStatus: AppUpdateStatusPayload = {
   supported: false,
   checking: false,
@@ -471,8 +481,87 @@ let appUpdateStatus: AppUpdateStatusPayload = {
 
 // Port 5060 is SIP — blocked by Node.js fetch (undici "bad port").
 const RUNTIME_API_PORT = 5160;
-const DEV_RUNTIME_ROOT = "/tmp/holaboss-runtime-macos-full";
-const STAGED_RUNTIME_ROOT = path.join("out", "runtime-macos");
+function runtimePlatformFromProcessPlatform(
+  platform: NodeJS.Platform = process.platform,
+): "macos" | "linux" | "windows" {
+  switch (platform) {
+    case "darwin":
+      return "macos";
+    case "linux":
+      return "linux";
+    case "win32":
+      return "windows";
+    default:
+      throw new Error(`Unsupported host platform: ${platform}`);
+  }
+}
+
+function runtimeBundleDirName(
+  runtimePlatform: "macos" | "linux" | "windows" = runtimePlatformFromProcessPlatform(),
+): string {
+  return `runtime-${runtimePlatform}`;
+}
+
+function runtimeBundleExecutableRelativePaths(
+  runtimePlatform: "macos" | "linux" | "windows" = runtimePlatformFromProcessPlatform(),
+): string[] {
+  const base = path.join("bin", "sandbox-runtime");
+  return runtimePlatform === "windows"
+    ? [`${base}.mjs`, `${base}.cmd`, `${base}.ps1`, `${base}.exe`, base]
+    : [base];
+}
+
+function runtimeBundleNodeRelativePaths(
+  runtimePlatform: "macos" | "linux" | "windows" = runtimePlatformFromProcessPlatform(),
+): string[] {
+  const base = path.join("node-runtime", "node_modules", ".bin", "node");
+  const packagedBin =
+    runtimePlatform === "windows"
+      ? path.join("node-runtime", "bin", "node.exe")
+      : path.join("node-runtime", "node_modules", "node", "bin", "node");
+  return runtimePlatform === "windows"
+    ? [
+        packagedBin,
+        `${base}.exe`,
+        `${base}.cmd`,
+        base,
+      ]
+    : [packagedBin, base];
+}
+
+function runtimeBundleNpmRelativePaths(
+  runtimePlatform: "macos" | "linux" | "windows" = runtimePlatformFromProcessPlatform(),
+): string[] {
+  const base = path.join("node-runtime", "node_modules", ".bin", "npm");
+  return runtimePlatform === "windows"
+    ? [
+        path.join("node-runtime", "bin", "npm.cmd"),
+        path.join("node-runtime", "bin", "npm"),
+        `${base}.cmd`,
+        base,
+        path.join("node-runtime", "node_modules", "npm", "bin", "npm-cli.js"),
+    ]
+    : [base, path.join("node-runtime", "node_modules", "npm", "bin", "npm-cli.js")];
+}
+
+function runtimeBundlePythonRelativePaths(
+  runtimePlatform: "macos" | "linux" | "windows" = runtimePlatformFromProcessPlatform(),
+): string[] {
+  const base = path.join("python-runtime", "bin", "python");
+  return runtimePlatform === "windows"
+    ? [
+        `${base}.cmd`,
+        path.join("python-runtime", "python", "python.exe"),
+        path.join("python-runtime", "python", "python3.exe"),
+      ]
+    : [base];
+}
+
+const CURRENT_RUNTIME_PLATFORM = runtimePlatformFromProcessPlatform();
+const RUNTIME_BUNDLE_DIR = runtimeBundleDirName(CURRENT_RUNTIME_PLATFORM);
+const DEV_RUNTIME_ROOT =
+  process.env.HOLABOSS_DEV_RUNTIME_ROOT?.trim() ||
+  path.join(os.tmpdir(), `holaboss-runtime-${CURRENT_RUNTIME_PLATFORM}-full`);
 const DESKTOP_USER_DATA_DIR = (
   process.env.HOLABOSS_DESKTOP_USER_DATA_DIR?.trim() || "holaboss-local"
 ).replace(/[\\/]+/g, "_");
@@ -486,6 +575,11 @@ interface PackagedDesktopConfig {
   projectsUrl?: string;
   marketplaceUrl?: string;
   proactiveUrl?: string;
+}
+
+interface RuntimeLaunchSpec {
+  command: string;
+  args: string[];
 }
 
 function loadPackagedDesktopConfig(): PackagedDesktopConfig {
@@ -556,10 +650,14 @@ const AUTH_SIGN_IN_URL = configuredRemoteBaseUrl(
 );
 const DESKTOP_RUNTIME_BINDING_EXCHANGE_PATH =
   "/api/v1/desktop-runtime/bindings/exchange";
+const DESKTOP_RUNTIME_MODEL_CATALOG_PATH =
+  "/api/v1/desktop-runtime/model-catalog";
 const AUTH_CALLBACK_PROTOCOL = "ai.holaboss.app";
 const LOCAL_RUNTIME_SCHEMA_VERSION = 1;
 const RUNTIME_BINDING_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 const RUNTIME_BINDING_REFRESH_FAILURE_BACKOFF_MS = 60 * 1000;
+const RUNTIME_MODEL_CATALOG_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
+const RUNTIME_MODEL_CATALOG_REFRESH_FAILURE_BACKOFF_MS = 60 * 1000;
 
 type TrustedIpcSenderScope = "main" | "auth-popup";
 
@@ -608,6 +706,7 @@ function configureStableUserDataPath() {
   const nextUserDataPath = explicit
     ? path.resolve(explicit)
     : path.join(app.getPath("appData"), DESKTOP_USER_DATA_DIR);
+  mkdirSync(nextUserDataPath, { recursive: true });
   if (app.getPath("userData") !== nextUserDataPath) {
     app.setPath("userData", nextUserDataPath);
   }
@@ -629,6 +728,42 @@ function loadAppUpdatePreferences(): AppUpdatePreferencesPayload {
     return typeof parsed === "object" && parsed ? parsed : {};
   } catch {
     return {};
+  }
+}
+
+function loadRuntimeModelCatalogCache(): RuntimeModelCatalogPayload {
+  const cachePath = runtimeModelCatalogCachePath();
+  try {
+    if (!existsSync(cachePath)) {
+      return {
+        catalogVersion: null,
+        providerModelGroups: [],
+        fetchedAt: null,
+      };
+    }
+    const parsed = JSON.parse(readFileSync(cachePath, "utf8")) as unknown;
+    const payload = runtimeConfigObject(parsed);
+    return {
+      catalogVersion:
+        runtimeConfigField(payload.catalogVersion as string | undefined) ||
+        runtimeConfigField(payload.catalog_version as string | undefined) ||
+        null,
+      providerModelGroups: normalizeRuntimeProviderModelGroups(
+        Array.isArray(payload.providerModelGroups)
+          ? payload.providerModelGroups
+          : Array.isArray(payload.provider_model_groups)
+            ? payload.provider_model_groups
+            : [],
+      ),
+      fetchedAt:
+        runtimeConfigField(payload.fetchedAt as string | undefined) || null,
+    };
+  } catch {
+    return {
+      catalogVersion: null,
+      providerModelGroups: [],
+      fetchedAt: null,
+    };
   }
 }
 
@@ -992,6 +1127,7 @@ function emitOpenSettingsPane(section: UiSettingsPaneSection = "settings") {
 
 configureStableUserDataPath();
 appUpdatePreferences = loadAppUpdatePreferences();
+runtimeModelCatalogState = loadRuntimeModelCatalogCache();
 appUpdateStatus = {
   ...appUpdateStatus,
   supported: appUpdateSupported(),
@@ -1024,6 +1160,19 @@ interface RuntimeBindingExchangePayload {
   default_model: string;
   instance_id: string;
   provider: string;
+  catalog_version?: string;
+  provider_model_groups?: RuntimeProviderModelGroupPayload[];
+}
+
+interface RuntimeModelCatalogResponsePayload {
+  catalog_version?: string;
+  provider_model_groups?: RuntimeProviderModelGroupPayload[];
+}
+
+interface RuntimeModelCatalogPayload {
+  catalogVersion: string | null;
+  providerModelGroups: RuntimeProviderModelGroupPayload[];
+  fetchedAt: string | null;
 }
 
 interface PopupThemePalette {
@@ -2187,6 +2336,10 @@ function runtimeConfigPath() {
   return path.join(runtimeSandboxRoot(), "state", "runtime-config.json");
 }
 
+function runtimeModelCatalogCachePath() {
+  return path.join(runtimeSandboxRoot(), "state", "runtime-model-catalog.json");
+}
+
 function runtimeDatabasePath() {
   return path.join(runtimeSandboxRoot(), "state", "runtime.db");
 }
@@ -3229,6 +3382,47 @@ function withDesktopBrowserStatus(
   };
 }
 
+function resolveTargetWindow(
+  senderWindow: BrowserWindow | null | undefined,
+): BrowserWindow | null {
+  if (senderWindow && !senderWindow.isDestroyed()) {
+    return senderWindow;
+  }
+  return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+}
+
+function desktopWindowStatePayload(
+  targetWindow: BrowserWindow | null | undefined = mainWindow,
+): DesktopWindowStatePayload {
+  if (!targetWindow || targetWindow.isDestroyed()) {
+    return {
+      isFullScreen: false,
+      isMaximized: false,
+      isMinimized: false,
+    };
+  }
+
+  return {
+    isFullScreen: targetWindow.isFullScreen(),
+    isMaximized: targetWindow.isMaximized(),
+    isMinimized: targetWindow.isMinimized(),
+  };
+}
+
+function emitWindowStateChanged(
+  targetWindow: BrowserWindow | null | undefined = mainWindow,
+) {
+  const resolvedWindow = resolveTargetWindow(targetWindow);
+  if (!resolvedWindow) {
+    return;
+  }
+
+  resolvedWindow.webContents.send(
+    "ui:windowState",
+    desktopWindowStatePayload(resolvedWindow),
+  );
+}
+
 function runtimeModelProxyApiKeyFromConfig(
   config: Record<string, string>,
 ): string {
@@ -3585,79 +3779,121 @@ function isUnsupportedHolabossRuntimeModel(
   );
 }
 
+function normalizeRuntimeProviderModelGroups(
+  rawGroups: unknown[],
+): RuntimeProviderModelGroupPayload[] {
+  const providers = new Map<string, { label: string; kind: string }>();
+  const groupedModels = new Map<
+    string,
+    Map<string, RuntimeProviderModelPayload>
+  >();
+  const ensureProviderGroup = (providerId: string) => {
+    if (!groupedModels.has(providerId)) {
+      groupedModels.set(
+        providerId,
+        new Map<string, RuntimeProviderModelPayload>(),
+      );
+    }
+    return groupedModels.get(providerId)!;
+  };
+
+  for (const rawGroup of rawGroups) {
+    const groupPayload = runtimeConfigObject(rawGroup);
+    const providerId = canonicalRuntimeProviderId(
+      runtimeFirstNonEmptyString(
+        groupPayload.providerId as string | undefined,
+        groupPayload.provider_id as string | undefined,
+      ),
+    );
+    if (!providerId) {
+      continue;
+    }
+
+    providers.set(providerId, {
+      label:
+        runtimeFirstNonEmptyString(
+          groupPayload.providerLabel as string | undefined,
+          groupPayload.provider_label as string | undefined,
+        ) || runtimeProviderLabel(providerId),
+      kind: normalizeRuntimeProviderKind(
+        runtimeFirstNonEmptyString(
+          groupPayload.kind as string | undefined,
+          groupPayload.provider_kind as string | undefined,
+        ),
+        providerId,
+        "",
+      ),
+    });
+
+    const models = Array.isArray(groupPayload.models) ? groupPayload.models : [];
+    for (const rawModel of models) {
+      const modelPayload = runtimeConfigObject(rawModel);
+      const modelId = normalizeRuntimeProviderModelId(
+        providerId,
+        runtimeFirstNonEmptyString(
+          modelPayload.modelId as string | undefined,
+          modelPayload.model_id as string | undefined,
+          runtimeModelIdFromToken(
+            runtimeFirstNonEmptyString(
+              modelPayload.token as string | undefined,
+              modelPayload.model_token as string | undefined,
+            ),
+          ),
+        ),
+      );
+      if (
+        !modelId ||
+        isDeprecatedRuntimeModelId(modelId) ||
+        isUnsupportedHolabossRuntimeModel(providerId, modelId)
+      ) {
+        continue;
+      }
+      const token = canonicalRuntimeModelToken(
+        providerId,
+        normalizeRuntimeProviderModelToken(
+          providerId,
+          runtimeFirstNonEmptyString(
+            modelPayload.token as string | undefined,
+            modelPayload.model_token as string | undefined,
+          ),
+          modelId,
+        ),
+        modelId,
+      );
+      ensureProviderGroup(providerId).set(token, {
+        token,
+        modelId,
+      });
+    }
+  }
+
+  const groups: RuntimeProviderModelGroupPayload[] = [];
+  for (const [providerId, provider] of providers.entries()) {
+    const models = Array.from(ensureProviderGroup(providerId).values());
+    if (models.length === 0) {
+      continue;
+    }
+    groups.push({
+      providerId,
+      providerLabel: provider.label,
+      kind: provider.kind,
+      models,
+    });
+  }
+  return groups;
+}
+
 function runtimeProviderModelGroups(
   document: Record<string, unknown>,
-  loadedLegacy: Record<string, string>,
+  _loadedLegacy: Record<string, string>,
+  managedCatalogGroups: RuntimeProviderModelGroupPayload[],
 ): RuntimeProviderModelGroupPayload[] {
-  const runtimePayload = runtimeConfigObject(document.runtime);
   const providersPayload = runtimeConfigObject(document.providers);
   const modelsPayload = runtimeConfigObject(document.models);
-  const integrationsPayload = runtimeConfigObject(document.integrations);
-  const holabossIntegration = runtimeConfigObject(integrationsPayload.holaboss);
-
   const providers = new Map<
     string,
     { id: string; kind: string; label: string }
   >();
-  for (const [providerId, rawProvider] of Object.entries(providersPayload)) {
-    const canonicalProviderId = canonicalRuntimeProviderId(providerId);
-    const providerPayload = runtimeConfigObject(rawProvider);
-    const optionsPayload = runtimeConfigObject(providerPayload.options);
-    const baseUrl = runtimeFirstNonEmptyString(
-      providerPayload.base_url as string | undefined,
-      providerPayload.baseURL as string | undefined,
-      optionsPayload.baseURL as string | undefined,
-      optionsPayload.base_url as string | undefined,
-    );
-    const kind = normalizeRuntimeProviderKind(
-      runtimeFirstNonEmptyString(
-        providerPayload.kind as string | undefined,
-        providerPayload.type as string | undefined,
-        optionsPayload.kind as string | undefined,
-      ),
-      canonicalProviderId,
-      baseUrl,
-    );
-    providers.set(canonicalProviderId, {
-      id: canonicalProviderId,
-      kind,
-      label: runtimeProviderLabel(canonicalProviderId),
-    });
-  }
-
-  const runtimeDefaultProvider = canonicalRuntimeProviderId(
-    runtimeFirstNonEmptyString(
-      runtimePayload.default_provider as string | undefined,
-      loadedLegacy.default_provider,
-      RUNTIME_HOLABOSS_PROVIDER_ID,
-    ),
-  );
-  const legacyBaseUrl = runtimeFirstNonEmptyString(
-    loadedLegacy.model_proxy_base_url,
-    holabossIntegration.model_proxy_base_url as string | undefined,
-  );
-  const legacyApiKey = runtimeFirstNonEmptyString(
-    loadedLegacy.model_proxy_api_key,
-    loadedLegacy.auth_token,
-    holabossIntegration.auth_token as string | undefined,
-  );
-  const hasLegacyProxyBinding = Boolean(legacyBaseUrl && legacyApiKey);
-  if (
-    hasLegacyProxyBinding &&
-    runtimeDefaultProvider &&
-    !providers.has(runtimeDefaultProvider)
-  ) {
-    providers.set(runtimeDefaultProvider, {
-      id: runtimeDefaultProvider,
-      kind: normalizeRuntimeProviderKind(
-        "",
-        runtimeDefaultProvider,
-        legacyBaseUrl,
-      ),
-      label: runtimeProviderLabel(runtimeDefaultProvider),
-    });
-  }
-
   const groupedModels = new Map<
     string,
     Map<string, RuntimeProviderModelPayload>
@@ -3708,32 +3944,58 @@ function runtimeProviderModelGroups(
       });
     }
   };
-  const seedLegacyHolabossProxyModels = (
-    providerId: string,
-    defaultModelToken: string,
+  const mergeManagedCatalog = (
+    groups: RuntimeProviderModelGroupPayload[],
   ) => {
-    if (!providers.has(providerId)) {
-      providers.set(providerId, {
-        id: providerId,
-        kind: RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY,
-        label: runtimeProviderLabel(providerId),
-      });
-    }
-
-    const seededModelIds = new Set<string>();
-    const preferredModelId = runtimeModelIdFromToken(defaultModelToken);
-    if (preferredModelId && !isDeprecatedRuntimeModelId(preferredModelId)) {
-      seededModelIds.add(preferredModelId);
-    }
-    for (const modelId of RUNTIME_HOLABOSS_LEGACY_PROXY_MODELS) {
-      seededModelIds.add(modelId);
-    }
-    for (const modelId of seededModelIds) {
-      addModel(providerId, `${providerId}/${modelId}`, modelId);
+    for (const group of groups) {
+      const providerId = canonicalRuntimeProviderId(group.providerId);
+      if (!providerId) {
+        continue;
+      }
+      if (!providers.has(providerId)) {
+        providers.set(providerId, {
+          id: providerId,
+          kind: normalizeRuntimeProviderKind(group.kind, providerId, ""),
+          label: group.providerLabel || runtimeProviderLabel(providerId),
+        });
+      }
+      for (const model of group.models) {
+        addModel(providerId, model.token, model.modelId);
+      }
     }
   };
 
-  const configuredModelsCount = Object.keys(modelsPayload).length;
+  mergeManagedCatalog(managedCatalogGroups);
+
+  for (const [providerId, rawProvider] of Object.entries(providersPayload)) {
+    const canonicalProviderId = canonicalRuntimeProviderId(providerId);
+    if (isHolabossProviderAlias(canonicalProviderId)) {
+      continue;
+    }
+    const providerPayload = runtimeConfigObject(rawProvider);
+    const optionsPayload = runtimeConfigObject(providerPayload.options);
+    const baseUrl = runtimeFirstNonEmptyString(
+      providerPayload.base_url as string | undefined,
+      providerPayload.baseURL as string | undefined,
+      optionsPayload.baseURL as string | undefined,
+      optionsPayload.base_url as string | undefined,
+    );
+    const kind = normalizeRuntimeProviderKind(
+      runtimeFirstNonEmptyString(
+        providerPayload.kind as string | undefined,
+        providerPayload.type as string | undefined,
+        optionsPayload.kind as string | undefined,
+      ),
+      canonicalProviderId,
+      baseUrl,
+    );
+    providers.set(canonicalProviderId, {
+      id: canonicalProviderId,
+      kind,
+      label: runtimeProviderLabel(canonicalProviderId),
+    });
+  }
+
   for (const [token, rawModel] of Object.entries(modelsPayload)) {
     const modelPayload = runtimeConfigObject(rawModel);
     let providerId = runtimeFirstNonEmptyString(
@@ -3754,43 +4016,12 @@ function runtimeProviderModelGroups(
     }
     if (providerId && modelId) {
       const normalizedProviderId = canonicalRuntimeProviderId(providerId);
+      if (isHolabossProviderAlias(normalizedProviderId)) {
+        continue;
+      }
       if (providers.has(normalizedProviderId)) {
         addModel(normalizedProviderId, token, modelId);
       }
-    }
-  }
-
-  const fallbackDefaultModel = normalizeLegacyRuntimeModelToken(
-    runtimeFirstNonEmptyString(
-      runtimePayload.default_model as string | undefined,
-      loadedLegacy.default_model,
-    ),
-  );
-  const hasExplicitProviderCatalog =
-    Object.keys(providersPayload).length > 0 ||
-    Object.keys(modelsPayload).length > 0;
-  if (
-    fallbackDefaultModel &&
-    configuredModelsCount === 0 &&
-    !hasExplicitProviderCatalog &&
-    hasLegacyProxyBinding
-  ) {
-    seedLegacyHolabossProxyModels(
-      RUNTIME_HOLABOSS_PROVIDER_ID,
-      fallbackDefaultModel,
-    );
-  }
-
-  if (hasLegacyProxyBinding) {
-    const legacyProxyProviderId =
-      runtimeDefaultProvider || RUNTIME_HOLABOSS_PROVIDER_ID;
-    const hasExplicitHolabossModels =
-      (groupedModels.get(legacyProxyProviderId)?.size ?? 0) > 0;
-    if (!hasExplicitHolabossModels) {
-      seedLegacyHolabossProxyModels(
-        legacyProxyProviderId,
-        fallbackDefaultModel,
-      );
     }
   }
 
@@ -3804,6 +4035,9 @@ function runtimeProviderModelGroups(
       groupedModels.get(providerId) ??
       new Map<string, RuntimeProviderModelPayload>();
     const provider = providers.get(providerId);
+    if (modelMap.size === 0) {
+      continue;
+    }
     groups.push({
       providerId,
       providerLabel: provider?.label ?? runtimeProviderLabel(providerId),
@@ -3819,6 +4053,175 @@ function isHolabossProviderAlias(providerId: string): boolean {
   return RUNTIME_HOLABOSS_PROVIDER_ALIASES.some(
     (alias) => alias === normalized,
   );
+}
+
+function runtimeModelCatalogPayloadFromResponse(
+  payload:
+    | RuntimeModelCatalogResponsePayload
+    | RuntimeBindingExchangePayload
+    | null
+    | undefined,
+): RuntimeModelCatalogPayload {
+  return {
+    catalogVersion:
+      runtimeConfigField(payload?.catalog_version as string | undefined) ||
+      null,
+    providerModelGroups: normalizeRuntimeProviderModelGroups(
+      Array.isArray(payload?.provider_model_groups)
+        ? payload.provider_model_groups
+        : [],
+    ),
+    fetchedAt: utcNowIso(),
+  };
+}
+
+async function syncRuntimeModelCatalogFromBinding(
+  binding: RuntimeBindingExchangePayload,
+): Promise<void> {
+  const payload = runtimeModelCatalogPayloadFromResponse(binding);
+  if (payload.catalogVersion || payload.providerModelGroups.length > 0) {
+    await persistRuntimeModelCatalog(payload);
+    return;
+  }
+  await refreshRuntimeModelCatalogIfNeeded({ force: true }).catch(() => undefined);
+}
+
+async function persistRuntimeModelCatalog(
+  payload: RuntimeModelCatalogPayload,
+): Promise<void> {
+  runtimeModelCatalogState = payload;
+  lastRuntimeModelCatalogRefreshAtMs = Date.now();
+  lastRuntimeModelCatalogRefreshFailureAtMs = 0;
+  await writeJsonFile(runtimeModelCatalogCachePath(), {
+    catalogVersion: payload.catalogVersion,
+    providerModelGroups: payload.providerModelGroups,
+    fetchedAt: payload.fetchedAt,
+  });
+}
+
+async function clearRuntimeModelCatalog(): Promise<void> {
+  runtimeModelCatalogState = {
+    catalogVersion: null,
+    providerModelGroups: [],
+    fetchedAt: null,
+  };
+  lastRuntimeModelCatalogRefreshAtMs = 0;
+  lastRuntimeModelCatalogRefreshFailureAtMs = 0;
+  try {
+    await fs.rm(runtimeModelCatalogCachePath(), { force: true });
+  } catch {
+    // ignore cache cleanup errors
+  }
+}
+
+async function withRuntimeModelCatalogRefreshLock<T>(
+  work: () => Promise<T>,
+): Promise<T> {
+  while (runtimeModelCatalogRefreshPromise) {
+    await runtimeModelCatalogRefreshPromise;
+  }
+
+  let releaseLock = () => {};
+  runtimeModelCatalogRefreshPromise = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+
+  try {
+    return await work();
+  } finally {
+    releaseLock();
+    runtimeModelCatalogRefreshPromise = null;
+  }
+}
+
+function shouldRefreshRuntimeModelCatalog(force = false): boolean {
+  if (force) {
+    return true;
+  }
+  if (runtimeModelCatalogState.providerModelGroups.length === 0) {
+    return true;
+  }
+  return (
+    Date.now() - lastRuntimeModelCatalogRefreshAtMs >
+    RUNTIME_MODEL_CATALOG_REFRESH_INTERVAL_MS
+  );
+}
+
+function hasRecentRuntimeModelCatalogRefreshFailure(): boolean {
+  return (
+    lastRuntimeModelCatalogRefreshFailureAtMs > 0 &&
+    Date.now() - lastRuntimeModelCatalogRefreshFailureAtMs <
+      RUNTIME_MODEL_CATALOG_REFRESH_FAILURE_BACKOFF_MS
+  );
+}
+
+async function fetchDesktopRuntimeModelCatalog(): Promise<RuntimeModelCatalogResponsePayload> {
+  const controlPlaneBaseUrl = requireControlPlaneBaseUrl();
+  const cookieHeader = authCookieHeader();
+  if (!cookieHeader) {
+    throw new Error("Better Auth session cookies are missing.");
+  }
+
+  const catalogUrl = `${controlPlaneBaseUrl}${DESKTOP_RUNTIME_MODEL_CATALOG_PATH}`;
+  let response: Response;
+  try {
+    response = await fetch(catalogUrl, {
+      method: "GET",
+      headers: {
+        Cookie: cookieHeader,
+      },
+    });
+  } catch (error) {
+    throw new Error(
+      `Runtime model catalog request failed for ${catalogUrl}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(
+      detail ||
+        `Runtime model catalog request failed with status ${response.status}`,
+    );
+  }
+
+  return response.json() as Promise<RuntimeModelCatalogResponsePayload>;
+}
+
+async function refreshRuntimeModelCatalogIfNeeded(options?: {
+  force?: boolean;
+}): Promise<RuntimeModelCatalogPayload> {
+  if (!DESKTOP_CONTROL_PLANE_BASE_URL) {
+    return runtimeModelCatalogState;
+  }
+  if (!authCookieHeader()) {
+    return runtimeModelCatalogState;
+  }
+  if (!shouldRefreshRuntimeModelCatalog(Boolean(options?.force))) {
+    return runtimeModelCatalogState;
+  }
+  if (!options?.force && hasRecentRuntimeModelCatalogRefreshFailure()) {
+    return runtimeModelCatalogState;
+  }
+
+  try {
+    await withRuntimeModelCatalogRefreshLock(async () => {
+      if (!shouldRefreshRuntimeModelCatalog(Boolean(options?.force))) {
+        return;
+      }
+      const payload = runtimeModelCatalogPayloadFromResponse(
+        await fetchDesktopRuntimeModelCatalog(),
+      );
+      await persistRuntimeModelCatalog(payload);
+    });
+  } catch (error) {
+    lastRuntimeModelCatalogRefreshFailureAtMs = Date.now();
+    if (runtimeModelCatalogState.providerModelGroups.length === 0) {
+      throw error;
+    }
+  }
+
+  return runtimeModelCatalogState;
 }
 
 function runtimeConfigRestartRequired(
@@ -3883,6 +4286,9 @@ async function getRuntimeConfig(): Promise<RuntimeConfigPayload> {
   const configPath = runtimeConfigPath();
   const loaded = await readRuntimeConfigFile();
   const document = await readRuntimeConfigDocument();
+  const managedCatalog = await refreshRuntimeModelCatalogIfNeeded().catch(
+    () => runtimeModelCatalogState,
+  );
   return {
     configPath,
     loadedFromFile:
@@ -3893,7 +4299,12 @@ async function getRuntimeConfig(): Promise<RuntimeConfigPayload> {
     modelProxyBaseUrl: loaded.model_proxy_base_url ?? null,
     defaultModel: loaded.default_model ?? null,
     controlPlaneBaseUrl: loaded.control_plane_base_url ?? null,
-    providerModelGroups: runtimeProviderModelGroups(document, loaded),
+    catalogVersion: managedCatalog.catalogVersion,
+    providerModelGroups: runtimeProviderModelGroups(
+      document,
+      loaded,
+      managedCatalog.providerModelGroups,
+    ),
   };
 }
 
@@ -4666,6 +5077,7 @@ async function clearRuntimeBindingSecrets(reason: string): Promise<void> {
     modelProxyBaseUrl: null,
     controlPlaneBaseUrl: null,
   });
+  await clearRuntimeModelCatalog();
   lastRuntimeBindingRefreshAtMs = 0;
   lastRuntimeBindingRefreshUserId = "";
   clearTransientRuntimeBindingRefreshFailure();
@@ -4701,6 +5113,7 @@ async function provisionRuntimeBindingForAuthenticatedUser(
       !forceRefresh &&
       !runtimeConfigNeedsBindingRefresh(currentConfig, userId)
     ) {
+      await refreshRuntimeModelCatalogIfNeeded().catch(() => undefined);
       await syncRuntimeUserProfileFromAuth(user);
       return;
     }
@@ -4739,6 +5152,7 @@ async function provisionRuntimeBindingForAuthenticatedUser(
         defaultModel: binding.default_model,
         controlPlaneBaseUrl: DESKTOP_CONTROL_PLANE_BASE_URL,
       });
+      await syncRuntimeModelCatalogFromBinding(binding);
       await restartEmbeddedRuntimeIfNeeded(currentConfig, nextConfig);
       await emitRuntimeConfig();
       await syncRuntimeUserProfileFromAuth(user);
@@ -4880,6 +5294,52 @@ function maybeAuthCallbackUrl(argument: string | undefined): string | null {
     normalized.startsWith(`${AUTH_CALLBACK_PROTOCOL}:/`)
     ? normalized
     : null;
+}
+
+function nearestPackageJsonDirectory(startDirectory: string): string | null {
+  let currentDirectory = path.resolve(startDirectory);
+
+  while (true) {
+    if (existsSync(path.join(currentDirectory, "package.json"))) {
+      return currentDirectory;
+    }
+    const parentDirectory = path.dirname(currentDirectory);
+    if (parentDirectory === currentDirectory) {
+      return null;
+    }
+    currentDirectory = parentDirectory;
+  }
+}
+
+function defaultAppProtocolClientArgs(): string[] {
+  const packageRoot = nearestPackageJsonDirectory(__dirname);
+  if (packageRoot) {
+    return [packageRoot];
+  }
+
+  const flagsWithSeparateValue = new Set(["--require", "-r"]);
+  for (let index = 1; index < process.argv.length; index += 1) {
+    const argument = process.argv[index]?.trim();
+    if (!argument) {
+      continue;
+    }
+    if (argument.startsWith("-")) {
+      if (
+        flagsWithSeparateValue.has(argument) &&
+        index + 1 < process.argv.length
+      ) {
+        index += 1;
+      }
+      continue;
+    }
+    if (maybeAuthCallbackUrl(argument)) {
+      continue;
+    }
+    return [path.resolve(argument)];
+  }
+
+  const appPath = app.getAppPath().trim();
+  return appPath ? [path.resolve(appPath)] : [];
 }
 
 function extractAuthToken(callbackUrl: string): string | null {
@@ -5726,30 +6186,70 @@ async function deleteCronjob(jobId: string): Promise<{ success: boolean }> {
   });
 }
 
+const runtimeNotificationListCache = new Map<
+  string,
+  RuntimeNotificationListResponsePayload
+>();
+
+function runtimeNotificationListCacheKey(
+  workspaceId?: string | null,
+  includeDismissed = false,
+): string {
+  return JSON.stringify({
+    workspaceId: workspaceId?.trim() || null,
+    includeDismissed,
+  });
+}
+
+function emptyRuntimeNotificationListResponse(): RuntimeNotificationListResponsePayload {
+  return {
+    items: [],
+    count: 0,
+  };
+}
+
 async function listNotifications(
   workspaceId?: string | null,
   includeDismissed = false,
 ): Promise<RuntimeNotificationListResponsePayload> {
-  return requestRuntimeJson<RuntimeNotificationListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/notifications",
-    params: {
-      workspace_id: workspaceId ?? undefined,
-      include_dismissed: includeDismissed,
-      limit: 50,
-    },
-  });
+  const cacheKey = runtimeNotificationListCacheKey(
+    workspaceId,
+    includeDismissed,
+  );
+  try {
+    const response = await requestRuntimeJson<RuntimeNotificationListResponsePayload>({
+      method: "GET",
+      path: "/api/v1/notifications",
+      params: {
+        workspace_id: workspaceId ?? undefined,
+        include_dismissed: includeDismissed,
+        limit: 50,
+      },
+    });
+    runtimeNotificationListCache.set(cacheKey, response);
+    return response;
+  } catch (error) {
+    if (isTransientRuntimeError(error)) {
+      return (
+        runtimeNotificationListCache.get(cacheKey) ??
+        emptyRuntimeNotificationListResponse()
+      );
+    }
+    throw error;
+  }
 }
 
 async function updateNotification(
   notificationId: string,
   payload: RuntimeNotificationUpdatePayload,
 ): Promise<RuntimeNotificationRecordPayload> {
-  return requestRuntimeJson<RuntimeNotificationRecordPayload>({
+  const response = await requestRuntimeJson<RuntimeNotificationRecordPayload>({
     method: "PATCH",
     path: `/api/v1/notifications/${encodeURIComponent(notificationId)}`,
     payload,
   });
+  runtimeNotificationListCache.clear();
+  return response;
 }
 
 async function listIntegrationCatalog(): Promise<IntegrationCatalogResponsePayload> {
@@ -9053,19 +9553,109 @@ async function fileExists(targetPath: string) {
   }
 }
 
-const REQUIRED_RUNTIME_BUNDLE_PATHS = [
-  path.join("bin", "sandbox-runtime"),
-  "package-metadata.json",
-  path.join("node-runtime", "node_modules", ".bin", "node"),
-  path.join("runtime", "metadata.json"),
-  path.join("runtime", "api-server", "dist", "index.mjs"),
-] as const;
+const REQUIRED_RUNTIME_BUNDLE_PATH_GROUPS = [
+  runtimeBundleExecutableRelativePaths(CURRENT_RUNTIME_PLATFORM),
+  ["package-metadata.json"],
+  runtimeBundleNodeRelativePaths(CURRENT_RUNTIME_PLATFORM),
+  runtimeBundleNpmRelativePaths(CURRENT_RUNTIME_PLATFORM),
+  runtimeBundlePythonRelativePaths(CURRENT_RUNTIME_PLATFORM),
+  [path.join("runtime", "metadata.json")],
+  [path.join("runtime", "api-server", "dist", "index.mjs")],
+];
+
+async function firstExistingRelativePath(
+  rootPath: string,
+  relativePaths: readonly string[],
+): Promise<string | null> {
+  for (const relativePath of relativePaths) {
+    const absolutePath = path.join(rootPath, relativePath);
+    if (await fileExists(absolutePath)) {
+      return absolutePath;
+    }
+  }
+  return null;
+}
+
+async function resolveRuntimeExecutablePath(
+  runtimeRoot: string,
+): Promise<string | null> {
+  return firstExistingRelativePath(
+    runtimeRoot,
+    runtimeBundleExecutableRelativePaths(CURRENT_RUNTIME_PLATFORM),
+  );
+}
+
+async function resolveRuntimeNodePath(
+  runtimeRoot: string,
+): Promise<string | null> {
+  return firstExistingRelativePath(
+    runtimeRoot,
+    runtimeBundleNodeRelativePaths(CURRENT_RUNTIME_PLATFORM),
+  );
+}
+
+async function resolveRuntimeLaunchSpec(
+  runtimeRoot: string,
+  executablePath: string,
+): Promise<RuntimeLaunchSpec | null> {
+  const extension = path.extname(executablePath).toLowerCase();
+  if (extension === ".mjs") {
+    const nodePath = await resolveRuntimeNodePath(runtimeRoot);
+    if (!nodePath) {
+      return null;
+    }
+    return {
+      command: nodePath,
+      args: [executablePath],
+    };
+  }
+
+  if (extension === ".ps1") {
+    return {
+      command: "powershell.exe",
+      args: [
+        "-NoLogo",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        executablePath,
+      ],
+    };
+  }
+
+  if (extension === ".cmd" || extension === ".bat") {
+    return {
+      command: process.env.ComSpec?.trim() || "cmd.exe",
+      args: ["/d", "/s", "/c", `"${executablePath}"`],
+    };
+  }
+
+  return {
+    command: executablePath,
+    args: [],
+  };
+}
+
+async function killWindowsProcessTree(pid: number | undefined | null) {
+  if (!pid) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    const killer = spawn("taskkill", ["/pid", String(pid), "/t", "/f"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    killer.once("error", () => resolve());
+    killer.once("exit", () => resolve());
+  });
+}
 
 async function validateRuntimeRoot(runtimeRoot: string) {
-  for (const relativePath of REQUIRED_RUNTIME_BUNDLE_PATHS) {
-    const absolutePath = path.join(runtimeRoot, relativePath);
-    if (!(await fileExists(absolutePath))) {
-      return `Runtime bundle is incomplete. Missing ${relativePath} under ${runtimeRoot}. Rebuild or restage runtime-macos.`;
+  for (const relativePaths of REQUIRED_RUNTIME_BUNDLE_PATH_GROUPS) {
+    if (!(await firstExistingRelativePath(runtimeRoot, relativePaths))) {
+      return `Runtime bundle is incomplete. Missing ${relativePaths.join(" or ")} under ${runtimeRoot}. Rebuild or restage ${RUNTIME_BUNDLE_DIR}.`;
     }
   }
 
@@ -9075,10 +9665,10 @@ async function validateRuntimeRoot(runtimeRoot: string) {
 async function resolveRuntimeRoot() {
   const candidates = [
     process.env.HOLABOSS_RUNTIME_ROOT,
-    isDev ? path.resolve(__dirname, "..", "runtime-macos") : undefined,
+    isDev ? path.resolve(__dirname, "..", RUNTIME_BUNDLE_DIR) : undefined,
     isDev
       ? DEV_RUNTIME_ROOT
-      : path.join(process.resourcesPath, "runtime-macos"),
+      : path.join(process.resourcesPath, RUNTIME_BUNDLE_DIR),
   ].filter((value): value is string =>
     Boolean(value && value.trim().length > 0),
   );
@@ -9151,7 +9741,7 @@ async function isRuntimeHealthy(url: string) {
 async function refreshRuntimeStatus() {
   const { runtimeRoot, validationError } = await resolveRuntimeRoot();
   const executablePath = runtimeRoot
-    ? path.join(runtimeRoot, "bin", "sandbox-runtime")
+    ? await resolveRuntimeExecutablePath(runtimeRoot)
     : null;
   const sandboxRoot = runtimeSandboxRoot();
   const harness = process.env.HOLABOSS_RUNTIME_HARNESS || "pi";
@@ -9199,7 +9789,7 @@ async function refreshRuntimeStatus() {
       runtimeRoot && executablePath
         ? runtimeStatus.lastError
         : validationError ||
-          "Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package runtime-macos into app resources.",
+          `Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package ${RUNTIME_BUNDLE_DIR} into app resources.`,
   });
   emitRuntimeState();
   return runtimeStatus;
@@ -9233,6 +9823,7 @@ async function stopEmbeddedRuntime() {
     await new Promise<void>((resolve) => {
       let settled = false;
       let forceSettleTimer: NodeJS.Timeout | null = null;
+      let sigkillTimer: NodeJS.Timeout | null = null;
       const settle = () => {
         if (settled) {
           return;
@@ -9241,12 +9832,24 @@ async function stopEmbeddedRuntime() {
         if (forceSettleTimer) {
           clearTimeout(forceSettleTimer);
         }
-        clearTimeout(sigkillTimer);
+        if (sigkillTimer) {
+          clearTimeout(sigkillTimer);
+        }
         running.removeListener("exit", onExit);
         resolve();
       };
       const onExit = () => settle();
-      const sigkillTimer = setTimeout(() => {
+      running.once("exit", onExit);
+
+      if (process.platform === "win32") {
+        void killWindowsProcessTree(running.pid).finally(() => {
+          forceSettleTimer = setTimeout(() => settle(), 1000);
+          forceSettleTimer.unref();
+        });
+        return;
+      }
+
+      sigkillTimer = setTimeout(() => {
         if (running.exitCode === null && running.signalCode === null) {
           try {
             running.kill("SIGKILL");
@@ -9259,8 +9862,6 @@ async function stopEmbeddedRuntime() {
         forceSettleTimer.unref();
       }, 3000);
       sigkillTimer.unref();
-
-      running.once("exit", onExit);
       try {
         const signalSent = running.kill("SIGTERM");
         if (
@@ -9284,7 +9885,7 @@ async function startEmbeddedRuntime() {
 
     const { runtimeRoot, validationError } = await resolveRuntimeRoot();
     const executablePath = runtimeRoot
-      ? path.join(runtimeRoot, "bin", "sandbox-runtime")
+      ? await resolveRuntimeExecutablePath(runtimeRoot)
       : null;
     const sandboxRoot = runtimeSandboxRoot();
     const harness = process.env.HOLABOSS_RUNTIME_HARNESS || "pi";
@@ -9306,7 +9907,7 @@ async function startEmbeddedRuntime() {
         runtimeRoot && executablePath
           ? ""
           : validationError ||
-            "Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package runtime-macos into app resources.",
+            `Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package ${RUNTIME_BUNDLE_DIR} into app resources.`,
     });
     emitRuntimeState();
 
@@ -9350,7 +9951,32 @@ async function startEmbeddedRuntime() {
       return refreshRuntimeStatus();
     }
 
-    const child = spawn(executablePath, [], {
+    const launchSpec = await resolveRuntimeLaunchSpec(runtimeRoot, executablePath);
+    if (!launchSpec) {
+      const launchError = `Runtime bundle is incomplete. Missing ${runtimeBundleNodeRelativePaths(CURRENT_RUNTIME_PLATFORM).join(" or ")} under ${runtimeRoot}. Rebuild or restage ${RUNTIME_BUNDLE_DIR}.`;
+      runtimeStatus = withDesktopBrowserStatus({
+        ...runtimeStatus,
+        status: "error",
+        pid: null,
+        lastError: launchError,
+      });
+      persistRuntimeProcessState({
+        pid: null,
+        status: "error",
+        lastError: launchError,
+      });
+      appendRuntimeEventLog({
+        category: "runtime",
+        event: "embedded_runtime.launch_error",
+        outcome: "error",
+        detail: launchError,
+      });
+      void appendRuntimeLog(`[embedded-runtime] ${launchError}\n`);
+      emitRuntimeState();
+      return runtimeStatus;
+    }
+
+    const child = spawn(launchSpec.command, launchSpec.args, {
       cwd: runtimeRoot,
       env: {
         ...process.env,
@@ -9367,6 +9993,7 @@ async function startEmbeddedRuntime() {
         HOLABOSS_AUTH_COOKIE: authCookieHeader() ?? "",
       },
       stdio: "pipe",
+      windowsHide: process.platform === "win32",
     });
 
     runtimeProcess = child;
@@ -12456,12 +13083,16 @@ function toggleOverflowPopup(anchorBounds: BrowserAnchorBoundsPayload) {
 }
 
 function createMainWindow() {
-  const macTitleBarOptions =
+  const titleBarOptions =
     process.platform === "darwin"
       ? {
           titleBarStyle: "hiddenInset" as const,
           trafficLightPosition: { x: 14, y: 30 },
         }
+      : process.platform === "win32"
+        ? {
+            frame: false,
+          }
       : {};
 
   const appIcon = nativeImage.createFromPath(
@@ -12480,7 +13111,7 @@ function createMainWindow() {
     backgroundColor: "#050907",
     autoHideMenuBar: true,
     icon: appIcon,
-    ...macTitleBarOptions,
+    ...titleBarOptions,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -12507,6 +13138,7 @@ function createMainWindow() {
     emitBrowserState();
     emitPendingAuthState();
     emitAppUpdateState();
+    emitWindowStateChanged(win);
   });
 
   win.webContents.on("before-input-event", (event, input) => {
@@ -12532,11 +13164,38 @@ function createMainWindow() {
     void win.loadFile(path.join(__dirname, "../dist/index.html"));
   }
 
+  win.on("maximize", () => {
+    emitWindowStateChanged(win);
+  });
+  win.on("unmaximize", () => {
+    emitWindowStateChanged(win);
+  });
+  win.on("minimize", () => {
+    emitWindowStateChanged(win);
+  });
+  win.on("restore", () => {
+    emitWindowStateChanged(win);
+  });
+  win.on("enter-full-screen", () => {
+    emitWindowStateChanged(win);
+  });
+  win.on("leave-full-screen", () => {
+    emitWindowStateChanged(win);
+  });
+
   win.once("ready-to-show", () => {
+    if (process.platform === "win32") {
+      win.maximize();
+      win.show();
+      emitWindowStateChanged(win);
+      return;
+    }
+
     const display = screen.getDisplayMatching(win.getBounds());
     const { x, y, width, height } = display.workArea;
     win.setBounds({ x, y, width, height });
     win.show();
+    emitWindowStateChanged(win);
   });
 
   win.once("closed", () => {
@@ -12569,9 +13228,11 @@ if (!singleInstanceLock) {
   app.quit();
 } else {
   if (process.defaultApp && process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient(AUTH_CALLBACK_PROTOCOL, process.execPath, [
-      path.resolve(process.argv[1]!),
-    ]);
+    app.setAsDefaultProtocolClient(
+      AUTH_CALLBACK_PROTOCOL,
+      process.execPath,
+      defaultAppProtocolClientArgs(),
+    );
   } else {
     app.setAsDefaultProtocolClient(AUTH_CALLBACK_PROTOCOL);
   }
@@ -12820,11 +13481,25 @@ app.whenReady().then(async () => {
       await openExternalUrl(rawUrl);
     },
   );
+  handleTrustedIpc("ui:getWindowState", ["main"], async (event) => {
+    return desktopWindowStatePayload(
+      resolveTargetWindow(BrowserWindow.fromWebContents(event.sender)),
+    );
+  });
+  handleTrustedIpc("ui:minimizeWindow", ["main"], async (event) => {
+    const targetWindow = resolveTargetWindow(
+      BrowserWindow.fromWebContents(event.sender),
+    );
+    if (!targetWindow) {
+      return;
+    }
+    targetWindow.minimize();
+  });
   handleTrustedIpc("ui:toggleWindowSize", ["main"], async (event) => {
-    const senderWindow = BrowserWindow.fromWebContents(event.sender);
-    const targetWindow =
-      senderWindow && !senderWindow.isDestroyed() ? senderWindow : mainWindow;
-    if (!targetWindow || targetWindow.isDestroyed()) {
+    const targetWindow = resolveTargetWindow(
+      BrowserWindow.fromWebContents(event.sender),
+    );
+    if (!targetWindow) {
       return;
     }
 
@@ -12839,6 +13514,15 @@ app.whenReady().then(async () => {
     }
 
     targetWindow.maximize();
+  });
+  handleTrustedIpc("ui:closeWindow", ["main"], async (event) => {
+    const targetWindow = resolveTargetWindow(
+      BrowserWindow.fromWebContents(event.sender),
+    );
+    if (!targetWindow) {
+      return;
+    }
+    targetWindow.close();
   });
   handleTrustedIpc(
     "ui:setTheme",
@@ -12898,6 +13582,7 @@ app.whenReady().then(async () => {
         defaultModel: binding.default_model,
         controlPlaneBaseUrl: DESKTOP_CONTROL_PLANE_BASE_URL,
       });
+      await syncRuntimeModelCatalogFromBinding(binding);
       await restartEmbeddedRuntimeIfNeeded(currentConfig, nextConfig);
       const config = await getRuntimeConfig();
       await emitRuntimeConfig(config);

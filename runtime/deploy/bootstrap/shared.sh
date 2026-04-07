@@ -40,6 +40,7 @@ holaboss_runtime_prepare_roots() {
   export HB_SANDBOX_ROOT="${SANDBOX_ROOT}"
   export MEMORY_ROOT_DIR="${MEMORY_ROOT_DIR:-${MEMORY_ROOT_DIR_DEFAULT}}"
   export STATE_ROOT_DIR="${STATE_ROOT_DIR:-${STATE_ROOT_DIR_DEFAULT}}"
+  export PATH="${HOLABOSS_RUNTIME_ROOT%/}/../python-runtime/bin:${HOLABOSS_RUNTIME_ROOT%/}/../python-runtime/python/bin:${PATH}"
 
 }
 

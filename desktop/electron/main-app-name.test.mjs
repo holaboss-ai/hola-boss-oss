@@ -13,3 +13,12 @@ test("desktop main process sets the app name to Holaboss", async () => {
   assert.match(source, /app\.setName\(\s*APP_DISPLAY_NAME\s*\)/);
   assert.match(source, /const APP_DISPLAY_NAME = "Holaboss";/);
 });
+
+test("desktop main process opens the main window maximized by default on Windows", async () => {
+  const source = await readFile(mainSourcePath, "utf8");
+
+  assert.match(
+    source,
+    /win\.once\("ready-to-show", \(\) => \{[\s\S]*if \(process\.platform === "win32"\) \{[\s\S]*win\.maximize\(\);[\s\S]*win\.show\(\);[\s\S]*return;[\s\S]*\}/,
+  );
+});

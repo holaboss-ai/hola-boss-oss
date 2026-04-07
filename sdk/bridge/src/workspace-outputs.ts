@@ -5,12 +5,19 @@ import {
 } from "./env"
 import type {
   CreateAppOutputRequest,
+  HolabossTurnContext,
+  PublishSessionArtifactRequest,
+  SessionArtifactPayload,
   UpdateAppOutputRequest,
   WorkspaceOutputPayload,
 } from "./types"
 
 interface WorkspaceOutputResponsePayload {
   output: WorkspaceOutputPayload
+}
+
+interface SessionArtifactResponsePayload {
+  artifact: SessionArtifactPayload
 }
 
 /**
@@ -115,4 +122,51 @@ export async function updateAppOutput(
   }
 
   return ((await response.json()) as WorkspaceOutputResponsePayload).output
+}
+
+/**
+ * Publishes an app-origin artifact scoped to the active assistant turn.
+ *
+ * Returns `null` when output publishing is not available.
+ */
+export async function publishSessionArtifact(
+  context: HolabossTurnContext,
+  request: PublishSessionArtifactRequest,
+): Promise<SessionArtifactPayload | null> {
+  if (!canPublishAppOutputs()) {
+    return null
+  }
+
+  const response = await fetch(
+    `${resolveWorkspaceApiUrl()}/agent-sessions/${encodeURIComponent(context.sessionId)}/artifacts`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-holaboss-workspace-id": context.workspaceId,
+      },
+      body: JSON.stringify({
+        workspace_id: context.workspaceId,
+        input_id: request.inputId ?? context.inputId ?? null,
+        artifact_type: request.artifactType,
+        external_id: request.externalId,
+        title: request.title,
+        platform: request.platform ?? null,
+        module_id: request.moduleId,
+        module_resource_id: request.moduleResourceId ?? null,
+        metadata: request.metadata ?? {},
+        artifact_id: request.artifactId ?? null,
+        change_type: request.changeType ?? null,
+      }),
+    },
+  )
+
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(
+      `Session artifact publish failed (${response.status}): ${text.slice(0, 500)}`,
+    )
+  }
+
+  return ((await response.json()) as SessionArtifactResponsePayload).artifact
 }

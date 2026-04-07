@@ -8,31 +8,20 @@ import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import {
+  resolveRuntimePlatform,
+  runtimeBundleDirName,
+  runtimeBundleExecutableRelativePaths,
+  runtimeBundleRequiredPathGroups
+} from "./runtime-bundle.mjs";
+
 const execFileAsync = promisify(execFile);
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
-function resolveRuntimePlatform() {
-  const explicitPlatform = process.env.HOLABOSS_RUNTIME_PLATFORM?.trim();
-  if (explicitPlatform) {
-    return explicitPlatform.toLowerCase();
-  }
-
-  switch (process.platform) {
-    case "darwin":
-      return "macos";
-    case "linux":
-      return "linux";
-    case "win32":
-      return "windows";
-    default:
-      throw new Error(`Unsupported host platform: ${process.platform}`);
-  }
-}
-
 const runtimePlatform = resolveRuntimePlatform();
 const stageParentDir = path.join(repoRoot, "out");
-const stageDir = path.join(stageParentDir, `runtime-${runtimePlatform}`);
-const defaultLocalRuntimeDir = `/tmp/holaboss-runtime-${runtimePlatform}-full`;
+const stageDir = path.join(stageParentDir, runtimeBundleDirName(runtimePlatform));
+const defaultLocalRuntimeDir = path.join(os.tmpdir(), `holaboss-runtime-${runtimePlatform}-full`);
 const sourceRepo = process.env.HOLABOSS_RUNTIME_SOURCE_REPO?.trim() || "holaboss-ai/holaboss-ai";
 const runtimeReleaseTagPrefix = "holaboss-runtime-";
 const legacyStableReleaseTagPrefix = "holaboss-";
@@ -50,6 +39,15 @@ async function pathExists(targetPath) {
   } catch {
     return false;
   }
+}
+
+async function firstExistingPath(paths) {
+  for (const targetPath of paths) {
+    if (await pathExists(targetPath)) {
+      return targetPath;
+    }
+  }
+  return null;
 }
 
 async function ensureCleanStageDir() {
@@ -73,9 +71,17 @@ async function extractRuntimeTarball(tarballPath) {
   }
 
   const rootEntry = entries.length === 1 ? path.join(extractDir, entries[0]) : extractDir;
-  const runtimeRoot = await pathExists(path.join(rootEntry, "bin", "sandbox-runtime")) ? rootEntry : null;
+  const runtimeRoot = (await firstExistingPath(
+    runtimeBundleExecutableRelativePaths(runtimePlatform).map((relativePath) => path.join(rootEntry, relativePath))
+  ))
+    ? rootEntry
+    : null;
   if (!runtimeRoot) {
-    throw new Error(`Runtime tarball ${tarballPath} did not contain a runtime root with bin/sandbox-runtime.`);
+    throw new Error(
+      `Runtime tarball ${tarballPath} did not contain a runtime root with ${
+        runtimeBundleExecutableRelativePaths(runtimePlatform).join(" or ")
+      }.`
+    );
   }
 
   await fs.cp(runtimeRoot, stageDir, { recursive: true, verbatimSymlinks: true });
@@ -222,17 +228,14 @@ async function stageFromGithubReleaseSelection(token) {
 }
 
 async function validateStageDir() {
-  const requiredPaths = [
-    path.join(stageDir, "bin", "sandbox-runtime"),
-    path.join(stageDir, "package-metadata.json"),
-    path.join(stageDir, "node-runtime", "node_modules", ".bin", "node"),
-    path.join(stageDir, "runtime", "metadata.json"),
-    path.join(stageDir, "runtime", "api-server", "dist", "index.mjs")
-  ];
-
-  for (const requiredPath of requiredPaths) {
-    if (!(await pathExists(requiredPath))) {
-      throw new Error(`Staged runtime is incomplete. Missing ${requiredPath}.`);
+  for (const requiredGroup of runtimeBundleRequiredPathGroups(runtimePlatform)) {
+    const matchingPath = await firstExistingPath(
+      requiredGroup.map((relativePath) => path.join(stageDir, relativePath))
+    );
+    if (!matchingPath) {
+      throw new Error(
+        `Staged runtime is incomplete. Missing ${requiredGroup.join(" or ")} under ${stageDir}.`
+      );
     }
   }
 

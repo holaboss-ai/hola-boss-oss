@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 interface NotificationToastStackProps {
+  leadingToast?: React.ReactNode;
   notifications: RuntimeNotificationRecordPayload[];
   onCloseToast: (notificationId: string) => void;
   onActivateNotification: (notificationId: string) => void;
@@ -27,7 +28,7 @@ function toastAccentClassName(level: RuntimeNotificationLevel): string {
   return "bg-sky-500/15 text-sky-200 ring-sky-400/30";
 }
 
-function toastIcon(level: RuntimeNotificationLevel) {
+function toastIcon(level: RuntimeNotificationLevel): React.ReactNode {
   if (level === "success") {
     return <CircleCheck size={18} />;
   }
@@ -51,17 +52,45 @@ function toastTimeLabel(value: string): string {
   });
 }
 
+function priorityBadgeClassName(priority: RuntimeNotificationPriority): string {
+  if (priority === "critical") {
+    return "border-rose-500/35 bg-rose-500/12 text-rose-200";
+  }
+  if (priority === "high") {
+    return "border-amber-400/35 bg-amber-400/12 text-amber-100";
+  }
+  if (priority === "low") {
+    return "border-border/60 bg-muted/60 text-muted-foreground";
+  }
+  return "border-sky-400/30 bg-sky-500/10 text-sky-200";
+}
+
+function priorityLabel(priority: RuntimeNotificationPriority): string {
+  if (priority === "critical") {
+    return "Critical";
+  }
+  if (priority === "high") {
+    return "High";
+  }
+  if (priority === "low") {
+    return "Low";
+  }
+  return "Normal";
+}
+
 export function NotificationToastStack({
+  leadingToast = null,
   notifications,
   onCloseToast,
   onActivateNotification,
 }: NotificationToastStackProps) {
-  if (notifications.length === 0) {
+  if (!leadingToast && notifications.length === 0) {
     return null;
   }
 
   return (
     <div className="pointer-events-none fixed bottom-4 left-4 z-[90] flex w-[min(380px,calc(100vw-2rem))] flex-col gap-3 sm:bottom-6 sm:left-6">
+      {leadingToast}
       {notifications.map((notification) => (
         <div
           key={notification.id}
@@ -84,6 +113,14 @@ export function NotificationToastStack({
               <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
                 <span className="truncate">
                   {notification.source_label || "Notification"}
+                </span>
+                <span
+                  className={cn(
+                    "rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-[0.14em]",
+                    priorityBadgeClassName(notification.priority),
+                  )}
+                >
+                  {priorityLabel(notification.priority)}
                 </span>
                 <span className="normal-case tracking-normal">
                   {toastTimeLabel(notification.created_at)}

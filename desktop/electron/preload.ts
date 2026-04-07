@@ -65,6 +65,12 @@ interface BrowserAnchorBoundsPayload {
 
 type UiSettingsPaneSection = "account" | "billing" | "providers" | "settings" | "about";
 
+interface DesktopWindowStatePayload {
+  isFullScreen: boolean;
+  isMaximized: boolean;
+  isMinimized: boolean;
+}
+
 interface BrowserStatePayload {
   id: string;
   url: string;
@@ -144,6 +150,7 @@ interface RuntimeConfigPayload {
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
   controlPlaneBaseUrl: string | null;
+  catalogVersion: string | null;
   providerModelGroups: RuntimeProviderModelGroupPayload[];
 }
 
@@ -860,10 +867,19 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   ui: {
     getTheme: () => ipcRenderer.invoke("ui:getTheme") as Promise<string>,
+    getWindowState: () =>
+      ipcRenderer.invoke("ui:getWindowState") as Promise<DesktopWindowStatePayload>,
+    minimizeWindow: () => ipcRenderer.invoke("ui:minimizeWindow") as Promise<void>,
     toggleWindowSize: () => ipcRenderer.invoke("ui:toggleWindowSize") as Promise<void>,
+    closeWindow: () => ipcRenderer.invoke("ui:closeWindow") as Promise<void>,
     setTheme: (theme: string) => ipcRenderer.invoke("ui:setTheme", theme) as Promise<void>,
     openSettingsPane: (section?: UiSettingsPaneSection) => ipcRenderer.invoke("ui:openSettingsPane", section) as Promise<void>,
     openExternalUrl: (url: string) => ipcRenderer.invoke("ui:openExternalUrl", url) as Promise<void>,
+    onWindowStateChange: (listener: (state: DesktopWindowStatePayload) => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, state: DesktopWindowStatePayload) => listener(state);
+      ipcRenderer.on("ui:windowState", wrapped);
+      return () => ipcRenderer.removeListener("ui:windowState", wrapped);
+    },
     onThemeChange: (listener: (theme: string) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, theme: string) => listener(theme);
       ipcRenderer.on("ui:themeChanged", wrapped);

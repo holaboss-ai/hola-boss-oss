@@ -197,7 +197,7 @@ jobs:
           node scripts/run-electron-builder.mjs \
             --projectDir "$PWD" \
             --publish never \
-            --mac dir \
+            --mac dir zip \
             --arm64 \
             --config.mac.notarize=false
           app_path="$(find out/release -maxdepth 2 -name '*.app' -print -quit)"
@@ -217,6 +217,10 @@ jobs:
             exit 1
           fi
           codesign --verify --deep --strict --verbose=2 "${app_path}"
+          if [ ! -f "${app_path}/Contents/Resources/app-update.yml" ]; then
+            echo "app-update.yml is missing from signed app bundle" >&2
+            exit 1
+          fi
       
       - name: Archive signed macOS app bundle
         working-directory: desktop
@@ -355,6 +359,10 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "${app_path}"
           spctl -a -vv -t exec "${app_path}"
           xcrun stapler validate "${app_path}"
+          if [ ! -f "${app_path}/Contents/Resources/app-update.yml" ]; then
+            echo "app-update.yml is missing from notarized app bundle" >&2
+            exit 1
+          fi
 
       - name: Archive notarized macOS app bundle
         id: archive_notarized_app

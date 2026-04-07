@@ -28,6 +28,7 @@ export {
   type OutputRecord,
   type RuntimeUserProfileNameSource,
   type RuntimeNotificationLevel,
+  type RuntimeNotificationPriority,
   type RuntimeNotificationRecord,
   type RuntimeNotificationState,
   type RuntimeUserProfileRecord,

@@ -10,6 +10,7 @@ import {
   NativeRunnerExecutor,
   RunnerExecutorError
 } from "./runner-worker.js";
+import { quoteShellValue, shellPathDelimiter } from "./runtime-shell.js";
 
 const ORIGINAL_ENV = {
   SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE: process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE,
@@ -112,9 +113,15 @@ function payload(overrides: Record<string, unknown> = {}): Record<string, unknow
 }
 
 function setNodeRunnerTemplate(lines: string[]): void {
-  const scriptBase64 = Buffer.from(lines.join("\n"), "utf8").toString("base64");
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-runner-worker-template-"));
+  TEMP_DIRS.push(tempDir);
+  const runnerScriptPath = path.join(tempDir, "runner-template.mjs");
+  fs.writeFileSync(runnerScriptPath, `${lines.join("\n")}\n`, "utf8");
+  const quotedRunnerScriptPath = quoteShellValue(runnerScriptPath);
   process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE =
-    `printf '%s' '${scriptBase64}' | base64 --decode | {runtime_node} - {request_base64}`;
+    process.platform === "win32"
+      ? `& {runtime_node} ${quotedRunnerScriptPath} {request_base64}`
+      : `{runtime_node} ${quotedRunnerScriptPath} {request_base64}`;
 }
 
 test("native runner executor returns parsed runner events", async () => {
@@ -321,12 +328,33 @@ test("build runner env injects runtime api url when missing", () => {
 test("build runner env prepends api-server local bin helpers", () => {
   process.env.HOLABOSS_RUNTIME_ROOT = "/bundle/runtime";
   process.env.HOLABOSS_RUNTIME_APP_ROOT = "/bundle/runtime";
-  process.env.PATH = "/usr/local/bin:/usr/bin";
+  const delimiter = shellPathDelimiter();
+  process.env.PATH = ["/usr/local/bin", "/usr/bin"].join(delimiter);
+  const bundleRoot = path.resolve("/bundle");
+  const runtimeAppRoot = "/bundle/runtime";
 
   const env = buildRunnerEnv();
 
   assert.equal(
     env.PATH,
-    `/bundle/node-runtime/bin:/bundle/runtime/api-server/node_modules/.bin:/usr/local/bin:/usr/bin`
+    [
+      ...(process.platform === "win32"
+        ? [
+            path.join(bundleRoot, "python-runtime", "python"),
+            path.join(bundleRoot, "python-runtime", "python", "Scripts"),
+            path.join(bundleRoot, "python-runtime", "bin"),
+            path.join(bundleRoot, "node-runtime", "bin"),
+            path.join(bundleRoot, "node-runtime", "node_modules", ".bin"),
+          ]
+        : [
+            path.join(bundleRoot, "python-runtime", "bin"),
+            path.join(bundleRoot, "python-runtime", "python", "bin"),
+            path.join(bundleRoot, "node-runtime", "node_modules", ".bin"),
+            path.join(bundleRoot, "node-runtime", "node_modules", "node", "bin"),
+          ]),
+      path.join(runtimeAppRoot, "api-server", "node_modules", ".bin"),
+      "/usr/local/bin",
+      "/usr/bin"
+    ].join(delimiter)
   );
 });

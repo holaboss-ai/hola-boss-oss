@@ -1114,13 +1114,22 @@ async function defaultBootstrapApplications(params: {
         type: "remote" as const,
         enabled: true,
         url: application.mcp_url,
-        headers: { "X-Workspace-Id": params.request.workspace_id },
+        headers: resolvedApplicationMcpHeaders(params.request),
         timeout: application.timeout_ms
       }
     }));
   } finally {
     store.close();
   }
+}
+
+export function resolvedApplicationMcpHeaders(request: TsRunnerRequest): Record<string, string> {
+  return {
+    "X-Workspace-Id": request.workspace_id,
+    "X-Holaboss-Workspace-Id": request.workspace_id,
+    "X-Holaboss-Session-Id": request.session_id,
+    "X-Holaboss-Input-Id": request.input_id,
+  };
 }
 
 async function defaultRunHarnessHost(params: {
