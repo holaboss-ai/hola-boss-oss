@@ -24,6 +24,7 @@ import { MarketplacePane } from "@/components/panes/MarketplacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
 import { SkillsPane } from "@/components/panes/SkillsPane";
 import { PublishDialog } from "@/components/publish/PublishDialog";
+import { UpdateReminder } from "@/components/ui/UpdateReminder";
 import { DesktopBillingProvider } from "@/lib/billing/useDesktopBilling";
 import { getWorkspaceAppDefinition } from "@/lib/workspaceApps";
 import {
@@ -213,13 +214,11 @@ function notificationToastDurationMs(
 }
 
 function appUpdateNotificationId(status: AppUpdateStatusPayload): string {
-  return `app-update:${
-    status.releaseTag || status.latestVersion || status.publishedAt || "latest"
-  }`;
+  return `app-update:${status.latestVersion || status.publishedAt || "latest"}`;
 }
 
 function appUpdateReleaseLabel(status: AppUpdateStatusPayload): string {
-  return status.latestVersion || status.releaseTag || "latest";
+  return status.latestVersion || "latest";
 }
 
 function notificationMetadataString(
@@ -291,7 +290,7 @@ function buildAppUpdateNotification(
       notification_kind: APP_UPDATE_NOTIFICATION_SOURCE,
       action_url: APP_UPDATE_NOTIFICATION_URL,
       activation_state: "dismissed",
-      update_release_tag: status.releaseTag ?? null,
+      update_release_tag: status.latestVersion ?? null,
     },
     read_at: state === "unread" ? null : createdAt,
     dismissed_at: null,
@@ -1762,6 +1761,15 @@ function AppShellContent() {
     };
   }, [selectedWorkspace, selectedWorkspaceId]);
 
+  const handleDismissUpdate = () => {
+    void window.electronAPI.appUpdate.dismiss(
+      appUpdateStatus?.latestVersion ?? null,
+    );
+  };
+
+  const handleInstallUpdate = () => {
+    void window.electronAPI.appUpdate.installNow();
+  };
   const toggleOperationsDrawer = () => {
     setOperationsDrawerOpen((open) => !open);
   };
@@ -1928,12 +1936,17 @@ function AppShellContent() {
     : (visibleSpacePaneIds[visibleSpacePaneIds.length - 1] ?? null);
   const showOperationsDrawer =
     spaceMode && spaceVisibility.agent && operationsDrawerOpen;
+  const shouldShowAppUpdateReminder = Boolean(
+    appUpdateStatus && (appUpdateStatus.available || appUpdateStatus.downloaded),
+  );
+  const appVersionLabel = appUpdateStatus?.currentVersion?.trim() || "";
   const shouldSuspendBrowserNativeView =
     isUtilityPaneResizing ||
     workspaceSwitcherOpen ||
     settingsDialogOpen ||
     createWorkspacePanelOpen ||
-    publishOpen;
+    publishOpen ||
+    shouldShowAppUpdateReminder;
   const bootstrapErrorMessage =
     !hasHydratedWorkspaceList && runtimeStatus?.status === "error"
       ? runtimeStatus.lastError.trim() ||
@@ -2228,6 +2241,13 @@ function AppShellContent() {
         {isUtilityPaneResizing ? (
           <div className="absolute inset-0 z-30 cursor-col-resize" />
         ) : null}
+        {shouldShowAppUpdateReminder && appUpdateStatus ? (
+          <UpdateReminder
+            status={appUpdateStatus}
+            onDismiss={handleDismissUpdate}
+            onInstallNow={handleInstallUpdate}
+          />
+        ) : null}
         <NotificationToastStack
           notifications={toastNotifications}
           onCloseToast={dismissNotificationToast}
@@ -2304,6 +2324,7 @@ function AppShellContent() {
               installedApps={installedApps}
               activeAppId={activeAppId}
               onSelectApp={handleOpenInstalledApp}
+              appVersionLabel={appVersionLabel}
             />
 
             <div className="flex h-full min-h-0 flex-col overflow-hidden">

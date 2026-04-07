@@ -63,13 +63,12 @@ test("app shell wires clear-all notifications through a bulk dismiss handler", a
 test("app shell routes app updates through the shared notification system", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.doesNotMatch(source, /UpdateReminder/);
   assert.match(source, /const appUpdateNotification = useMemo\(\(\) => \{/);
   assert.match(source, /action_url: APP_UPDATE_NOTIFICATION_URL/);
   assert.match(source, /activation_state: "dismissed"/);
   assert.match(source, /await window\.electronAPI\.appUpdate\.dismiss\(/);
   assert.match(source, /await window\.electronAPI\.ui\.openExternalUrl\(targetUrl\);/);
-  assert.doesNotMatch(source, /Boolean\(appUpdateStatus\?\.available\)/);
+  assert.match(source, /const combinedNotifications = useMemo\(\(\) => \{/);
   assert.match(source, /<BrowserPane[\s\S]*suspendNativeView=\{shouldSuspendBrowserNativeView\}/);
 });
 
@@ -88,6 +87,25 @@ test("app shell uses the integrated title bar path for macOS and Windows", async
     source,
     /<TopTabsBar[\s\S]*integratedTitleBar=\{hasIntegratedTitleBar\}[\s\S]*desktopPlatform=\{desktopPlatform\}/,
   );
+});
+
+test("app shell suspends the native browser view while the update reminder is visible", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const shouldShowAppUpdateReminder = Boolean\([\s\S]*appUpdateStatus\.available \|\| appUpdateStatus\.downloaded[\s\S]*const shouldSuspendBrowserNativeView =/,
+  );
+  assert.match(source, /<BrowserPane[\s\S]*suspendNativeView=\{shouldSuspendBrowserNativeView\}/);
+  assert.match(source, /<UpdateReminder[\s\S]*onInstallNow=\{handleInstallUpdate\}/);
+});
+
+test("app shell passes the app version label into the left rail", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /const appVersionLabel = appUpdateStatus\?\.currentVersion\?\.trim\(\) \|\| "";/);
+  assert.match(source, /<LeftNavigationRail[\s\S]*appVersionLabel=\{appVersionLabel\}/);
+  assert.doesNotMatch(source, /absolute bottom-3 left-4/);
 });
 
 test("app shell requests remote task proposal generation without a separate success banner", async () => {

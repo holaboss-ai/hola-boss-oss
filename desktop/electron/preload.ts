@@ -180,13 +180,13 @@ interface AppUpdateStatusPayload {
   supported: boolean;
   checking: boolean;
   available: boolean;
+  downloaded: boolean;
+  downloadProgressPercent: number | null;
   currentVersion: string;
   latestVersion: string | null;
-  releaseTag: string | null;
-  releaseUrl: string | null;
-  downloadUrl: string | null;
+  releaseName: string | null;
   publishedAt: string | null;
-  dismissedReleaseTag: string | null;
+  dismissedVersion: string | null;
   lastCheckedAt: string | null;
   error: string;
 }
@@ -902,8 +902,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   appUpdate: {
     getStatus: () => ipcRenderer.invoke("appUpdate:getStatus") as Promise<AppUpdateStatusPayload>,
     checkNow: () => ipcRenderer.invoke("appUpdate:checkNow") as Promise<AppUpdateStatusPayload>,
-    dismiss: (releaseTag?: string | null) => ipcRenderer.invoke("appUpdate:dismiss", releaseTag) as Promise<AppUpdateStatusPayload>,
-    openDownload: () => ipcRenderer.invoke("appUpdate:openDownload") as Promise<void>,
+    dismiss: (version?: string | null) => ipcRenderer.invoke("appUpdate:dismiss", version) as Promise<AppUpdateStatusPayload>,
+    installNow: () => ipcRenderer.invoke("appUpdate:installNow") as Promise<void>,
     onStateChange: (listener: (status: AppUpdateStatusPayload) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, status: AppUpdateStatusPayload) => listener(status);
       ipcRenderer.on("appUpdate:state", wrapped);
