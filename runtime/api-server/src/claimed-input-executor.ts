@@ -7,14 +7,14 @@ import { buildRunFailedEvent, executeRunnerRequest, type RunnerEvent } from "./r
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
 import { normalizeHarnessId, resolveRuntimeHarnessAdapter } from "./harness-registry.js";
 import type { MemoryServiceLike } from "./memory.js";
-import { writeTurnMemory, type TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
+import type { TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
+import { schedulePostRunTasks } from "./post-run-tasks.js";
 import { collectWorkspaceFileManifest, detectWorkspaceFileOutputs, type WorkspaceFileManifest } from "./turn-output-capture.js";
 
 const ONBOARD_PROMPT_HEADER = "[Holaboss Workspace Onboarding v1]";
 const RUNTIME_EXEC_CONTEXT_KEY = "_sandbox_runtime_exec_v1";
 const RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY = "model_proxy_api_key";
 const RUNTIME_EXEC_SANDBOX_ID_KEY = "sandbox_id";
-const EXECUTOR_COMPACTION_SOURCE = "executor_post_turn";
 
 interface SessionInputAttachment {
   id: string;
@@ -497,23 +497,6 @@ function persistTurnResult(params: {
   });
 }
 
-async function writeTurnMemoryIfAvailable(params: {
-  store: RuntimeStateStore;
-  memoryService?: MemoryServiceLike | null;
-  turnResult: TurnResultRecord | null;
-  modelContext?: TurnMemoryWritebackModelContext | null;
-}): Promise<TurnResultRecord | null> {
-  if (!params.memoryService || !params.turnResult) {
-    return params.turnResult ?? null;
-  }
-  return await writeTurnMemory({
-    store: params.store,
-    memoryService: params.memoryService,
-    turnResult: params.turnResult,
-    modelContext: params.modelContext ?? null,
-  });
-}
-
 function appendNextOutputEvent(params: {
   store: RuntimeStateStore;
   record: SessionInputRecord;
@@ -533,99 +516,6 @@ function appendNextOutputEvent(params: {
     createdAt: params.createdAt,
   });
   return nextSequence;
-}
-
-function restoredMemoryPathCount(value: unknown): number {
-  if (!isRecord(value)) {
-    return 0;
-  }
-  const restored = Array.isArray(value.restored_memory_paths) ? value.restored_memory_paths : [];
-  return restored.filter((entry) => typeof entry === "string" && entry.trim().length > 0).length;
-}
-
-async function writeTurnMemoryWithLifecycleEvents(params: {
-  store: RuntimeStateStore;
-  record: SessionInputRecord;
-  memoryService?: MemoryServiceLike | null;
-  turnResult: TurnResultRecord | null;
-  modelContext?: TurnMemoryWritebackModelContext | null;
-  lastSequence: number;
-}): Promise<{ turnResult: TurnResultRecord | null; lastSequence: number }> {
-  if (!params.memoryService || !params.turnResult) {
-    return {
-      turnResult: params.turnResult ?? null,
-      lastSequence: params.lastSequence,
-    };
-  }
-
-  const startedAtMs = Date.now();
-  let lastSequence = appendNextOutputEvent({
-    store: params.store,
-    record: params.record,
-    lastSequence: params.lastSequence,
-    eventType: "compaction_start",
-    payload: {
-      source: EXECUTOR_COMPACTION_SOURCE,
-      status: "started",
-    },
-  });
-
-  try {
-    const updatedTurnResult = await writeTurnMemory({
-      store: params.store,
-      memoryService: params.memoryService,
-      turnResult: params.turnResult,
-      modelContext: params.modelContext ?? null,
-    });
-    const boundaryId = updatedTurnResult.compactionBoundaryId ?? `compaction:${updatedTurnResult.inputId}`;
-    const boundary = params.store.getCompactionBoundary({ boundaryId });
-    lastSequence = appendNextOutputEvent({
-      store: params.store,
-      record: params.record,
-      lastSequence,
-      eventType: "compaction_boundary_written",
-      payload: {
-        source: EXECUTOR_COMPACTION_SOURCE,
-        boundary_id: boundary?.boundaryId ?? boundaryId,
-        boundary_type: boundary?.boundaryType ?? EXECUTOR_COMPACTION_SOURCE,
-        previous_boundary_id: boundary?.previousBoundaryId ?? null,
-        request_snapshot_fingerprint: boundary?.requestSnapshotFingerprint ?? null,
-        restored_memory_path_count: restoredMemoryPathCount(boundary?.restorationContext),
-      },
-    });
-    lastSequence = appendNextOutputEvent({
-      store: params.store,
-      record: params.record,
-      lastSequence,
-      eventType: "compaction_end",
-      payload: {
-        source: EXECUTOR_COMPACTION_SOURCE,
-        status: "completed",
-        duration_ms: Math.max(0, Date.now() - startedAtMs),
-        boundary_id: boundary?.boundaryId ?? boundaryId,
-        boundary_type: boundary?.boundaryType ?? EXECUTOR_COMPACTION_SOURCE,
-      },
-    });
-    return {
-      turnResult: updatedTurnResult,
-      lastSequence,
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    lastSequence = appendNextOutputEvent({
-      store: params.store,
-      record: params.record,
-      lastSequence,
-      eventType: "compaction_end",
-      payload: {
-        source: EXECUTOR_COMPACTION_SOURCE,
-        status: "failed",
-        duration_ms: Math.max(0, Date.now() - startedAtMs),
-        error_message: errorMessage,
-      },
-    });
-    throw error;
-  }
 }
 
 function terminalStatusForCompletedPayload(
@@ -673,6 +563,7 @@ export async function processClaimedInput(params: {
   record: SessionInputRecord;
   claimedBy?: string;
   memoryService?: MemoryServiceLike | null;
+  schedulePostRunTasksFn?: typeof schedulePostRunTasks;
   executeRunnerRequestFn?: typeof executeRunnerRequest;
   resolveProductRuntimeConfigFn?: typeof resolveProductRuntimeConfig;
 }): Promise<void> {
@@ -1113,15 +1004,6 @@ export async function processClaimedInput(params: {
       promptCacheProfile,
       tokenUsage,
     });
-    const memoryWriteback = await writeTurnMemoryWithLifecycleEvents({
-      store,
-      record,
-      memoryService: params.memoryService,
-      turnResult,
-      modelContext: memoryWritebackModelContext,
-      lastSequence,
-    });
-    lastSequence = memoryWriteback.lastSequence;
     if (deferredTerminalEvent) {
       lastSequence = appendNextOutputEvent({
         store,
@@ -1133,6 +1015,13 @@ export async function processClaimedInput(params: {
       });
       deferredTerminalEvent = null;
     }
+    (params.schedulePostRunTasksFn ?? schedulePostRunTasks)({
+      store,
+      record,
+      turnResult,
+      memoryService: params.memoryService,
+      modelContext: memoryWritebackModelContext,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     store.updateInput(record.inputId, {
@@ -1173,10 +1062,11 @@ export async function processClaimedInput(params: {
       promptCacheProfile: null,
       tokenUsage: null,
     });
-    await writeTurnMemoryIfAvailable({
+    (params.schedulePostRunTasksFn ?? schedulePostRunTasks)({
       store,
-      memoryService: params.memoryService,
+      record,
       turnResult,
+      memoryService: params.memoryService,
       modelContext: memoryWritebackModelContext,
     });
   }
