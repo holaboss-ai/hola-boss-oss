@@ -45,7 +45,7 @@ test("app shell removes the outputs quick action", async () => {
 test("app shell polls runtime notifications and renders the toast stack", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /window\.electronAPI\.workspace\.listNotifications\(\s*null,\s*false,\s*\)/);
+  assert.match(source, /window\.electronAPI\.workspace\.listNotifications\(\s*null,\s*true,\s*\)/);
   assert.match(source, /<NotificationToastStack[\s\S]*leadingToast=\{/);
   assert.match(source, /<NotificationToastStack[\s\S]*notifications=\{toastNotifications\}/);
   assert.match(source, /notifications=\{combinedNotifications\}/);
@@ -56,6 +56,7 @@ test("app shell wires clear-all notifications through a bulk dismiss handler", a
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(source, /const handleClearAllNotifications = useCallback\(async \(\) => \{/);
+  assert.match(source, /const notificationsToDismiss = combinedNotifications\.filter\(\s*\(notification\) => notification\.state !== "dismissed",/);
   assert.match(source, /runtimeNotificationIds\.map\(\(notificationId\) =>\s*window\.electronAPI\.workspace\.updateNotification\(notificationId,\s*\{\s*state: "dismissed",\s*\}\),/);
   assert.match(source, /appUpdateNotifications\.map\(\(notification\) =>\s*window\.electronAPI\.appUpdate\.dismiss\(notificationReleaseTag\(notification\)\),/);
   assert.match(source, /onClearAllNotifications=\{\(\) => \{\s*void handleClearAllNotifications\(\);\s*\}\}/);
@@ -70,6 +71,8 @@ test("app shell routes app updates through the shared notification system", asyn
   assert.match(source, /activation_state: "read"/);
   assert.match(source, /await window\.electronAPI\.appUpdate\.dismiss\(/);
   assert.match(source, /await window\.electronAPI\.ui\.openExternalUrl\(targetUrl\);/);
+  assert.match(source, /const \[dismissedSyntheticNotifications, setDismissedSyntheticNotifications\]/);
+  assert.match(source, /rememberDismissedSyntheticNotification\(notification\);/);
   assert.match(source, /const combinedNotifications = useMemo\(\(\) => \{/);
   assert.match(source, /<BrowserPane[\s\S]*suspendNativeView=\{shouldSuspendBrowserNativeView\}/);
 });

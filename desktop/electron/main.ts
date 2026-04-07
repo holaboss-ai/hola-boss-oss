@@ -411,7 +411,7 @@ let overflowPopupWindow: BrowserWindow | null = null;
 let addressSuggestionsPopupWindow: BrowserWindow | null = null;
 let attachedBrowserTabView: BrowserView | null = null;
 let attachedAppSurfaceView: BrowserView | null = null;
-let currentTheme = "holaboss";
+let currentTheme = "amber-minimal-light";
 let browserBounds: BrowserBoundsPayload = { x: 0, y: 0, width: 0, height: 0 };
 let overflowAnchorBounds: BrowserAnchorBoundsPayload | null = null;
 let addressSuggestionsState: {

@@ -318,6 +318,19 @@ function buildAppUpdateNotification(
   };
 }
 
+function dismissedNotificationRecord(
+  notification: RuntimeNotificationRecordPayload,
+): RuntimeNotificationRecordPayload {
+  const timestamp = new Date().toISOString();
+  return {
+    ...notification,
+    state: "dismissed",
+    read_at: notification.read_at || timestamp,
+    dismissed_at: notification.dismissed_at || timestamp,
+    updated_at: timestamp,
+  };
+}
+
 function loadSpaceVisibility(): SpaceVisibilityState {
   return DEFAULT_SPACE_VISIBILITY;
 }
@@ -395,7 +408,7 @@ function loadTheme(): AppTheme {
     // ignore
   }
 
-  return "amber-minimal-dark";
+  return "amber-minimal-light";
 }
 
 function spaceComponentLabel(componentId: SpaceComponentId) {
@@ -771,6 +784,8 @@ function AppShellContent() {
   >([]);
   const [syntheticNotificationStates, setSyntheticNotificationStates] =
     useState<Record<string, RuntimeNotificationState>>({});
+  const [dismissedSyntheticNotifications, setDismissedSyntheticNotifications] =
+    useState<Record<string, RuntimeNotificationRecordPayload>>({});
   const utilityPaneHostRef = useRef<HTMLDivElement | null>(null);
   const utilityPaneResizeStateRef = useRef<UtilityPaneResizeState | null>(null);
   const filesPaneWidthRef = useRef(filesPaneWidth);
@@ -796,11 +811,21 @@ function AppShellContent() {
   }, [appUpdateStatus, syntheticNotificationStates]);
 
   const combinedNotifications = useMemo(() => {
+    const activeNotificationIds = new Set<string>();
+    if (appUpdateNotification) {
+      activeNotificationIds.add(appUpdateNotification.id);
+    }
+    for (const notification of notifications) {
+      activeNotificationIds.add(notification.id);
+    }
+    const syntheticHistory = Object.values(dismissedSyntheticNotifications).filter(
+      (notification) => !activeNotificationIds.has(notification.id),
+    );
     const items = appUpdateNotification
-      ? [appUpdateNotification, ...notifications]
-      : notifications;
+      ? [appUpdateNotification, ...notifications, ...syntheticHistory]
+      : [...notifications, ...syntheticHistory];
     return [...items].sort(notificationSortComparator);
-  }, [appUpdateNotification, notifications]);
+  }, [appUpdateNotification, dismissedSyntheticNotifications, notifications]);
 
   const notificationById = useMemo(
     () =>
@@ -1111,6 +1136,19 @@ function AppShellContent() {
     [],
   );
 
+  const rememberDismissedSyntheticNotification = useCallback(
+    (notification: RuntimeNotificationRecordPayload) => {
+      if (!isAppUpdateNotification(notification)) {
+        return;
+      }
+      setDismissedSyntheticNotifications((current) => ({
+        ...current,
+        [notification.id]: dismissedNotificationRecord(notification),
+      }));
+    },
+    [],
+  );
+
   const refreshNotifications = useCallback(async () => {
     if (!window.electronAPI) {
       return;
@@ -1119,7 +1157,7 @@ function AppShellContent() {
     try {
       const response = await window.electronAPI.workspace.listNotifications(
         null,
-        false,
+        true,
       );
       setNotifications(response.items);
 
@@ -1248,6 +1286,7 @@ function AppShellContent() {
         try {
           dismissNotificationToast(notification.id);
           markSyntheticNotificationsRead([notification.id]);
+          rememberDismissedSyntheticNotification(notification);
           await window.electronAPI.appUpdate.dismiss(
             notificationReleaseTag(notification),
           );
@@ -1271,30 +1310,37 @@ function AppShellContent() {
       dismissNotificationToast,
       markSyntheticNotificationsRead,
       notificationById,
+      rememberDismissedSyntheticNotification,
       refreshNotifications,
     ],
   );
 
   const handleClearAllNotifications = useCallback(async () => {
-    if (!window.electronAPI || combinedNotifications.length === 0) {
+    const notificationsToDismiss = combinedNotifications.filter(
+      (notification) => notification.state !== "dismissed",
+    );
+    if (!window.electronAPI || notificationsToDismiss.length === 0) {
       return;
     }
 
-    for (const notification of combinedNotifications) {
+    for (const notification of notificationsToDismiss) {
       dismissNotificationToast(notification.id);
     }
 
     try {
-      const runtimeNotificationIds = combinedNotifications
+      const runtimeNotificationIds = notificationsToDismiss
         .filter((notification) => !isAppUpdateNotification(notification))
         .map((notification) => notification.id);
-      const appUpdateNotifications = combinedNotifications.filter((notification) =>
-        isAppUpdateNotification(notification),
+      const appUpdateNotifications = notificationsToDismiss.filter(
+        (notification) => isAppUpdateNotification(notification),
       );
       if (appUpdateNotifications.length > 0) {
         markSyntheticNotificationsRead(
           appUpdateNotifications.map((notification) => notification.id),
         );
+        for (const notification of appUpdateNotifications) {
+          rememberDismissedSyntheticNotification(notification);
+        }
       }
       await Promise.allSettled([
         ...runtimeNotificationIds.map((notificationId) =>
@@ -1316,6 +1362,7 @@ function AppShellContent() {
     combinedNotifications,
     dismissNotificationToast,
     markSyntheticNotificationsRead,
+    rememberDismissedSyntheticNotification,
     refreshNotifications,
   ]);
 

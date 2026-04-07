@@ -95,6 +95,10 @@ export function NotificationCenter({
   onDismiss,
   onClearAll,
 }: NotificationCenterProps) {
+  const canDismissAll = notifications.some(
+    (notification) => notification.state !== "dismissed",
+  );
+
   return (
     <Popover onOpenChange={onOpenChange}>
       <PopoverTrigger
@@ -137,7 +141,7 @@ export function NotificationCenter({
                     ? `${notifications.length} total`
                     : "No new items"}
               </span>
-              {notifications.length > 0 && onClearAll ? (
+              {canDismissAll && onClearAll ? (
                 <Button
                   type="button"
                   variant="ghost"
@@ -145,7 +149,7 @@ export function NotificationCenter({
                   onClick={onClearAll}
                   className="text-muted-foreground hover:text-foreground"
                 >
-                  Clear all
+                  Dismiss all
                 </Button>
               ) : null}
             </div>
@@ -166,6 +170,7 @@ export function NotificationCenter({
             <div className="flex flex-col gap-2">
               {notifications.map((notification) => {
                 const isUnread = notification.state === "unread";
+                const isDismissed = notification.state === "dismissed";
                 return (
                   <div
                     key={notification.id}
@@ -173,6 +178,8 @@ export function NotificationCenter({
                       "rounded-2xl border transition-colors",
                       isUnread
                         ? "border-primary/25 bg-primary/5"
+                        : isDismissed
+                          ? "border-border/40 bg-muted/20 opacity-75"
                         : "border-border/50 bg-background/70",
                     )}
                   >
@@ -182,6 +189,8 @@ export function NotificationCenter({
                           "mt-1.5 size-2 shrink-0 rounded-full",
                           isUnread
                             ? unreadAccentClassName(notification.level)
+                            : isDismissed
+                              ? "bg-muted-foreground/20"
                             : "bg-muted-foreground/30",
                         )}
                       />
@@ -212,6 +221,10 @@ export function NotificationCenter({
                           </span>
                           {isUnread ? (
                             <Clock3 size={13} className="shrink-0 text-primary" />
+                          ) : isDismissed ? (
+                            <span className="shrink-0 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                              Dismissed
+                            </span>
                           ) : (
                             <Check size={13} className="shrink-0 text-muted-foreground" />
                           )}
@@ -220,16 +233,18 @@ export function NotificationCenter({
                           {notification.message}
                         </p>
                       </button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label={`Dismiss notification ${notification.title}`}
-                        onClick={() => onDismiss(notification.id)}
-                        className="mt-0.5 text-muted-foreground hover:text-foreground"
-                      >
-                        <X size={14} />
-                      </Button>
+                      {!isDismissed ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label={`Dismiss notification ${notification.title}`}
+                          onClick={() => onDismiss(notification.id)}
+                          className="mt-0.5 text-muted-foreground hover:text-foreground"
+                        >
+                          <X size={14} />
+                        </Button>
+                      ) : null}
                     </div>
                   </div>
                 );
