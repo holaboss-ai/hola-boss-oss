@@ -47,8 +47,27 @@ function bundledNodeCandidates(outputRoot) {
   ];
 }
 
+function bundledNpmCandidates(outputRoot) {
+  return [
+    path.join(outputRoot, "node-runtime", "node_modules", ".bin", "npm.cmd"),
+    path.join(outputRoot, "node-runtime", "node_modules", ".bin", "npm"),
+    path.join(outputRoot, "node-runtime", "node_modules", "npm", "bin", "npm-cli.js")
+  ];
+}
+
 function resolveNodeVersion() {
   return process.env.HOLABOSS_RUNTIME_NODE_VERSION?.trim() || process.versions.node;
+}
+
+function resolveNpmVersion() {
+  const explicitVersion = process.env.HOLABOSS_RUNTIME_NPM_VERSION?.trim();
+  if (explicitVersion) {
+    return explicitVersion;
+  }
+  return execFileSync(npmCommand(), ["--version"], {
+    stdio: ["ignore", "pipe", "ignore"],
+    encoding: "utf8"
+  }).trim();
 }
 
 export function buildWindowsRuntimeLauncherSource() {
@@ -94,6 +113,7 @@ export function packageWindowsRuntime(
   const packageMetadataPath = path.join(outputRoot, "package-metadata.json");
   const skipNodeDeps = process.env.HOLABOSS_SKIP_NODE_DEPS?.trim() === "1";
   const nodeVersion = resolveNodeVersion();
+  const npmVersion = resolveNpmVersion();
 
   try {
     buildRuntimeRoot(runtimeStagingRoot);
@@ -106,7 +126,7 @@ export function packageWindowsRuntime(
     mkdirSync(binDir, { recursive: true });
     if (!skipNodeDeps) {
       mkdirSync(nodeRuntimeDir, { recursive: true });
-      execFileSync(npmCommand(), ["install", "--prefix", nodeRuntimeDir, `node@${nodeVersion}`], {
+      execFileSync(npmCommand(), ["install", "--prefix", nodeRuntimeDir, `node@${nodeVersion}`, `npm@${npmVersion}`], {
         stdio: "inherit",
         env: process.env
       });
@@ -117,11 +137,14 @@ export function packageWindowsRuntime(
     writeFileSync(path.join(binDir, "sandbox-runtime.cmd"), buildWindowsRuntimeCmdLauncherSource());
 
     const bundledNodeBin = firstExistingPath(bundledNodeCandidates(outputRoot));
+    const bundledNpmBin = firstExistingPath(bundledNpmCandidates(outputRoot));
     const packageMetadata = {
       platform: "windows",
       node_deps_installed: !skipNodeDeps,
       bundled_node_bin: Boolean(bundledNodeBin),
-      bundled_node_version: skipNodeDeps ? null : nodeVersion
+      bundled_node_version: skipNodeDeps ? null : nodeVersion,
+      bundled_npm_bin: Boolean(bundledNpmBin),
+      bundled_npm_version: skipNodeDeps ? null : npmVersion
     };
     writeFileSync(packageMetadataPath, `${JSON.stringify(packageMetadata, null, 2)}\n`);
 

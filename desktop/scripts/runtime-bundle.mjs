@@ -51,11 +51,26 @@ export function runtimeBundleNodeRelativePaths(runtimePlatform = resolveRuntimeP
     : [base];
 }
 
+export function runtimeBundleNpmRelativePaths(runtimePlatform = resolveRuntimePlatform()) {
+  const base = path.join("node-runtime", "node_modules", ".bin", "npm");
+  return runtimePlatform === "windows"
+    ? [
+        `${base}.cmd`,
+        base,
+        path.join("node-runtime", "node_modules", "npm", "bin", "npm-cli.js")
+      ]
+    : [
+        base,
+        path.join("node-runtime", "node_modules", "npm", "bin", "npm-cli.js")
+      ];
+}
+
 export function runtimeBundleRequiredPathGroups(runtimePlatform = resolveRuntimePlatform()) {
   return [
     runtimeBundleExecutableRelativePaths(runtimePlatform),
     ["package-metadata.json"],
     runtimeBundleNodeRelativePaths(runtimePlatform),
+    runtimeBundleNpmRelativePaths(runtimePlatform),
     [path.join("runtime", "metadata.json")],
     [path.join("runtime", "api-server", "dist", "index.mjs")]
   ];

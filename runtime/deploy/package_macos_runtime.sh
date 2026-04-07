@@ -49,6 +49,7 @@ BIN_DIR="${OUTPUT_ROOT}/bin"
 PACKAGE_METADATA_PATH="${OUTPUT_ROOT}/package-metadata.json"
 SKIP_NODE_DEPS="${HOLABOSS_SKIP_NODE_DEPS:-0}"
 LOCAL_NODE_BIN="${NODE_RUNTIME_DIR}/node_modules/.bin/node"
+LOCAL_NPM_BIN="${NODE_RUNTIME_DIR}/node_modules/.bin/npm"
 
 NODE_VERSION="${HOLABOSS_RUNTIME_NODE_VERSION:-}"
 if [ -z "${NODE_VERSION}" ]; then
@@ -57,12 +58,18 @@ if [ -z "${NODE_VERSION}" ]; then
   NODE_VERSION="${NODE_VERSION#v}"
 fi
 
+NPM_VERSION="${HOLABOSS_RUNTIME_NPM_VERSION:-}"
+if [ -z "${NPM_VERSION}" ]; then
+  require_cmd npm
+  NPM_VERSION="$(npm --version)"
+fi
+
 mkdir -p "${BIN_DIR}"
 
 if [ "${SKIP_NODE_DEPS}" != "1" ]; then
   require_cmd npm
   mkdir -p "${NODE_RUNTIME_DIR}"
-  npm install --prefix "${NODE_RUNTIME_DIR}" "node@${NODE_VERSION}"
+  npm install --prefix "${NODE_RUNTIME_DIR}" "node@${NODE_VERSION}" "npm@${NPM_VERSION}"
   "${SCRIPT_DIR}/prune_packaged_tree.sh" "${NODE_RUNTIME_DIR}" "macos"
 fi
 
@@ -91,7 +98,9 @@ cat > "${PACKAGE_METADATA_PATH}" <<EOF
   "platform": "macos",
   "node_deps_installed": $([ "${SKIP_NODE_DEPS}" = "1" ] && printf 'false' || printf 'true'),
   "bundled_node_bin": $([ "${SKIP_NODE_DEPS}" = "1" ] || [ ! -x "${LOCAL_NODE_BIN}" ] && printf 'false' || printf 'true'),
-  "bundled_node_version": $([ "${SKIP_NODE_DEPS}" = "1" ] && printf 'null' || printf '"%s"' "${NODE_VERSION}")
+  "bundled_node_version": $([ "${SKIP_NODE_DEPS}" = "1" ] && printf 'null' || printf '"%s"' "${NODE_VERSION}"),
+  "bundled_npm_bin": $([ "${SKIP_NODE_DEPS}" = "1" ] || [ ! -x "${LOCAL_NPM_BIN}" ] && printf 'false' || printf 'true'),
+  "bundled_npm_version": $([ "${SKIP_NODE_DEPS}" = "1" ] && printf 'null' || printf '"%s"' "${NPM_VERSION}")
 }
 EOF
 

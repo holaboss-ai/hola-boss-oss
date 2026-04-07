@@ -528,6 +528,19 @@ function runtimeBundleNodeRelativePaths(
     : [base];
 }
 
+function runtimeBundleNpmRelativePaths(
+  runtimePlatform: "macos" | "linux" | "windows" = runtimePlatformFromProcessPlatform(),
+): string[] {
+  const base = path.join("node-runtime", "node_modules", ".bin", "npm");
+  return runtimePlatform === "windows"
+    ? [
+        `${base}.cmd`,
+        base,
+        path.join("node-runtime", "node_modules", "npm", "bin", "npm-cli.js"),
+      ]
+    : [base, path.join("node-runtime", "node_modules", "npm", "bin", "npm-cli.js")];
+}
+
 const CURRENT_RUNTIME_PLATFORM = runtimePlatformFromProcessPlatform();
 const RUNTIME_BUNDLE_DIR = runtimeBundleDirName(CURRENT_RUNTIME_PLATFORM);
 const DEV_RUNTIME_ROOT =
@@ -9198,6 +9211,7 @@ const REQUIRED_RUNTIME_BUNDLE_PATH_GROUPS = [
   runtimeBundleExecutableRelativePaths(CURRENT_RUNTIME_PLATFORM),
   ["package-metadata.json"],
   runtimeBundleNodeRelativePaths(CURRENT_RUNTIME_PLATFORM),
+  runtimeBundleNpmRelativePaths(CURRENT_RUNTIME_PLATFORM),
   [path.join("runtime", "metadata.json")],
   [path.join("runtime", "api-server", "dist", "index.mjs")],
 ];
