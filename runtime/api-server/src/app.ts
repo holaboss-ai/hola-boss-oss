@@ -660,6 +660,7 @@ function runtimeNotificationPayload(record: RuntimeNotificationRecord): Record<s
     title: record.title,
     message: record.message,
     level: record.level,
+    priority: record.priority,
     state: record.state,
     metadata: record.metadata,
     read_at: record.readAt,

@@ -141,7 +141,8 @@ test("runtime cron worker persists system_notification cronjobs as unread notifi
     delivery: { channel: "system_notification" },
     metadata: {
       notification_title: "Drink Water",
-      notification_level: "warning"
+      notification_level: "warning",
+      notification_priority: "critical"
     }
   });
 
@@ -155,6 +156,7 @@ test("runtime cron worker persists system_notification cronjobs as unread notifi
   assert.equal(notifications[0]?.title, "Drink Water");
   assert.equal(notifications[0]?.message, "Time to drink water.");
   assert.equal(notifications[0]?.level, "warning");
+  assert.equal(notifications[0]?.priority, "critical");
   assert.equal(notifications[0]?.state, "unread");
   assert.equal(notifications[0]?.cronjobId, job.id);
   assert.ok(updated);

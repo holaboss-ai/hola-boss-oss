@@ -14,7 +14,7 @@ interface NotificationCenterProps {
   unreadCount: number;
   integratedTitleBar?: boolean;
   onOpenChange?: (open: boolean) => void;
-  onMarkRead: (notificationId: string) => void;
+  onActivateNotification: (notificationId: string) => void;
   onDismiss: (notificationId: string) => void;
   onClearAll?: () => void;
 }
@@ -60,12 +60,38 @@ function unreadAccentClassName(level: RuntimeNotificationLevel): string {
   return "bg-sky-400";
 }
 
+function priorityBadgeClassName(priority: RuntimeNotificationPriority): string {
+  if (priority === "critical") {
+    return "border-rose-500/35 bg-rose-500/12 text-rose-200";
+  }
+  if (priority === "high") {
+    return "border-amber-400/35 bg-amber-400/12 text-amber-100";
+  }
+  if (priority === "low") {
+    return "border-border/60 bg-muted/60 text-muted-foreground";
+  }
+  return "border-sky-400/30 bg-sky-500/10 text-sky-200";
+}
+
+function priorityLabel(priority: RuntimeNotificationPriority): string {
+  if (priority === "critical") {
+    return "Critical";
+  }
+  if (priority === "high") {
+    return "High";
+  }
+  if (priority === "low") {
+    return "Low";
+  }
+  return "Normal";
+}
+
 export function NotificationCenter({
   notifications,
   unreadCount,
   integratedTitleBar = false,
   onOpenChange,
-  onMarkRead,
+  onActivateNotification,
   onDismiss,
   onClearAll,
 }: NotificationCenterProps) {
@@ -133,7 +159,7 @@ export function NotificationCenter({
                 No notifications yet
               </div>
               <p className="mt-1 text-sm text-muted-foreground">
-                Reminder-style cronjobs will appear here.
+                System reminders and desktop updates will appear here.
               </p>
             </div>
           ) : (
@@ -161,12 +187,20 @@ export function NotificationCenter({
                       />
                       <button
                         type="button"
-                        onClick={() => onMarkRead(notification.id)}
+                        onClick={() => onActivateNotification(notification.id)}
                         className="min-w-0 flex-1 text-left"
                       >
                         <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
                           <span className="truncate">
                             {notification.source_label || "Notification"}
+                          </span>
+                          <span
+                            className={cn(
+                              "rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-[0.14em]",
+                              priorityBadgeClassName(notification.priority),
+                            )}
+                          >
+                            {priorityLabel(notification.priority)}
                           </span>
                           <span className="normal-case tracking-normal">
                             {relativeTimeLabel(notification.created_at)}

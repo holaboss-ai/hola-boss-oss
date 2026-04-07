@@ -1127,7 +1127,8 @@ test("runtime notifications round trip supports create, list, update, get, and d
     sourceLabel: "Workspace 1",
     title: "Drink Water",
     message: "Time to drink water.",
-    level: "info"
+    level: "info",
+    priority: "high"
   });
   const listed = store.listRuntimeNotifications({ workspaceId: "workspace-1" });
   const fetched = store.getRuntimeNotification(created.id);
@@ -1149,6 +1150,7 @@ test("runtime notifications round trip supports create, list, update, get, and d
 
   assert.equal(listed.length, 1);
   assert.ok(fetched);
+  assert.equal(fetched.priority, "high");
   assert.ok(updated);
   assert.equal(updated.state, "read");
   assert.ok(updated.readAt);
@@ -1157,6 +1159,48 @@ test("runtime notifications round trip supports create, list, update, get, and d
   assert.ok(dismissed.dismissedAt);
   assert.equal(listedWithoutDismissed.length, 0);
   assert.equal(listedIncludingDismissed.length, 1);
+  store.close();
+});
+
+test("runtime notifications sort by priority before recency", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  store.createRuntimeNotification({
+    workspaceId: "workspace-1",
+    title: "Normal",
+    message: "Normal priority",
+    priority: "normal",
+    createdAt: "2026-01-01T10:00:00.000Z"
+  });
+  store.createRuntimeNotification({
+    workspaceId: "workspace-1",
+    title: "Critical",
+    message: "Critical priority",
+    priority: "critical",
+    createdAt: "2026-01-01T09:00:00.000Z"
+  });
+  store.createRuntimeNotification({
+    workspaceId: "workspace-1",
+    title: "High",
+    message: "High priority",
+    priority: "high",
+    createdAt: "2026-01-01T11:00:00.000Z"
+  });
+
+  const listed = store.listRuntimeNotifications({ workspaceId: "workspace-1" });
+
+  assert.deepEqual(
+    listed.map((item) => item.title),
+    ["Critical", "High", "Normal"]
+  );
+  assert.deepEqual(
+    listed.map((item) => item.priority),
+    ["critical", "high", "normal"]
+  );
   store.close();
 });
 

@@ -483,6 +483,7 @@ declare global {
   }
 
   type RuntimeNotificationLevel = "info" | "success" | "warning" | "error";
+  type RuntimeNotificationPriority = "low" | "normal" | "high" | "critical";
   type RuntimeNotificationState = "unread" | "read" | "dismissed";
 
   interface RuntimeNotificationRecordPayload {
@@ -494,6 +495,7 @@ declare global {
     title: string;
     message: string;
     level: RuntimeNotificationLevel;
+    priority: RuntimeNotificationPriority;
     state: RuntimeNotificationState;
     metadata: Record<string, unknown>;
     read_at: string | null;

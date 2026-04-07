@@ -53,7 +53,7 @@ interface TopTabsBarProps {
   notifications?: RuntimeNotificationRecordPayload[];
   notificationUnreadCount?: number;
   onNotificationCenterOpenChange?: (open: boolean) => void;
-  onMarkNotificationRead?: (notificationId: string) => void;
+  onActivateNotification?: (notificationId: string) => void;
   onDismissNotification?: (notificationId: string) => void;
   onClearAllNotifications?: () => void;
 }
@@ -72,7 +72,7 @@ export function TopTabsBar({
   notifications = [],
   notificationUnreadCount = 0,
   onNotificationCenterOpenChange,
-  onMarkNotificationRead,
+  onActivateNotification,
   onDismissNotification,
   onClearAllNotifications,
 }: TopTabsBarProps) {
@@ -302,7 +302,9 @@ export function TopTabsBar({
             unreadCount={notificationUnreadCount}
             integratedTitleBar={integratedTitleBar}
             onOpenChange={onNotificationCenterOpenChange}
-            onMarkRead={(notificationId) => onMarkNotificationRead?.(notificationId)}
+            onActivateNotification={(notificationId) =>
+              onActivateNotification?.(notificationId)
+            }
             onDismiss={(notificationId) => onDismissNotification?.(notificationId)}
             onClearAll={() => onClearAllNotifications?.()}
           />
