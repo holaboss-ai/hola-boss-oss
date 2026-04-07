@@ -102,6 +102,17 @@ const DIRECT_OPENROUTER_BASE_URL_ENV = "OPENROUTER_BASE_URL";
 const DEFAULT_DIRECT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_DIRECT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const KNOWN_DIRECT_PROVIDER_HOSTS = new Set(["api.openai.com", "api.anthropic.com"]);
+const GEMINI_OPENAI_COMPAT_HOST = "generativelanguage.googleapis.com";
+const GEMINI_OPENAI_COMPAT_PATH = "/v1beta/openai";
+const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string>> = {
+  anthropic_direct: {
+    "claude-sonnet-4-5": "claude-sonnet-4-6"
+  },
+  gemini_direct: {
+    "gemini-3.1-pro-preview": "gemini-2.5-pro",
+    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite"
+  }
+};
 
 interface ConfiguredRuntimeProvider {
   id: string;
@@ -295,6 +306,25 @@ function runtimeConfigDocument(): Record<string, unknown> {
   }
 }
 
+function normalizeConfiguredProviderModelId(providerId: string, modelId: string): string {
+  const normalizedProviderId = providerId.trim().toLowerCase();
+  const normalizedModelId = modelId.trim();
+  if (!normalizedProviderId || !normalizedModelId) {
+    return normalizedModelId;
+  }
+  return LEGACY_DIRECT_PROVIDER_MODEL_ALIASES[normalizedProviderId]?.[normalizedModelId] ?? normalizedModelId;
+}
+
+function normalizeConfiguredProviderModelToken(providerId: string, token: string, modelId: string): string {
+  const normalizedToken = token.trim();
+  const normalizedModelId = normalizeConfiguredProviderModelId(providerId, modelId);
+  const providerPrefix = `${providerId.trim()}/`;
+  if (!providerPrefix.trim() || !normalizedToken.startsWith(providerPrefix)) {
+    return normalizedToken || `${providerId.trim()}/${normalizedModelId}`;
+  }
+  return `${providerId.trim()}/${normalizedModelId}`;
+}
+
 function configuredRuntimeModelCatalog(defaultProviderHint: string): RuntimeModelCatalog {
   const config = resolveProductRuntimeConfig({
     requireAuth: false,
@@ -412,12 +442,13 @@ function configuredRuntimeModelCatalog(defaultProviderHint: string): RuntimeMode
     if (!provider) {
       continue;
     }
-    assertCanonicalConfiguredModelId(provider, modelId);
+    const normalizedModelId = normalizeConfiguredProviderModelId(provider.id, modelId);
+    assertCanonicalConfiguredModelId(provider, normalizedModelId);
     configuredModels.push({
-      token,
+      token: normalizeConfiguredProviderModelToken(provider.id, token, normalizedModelId),
       providerId,
-      modelId,
-      modelProxyProvider: modelProxyProviderForProviderKind(provider.kind, modelId)
+      modelId: normalizedModelId,
+      modelProxyProvider: modelProxyProviderForProviderKind(provider.kind, normalizedModelId)
     });
   }
 
@@ -481,10 +512,22 @@ function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: stri
   }
 
   const catalog = configuredRuntimeModelCatalog(defaultProviderHint);
+  const defaultProvider = defaultConfiguredProvider(catalog, defaultProviderHint);
+  const normalizedToken = (() => {
+    if (!token.includes("/")) {
+      return defaultProvider ? normalizeConfiguredProviderModelId(defaultProvider.id, token) : token;
+    }
+    const [providerToken, ...rest] = token.split("/");
+    const configuredProvider = catalog.providers.get(providerToken.trim());
+    if (!configuredProvider || rest.length === 0) {
+      return token;
+    }
+    return `${providerToken.trim()}/${normalizeConfiguredProviderModelId(configuredProvider.id, rest.join("/"))}`;
+  })();
   const configuredModel =
-    catalog.models.find((entry) => entry.token === token) ??
-    (catalog.models.filter((entry) => entry.modelId === token).length === 1
-      ? catalog.models.find((entry) => entry.modelId === token)
+    catalog.models.find((entry) => entry.token === token || entry.token === normalizedToken) ??
+    (catalog.models.filter((entry) => entry.modelId === token || entry.modelId === normalizedToken).length === 1
+      ? catalog.models.find((entry) => entry.modelId === token || entry.modelId === normalizedToken)
       : null);
   if (configuredModel) {
     const configuredProvider = catalog.providers.get(configuredModel.providerId) ?? null;
@@ -503,12 +546,14 @@ function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: stri
   if (token.includes("/")) {
     const [providerToken, ...rest] = token.split("/");
     const normalizedProviderToken = providerToken.trim();
-    const modelId = rest.join("/").trim();
+    const configuredProvider = catalog.providers.get(normalizedProviderToken);
+    const modelId = configuredProvider
+      ? normalizeConfiguredProviderModelId(configuredProvider.id, rest.join("/").trim())
+      : rest.join("/").trim();
     if (!modelId) {
       throw new Error("model id segment after provider must be non-empty");
     }
 
-    const configuredProvider = catalog.providers.get(normalizedProviderToken);
     if (configuredProvider) {
       assertCanonicalConfiguredModelId(configuredProvider, modelId);
       const modelProxyProvider = modelProxyProviderForProviderKind(configuredProvider.kind, modelId);
@@ -561,16 +606,16 @@ function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: stri
     }
   }
 
-  const normalizedToken = token.toLowerCase();
-  const defaultProvider = defaultConfiguredProvider(catalog, defaultProviderHint);
-  if (normalizedToken.startsWith("claude")) {
+  const normalizedBareToken = (defaultProvider ? normalizeConfiguredProviderModelId(defaultProvider.id, token) : token).toLowerCase();
+  if (normalizedBareToken.startsWith("claude")) {
     const anthropicProvider = firstConfiguredProviderByKind(catalog, PROVIDER_KIND_ANTHROPIC_NATIVE) ?? defaultProvider;
     if (anthropicProvider) {
-      const modelProxyProvider = modelProxyProviderForProviderKind(anthropicProvider.kind, token);
+      const normalizedModelId = normalizeConfiguredProviderModelId(anthropicProvider.id, token);
+      const modelProxyProvider = modelProxyProviderForProviderKind(anthropicProvider.kind, normalizedModelId);
       return {
         providerId: runtimeProviderIdForConfiguredProvider(anthropicProvider, modelProxyProvider),
-        modelId: token,
-        modelToken: token,
+        modelId: normalizedModelId,
+        modelToken: normalizedModelId,
         modelProxyProvider,
         configuredProvider: anthropicProvider
       };
@@ -585,11 +630,12 @@ function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: stri
   }
 
   if (defaultProvider) {
-    const modelProxyProvider = modelProxyProviderForProviderKind(defaultProvider.kind, token);
+    const normalizedModelId = normalizeConfiguredProviderModelId(defaultProvider.id, token);
+    const modelProxyProvider = modelProxyProviderForProviderKind(defaultProvider.kind, normalizedModelId);
     return {
       providerId: runtimeProviderIdForConfiguredProvider(defaultProvider, modelProxyProvider),
-      modelId: token,
-      modelToken: token,
+      modelId: normalizedModelId,
+      modelToken: normalizedModelId,
       modelProxyProvider,
       configuredProvider: defaultProvider
     };
@@ -625,6 +671,7 @@ function shouldTreatAsDirectProviderBaseUrl(baseRoot: string): boolean {
   }
   try {
     const parsed = new URL(normalizedRoot);
+    const normalizedHost = parsed.hostname.toLowerCase();
     const normalizedPath = parsed.pathname.replace(/\/+$/, "").toLowerCase();
     if (normalizedPath.includes("model-proxy")) {
       return false;
@@ -636,6 +683,12 @@ function shouldTreatAsDirectProviderBaseUrl(baseRoot: string): boolean {
     ) {
       return false;
     }
+    if (
+      normalizedHost === GEMINI_OPENAI_COMPAT_HOST &&
+      (normalizedPath === "" || normalizedPath === "/" || normalizedPath === "/v1beta" || normalizedPath === GEMINI_OPENAI_COMPAT_PATH)
+    ) {
+      return true;
+    }
     if (normalizedPath === "/v1") {
       return true;
     }
@@ -644,7 +697,8 @@ function shouldTreatAsDirectProviderBaseUrl(baseRoot: string): boolean {
     }
     return false;
   } catch {
-    return normalizedRoot.toLowerCase().endsWith("/v1");
+    const loweredRoot = normalizedRoot.toLowerCase();
+    return loweredRoot.endsWith("/v1") || loweredRoot.endsWith(GEMINI_OPENAI_COMPAT_PATH);
   }
 }
 
@@ -653,15 +707,34 @@ function appendProviderRoute(baseRoot: string, provider: string): string {
   return `${normalizedRoot}/${providerPathSegment(provider)}/v1`;
 }
 
-function normalizeDirectProviderBaseUrl(baseRoot: string): string {
+function normalizeDirectProviderBaseUrl(baseRoot: string, provider: string = MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE): string {
   const normalizedRoot = baseRoot.replace(/\/+$/, "");
+  const normalizedProvider = normalizeModelProxyProvider(provider);
   try {
     const parsed = new URL(normalizedRoot);
+    const normalizedHost = parsed.hostname.toLowerCase();
+    const normalizedPath = parsed.pathname.replace(/\/+$/, "").toLowerCase();
+    if (normalizedProvider === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE) {
+      if (normalizedPath.endsWith("/v1")) {
+        const withoutV1 = parsed.pathname.replace(/\/v1\/?$/i, "") || "/";
+        return `${parsed.origin}${withoutV1 === "/" ? "" : withoutV1}`;
+      }
+      return normalizedRoot;
+    }
+    if (
+      normalizedHost === GEMINI_OPENAI_COMPAT_HOST &&
+      (normalizedPath === "" || normalizedPath === "/" || normalizedPath === "/v1beta")
+    ) {
+      return `${parsed.origin}${GEMINI_OPENAI_COMPAT_PATH}`;
+    }
     if (parsed.pathname === "" || parsed.pathname === "/") {
       return `${normalizedRoot}/v1`;
     }
     return normalizedRoot;
   } catch {
+    if (normalizedProvider === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE) {
+      return normalizedRoot.replace(/\/v1\/?$/i, "");
+    }
     return normalizedRoot;
   }
 }
@@ -687,10 +760,10 @@ function baseUrlForProvider(baseRoot: string, provider: string, options?: { forc
     return appendProviderRoute(baseRoot, normalizedProvider);
   }
   if (shouldTreatAsDirectProviderBaseUrl(baseRoot)) {
-    return normalizeDirectProviderBaseUrl(baseRoot);
+    return normalizeDirectProviderBaseUrl(baseRoot, normalizedProvider);
   }
   if (isProviderScopedV1Path(baseRoot, normalizedProvider)) {
-    return normalizeDirectProviderBaseUrl(baseRoot);
+    return normalizeDirectProviderBaseUrl(baseRoot, normalizedProvider);
   }
   return appendProviderRoute(baseRoot, normalizedProvider);
 }
@@ -773,7 +846,7 @@ function configuredProviderProxyRoute(provider: ConfiguredRuntimeProvider, model
 function configuredDirectProviderBaseUrl(provider: ConfiguredRuntimeProvider, modelProxyProvider: string, baseRoot: string): string {
   const normalizedProvider = normalizeModelProxyProvider(modelProxyProvider);
   if (provider.kind === PROVIDER_KIND_OPENROUTER) {
-    return normalizeDirectProviderBaseUrl(baseRoot);
+    return normalizeDirectProviderBaseUrl(baseRoot, normalizedProvider);
   }
   return baseUrlForProvider(baseRoot, normalizedProvider);
 }

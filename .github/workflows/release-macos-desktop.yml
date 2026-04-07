@@ -276,7 +276,7 @@ jobs:
           fi
 
       - name: Download signed macOS app bundle artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: holaboss-desktop-signed-macos-app
           path: out/downloaded-signed-app
@@ -374,7 +374,7 @@ jobs:
           if-no-files-found: error
 
   release-macos-desktop:
-    name: Build signed macOS desktop DMG
+    name: Build signed macOS desktop release artifacts
     needs:
       - ensure-release
       - notarize-macos-app
@@ -402,7 +402,7 @@ jobs:
         run: npm run desktop:install
 
       - name: Download notarized macOS app bundle artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: holaboss-desktop-notarized-macos-app
           path: out/downloaded-notarized-app
@@ -428,7 +428,7 @@ jobs:
           app_path="$(cd "$(dirname "${app_path}")" && pwd)/$(basename "${app_path}")"
           echo "app_path=${app_path}" >> "${GITHUB_OUTPUT}"
 
-      - name: Build macOS desktop DMG from notarized app bundle
+      - name: Build macOS desktop release artifacts from notarized app bundle
         working-directory: desktop
         shell: bash
         env:
@@ -444,28 +444,57 @@ jobs:
             --projectDir "$PWD" \
             --publish never \
             --prepackaged "${app_path}" \
-            --mac dmg \
+            --mac dmg zip \
             --arm64 \
             --config.mac.notarize=false
 
-      - name: Upload macOS desktop DMG artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ env.DESKTOP_ASSET_PREFIX }}-${{ inputs.release_tag }}
-          path: desktop/out/release/*.dmg
-          if-no-files-found: error
-
-      - name: Upload macOS desktop DMG release asset
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Validate macOS auto-update artifacts
+        shell: bash
         run: |
           dmg_path="$(find desktop/out/release -maxdepth 1 -name '*.dmg' -print -quit)"
+          zip_path="$(find desktop/out/release -maxdepth 1 -name '*.zip' ! -name '*.blockmap' -print -quit)"
+          manifest_path="desktop/out/release/latest-mac.yml"
           if [ -z "${dmg_path}" ]; then
             echo "no DMG found in desktop/out/release" >&2
             exit 1
           fi
+          if [ -z "${zip_path}" ]; then
+            echo "no macOS zip found in desktop/out/release" >&2
+            exit 1
+          fi
+          if [ ! -f "${manifest_path}" ]; then
+            echo "latest-mac.yml was not generated" >&2
+            exit 1
+          fi
+
+      - name: Upload macOS desktop release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.DESKTOP_ASSET_PREFIX }}-${{ inputs.release_tag }}
+          path: |
+            desktop/out/release/*.dmg
+            desktop/out/release/*.zip
+            desktop/out/release/*.blockmap
+            desktop/out/release/latest-mac.yml
+          if-no-files-found: error
+
+      - name: Upload macOS desktop release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dmg_path="$(find desktop/out/release -maxdepth 1 -name '*.dmg' -print -quit)"
+          zip_path="$(find desktop/out/release -maxdepth 1 -name '*.zip' ! -name '*.blockmap' -print -quit)"
+          manifest_path="desktop/out/release/latest-mac.yml"
           stable_path="desktop/out/release/${DESKTOP_RELEASE_ASSET_NAME}"
           cp "${dmg_path}" "${stable_path}"
+          upload_paths=(
+            "${stable_path}"
+            "${zip_path}"
+            "${manifest_path}"
+          )
+          while IFS= read -r blockmap_path; do
+            upload_paths+=("${blockmap_path}")
+          done < <(find desktop/out/release -maxdepth 1 -name '*.blockmap' -print)
           gh release upload "${RELEASE_TAG}" \
-            "${stable_path}" \
+            "${upload_paths[@]}" \
             --clobber

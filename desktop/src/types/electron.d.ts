@@ -192,13 +192,13 @@ declare global {
     supported: boolean;
     checking: boolean;
     available: boolean;
+    downloaded: boolean;
+    downloadProgressPercent: number | null;
     currentVersion: string;
     latestVersion: string | null;
-    releaseTag: string | null;
-    releaseUrl: string | null;
-    downloadUrl: string | null;
+    releaseName: string | null;
     publishedAt: string | null;
-    dismissedReleaseTag: string | null;
+    dismissedVersion: string | null;
     lastCheckedAt: string | null;
     error: string;
   }
@@ -314,9 +314,9 @@ declare global {
     proposal_count: number;
     heartbeat: ProactiveStatusSnapshotPayload;
     bridge: ProactiveStatusSnapshotPayload;
-    delivery_state: string;
-    delivery_summary: string;
-    delivery_detail: string | null;
+    lifecycle_state: string;
+    lifecycle_summary: string;
+    lifecycle_detail: string | null;
   }
 
   interface RemoteTaskProposalGenerationRequestPayload {
@@ -1046,8 +1046,8 @@ declare global {
     appUpdate: {
       getStatus: () => Promise<AppUpdateStatusPayload>;
       checkNow: () => Promise<AppUpdateStatusPayload>;
-      dismiss: (releaseTag?: string | null) => Promise<AppUpdateStatusPayload>;
-      openDownload: () => Promise<void>;
+      dismiss: (version?: string | null) => Promise<AppUpdateStatusPayload>;
+      installNow: () => Promise<void>;
       onStateChange: (listener: (status: AppUpdateStatusPayload) => void) => () => void;
     };
     workbench: {

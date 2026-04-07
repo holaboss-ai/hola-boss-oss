@@ -55,6 +55,31 @@ function baseRequest(): HarnessHostPiRequest {
   };
 }
 
+test("pi normalizes array-wrapped openai-compatible error bodies", async () => {
+  const { APIError } = await import("openai");
+  const error = APIError.generate(
+    400,
+    [
+      {
+        error: {
+          code: 400,
+          message: "User location is not supported for the API use.",
+          status: "FAILED_PRECONDITION",
+        },
+      },
+    ],
+    undefined,
+    new Headers()
+  );
+
+  assert.equal(error.message, "400 User location is not supported for the API use.");
+  assert.deepEqual(error.error, {
+    code: 400,
+    message: "User location is not supported for the API use.",
+    status: "FAILED_PRECONDITION",
+  });
+});
+
 async function createDocxBuffer(lines: string[]): Promise<Buffer> {
   const zip = new JSZip();
   const body = lines.map((line) => `<w:p><w:r><w:t>${line}</w:t></w:r></w:p>`).join("");
@@ -195,6 +220,64 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
         },
       },
     ]
+  );
+
+  assert.deepEqual(
+    mapPiSessionEvent(
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [],
+          api: "anthropic-messages",
+          provider: "anthropic_direct",
+          model: "claude-sonnet-4-6",
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: "error",
+          errorMessage: "404 Not Found",
+          timestamp: Date.now(),
+        },
+      } as never,
+      sessionFile,
+      createPiEventMapperState()
+    ),
+    [
+      {
+        event_type: "run_failed",
+        payload: {
+          type: "ProviderError",
+          message: "404 Not Found",
+          stop_reason: "error",
+          provider: "anthropic_direct",
+          model: "claude-sonnet-4-6",
+          event: "message_end",
+          source: "pi",
+          harness_session_id: sessionFile,
+        },
+      },
+    ]
+  );
+
+  assert.deepEqual(
+    mapPiSessionEvent(
+      {
+        type: "agent_end",
+        messages: [],
+      },
+      sessionFile,
+      {
+        ...createPiEventMapperState(),
+        terminalState: "failed",
+      }
+    ),
+    []
   );
 
   assert.deepEqual(
@@ -660,6 +743,37 @@ test("buildPiProviderConfig registers runtime-configured ollama models for the P
   }
 });
 
+test("buildPiProviderConfig preserves direct OpenRouter endpoints and headers", () => {
+  const request: HarnessHostPiRequest = {
+    ...baseRequest(),
+    provider_id: "openrouter_direct",
+    model_id: "openai/gpt-5.4",
+    model_client: {
+      model_proxy_provider: "openai_compatible",
+      api_key: "sk-or-test",
+      base_url: "https://openrouter.ai/api/v1",
+      default_headers: {
+        "HTTP-Referer": "https://holaboss.ai",
+        "X-Title": "Holaboss",
+      },
+    },
+  };
+
+  const providerConfig = buildPiProviderConfig(request);
+
+  assert.equal(providerConfig.baseUrl, "https://openrouter.ai/api/v1");
+  assert.equal(providerConfig.apiKey, "sk-or-test");
+  assert.equal(providerConfig.api, "openai-completions");
+  assert.deepEqual(providerConfig.headers, {
+    "HTTP-Referer": "https://holaboss.ai",
+    "X-Title": "Holaboss",
+  });
+  assert.equal(providerConfig.authHeader, true);
+  assert.equal(providerConfig.models[0]?.id, "openai/gpt-5.4");
+  assert.equal(providerConfig.models[0]?.api, "openai-completions");
+  assert.equal(providerConfig.models[0]?.compat, undefined);
+});
+
 test("createPiMcpCustomTools filters discovery to allowlisted tools and forwards calls via mcporter", async () => {
   const request: HarnessHostPiRequest = {
     ...baseRequest(),
@@ -890,6 +1004,80 @@ test("runPi emits run_started and terminal success when the session completes", 
       firstKeptEntryId: "entry-1",
       tokensBefore: 1234,
     });
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+});
+
+test("runPi emits terminal failure from assistant error messages and suppresses trailing agent_end success", async () => {
+  const request = baseRequest();
+  const events: Array<{ event_type: string; payload: Record<string, unknown> }> = [];
+  const originalWrite = process.stdout.write.bind(process.stdout);
+  const fakeSession = {
+    subscribe(listener: (event: unknown) => void) {
+      this.listener = listener;
+      return () => {};
+    },
+    async sendUserMessage() {
+      this.listener?.({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [],
+          api: "anthropic-messages",
+          provider: "anthropic_direct",
+          model: "claude-sonnet-4-6",
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: "error",
+          errorMessage: "404 Not Found",
+          timestamp: Date.now(),
+        },
+      });
+      this.listener?.({
+        type: "agent_end",
+        messages: [],
+      });
+    },
+    async abort() {},
+    dispose() {},
+    listener: undefined as ((event: unknown) => void) | undefined,
+  };
+
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    const lines = String(chunk)
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { event_type: string; payload: Record<string, unknown> });
+    events.push(...lines);
+    return true;
+  }) as typeof process.stdout.write;
+
+  try {
+    const exitCode = await runPi(request, {
+      createSession: async () => ({
+        session: fakeSession as never,
+        sessionFile: "/tmp/pi-session.jsonl",
+        mcpToolMetadata: new Map(),
+        skillMetadataByAlias: new Map(),
+        dispose: async () => {},
+      }),
+    });
+
+    assert.equal(exitCode, 0);
+    assert.deepEqual(
+      events.map((event) => event.event_type),
+      ["run_started", "run_failed"]
+    );
+    assert.equal(events[1]?.payload.message, "404 Not Found");
+    assert.equal(events[1]?.payload.harness_session_id, "/tmp/pi-session.jsonl");
   } finally {
     process.stdout.write = originalWrite;
   }

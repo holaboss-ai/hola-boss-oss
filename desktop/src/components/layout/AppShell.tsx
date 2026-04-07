@@ -1445,12 +1445,12 @@ function AppShellContent() {
 
   const handleDismissUpdate = () => {
     void window.electronAPI.appUpdate.dismiss(
-      appUpdateStatus?.releaseTag ?? null,
+      appUpdateStatus?.latestVersion ?? null,
     );
   };
 
-  const handleDownloadUpdate = () => {
-    void window.electronAPI.appUpdate.openDownload();
+  const handleInstallUpdate = () => {
+    void window.electronAPI.appUpdate.installNow();
   };
 
   const toggleOperationsDrawer = () => {
@@ -1619,6 +1619,17 @@ function AppShellContent() {
     : (visibleSpacePaneIds[visibleSpacePaneIds.length - 1] ?? null);
   const showOperationsDrawer =
     spaceMode && spaceVisibility.agent && operationsDrawerOpen;
+  const shouldShowAppUpdateReminder = Boolean(
+    appUpdateStatus && (appUpdateStatus.available || appUpdateStatus.downloaded),
+  );
+  const appVersionLabel = appUpdateStatus?.currentVersion?.trim() || "";
+  const shouldSuspendBrowserNativeView =
+    isUtilityPaneResizing ||
+    workspaceSwitcherOpen ||
+    settingsDialogOpen ||
+    createWorkspacePanelOpen ||
+    publishOpen ||
+    shouldShowAppUpdateReminder;
   const bootstrapErrorMessage =
     !hasHydratedWorkspaceList && runtimeStatus?.status === "error"
       ? runtimeStatus.lastError.trim() ||
@@ -1731,13 +1742,7 @@ function AppShellContent() {
             />
           ) : (
             <BrowserPane
-              suspendNativeView={
-                isUtilityPaneResizing ||
-                workspaceSwitcherOpen ||
-                settingsDialogOpen ||
-                createWorkspacePanelOpen ||
-                publishOpen
-              }
+              suspendNativeView={shouldSuspendBrowserNativeView}
               layoutSyncKey={`${visibleSpacePaneIds.join("|")}:${filesPaneWidth}:${browserPaneWidth}:${showOperationsDrawer ? 1 : 0}`}
             />
           ),
@@ -1749,8 +1754,10 @@ function AppShellContent() {
       flexSpacePaneId,
       publishOpen,
       isUtilityPaneResizing,
+      appUpdateStatus,
       createWorkspacePanelOpen,
       settingsDialogOpen,
+      shouldSuspendBrowserNativeView,
       showOperationsDrawer,
       visibleSpacePaneIds,
       workspaceSwitcherOpen,
@@ -1912,11 +1919,11 @@ function AppShellContent() {
         {isUtilityPaneResizing ? (
           <div className="absolute inset-0 z-30 cursor-col-resize" />
         ) : null}
-        {appUpdateStatus?.available ? (
+        {shouldShowAppUpdateReminder && appUpdateStatus ? (
           <UpdateReminder
             status={appUpdateStatus}
             onDismiss={handleDismissUpdate}
-            onDownload={handleDownloadUpdate}
+            onInstallNow={handleInstallUpdate}
           />
         ) : null}
         <NotificationToastStack
@@ -1994,6 +2001,7 @@ function AppShellContent() {
               installedApps={installedApps}
               activeAppId={activeAppId}
               onSelectApp={handleOpenInstalledApp}
+              appVersionLabel={appVersionLabel}
             />
 
             <div className="flex h-full min-h-0 flex-col overflow-hidden">

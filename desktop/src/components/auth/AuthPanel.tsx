@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import anthropicLogo from "@/assets/providers/anthropic.svg";
 import geminiLogo from "@/assets/providers/gemini.svg";
+import minimaxLogo from "@/assets/providers/minimax.svg";
 import ollamaLogo from "@/assets/providers/ollama.svg";
 import openaiLogo from "@/assets/providers/openai.svg";
 import openrouterLogo from "@/assets/providers/openrouter.svg";
@@ -16,9 +17,18 @@ interface AuthPanelProps {
   view?: AuthPanelView;
 }
 
-const KNOWN_PROVIDER_ORDER = ["holaboss", "openai_direct", "anthropic_direct", "openrouter_direct", "gemini_direct", "ollama_direct"] as const;
+const KNOWN_PROVIDER_ORDER = ["holaboss", "openai_direct", "anthropic_direct", "openrouter_direct", "gemini_direct", "ollama_direct", "minimax_direct"] as const;
 type KnownProviderId = (typeof KNOWN_PROVIDER_ORDER)[number];
 const PROVIDER_AUTOSAVE_DELAY_MS = 800;
+const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string>> = {
+  anthropic_direct: {
+    "claude-sonnet-4-5": "claude-sonnet-4-6"
+  },
+  gemini_direct: {
+    "gemini-3.1-pro-preview": "gemini-2.5-pro",
+    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite"
+  }
+};
 
 interface KnownProviderTemplate {
   id: KnownProviderId;
@@ -46,7 +56,7 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     description: "Managed by your Holaboss account session and runtime binding.",
     kind: "holaboss_proxy",
     defaultBaseUrl: "",
-    defaultModels: ["gpt-5.2", "gpt-5-mini", "gpt-4.1-mini", "claude-sonnet-4-5", "claude-opus-4-1"],
+    defaultModels: ["gpt-5.2", "gpt-5-mini", "gpt-4.1-mini"],
     apiKeyPlaceholder: "hbrt.v1.your-proxy-token"
   },
   openai_direct: {
@@ -63,8 +73,8 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     label: "Anthropic",
     description: "Direct Anthropic native endpoint with your own API key.",
     kind: "anthropic_native",
-    defaultBaseUrl: "https://api.anthropic.com/v1",
-    defaultModels: ["claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"],
+    defaultBaseUrl: "https://api.anthropic.com",
+    defaultModels: ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
     apiKeyPlaceholder: "sk-ant-your-anthropic-key"
   },
   openrouter_direct: {
@@ -82,7 +92,7 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     description: "Google Gemini OpenAI-compatible endpoint with your own API key.",
     kind: "openai_compatible",
     defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-    defaultModels: ["gemini-3.1-pro-preview", "gemini-3.1-flash-lite-preview", "gemini-2.5-pro", "gemini-2.5-flash"],
+    defaultModels: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
     apiKeyPlaceholder: "AIza...your-gemini-api-key"
   },
   ollama_direct: {
@@ -93,6 +103,15 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     defaultBaseUrl: "http://localhost:11434/v1",
     defaultModels: ["llama3.1:8b", "qwen3:8b", "gpt-oss:20b"],
     apiKeyPlaceholder: "Optional. Use 'ollama' for strict OpenAI SDK compatibility."
+  },
+  minimax_direct: {
+    id: "minimax_direct",
+    label: "MiniMax",
+    description: "MiniMax OpenAI-compatible endpoint with your own API key.",
+    kind: "openai_compatible",
+    defaultBaseUrl: "https://api.minimax.io/v1",
+    defaultModels: ["MiniMax-M2.7", "MiniMax-M2.7-highspeed"],
+    apiKeyPlaceholder: "sk-your-minimax-api-key"
   }
 };
 
@@ -137,6 +156,12 @@ function createDefaultProviderDrafts(): ProviderDraftMap {
       baseUrl: KNOWN_PROVIDER_TEMPLATES.ollama_direct.defaultBaseUrl,
       apiKey: "",
       modelsText: KNOWN_PROVIDER_TEMPLATES.ollama_direct.defaultModels.join(", ")
+    },
+    minimax_direct: {
+      enabled: false,
+      baseUrl: KNOWN_PROVIDER_TEMPLATES.minimax_direct.defaultBaseUrl,
+      apiKey: "",
+      modelsText: KNOWN_PROVIDER_TEMPLATES.minimax_direct.defaultModels.join(", ")
     }
   };
 }
@@ -190,6 +215,15 @@ function parseModelsText(value: string): string[] {
   );
 }
 
+function normalizeConfiguredProviderModelId(providerId: string, modelId: string): string {
+  const normalizedProviderId = providerId.trim().toLowerCase();
+  const normalizedModelId = modelId.trim();
+  if (!normalizedProviderId || !normalizedModelId) {
+    return normalizedModelId;
+  }
+  return LEGACY_DIRECT_PROVIDER_MODEL_ALIASES[normalizedProviderId]?.[normalizedModelId] ?? normalizedModelId;
+}
+
 function enabledProviderIdsForDrafts(providerDrafts: ProviderDraftMap, isSignedIn: boolean): KnownProviderId[] {
   return KNOWN_PROVIDER_ORDER.filter((providerId) =>
     providerId === "holaboss" ? isSignedIn : providerDrafts[providerId].enabled
@@ -214,6 +248,9 @@ function ProviderBrandIcon({ providerId }: { providerId: KnownProviderId }) {
   }
   if (providerId === "ollama_direct") {
     return <img src={ollamaLogo} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
+  }
+  if (providerId === "minimax_direct") {
+    return <img src={minimaxLogo} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
   }
   return null;
 }
@@ -273,7 +310,7 @@ function deriveProviderDraftsFromDocument(
         }
       }
       if (modelProvider === providerId && modelId.trim()) {
-        modelIds.push(modelId.trim());
+        modelIds.push(normalizeConfiguredProviderModelId(providerId, modelId));
       }
     }
     const normalizedModelIds = uniqueValues(modelIds);

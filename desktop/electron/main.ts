@@ -4,6 +4,11 @@ import { createAuthClient } from "better-auth/client";
 import Database from "better-sqlite3";
 import "dotenv/config";
 import {
+  autoUpdater,
+  type ProgressInfo,
+  type UpdateInfo,
+} from "electron-updater";
+import {
   app,
   BrowserView,
   BrowserWindow,
@@ -30,7 +35,6 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { request as httpsRequest } from "node:https";
 import path from "node:path";
 import { URL } from "node:url";
 import * as XLSX from "xlsx";
@@ -74,8 +78,7 @@ const APP_THEMES = new Set([
 const GITHUB_RELEASES_OWNER = "holaboss-ai";
 const GITHUB_RELEASES_REPO = "holaboss-ai";
 const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
-const APP_UPDATE_REQUEST_TIMEOUT_MS = 15000;
-const APP_UPDATE_MACOS_ASSET_NAME = "Holaboss-macos-arm64.dmg";
+const APP_UPDATE_SUPPORTED_PLATFORMS = new Set(["darwin"]);
 const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
 const HOLABOSS_HOME_URL = "https://www.holaboss.ai";
 const HOLABOSS_DOCS_URL = `https://github.com/${GITHUB_RELEASES_OWNER}/${GITHUB_RELEASES_REPO}`;
@@ -94,8 +97,6 @@ const RUNTIME_HOLABOSS_LEGACY_PROXY_MODELS = [
   "gpt-5.4",
   "gpt-5.4-mini",
   "gpt-5.3-codex",
-  "claude-sonnet-4-5",
-  "claude-opus-4-1",
 ] as const;
 const RUNTIME_DEPRECATED_MODEL_IDS = new Set([
   "gpt-5.1",
@@ -103,6 +104,15 @@ const RUNTIME_DEPRECATED_MODEL_IDS = new Set([
   "gpt-5.1-codex-mini",
   "gpt-5.1-codex-max",
 ]);
+const RUNTIME_LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string>> = {
+  anthropic_direct: {
+    "claude-sonnet-4-5": "claude-sonnet-4-6",
+  },
+  gemini_direct: {
+    "gemini-3.1-pro-preview": "gemini-2.5-pro",
+    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite",
+  },
+};
 
 function configureChromiumLoggingPolicy() {
   if (verboseTelemetryEnabled || chromiumStderrLoggingEnabled) {
@@ -366,6 +376,7 @@ interface AuthErrorPayload {
 }
 
 interface AppUpdatePreferencesPayload {
+  dismissedVersion?: string | null;
   dismissedReleaseTag?: string | null;
 }
 
@@ -373,29 +384,15 @@ interface AppUpdateStatusPayload {
   supported: boolean;
   checking: boolean;
   available: boolean;
+  downloaded: boolean;
+  downloadProgressPercent: number | null;
   currentVersion: string;
   latestVersion: string | null;
-  releaseTag: string | null;
-  releaseUrl: string | null;
-  downloadUrl: string | null;
+  releaseName: string | null;
   publishedAt: string | null;
-  dismissedReleaseTag: string | null;
+  dismissedVersion: string | null;
   lastCheckedAt: string | null;
   error: string;
-}
-
-interface GithubReleaseAssetPayload {
-  name?: string;
-  browser_download_url?: string;
-}
-
-interface GithubReleasePayload {
-  tag_name?: string;
-  html_url?: string;
-  published_at?: string;
-  draft?: boolean;
-  prerelease?: boolean;
-  assets?: GithubReleaseAssetPayload[];
 }
 
 interface WorkbenchOpenBrowserPayload {
@@ -455,18 +452,19 @@ let desktopBrowserServiceUrl = "";
 let desktopBrowserServiceAuthToken = "";
 let appUpdateCheckTimer: NodeJS.Timeout | null = null;
 let appUpdateCheckPromise: Promise<AppUpdateStatusPayload> | null = null;
+let appUpdateEventsConfigured = false;
 let appUpdatePreferences: AppUpdatePreferencesPayload = {};
 let appUpdateStatus: AppUpdateStatusPayload = {
   supported: false,
   checking: false,
   available: false,
-  currentVersion: app.getVersion(),
+  downloaded: false,
+  downloadProgressPercent: null,
+  currentVersion: normalizeReleaseVersion(app.getVersion()),
   latestVersion: null,
-  releaseTag: null,
-  releaseUrl: null,
-  downloadUrl: null,
+  releaseName: null,
   publishedAt: null,
-  dismissedReleaseTag: null,
+  dismissedVersion: null,
   lastCheckedAt: null,
   error: "",
 };
@@ -695,116 +693,180 @@ function normalizeReleaseVersion(value: string): string {
   return match ? match[1] : trimmed;
 }
 
-function versionParts(value: string): number[] {
-  return normalizeReleaseVersion(value)
-    .split(".")
-    .map((part) => Number.parseInt(part, 10))
-    .filter((part) => Number.isFinite(part));
+function currentAppVersion() {
+  return normalizeReleaseVersion(app.getVersion());
 }
 
-function compareReleaseVersions(left: string, right: string): number {
-  const leftParts = versionParts(left);
-  const rightParts = versionParts(right);
-  const length = Math.max(leftParts.length, rightParts.length);
+function appUpdateSupported() {
+  return app.isPackaged && APP_UPDATE_SUPPORTED_PLATFORMS.has(process.platform);
+}
 
-  for (let index = 0; index < length; index += 1) {
-    const leftValue = leftParts[index] ?? 0;
-    const rightValue = rightParts[index] ?? 0;
-    if (leftValue < rightValue) {
-      return -1;
-    }
-    if (leftValue > rightValue) {
-      return 1;
-    }
+function dismissedAppUpdateVersion() {
+  const dismissedVersion = normalizeReleaseVersion(
+    appUpdatePreferences.dismissedVersion?.trim() ||
+      appUpdatePreferences.dismissedReleaseTag?.trim() ||
+      "",
+  );
+  return dismissedVersion || null;
+}
+
+function releaseNameFromUpdateInfo(info: UpdateInfo) {
+  const releaseName =
+    typeof info.releaseName === "string" ? info.releaseName.trim() : "";
+  return releaseName || null;
+}
+
+function publishedAtFromUpdateInfo(info: UpdateInfo) {
+  const publishedAt =
+    typeof info.releaseDate === "string" ? info.releaseDate.trim() : "";
+  return publishedAt || null;
+}
+
+function latestVersionFromUpdateInfo(info: UpdateInfo) {
+  const latestVersion = normalizeReleaseVersion(info.version ?? "");
+  return latestVersion || null;
+}
+
+function nextAppUpdateTimestamp() {
+  return new Date().toISOString();
+}
+
+function applyAppUpdateInfo(
+  info: UpdateInfo,
+  overrides: Partial<AppUpdateStatusPayload> = {},
+) {
+  appUpdateStatus = {
+    ...appUpdateStatus,
+    supported: appUpdateSupported(),
+    checking: false,
+    currentVersion: currentAppVersion(),
+    latestVersion: latestVersionFromUpdateInfo(info),
+    releaseName: releaseNameFromUpdateInfo(info),
+    publishedAt: publishedAtFromUpdateInfo(info),
+    dismissedVersion: dismissedAppUpdateVersion(),
+    lastCheckedAt: nextAppUpdateTimestamp(),
+    error: "",
+    ...overrides,
+  };
+}
+
+function applyUnsupportedAppUpdateStatus() {
+  appUpdateStatus = {
+    ...appUpdateStatus,
+    supported: false,
+    checking: false,
+    available: false,
+    downloaded: false,
+    downloadProgressPercent: null,
+    currentVersion: currentAppVersion(),
+    latestVersion: null,
+    releaseName: null,
+    publishedAt: null,
+    dismissedVersion: dismissedAppUpdateVersion(),
+    lastCheckedAt: nextAppUpdateTimestamp(),
+    error: "",
+  };
+}
+
+function clampDownloadProgressPercent(progress: ProgressInfo) {
+  if (!Number.isFinite(progress.percent)) {
+    return null;
+  }
+  return Math.max(0, Math.min(100, progress.percent));
+}
+
+function configureAutoUpdater() {
+  if (!appUpdateSupported() || appUpdateEventsConfigured) {
+    return;
   }
 
-  return 0;
-}
+  appUpdateEventsConfigured = true;
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.allowPrerelease = false;
 
-function releaseDownloadUrl(release: GithubReleasePayload): string {
-  const assets = Array.isArray(release.assets) ? release.assets : [];
-  if (process.platform === "darwin") {
-    const dmgAsset = assets.find(
-      (asset) => asset.name === APP_UPDATE_MACOS_ASSET_NAME,
-    );
-    if (
-      typeof dmgAsset?.browser_download_url === "string" &&
-      dmgAsset.browser_download_url.trim()
-    ) {
-      return dmgAsset.browser_download_url.trim();
-    }
-  }
+  autoUpdater.on("checking-for-update", () => {
+    appUpdateStatus = {
+      ...appUpdateStatus,
+      supported: true,
+      checking: true,
+      available: false,
+      downloaded: false,
+      downloadProgressPercent: null,
+      currentVersion: currentAppVersion(),
+      dismissedVersion: dismissedAppUpdateVersion(),
+      error: "",
+    };
+    emitAppUpdateState();
+  });
 
-  return typeof release.html_url === "string" ? release.html_url.trim() : "";
-}
-
-async function requestJsonFromUrl<T>(targetUrl: URL): Promise<T> {
-  const requestImpl =
-    targetUrl.protocol === "https:" ? httpsRequest : httpRequest;
-
-  return new Promise<T>((resolve, reject) => {
-    const request = requestImpl(
-      {
-        protocol: targetUrl.protocol,
-        hostname: targetUrl.hostname,
-        port:
-          targetUrl.port || (targetUrl.protocol === "https:" ? "443" : "80"),
-        path: `${targetUrl.pathname}${targetUrl.search}`,
-        method: "GET",
-        headers: {
-          Accept: "application/vnd.github+json",
-          "User-Agent": "Holaboss-Desktop-Updater",
-        },
-        timeout: APP_UPDATE_REQUEST_TIMEOUT_MS,
-      },
-      (response) => {
-        const chunks: Buffer[] = [];
-        response.on("data", (chunk) => {
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-        });
-        response.on("end", () => {
-          const statusCode = response.statusCode ?? 0;
-          const body = Buffer.concat(chunks).toString("utf8");
-          if (statusCode < 200 || statusCode >= 300) {
-            reject(
-              new Error(
-                `GitHub release check failed (${statusCode} ${response.statusMessage ?? "error"}).`,
-              ),
-            );
-            return;
-          }
-
-          try {
-            resolve(JSON.parse(body) as T);
-          } catch {
-            reject(new Error("GitHub returned invalid JSON."));
-          }
-        });
-      },
-    );
-
-    request.on("timeout", () => {
-      request.destroy(new Error("GitHub release check timed out."));
+  autoUpdater.on("update-available", (info) => {
+    const latestVersion = latestVersionFromUpdateInfo(info);
+    const dismissedVersion = dismissedAppUpdateVersion();
+    applyAppUpdateInfo(info, {
+      available: Boolean(latestVersion && dismissedVersion !== latestVersion),
+      downloaded: false,
+      downloadProgressPercent: 0,
     });
-    request.on("error", (error) => {
-      reject(error);
+    emitAppUpdateState();
+  });
+
+  autoUpdater.on("download-progress", (progress) => {
+    appUpdateStatus = {
+      ...appUpdateStatus,
+      checking: false,
+      downloadProgressPercent: clampDownloadProgressPercent(progress),
+      lastCheckedAt: nextAppUpdateTimestamp(),
+      error: "",
+    };
+    emitAppUpdateState();
+  });
+
+  autoUpdater.on("update-downloaded", (info) => {
+    applyAppUpdateInfo(info, {
+      available: false,
+      downloaded: true,
+      downloadProgressPercent: 100,
     });
-    request.end();
+    emitAppUpdateState();
+  });
+
+  autoUpdater.on("update-not-available", (info) => {
+    applyAppUpdateInfo(info, {
+      available: false,
+      downloaded: false,
+      downloadProgressPercent: null,
+    });
+    emitAppUpdateState();
+  });
+
+  autoUpdater.on("error", (error) => {
+    appUpdateStatus = {
+      ...appUpdateStatus,
+      supported: appUpdateSupported(),
+      checking: false,
+      available: false,
+      downloadProgressPercent: null,
+      currentVersion: currentAppVersion(),
+      dismissedVersion: dismissedAppUpdateVersion(),
+      lastCheckedAt: nextAppUpdateTimestamp(),
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to check for updates.",
+    };
+    emitAppUpdateState();
   });
 }
 
 async function checkForAppUpdates(): Promise<AppUpdateStatusPayload> {
-  if (!app.isPackaged) {
-    appUpdateStatus = {
-      ...appUpdateStatus,
-      supported: false,
-      checking: false,
-      available: false,
-      currentVersion: app.getVersion(),
-      error: "",
-      lastCheckedAt: new Date().toISOString(),
-    };
+  if (!appUpdateSupported()) {
+    applyUnsupportedAppUpdateStatus();
     emitAppUpdateState();
+    return appUpdateStatus;
+  }
+
+  if (appUpdateStatus.downloaded) {
     return appUpdateStatus;
   }
 
@@ -812,62 +874,30 @@ async function checkForAppUpdates(): Promise<AppUpdateStatusPayload> {
     return appUpdateCheckPromise;
   }
 
+  configureAutoUpdater();
   appUpdateStatus = {
     ...appUpdateStatus,
     supported: true,
     checking: true,
-    currentVersion: normalizeReleaseVersion(app.getVersion()),
-    dismissedReleaseTag: appUpdatePreferences.dismissedReleaseTag ?? null,
+    currentVersion: currentAppVersion(),
+    dismissedVersion: dismissedAppUpdateVersion(),
     error: "",
   };
   emitAppUpdateState();
 
   appUpdateCheckPromise = (async () => {
     try {
-      const release = await requestJsonFromUrl<GithubReleasePayload>(
-        new URL(
-          `https://api.github.com/repos/${GITHUB_RELEASES_OWNER}/${GITHUB_RELEASES_REPO}/releases/latest`,
-        ),
-      );
-
-      const releaseTag =
-        typeof release.tag_name === "string" ? release.tag_name.trim() : "";
-      const latestVersion = normalizeReleaseVersion(releaseTag);
-      const currentVersion = normalizeReleaseVersion(app.getVersion());
-      const dismissedReleaseTag =
-        appUpdatePreferences.dismissedReleaseTag ?? null;
-      const newerReleaseAvailable =
-        Boolean(releaseTag) &&
-        Boolean(latestVersion) &&
-        compareReleaseVersions(currentVersion, latestVersion) < 0;
-
-      appUpdateStatus = {
-        supported: true,
-        checking: false,
-        available: newerReleaseAvailable && dismissedReleaseTag !== releaseTag,
-        currentVersion,
-        latestVersion: latestVersion || null,
-        releaseTag: releaseTag || null,
-        releaseUrl:
-          typeof release.html_url === "string"
-            ? release.html_url.trim() || null
-            : null,
-        downloadUrl: releaseDownloadUrl(release) || null,
-        publishedAt:
-          typeof release.published_at === "string"
-            ? release.published_at
-            : null,
-        dismissedReleaseTag,
-        lastCheckedAt: new Date().toISOString(),
-        error: "",
-      };
+      await autoUpdater.checkForUpdates();
     } catch (error) {
       appUpdateStatus = {
         ...appUpdateStatus,
         supported: true,
         checking: false,
-        currentVersion: normalizeReleaseVersion(app.getVersion()),
-        lastCheckedAt: new Date().toISOString(),
+        available: false,
+        downloadProgressPercent: null,
+        currentVersion: currentAppVersion(),
+        dismissedVersion: dismissedAppUpdateVersion(),
+        lastCheckedAt: nextAppUpdateTimestamp(),
         error:
           error instanceof Error
             ? error.message
@@ -885,7 +915,7 @@ async function checkForAppUpdates(): Promise<AppUpdateStatusPayload> {
 }
 
 function scheduleAppUpdateChecks() {
-  if (!app.isPackaged || appUpdateCheckTimer) {
+  if (!appUpdateSupported() || appUpdateCheckTimer) {
     return;
   }
 
@@ -896,39 +926,46 @@ function scheduleAppUpdateChecks() {
 }
 
 async function dismissAppUpdate(
-  releaseTag?: string | null,
+  version?: string | null,
 ): Promise<AppUpdateStatusPayload> {
-  const nextDismissedReleaseTag =
-    releaseTag?.trim() || appUpdateStatus.releaseTag || null;
-  if (!nextDismissedReleaseTag) {
+  const nextDismissedVersion =
+    normalizeReleaseVersion(
+      version?.trim() || appUpdateStatus.latestVersion || "",
+    ) || null;
+  if (!nextDismissedVersion) {
     return appUpdateStatus;
   }
 
   appUpdatePreferences = {
     ...appUpdatePreferences,
-    dismissedReleaseTag: nextDismissedReleaseTag,
+    dismissedVersion: nextDismissedVersion,
+    dismissedReleaseTag: nextDismissedVersion,
   };
   await persistAppUpdatePreferences();
 
+  const dismissesCurrentVersion =
+    appUpdateStatus.latestVersion === nextDismissedVersion;
   appUpdateStatus = {
     ...appUpdateStatus,
-    available:
-      appUpdateStatus.releaseTag !== nextDismissedReleaseTag
-        ? appUpdateStatus.available
-        : false,
-    dismissedReleaseTag: nextDismissedReleaseTag,
+    available: dismissesCurrentVersion ? false : appUpdateStatus.available,
+    downloaded: dismissesCurrentVersion ? false : appUpdateStatus.downloaded,
+    downloadProgressPercent: dismissesCurrentVersion
+      ? null
+      : appUpdateStatus.downloadProgressPercent,
+    dismissedVersion: nextDismissedVersion,
   };
   emitAppUpdateState();
   return appUpdateStatus;
 }
 
-async function openAppUpdateDownload(): Promise<void> {
-  const targetUrl = appUpdateStatus.downloadUrl || appUpdateStatus.releaseUrl;
-  if (!targetUrl) {
-    throw new Error("No release download link is available.");
+function installAppUpdateNow() {
+  if (!appUpdateSupported()) {
+    throw new Error("In-app updates are unavailable on this build.");
   }
-
-  await shell.openExternal(targetUrl);
+  if (!appUpdateStatus.downloaded) {
+    throw new Error("No downloaded update is ready to install.");
+  }
+  autoUpdater.quitAndInstall(false, true);
 }
 
 async function openExternalUrl(rawUrl: string): Promise<void> {
@@ -957,8 +994,8 @@ configureStableUserDataPath();
 appUpdatePreferences = loadAppUpdatePreferences();
 appUpdateStatus = {
   ...appUpdateStatus,
-  supported: app.isPackaged,
-  dismissedReleaseTag: appUpdatePreferences.dismissedReleaseTag ?? null,
+  supported: appUpdateSupported(),
+  dismissedVersion: dismissedAppUpdateVersion(),
 };
 
 const desktopAuthClient =
@@ -1541,6 +1578,10 @@ interface RemoteTaskProposalGenerationResponsePayload {
   accepted_count: number;
   event_count: number;
   correlation_id: string;
+}
+
+interface ProactiveContextCaptureResponsePayload {
+  context: Record<string, unknown>;
 }
 
 interface ProactiveTaskProposalPreferenceUpdatePayload {
@@ -3392,6 +3433,40 @@ function normalizeLegacyRuntimeModelToken(token: string): string {
   return token.trim();
 }
 
+function normalizeRuntimeProviderModelId(
+  providerId: string,
+  modelId: string,
+): string {
+  const normalizedProviderId = providerId.trim().toLowerCase();
+  const normalizedModelId = modelId.trim();
+  if (!normalizedProviderId || !normalizedModelId) {
+    return normalizedModelId;
+  }
+  return (
+    RUNTIME_LEGACY_DIRECT_PROVIDER_MODEL_ALIASES[normalizedProviderId]?.[
+      normalizedModelId
+    ] ?? normalizedModelId
+  );
+}
+
+function normalizeRuntimeProviderModelToken(
+  providerId: string,
+  token: string,
+  modelId: string,
+): string {
+  const normalizedProviderId = canonicalRuntimeProviderId(providerId);
+  const normalizedModelId = normalizeRuntimeProviderModelId(
+    normalizedProviderId,
+    modelId,
+  );
+  const normalizedToken = token.trim();
+  const providerPrefix = `${normalizedProviderId}/`;
+  if (!normalizedToken.startsWith(providerPrefix)) {
+    return normalizedToken || providerPrefix + normalizedModelId;
+  }
+  return `${providerPrefix}${normalizedModelId}`;
+}
+
 function runtimeProviderLabel(providerId: string): string {
   const normalized = providerId.trim().toLowerCase();
   if (normalized === "openai" || normalized.includes("openai")) {
@@ -3408,6 +3483,9 @@ function runtimeProviderLabel(providerId: string): string {
   }
   if (normalized.includes("ollama")) {
     return "Ollama";
+  }
+  if (normalized.includes("minimax")) {
+    return "MiniMax";
   }
   if (
     normalized === RUNTIME_HOLABOSS_PROVIDER_ID ||
@@ -3475,7 +3553,8 @@ function runtimeModelIdFromToken(token: string): string {
     normalizedPrefix.includes("openrouter") ||
     normalizedPrefix.includes("gemini") ||
     normalizedPrefix.includes("google") ||
-    normalizedPrefix.includes("ollama")
+    normalizedPrefix.includes("ollama") ||
+    normalizedPrefix.includes("minimax")
   ) {
     return rest.join("/").trim();
   }
@@ -3485,6 +3564,25 @@ function runtimeModelIdFromToken(token: string): string {
 function isDeprecatedRuntimeModelId(modelId: string): boolean {
   const normalized = runtimeModelIdFromToken(modelId).toLowerCase();
   return RUNTIME_DEPRECATED_MODEL_IDS.has(normalized);
+}
+
+function isClaudeRuntimeModelId(modelId: string): boolean {
+  const normalized = modelId.trim().toLowerCase();
+  return /^((openai|anthropic|holaboss|holaboss_model_proxy)\/)*claude-/.test(
+    normalized,
+  );
+}
+
+function isUnsupportedHolabossRuntimeModel(
+  providerId: string,
+  modelId: string,
+): boolean {
+  const normalizedProviderId = canonicalRuntimeProviderId(providerId);
+  return (
+    RUNTIME_HOLABOSS_PROVIDER_ALIASES.some(
+      (alias) => alias === normalizedProviderId,
+    ) && isClaudeRuntimeModelId(modelId)
+  );
 }
 
 function runtimeProviderModelGroups(
@@ -3575,17 +3673,28 @@ function runtimeProviderModelGroups(
   };
   const addModel = (providerId: string, token: string, modelId: string) => {
     const normalizedProviderId = canonicalRuntimeProviderId(providerId);
-    const normalizedModelId = modelId.trim();
+    const normalizedModelId = normalizeRuntimeProviderModelId(
+      normalizedProviderId,
+      modelId,
+    );
     if (
       !normalizedProviderId ||
       !normalizedModelId ||
+      isUnsupportedHolabossRuntimeModel(
+        normalizedProviderId,
+        normalizedModelId,
+      ) ||
       isDeprecatedRuntimeModelId(normalizedModelId)
     ) {
       return;
     }
     const normalizedToken = canonicalRuntimeModelToken(
       normalizedProviderId,
-      token,
+      normalizeRuntimeProviderModelToken(
+        normalizedProviderId,
+        token,
+        normalizedModelId,
+      ),
       normalizedModelId,
     );
     if (isDeprecatedRuntimeModelId(normalizedToken)) {
@@ -5128,6 +5237,14 @@ async function ingestWorkspaceHeartbeat(params: {
   });
 
   try {
+    const bundledContext = await requestRuntimeJson<ProactiveContextCaptureResponsePayload>({
+      method: "POST",
+      path: "/api/v1/proactive/context/capture",
+      payload: {
+        workspace_id: workspaceId,
+      },
+      retryTransientErrors: true,
+    });
     const results = await requestControlPlaneJson<
       ProactiveIngestItemResultPayload[]
     >({
@@ -5150,6 +5267,7 @@ async function ingestWorkspaceHeartbeat(params: {
             source_refs: [params.sourceRef],
             window: "24h",
             proposal_scope: "window",
+            captured_context: bundledContext.context,
           },
         ],
       },
@@ -5415,9 +5533,9 @@ async function getProactiveStatus(
       proposal_count: 0,
       heartbeat: fallbackHeartbeat,
       bridge: fallbackBridge,
-      delivery_state: "idle",
-      delivery_summary: "Select a workspace to inspect proactive status.",
-      delivery_detail: null,
+      lifecycle_state: "idle",
+      lifecycle_summary: "Select a workspace to inspect proactive status.",
+      lifecycle_detail: null,
     };
   }
 
@@ -5520,52 +5638,42 @@ async function getProactiveStatus(
     };
   }
 
-  let deliveryState = "idle";
-  let deliverySummary = "No suggestions right now.";
-  let deliveryDetail: string | null = null;
+  let lifecycleState = "idle";
+  let lifecycleSummary = "Idle.";
+  let lifecycleDetail: string | null = null;
   const heartbeatAgeSeconds = secondsSinceIso(heartbeat.recorded_at);
   const heartbeatJustClaimed =
     heartbeatAgeSeconds !== null && heartbeatAgeSeconds < 10;
   const heartbeatSettled =
     heartbeatAgeSeconds !== null && heartbeatAgeSeconds >= 120;
-  if (proposalCount > 0) {
-    deliveryState = "ready";
-    deliverySummary = `${proposalCount} suggestion${proposalCount === 1 ? "" : "s"} ready.`;
-  } else if (heartbeat.state === "published" && bridge.state === "error") {
-    deliveryState = "unavailable";
-    deliverySummary = "Suggestions are unavailable right now.";
-    deliveryDetail = bridge.detail;
-  } else if (heartbeat.state === "pending") {
-    deliveryState = "sent";
-    deliverySummary = "Request sent.";
-    deliveryDetail = "Waiting for the workspace to pick it up.";
+  if (heartbeat.state === "pending") {
+    lifecycleState = "sent";
+    lifecycleSummary = "Sent.";
+    lifecycleDetail = "Waiting for the proactive agent to claim this run.";
   } else if (heartbeat.state === "published" && heartbeatJustClaimed) {
-    deliveryState = "claimed";
-    deliverySummary = "Request picked up.";
-    deliveryDetail = "Preparing suggestions for this workspace.";
+    lifecycleState = "claimed";
+    lifecycleSummary = "Claimed.";
+    lifecycleDetail = "The proactive agent has started working on this run.";
   } else if (heartbeat.state === "published" && !heartbeatSettled) {
-    deliveryState = "analyzing";
-    deliverySummary = "Analyzing workspace.";
-    deliveryDetail = "Looking for useful suggestions.";
-  } else if (heartbeat.state === "published") {
-    deliveryState = "idle";
-    deliverySummary = "No suggestions right now.";
+    lifecycleState = "analyzing";
+    lifecycleSummary = "Analyzing.";
+    lifecycleDetail = "Looking for useful suggestions.";
   } else if (heartbeat.state === "failed") {
-    deliveryState = "error";
-    deliverySummary = "Couldn't generate suggestions.";
-    deliveryDetail = heartbeat.detail;
+    lifecycleState = "error";
+    lifecycleSummary = "Error.";
+    lifecycleDetail = heartbeat.detail;
   } else if (heartbeat.state === "skipped") {
-    deliveryState = "unavailable";
-    deliverySummary = "Suggestions are unavailable right now.";
-    deliveryDetail = heartbeat.detail;
-  } else if (bridge.state === "error") {
-    deliveryState = "unavailable";
-    deliverySummary = "Suggestions are unavailable right now.";
-    deliveryDetail = bridge.detail;
-  } else if (bridge.state === "inactive") {
-    deliveryState = "unavailable";
-    deliverySummary = "Suggestions are unavailable right now.";
-    deliveryDetail = bridge.detail;
+    lifecycleState = "unavailable";
+    lifecycleSummary = "Unavailable.";
+    lifecycleDetail = heartbeat.detail;
+  } else if (
+    bridge.state === "error" ||
+    bridge.state === "inactive" ||
+    bridge.state === "pending"
+  ) {
+    lifecycleState = "unavailable";
+    lifecycleSummary = "Unavailable.";
+    lifecycleDetail = bridge.detail;
   }
 
   return {
@@ -5573,9 +5681,9 @@ async function getProactiveStatus(
     proposal_count: proposalCount,
     heartbeat,
     bridge,
-    delivery_state: deliveryState,
-    delivery_summary: deliverySummary,
-    delivery_detail: deliveryDetail,
+    lifecycle_state: lifecycleState,
+    lifecycle_summary: lifecycleSummary,
+    lifecycle_detail: lifecycleDetail,
   };
 }
 
@@ -11293,6 +11401,7 @@ function setBrowserBounds(bounds: BrowserBoundsPayload) {
   const workspace = activeBrowserWorkspace();
   if (!workspace || !workspace.activeTabId || !hasVisibleBrowserBounds()) {
     mainWindow?.setBrowserView(null);
+    attachedBrowserTabView = null;
     return;
   }
   updateAttachedBrowserView();
@@ -12760,10 +12869,10 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "appUpdate:dismiss",
     ["main"],
-    async (_event, releaseTag?: string | null) => dismissAppUpdate(releaseTag),
+    async (_event, version?: string | null) => dismissAppUpdate(version),
   );
-  handleTrustedIpc("appUpdate:openDownload", ["main"], async () => {
-    await openAppUpdateDownload();
+  handleTrustedIpc("appUpdate:installNow", ["main"], async () => {
+    installAppUpdateNow();
   });
   handleTrustedIpc(
     "runtime:exchangeBinding",
@@ -13573,6 +13682,7 @@ app.whenReady().then(async () => {
   });
 
   createMainWindow();
+  configureAutoUpdater();
   scheduleAppUpdateChecks();
   void checkForAppUpdates();
   try {

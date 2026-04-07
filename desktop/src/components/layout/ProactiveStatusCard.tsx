@@ -24,11 +24,11 @@ interface ProactiveLifecyclePanelProps {
 function proactiveStateLabel(state: string): string {
   switch (state) {
     case "ready":
-      return "Ready";
+      return "Idle";
     case "sent":
       return "Sent";
     case "claimed":
-      return "Picked Up";
+      return "Claimed";
     case "analyzing":
       return "Analyzing";
     case "idle":
@@ -43,9 +43,6 @@ function proactiveStateLabel(state: string): string {
 }
 
 function proactiveStateClasses(state: string): string {
-  if (state === "ready") {
-    return "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
-  }
   if (state === "sent") {
     return "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300";
   }
@@ -58,7 +55,7 @@ function proactiveStateClasses(state: string): string {
   if (state === "error" || state === "unavailable") {
     return "border-destructive/30 bg-destructive/10 text-destructive";
   }
-  if (state === "idle") {
+  if (state === "idle" || state === "ready") {
     return "border-border/45 bg-background/70 text-muted-foreground";
   }
   return "border-border/45 bg-background/70 text-foreground/72";
@@ -83,27 +80,27 @@ function lifecycleCopy(params: {
   if (!hasWorkspace) {
     return {
       state: "idle",
-      summary: "Select a workspace to view suggestions.",
+      summary: "Select a workspace to inspect proactive status.",
       detail: null,
     };
   }
   if (proactiveStatus) {
     return {
-      state: proactiveStatus.delivery_state || "idle",
-      summary: proactiveStatus.delivery_summary || "No suggestions right now.",
-      detail: proactiveStatus.delivery_detail || null,
+      state: proactiveStatus.lifecycle_state || "idle",
+      summary: proactiveStatus.lifecycle_summary || "Idle.",
+      detail: proactiveStatus.lifecycle_detail || null,
     };
   }
   if (isLoading) {
     return {
       state: "checking",
-      summary: "Checking suggestion status.",
+      summary: "Checking proactive status.",
       detail: null,
     };
   }
   return {
     state: "idle",
-    summary: "No suggestions right now.",
+    summary: "Idle.",
     detail: null,
   };
 }
