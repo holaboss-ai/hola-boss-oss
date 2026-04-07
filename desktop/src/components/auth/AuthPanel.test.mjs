@@ -44,6 +44,18 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.doesNotMatch(source, /Recommended models configured/);
 });
 
+test("runtime auth panel keeps provider cards readable in dark themes", async () => {
+  const source = await readFile(AUTH_PANEL_PATH, "utf8");
+
+  assert.match(source, /function providerBrandIconAsset/);
+  assert.match(source, /WebkitMaskImage: `url\(\$\{assetUrl\}\)`/);
+  assert.match(source, /className="block h-4 w-4 bg-foreground\/92"/);
+  assert.match(source, /border-border\/55 bg-background\/80 text-foreground/);
+  assert.match(source, /text-sm leading-6 text-foreground\/82/);
+  assert.match(source, /text-sm leading-6 text-muted-foreground\/95/);
+  assert.doesNotMatch(source, /text-text-main/);
+});
+
 test("holaboss proxy defaults only advertise managed gpt models", async () => {
   const source = await readFile(AUTH_PANEL_PATH, "utf8");
   const holabossTemplate =

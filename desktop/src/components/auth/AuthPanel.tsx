@@ -230,27 +230,50 @@ function enabledProviderIdsForDrafts(providerDrafts: ProviderDraftMap, isSignedI
   );
 }
 
+function providerBrandIconAsset(providerId: KnownProviderId): string | null {
+  if (providerId === "openai_direct") {
+    return openaiLogo;
+  }
+  if (providerId === "anthropic_direct") {
+    return anthropicLogo;
+  }
+  if (providerId === "openrouter_direct") {
+    return openrouterLogo;
+  }
+  if (providerId === "gemini_direct") {
+    return geminiLogo;
+  }
+  if (providerId === "ollama_direct") {
+    return ollamaLogo;
+  }
+  if (providerId === "minimax_direct") {
+    return minimaxLogo;
+  }
+  return null;
+}
+
 function ProviderBrandIcon({ providerId }: { providerId: KnownProviderId }) {
   if (providerId === "holaboss") {
     return <img src={holabossLogoUrl} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
   }
-  if (providerId === "openai_direct") {
-    return <img src={openaiLogo} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
-  }
-  if (providerId === "anthropic_direct") {
-    return <img src={anthropicLogo} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
-  }
-  if (providerId === "openrouter_direct") {
-    return <img src={openrouterLogo} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
-  }
-  if (providerId === "gemini_direct") {
-    return <img src={geminiLogo} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
-  }
-  if (providerId === "ollama_direct") {
-    return <img src={ollamaLogo} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
-  }
-  if (providerId === "minimax_direct") {
-    return <img src={minimaxLogo} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
+  const assetUrl = providerBrandIconAsset(providerId);
+  if (assetUrl) {
+    return (
+      <span
+        aria-hidden="true"
+        className="block h-4 w-4 bg-foreground/92"
+        style={{
+          WebkitMaskImage: `url(${assetUrl})`,
+          maskImage: `url(${assetUrl})`,
+          WebkitMaskRepeat: "no-repeat",
+          maskRepeat: "no-repeat",
+          WebkitMaskPosition: "center",
+          maskPosition: "center",
+          WebkitMaskSize: "contain",
+          maskSize: "contain",
+        }}
+      />
+    );
   }
   return null;
 }
@@ -859,18 +882,20 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       <div
         key={providerId}
         className={`theme-control-surface overflow-hidden rounded-[14px] border transition ${
-          isExpanded ? "border-primary/35 bg-card/90" : "border-border/40 bg-card/75"
+          isExpanded
+            ? "border-primary/35 bg-card/96 shadow-[0_0_0_1px_rgb(var(--color-primary)/0.08)]"
+            : "border-border/55 bg-card/92 hover:border-border/75"
         }`}
       >
         <div className="flex items-start justify-between gap-3 px-4 py-4">
           <div className="flex min-w-0 flex-1 items-start gap-3">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-border/35 bg-background/45 text-foreground/86">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-border/55 bg-background/80 text-foreground">
               <ProviderBrandIcon providerId={providerId} />
             </span>
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-foreground">{template.label}</div>
-              <div className="mt-1 text-sm text-muted-foreground">{template.description}</div>
-              <div className="mt-1 text-sm text-muted-foreground">{statusText}</div>
+              <div className="text-sm font-semibold text-foreground">{template.label}</div>
+              <div className="mt-1 text-sm leading-6 text-foreground/82">{template.description}</div>
+              <div className="mt-1 text-sm leading-6 text-muted-foreground/95">{statusText}</div>
             </div>
           </div>
 
@@ -917,7 +942,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   updateProviderDraft(providerId, { enabled: true });
                   setExpandedProviderId(providerId);
                 }}
-                className={`${actionButtonClassName} border border-border/45 text-text-main hover:border-neon-green/35 hover:text-neon-green`}
+                className={`${actionButtonClassName} border border-border/55 text-foreground hover:border-neon-green/35 hover:text-neon-green`}
               >
                 Connect
               </button>
