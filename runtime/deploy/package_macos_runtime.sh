@@ -45,11 +45,13 @@ cp -R "${STAGING_ROOT}/runtime-root" "${OUTPUT_ROOT}/runtime"
 "${SCRIPT_DIR}/prune_packaged_tree.sh" "${OUTPUT_ROOT}/runtime" "macos"
 
 NODE_RUNTIME_DIR="${OUTPUT_ROOT}/node-runtime"
+PYTHON_RUNTIME_DIR="${OUTPUT_ROOT}/python-runtime"
 BIN_DIR="${OUTPUT_ROOT}/bin"
 PACKAGE_METADATA_PATH="${OUTPUT_ROOT}/package-metadata.json"
 SKIP_NODE_DEPS="${HOLABOSS_SKIP_NODE_DEPS:-0}"
 LOCAL_NODE_BIN="${NODE_RUNTIME_DIR}/node_modules/.bin/node"
 LOCAL_NPM_BIN="${NODE_RUNTIME_DIR}/node_modules/.bin/npm"
+LOCAL_PYTHON_BIN="${PYTHON_RUNTIME_DIR}/bin/python"
 
 NODE_VERSION="${HOLABOSS_RUNTIME_NODE_VERSION:-}"
 if [ -z "${NODE_VERSION}" ]; then
@@ -64,6 +66,21 @@ if [ -z "${NPM_VERSION}" ]; then
   NPM_VERSION="$(npm --version)"
 fi
 
+PYTHON_VERSION="${HOLABOSS_RUNTIME_PYTHON_VERSION:-3.12.13}"
+PYTHON_ARCH_RAW="${HOLABOSS_RUNTIME_PYTHON_ARCH:-$(uname -m)}"
+case "${PYTHON_ARCH_RAW}" in
+  x64|amd64|x86_64)
+    PYTHON_TARGET="x86_64-apple-darwin"
+    ;;
+  arm64|aarch64)
+    PYTHON_TARGET="aarch64-apple-darwin"
+    ;;
+  *)
+    echo "unsupported Python runtime architecture: ${PYTHON_ARCH_RAW}" >&2
+    exit 1
+    ;;
+esac
+
 mkdir -p "${BIN_DIR}"
 
 if [ "${SKIP_NODE_DEPS}" != "1" ]; then
@@ -72,6 +89,9 @@ if [ "${SKIP_NODE_DEPS}" != "1" ]; then
   npm install --prefix "${NODE_RUNTIME_DIR}" "node@${NODE_VERSION}" "npm@${NPM_VERSION}"
   "${SCRIPT_DIR}/prune_packaged_tree.sh" "${NODE_RUNTIME_DIR}" "macos"
 fi
+
+require_cmd node
+node "${SCRIPT_DIR}/stage_python_runtime.mjs" "${OUTPUT_ROOT}" "macos"
 
 cat > "${BIN_DIR}/sandbox-runtime" <<'EOF'
 #!/usr/bin/env bash
@@ -83,7 +103,7 @@ BUNDLED_NODE_BIN="${BUNDLE_ROOT}/node-runtime/node_modules/.bin/node"
 
 export HOLABOSS_RUNTIME_APP_ROOT="${BUNDLE_ROOT}/runtime"
 export HOLABOSS_RUNTIME_ROOT="${BUNDLE_ROOT}/runtime"
-export PATH="${BUNDLE_ROOT}/node-runtime/node_modules/.bin:${BUNDLE_ROOT}/node-runtime/bin:${PATH}"
+export PATH="${BUNDLE_ROOT}/python-runtime/bin:${BUNDLE_ROOT}/python-runtime/python/bin:${BUNDLE_ROOT}/node-runtime/node_modules/.bin:${BUNDLE_ROOT}/node-runtime/bin:${PATH}"
 if [ -x "${BUNDLED_NODE_BIN}" ]; then
   export HOLABOSS_RUNTIME_NODE_BIN="${BUNDLED_NODE_BIN}"
 fi
@@ -100,7 +120,10 @@ cat > "${PACKAGE_METADATA_PATH}" <<EOF
   "bundled_node_bin": $([ "${SKIP_NODE_DEPS}" = "1" ] || [ ! -x "${LOCAL_NODE_BIN}" ] && printf 'false' || printf 'true'),
   "bundled_node_version": $([ "${SKIP_NODE_DEPS}" = "1" ] && printf 'null' || printf '"%s"' "${NODE_VERSION}"),
   "bundled_npm_bin": $([ "${SKIP_NODE_DEPS}" = "1" ] || [ ! -x "${LOCAL_NPM_BIN}" ] && printf 'false' || printf 'true'),
-  "bundled_npm_version": $([ "${SKIP_NODE_DEPS}" = "1" ] && printf 'null' || printf '"%s"' "${NPM_VERSION}")
+  "bundled_npm_version": $([ "${SKIP_NODE_DEPS}" = "1" ] && printf 'null' || printf '"%s"' "${NPM_VERSION}"),
+  "bundled_python_bin": $([ ! -x "${LOCAL_PYTHON_BIN}" ] && printf 'false' || printf 'true'),
+  "bundled_python_version": "${PYTHON_VERSION}",
+  "bundled_python_target": "${PYTHON_TARGET}"
 }
 EOF
 

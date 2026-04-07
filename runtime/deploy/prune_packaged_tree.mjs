@@ -11,6 +11,7 @@ const FILE_SUFFIXES_TO_PRUNE = [
   ".map",
   ".md",
   ".markdown",
+  ".pdb",
   ".tsbuildinfo",
   ".exp",
   ".lib"

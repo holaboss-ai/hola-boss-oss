@@ -1,3 +1,4 @@
+import path from "node:path";
 import { spawn, spawnSync, type SpawnOptions } from "node:child_process";
 
 export type RuntimeShellKind = "posix" | "powershell";
@@ -7,6 +8,20 @@ type ChildLike = ReturnType<SpawnLike>;
 
 export function runtimeShellKind(platform: NodeJS.Platform = process.platform): RuntimeShellKind {
   return platform === "win32" ? "powershell" : "posix";
+}
+
+function windowsPowerShellPath(env: NodeJS.ProcessEnv = process.env): string {
+  const systemRoot = (env.SystemRoot ?? env.windir ?? "C:\\Windows").trim();
+  if (!systemRoot) {
+    return "powershell.exe";
+  }
+  return path.win32.join(
+    systemRoot,
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
 }
 
 export function shellPathDelimiter(platform: NodeJS.Platform = process.platform): string {
@@ -29,7 +44,7 @@ export function shellCommandInvocation(commandText: string, platform: NodeJS.Pla
   const shellKind = runtimeShellKind(platform);
   if (shellKind === "powershell") {
     return {
-      command: "powershell.exe",
+      command: windowsPowerShellPath(),
       args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", commandText],
       detached: false,
       shellKind,

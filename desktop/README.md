@@ -64,6 +64,7 @@ cp .env.example .env
 ```
 
 `prepare:runtime` downloads the latest runtime-channel bundle for the current host platform from GitHub Releases and stages it into `out/runtime-<platform>/`.
+Each staged runtime bundle is self-contained and now carries the runtime API, bundled Node/npm, and bundled Python.
 
 ## Build
 
@@ -116,6 +117,12 @@ The staging script accepts one of:
 - `HOLABOSS_RUNTIME_BUNDLE_URL=https://.../holaboss-runtime-<platform>-<sha>.tar.gz`
 - `HOLABOSS_GITHUB_TOKEN=...` or `GITHUB_TOKEN=...` to fetch the latest runtime-channel release asset from GitHub Releases
 - `HOLABOSS_RUNTIME_PLATFORM=macos|linux|windows` to override the auto-detected target platform when needed
+
+Runtime packagers can also override the bundled Python source when needed:
+- `HOLABOSS_RUNTIME_PYTHON_DIR=/absolute/path/to/extracted/python`
+- `HOLABOSS_RUNTIME_PYTHON_TARBALL=/absolute/path/to/cpython-...tar.gz`
+- `HOLABOSS_RUNTIME_PYTHON_URL=https://.../cpython-...tar.gz`
+- `HOLABOSS_RUNTIME_PYTHON_VERSION`, `HOLABOSS_RUNTIME_PYTHON_RELEASE`, `HOLABOSS_RUNTIME_PYTHON_VARIANT`, and `HOLABOSS_RUNTIME_PYTHON_TARGET_TRIPLE`
 
 If none are set, it falls back to the host temp directory, for example `${TMPDIR:-/tmp}/holaboss-runtime-<platform>-full`.
 

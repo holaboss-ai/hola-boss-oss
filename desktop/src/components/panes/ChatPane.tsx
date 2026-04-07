@@ -1444,6 +1444,9 @@ export function ChatPane({
     const currentRuntimeStatus = runtimeStateStatus(
       currentRuntimeState?.status,
     );
+    const currentRuntimeInputId = (
+      currentRuntimeState?.current_input_id || ""
+    ).trim();
     const hasAssistantMessage = nextMessages.some(
       (message) => message.role === "assistant",
     );
@@ -1472,7 +1475,8 @@ export function ChatPane({
         {
           sessionId: nextSessionId,
           workspaceId,
-          includeHistory: true,
+          inputId: currentRuntimeInputId || undefined,
+          includeHistory: Boolean(currentRuntimeInputId),
           stopOnTerminal: true,
         },
       );
@@ -1497,8 +1501,8 @@ export function ChatPane({
           ? "stream_requested_onboarding_bootstrap"
           : "stream_requested_existing_run",
         detail: shouldAttachOnboardingBootstrapStream
-          ? "attached to in-flight onboarding opener"
-          : "attached to in-flight session run",
+          ? `attached to in-flight onboarding opener input=${currentRuntimeInputId || "latest"}`
+          : `attached to in-flight session run input=${currentRuntimeInputId || "latest"}`,
       });
     } else if (!activeStreamIdRef.current && !pendingInputIdRef.current) {
       setIsResponding(false);

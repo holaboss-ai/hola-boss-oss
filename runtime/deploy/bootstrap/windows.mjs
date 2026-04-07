@@ -44,6 +44,14 @@ function runtimeNodeCandidates(bundleRoot) {
   ];
 }
 
+function runtimePythonPathEntries(bundleRoot) {
+  return [
+    path.join(bundleRoot, "python-runtime", "python"),
+    path.join(bundleRoot, "python-runtime", "python", "Scripts"),
+    path.join(bundleRoot, "python-runtime", "bin"),
+  ];
+}
+
 function runtimeApiEntryCandidates(runtimeAppRoot) {
   return [
     path.join(runtimeAppRoot, "api-server", "dist", "index.mjs"),
@@ -69,6 +77,7 @@ export async function startWindowsRuntime(args = process.argv.slice(2), options 
     process.execPath;
   const runtimeApiEntry = firstExistingPath(runtimeApiEntryCandidates(runtimeAppRoot));
   const pathEntries = [
+    ...runtimePythonPathEntries(bundleRoot),
     path.join(bundleRoot, "node-runtime", "node_modules", ".bin"),
     path.join(bundleRoot, "node-runtime", "bin"),
     process.env.PATH ?? ""

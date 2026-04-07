@@ -20,7 +20,10 @@ test("shellCommandInvocation uses bash on POSIX", () => {
 test("shellCommandInvocation uses PowerShell on Windows", () => {
   const invocation = shellCommandInvocation("Write-Output hello", "win32");
 
-  assert.equal(invocation.command, "powershell.exe");
+  assert.equal(
+    invocation.command,
+    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  );
   assert.deepEqual(invocation.args, [
     "-NoLogo",
     "-NoProfile",

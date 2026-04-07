@@ -44,6 +44,7 @@ const runtimeSourceInputs = [
   path.join(repoRoot, "runtime", "deploy", "build_runtime_root.sh"),
   path.join(repoRoot, "runtime", "deploy", "prune_packaged_tree.mjs"),
   path.join(repoRoot, "runtime", "deploy", "prune_packaged_tree.sh"),
+  path.join(repoRoot, "runtime", "deploy", "stage_python_runtime.mjs"),
   localPackagerPath
 ];
 

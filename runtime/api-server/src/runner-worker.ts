@@ -71,6 +71,21 @@ function bundledRuntimeNodeModulesBinDir(): string {
   return path.join(runtimeBundleRoot(), "node-runtime", "node_modules", ".bin");
 }
 
+function bundledRuntimePythonPathEntries(platform: NodeJS.Platform = process.platform): string[] {
+  const bundleRoot = runtimeBundleRoot();
+  if (platform === "win32") {
+    return [
+      path.join(bundleRoot, "python-runtime", "python"),
+      path.join(bundleRoot, "python-runtime", "python", "Scripts"),
+      path.join(bundleRoot, "python-runtime", "bin"),
+    ];
+  }
+  return [
+    path.join(bundleRoot, "python-runtime", "bin"),
+    path.join(bundleRoot, "python-runtime", "python", "bin"),
+  ];
+}
+
 function prependPathEntries(currentPath: string | undefined, entries: string[]): string {
   const normalizedEntries = entries.map((entry) => entry.trim()).filter(Boolean);
   if (normalizedEntries.length === 0) {
@@ -170,6 +185,7 @@ export function buildRunnerEnv(): NodeJS.ProcessEnv {
     env.SANDBOX_RUNTIME_API_URL = currentApiUrl;
   }
   env.PATH = prependPathEntries(env.PATH, [
+    ...bundledRuntimePythonPathEntries(),
     bundledRuntimeNodeModulesBinDir(),
     bundledRuntimeNodeBinDir(),
     path.join(runtimeAppRoot(), "api-server", "node_modules", ".bin")

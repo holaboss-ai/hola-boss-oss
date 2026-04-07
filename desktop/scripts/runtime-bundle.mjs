@@ -65,12 +65,24 @@ export function runtimeBundleNpmRelativePaths(runtimePlatform = resolveRuntimePl
       ];
 }
 
+export function runtimeBundlePythonRelativePaths(runtimePlatform = resolveRuntimePlatform()) {
+  const base = path.join("python-runtime", "bin", "python");
+  return runtimePlatform === "windows"
+    ? [
+        `${base}.cmd`,
+        path.join("python-runtime", "python", "python.exe"),
+        path.join("python-runtime", "python", "python3.exe")
+      ]
+    : [base];
+}
+
 export function runtimeBundleRequiredPathGroups(runtimePlatform = resolveRuntimePlatform()) {
   return [
     runtimeBundleExecutableRelativePaths(runtimePlatform),
     ["package-metadata.json"],
     runtimeBundleNodeRelativePaths(runtimePlatform),
     runtimeBundleNpmRelativePaths(runtimePlatform),
+    runtimeBundlePythonRelativePaths(runtimePlatform),
     [path.join("runtime", "metadata.json")],
     [path.join("runtime", "api-server", "dist", "index.mjs")]
   ];

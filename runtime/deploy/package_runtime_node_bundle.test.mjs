@@ -15,29 +15,39 @@ const linuxPackagerPath = path.join(__dirname, "package_linux_runtime.sh");
 const windowsPackagerPath = path.join(__dirname, "package_windows_runtime.mjs");
 
 for (const targetPath of [macosPackagerPath, linuxPackagerPath]) {
-  test(`${path.basename(targetPath)} bundles a local node runtime and exports it`, async () => {
+  test(`${path.basename(targetPath)} bundles local node and python runtimes and exports them`, async () => {
     const source = await readFile(targetPath, "utf8");
+    const targetPlatform = path.basename(targetPath).includes("macos") ? "macos" : "linux";
 
     assert.match(source, /npm install --prefix "\$\{NODE_RUNTIME_DIR\}" "node@\$\{NODE_VERSION\}" "npm@\$\{NPM_VERSION\}"/);
+    assert.match(source, new RegExp(`node "\\$\\{SCRIPT_DIR\\}/stage_python_runtime\\.mjs" "\\$\\{OUTPUT_ROOT\\}" "${targetPlatform}"`));
     assert.match(source, /BUNDLED_NODE_BIN="\$\{BUNDLE_ROOT\}\/node-runtime\/node_modules\/\.bin\/node"/);
-    assert.match(source, /export PATH="\$\{BUNDLE_ROOT\}\/node-runtime\/node_modules\/\.bin:\$\{BUNDLE_ROOT\}\/node-runtime\/bin:\$\{PATH\}"/);
+    assert.match(source, /export PATH="\$\{BUNDLE_ROOT\}\/python-runtime\/bin:\$\{BUNDLE_ROOT\}\/python-runtime\/python\/bin:\$\{BUNDLE_ROOT\}\/node-runtime\/node_modules\/\.bin:\$\{BUNDLE_ROOT\}\/node-runtime\/bin:\$\{PATH\}"/);
     assert.match(source, /export HOLABOSS_RUNTIME_NODE_BIN="\$\{BUNDLED_NODE_BIN\}"/);
     assert.match(source, /"bundled_npm_bin":/);
     assert.match(source, /"bundled_npm_version":/);
+    assert.match(source, /"bundled_python_bin":/);
+    assert.match(source, /"bundled_python_version":/);
+    assert.match(source, /"bundled_python_target":/);
     assert.equal(/npm install --global --prefix "\$\{NODE_RUNTIME_DIR\}"/.test(source), false);
     assert.equal(/HOLABOSS_INSTALL_[A-Z_]+/.test(source), false);
   });
 }
 
-test("package_windows_runtime.mjs writes launchers that use the bundled node runtime", async () => {
+test("package_windows_runtime.mjs writes launchers that use the bundled node runtime and stages Python", async () => {
   const source = await readFile(windowsPackagerPath, "utf8");
   const launcherSource = buildWindowsRuntimeLauncherSource();
   const cmdLauncherSource = buildWindowsRuntimeCmdLauncherSource();
 
-  assert.match(source, /execFileSync\(npmCommand\(\), \["install", "--prefix", nodeRuntimeDir, `node@\$\{nodeVersion\}`, `npm@\$\{npmVersion\}`\]/);
+  assert.match(source, /import \{ stagePythonRuntime \} from "\.\/stage_python_runtime\.mjs";/);
+  assert.match(source, /runNpm\(\["install", "--prefix", nodeRuntimeDir, `node@\$\{nodeVersion\}`, `npm@\$\{npmVersion\}`\]/);
   assert.match(source, /prunePackagedTree\(nodeRuntimeDir, "windows"\)/);
+  assert.match(source, /const pythonStageResult = await stagePythonRuntime\(outputRoot, "windows"\);/);
   assert.match(source, /bundled_npm_bin: Boolean\(bundledNpmBin\)/);
   assert.match(source, /bundled_npm_version: skipNodeDeps \? null : npmVersion/);
+  assert.match(source, /bundled_python_bin: Boolean\(bundledPythonBin\)/);
+  assert.match(source, /bundled_python_version: pythonStageResult\.bundledPythonVersion/);
+  assert.match(source, /bundled_python_target: pythonStageResult\.bundledPythonTarget/);
   assert.match(launcherSource, /startWindowsRuntime/);
   assert.match(launcherSource, /process\.exit/);
   assert.match(cmdLauncherSource, /node-runtime\\node_modules\\\.bin\\node\.exe/);

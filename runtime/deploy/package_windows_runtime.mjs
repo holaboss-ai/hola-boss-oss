@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 
 import { buildRuntimeRoot } from "./build_runtime_root.mjs";
 import { prunePackagedTree } from "./prune_packaged_tree.mjs";
+import { stagePythonRuntime } from "./stage_python_runtime.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const runtimeRoot = path.resolve(scriptDir, "..");
@@ -87,6 +88,15 @@ function bundledNpmCandidates(outputRoot) {
   ];
 }
 
+function bundledPythonCandidates(outputRoot) {
+  return [
+    path.join(outputRoot, "python-runtime", "python", "python.exe"),
+    path.join(outputRoot, "python-runtime", "python", "python3.exe"),
+    path.join(outputRoot, "python-runtime", "bin", "python.cmd"),
+    path.join(outputRoot, "python-runtime", "bin", "python3.cmd")
+  ];
+}
+
 function resolveNodeVersion() {
   return process.env.HOLABOSS_RUNTIME_NODE_VERSION?.trim() || process.versions.node;
 }
@@ -131,7 +141,7 @@ if not exist "%BUNDLED_NODE_BIN%" (
 `;
 }
 
-export function packageWindowsRuntime(
+export async function packageWindowsRuntime(
   outputRootArg = path.join(repoRoot, "out", "runtime-windows")
 ) {
   assertWindowsHost();
@@ -165,18 +175,25 @@ export function packageWindowsRuntime(
       prunePackagedTree(nodeRuntimeDir, "windows");
     }
 
+    const pythonStageResult = await stagePythonRuntime(outputRoot, "windows");
+
     writeFileSync(path.join(binDir, "sandbox-runtime.mjs"), buildWindowsRuntimeLauncherSource());
     writeFileSync(path.join(binDir, "sandbox-runtime.cmd"), buildWindowsRuntimeCmdLauncherSource());
 
     const bundledNodeBin = firstExistingPath(bundledNodeCandidates(outputRoot));
     const bundledNpmBin = firstExistingPath(bundledNpmCandidates(outputRoot));
+    const bundledPythonBin =
+      pythonStageResult.bundledPythonBin || firstExistingPath(bundledPythonCandidates(outputRoot));
     const packageMetadata = {
       platform: "windows",
       node_deps_installed: !skipNodeDeps,
       bundled_node_bin: Boolean(bundledNodeBin),
       bundled_node_version: skipNodeDeps ? null : nodeVersion,
       bundled_npm_bin: Boolean(bundledNpmBin),
-      bundled_npm_version: skipNodeDeps ? null : npmVersion
+      bundled_npm_version: skipNodeDeps ? null : npmVersion,
+      bundled_python_bin: Boolean(bundledPythonBin),
+      bundled_python_version: pythonStageResult.bundledPythonVersion,
+      bundled_python_target: pythonStageResult.bundledPythonTarget
     };
     writeFileSync(packageMetadataPath, `${JSON.stringify(packageMetadata, null, 2)}\n`);
 
@@ -192,5 +209,5 @@ function isDirectRun() {
 }
 
 if (isDirectRun()) {
-  packageWindowsRuntime(process.argv[2]);
+  await packageWindowsRuntime(process.argv[2]);
 }
