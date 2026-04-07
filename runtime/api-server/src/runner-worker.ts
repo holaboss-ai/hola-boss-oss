@@ -3,9 +3,15 @@ import { Buffer } from "node:buffer";
 import path from "node:path";
 import { Readable } from "node:stream";
 
+import {
+  killChildProcess,
+  quoteShellValue,
+  runtimeShellKind,
+  shellPathDelimiter,
+  spawnShellCommand,
+} from "./runtime-shell.js";
+
 const TERMINAL_EVENT_TYPES = new Set(["run_completed", "run_failed"]);
-const DEFAULT_TS_RUNNER_COMMAND_TEMPLATE =
-  "cd {runtime_root}/api-server && {runtime_node} dist/ts-runner.mjs --request-base64 {request_base64}";
 const HEARTBEAT_INTERVAL_MS = 5000;
 const DEFAULT_RUN_TIMEOUT_SECONDS = 1800;
 const DEFAULT_IDLE_TIMEOUT_SECONDS = 180;
@@ -35,29 +41,6 @@ export interface RunnerExecutionResult {
 
 export type RunnerEvent = Record<string, unknown>;
 
-function killRunnerProcess(child: ReturnType<typeof spawn>, signal: NodeJS.Signals): void {
-  if (child.killed) {
-    return;
-  }
-  if (process.platform !== "win32" && typeof child.pid === "number" && child.pid > 0) {
-    try {
-      process.kill(-child.pid, signal);
-      return;
-    } catch {
-      // Fall back to the direct child signal below.
-    }
-  }
-  try {
-    child.kill(signal);
-  } catch {
-    // ignore
-  }
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
 function encodeRequest(payload: Record<string, unknown>): string {
   return Buffer.from(JSON.stringify(payload), "utf-8").toString("base64");
 }
@@ -84,8 +67,8 @@ export function bundledRuntimeNodeBinDir(): string {
   return path.join(runtimeBundleRoot(), "node-runtime", "bin");
 }
 
-function pathDelimiter(): string {
-  return process.platform === "win32" ? ";" : ":";
+function bundledRuntimeNodeModulesBinDir(): string {
+  return path.join(runtimeBundleRoot(), "node-runtime", "node_modules", ".bin");
 }
 
 function prependPathEntries(currentPath: string | undefined, entries: string[]): string {
@@ -94,7 +77,7 @@ function prependPathEntries(currentPath: string | undefined, entries: string[]):
     return currentPath ?? "";
   }
 
-  const delimiter = pathDelimiter();
+  const delimiter = shellPathDelimiter();
   const currentEntries = (currentPath ?? "").split(delimiter).map((entry) => entry.trim()).filter(Boolean);
   const deduped = [
     ...normalizedEntries,
@@ -187,23 +170,42 @@ export function buildRunnerEnv(): NodeJS.ProcessEnv {
     env.SANDBOX_RUNTIME_API_URL = currentApiUrl;
   }
   env.PATH = prependPathEntries(env.PATH, [
+    bundledRuntimeNodeModulesBinDir(),
     bundledRuntimeNodeBinDir(),
     path.join(runtimeAppRoot(), "api-server", "node_modules", ".bin")
   ]);
   return env;
 }
 
+function runtimeApiServerRoot(): string {
+  return path.join(runtimeRoot(), "api-server");
+}
+
+function defaultRunnerCommand(payload: Record<string, unknown>): string {
+  const requestBase64 = quoteShellValue(encodeRequest(payload));
+  const runtimeNodeQuoted = quoteShellValue(runtimeNode());
+  const runtimeApiServerRootQuoted = quoteShellValue(runtimeApiServerRoot());
+  if (runtimeShellKind() === "powershell") {
+    return `Set-Location -LiteralPath ${runtimeApiServerRootQuoted}; & ${runtimeNodeQuoted} dist/ts-runner.mjs --request-base64 ${requestBase64}`;
+  }
+  return `cd ${runtimeApiServerRootQuoted} && ${runtimeNodeQuoted} dist/ts-runner.mjs --request-base64 ${requestBase64}`;
+}
+
 function runnerCommand(payload: Record<string, unknown>): string {
-  const template = process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE ?? DEFAULT_TS_RUNNER_COMMAND_TEMPLATE;
+  const template = (process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE ?? "").trim();
+  if (!template) {
+    return defaultRunnerCommand(payload);
+  }
   const replacements: Record<string, string> = {
-    request_base64: shellQuote(encodeRequest(payload)),
-    runtime_app_root: shellQuote(runtimeAppRoot()),
-    runtime_root: shellQuote(runtimeRoot()),
-    runtime_node: shellQuote(runtimeNode())
+    request_base64: quoteShellValue(encodeRequest(payload)),
+    runtime_api_server_root: quoteShellValue(runtimeApiServerRoot()),
+    runtime_app_root: quoteShellValue(runtimeAppRoot()),
+    runtime_root: quoteShellValue(runtimeRoot()),
+    runtime_node: quoteShellValue(runtimeNode())
   };
   try {
     const rendered = template.replace(
-      /\{(request_base64|runtime_app_root|runtime_root|runtime_node)\}/g,
+      /\{(request_base64|runtime_api_server_root|runtime_app_root|runtime_root|runtime_node)\}/g,
       (match, key) => {
         const replacement = replacements[key];
         if (replacement === undefined) {
@@ -335,10 +337,9 @@ export async function executeRunnerRequest(
   if (workspaceId) {
     env.HOLABOSS_WORKSPACE_ID = workspaceId;
   }
-  const child = spawn("/bin/bash", ["-lc", command], {
+  const child = spawnShellCommand(spawn, command, {
     stdio: ["ignore", "pipe", "pipe"],
     env,
-    detached: process.platform !== "win32"
   });
   const closePromise = new Promise<number>((resolve, reject) => {
     child.once("error", reject);
@@ -358,7 +359,7 @@ export async function executeRunnerRequest(
   let sawTerminal = false;
   const timeout = setTimeout(() => {
     timedOut = true;
-    killRunnerProcess(child, "SIGKILL");
+    killChildProcess(child, "SIGKILL");
   }, timeoutMs);
   let idleTimeout: NodeJS.Timeout | null = null;
   const resetIdleTimeout = () => {
@@ -370,7 +371,7 @@ export async function executeRunnerRequest(
         return;
       }
       idleTimedOut = true;
-      killRunnerProcess(child, "SIGKILL");
+      killChildProcess(child, "SIGKILL");
     }, idleTimeoutMs);
   };
   resetIdleTimeout();
@@ -419,7 +420,7 @@ export async function executeRunnerRequest(
           }
           if (TERMINAL_EVENT_TYPES.has(parsed.event_type as string)) {
             sawTerminal = true;
-            killRunnerProcess(child, "SIGTERM");
+            killChildProcess(child, "SIGTERM");
           }
         } catch {
           if (skippedLines.length < 20) {
@@ -477,10 +478,9 @@ export class NativeRunnerExecutor implements RunnerExecutorLike {
   async stream(payload: Record<string, unknown>): Promise<Readable> {
     validateRunnerPayload(payload);
     const command = runnerCommand(payload);
-    const child = spawn("/bin/bash", ["-lc", command], {
+    const child = spawnShellCommand(spawn, command, {
       stdio: ["ignore", "pipe", "pipe"],
       env: buildRunnerEnv(),
-      detached: process.platform !== "win32"
     });
     const stdout = child.stdout;
     const stderr = child.stderr;
@@ -545,7 +545,7 @@ export class NativeRunnerExecutor implements RunnerExecutorLike {
             if (heartbeat) {
               clearTimeout(heartbeat);
             }
-            killRunnerProcess(child, "SIGTERM");
+            killChildProcess(child, "SIGTERM");
           }
         } catch {
           if (skippedLines.length < 20) {
@@ -595,7 +595,7 @@ export class NativeRunnerExecutor implements RunnerExecutorLike {
         clearTimeout(heartbeat);
       }
       if (!child.killed) {
-        killRunnerProcess(child, "SIGTERM");
+        killChildProcess(child, "SIGTERM");
       }
     });
 

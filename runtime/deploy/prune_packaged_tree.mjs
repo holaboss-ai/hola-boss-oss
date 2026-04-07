@@ -1,0 +1,138 @@
+#!/usr/bin/env node
+
+import { readdirSync, rmSync, statSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const FILE_SUFFIXES_TO_PRUNE = [
+  ".d.ts",
+  ".d.cts",
+  ".d.mts",
+  ".map",
+  ".md",
+  ".markdown",
+  ".tsbuildinfo",
+  ".exp",
+  ".lib"
+];
+
+const DIRECTORY_NAMES_TO_PRUNE = new Set([
+  ".github",
+  ".vscode",
+  "__tests__",
+  "test",
+  "tests",
+  "example",
+  "examples",
+  "website",
+  "coverage",
+  "benchmark",
+  "benchmarks"
+]);
+
+const DOC_DIRECTORY_NAMES = new Set(["doc", "docs"]);
+
+const KOFFI_PREFIXES_TO_KEEP = {
+  macos: new Set(["darwin_"]),
+  linux: new Set(["linux_", "musl_"]),
+  windows: new Set(["win32_"])
+};
+
+function countFiles(rootPath) {
+  const stats = statSync(rootPath);
+  if (!stats.isDirectory()) {
+    return 1;
+  }
+
+  let count = 0;
+  for (const entry of readdirSync(rootPath, { withFileTypes: true })) {
+    count += countFiles(path.join(rootPath, entry.name));
+  }
+  return count;
+}
+
+function shouldPruneFile(fileName) {
+  return FILE_SUFFIXES_TO_PRUNE.some((suffix) => fileName.endsWith(suffix));
+}
+
+function pruneCommonRuntimeFiles(rootPath, insideNodeModules = false) {
+  for (const entry of readdirSync(rootPath, { withFileTypes: true })) {
+    const entryPath = path.join(rootPath, entry.name);
+    if (entry.isDirectory()) {
+      const nextInsideNodeModules = insideNodeModules || entry.name === "node_modules";
+      if (DIRECTORY_NAMES_TO_PRUNE.has(entry.name)) {
+        rmSync(entryPath, { recursive: true, force: true });
+        continue;
+      }
+      if (DOC_DIRECTORY_NAMES.has(entry.name) && !insideNodeModules) {
+        rmSync(entryPath, { recursive: true, force: true });
+        continue;
+      }
+      pruneCommonRuntimeFiles(entryPath, nextInsideNodeModules);
+      continue;
+    }
+
+    if (entry.isFile() && shouldPruneFile(entry.name)) {
+      rmSync(entryPath, { force: true });
+    }
+  }
+}
+
+function pruneKoffiBinaries(rootPath, targetPlatform) {
+  const keepPrefixes = KOFFI_PREFIXES_TO_KEEP[targetPlatform];
+  if (!keepPrefixes) {
+    return;
+  }
+
+  for (const entry of readdirSync(rootPath, { withFileTypes: true })) {
+    const entryPath = path.join(rootPath, entry.name);
+    if (!entry.isDirectory()) {
+      continue;
+    }
+
+    if (
+      path.basename(rootPath) === "koffi" &&
+      path.basename(path.dirname(rootPath)) === "build" &&
+      path.basename(path.dirname(path.dirname(rootPath))) === "koffi" &&
+      path.basename(path.dirname(path.dirname(path.dirname(rootPath)))) === "node_modules"
+    ) {
+      if (![...keepPrefixes].some((prefix) => entry.name.startsWith(prefix))) {
+        rmSync(entryPath, { recursive: true, force: true });
+      }
+      continue;
+    }
+
+    pruneKoffiBinaries(entryPath, targetPlatform);
+  }
+}
+
+export function prunePackagedTree(targetRoot, targetPlatform = "") {
+  const resolvedRoot = path.resolve(targetRoot);
+  let beforeCount = 0;
+  try {
+    beforeCount = countFiles(resolvedRoot);
+  } catch {
+    return;
+  }
+
+  pruneCommonRuntimeFiles(resolvedRoot);
+  if (targetPlatform) {
+    pruneKoffiBinaries(resolvedRoot, targetPlatform);
+  }
+  const afterCount = countFiles(resolvedRoot);
+  console.error(`pruned packaged tree at ${resolvedRoot} (${beforeCount} -> ${afterCount} files)`);
+}
+
+function isDirectRun() {
+  return Boolean(process.argv[1]) && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+}
+
+if (isDirectRun()) {
+  const targetRoot = process.argv[2];
+  const targetPlatform = process.argv[3] ?? "";
+  if (!targetRoot) {
+    console.error("usage: prune_packaged_tree.mjs <target-root> [platform]");
+    process.exit(1);
+  }
+  prunePackagedTree(targetRoot, targetPlatform);
+}

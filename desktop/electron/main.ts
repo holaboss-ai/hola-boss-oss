@@ -31,6 +31,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import { request as httpsRequest } from "node:https";
+import os from "node:os";
 import path from "node:path";
 import { URL } from "node:url";
 import * as XLSX from "xlsx";
@@ -483,8 +484,55 @@ let appUpdateStatus: AppUpdateStatusPayload = {
 
 // Port 5060 is SIP — blocked by Node.js fetch (undici "bad port").
 const RUNTIME_API_PORT = 5160;
-const DEV_RUNTIME_ROOT = "/tmp/holaboss-runtime-macos-full";
-const STAGED_RUNTIME_ROOT = path.join("out", "runtime-macos");
+function runtimePlatformFromProcessPlatform(
+  platform: NodeJS.Platform = process.platform,
+): "macos" | "linux" | "windows" {
+  switch (platform) {
+    case "darwin":
+      return "macos";
+    case "linux":
+      return "linux";
+    case "win32":
+      return "windows";
+    default:
+      throw new Error(`Unsupported host platform: ${platform}`);
+  }
+}
+
+function runtimeBundleDirName(
+  runtimePlatform: "macos" | "linux" | "windows" = runtimePlatformFromProcessPlatform(),
+): string {
+  return `runtime-${runtimePlatform}`;
+}
+
+function runtimeBundleExecutableRelativePaths(
+  runtimePlatform: "macos" | "linux" | "windows" = runtimePlatformFromProcessPlatform(),
+): string[] {
+  const base = path.join("bin", "sandbox-runtime");
+  return runtimePlatform === "windows"
+    ? [`${base}.mjs`, `${base}.cmd`, `${base}.ps1`, `${base}.exe`, base]
+    : [base];
+}
+
+function runtimeBundleNodeRelativePaths(
+  runtimePlatform: "macos" | "linux" | "windows" = runtimePlatformFromProcessPlatform(),
+): string[] {
+  const base = path.join("node-runtime", "node_modules", ".bin", "node");
+  return runtimePlatform === "windows"
+    ? [
+        `${base}.exe`,
+        `${base}.cmd`,
+        path.join("node-runtime", "node_modules", "node", "bin", "node.exe"),
+        base,
+      ]
+    : [base];
+}
+
+const CURRENT_RUNTIME_PLATFORM = runtimePlatformFromProcessPlatform();
+const RUNTIME_BUNDLE_DIR = runtimeBundleDirName(CURRENT_RUNTIME_PLATFORM);
+const DEV_RUNTIME_ROOT =
+  process.env.HOLABOSS_DEV_RUNTIME_ROOT?.trim() ||
+  path.join(os.tmpdir(), `holaboss-runtime-${CURRENT_RUNTIME_PLATFORM}-full`);
 const DESKTOP_USER_DATA_DIR = (
   process.env.HOLABOSS_DESKTOP_USER_DATA_DIR?.trim() || "holaboss-local"
 ).replace(/[\\/]+/g, "_");
@@ -498,6 +546,11 @@ interface PackagedDesktopConfig {
   projectsUrl?: string;
   marketplaceUrl?: string;
   proactiveUrl?: string;
+}
+
+interface RuntimeLaunchSpec {
+  command: string;
+  args: string[];
 }
 
 function loadPackagedDesktopConfig(): PackagedDesktopConfig {
@@ -9101,19 +9154,107 @@ async function fileExists(targetPath: string) {
   }
 }
 
-const REQUIRED_RUNTIME_BUNDLE_PATHS = [
-  path.join("bin", "sandbox-runtime"),
-  "package-metadata.json",
-  path.join("node-runtime", "node_modules", ".bin", "node"),
-  path.join("runtime", "metadata.json"),
-  path.join("runtime", "api-server", "dist", "index.mjs"),
-] as const;
+const REQUIRED_RUNTIME_BUNDLE_PATH_GROUPS = [
+  runtimeBundleExecutableRelativePaths(CURRENT_RUNTIME_PLATFORM),
+  ["package-metadata.json"],
+  runtimeBundleNodeRelativePaths(CURRENT_RUNTIME_PLATFORM),
+  [path.join("runtime", "metadata.json")],
+  [path.join("runtime", "api-server", "dist", "index.mjs")],
+];
+
+async function firstExistingRelativePath(
+  rootPath: string,
+  relativePaths: readonly string[],
+): Promise<string | null> {
+  for (const relativePath of relativePaths) {
+    const absolutePath = path.join(rootPath, relativePath);
+    if (await fileExists(absolutePath)) {
+      return absolutePath;
+    }
+  }
+  return null;
+}
+
+async function resolveRuntimeExecutablePath(
+  runtimeRoot: string,
+): Promise<string | null> {
+  return firstExistingRelativePath(
+    runtimeRoot,
+    runtimeBundleExecutableRelativePaths(CURRENT_RUNTIME_PLATFORM),
+  );
+}
+
+async function resolveRuntimeNodePath(
+  runtimeRoot: string,
+): Promise<string | null> {
+  return firstExistingRelativePath(
+    runtimeRoot,
+    runtimeBundleNodeRelativePaths(CURRENT_RUNTIME_PLATFORM),
+  );
+}
+
+async function resolveRuntimeLaunchSpec(
+  runtimeRoot: string,
+  executablePath: string,
+): Promise<RuntimeLaunchSpec | null> {
+  const extension = path.extname(executablePath).toLowerCase();
+  if (extension === ".mjs") {
+    const nodePath = await resolveRuntimeNodePath(runtimeRoot);
+    if (!nodePath) {
+      return null;
+    }
+    return {
+      command: nodePath,
+      args: [executablePath],
+    };
+  }
+
+  if (extension === ".ps1") {
+    return {
+      command: "powershell.exe",
+      args: [
+        "-NoLogo",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        executablePath,
+      ],
+    };
+  }
+
+  if (extension === ".cmd" || extension === ".bat") {
+    return {
+      command: process.env.ComSpec?.trim() || "cmd.exe",
+      args: ["/d", "/s", "/c", `"${executablePath}"`],
+    };
+  }
+
+  return {
+    command: executablePath,
+    args: [],
+  };
+}
+
+async function killWindowsProcessTree(pid: number | undefined | null) {
+  if (!pid) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    const killer = spawn("taskkill", ["/pid", String(pid), "/t", "/f"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    killer.once("error", () => resolve());
+    killer.once("exit", () => resolve());
+  });
+}
 
 async function validateRuntimeRoot(runtimeRoot: string) {
-  for (const relativePath of REQUIRED_RUNTIME_BUNDLE_PATHS) {
-    const absolutePath = path.join(runtimeRoot, relativePath);
-    if (!(await fileExists(absolutePath))) {
-      return `Runtime bundle is incomplete. Missing ${relativePath} under ${runtimeRoot}. Rebuild or restage runtime-macos.`;
+  for (const relativePaths of REQUIRED_RUNTIME_BUNDLE_PATH_GROUPS) {
+    if (!(await firstExistingRelativePath(runtimeRoot, relativePaths))) {
+      return `Runtime bundle is incomplete. Missing ${relativePaths.join(" or ")} under ${runtimeRoot}. Rebuild or restage ${RUNTIME_BUNDLE_DIR}.`;
     }
   }
 
@@ -9123,10 +9264,10 @@ async function validateRuntimeRoot(runtimeRoot: string) {
 async function resolveRuntimeRoot() {
   const candidates = [
     process.env.HOLABOSS_RUNTIME_ROOT,
-    isDev ? path.resolve(__dirname, "..", "runtime-macos") : undefined,
+    isDev ? path.resolve(__dirname, "..", RUNTIME_BUNDLE_DIR) : undefined,
     isDev
       ? DEV_RUNTIME_ROOT
-      : path.join(process.resourcesPath, "runtime-macos"),
+      : path.join(process.resourcesPath, RUNTIME_BUNDLE_DIR),
   ].filter((value): value is string =>
     Boolean(value && value.trim().length > 0),
   );
@@ -9199,7 +9340,7 @@ async function isRuntimeHealthy(url: string) {
 async function refreshRuntimeStatus() {
   const { runtimeRoot, validationError } = await resolveRuntimeRoot();
   const executablePath = runtimeRoot
-    ? path.join(runtimeRoot, "bin", "sandbox-runtime")
+    ? await resolveRuntimeExecutablePath(runtimeRoot)
     : null;
   const sandboxRoot = runtimeSandboxRoot();
   const harness = process.env.HOLABOSS_RUNTIME_HARNESS || "pi";
@@ -9247,7 +9388,7 @@ async function refreshRuntimeStatus() {
       runtimeRoot && executablePath
         ? runtimeStatus.lastError
         : validationError ||
-          "Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package runtime-macos into app resources.",
+          `Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package ${RUNTIME_BUNDLE_DIR} into app resources.`,
   });
   emitRuntimeState();
   return runtimeStatus;
@@ -9281,6 +9422,7 @@ async function stopEmbeddedRuntime() {
     await new Promise<void>((resolve) => {
       let settled = false;
       let forceSettleTimer: NodeJS.Timeout | null = null;
+      let sigkillTimer: NodeJS.Timeout | null = null;
       const settle = () => {
         if (settled) {
           return;
@@ -9289,12 +9431,24 @@ async function stopEmbeddedRuntime() {
         if (forceSettleTimer) {
           clearTimeout(forceSettleTimer);
         }
-        clearTimeout(sigkillTimer);
+        if (sigkillTimer) {
+          clearTimeout(sigkillTimer);
+        }
         running.removeListener("exit", onExit);
         resolve();
       };
       const onExit = () => settle();
-      const sigkillTimer = setTimeout(() => {
+      running.once("exit", onExit);
+
+      if (process.platform === "win32") {
+        void killWindowsProcessTree(running.pid).finally(() => {
+          forceSettleTimer = setTimeout(() => settle(), 1000);
+          forceSettleTimer.unref();
+        });
+        return;
+      }
+
+      sigkillTimer = setTimeout(() => {
         if (running.exitCode === null && running.signalCode === null) {
           try {
             running.kill("SIGKILL");
@@ -9307,8 +9461,6 @@ async function stopEmbeddedRuntime() {
         forceSettleTimer.unref();
       }, 3000);
       sigkillTimer.unref();
-
-      running.once("exit", onExit);
       try {
         const signalSent = running.kill("SIGTERM");
         if (
@@ -9332,7 +9484,7 @@ async function startEmbeddedRuntime() {
 
     const { runtimeRoot, validationError } = await resolveRuntimeRoot();
     const executablePath = runtimeRoot
-      ? path.join(runtimeRoot, "bin", "sandbox-runtime")
+      ? await resolveRuntimeExecutablePath(runtimeRoot)
       : null;
     const sandboxRoot = runtimeSandboxRoot();
     const harness = process.env.HOLABOSS_RUNTIME_HARNESS || "pi";
@@ -9354,7 +9506,7 @@ async function startEmbeddedRuntime() {
         runtimeRoot && executablePath
           ? ""
           : validationError ||
-            "Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package runtime-macos into app resources.",
+            `Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package ${RUNTIME_BUNDLE_DIR} into app resources.`,
     });
     emitRuntimeState();
 
@@ -9398,7 +9550,32 @@ async function startEmbeddedRuntime() {
       return refreshRuntimeStatus();
     }
 
-    const child = spawn(executablePath, [], {
+    const launchSpec = await resolveRuntimeLaunchSpec(runtimeRoot, executablePath);
+    if (!launchSpec) {
+      const launchError = `Runtime bundle is incomplete. Missing ${runtimeBundleNodeRelativePaths(CURRENT_RUNTIME_PLATFORM).join(" or ")} under ${runtimeRoot}. Rebuild or restage ${RUNTIME_BUNDLE_DIR}.`;
+      runtimeStatus = withDesktopBrowserStatus({
+        ...runtimeStatus,
+        status: "error",
+        pid: null,
+        lastError: launchError,
+      });
+      persistRuntimeProcessState({
+        pid: null,
+        status: "error",
+        lastError: launchError,
+      });
+      appendRuntimeEventLog({
+        category: "runtime",
+        event: "embedded_runtime.launch_error",
+        outcome: "error",
+        detail: launchError,
+      });
+      void appendRuntimeLog(`[embedded-runtime] ${launchError}\n`);
+      emitRuntimeState();
+      return runtimeStatus;
+    }
+
+    const child = spawn(launchSpec.command, launchSpec.args, {
       cwd: runtimeRoot,
       env: {
         ...process.env,
@@ -9415,6 +9592,7 @@ async function startEmbeddedRuntime() {
         HOLABOSS_AUTH_COOKIE: authCookieHeader() ?? "",
       },
       stdio: "pipe",
+      windowsHide: process.platform === "win32",
     });
 
     runtimeProcess = child;

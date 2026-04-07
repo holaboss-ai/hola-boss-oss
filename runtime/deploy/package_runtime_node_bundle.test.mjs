@@ -4,9 +4,15 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  buildWindowsRuntimeCmdLauncherSource,
+  buildWindowsRuntimeLauncherSource
+} from "./package_windows_runtime.mjs";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const macosPackagerPath = path.join(__dirname, "package_macos_runtime.sh");
 const linuxPackagerPath = path.join(__dirname, "package_linux_runtime.sh");
+const windowsPackagerPath = path.join(__dirname, "package_windows_runtime.mjs");
 
 for (const targetPath of [macosPackagerPath, linuxPackagerPath]) {
   test(`${path.basename(targetPath)} bundles a local node runtime and exports it`, async () => {
@@ -20,3 +26,16 @@ for (const targetPath of [macosPackagerPath, linuxPackagerPath]) {
     assert.equal(/HOLABOSS_INSTALL_[A-Z_]+/.test(source), false);
   });
 }
+
+test("package_windows_runtime.mjs writes launchers that use the bundled node runtime", async () => {
+  const source = await readFile(windowsPackagerPath, "utf8");
+  const launcherSource = buildWindowsRuntimeLauncherSource();
+  const cmdLauncherSource = buildWindowsRuntimeCmdLauncherSource();
+
+  assert.match(source, /execFileSync\(npmCommand\(\), \["install", "--prefix", nodeRuntimeDir, `node@\$\{nodeVersion\}`\]/);
+  assert.match(source, /prunePackagedTree\(nodeRuntimeDir, "windows"\)/);
+  assert.match(launcherSource, /startWindowsRuntime/);
+  assert.match(launcherSource, /process\.exit/);
+  assert.match(cmdLauncherSource, /node-runtime\\node_modules\\\.bin\\node\.exe/);
+  assert.match(cmdLauncherSource, /sandbox-runtime\.mjs/);
+});

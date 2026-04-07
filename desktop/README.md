@@ -77,16 +77,18 @@ This creates:
 
 ## Runtime Bundle
 
-Production mac builds expect a staged runtime bundle at `out/runtime-macos/`. On macOS, you can stage it with:
+Packaged desktop builds expect a staged runtime bundle at `out/runtime-<platform>/`:
 
 ```bash
 npm run prepare:runtime
 ```
 
-On Linux, the same command stages `out/runtime-linux/` automatically. If you need to override the detected platform explicitly:
+That stages the bundle for the current host platform. If you need to target a specific platform explicitly:
 
 ```bash
-GITHUB_TOKEN="$(gh auth token)" HOLABOSS_RUNTIME_PLATFORM=linux npm run prepare:runtime
+GITHUB_TOKEN="$(gh auth token)" npm run prepare:runtime:macos
+GITHUB_TOKEN="$(gh auth token)" npm run prepare:runtime:linux
+GITHUB_TOKEN="$(gh auth token)" npm run prepare:runtime:windows
 ```
 
 For local development against unreleased `hola-boss-oss` runtime changes:
@@ -105,16 +107,17 @@ Or package directly with local runtime in one step:
 
 ```bash
 npm run dist:mac:local
+npm run dist:win:local
 ```
 
 The staging script accepts one of:
-- `HOLABOSS_RUNTIME_DIR=/absolute/path/to/runtime-macos`
-- `HOLABOSS_RUNTIME_TARBALL=/absolute/path/to/holaboss-runtime-macos-<sha>.tar.gz`
-- `HOLABOSS_RUNTIME_BUNDLE_URL=https://.../holaboss-runtime-macos-<sha>.tar.gz`
+- `HOLABOSS_RUNTIME_DIR=/absolute/path/to/runtime-<platform>`
+- `HOLABOSS_RUNTIME_TARBALL=/absolute/path/to/holaboss-runtime-<platform>-<sha>.tar.gz`
+- `HOLABOSS_RUNTIME_BUNDLE_URL=https://.../holaboss-runtime-<platform>-<sha>.tar.gz`
 - `HOLABOSS_GITHUB_TOKEN=...` or `GITHUB_TOKEN=...` to fetch the latest runtime-channel release asset from GitHub Releases
 - `HOLABOSS_RUNTIME_PLATFORM=macos|linux|windows` to override the auto-detected target platform when needed
 
-If none are set, it falls back to `/tmp/holaboss-runtime-macos-full` when present.
+If none are set, it falls back to the host temp directory, for example `${TMPDIR:-/tmp}/holaboss-runtime-<platform>-full`.
 
 To build a mac app bundle with the runtime embedded in Electron resources:
 
@@ -125,6 +128,15 @@ GITHUB_TOKEN="$(gh auth token)" npm run dist:mac
 Use `dist:mac` when you want the latest released macOS runtime. Use `dist:mac:local` for local unreleased runtime code.
 
 This produces an unsigned local mac app bundle with `runtime-macos` embedded in `Contents/Resources/`.
+
+For Windows packaging:
+
+```bash
+GITHUB_TOKEN="$(gh auth token)" npm run dist:win
+npm run dist:win:local
+```
+
+Use `dist:win` with a staged or downloaded `out/runtime-windows/` bundle. Use `dist:win:local` on a Windows host to build and stage a native local runtime bundle first, then produce a Windows NSIS installer.
 
 Output:
 - [Holaboss Workspace.app](/Users/jeffrey/Desktop/hola-boss-oss/desktop/out/release/mac-arm64/Holaboss%20Workspace.app)
