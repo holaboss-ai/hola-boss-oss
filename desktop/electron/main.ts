@@ -94,11 +94,6 @@ const RUNTIME_HOLABOSS_PROVIDER_ALIASES = [
   "holaboss",
   RUNTIME_HOLABOSS_PROVIDER_ID,
 ] as const;
-const RUNTIME_HOLABOSS_LEGACY_PROXY_MODELS = [
-  "gpt-5.4",
-  "gpt-5.4-mini",
-  "gpt-5.3-codex",
-] as const;
 const RUNTIME_DEPRECATED_MODEL_IDS = new Set([
   "gpt-5.1",
   "gpt-5.1-codex",
@@ -320,6 +315,7 @@ interface RuntimeConfigPayload {
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
   controlPlaneBaseUrl: string | null;
+  catalogVersion: string | null;
   providerModelGroups: RuntimeProviderModelGroupPayload[];
 }
 
@@ -473,6 +469,14 @@ let desktopBrowserServiceAuthToken = "";
 let appUpdateCheckTimer: NodeJS.Timeout | null = null;
 let appUpdateCheckPromise: Promise<AppUpdateStatusPayload> | null = null;
 let appUpdatePreferences: AppUpdatePreferencesPayload = {};
+let runtimeModelCatalogState: RuntimeModelCatalogPayload = {
+  catalogVersion: null,
+  providerModelGroups: [],
+  fetchedAt: null,
+};
+let runtimeModelCatalogRefreshPromise: Promise<void> | null = null;
+let lastRuntimeModelCatalogRefreshAtMs = 0;
+let lastRuntimeModelCatalogRefreshFailureAtMs = 0;
 let appUpdateStatus: AppUpdateStatusPayload = {
   supported: false,
   checking: false,
@@ -640,10 +644,14 @@ const AUTH_SIGN_IN_URL = configuredRemoteBaseUrl(
 );
 const DESKTOP_RUNTIME_BINDING_EXCHANGE_PATH =
   "/api/v1/desktop-runtime/bindings/exchange";
+const DESKTOP_RUNTIME_MODEL_CATALOG_PATH =
+  "/api/v1/desktop-runtime/model-catalog";
 const AUTH_CALLBACK_PROTOCOL = "ai.holaboss.app";
 const LOCAL_RUNTIME_SCHEMA_VERSION = 1;
 const RUNTIME_BINDING_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 const RUNTIME_BINDING_REFRESH_FAILURE_BACKOFF_MS = 60 * 1000;
+const RUNTIME_MODEL_CATALOG_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
+const RUNTIME_MODEL_CATALOG_REFRESH_FAILURE_BACKOFF_MS = 60 * 1000;
 
 type TrustedIpcSenderScope = "main" | "auth-popup";
 
@@ -713,6 +721,42 @@ function loadAppUpdatePreferences(): AppUpdatePreferencesPayload {
     return typeof parsed === "object" && parsed ? parsed : {};
   } catch {
     return {};
+  }
+}
+
+function loadRuntimeModelCatalogCache(): RuntimeModelCatalogPayload {
+  const cachePath = runtimeModelCatalogCachePath();
+  try {
+    if (!existsSync(cachePath)) {
+      return {
+        catalogVersion: null,
+        providerModelGroups: [],
+        fetchedAt: null,
+      };
+    }
+    const parsed = JSON.parse(readFileSync(cachePath, "utf8")) as unknown;
+    const payload = runtimeConfigObject(parsed);
+    return {
+      catalogVersion:
+        runtimeConfigField(payload.catalogVersion as string | undefined) ||
+        runtimeConfigField(payload.catalog_version as string | undefined) ||
+        null,
+      providerModelGroups: normalizeRuntimeProviderModelGroups(
+        Array.isArray(payload.providerModelGroups)
+          ? payload.providerModelGroups
+          : Array.isArray(payload.provider_model_groups)
+            ? payload.provider_model_groups
+            : [],
+      ),
+      fetchedAt:
+        runtimeConfigField(payload.fetchedAt as string | undefined) || null,
+    };
+  } catch {
+    return {
+      catalogVersion: null,
+      providerModelGroups: [],
+      fetchedAt: null,
+    };
   }
 }
 
@@ -1112,6 +1156,7 @@ function emitOpenSettingsPane(section: UiSettingsPaneSection = "settings") {
 
 configureStableUserDataPath();
 appUpdatePreferences = loadAppUpdatePreferences();
+runtimeModelCatalogState = loadRuntimeModelCatalogCache();
 appUpdateStatus = {
   ...appUpdateStatus,
   supported: app.isPackaged,
@@ -1144,6 +1189,19 @@ interface RuntimeBindingExchangePayload {
   default_model: string;
   instance_id: string;
   provider: string;
+  catalog_version?: string;
+  provider_model_groups?: RuntimeProviderModelGroupPayload[];
+}
+
+interface RuntimeModelCatalogResponsePayload {
+  catalog_version?: string;
+  provider_model_groups?: RuntimeProviderModelGroupPayload[];
+}
+
+interface RuntimeModelCatalogPayload {
+  catalogVersion: string | null;
+  providerModelGroups: RuntimeProviderModelGroupPayload[];
+  fetchedAt: string | null;
 }
 
 interface PopupThemePalette {
@@ -2305,6 +2363,10 @@ function runtimeSandboxRoot() {
 
 function runtimeConfigPath() {
   return path.join(runtimeSandboxRoot(), "state", "runtime-config.json");
+}
+
+function runtimeModelCatalogCachePath() {
+  return path.join(runtimeSandboxRoot(), "state", "runtime-model-catalog.json");
 }
 
 function runtimeDatabasePath() {
@@ -3746,79 +3808,121 @@ function isUnsupportedHolabossRuntimeModel(
   );
 }
 
+function normalizeRuntimeProviderModelGroups(
+  rawGroups: unknown[],
+): RuntimeProviderModelGroupPayload[] {
+  const providers = new Map<string, { label: string; kind: string }>();
+  const groupedModels = new Map<
+    string,
+    Map<string, RuntimeProviderModelPayload>
+  >();
+  const ensureProviderGroup = (providerId: string) => {
+    if (!groupedModels.has(providerId)) {
+      groupedModels.set(
+        providerId,
+        new Map<string, RuntimeProviderModelPayload>(),
+      );
+    }
+    return groupedModels.get(providerId)!;
+  };
+
+  for (const rawGroup of rawGroups) {
+    const groupPayload = runtimeConfigObject(rawGroup);
+    const providerId = canonicalRuntimeProviderId(
+      runtimeFirstNonEmptyString(
+        groupPayload.providerId as string | undefined,
+        groupPayload.provider_id as string | undefined,
+      ),
+    );
+    if (!providerId) {
+      continue;
+    }
+
+    providers.set(providerId, {
+      label:
+        runtimeFirstNonEmptyString(
+          groupPayload.providerLabel as string | undefined,
+          groupPayload.provider_label as string | undefined,
+        ) || runtimeProviderLabel(providerId),
+      kind: normalizeRuntimeProviderKind(
+        runtimeFirstNonEmptyString(
+          groupPayload.kind as string | undefined,
+          groupPayload.provider_kind as string | undefined,
+        ),
+        providerId,
+        "",
+      ),
+    });
+
+    const models = Array.isArray(groupPayload.models) ? groupPayload.models : [];
+    for (const rawModel of models) {
+      const modelPayload = runtimeConfigObject(rawModel);
+      const modelId = normalizeRuntimeProviderModelId(
+        providerId,
+        runtimeFirstNonEmptyString(
+          modelPayload.modelId as string | undefined,
+          modelPayload.model_id as string | undefined,
+          runtimeModelIdFromToken(
+            runtimeFirstNonEmptyString(
+              modelPayload.token as string | undefined,
+              modelPayload.model_token as string | undefined,
+            ),
+          ),
+        ),
+      );
+      if (
+        !modelId ||
+        isDeprecatedRuntimeModelId(modelId) ||
+        isUnsupportedHolabossRuntimeModel(providerId, modelId)
+      ) {
+        continue;
+      }
+      const token = canonicalRuntimeModelToken(
+        providerId,
+        normalizeRuntimeProviderModelToken(
+          providerId,
+          runtimeFirstNonEmptyString(
+            modelPayload.token as string | undefined,
+            modelPayload.model_token as string | undefined,
+          ),
+          modelId,
+        ),
+        modelId,
+      );
+      ensureProviderGroup(providerId).set(token, {
+        token,
+        modelId,
+      });
+    }
+  }
+
+  const groups: RuntimeProviderModelGroupPayload[] = [];
+  for (const [providerId, provider] of providers.entries()) {
+    const models = Array.from(ensureProviderGroup(providerId).values());
+    if (models.length === 0) {
+      continue;
+    }
+    groups.push({
+      providerId,
+      providerLabel: provider.label,
+      kind: provider.kind,
+      models,
+    });
+  }
+  return groups;
+}
+
 function runtimeProviderModelGroups(
   document: Record<string, unknown>,
-  loadedLegacy: Record<string, string>,
+  _loadedLegacy: Record<string, string>,
+  managedCatalogGroups: RuntimeProviderModelGroupPayload[],
 ): RuntimeProviderModelGroupPayload[] {
-  const runtimePayload = runtimeConfigObject(document.runtime);
   const providersPayload = runtimeConfigObject(document.providers);
   const modelsPayload = runtimeConfigObject(document.models);
-  const integrationsPayload = runtimeConfigObject(document.integrations);
-  const holabossIntegration = runtimeConfigObject(integrationsPayload.holaboss);
-
   const providers = new Map<
     string,
     { id: string; kind: string; label: string }
   >();
-  for (const [providerId, rawProvider] of Object.entries(providersPayload)) {
-    const canonicalProviderId = canonicalRuntimeProviderId(providerId);
-    const providerPayload = runtimeConfigObject(rawProvider);
-    const optionsPayload = runtimeConfigObject(providerPayload.options);
-    const baseUrl = runtimeFirstNonEmptyString(
-      providerPayload.base_url as string | undefined,
-      providerPayload.baseURL as string | undefined,
-      optionsPayload.baseURL as string | undefined,
-      optionsPayload.base_url as string | undefined,
-    );
-    const kind = normalizeRuntimeProviderKind(
-      runtimeFirstNonEmptyString(
-        providerPayload.kind as string | undefined,
-        providerPayload.type as string | undefined,
-        optionsPayload.kind as string | undefined,
-      ),
-      canonicalProviderId,
-      baseUrl,
-    );
-    providers.set(canonicalProviderId, {
-      id: canonicalProviderId,
-      kind,
-      label: runtimeProviderLabel(canonicalProviderId),
-    });
-  }
-
-  const runtimeDefaultProvider = canonicalRuntimeProviderId(
-    runtimeFirstNonEmptyString(
-      runtimePayload.default_provider as string | undefined,
-      loadedLegacy.default_provider,
-      RUNTIME_HOLABOSS_PROVIDER_ID,
-    ),
-  );
-  const legacyBaseUrl = runtimeFirstNonEmptyString(
-    loadedLegacy.model_proxy_base_url,
-    holabossIntegration.model_proxy_base_url as string | undefined,
-  );
-  const legacyApiKey = runtimeFirstNonEmptyString(
-    loadedLegacy.model_proxy_api_key,
-    loadedLegacy.auth_token,
-    holabossIntegration.auth_token as string | undefined,
-  );
-  const hasLegacyProxyBinding = Boolean(legacyBaseUrl && legacyApiKey);
-  if (
-    hasLegacyProxyBinding &&
-    runtimeDefaultProvider &&
-    !providers.has(runtimeDefaultProvider)
-  ) {
-    providers.set(runtimeDefaultProvider, {
-      id: runtimeDefaultProvider,
-      kind: normalizeRuntimeProviderKind(
-        "",
-        runtimeDefaultProvider,
-        legacyBaseUrl,
-      ),
-      label: runtimeProviderLabel(runtimeDefaultProvider),
-    });
-  }
-
   const groupedModels = new Map<
     string,
     Map<string, RuntimeProviderModelPayload>
@@ -3869,32 +3973,58 @@ function runtimeProviderModelGroups(
       });
     }
   };
-  const seedLegacyHolabossProxyModels = (
-    providerId: string,
-    defaultModelToken: string,
+  const mergeManagedCatalog = (
+    groups: RuntimeProviderModelGroupPayload[],
   ) => {
-    if (!providers.has(providerId)) {
-      providers.set(providerId, {
-        id: providerId,
-        kind: RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY,
-        label: runtimeProviderLabel(providerId),
-      });
-    }
-
-    const seededModelIds = new Set<string>();
-    const preferredModelId = runtimeModelIdFromToken(defaultModelToken);
-    if (preferredModelId && !isDeprecatedRuntimeModelId(preferredModelId)) {
-      seededModelIds.add(preferredModelId);
-    }
-    for (const modelId of RUNTIME_HOLABOSS_LEGACY_PROXY_MODELS) {
-      seededModelIds.add(modelId);
-    }
-    for (const modelId of seededModelIds) {
-      addModel(providerId, `${providerId}/${modelId}`, modelId);
+    for (const group of groups) {
+      const providerId = canonicalRuntimeProviderId(group.providerId);
+      if (!providerId) {
+        continue;
+      }
+      if (!providers.has(providerId)) {
+        providers.set(providerId, {
+          id: providerId,
+          kind: normalizeRuntimeProviderKind(group.kind, providerId, ""),
+          label: group.providerLabel || runtimeProviderLabel(providerId),
+        });
+      }
+      for (const model of group.models) {
+        addModel(providerId, model.token, model.modelId);
+      }
     }
   };
 
-  const configuredModelsCount = Object.keys(modelsPayload).length;
+  mergeManagedCatalog(managedCatalogGroups);
+
+  for (const [providerId, rawProvider] of Object.entries(providersPayload)) {
+    const canonicalProviderId = canonicalRuntimeProviderId(providerId);
+    if (isHolabossProviderAlias(canonicalProviderId)) {
+      continue;
+    }
+    const providerPayload = runtimeConfigObject(rawProvider);
+    const optionsPayload = runtimeConfigObject(providerPayload.options);
+    const baseUrl = runtimeFirstNonEmptyString(
+      providerPayload.base_url as string | undefined,
+      providerPayload.baseURL as string | undefined,
+      optionsPayload.baseURL as string | undefined,
+      optionsPayload.base_url as string | undefined,
+    );
+    const kind = normalizeRuntimeProviderKind(
+      runtimeFirstNonEmptyString(
+        providerPayload.kind as string | undefined,
+        providerPayload.type as string | undefined,
+        optionsPayload.kind as string | undefined,
+      ),
+      canonicalProviderId,
+      baseUrl,
+    );
+    providers.set(canonicalProviderId, {
+      id: canonicalProviderId,
+      kind,
+      label: runtimeProviderLabel(canonicalProviderId),
+    });
+  }
+
   for (const [token, rawModel] of Object.entries(modelsPayload)) {
     const modelPayload = runtimeConfigObject(rawModel);
     let providerId = runtimeFirstNonEmptyString(
@@ -3915,43 +4045,12 @@ function runtimeProviderModelGroups(
     }
     if (providerId && modelId) {
       const normalizedProviderId = canonicalRuntimeProviderId(providerId);
+      if (isHolabossProviderAlias(normalizedProviderId)) {
+        continue;
+      }
       if (providers.has(normalizedProviderId)) {
         addModel(normalizedProviderId, token, modelId);
       }
-    }
-  }
-
-  const fallbackDefaultModel = normalizeLegacyRuntimeModelToken(
-    runtimeFirstNonEmptyString(
-      runtimePayload.default_model as string | undefined,
-      loadedLegacy.default_model,
-    ),
-  );
-  const hasExplicitProviderCatalog =
-    Object.keys(providersPayload).length > 0 ||
-    Object.keys(modelsPayload).length > 0;
-  if (
-    fallbackDefaultModel &&
-    configuredModelsCount === 0 &&
-    !hasExplicitProviderCatalog &&
-    hasLegacyProxyBinding
-  ) {
-    seedLegacyHolabossProxyModels(
-      RUNTIME_HOLABOSS_PROVIDER_ID,
-      fallbackDefaultModel,
-    );
-  }
-
-  if (hasLegacyProxyBinding) {
-    const legacyProxyProviderId =
-      runtimeDefaultProvider || RUNTIME_HOLABOSS_PROVIDER_ID;
-    const hasExplicitHolabossModels =
-      (groupedModels.get(legacyProxyProviderId)?.size ?? 0) > 0;
-    if (!hasExplicitHolabossModels) {
-      seedLegacyHolabossProxyModels(
-        legacyProxyProviderId,
-        fallbackDefaultModel,
-      );
     }
   }
 
@@ -3965,6 +4064,9 @@ function runtimeProviderModelGroups(
       groupedModels.get(providerId) ??
       new Map<string, RuntimeProviderModelPayload>();
     const provider = providers.get(providerId);
+    if (modelMap.size === 0) {
+      continue;
+    }
     groups.push({
       providerId,
       providerLabel: provider?.label ?? runtimeProviderLabel(providerId),
@@ -3980,6 +4082,175 @@ function isHolabossProviderAlias(providerId: string): boolean {
   return RUNTIME_HOLABOSS_PROVIDER_ALIASES.some(
     (alias) => alias === normalized,
   );
+}
+
+function runtimeModelCatalogPayloadFromResponse(
+  payload:
+    | RuntimeModelCatalogResponsePayload
+    | RuntimeBindingExchangePayload
+    | null
+    | undefined,
+): RuntimeModelCatalogPayload {
+  return {
+    catalogVersion:
+      runtimeConfigField(payload?.catalog_version as string | undefined) ||
+      null,
+    providerModelGroups: normalizeRuntimeProviderModelGroups(
+      Array.isArray(payload?.provider_model_groups)
+        ? payload.provider_model_groups
+        : [],
+    ),
+    fetchedAt: utcNowIso(),
+  };
+}
+
+async function syncRuntimeModelCatalogFromBinding(
+  binding: RuntimeBindingExchangePayload,
+): Promise<void> {
+  const payload = runtimeModelCatalogPayloadFromResponse(binding);
+  if (payload.catalogVersion || payload.providerModelGroups.length > 0) {
+    await persistRuntimeModelCatalog(payload);
+    return;
+  }
+  await refreshRuntimeModelCatalogIfNeeded({ force: true }).catch(() => undefined);
+}
+
+async function persistRuntimeModelCatalog(
+  payload: RuntimeModelCatalogPayload,
+): Promise<void> {
+  runtimeModelCatalogState = payload;
+  lastRuntimeModelCatalogRefreshAtMs = Date.now();
+  lastRuntimeModelCatalogRefreshFailureAtMs = 0;
+  await writeJsonFile(runtimeModelCatalogCachePath(), {
+    catalogVersion: payload.catalogVersion,
+    providerModelGroups: payload.providerModelGroups,
+    fetchedAt: payload.fetchedAt,
+  });
+}
+
+async function clearRuntimeModelCatalog(): Promise<void> {
+  runtimeModelCatalogState = {
+    catalogVersion: null,
+    providerModelGroups: [],
+    fetchedAt: null,
+  };
+  lastRuntimeModelCatalogRefreshAtMs = 0;
+  lastRuntimeModelCatalogRefreshFailureAtMs = 0;
+  try {
+    await fs.rm(runtimeModelCatalogCachePath(), { force: true });
+  } catch {
+    // ignore cache cleanup errors
+  }
+}
+
+async function withRuntimeModelCatalogRefreshLock<T>(
+  work: () => Promise<T>,
+): Promise<T> {
+  while (runtimeModelCatalogRefreshPromise) {
+    await runtimeModelCatalogRefreshPromise;
+  }
+
+  let releaseLock = () => {};
+  runtimeModelCatalogRefreshPromise = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+
+  try {
+    return await work();
+  } finally {
+    releaseLock();
+    runtimeModelCatalogRefreshPromise = null;
+  }
+}
+
+function shouldRefreshRuntimeModelCatalog(force = false): boolean {
+  if (force) {
+    return true;
+  }
+  if (runtimeModelCatalogState.providerModelGroups.length === 0) {
+    return true;
+  }
+  return (
+    Date.now() - lastRuntimeModelCatalogRefreshAtMs >
+    RUNTIME_MODEL_CATALOG_REFRESH_INTERVAL_MS
+  );
+}
+
+function hasRecentRuntimeModelCatalogRefreshFailure(): boolean {
+  return (
+    lastRuntimeModelCatalogRefreshFailureAtMs > 0 &&
+    Date.now() - lastRuntimeModelCatalogRefreshFailureAtMs <
+      RUNTIME_MODEL_CATALOG_REFRESH_FAILURE_BACKOFF_MS
+  );
+}
+
+async function fetchDesktopRuntimeModelCatalog(): Promise<RuntimeModelCatalogResponsePayload> {
+  const controlPlaneBaseUrl = requireControlPlaneBaseUrl();
+  const cookieHeader = authCookieHeader();
+  if (!cookieHeader) {
+    throw new Error("Better Auth session cookies are missing.");
+  }
+
+  const catalogUrl = `${controlPlaneBaseUrl}${DESKTOP_RUNTIME_MODEL_CATALOG_PATH}`;
+  let response: Response;
+  try {
+    response = await fetch(catalogUrl, {
+      method: "GET",
+      headers: {
+        Cookie: cookieHeader,
+      },
+    });
+  } catch (error) {
+    throw new Error(
+      `Runtime model catalog request failed for ${catalogUrl}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(
+      detail ||
+        `Runtime model catalog request failed with status ${response.status}`,
+    );
+  }
+
+  return response.json() as Promise<RuntimeModelCatalogResponsePayload>;
+}
+
+async function refreshRuntimeModelCatalogIfNeeded(options?: {
+  force?: boolean;
+}): Promise<RuntimeModelCatalogPayload> {
+  if (!DESKTOP_CONTROL_PLANE_BASE_URL) {
+    return runtimeModelCatalogState;
+  }
+  if (!authCookieHeader()) {
+    return runtimeModelCatalogState;
+  }
+  if (!shouldRefreshRuntimeModelCatalog(Boolean(options?.force))) {
+    return runtimeModelCatalogState;
+  }
+  if (!options?.force && hasRecentRuntimeModelCatalogRefreshFailure()) {
+    return runtimeModelCatalogState;
+  }
+
+  try {
+    await withRuntimeModelCatalogRefreshLock(async () => {
+      if (!shouldRefreshRuntimeModelCatalog(Boolean(options?.force))) {
+        return;
+      }
+      const payload = runtimeModelCatalogPayloadFromResponse(
+        await fetchDesktopRuntimeModelCatalog(),
+      );
+      await persistRuntimeModelCatalog(payload);
+    });
+  } catch (error) {
+    lastRuntimeModelCatalogRefreshFailureAtMs = Date.now();
+    if (runtimeModelCatalogState.providerModelGroups.length === 0) {
+      throw error;
+    }
+  }
+
+  return runtimeModelCatalogState;
 }
 
 function runtimeConfigRestartRequired(
@@ -4044,6 +4315,9 @@ async function getRuntimeConfig(): Promise<RuntimeConfigPayload> {
   const configPath = runtimeConfigPath();
   const loaded = await readRuntimeConfigFile();
   const document = await readRuntimeConfigDocument();
+  const managedCatalog = await refreshRuntimeModelCatalogIfNeeded().catch(
+    () => runtimeModelCatalogState,
+  );
   return {
     configPath,
     loadedFromFile:
@@ -4054,7 +4328,12 @@ async function getRuntimeConfig(): Promise<RuntimeConfigPayload> {
     modelProxyBaseUrl: loaded.model_proxy_base_url ?? null,
     defaultModel: loaded.default_model ?? null,
     controlPlaneBaseUrl: loaded.control_plane_base_url ?? null,
-    providerModelGroups: runtimeProviderModelGroups(document, loaded),
+    catalogVersion: managedCatalog.catalogVersion,
+    providerModelGroups: runtimeProviderModelGroups(
+      document,
+      loaded,
+      managedCatalog.providerModelGroups,
+    ),
   };
 }
 
@@ -4827,6 +5106,7 @@ async function clearRuntimeBindingSecrets(reason: string): Promise<void> {
     modelProxyBaseUrl: null,
     controlPlaneBaseUrl: null,
   });
+  await clearRuntimeModelCatalog();
   lastRuntimeBindingRefreshAtMs = 0;
   lastRuntimeBindingRefreshUserId = "";
   clearTransientRuntimeBindingRefreshFailure();
@@ -4862,6 +5142,7 @@ async function provisionRuntimeBindingForAuthenticatedUser(
       !forceRefresh &&
       !runtimeConfigNeedsBindingRefresh(currentConfig, userId)
     ) {
+      await refreshRuntimeModelCatalogIfNeeded().catch(() => undefined);
       await syncRuntimeUserProfileFromAuth(user);
       return;
     }
@@ -4900,6 +5181,7 @@ async function provisionRuntimeBindingForAuthenticatedUser(
         defaultModel: binding.default_model,
         controlPlaneBaseUrl: DESKTOP_CONTROL_PLANE_BASE_URL,
       });
+      await syncRuntimeModelCatalogFromBinding(binding);
       await restartEmbeddedRuntimeIfNeeded(currentConfig, nextConfig);
       await emitRuntimeConfig();
       await syncRuntimeUserProfileFromAuth(user);
@@ -13328,6 +13610,7 @@ app.whenReady().then(async () => {
         defaultModel: binding.default_model,
         controlPlaneBaseUrl: DESKTOP_CONTROL_PLANE_BASE_URL,
       });
+      await syncRuntimeModelCatalogFromBinding(binding);
       await restartEmbeddedRuntimeIfNeeded(currentConfig, nextConfig);
       const config = await getRuntimeConfig();
       await emitRuntimeConfig(config);

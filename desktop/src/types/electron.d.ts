@@ -147,6 +147,7 @@ declare global {
     modelProxyBaseUrl: string | null;
     defaultModel: string | null;
     controlPlaneBaseUrl: string | null;
+    catalogVersion: string | null;
     providerModelGroups: RuntimeProviderModelGroupPayload[];
   }
 

@@ -58,16 +58,15 @@ test("runtime auth panel keeps provider cards readable in dark themes", async ()
   assert.doesNotMatch(source, /text-text-main/);
 });
 
-test("holaboss proxy defaults only advertise managed gpt models", async () => {
+test("holaboss proxy models come from the managed runtime catalog instead of local defaults", async () => {
   const source = await readFile(AUTH_PANEL_PATH, "utf8");
   const holabossTemplate =
     source.match(/holaboss:\s*\{[\s\S]*?apiKeyPlaceholder: "hbrt\.v1\.your-proxy-token"[\s\S]*?\n\s*}/)?.[0] ?? "";
 
-  assert.match(
-    holabossTemplate,
-    /defaultModels: \["gpt-5\.2", "gpt-5-mini", "gpt-4\.1-mini"\]/,
-  );
+  assert.match(holabossTemplate, /defaultModels: \[\]/);
   assert.doesNotMatch(holabossTemplate, /claude-/);
+  assert.match(source, /function configuredRuntimeProviderModelIds\(/);
+  assert.match(source, /if \(providerId === "holaboss"\) \{\s*continue;\s*\}/);
 });
 
 test("direct Anthropic and Gemini defaults advertise current provider model ids", async () => {
