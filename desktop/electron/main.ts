@@ -5827,30 +5827,70 @@ async function deleteCronjob(jobId: string): Promise<{ success: boolean }> {
   });
 }
 
+const runtimeNotificationListCache = new Map<
+  string,
+  RuntimeNotificationListResponsePayload
+>();
+
+function runtimeNotificationListCacheKey(
+  workspaceId?: string | null,
+  includeDismissed = false,
+): string {
+  return JSON.stringify({
+    workspaceId: workspaceId?.trim() || null,
+    includeDismissed,
+  });
+}
+
+function emptyRuntimeNotificationListResponse(): RuntimeNotificationListResponsePayload {
+  return {
+    items: [],
+    count: 0,
+  };
+}
+
 async function listNotifications(
   workspaceId?: string | null,
   includeDismissed = false,
 ): Promise<RuntimeNotificationListResponsePayload> {
-  return requestRuntimeJson<RuntimeNotificationListResponsePayload>({
-    method: "GET",
-    path: "/api/v1/notifications",
-    params: {
-      workspace_id: workspaceId ?? undefined,
-      include_dismissed: includeDismissed,
-      limit: 50,
-    },
-  });
+  const cacheKey = runtimeNotificationListCacheKey(
+    workspaceId,
+    includeDismissed,
+  );
+  try {
+    const response = await requestRuntimeJson<RuntimeNotificationListResponsePayload>({
+      method: "GET",
+      path: "/api/v1/notifications",
+      params: {
+        workspace_id: workspaceId ?? undefined,
+        include_dismissed: includeDismissed,
+        limit: 50,
+      },
+    });
+    runtimeNotificationListCache.set(cacheKey, response);
+    return response;
+  } catch (error) {
+    if (isTransientRuntimeError(error)) {
+      return (
+        runtimeNotificationListCache.get(cacheKey) ??
+        emptyRuntimeNotificationListResponse()
+      );
+    }
+    throw error;
+  }
 }
 
 async function updateNotification(
   notificationId: string,
   payload: RuntimeNotificationUpdatePayload,
 ): Promise<RuntimeNotificationRecordPayload> {
-  return requestRuntimeJson<RuntimeNotificationRecordPayload>({
+  const response = await requestRuntimeJson<RuntimeNotificationRecordPayload>({
     method: "PATCH",
     path: `/api/v1/notifications/${encodeURIComponent(notificationId)}`,
     payload,
   });
+  runtimeNotificationListCache.clear();
+  return response;
 }
 
 async function listIntegrationCatalog(): Promise<IntegrationCatalogResponsePayload> {
