@@ -1,5 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 
 import {
   buildPythonAssetName,
@@ -8,6 +20,7 @@ import {
   normalizeRuntimePlatform,
   resolvePythonTargetTriple,
   resolvePythonVariants,
+  stagePythonRuntime,
 } from "./stage_python_runtime.mjs";
 
 test("python runtime helper normalizes supported platforms and architectures", () => {
@@ -54,4 +67,53 @@ test("python runtime helper defaults to stripped then unstripped archives", () =
     resolvePythonVariants({ HOLABOSS_RUNTIME_PYTHON_VARIANT: "install_only" }),
     ["install_only"],
   );
+});
+
+test("python runtime staging dereferences absolute symlinks from the source install", async () => {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), "holaboss-python-stage-test-"));
+  const sourceRoot = path.join(tempRoot, "source-python");
+  const sourceBin = path.join(sourceRoot, "bin");
+  const outputRoot = path.join(tempRoot, "output");
+  mkdirSync(sourceBin, { recursive: true });
+
+  const versionedPython = path.join(sourceBin, "python3.12");
+  writeFileSync(
+    versionedPython,
+    "#!/usr/bin/env bash\nprintf 'python-ok\\n'\n",
+  );
+  chmodSync(versionedPython, 0o755);
+
+  symlinkSync(versionedPython, path.join(sourceBin, "python"));
+  symlinkSync(versionedPython, path.join(sourceBin, "python3"));
+
+  const previousPythonDir = process.env.HOLABOSS_RUNTIME_PYTHON_DIR;
+  try {
+    process.env.HOLABOSS_RUNTIME_PYTHON_DIR = sourceRoot;
+    const result = await stagePythonRuntime(outputRoot, "macos");
+    const stagedPython = path.join(result.pythonRuntimeRoot, "python", "bin", "python");
+    const stagedPython3 = path.join(result.pythonRuntimeRoot, "python", "bin", "python3");
+
+    assert.equal(lstatSync(stagedPython).isSymbolicLink(), false);
+    assert.equal(lstatSync(stagedPython3).isSymbolicLink(), false);
+    assert.equal(
+      readFileSync(stagedPython, "utf8"),
+      readFileSync(versionedPython, "utf8"),
+    );
+    assert.equal(
+      readFileSync(stagedPython3, "utf8"),
+      readFileSync(versionedPython, "utf8"),
+    );
+  } finally {
+    if (previousPythonDir === undefined) {
+      delete process.env.HOLABOSS_RUNTIME_PYTHON_DIR;
+    } else {
+      process.env.HOLABOSS_RUNTIME_PYTHON_DIR = previousPythonDir;
+    }
+    try {
+      unlinkSync(path.join(sourceBin, "python"));
+      unlinkSync(path.join(sourceBin, "python3"));
+    } catch {
+      // ignore
+    }
+  }
 });

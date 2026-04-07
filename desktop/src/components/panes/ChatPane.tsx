@@ -658,6 +658,52 @@ function extractMcpErrorText(result: unknown): string {
   return "";
 }
 
+function extractToolResultText(result: unknown, maxLength = 200): string {
+  if (!isRecord(result)) {
+    return "";
+  }
+  const content = Array.isArray(result.content) ? result.content : [];
+  for (const part of content) {
+    if (
+      isRecord(part) &&
+      part.type === "text" &&
+      typeof part.text === "string"
+    ) {
+      const text = part.text.trim();
+      if (text) {
+        return summarizeUnknown(text, maxLength);
+      }
+    }
+  }
+  return "";
+}
+
+function extractToolErrorText(payload: Record<string, unknown>): string {
+  const mcpErrorText = extractMcpErrorText(payload.result);
+  if (mcpErrorText) {
+    return mcpErrorText;
+  }
+
+  const resultText = extractToolResultText(payload.result);
+  if (resultText) {
+    return resultText;
+  }
+
+  if (typeof payload.error === "string") {
+    const text = payload.error.trim();
+    if (text) {
+      return summarizeUnknown(text, 200);
+    }
+  }
+
+  const resultSummary = summarizeUnknown(payload.result, 200);
+  if (resultSummary && resultSummary !== "true" && resultSummary !== "false") {
+    return resultSummary;
+  }
+
+  return "";
+}
+
 function isIntegrationError(
   text: string,
 ): { provider: string; action: string } | null {
@@ -705,15 +751,15 @@ function toolTraceStepFromPayload(
   const argsSummary = summarizeUnknown(payload.tool_args);
   const resultSummary = summarizeUnknown(payload.result);
   const errorSummary = summarizeUnknown(payload.error);
-  const mcpErrorText = extractMcpErrorText(payload.result);
+  const toolErrorText = extractToolErrorText(payload);
 
   if (phase === "started") {
     if (argsSummary) {
       details.push(argsSummary);
     }
   } else if (TOOL_TRACE_TERMINAL_PHASES.has(phase)) {
-    if (isError && mcpErrorText) {
-      details.push(mcpErrorText);
+    if (isError && toolErrorText) {
+      details.push(toolErrorText);
     } else if (isError) {
       if (errorSummary && errorSummary !== "true" && errorSummary !== "false") {
         details.push(errorSummary);
@@ -2971,9 +3017,14 @@ export function ChatPane({
   const configuredProviderModelGroups =
     runtimeConfig?.providerModelGroups ?? [];
   const visibleConfiguredProviderModelGroups = configuredProviderModelGroups
+    .filter(
+      (providerGroup) =>
+        isSignedIn || !isHolabossProviderId(providerGroup.providerId),
+    )
     .map((providerGroup) => ({
       ...providerGroup,
       pending:
+        isSignedIn &&
         isHolabossProviderId(providerGroup.providerId) &&
         !holabossProxyModelsAvailable,
       models: providerGroup.models.filter((model) => {
@@ -4177,10 +4228,21 @@ function TraceStepGroup({
   onToggleStep: (stepId: string) => void;
 }) {
   const [groupExpanded, setGroupExpanded] = useState(false);
-  const completedCount = steps.filter((s) => s.status === "completed").length;
-  const errorCount = steps.filter((s) => s.status === "error").length;
   const runningCount = steps.filter((s) => s.status === "running").length;
-  const isAllDone = runningCount === 0 && steps.length > 0;
+  const terminalErrorCount = steps.filter(
+    (step) => step.kind === "phase" && step.status === "error",
+  ).length;
+  const recoveredErrorCount = steps.filter(
+    (step) => step.kind === "tool" && step.status === "error",
+  ).length;
+  const groupHasTerminalError = terminalErrorCount > 0;
+  const stepCount = steps.length;
+  const stepLabel = `${stepCount} step${stepCount === 1 ? "" : "s"}`;
+  const summarySuffix = groupHasTerminalError
+    ? ` (${terminalErrorCount} failed)`
+    : recoveredErrorCount > 0
+      ? ` (${recoveredErrorCount} recovered)`
+      : "";
 
   return (
     <div className="mt-3">
@@ -4191,16 +4253,16 @@ function TraceStepGroup({
       >
         {runningCount > 0 ? (
           <Loader2 size={13} className="animate-spin text-muted-foreground" />
-        ) : errorCount > 0 ? (
+        ) : groupHasTerminalError ? (
           <AlertTriangle size={13} className="text-destructive" />
         ) : (
           <Check size={13} className="text-emerald-500" />
         )}
         <span>
           {runningCount > 0
-            ? `Running ${steps.length} tool${steps.length === 1 ? "" : "s"}...`
-            : `Used ${steps.length} tool${steps.length === 1 ? "" : "s"}`}
-          {errorCount > 0 ? ` (${errorCount} failed)` : ""}
+            ? `Running ${stepLabel}...`
+            : `Used ${stepLabel}`}
+          {summarySuffix}
         </span>
         <ChevronDown
           size={12}

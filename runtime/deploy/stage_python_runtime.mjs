@@ -7,8 +7,10 @@ import {
   cpSync,
   createWriteStream,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -373,6 +375,43 @@ function writeWindowsToolShims(pythonRuntimeRoot, pythonInstallRoot) {
   writeWindowsShim(path.join(shimDir, "pip3.cmd"), pythonRelative, ["-m", "pip"]);
 }
 
+function materializeSymlinks(rootPath) {
+  if (!pathExists(rootPath) || !statSync(rootPath).isDirectory()) {
+    return;
+  }
+
+  const queue = [rootPath];
+  while (queue.length > 0) {
+    const currentPath = queue.pop();
+    if (!currentPath) {
+      continue;
+    }
+
+    for (const entry of readdirSync(currentPath)) {
+      const entryPath = path.join(currentPath, entry);
+      const entryDetails = lstatSync(entryPath);
+
+      if (entryDetails.isSymbolicLink()) {
+        const resolvedTargetPath = realpathSync(entryPath);
+        rmSync(entryPath, { recursive: true, force: true });
+
+        const targetDetails = statSync(resolvedTargetPath);
+        if (targetDetails.isDirectory()) {
+          cpSync(resolvedTargetPath, entryPath, { recursive: true, force: true });
+          queue.push(entryPath);
+        } else {
+          copyFileSync(resolvedTargetPath, entryPath);
+        }
+        continue;
+      }
+
+      if (entryDetails.isDirectory()) {
+        queue.push(entryPath);
+      }
+    }
+  }
+}
+
 function resolveLocalPythonRoot(localDir) {
   const resolvedDir = path.resolve(localDir);
   const pythonRoot = firstExistingPath([path.join(resolvedDir, "python"), resolvedDir]);
@@ -407,6 +446,7 @@ export async function stagePythonRuntime(outputRootArg, runtimePlatformArg = pro
 
     mkdirSync(pythonRuntimeRoot, { recursive: true });
     cpSync(extractedPythonRoot, pythonInstallRoot, { recursive: true, force: true });
+    materializeSymlinks(pythonInstallRoot);
     prunePackagedTree(pythonInstallRoot, spec.platform);
 
     if (spec.platform === "windows") {

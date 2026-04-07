@@ -7,12 +7,16 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.join(__dirname, "ChatPane.tsx");
 
-test("chat model picker keeps holaboss models visible as pending until runtime binding is ready", async () => {
+test("chat model picker hides holaboss models while signed out and only marks them pending after sign-in", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(
     source,
-    /pending:\s*isHolabossProviderId\(providerGroup\.providerId\)\s*&&\s*!holabossProxyModelsAvailable/,
+    /filter\(\s*\(providerGroup\) =>\s*isSignedIn \|\| !isHolabossProviderId\(providerGroup\.providerId\),?\s*\)/,
+  );
+  assert.match(
+    source,
+    /pending:\s*isSignedIn &&\s*isHolabossProviderId\(providerGroup\.providerId\)\s*&&\s*!holabossProxyModelsAvailable/,
   );
   assert.match(source, /disabled: providerGroup\.pending/);
   assert.match(
@@ -25,7 +29,7 @@ test("chat model picker keeps holaboss models visible as pending until runtime b
   );
 });
 
-test("chat model picker renders pending options without collapsing back to provider setup", async () => {
+test("chat model picker still renders pending signed-in holaboss options without collapsing back to provider setup", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /const displayLabel =[\s\S]*selectedModelLabel \|\| "Select model"/);
@@ -71,6 +75,54 @@ test("chat pane shows provider setup CTA when no chat models are available", asy
     /disabled=\{isResponding \|\| noAvailableModels\}[\s\S]*<option value=\{CHAT_MODEL_USE_RUNTIME_DEFAULT\}>\{modelSelectionUnavailableReason\}<\/option>/,
   );
   assert.doesNotMatch(source, /if \(!resolvedUserId\) \{/);
+});
+
+test("chat pane falls back to provider setup instead of holaboss pending state when signed out", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const hasPendingConfiguredProviderCatalog =\s*visibleConfiguredProviderModelGroups\.some\(/,
+  );
+  assert.match(
+    source,
+    /const modelSelectionUnavailableReason =[\s\S]*hasPendingConfiguredProviderCatalog[\s\S]*"Holaboss models are finishing setup\. Refresh runtime binding or use another provider\."[\s\S]*"No models available\. Configure a provider to start chatting\."/,
+  );
+  assert.match(
+    source,
+    /const requiresModelProviderSetup =\s*!hasConfiguredProviderCatalog && !holabossProxyModelsAvailable;/,
+  );
+});
+
+test("chat trace summary treats recovered tool errors separately from terminal run failures", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const terminalErrorCount = steps\.filter\(\s*\(step\) => step\.kind === "phase" && step\.status === "error"/,
+  );
+  assert.match(
+    source,
+    /const recoveredErrorCount = steps\.filter\(\s*\(step\) => step\.kind === "tool" && step\.status === "error"/,
+  );
+  assert.match(source, /const groupHasTerminalError = terminalErrorCount > 0;/);
+  assert.match(
+    source,
+    /const summarySuffix = groupHasTerminalError[\s\S]*`\s*\(\$\{recoveredErrorCount\} recovered\)`/,
+  );
+  assert.match(
+    source,
+    /runningCount > 0[\s\S]*groupHasTerminalError[\s\S]*<Check size=\{13\} className="text-emerald-500" \/>/,
+  );
+});
+
+test("chat trace tool errors surface stderr text instead of a generic error label", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /function extractToolErrorText\(payload: Record<string, unknown>\)/);
+  assert.match(source, /const resultText = extractToolResultText\(payload\.result\);/);
+  assert.match(source, /const toolErrorText = extractToolErrorText\(payload\);/);
+  assert.match(source, /if \(isError && toolErrorText\) \{\s*details\.push\(toolErrorText\);/);
 });
 
 test("chat pane groups configured models under provider headings", async () => {
