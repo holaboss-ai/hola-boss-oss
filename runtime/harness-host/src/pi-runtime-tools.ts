@@ -19,6 +19,8 @@ const DEFAULT_RUNTIME_TOOL_TIMEOUT_MS = 30000;
 export interface PiRuntimeToolOptions {
   runtimeApiBaseUrl: string;
   workspaceId?: string | null;
+  sessionId?: string | null;
+  selectedModel?: string | null;
   fetchImpl?: typeof fetch;
 }
 
@@ -30,11 +32,24 @@ function normalizeRuntimeApiBaseUrl(value: unknown): string {
   return typeof value === "string" ? value.trim().replace(/\/+$/, "") : "";
 }
 
-function runtimeToolHeaders(workspaceId?: string | null): Record<string, string> {
+function runtimeToolHeaders(params: {
+  workspaceId?: string | null;
+  sessionId?: string | null;
+  selectedModel?: string | null;
+}): Record<string, string> {
   const headers: Record<string, string> = {};
-  const normalizedWorkspaceId = typeof workspaceId === "string" ? workspaceId.trim() : "";
+  const normalizedWorkspaceId = typeof params.workspaceId === "string" ? params.workspaceId.trim() : "";
   if (normalizedWorkspaceId) {
     headers["x-holaboss-workspace-id"] = normalizedWorkspaceId;
+  }
+  const normalizedSessionId = typeof params.sessionId === "string" ? params.sessionId.trim() : "";
+  if (normalizedSessionId) {
+    headers["x-holaboss-session-id"] = normalizedSessionId;
+  }
+  const normalizedSelectedModel =
+    typeof params.selectedModel === "string" ? params.selectedModel.trim() : "";
+  if (normalizedSelectedModel) {
+    headers["x-holaboss-selected-model"] = normalizedSelectedModel;
   }
   return headers;
 }
@@ -160,7 +175,11 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId) {
       return Type.Object(
         {
           cron: Type.String({ description: "Cron expression." }),
-          description: Type.String({ description: "Human-readable cronjob description." }),
+          description: Type.String({ description: "Short display description for the cronjob." }),
+          instruction: Type.String({
+            description:
+              "The exact task to execute when the cronjob runs. Keep schedule wording out of this field."
+          }),
           initiated_by: Type.Optional(Type.String({ description: "Actor creating the cronjob." })),
           name: Type.Optional(Type.String({ description: "Optional cronjob name." })),
           enabled: Type.Optional(Type.Boolean({ description: "Whether the cronjob is enabled." })),
@@ -175,7 +194,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId) {
           metadata_json: Type.Optional(
             Type.String({
               description:
-                "JSON object string for cronjob metadata. For `system_notification`, include a short `message`. For `session_run`, use metadata for execution context only; keep the actual task instruction in `description`."
+                "JSON object string for cronjob metadata. For `system_notification`, include a short `message`. For `session_run`, use metadata for execution context only; keep the actual task instruction in `instruction`."
             })
           ),
         },
@@ -187,7 +206,13 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId) {
           job_id: Type.String({ description: "Cronjob id." }),
           name: Type.Optional(Type.String({ description: "Optional cronjob name." })),
           cron: Type.Optional(Type.String({ description: "Cron expression." })),
-          description: Type.Optional(Type.String({ description: "Human-readable cronjob description." })),
+          description: Type.Optional(Type.String({ description: "Short display description for the cronjob." })),
+          instruction: Type.Optional(
+            Type.String({
+              description:
+                "The exact task to execute when the cronjob runs. Keep schedule wording out of this field."
+            })
+          ),
           enabled: Type.Optional(Type.Boolean({ description: "Whether the cronjob is enabled." })),
           delivery_channel: Type.Optional(
             Type.String({
@@ -200,7 +225,7 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId) {
           metadata_json: Type.Optional(
             Type.String({
               description:
-                "JSON object string for cronjob metadata. For `system_notification`, include a short `message`. For `session_run`, use metadata for execution context only; keep the actual task instruction in `description`."
+                "JSON object string for cronjob metadata. For `system_notification`, include a short `message`. For `session_run`, use metadata for execution context only; keep the actual task instruction in `instruction`."
             })
           ),
         },
@@ -270,6 +295,7 @@ function createCronjobBody(toolParams: unknown): Record<string, unknown> {
   return {
     cron: String(params.cron ?? ""),
     description: String(params.description ?? ""),
+    instruction: String(params.instruction ?? ""),
     ...(optionalString(params.initiated_by) ? { initiated_by: optionalString(params.initiated_by) } : {}),
     ...(optionalString(params.name) ? { name: optionalString(params.name) } : {}),
     ...(typeof params.enabled === "boolean" ? { enabled: params.enabled } : {}),
@@ -286,6 +312,7 @@ function updateCronjobBody(toolParams: unknown): Record<string, unknown> {
     ...(optionalString(params.name) ? { name: optionalString(params.name) } : {}),
     ...(optionalString(params.cron) ? { cron: optionalString(params.cron) } : {}),
     ...(optionalString(params.description) ? { description: optionalString(params.description) } : {}),
+    ...(optionalString(params.instruction) ? { instruction: optionalString(params.instruction) } : {}),
     ...(typeof params.enabled === "boolean" ? { enabled: params.enabled } : {}),
     ...(delivery ? { delivery } : {}),
     ...(metadata ? { metadata } : {})
@@ -297,6 +324,8 @@ async function executeRuntimeTool(params: {
   toolParams: unknown;
   runtimeApiBaseUrl: string;
   workspaceId?: string | null;
+  sessionId?: string | null;
+  selectedModel?: string | null;
   fetchImpl?: typeof fetch;
   signal: AbortSignal | undefined;
 }) {
@@ -345,12 +374,16 @@ async function executeRuntimeTool(params: {
   const response = fetchImpl
     ? await (async () => {
         const raw = await fetchImpl(`${params.runtimeApiBaseUrl}${requestPath}`, {
-          method,
-          headers: {
-            "content-type": "application/json; charset=utf-8",
-            ...runtimeToolHeaders(params.workspaceId),
-          },
-          ...(body && method !== "GET" && method !== "DELETE" ? { body: JSON.stringify(body) } : {}),
+            method,
+            headers: {
+              "content-type": "application/json; charset=utf-8",
+              ...runtimeToolHeaders({
+                workspaceId: params.workspaceId,
+                sessionId: params.sessionId,
+                selectedModel: params.selectedModel,
+              }),
+            },
+            ...(body && method !== "GET" && method !== "DELETE" ? { body: JSON.stringify(body) } : {}),
           signal,
         });
         return {
@@ -364,7 +397,11 @@ async function executeRuntimeTool(params: {
         method,
         headers: {
           "content-type": "application/json; charset=utf-8",
-          ...runtimeToolHeaders(params.workspaceId),
+          ...runtimeToolHeaders({
+            workspaceId: params.workspaceId,
+            sessionId: params.sessionId,
+            selectedModel: params.selectedModel,
+          }),
         },
         ...(body && method !== "GET" && method !== "DELETE" ? { body: JSON.stringify(body) } : {}),
         signal,
@@ -403,6 +440,8 @@ export function createPiRuntimeToolDefinition(
         toolParams,
         runtimeApiBaseUrl: options.runtimeApiBaseUrl,
         workspaceId: options.workspaceId,
+        sessionId: options.sessionId,
+        selectedModel: options.selectedModel,
         fetchImpl,
         signal,
       }),
@@ -413,6 +452,8 @@ export async function resolvePiRuntimeToolDefinitions(
   options: {
     runtimeApiBaseUrl?: string | null;
     workspaceId?: string | null;
+    sessionId?: string | null;
+    selectedModel?: string | null;
     fetchImpl?: typeof fetch;
   } = {}
 ): Promise<ToolDefinition[]> {
@@ -427,7 +468,11 @@ export async function resolvePiRuntimeToolDefinitions(
       ? await (async () => {
           const raw = await fetchImpl(`${runtimeApiBaseUrl}${RUNTIME_TOOLS_CAPABILITY_STATUS_PATH}`, {
             method: "GET",
-            headers: runtimeToolHeaders(options.workspaceId),
+            headers: runtimeToolHeaders({
+              workspaceId: options.workspaceId,
+              sessionId: options.sessionId,
+              selectedModel: options.selectedModel,
+            }),
             signal: AbortSignal.timeout(2000),
           });
           return {
@@ -439,7 +484,11 @@ export async function resolvePiRuntimeToolDefinitions(
       : await nodeRequestJson({
           url: `${runtimeApiBaseUrl}${RUNTIME_TOOLS_CAPABILITY_STATUS_PATH}`,
           method: "GET",
-          headers: runtimeToolHeaders(options.workspaceId),
+          headers: runtimeToolHeaders({
+            workspaceId: options.workspaceId,
+            sessionId: options.sessionId,
+            selectedModel: options.selectedModel,
+          }),
           signal: AbortSignal.timeout(2000),
         });
     if (!response.ok || !isRecord(response.payload) || response.payload.available !== true) {
@@ -453,6 +502,8 @@ export async function resolvePiRuntimeToolDefinitions(
     createPiRuntimeToolDefinition(tool.id, tool.description, {
       runtimeApiBaseUrl,
       workspaceId: options.workspaceId,
+      sessionId: options.sessionId,
+      selectedModel: options.selectedModel,
       fetchImpl,
     })
   );

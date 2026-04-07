@@ -22,9 +22,12 @@ export interface RuntimeAgentToolCapabilityPayload {
 export interface RuntimeAgentToolsCreateCronjobParams {
   workspaceId: string;
   initiatedBy?: string | null;
+  sessionId?: string | null;
+  selectedModel?: string | null;
   name?: string | null;
   cron: string;
   description: string;
+  instruction?: string | null;
   enabled?: boolean;
   delivery?: {
     channel: string;
@@ -41,6 +44,7 @@ export interface RuntimeAgentToolsUpdateCronjobParams {
   name?: string | null;
   cron?: string | null;
   description?: string | null;
+  instruction?: string | null;
   enabled?: boolean | null;
   delivery?:
     | {
@@ -116,16 +120,41 @@ function normalizedString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function metadataWithHolabossUserId(
-  metadata: Record<string, unknown> | null | undefined,
-  holabossUserId: string | null | undefined
+function metadataWithCronjobDefaults(params: {
+  metadata: Record<string, unknown> | null | undefined;
+  holabossUserId: string | null | undefined;
+  selectedModel?: string | null | undefined;
+  sourceSessionId?: string | null | undefined;
+}
 ): JsonObject {
-  const nextMetadata: JsonObject = { ...((metadata ?? {}) as JsonObject) };
-  const userId = normalizedString(holabossUserId);
+  const nextMetadata: JsonObject = { ...((params.metadata ?? {}) as JsonObject) };
+  const userId = normalizedString(params.holabossUserId);
   if (userId && typeof nextMetadata.holaboss_user_id !== "string") {
     nextMetadata.holaboss_user_id = userId;
   }
+  const selectedModel = normalizedString(params.selectedModel);
+  if (selectedModel && typeof nextMetadata.model !== "string") {
+    nextMetadata.model = selectedModel;
+  }
+  const sourceSessionId = normalizedString(params.sourceSessionId);
+  if (sourceSessionId && typeof nextMetadata.source_session_id !== "string") {
+    nextMetadata.source_session_id = sourceSessionId;
+  }
   return nextMetadata;
+}
+
+function resolvedInstructionForCronjobUpdate(params: {
+  existing: CronjobRecord;
+  description: string | null;
+  instruction: string | null;
+}): string | null | undefined {
+  if (params.instruction !== null) {
+    return params.instruction;
+  }
+  if (params.description !== null && params.existing.instruction.trim() === params.existing.description.trim()) {
+    return params.description;
+  }
+  return undefined;
 }
 
 export function normalizeDelivery(params: {
@@ -176,6 +205,7 @@ export function cronjobPayload(record: CronjobRecord): JsonObject {
     name: record.name,
     cron: record.cron,
     description: record.description,
+    instruction: record.instruction,
     enabled: record.enabled,
     delivery: record.delivery as JsonValue,
     metadata: record.metadata as JsonValue,
@@ -257,11 +287,15 @@ export class RuntimeAgentToolsService {
     this.requireWorkspace(params.workspaceId);
     const cron = normalizedString(params.cron);
     const description = normalizedString(params.description);
+    const instruction = normalizedString(params.instruction ?? params.description);
     if (!cron) {
       throw new RuntimeAgentToolsServiceError(400, "cronjob_cron_required", "cron is required");
     }
     if (!description) {
       throw new RuntimeAgentToolsServiceError(400, "cronjob_description_required", "description is required");
+    }
+    if (!instruction) {
+      throw new RuntimeAgentToolsServiceError(400, "cronjob_instruction_required", "instruction is required");
     }
     const created = this.store.createCronjob({
       workspaceId: params.workspaceId,
@@ -269,13 +303,19 @@ export class RuntimeAgentToolsService {
       name: normalizedString(params.name),
       cron,
       description,
+      instruction,
       enabled: params.enabled !== false,
       delivery: normalizeDelivery({
         channel: normalizedString(params.delivery?.channel ?? "session_run") || "session_run",
         mode: params.delivery?.mode ?? "announce",
         to: params.delivery?.to
       }),
-      metadata: metadataWithHolabossUserId(params.metadata, params.holabossUserId),
+      metadata: metadataWithCronjobDefaults({
+        metadata: params.metadata,
+        holabossUserId: params.holabossUserId,
+        selectedModel: params.selectedModel,
+        sourceSessionId: params.sessionId,
+      }),
       nextRunAt: cronjobNextRunAt(cron, new Date())
     });
     return cronjobPayload(created);
@@ -289,14 +329,19 @@ export class RuntimeAgentToolsService {
       throw new RuntimeAgentToolsServiceError(400, "cronjob_cron_required", "cron is required");
     }
     const description = params.description == null ? null : normalizedString(params.description);
+    const instruction = params.instruction == null ? null : normalizedString(params.instruction);
     if (params.description !== undefined && !description) {
       throw new RuntimeAgentToolsServiceError(400, "cronjob_description_required", "description is required");
+    }
+    if (params.instruction !== undefined && !instruction) {
+      throw new RuntimeAgentToolsServiceError(400, "cronjob_instruction_required", "instruction is required");
     }
     const updated = this.store.updateCronjob({
       jobId: params.jobId,
       name: params.name === undefined ? undefined : normalizedString(params.name),
       cron,
       description,
+      instruction: resolvedInstructionForCronjobUpdate({ existing, description, instruction }),
       enabled: params.enabled === undefined ? undefined : params.enabled,
       delivery:
         params.delivery === undefined || params.delivery === null

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Clock3, Loader2, MoreHorizontal, Plus, Trash2 } from "lucide-react";
+import { Clock3, Loader2, MoreHorizontal, Play, Plus, Trash2 } from "lucide-react";
 import { PaneCard } from "@/components/ui/PaneCard";
 import { Button } from "@/components/ui/button";
 import {
@@ -294,6 +294,22 @@ export function AutomationsPane({
     }
   };
 
+  const handleRunNow = async (job: CronjobRecordPayload) => {
+    setBusyJobId(job.id);
+    setStatusMessage("");
+    try {
+      const response = await window.electronAPI.workspace.runCronjobNow(job.id);
+      setStatusTone("success");
+      setStatusMessage(`Ran "${jobTitle(response.cronjob)}" now.`);
+      await refreshData();
+    } catch (error) {
+      setStatusTone("error");
+      setStatusMessage(normalizeErrorMessage(error));
+    } finally {
+      setBusyJobId(null);
+    }
+  };
+
   const handleNewSchedule = () => {
     if (onCreateSchedule) {
       onCreateSchedule();
@@ -376,10 +392,11 @@ export function AutomationsPane({
               ) : (
                 <div className="flex h-full min-h-0 flex-col">
                   <div className="shrink-0 border-b border-border/35 bg-muted/35 px-4 py-2.5">
-                    <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.4fr)_120px_48px] items-center gap-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground/75">
+                    <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.4fr)_120px_132px_48px] items-center gap-4 text-[11px] font-medium uppercase tracking-widest text-muted-foreground/75">
                       <span>Title</span>
                       <span>Schedule at</span>
                       <span>Status</span>
+                      <span>Run</span>
                       <span />
                     </div>
                   </div>
@@ -390,7 +407,7 @@ export function AutomationsPane({
                       return (
                         <div
                           key={job.id}
-                          className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.4fr)_120px_48px] items-center gap-4 border-b border-border/25 px-4 py-3 transition-colors hover:bg-accent/45"
+                          className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.4fr)_120px_132px_48px] items-center gap-4 border-b border-border/25 px-4 py-3 transition-colors hover:bg-accent/45"
                         >
                           <div className="min-w-0">
                             <div className="truncate text-sm font-medium text-foreground">
@@ -434,6 +451,24 @@ export function AutomationsPane({
                                 </span>
                               ) : null}
                             </button>
+                          </div>
+
+                          <div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={isBusy}
+                              onClick={() => void handleRunNow(job)}
+                              className="h-8 rounded-lg px-3"
+                            >
+                              {isBusy ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : (
+                                <Play size={14} />
+                              )}
+                              Run now
+                            </Button>
                           </div>
 
                           <div className="flex justify-end">

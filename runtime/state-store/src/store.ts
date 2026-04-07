@@ -286,6 +286,7 @@ export interface CronjobRecord {
   name: string;
   cron: string;
   description: string;
+  instruction: string;
   enabled: boolean;
   delivery: Record<string, unknown>;
   metadata: Record<string, unknown>;
@@ -2653,6 +2654,7 @@ export class RuntimeStateStore {
     initiatedBy: string;
     cron: string;
     description: string;
+    instruction?: string;
     delivery: Record<string, unknown>;
     enabled?: boolean;
     metadata?: Record<string, unknown> | null;
@@ -2665,9 +2667,9 @@ export class RuntimeStateStore {
     this.db()
       .prepare(`
         INSERT INTO cronjobs (
-            id, workspace_id, initiated_by, name, cron, description, enabled, delivery, metadata,
+            id, workspace_id, initiated_by, name, cron, description, instruction, enabled, delivery, metadata,
             last_run_at, next_run_at, run_count, last_status, last_error, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 0, NULL, NULL, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 0, NULL, NULL, ?, ?)
       `)
       .run(
         resolvedId,
@@ -2676,6 +2678,7 @@ export class RuntimeStateStore {
         params.name ?? "",
         params.cron,
         params.description,
+        params.instruction ?? params.description,
         params.enabled === false ? 0 : 1,
         JSON.stringify(params.delivery),
         JSON.stringify(params.metadata ?? {}),
@@ -2719,6 +2722,7 @@ export class RuntimeStateStore {
     name?: string | null;
     cron?: string | null;
     description?: string | null;
+    instruction?: string | null;
     enabled?: boolean | null;
     delivery?: Record<string, unknown> | null;
     metadata?: Record<string, unknown> | null;
@@ -2738,6 +2742,7 @@ export class RuntimeStateStore {
         SET name = ?,
             cron = ?,
             description = ?,
+            instruction = ?,
             enabled = ?,
             delivery = ?,
             metadata = ?,
@@ -2753,6 +2758,7 @@ export class RuntimeStateStore {
         params.name ?? existing.name,
         params.cron ?? existing.cron,
         params.description ?? existing.description,
+        params.instruction ?? existing.instruction,
         params.enabled == null ? (existing.enabled ? 1 : 0) : params.enabled ? 1 : 0,
         JSON.stringify(params.delivery ?? existing.delivery),
         JSON.stringify(params.metadata ?? existing.metadata),
@@ -3558,6 +3564,7 @@ export class RuntimeStateStore {
           name TEXT NOT NULL DEFAULT '',
           cron TEXT NOT NULL,
           description TEXT NOT NULL,
+          instruction TEXT NOT NULL DEFAULT '',
           enabled INTEGER NOT NULL DEFAULT 1,
           delivery TEXT NOT NULL,
           metadata TEXT NOT NULL DEFAULT '{}',
@@ -3614,6 +3621,7 @@ export class RuntimeStateStore {
     `);
     this.migrateLegacySessionArtifactsToOutputs(db);
     this.migrateRuntimeNotificationPriority(db);
+    this.migrateCronjobInstructions(db);
   }
 
   private migrateRuntimeNotificationPriority(db: Database.Database): void {
@@ -3623,6 +3631,16 @@ export class RuntimeStateStore {
     if (!columns.has("priority")) {
       db.exec("ALTER TABLE runtime_notifications ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal';");
     }
+  }
+
+  private migrateCronjobInstructions(db: Database.Database): void {
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(cronjobs)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+    if (!columns.has("instruction")) {
+      db.exec("ALTER TABLE cronjobs ADD COLUMN instruction TEXT NOT NULL DEFAULT '';");
+    }
+    db.exec("UPDATE cronjobs SET instruction = description WHERE trim(coalesce(instruction, '')) = '';");
   }
 
   private migrateLegacySessionArtifactsToOutputs(db: Database.Database): void {
@@ -4567,6 +4585,7 @@ export class RuntimeStateStore {
       name: row.name == null ? "" : String(row.name),
       cron: String(row.cron),
       description: String(row.description),
+      instruction: row.instruction == null || String(row.instruction).trim().length === 0 ? String(row.description) : String(row.instruction),
       enabled: Boolean(Number(row.enabled)),
       delivery: this.parseJsonDict(row.delivery),
       metadata: this.parseJsonDict(row.metadata),

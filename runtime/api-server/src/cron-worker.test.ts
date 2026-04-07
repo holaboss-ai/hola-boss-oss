@@ -42,6 +42,13 @@ test("cronjob helpers preserve legacy scheduling behavior", () => {
     cronjobInstruction("Daily check", { priority: 1, team: "growth" }),
     'Daily check\n\n[Cronjob Metadata]\n{"team":"growth"}'
   );
+  assert.equal(
+    cronjobInstruction("Remind me to drink water.", {
+      source_session_id: "session-main",
+      team: "growth"
+    }),
+    'Remind me to drink water.\n\n[Cronjob Metadata]\n{"team":"growth"}'
+  );
 
   const previous = process.env.CRONJOB_RUNNER_CHECK_INTERVAL_SECONDS;
   process.env.CRONJOB_RUNNER_CHECK_INTERVAL_SECONDS = "2";
@@ -72,6 +79,7 @@ test("runtime cron worker queues due session_run cronjobs and updates bookkeepin
     name: "Daily",
     cron: "0 9 * * *",
     description: "Daily check",
+    instruction: "Say hello",
     delivery: { channel: "session_run" },
     metadata: {
       session_id: "session-cron",
@@ -99,6 +107,7 @@ test("runtime cron worker queues due session_run cronjobs and updates bookkeepin
   const runtimeState = store.getRuntimeState({ workspaceId: workspace.id, sessionId: "session-cron" });
   const queued = store.claimInputs({ limit: 10, claimedBy: "test", leaseSeconds: 300 });
   const history = store.listSessionMessages({ workspaceId: workspace.id, sessionId: "session-cron" });
+  const notifications = store.listRuntimeNotifications({ workspaceId: workspace.id });
 
   assert.equal(processed, 1);
   assert.equal(wakeCalls, 1);
@@ -114,7 +123,73 @@ test("runtime cron worker queues due session_run cronjobs and updates bookkeepin
   assert.equal(queued.length, 1);
   assert.equal(queued[0].payload.model, "gpt-5");
   assert.deepEqual(queued[0].payload.context, { source: "cronjob", cronjob_id: job.id });
+  assert.match(String(queued[0].payload.text), /^Say hello/);
   assert.match(String(queued[0].payload.text), /\[Cronjob Metadata\]/);
+  assert.match(String(history[0].text), /^Say hello/);
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0]?.title, "Daily");
+  assert.equal(notifications[0]?.message, "Daily check");
+  assert.equal(notifications[0]?.state, "unread");
+  assert.equal(notifications[0]?.cronjobId, job.id);
+  assert.equal(notifications[0]?.sourceType, "cronjob");
+  assert.equal(notifications[0]?.metadata.session_id, "session-cron");
+  assert.equal(notifications[0]?.metadata.cronjob_instruction, "Say hello");
+
+  store.close();
+});
+
+test("runtime cron worker inherits the main-session model when cronjob metadata does not pin one", async () => {
+  const root = makeTempDir("hb-runtime-cron-worker-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  store.upsertTurnRequestSnapshot({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: "input-main",
+    snapshotKind: "harness_host_request",
+    fingerprint: "snapshot-main",
+    payload: {
+      runtime_config: {
+        provider_id: "openai",
+        model_id: "gpt-5.4"
+      }
+    }
+  });
+  const job = store.createCronjob({
+    workspaceId: workspace.id,
+    initiatedBy: "workspace_agent",
+    name: "Hello",
+    cron: "0 9 * * *",
+    description: "Say hello every day.",
+    instruction: "Say hello.",
+    delivery: { channel: "session_run" },
+    metadata: {}
+  });
+
+  const worker = new RuntimeCronWorker({
+    store,
+    queueWorker: {
+      async start() {},
+      wake() {},
+      async close() {}
+    }
+  });
+
+  const processed = await worker.processDueCronjobsOnce(new Date("2025-01-01T09:30:00Z"));
+  const queued = store.claimInputs({ limit: 10, claimedBy: "test", leaseSeconds: 300 });
+
+  assert.equal(processed, 1);
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0]?.payload.model, "openai/gpt-5.4");
 
   store.close();
 });

@@ -37,6 +37,7 @@ import {
 } from "./queue-worker.js";
 import {
   type CronWorkerLike,
+  executeLocalCronjobDelivery,
   RuntimeCronWorker,
   cronjobNextRunAt
 } from "./cron-worker.js";
@@ -317,6 +318,32 @@ function requiredCapabilityWorkspaceId(params: {
     throw new Error("workspace_id is required");
   }
   return workspaceId;
+}
+
+function capabilitySessionId(params: {
+  headers: Record<string, unknown>;
+  query?: Record<string, unknown> | null;
+  body?: Record<string, unknown> | null;
+}): string {
+  return (
+    headerString(params.headers, "x-holaboss-session-id") ||
+    optionalString(params.query?.session_id) ||
+    optionalString(params.body?.session_id) ||
+    ""
+  );
+}
+
+function capabilitySelectedModel(params: {
+  headers: Record<string, unknown>;
+  query?: Record<string, unknown> | null;
+  body?: Record<string, unknown> | null;
+}): string {
+  return (
+    headerString(params.headers, "x-holaboss-selected-model") ||
+    optionalString(params.query?.selected_model) ||
+    optionalString(params.body?.selected_model) ||
+    ""
+  );
 }
 
 function requiredCronjobDeliveryInput(value: unknown): {
@@ -637,6 +664,7 @@ function cronjobPayload(record: CronjobRecord): Record<string, unknown> {
     name: record.name,
     cron: record.cron,
     description: record.description,
+    instruction: record.instruction,
     enabled: record.enabled,
     delivery: record.delivery,
     metadata: record.metadata,
@@ -2304,10 +2332,19 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
           headers: request.headers as Record<string, unknown>,
           body: request.body
         }),
+        sessionId: capabilitySessionId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body
+        }),
+        selectedModel: capabilitySelectedModel({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body
+        }),
         initiatedBy: optionalString(request.body.initiated_by),
         name: optionalString(request.body.name),
         cron: requiredString(request.body.cron, "cron"),
         description: requiredString(request.body.description, "description"),
+        instruction: nullableString(request.body.instruction) ?? undefined,
         enabled: optionalBoolean(request.body.enabled, true),
         delivery: optionalCronjobDeliveryInput(request.body.delivery),
         metadata: optionalDict(request.body.metadata) ?? undefined
@@ -2358,6 +2395,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         name: hasOwn(request.body, "name") ? nullableString(request.body.name) : undefined,
         cron: hasOwn(request.body, "cron") ? nullableString(request.body.cron) : undefined,
         description: hasOwn(request.body, "description") ? nullableString(request.body.description) : undefined,
+        instruction: hasOwn(request.body, "instruction") ? nullableString(request.body.instruction) : undefined,
         enabled: hasOwn(request.body, "enabled") ? optionalBoolean(request.body.enabled, false) : undefined,
         delivery: hasOwn(request.body, "delivery") ? optionalCronjobDeliveryInput(request.body.delivery) ?? null : undefined,
         metadata: hasOwn(request.body, "metadata") ? (optionalDict(request.body.metadata) ?? {}) : undefined
@@ -4122,6 +4160,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       name: optionalString(request.body.name) ?? "",
       cron: requiredString(request.body.cron, "cron"),
       description: requiredString(request.body.description, "description"),
+      instruction: optionalString(request.body.instruction) ?? requiredString(request.body.description, "description"),
       enabled: optionalBoolean(request.body.enabled, true),
       delivery: requiredDict(request.body.delivery, "delivery"),
       metadata: optionalDict(request.body.metadata) ?? {},
@@ -4139,17 +4178,82 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     return cronjobPayload(job);
   });
 
+  app.post("/api/v1/cronjobs/:jobId/run", async (request, reply) => {
+    const params = request.params as { jobId: string };
+    const job = store.getCronjob(params.jobId);
+    if (!job) {
+      return sendError(reply, 404, "Cronjob not found");
+    }
+
+    const now = new Date();
+    try {
+      const result = executeLocalCronjobDelivery(
+        store,
+        job,
+        now,
+        () => queueWorker?.wake(),
+      );
+      const updated = store.updateCronjob({
+        jobId: job.id,
+        lastRunAt: now.toISOString(),
+        nextRunAt: cronjobNextRunAt(job.cron, now),
+        runCount: job.runCount + 1,
+        lastStatus: "success",
+        lastError: null,
+      });
+      if (!updated) {
+        return sendError(reply, 404, "Cronjob not found");
+      }
+      return {
+        success: true,
+        cronjob: cronjobPayload(updated),
+        session_id: result.sessionId,
+        notification_id: result.notificationId,
+      };
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "cronjob run failed";
+      store.updateCronjob({
+        jobId: job.id,
+        lastRunAt: now.toISOString(),
+        nextRunAt: cronjobNextRunAt(job.cron, now),
+        lastStatus: "failed",
+        lastError: message,
+      });
+      return sendError(reply, 400, message);
+    }
+  });
+
   app.patch("/api/v1/cronjobs/:jobId", async (request, reply) => {
     if (!isRecord(request.body)) {
       return sendError(reply, 400, "request body must be an object");
     }
     const params = request.params as { jobId: string };
+    const existing = store.getCronjob(params.jobId);
+    if (!existing) {
+      return sendError(reply, 404, "Cronjob not found");
+    }
+    if (hasOwn(request.body, "description") && request.body.description != null && optionalString(request.body.description) === undefined) {
+      return sendError(reply, 400, "description is required");
+    }
+    if (hasOwn(request.body, "instruction") && request.body.instruction != null && optionalString(request.body.instruction) === undefined) {
+      return sendError(reply, 400, "instruction is required");
+    }
     const cron = nullableString(request.body.cron);
+    const description = nullableString(request.body.description);
+    const explicitInstruction = hasOwn(request.body, "instruction") ? nullableString(request.body.instruction) : undefined;
+    const instruction =
+      explicitInstruction !== undefined
+        ? explicitInstruction
+        : description != null && existing.instruction.trim() === existing.description.trim()
+          ? description
+          : undefined;
     const job = store.updateCronjob({
       jobId: params.jobId,
       name: nullableString(request.body.name),
       cron,
-      description: nullableString(request.body.description),
+      description,
+      instruction,
       enabled: hasOwn(request.body, "enabled") ? optionalBoolean(request.body.enabled, false) : null,
       delivery: hasOwn(request.body, "delivery") ? (optionalDict(request.body.delivery) ?? {}) : undefined,
       metadata: hasOwn(request.body, "metadata") ? (optionalDict(request.body.metadata) ?? {}) : undefined,

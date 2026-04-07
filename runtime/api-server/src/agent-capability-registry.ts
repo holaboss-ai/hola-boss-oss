@@ -1268,6 +1268,8 @@ export function renderCapabilityPolicyPromptSection(manifest: AgentCapabilityMan
   if (manifest.runtime_tools.some((capability) => capability.id === "holaboss_cronjobs_create")) {
     lines.push("Cronjob delivery routing: use `session_run` for recurring agent work such as running instructions, tasks, analysis, browsing, or writing.");
     lines.push("Use `system_notification` only for lightweight reminders or notifications where the primary outcome is a short message rather than agent execution.");
+    lines.push("When creating or updating cronjobs, put the executable task in `instruction` and keep `description` as a short display summary only.");
+    lines.push("Do not repeat schedule wording such as 'every 5 minutes' inside the cronjob `instruction` unless the task itself genuinely requires saying that phrase.");
   }
   if (manifest.workspace_commands.length > 0) {
     lines.push(`Workspace commands available now: ${summarizeList(manifest.workspace_commands)}`);
