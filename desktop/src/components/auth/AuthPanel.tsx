@@ -56,7 +56,7 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     description: "Managed by your Holaboss account session and runtime binding.",
     kind: "holaboss_proxy",
     defaultBaseUrl: "",
-    defaultModels: ["gpt-5.2", "gpt-5-mini", "gpt-4.1-mini"],
+    defaultModels: [],
     apiKeyPlaceholder: "hbrt.v1.your-proxy-token"
   },
   openai_direct: {
@@ -252,6 +252,32 @@ function providerBrandIconMarkup(providerId: KnownProviderId): string | null {
   return null;
 }
 
+function configuredRuntimeProviderModelIds(
+  runtimeConfig: RuntimeConfigPayload | null,
+  providerId: KnownProviderId
+): string[] {
+  const runtimeProviderId =
+    providerId === "holaboss" ? "holaboss_model_proxy" : providerId;
+  const providerGroup = runtimeConfig?.providerModelGroups.find(
+    (group) => group.providerId.trim() === runtimeProviderId
+  );
+  if (!providerGroup) {
+    return [];
+  }
+  return uniqueValues(
+    providerGroup.models
+      .map((model) => normalizeConfiguredProviderModelId(providerId, model.modelId || model.token))
+      .filter(Boolean)
+  );
+}
+
+function configuredRuntimeProviderPrefixes(providerId: KnownProviderId): string[] {
+  if (providerId === "holaboss") {
+    return ["holaboss/", "holaboss_model_proxy/"];
+  }
+  return [`${providerId}/`];
+}
+
 function ProviderBrandIcon({ providerId }: { providerId: KnownProviderId }) {
   if (providerId === "holaboss") {
     return <img src={holabossLogoUrl} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
@@ -285,7 +311,11 @@ function deriveProviderDraftsFromDocument(
 
   for (const providerId of KNOWN_PROVIDER_ORDER) {
     const template = KNOWN_PROVIDER_TEMPLATES[providerId];
-    const providerPayload = asRecord(providersPayload[providerId]);
+    const providerPayload = asRecord(
+      providerId === "holaboss"
+        ? providersPayload.holaboss_model_proxy ?? providersPayload.holaboss
+        : providersPayload[providerId]
+    );
     const optionsPayload = asRecord(providerPayload.options);
 
     const baseUrl = firstNonEmptyString(
@@ -306,32 +336,41 @@ function deriveProviderDraftsFromDocument(
       providerId === "holaboss" ? (holabossIntegration.auth_token as string | undefined) : ""
     );
     const modelIds: string[] = [];
-    for (const [token, rawModel] of Object.entries(modelsPayload)) {
-      const modelPayload = asRecord(rawModel);
-      let modelProvider = firstNonEmptyString(
-        modelPayload.provider as string | undefined,
-        modelPayload.provider_id as string | undefined
-      );
-      let modelId = firstNonEmptyString(
-        modelPayload.model as string | undefined,
-        modelPayload.model_id as string | undefined
-      );
-      if (!modelProvider && token.includes("/")) {
-        const [prefix, ...rest] = token.split("/");
-        if (prefix.trim() === providerId && rest.length > 0) {
-          modelProvider = providerId;
-          modelId = modelId || rest.join("/");
+    if (providerId !== "holaboss") {
+      for (const [token, rawModel] of Object.entries(modelsPayload)) {
+        const modelPayload = asRecord(rawModel);
+        let modelProvider = firstNonEmptyString(
+          modelPayload.provider as string | undefined,
+          modelPayload.provider_id as string | undefined
+        );
+        let modelId = firstNonEmptyString(
+          modelPayload.model as string | undefined,
+          modelPayload.model_id as string | undefined
+        );
+        if (!modelProvider && token.includes("/")) {
+          const [prefix, ...rest] = token.split("/");
+          if (prefix.trim() === providerId && rest.length > 0) {
+            modelProvider = providerId;
+            modelId = modelId || rest.join("/");
+          }
+        }
+        if (modelProvider === providerId && modelId.trim()) {
+          modelIds.push(normalizeConfiguredProviderModelId(providerId, modelId));
         }
       }
-      if (modelProvider === providerId && modelId.trim()) {
-        modelIds.push(normalizeConfiguredProviderModelId(providerId, modelId));
-      }
     }
-    const normalizedModelIds = uniqueValues(modelIds);
+    const normalizedModelIds =
+      providerId === "holaboss"
+        ? configuredRuntimeProviderModelIds(runtimeConfig, providerId)
+        : uniqueValues(modelIds);
     const fallbackDefaultModel = firstNonEmptyString(runtimePayload.default_model as string | undefined, runtimeConfig?.defaultModel ?? "");
-    const fallbackProviderPrefix = `${providerId}/`;
-    if (normalizedModelIds.length === 0 && fallbackDefaultModel.startsWith(fallbackProviderPrefix)) {
-      normalizedModelIds.push(fallbackDefaultModel.slice(fallbackProviderPrefix.length).trim());
+    if (normalizedModelIds.length === 0) {
+      for (const providerPrefix of configuredRuntimeProviderPrefixes(providerId)) {
+        if (fallbackDefaultModel.startsWith(providerPrefix)) {
+          normalizedModelIds.push(fallbackDefaultModel.slice(providerPrefix.length).trim());
+          break;
+        }
+      }
     }
     drafts[providerId] = {
       enabled:
@@ -627,8 +666,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       const currentRuntime = asRecord(currentDocument.runtime);
       const currentProviders = asRecord(currentDocument.providers);
       const currentModels = asRecord(currentDocument.models);
-      const currentIntegrations = asRecord(currentDocument.integrations);
-      const currentHolabossIntegration = asRecord(currentIntegrations.holaboss);
 
       const nextProviders: Record<string, unknown> = {};
       for (const [providerId, providerPayload] of Object.entries(currentProviders)) {
@@ -653,6 +690,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       const enabledProviders = enabledProviderIdsForDrafts(draftsSnapshot, isSignedIn);
 
       for (const providerId of enabledProviders) {
+        if (providerId === "holaboss") {
+          continue;
+        }
         const providerTemplate = KNOWN_PROVIDER_TEMPLATES[providerId];
         const providerDraft = draftsSnapshot[providerId];
         const existingProviderPayload = asRecord(currentProviders[providerId]);
@@ -661,19 +701,17 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           kind: providerTemplate.kind
         };
         const normalizedBaseUrl = firstNonEmptyString(
-          providerId === "holaboss" ? (existingProviderPayload.base_url as string | undefined) : "",
-          providerId === "holaboss" ? (existingProviderPayload.baseURL as string | undefined) : "",
-          providerId === "holaboss" ? (existingProviderOptions.base_url as string | undefined) : "",
-          providerId === "holaboss" ? (existingProviderOptions.baseURL as string | undefined) : "",
-          providerId === "holaboss" ? (runtimeConfig?.modelProxyBaseUrl ?? "") : "",
+          existingProviderPayload.base_url as string | undefined,
+          existingProviderPayload.baseURL as string | undefined,
+          existingProviderOptions.base_url as string | undefined,
+          existingProviderOptions.baseURL as string | undefined,
           providerDraft.baseUrl
         );
         const normalizedApiKey = firstNonEmptyString(
-          providerId === "holaboss" ? (existingProviderPayload.api_key as string | undefined) : "",
-          providerId === "holaboss" ? (existingProviderPayload.auth_token as string | undefined) : "",
-          providerId === "holaboss" ? (existingProviderOptions.api_key as string | undefined) : "",
-          providerId === "holaboss" ? (existingProviderOptions.apiKey as string | undefined) : "",
-          providerId === "holaboss" ? (currentHolabossIntegration.auth_token as string | undefined) : "",
+          existingProviderPayload.api_key as string | undefined,
+          existingProviderPayload.auth_token as string | undefined,
+          existingProviderOptions.api_key as string | undefined,
+          existingProviderOptions.apiKey as string | undefined,
           providerDraft.apiKey
         );
         if (normalizedBaseUrl) {

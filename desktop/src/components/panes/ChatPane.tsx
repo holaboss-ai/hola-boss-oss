@@ -103,6 +103,8 @@ interface ChatModelOption {
   label: string;
   selectedLabel?: string;
   searchText?: string;
+  disabled?: boolean;
+  statusLabel?: string;
 }
 
 interface ChatModelOptionGroup {
@@ -2967,6 +2969,9 @@ export function ChatPane({
   const visibleConfiguredProviderModelGroups = configuredProviderModelGroups
     .map((providerGroup) => ({
       ...providerGroup,
+      pending:
+        isHolabossProviderId(providerGroup.providerId) &&
+        !holabossProxyModelsAvailable,
       models: providerGroup.models.filter((model) => {
         const normalizedToken = model.token.trim();
         if (!normalizedToken || isDeprecatedChatModel(normalizedToken)) {
@@ -2980,15 +2985,16 @@ export function ChatPane({
         ) {
           return false;
         }
-        if (holabossProxyModelsAvailable) {
-          return true;
-        }
-        return !isHolabossProviderId(providerGroup.providerId);
+        return true;
       }),
     }))
     .filter((providerGroup) => providerGroup.models.length > 0);
   const hasConfiguredProviderCatalog =
     visibleConfiguredProviderModelGroups.length > 0;
+  const hasPendingConfiguredProviderCatalog =
+    visibleConfiguredProviderModelGroups.some(
+      (providerGroup) => providerGroup.pending,
+    );
   const providerModelLabelCounts = new Map<string, number>();
   for (const providerGroup of visibleConfiguredProviderModelGroups) {
     for (const model of providerGroup.models) {
@@ -3025,12 +3031,16 @@ export function ChatPane({
                 ? `${providerGroup.providerLabel} · ${modelLabel}`
                 : modelLabel,
               searchText: `${providerGroup.providerLabel} ${modelLabel} ${model.token}`,
+              disabled: providerGroup.pending,
+              statusLabel: providerGroup.pending ? "Pending" : undefined,
             };
           }),
         }))
       : [];
   const availableChatModelOptions = hasConfiguredProviderCatalog
-    ? availableChatModelOptionGroups.flatMap((group) => group.options)
+    ? availableChatModelOptionGroups.flatMap((group) =>
+        group.options.filter((option) => !option.disabled),
+      )
     : requiresModelProviderSetup
       ? []
       : Array.from(
@@ -3094,6 +3104,8 @@ export function ChatPane({
   const modelSelectionUnavailableReason =
     availableChatModelOptions.length > 0
       ? ""
+      : hasPendingConfiguredProviderCatalog
+        ? "Holaboss models are finishing setup. Refresh runtime binding or use another provider."
       : "No models available. Configure a provider to start chatting.";
   const composerBaseDisabledReason =
     baseComposerDisabledReason ||
@@ -4431,7 +4443,7 @@ function ModelCombobox({
   const displayLabel =
     selectedModel === CHAT_MODEL_USE_RUNTIME_DEFAULT
       ? `Auto (${runtimeDefaultModelLabel})`
-      : selectedModelLabel;
+      : selectedModelLabel || "Select model";
 
   const hasFilteredOptions =
     Boolean(filteredAutoOption) ||
@@ -4439,11 +4451,16 @@ function ModelCombobox({
 
   const renderOption = (option: ChatModelOption) => {
     const active = option.value === selectedModel;
+    const optionDisabled = Boolean(option.disabled);
     return (
       <button
         key={option.value}
         type="button"
+        disabled={optionDisabled}
         onClick={() => {
+          if (optionDisabled) {
+            return;
+          }
           onModelChange(option.value);
           setOpen(false);
           setQuery("");
@@ -4451,11 +4468,19 @@ function ModelCombobox({
         className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs transition-colors ${
           active
             ? "bg-accent text-accent-foreground"
+            : optionDisabled
+              ? "cursor-not-allowed text-muted-foreground/70"
             : "text-foreground hover:bg-accent/50"
         }`}
       >
         <span className="truncate">{option.label}</span>
-        {active ? <Check size={13} className="shrink-0 text-primary" /> : null}
+        {active ? (
+          <Check size={13} className="shrink-0 text-primary" />
+        ) : option.statusLabel ? (
+          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/85">
+            {option.statusLabel}
+          </span>
+        ) : null}
       </button>
     );
   };
@@ -4560,9 +4585,15 @@ function Composer({
 }: ComposerProps) {
   const [isDragActive, setIsDragActive] = useState(false);
   const noAvailableModels =
-    !runtimeDefaultModelAvailable && modelOptions.length === 0;
+    !runtimeDefaultModelAvailable &&
+    modelOptions.length === 0 &&
+    modelOptionGroups.length === 0;
   const inputDisabled = disabled || isResponding;
+  const visibleModelOptions = modelOptionGroups.flatMap((group) => group.options);
   const selectedModelOptionLabel =
+    visibleModelOptions.find((option) => option.value === selectedModel)
+      ?.selectedLabel ??
+    visibleModelOptions.find((option) => option.value === selectedModel)?.label ??
     modelOptions.find((option) => option.value === selectedModel)
       ?.selectedLabel ??
     modelOptions.find((option) => option.value === selectedModel)?.label ??
