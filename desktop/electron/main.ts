@@ -47,7 +47,8 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { ensureWorkspaceGitRepo } from "./workspace-git.js";
 
-const isDev = !!process.env.VITE_DEV_SERVER_URL;
+const APP_DISPLAY_NAME = "Holaboss";
+const AUTH_CALLBACK_PROTOCOL = "ai.holaboss.app";
 const verboseTelemetryEnabled =
   process.env.HOLABOSS_VERBOSE_TELEMETRY?.trim() === "1";
 const chromiumStderrLoggingEnabled =
@@ -88,7 +89,6 @@ const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
 const HOLABOSS_HOME_URL = "https://www.holaboss.ai";
 const HOLABOSS_DOCS_URL = `https://github.com/${GITHUB_RELEASES_OWNER}/${GITHUB_RELEASES_REPO}`;
 const HOLABOSS_HELP_URL = `${HOLABOSS_DOCS_URL}/issues`;
-const APP_DISPLAY_NAME = "Holaboss";
 const RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY = "holaboss_proxy";
 const RUNTIME_PROVIDER_KIND_OPENAI_COMPATIBLE = "openai_compatible";
 const RUNTIME_PROVIDER_KIND_ANTHROPIC_NATIVE = "anthropic_native";
@@ -114,6 +114,64 @@ const RUNTIME_LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string
     "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite",
   },
 };
+
+interface DevLaunchContext {
+  devServerUrl: string;
+  userDataPath: string;
+}
+
+function maybeAuthCallbackUrl(argument: string | undefined): string | null {
+  if (!argument) {
+    return null;
+  }
+  const normalized = argument.trim();
+  if (!normalized) {
+    return null;
+  }
+  return normalized.startsWith(`${AUTH_CALLBACK_PROTOCOL}://`) ||
+    normalized.startsWith(`${AUTH_CALLBACK_PROTOCOL}:/`)
+    ? normalized
+    : null;
+}
+
+function devLaunchContextPath(): string {
+  return path.join(app.getPath("appData"), APP_DISPLAY_NAME, "dev-launch.json");
+}
+
+function loadRecoveredDevLaunchContext(): DevLaunchContext | null {
+  const hasAuthCallbackArgument = process.argv.some((value) =>
+    maybeAuthCallbackUrl(value),
+  );
+  if (!hasAuthCallbackArgument) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(
+      readFileSync(devLaunchContextPath(), "utf8"),
+    ) as Partial<DevLaunchContext>;
+    const devServerUrl =
+      typeof parsed.devServerUrl === "string" ? parsed.devServerUrl.trim() : "";
+    const userDataPath =
+      typeof parsed.userDataPath === "string" ? parsed.userDataPath.trim() : "";
+    if (!devServerUrl || !userDataPath) {
+      return null;
+    }
+    return {
+      devServerUrl,
+      userDataPath,
+    };
+  } catch {
+    return null;
+  }
+}
+
+const recoveredDevLaunchContext = loadRecoveredDevLaunchContext();
+const RESOLVED_DEV_SERVER_URL =
+  process.env.VITE_DEV_SERVER_URL?.trim() ||
+  recoveredDevLaunchContext?.devServerUrl ||
+  "";
+const isDev = Boolean(RESOLVED_DEV_SERVER_URL);
 
 function configureChromiumLoggingPolicy() {
   if (verboseTelemetryEnabled || chromiumStderrLoggingEnabled) {
@@ -619,7 +677,7 @@ function loadPackagedDesktopConfig(): PackagedDesktopConfig {
 
 const packagedDesktopConfig = loadPackagedDesktopConfig();
 const INTERNAL_DEV_BACKEND_OVERRIDES_ENABLED =
-  Boolean(process.env.VITE_DEV_SERVER_URL) ||
+  Boolean(RESOLVED_DEV_SERVER_URL) ||
   process.env.HOLABOSS_INTERNAL_DEV?.trim() === "1";
 function internalOverride(envName: string): string {
   if (!INTERNAL_DEV_BACKEND_OVERRIDES_ENABLED) {
@@ -669,7 +727,6 @@ const DESKTOP_RUNTIME_BINDING_EXCHANGE_PATH =
   "/api/v1/desktop-runtime/bindings/exchange";
 const DESKTOP_RUNTIME_MODEL_CATALOG_PATH =
   "/api/v1/desktop-runtime/model-catalog";
-const AUTH_CALLBACK_PROTOCOL = "ai.holaboss.app";
 const LOCAL_RUNTIME_SCHEMA_VERSION = 1;
 const RUNTIME_BINDING_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 const RUNTIME_BINDING_REFRESH_FAILURE_BACKOFF_MS = 60 * 1000;
@@ -719,7 +776,10 @@ function handleTrustedIpc<Args extends unknown[], Result>(
 }
 
 function configureStableUserDataPath() {
-  const explicit = process.env.HOLABOSS_DESKTOP_USER_DATA_PATH?.trim();
+  const explicit =
+    process.env.HOLABOSS_DESKTOP_USER_DATA_PATH?.trim() ||
+    recoveredDevLaunchContext?.userDataPath?.trim() ||
+    "";
   const nextUserDataPath = explicit
     ? path.resolve(explicit)
     : path.join(app.getPath("appData"), DESKTOP_USER_DATA_DIR);
@@ -727,6 +787,20 @@ function configureStableUserDataPath() {
   if (app.getPath("userData") !== nextUserDataPath) {
     app.setPath("userData", nextUserDataPath);
   }
+}
+
+function persistDevLaunchContext() {
+  if (!RESOLVED_DEV_SERVER_URL) {
+    return;
+  }
+
+  const nextContext: DevLaunchContext = {
+    devServerUrl: RESOLVED_DEV_SERVER_URL,
+    userDataPath: app.getPath("userData"),
+  };
+  const targetPath = devLaunchContextPath();
+  mkdirSync(path.dirname(targetPath), { recursive: true });
+  writeFileSync(targetPath, JSON.stringify(nextContext, null, 2));
 }
 
 function appUpdatePreferencesPath() {
@@ -1143,6 +1217,7 @@ function emitOpenSettingsPane(section: UiSettingsPaneSection = "settings") {
 }
 
 configureStableUserDataPath();
+persistDevLaunchContext();
 appUpdatePreferences = loadAppUpdatePreferences();
 runtimeModelCatalogState = loadRuntimeModelCatalogCache();
 appUpdateStatus = {
@@ -5364,20 +5439,6 @@ async function ensureRuntimeBindingReadyForWorkspaceFlow(
     await clearRuntimeBindingSecrets(`${reason}:binding_incomplete`);
     throw new Error("Runtime binding is incomplete. Sign in again.");
   }
-}
-
-function maybeAuthCallbackUrl(argument: string | undefined): string | null {
-  if (!argument) {
-    return null;
-  }
-  const normalized = argument.trim();
-  if (!normalized) {
-    return null;
-  }
-  return normalized.startsWith(`${AUTH_CALLBACK_PROTOCOL}://`) ||
-    normalized.startsWith(`${AUTH_CALLBACK_PROTOCOL}:/`)
-    ? normalized
-    : null;
 }
 
 function nearestPackageJsonDirectory(startDirectory: string): string | null {
@@ -13910,7 +13971,7 @@ function createMainWindow() {
   });
 
   if (isDev) {
-    void win.loadURL(process.env.VITE_DEV_SERVER_URL as string);
+    void win.loadURL(RESOLVED_DEV_SERVER_URL);
   } else {
     void win.loadFile(path.join(__dirname, "../dist/index.html"));
   }

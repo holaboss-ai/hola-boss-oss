@@ -296,14 +296,17 @@ function loadBrowserPaneWidth(): number {
 function loadOperationsDrawerOpen(): boolean {
   try {
     const raw = localStorage.getItem(OPERATIONS_DRAWER_OPEN_STORAGE_KEY);
-    if (raw === "0") {
+    if (raw === "1" || raw === "true") {
+      return true;
+    }
+    if (raw === "0" || raw === "false") {
       return false;
     }
   } catch {
     // ignore
   }
 
-  return true;
+  return false;
 }
 
 function loadOperationsDrawerTab(): OperationsDrawerTab {
