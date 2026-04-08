@@ -1764,15 +1764,33 @@ export class RuntimeStateStore {
       );
   }
 
-  listSessionMessages(params: { workspaceId: string; sessionId: string }): SessionMessageRecord[] {
+  listSessionMessages(params: {
+    workspaceId: string;
+    sessionId: string;
+    role?: string;
+    limit?: number;
+    offset?: number;
+    order?: "asc" | "desc";
+  }): SessionMessageRecord[] {
+    let query = `
+      SELECT id, role, text, created_at
+      FROM session_messages
+      WHERE workspace_id = ? AND session_id = ?
+    `;
+    const values: Array<string | number> = [params.workspaceId, params.sessionId];
+    if (params.role) {
+      query += " AND role = ?";
+      values.push(params.role);
+    }
+    const direction = params.order === "desc" ? "DESC" : "ASC";
+    query += ` ORDER BY datetime(created_at) ${direction}, id ${direction}`;
+    if (params.limit !== undefined || params.offset !== undefined) {
+      query += " LIMIT ? OFFSET ?";
+      values.push(params.limit ?? -1, params.offset ?? 0);
+    }
     const rows = this.db()
-      .prepare<[string, string], { id: string; role: string; text: string; created_at: string }>(`
-        SELECT id, role, text, created_at
-        FROM session_messages
-        WHERE workspace_id = ? AND session_id = ?
-        ORDER BY datetime(created_at) ASC, id ASC
-      `)
-      .all(params.workspaceId, params.sessionId);
+      .prepare<typeof values, { id: string; role: string; text: string; created_at: string }>(query)
+      .all(...values);
     return rows.map((row) => ({
       id: row.id,
       role: row.role,
@@ -2213,6 +2231,7 @@ export class RuntimeStateStore {
   listMemoryEntries(params: {
     workspaceId?: string | null;
     scope?: string | null;
+    memoryType?: string | null;
     status?: string | null;
     limit?: number;
     offset?: number;
@@ -2239,6 +2258,14 @@ export class RuntimeStateStore {
         values.push(params.scope);
       }
     }
+    if (params.memoryType !== undefined) {
+      if (params.memoryType === null) {
+        query += " AND memory_type IS NULL";
+      } else {
+        query += " AND memory_type = ?";
+        values.push(params.memoryType);
+      }
+    }
     if (params.status !== undefined) {
       if (params.status === null) {
         query += " AND status IS NULL";
@@ -2254,6 +2281,38 @@ export class RuntimeStateStore {
     values.push(params.limit ?? 200, params.offset ?? 0);
     const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
     return rows.map((row) => this.rowToMemoryEntry(row));
+  }
+
+  listWorkspaceMemoryEntryCounts(params: {
+    status?: string | null;
+  } = {}): Array<{ workspaceId: string; count: number }> {
+    let query = `
+      SELECT workspace_id, COUNT(*) AS total
+      FROM memory_entries
+      WHERE scope = 'workspace'
+        AND workspace_id IS NOT NULL
+    `;
+    const values: string[] = [];
+    if (params.status !== undefined) {
+      if (params.status === null) {
+        query += " AND status IS NULL";
+      } else {
+        query += " AND status = ?";
+        values.push(params.status);
+      }
+    }
+    query += `
+      GROUP BY workspace_id
+      ORDER BY workspace_id ASC
+    `;
+    const rows = this.db().prepare(query).all(...values) as Array<{
+      workspace_id: string;
+      total: number;
+    }>;
+    return rows.map((row) => ({
+      workspaceId: row.workspace_id,
+      count: Number(row.total),
+    }));
   }
 
   upsertTurnRequestSnapshot(params: {

@@ -889,6 +889,24 @@ test("session messages preserve ascending order and include metadata placeholder
       metadata: {}
     }
   ]);
+  assert.deepEqual(
+    store.listSessionMessages({
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      role: "user",
+      order: "desc",
+      limit: 1,
+    }),
+    [
+      {
+        id: "m-1",
+        role: "user",
+        text: "hello",
+        createdAt: "2026-01-01T00:00:00+00:00",
+        metadata: {}
+      }
+    ]
+  );
   store.close();
 });
 
@@ -1122,7 +1140,14 @@ test("memory entries round trip and filter by workspace or scope", () => {
 
   assert.deepEqual(store.getMemoryEntry({ memoryId: "user-preference:response-style" }), preference);
   assert.deepEqual(store.listMemoryEntries({ scope: "user", status: "active" }), [preference]);
+  assert.deepEqual(
+    store.listMemoryEntries({ scope: "user", memoryType: "preference", status: "active" }),
+    [preference]
+  );
   assert.deepEqual(store.listMemoryEntries({ workspaceId: "workspace-1", status: "active" }), [blocker]);
+  assert.deepEqual(store.listWorkspaceMemoryEntryCounts({ status: "active" }), [
+    { workspaceId: "workspace-1", count: 1 }
+  ]);
   assert.deepEqual(
     store.listMemoryEntries({ status: "active" }).map((entry) => entry.memoryId),
     [preference.memoryId, blocker.memoryId]

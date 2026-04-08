@@ -64,7 +64,8 @@ interface TurnWritebackContext {
   compactedSummary: string | null;
   turnResult: TurnResultRecord;
   recentTurns: TurnResultRecord[];
-  sessionMessages: SessionMessageRecord[];
+  recentUserMessages: SessionMessageRecord[];
+  completedTurnCount: number;
 }
 
 export interface TurnMemoryWritebackModelContext {
@@ -73,6 +74,8 @@ export interface TurnMemoryWritebackModelContext {
 }
 
 const RECENT_TURNS_LIMIT = 5;
+const RECENT_USER_MESSAGES_LIMIT = 6;
+const MODEL_EXTRACTION_INTERVAL_TURNS = 5;
 const MODEL_EXTRACTION_MIN_CONFIDENCE = 0.82;
 const MODEL_EXTRACTION_MIN_CONFIDENCE_CORROBORATED = 0.6;
 const MODEL_EXTRACTION_MIN_EVIDENCE_CHARS = 36;
@@ -297,6 +300,10 @@ function recentUserRequests(sessionMessages: SessionMessageRecord[], maxCount: n
     return userMessages;
   }
   return userMessages.slice(userMessages.length - maxCount);
+}
+
+function shouldRunModelExtractionForTurnCount(completedTurnCount: number): boolean {
+  return completedTurnCount > 0 && completedTurnCount % MODEL_EXTRACTION_INTERVAL_TURNS === 0;
 }
 
 function renderSessionMemory(turnResult: TurnResultRecord, recentTurns: TurnResultRecord[], sessionMessages: SessionMessageRecord[]): string {
@@ -993,18 +1000,21 @@ function durableCandidateFromExtracted(params: {
 async function extractedDurableMemoryCandidates(params: {
   turnResult: TurnResultRecord;
   recentTurns: TurnResultRecord[];
-  sessionMessages: SessionMessageRecord[];
+  recentUserMessages: SessionMessageRecord[];
+  completedTurnCount: number;
   modelContext?: TurnMemoryWritebackModelContext | null;
 }): Promise<ModelDurableCandidate[]> {
   if (!params.modelContext?.modelClient) {
+    return [];
+  }
+  if (!shouldRunModelExtractionForTurnCount(params.completedTurnCount)) {
     return [];
   }
   const recentTurnSummaries = params.recentTurns
     .slice(0, 4)
     .map((turnResult) => turnResult.compactedSummary ?? compactTurnSummary(turnResult))
     .filter((summary): summary is string => Boolean(summary));
-  const recentUserMessages = params.sessionMessages
-    .filter((message) => message.role === "user")
+  const recentUserMessages = params.recentUserMessages
     .slice(-4)
     .map((message) => clippedText(message.text, 220));
   const extractionContext: DurableMemoryExtractionContext = {
@@ -1241,115 +1251,115 @@ function renderDurableIndexLine(relativeTarget: string, entry: DurableMemoryCand
   return `- [${entry.title}](${relativeTarget}) ${metadata.join(" ")} - ${entry.summary}`;
 }
 
+function durableIndexEntryFromRecord(record: ReturnType<RuntimeStateStore["listMemoryEntries"]>[number]): DurableMemoryCandidate {
+  return {
+    memoryId: record.memoryId,
+    scope: record.scope as "workspace" | "user",
+    memoryType: record.memoryType as MemoryEntryType,
+    subjectKey: record.subjectKey,
+    path: record.path,
+    title: record.title,
+    summary: record.summary,
+    content: "",
+    tags: record.tags,
+    verificationPolicy: record.verificationPolicy as MemoryVerificationPolicy,
+    stalenessPolicy: record.stalenessPolicy as MemoryStalenessPolicy,
+    staleAfterSeconds: record.staleAfterSeconds,
+    sourceType: record.sourceType ?? "manual",
+    observedAt: record.observedAt,
+    lastVerifiedAt: record.lastVerifiedAt,
+    confidence: record.confidence,
+  };
+}
+
+async function upsertMemoryFileIfChanged(params: {
+  memoryService: MemoryServiceLike;
+  workspaceId: string;
+  path: string;
+  content: string;
+}): Promise<void> {
+  const existing = await params.memoryService.get({
+    workspace_id: params.workspaceId,
+    path: params.path,
+  });
+  if ((existing.text as string | undefined) === params.content) {
+    return;
+  }
+  await params.memoryService.upsert({
+    workspace_id: params.workspaceId,
+    path: params.path,
+    content: params.content,
+    append: false,
+  });
+}
+
 async function upsertMemoryIndexes(params: {
   store: RuntimeStateStore;
   memoryService: MemoryServiceLike;
   workspaceId: string;
 }): Promise<string[]> {
-  const entries = params.store.listMemoryEntries({
+  const workspaceEntries = params.store.listMemoryEntries({
+    workspaceId: params.workspaceId,
+    scope: "workspace",
     status: "active",
     limit: 500,
     offset: 0,
   });
-  const workspaceEntries = entries.filter((entry) => entry.scope === "workspace" && entry.workspaceId === params.workspaceId);
-  const workspaceIndexCounts = [...new Set(entries
-    .filter((entry) => entry.scope === "workspace" && entry.workspaceId)
-    .map((entry) => entry.workspaceId as string))]
-    .map((workspaceId) => ({
-      workspaceId,
-      count: entries.filter((entry) => entry.scope === "workspace" && entry.workspaceId === workspaceId).length,
-    }));
+  const workspaceIndexCounts = params.store.listWorkspaceMemoryEntryCounts({
+    status: "active",
+  });
   if (!workspaceIndexCounts.some((entry) => entry.workspaceId === params.workspaceId)) {
     workspaceIndexCounts.push({
       workspaceId: params.workspaceId,
       count: workspaceEntries.length,
     });
   }
-  const preferenceEntries = entries.filter((entry) => entry.scope === "user" && entry.memoryType === "preference");
-  const identityEntries = entries.filter((entry) => entry.scope === "user" && entry.memoryType === "identity");
+  const preferenceEntries = params.store.listMemoryEntries({
+    scope: "user",
+    memoryType: "preference",
+    status: "active",
+    limit: 500,
+    offset: 0,
+  });
+  const identityEntries = params.store.listMemoryEntries({
+    scope: "user",
+    memoryType: "identity",
+    status: "active",
+    limit: 500,
+    offset: 0,
+  });
   const restoredPaths: string[] = [];
   const workspaceIndexContent = renderWorkspaceMemoryIndex({
     workspaceId: params.workspaceId,
-    entries: workspaceEntries.map((entry) => ({
-      memoryId: entry.memoryId,
-      scope: entry.scope as "workspace" | "user",
-      memoryType: entry.memoryType as MemoryEntryType,
-      subjectKey: entry.subjectKey,
-      path: entry.path,
-      title: entry.title,
-      summary: entry.summary,
-      content: "",
-      tags: entry.tags,
-      verificationPolicy: entry.verificationPolicy as MemoryVerificationPolicy,
-      stalenessPolicy: entry.stalenessPolicy as MemoryStalenessPolicy,
-      staleAfterSeconds: entry.staleAfterSeconds,
-      sourceType: entry.sourceType ?? "manual",
-      observedAt: entry.observedAt,
-      lastVerifiedAt: entry.lastVerifiedAt,
-      confidence: entry.confidence,
-    })),
+    entries: workspaceEntries.map(durableIndexEntryFromRecord),
   });
-  await params.memoryService.upsert({
-    workspace_id: params.workspaceId,
+  await upsertMemoryFileIfChanged({
+    memoryService: params.memoryService,
+    workspaceId: params.workspaceId,
     path: workspaceMemoryIndexPath(params.workspaceId),
     content: workspaceIndexContent,
-    append: false,
   });
   restoredPaths.push(workspaceMemoryIndexPath(params.workspaceId));
 
   const preferenceIndexContent = renderPreferenceMemoryIndex(
-    preferenceEntries.map((entry) => ({
-      memoryId: entry.memoryId,
-      scope: entry.scope as "workspace" | "user",
-      memoryType: entry.memoryType as MemoryEntryType,
-      subjectKey: entry.subjectKey,
-      path: entry.path,
-      title: entry.title,
-      summary: entry.summary,
-      content: "",
-      tags: entry.tags,
-      verificationPolicy: entry.verificationPolicy as MemoryVerificationPolicy,
-      stalenessPolicy: entry.stalenessPolicy as MemoryStalenessPolicy,
-      staleAfterSeconds: entry.staleAfterSeconds,
-      sourceType: entry.sourceType ?? "manual",
-      observedAt: entry.observedAt,
-      lastVerifiedAt: entry.lastVerifiedAt,
-      confidence: entry.confidence,
-    }))
+    preferenceEntries.map(durableIndexEntryFromRecord)
   );
-  await params.memoryService.upsert({
-    workspace_id: params.workspaceId,
+  await upsertMemoryFileIfChanged({
+    memoryService: params.memoryService,
+    workspaceId: params.workspaceId,
     path: preferenceMemoryIndexPath(),
     content: preferenceIndexContent,
-    append: false,
   });
   restoredPaths.push(preferenceMemoryIndexPath());
 
   const identityIndexContent = renderIdentityMemoryIndex(
-    identityEntries.map((entry) => ({
-      memoryId: entry.memoryId,
-      scope: entry.scope as "workspace" | "user",
-      memoryType: entry.memoryType as MemoryEntryType,
-      subjectKey: entry.subjectKey,
-      path: entry.path,
-      title: entry.title,
-      summary: entry.summary,
-      content: "",
-      tags: entry.tags,
-      verificationPolicy: entry.verificationPolicy as MemoryVerificationPolicy,
-      stalenessPolicy: entry.stalenessPolicy as MemoryStalenessPolicy,
-      staleAfterSeconds: entry.staleAfterSeconds,
-      sourceType: entry.sourceType ?? "manual",
-      observedAt: entry.observedAt,
-      lastVerifiedAt: entry.lastVerifiedAt,
-      confidence: entry.confidence,
-    }))
+    identityEntries.map(durableIndexEntryFromRecord)
   );
-  await params.memoryService.upsert({
-    workspace_id: params.workspaceId,
+  await upsertMemoryFileIfChanged({
+    memoryService: params.memoryService,
+    workspaceId: params.workspaceId,
     path: identityMemoryIndexPath(),
     content: identityIndexContent,
-    append: false,
   });
   restoredPaths.push(identityMemoryIndexPath());
 
@@ -1358,11 +1368,11 @@ async function upsertMemoryIndexes(params: {
     preferenceEntryCount: preferenceEntries.length,
     identityEntryCount: identityEntries.length,
   });
-  await params.memoryService.upsert({
-    workspace_id: params.workspaceId,
+  await upsertMemoryFileIfChanged({
+    memoryService: params.memoryService,
+    workspaceId: params.workspaceId,
     path: rootMemoryIndexPath(),
     content: rootIndexContent,
-    append: false,
   });
   restoredPaths.push(rootMemoryIndexPath());
 
@@ -1481,11 +1491,11 @@ async function upsertDurableMemoryCandidate(params: {
   inputId: string;
   candidate: DurableMemoryCandidate;
 }): Promise<string> {
-  await params.memoryService.upsert({
-    workspace_id: params.workspaceId,
+  await upsertMemoryFileIfChanged({
+    memoryService: params.memoryService,
+    workspaceId: params.workspaceId,
     path: params.candidate.path,
     content: params.candidate.content,
-    append: false,
   });
   params.store.upsertMemoryEntry({
     memoryId: params.candidate.memoryId,
@@ -1521,15 +1531,23 @@ function loadTurnWritebackContext(store: RuntimeStateStore, turnResult: TurnResu
     limit: RECENT_TURNS_LIMIT,
     offset: 0,
   });
-  const sessionMessages = store.listSessionMessages({
+  const recentUserMessages = store.listSessionMessages({
     workspaceId: updatedTurnResult.workspaceId,
     sessionId: updatedTurnResult.sessionId,
+    role: "user",
+    order: "desc",
+    limit: RECENT_USER_MESSAGES_LIMIT,
+    offset: 0,
   });
   return {
     compactedSummary,
     turnResult: updatedTurnResult,
     recentTurns,
-    sessionMessages,
+    recentUserMessages: [...recentUserMessages].reverse(),
+    completedTurnCount: store.countTurnResults({
+      workspaceId: updatedTurnResult.workspaceId,
+      sessionId: updatedTurnResult.sessionId,
+    }),
   };
 }
 
@@ -1617,7 +1635,7 @@ export async function writeTurnContinuity(params: {
     turnResult: context.turnResult,
     summary: context.compactedSummary,
     recentTurns: context.recentTurns,
-    sessionMessages: context.sessionMessages,
+    sessionMessages: context.recentUserMessages,
   });
   const restoredMemoryPaths: string[] = [];
 
@@ -1634,7 +1652,7 @@ export async function writeTurnContinuity(params: {
       store: params.store,
       turnResult: context.turnResult,
       recentTurns: context.recentTurns,
-      sessionMessages: context.sessionMessages,
+      sessionMessages: context.recentUserMessages,
       restoredMemoryPaths,
     });
   }
@@ -1643,7 +1661,7 @@ export async function writeTurnContinuity(params: {
     store: params.store,
     turnResult: context.turnResult,
     recentTurns: context.recentTurns,
-    sessionMessages: context.sessionMessages,
+    sessionMessages: context.recentUserMessages,
     restoredMemoryPaths,
   });
 }
@@ -1659,12 +1677,13 @@ export async function writeTurnDurableMemory(params: {
     turnResult: context.turnResult,
     summary: context.compactedSummary,
     recentTurns: context.recentTurns,
-    sessionMessages: context.sessionMessages,
+    sessionMessages: context.recentUserMessages,
   });
   const extractedCandidates = await extractedDurableMemoryCandidates({
     turnResult: context.turnResult,
     recentTurns: context.recentTurns,
-    sessionMessages: context.sessionMessages,
+    recentUserMessages: context.recentUserMessages,
+    completedTurnCount: context.completedTurnCount,
     modelContext: params.modelContext ?? null,
   });
   const acceptedExtractedCandidates = acceptedModelDurableCandidates({
@@ -1673,6 +1692,9 @@ export async function writeTurnDurableMemory(params: {
     heuristicDurableCandidates,
   });
   const durableCandidates = mergeDurableCandidates(acceptedExtractedCandidates, heuristicDurableCandidates);
+  if (durableCandidates.length === 0) {
+    return params.store.getTurnResult({ inputId: context.turnResult.inputId }) ?? context.turnResult;
+  }
   const restoredMemoryPaths: string[] = [];
 
   for (const candidate of durableCandidates) {
