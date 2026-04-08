@@ -152,15 +152,27 @@ test("file explorer exposes right-click rename and delete actions for entries", 
 
   assert.match(source, /type FileExplorerContextMenuState = \{/);
   assert.match(source, /const \[contextMenu, setContextMenu\] = useState<FileExplorerContextMenuState \| null>\(null\);/);
+  assert.match(source, /const \[renamingPath, setRenamingPath\] = useState<string \| null>\(null\);/);
+  assert.match(source, /const \[renameDraft, setRenameDraft\] = useState\(""\);/);
+  assert.match(source, /const paneRect = containerRef\.current\?\.getBoundingClientRect\(\);/);
   assert.match(
     source,
-    /onContextMenu=\{\(event\) => \{\s*event\.preventDefault\(\);\s*setSelectedPath\(entry\.absolutePath\);\s*setContextMenu\(\{\s*entry,\s*x: event\.clientX,\s*y: event\.clientY,\s*\}\);\s*\}\}/,
+    /onContextMenu=\{\(event\) => \{\s*event\.preventDefault\(\);\s*const paneRect = containerRef\.current\?\.getBoundingClientRect\(\);\s*if \(!paneRect\) \{\s*return;\s*\}\s*setSelectedPath\(entry\.absolutePath\);\s*setContextMenu\(\{\s*entry,\s*x: event\.clientX,\s*y: event\.clientY,[\s\S]*paneBounds:/,
   );
-  assert.match(source, /Rename \${entry\.isDirectory \? "folder" : "file"}/);
+  assert.match(source, /const menuWidth = Math\.min\(196, Math\.max\(160, contextMenu\.paneBounds\.width - 16\)\);/);
+  assert.match(source, /contextMenu\.paneBounds\.right - menuWidth - 8/);
+  assert.match(source, /contextMenu\.paneBounds\.bottom - menuHeight - 8/);
+  assert.match(source, /setRenamingPath\(entry\.absolutePath\);/);
+  assert.match(source, /setRenameDraft\(entry\.name\);/);
+  assert.match(source, /ref=\{renameInputRef\}/);
+  assert.match(source, /onBlur=\{\(\) => \{\s*void submitRenameEntry\(\);\s*\}\}/);
+  assert.match(source, /if \(event\.key === "Enter"\) \{\s*event\.preventDefault\(\);\s*void submitRenameEntry\(\);/);
+  assert.match(source, /if \(event\.key === "Escape"\) \{\s*event\.preventDefault\(\);\s*cancelRenameEntry\(\);/);
+  assert.doesNotMatch(source, /window\.prompt/);
   assert.match(source, /Delete folder "\$\{entry\.name\}" and all of its contents\? This cannot be undone\./);
   assert.match(
     source,
-    /window\.electronAPI\.fs\.renamePath\(\s*entry\.absolutePath,\s*nextName,\s*selectedWorkspaceId \?\? null,\s*\)/,
+    /window\.electronAPI\.fs\.renamePath\(\s*renamingEntry\.absolutePath,\s*nextName,\s*selectedWorkspaceId \?\? null,\s*\)/,
   );
   assert.match(
     source,

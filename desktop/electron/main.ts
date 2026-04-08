@@ -11086,16 +11086,21 @@ async function renameExplorerPath(
     throw new Error("Renamed path escapes workspace root.");
   }
 
+  let targetExists = false;
   try {
     await fs.access(nextAbsolutePath);
-    throw new Error(`A file or folder named "${trimmedName}" already exists.`);
+    targetExists = true;
   } catch (cause) {
     const code = cause && typeof cause === "object" && "code" in cause
       ? String((cause as { code?: unknown }).code ?? "")
       : "";
-    if (code && code !== "ENOENT") {
+    if (code !== "ENOENT") {
       throw cause;
     }
+  }
+
+  if (targetExists) {
+    throw new Error(`A file or folder named "${trimmedName}" already exists.`);
   }
 
   await fs.rename(absolutePath, nextAbsolutePath);

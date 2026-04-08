@@ -43,6 +43,8 @@ test("desktop file explorer enforces the selected workspace root as a filesystem
   assert.match(source, /throw new Error\(`Target path escapes workspace root: \$\{trimmedTargetPath\}`\);/);
   assert.match(source, /throw new Error\("Workspace root cannot be renamed\."\);/);
   assert.match(source, /throw new Error\("Workspace root cannot be deleted\."\);/);
+  assert.match(source, /let targetExists = false;/);
+  assert.match(source, /if \(targetExists\) \{\s*throw new Error\(`A file or folder named "\$\{trimmedName\}" already exists\.`\);\s*\}/);
   assert.match(
     source,
     /"fs:listDirectory"[\s\S]*async \(_event, targetPath\?: string \| null, workspaceId\?: string \| null\) =>\s*listDirectory\(targetPath, workspaceId\)/,
