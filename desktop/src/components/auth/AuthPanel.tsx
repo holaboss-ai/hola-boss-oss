@@ -1187,6 +1187,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         : "Not connected.";
     const actionButtonClassName =
       "inline-flex h-9 min-w-[128px] shrink-0 items-center justify-center rounded-[10px] px-3 text-sm transition disabled:cursor-not-allowed disabled:opacity-50";
+    const actionBadgeClassName =
+      "inline-flex h-9 min-w-[128px] shrink-0 items-center justify-center rounded-full border px-3 text-xs uppercase tracking-[0.14em]";
 
     return (
       <div
@@ -1212,13 +1214,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 md:flex-col md:items-end md:justify-center">
             {isHolabossProvider ? (
               isEnabled ? (
-                <button
-                  type="button"
-                  onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
-                  className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-primary/35`}
-                >
-                  {isExpanded ? "Hide" : "Edit"}
-                </button>
+                <div className={`${actionBadgeClassName} border-primary/30 bg-primary/10 text-primary`}>
+                  Enabled
+                </div>
               ) : (
                 <button
                   type="button"
