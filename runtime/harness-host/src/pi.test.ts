@@ -14,6 +14,7 @@ import {
   buildPiPromptPayload,
   buildPiMcpServerBindings,
   buildPiMcpToolName,
+  createPiTodoToolDefinitions,
   createPiEventMapperState,
   createPiMcpCustomTools,
   mapPiSessionEvent,
@@ -556,6 +557,66 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
       },
     ]
   );
+});
+
+test("createPiTodoToolDefinitions persists session todo state", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-todo-"));
+  const stateDir = path.join(root, ".holaboss", "pi-agent");
+  const [todoRead, todoWrite] = createPiTodoToolDefinitions({
+    stateDir,
+    sessionId: "session-1",
+  });
+  const textBlock = (result: Awaited<ReturnType<typeof todoRead.execute>>) => result.content[0] as { text: string };
+
+  const emptyResult = await todoRead.execute("call-read-empty", {}, undefined, undefined, {} as never);
+  assert.equal(textBlock(emptyResult).text, "No todo items are currently recorded for this session.");
+  assert.deepEqual((emptyResult.details as { todos: unknown[] }).todos, []);
+
+  const writeResult = await todoWrite.execute(
+    "call-write",
+    {
+      todos: [
+        { content: "Inspect todowrite wiring", status: "in_progress" },
+        { title: "Add tests" },
+        { text: "Verify session persistence", done: true },
+      ],
+    },
+    undefined,
+    undefined,
+    {} as never
+  );
+  assert.match(textBlock(writeResult).text, /Saved 3 todo items\./);
+
+  const rereadResult = await todoRead.execute("call-read", {}, undefined, undefined, {} as never);
+  assert.deepEqual((rereadResult.details as { todos: unknown[] }).todos, [
+    { content: "Inspect todowrite wiring", status: "in_progress" },
+    { content: "Add tests", status: "pending" },
+    { content: "Verify session persistence", status: "completed" },
+  ]);
+
+  const persistedStatePath = path.join(stateDir, "todos", "session-1.json");
+  assert.deepEqual(JSON.parse(fs.readFileSync(persistedStatePath, "utf8")), {
+    version: 1,
+    session_id: "session-1",
+    updated_at: (rereadResult.details as { updated_at: string }).updated_at,
+    todos: [
+      { content: "Inspect todowrite wiring", status: "in_progress" },
+      { content: "Add tests", status: "pending" },
+      { content: "Verify session persistence", status: "completed" },
+    ],
+  });
+
+  const [otherSessionRead] = createPiTodoToolDefinitions({
+    stateDir,
+    sessionId: "session-2",
+  });
+  const otherSessionResult = await otherSessionRead.execute("call-read-other", {}, undefined, undefined, {} as never);
+  assert.deepEqual((otherSessionResult.details as { todos: unknown[] }).todos, []);
+
+  await todoWrite.execute("call-clear", { todos: [] }, undefined, undefined, {} as never);
+  const clearedResult = await todoRead.execute("call-read-cleared", {}, undefined, undefined, {} as never);
+  assert.equal(textBlock(clearedResult).text, "No todo items are currently recorded for this session.");
+  assert.deepEqual((clearedResult.details as { todos: unknown[] }).todos, []);
 });
 
 test("buildPiMcpServerBindings converts remote and local MCP payloads into mcporter definitions", () => {

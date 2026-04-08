@@ -112,8 +112,16 @@ test("chat trace summary treats recovered tool errors separately from terminal r
   );
   assert.match(
     source,
-    /runningCount > 0[\s\S]*groupHasTerminalError[\s\S]*<Check size=\{13\} className="text-emerald-500" \/>/,
+    /groupHasTerminalError[\s\S]*groupIsLive \|\| runningCount > 0[\s\S]*<Check size=\{13\} className="text-emerald-500" \/>/,
   );
+});
+
+test("chat trace summary keeps a live run in progress even after completed tool steps exist", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /<TraceStepGroup[\s\S]*live=\{live\}/);
+  assert.match(source, /const groupIsLive = live && !groupHasTerminalError;/);
+  assert.match(source, /groupIsLive\s*\?\s*`Working through \$\{stepLabel\}\.\.\.`/);
 });
 
 test("chat trace tool errors surface stderr text instead of a generic error label", async () => {
