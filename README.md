@@ -43,10 +43,7 @@ Holaboss enables you to build AI workspaces that go beyond one-off task executio
 ## Star the Repository
 
 <p align="center">
-  <video src="docs/videos/CTA-Repo-4k.mp4" controls muted playsinline width="1280">
-    Your browser does not support the video tag. You can watch the video directly at
-    <a href="docs/videos/CTA-Repo-4k.mp4">docs/videos/CTA-Repo-4k.mp4</a>.
-  </video>
+  <img src="docs/images/star-the-repo.gif" alt="Animated preview from the Holaboss star-the-repo video" width="1280" />
 </p>
 
 <p align="center"><strong>If Holaboss is useful or interesting, a GitHub Star would be greatly appreciated.</strong></p>
