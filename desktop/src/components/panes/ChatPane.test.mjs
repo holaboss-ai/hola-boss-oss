@@ -116,12 +116,28 @@ test("chat trace summary treats recovered tool errors separately from terminal r
   );
 });
 
-test("chat trace summary keeps a live run in progress even after completed tool steps exist", async () => {
+test("chat trace summary keeps a live run in progress when no active step label is available", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /<TraceStepGroup[\s\S]*live=\{live\}/);
   assert.match(source, /const groupIsLive = live && !groupHasTerminalError;/);
-  assert.match(source, /groupIsLive\s*\?\s*`Working through \$\{stepLabel\}\.\.\.`/);
+  assert.match(
+    source,
+    /activeStep[\s\S]*groupIsLive\s*\?\s*`Working through \$\{stepLabel\}\.\.\.`/,
+  );
+});
+
+test("chat trace collapsed summary surfaces the current active step", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const activeStep =[\s\S]*\.find\(\s*\(step\) => step\.status === "running" \|\| step\.status === "waiting",/,
+  );
+  assert.match(
+    source,
+    /activeStep\s*\?\s*`\$\{traceStatusLabel\(activeStep\.status\)\}: \$\{activeStep\.title\}`/,
+  );
 });
 
 test("chat trace tool errors surface stderr text instead of a generic error label", async () => {

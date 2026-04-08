@@ -13,6 +13,10 @@ test("file explorer syncs the workspace root only when the selected workspace ch
   assert.match(source, /const lastSyncedWorkspaceRootRef = useRef<\{ workspaceId: string; rootPath: string \} \| null>\(null\);/);
   assert.match(
     source,
+    /window\.electronAPI\.fs\.listDirectory\(\s*targetPath \?\? null,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
+  assert.match(
+    source,
     /lastSyncedWorkspaceRootRef\.current = \{\s*workspaceId: selectedWorkspaceId,\s*rootPath: workspaceRoot\s*\};/
   );
   assert.match(source, /\}, \[loadDirectory, selectedWorkspaceId\]\);/);
@@ -23,10 +27,13 @@ test("file explorer syncs the workspace root only when the selected workspace ch
 test("file explorer polls the current directory to surface live file changes", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /const payload = await window\.electronAPI\.fs\.listDirectory\(currentPath\);/);
+  assert.match(
+    source,
+    /const payload = await window\.electronAPI\.fs\.listDirectory\(\s*currentPath,\s*selectedWorkspaceId \?\? null,\s*\);/,
+  );
   assert.match(source, /const timer = window\.setInterval\(\(\) => \{\s*void refreshCurrentDirectory\(\);\s*\}, 1200\);/);
   assert.match(source, /window\.clearInterval\(timer\);/);
-  assert.match(source, /\}, \[currentPath\]\);/);
+  assert.match(source, /\}, \[currentPath, selectedWorkspaceId\]\);/);
 });
 
 test("file explorer opens folders on double click instead of single click", async () => {
@@ -50,7 +57,7 @@ test("file explorer home opens the selected workspace root when available", asyn
   assert.match(source, /onClick=\{\(\) => \{\s*void openHomeDirectory\(\);\s*\}\}/);
 });
 
-test("file explorer disables up navigation when already at workspace root", async () => {
+test("file explorer uses breadcrumbs and home instead of a separate up button", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /const \[workspaceRootPath, setWorkspaceRootPath\] = useState<string \| null>\(null\);/);
@@ -58,11 +65,27 @@ test("file explorer disables up navigation when already at workspace root", asyn
     source,
     /const isAtWorkspaceRoot = workspaceRootPath[\s\S]*normalizeComparablePath\(currentPath\) === normalizeComparablePath\(workspaceRootPath\)/
   );
+  assert.doesNotMatch(source, /label="Up"/);
+  assert.doesNotMatch(source, /ArrowUp/);
+  assert.match(source, /label="Home"[\s\S]*disabled=\{isAtWorkspaceRoot\}/);
+});
+
+test("file explorer renders clickable breadcrumbs scoped to the current path", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /type FileExplorerBreadcrumb = \{/);
+  assert.match(source, /function buildPathBreadcrumbs\(/);
   assert.match(
     source,
-    /label="Up"[\s\S]*onClick=\{\(\) => parentPath && !isAtWorkspaceRoot && void openPath\(parentPath\)\}[\s\S]*disabled=\{!parentPath \|\| isAtWorkspaceRoot\}/
+    /const breadcrumbs = useMemo\(\s*\(\) => buildPathBreadcrumbs\(currentPath, workspaceRootPath\),\s*\[currentPath, workspaceRootPath\],\s*\);/,
   );
-  assert.match(source, /label="Home"[\s\S]*disabled=\{isAtWorkspaceRoot\}/);
+  assert.match(source, /chat-scrollbar-hidden mt-1\.5 flex items-center gap-1 overflow-x-auto/);
+  assert.match(source, /breadcrumbs\.map\(\(breadcrumb\) => \(/);
+  assert.match(source, /<ChevronRight size=\{10\}/);
+  assert.match(
+    source,
+    /onClick=\{\(\) => \{\s*void openPath\(breadcrumb\.absolutePath\);\s*\}\}/,
+  );
 });
 
 test("file explorer accepts one-shot focus requests for artifact files", async () => {
@@ -89,6 +112,14 @@ test("file explorer opens text files directly in the editor without a preview to
   assert.match(source, /readOnly=\{!preview\.isEditable\}/);
   assert.match(source, /embedded-input focus:border-border\/70/);
   assert.doesNotMatch(source, /focus:bg-background\/35/);
+  assert.match(
+    source,
+    /window\.electronAPI\.fs\.readFilePreview\(\s*targetPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
+  assert.match(
+    source,
+    /window\.electronAPI\.fs\.writeTextFile\(\s*preview\.absolutePath,\s*previewDraft,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
   assert.match(source, /Save/);
 });
 

@@ -1,15 +1,23 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  Loader2,
+  LogOut,
+  RefreshCw,
+  ShieldCheck,
+} from "lucide-react";
 import anthropicLogoMarkup from "@/assets/providers/anthropic.svg?raw";
 import geminiLogoMarkup from "@/assets/providers/gemini.svg?raw";
 import minimaxLogoMarkup from "@/assets/providers/minimax.svg?raw";
 import ollamaLogoMarkup from "@/assets/providers/ollama.svg?raw";
 import openaiLogoMarkup from "@/assets/providers/openai.svg?raw";
 import openrouterLogoMarkup from "@/assets/providers/openrouter.svg?raw";
+import { BillingSummaryCard } from "@/components/billing/BillingSummaryCard";
 import {
   useDesktopAuthSession,
   type AuthSession
 } from "@/lib/auth/authClient";
 import { holabossLogoUrl } from "@/lib/assetPaths";
+import { useDesktopBilling } from "@/lib/billing/useDesktopBilling";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 
 type AuthPanelView = "full" | "account" | "runtime";
@@ -448,6 +456,7 @@ function sessionInitials(session: AuthSession | null): string {
 
 export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const sessionState = useDesktopAuthSession();
+  const billingState = useDesktopBilling();
   const { runtimeConfig: sharedRuntimeConfig } = useWorkspaceDesktop();
   const session = sessionState.data;
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigPayload | null>(null);
@@ -915,7 +924,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         ? "Connected. Expand to edit settings."
         : "Not connected.";
     const actionButtonClassName =
-      "inline-flex h-9 min-w-[96px] shrink-0 items-center justify-center rounded-[10px] px-3 text-sm transition disabled:cursor-not-allowed disabled:opacity-50";
+      "inline-flex h-9 min-w-[128px] shrink-0 items-center justify-center rounded-[10px] px-3 text-sm transition disabled:cursor-not-allowed disabled:opacity-50";
+    const actionBadgeClassName =
+      "inline-flex h-9 min-w-[128px] shrink-0 items-center justify-center rounded-full border px-3 text-xs uppercase tracking-[0.14em]";
 
     return (
       <div
@@ -926,7 +937,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             : "border-border/55 bg-card/92 hover:border-border/75"
         }`}
       >
-        <div className="flex items-start justify-between gap-3 px-4 py-4">
+        <div className="flex flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between">
           <div className="flex min-w-0 flex-1 items-start gap-3">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-border/55 bg-background/80 text-foreground">
               <ProviderBrandIcon providerId={providerId} />
@@ -938,10 +949,10 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 md:flex-col md:items-end md:justify-center">
             {isHolabossProvider ? (
               isEnabled ? (
-                <div className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs uppercase tracking-[0.14em] text-primary">
+                <div className={`${actionBadgeClassName} border-primary/30 bg-primary/10 text-primary`}>
                   Enabled
                 </div>
               ) : (
@@ -1053,6 +1064,124 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       </div>
     </div>
   );
+
+  if (view === "account") {
+    return (
+      <section className="grid w-full max-w-[1080px] gap-5">
+        <div className="rounded-[28px] border border-border/35 bg-card/95 px-5 py-5 shadow-sm">
+          <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+            <div className="flex min-w-0 items-center gap-4">
+              <div className="grid h-16 w-16 shrink-0 place-items-center rounded-full border border-border/30 bg-muted/70 text-2xl font-semibold text-foreground">
+                {sessionInitials(session)}
+              </div>
+              <div className="min-w-0">
+                <div className="truncate text-[28px] font-semibold tracking-[-0.04em] text-foreground">
+                  {isSignedIn
+                    ? sessionDisplayName(session) || "Holaboss account"
+                    : "Holaboss account"}
+                </div>
+                <div className="mt-1 truncate text-base text-muted-foreground">
+                  {isSignedIn ? sessionEmail(session) || "Signed in" : "Not connected"}
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <div
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-medium ${badgeClassName}`}
+                  >
+                    <ShieldCheck size={12} />
+                    <span>{statusBadgeLabel}</span>
+                  </div>
+                  <div className="inline-flex items-center gap-1.5 rounded-full border border-border/40 bg-muted/40 px-3 py-1 text-[11px] font-medium text-muted-foreground">
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary/70" />
+                    <span>
+                      {runtimeBindingReady
+                        ? "Runtime ready on this desktop"
+                        : isSignedIn
+                          ? "Runtime setup in progress"
+                          : "Runtime unavailable"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2 self-start md:self-auto">
+              {isSignedIn ? (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Refresh session"
+                    onClick={() => void handleRefreshSession()}
+                    disabled={sessionState.isPending}
+                    className="grid h-11 w-11 place-items-center rounded-[16px] border border-border/45 bg-background text-muted-foreground transition hover:border-primary/35 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {sessionState.isPending ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <RefreshCw size={16} />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Sign out"
+                    onClick={() => void handleSignOut()}
+                    disabled={!isSignedIn}
+                    className="grid h-11 w-11 place-items-center rounded-[16px] border border-destructive/20 bg-destructive/5 text-destructive transition hover:border-destructive/35 hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <LogOut size={16} />
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="inline-flex h-11 items-center justify-center rounded-full border border-foreground bg-foreground px-5 text-sm font-medium text-background transition hover:opacity-92 disabled:cursor-not-allowed disabled:opacity-50"
+                  type="button"
+                  onClick={() => void handleStartSignIn()}
+                  disabled={isStartingSignIn}
+                >
+                  {isStartingSignIn ? "Opening sign-in..." : "Sign in"}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {isFinishingSetup && !isExchangingRuntimeBinding ? (
+            <div className="mt-4 flex flex-col gap-3 rounded-[22px] border border-amber-300/20 bg-amber-400/8 px-4 py-4 md:flex-row md:items-center md:justify-between">
+              <div className="text-sm text-amber-300">
+                Sign-in completed. Holaboss is finishing local runtime setup.
+              </div>
+              <button
+                className="inline-flex h-10 items-center justify-center rounded-full border border-amber-300/30 px-4 text-sm font-medium text-amber-200 transition hover:bg-amber-400/10 disabled:cursor-not-allowed disabled:opacity-50"
+                type="button"
+                onClick={() => void handleExchangeRuntimeBinding()}
+                disabled={isExchangingRuntimeBinding}
+              >
+                {isExchangingRuntimeBinding ? "Refreshing..." : "Retry setup"}
+              </button>
+            </div>
+          ) : null}
+
+          {(authMessage || authError) && (
+            <div
+              className={`mt-4 rounded-[20px] border px-4 py-3 text-sm ${
+                authError
+                  ? "border-rose-400/25 bg-rose-500/8 text-rose-400"
+                  : "border-neon-green/25 bg-neon-green/8 text-neon-green"
+              }`}
+            >
+              {authError || authMessage}
+            </div>
+          )}
+        </div>
+
+        <BillingSummaryCard
+          overview={billingState.overview}
+          usage={billingState.usage}
+          links={billingState.links}
+          isLoading={billingState.isLoading}
+          error={billingState.error}
+        />
+      </section>
+    );
+  }
 
   if (runtimeOnlyView) {
     return (

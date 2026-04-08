@@ -1745,6 +1745,55 @@ interface ProactiveTaskProposalPreferencePayload {
   sandbox_id: string;
 }
 
+interface ProactiveHeartbeatWorkspacePayload {
+  workspace_id: string;
+  workspace_name: string | null;
+  enabled: boolean;
+  last_seen_at: string | null;
+}
+
+interface ProactiveHeartbeatConfigPayload {
+  holaboss_user_id: string;
+  sandbox_id: string;
+  has_schedule: boolean;
+  cron: string;
+  enabled: boolean;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  workspaces: ProactiveHeartbeatWorkspacePayload[];
+}
+
+interface ProactiveHeartbeatConfigUpdatePayload {
+  cron?: string;
+  enabled?: boolean;
+  holaboss_user_id?: string;
+  sandbox_id?: string;
+}
+
+interface ProactiveHeartbeatWorkspaceUpdatePayload {
+  workspace_id: string;
+  workspace_name?: string | null;
+  enabled: boolean;
+  holaboss_user_id?: string;
+  sandbox_id?: string;
+}
+
+interface ProactiveHeartbeatCronjobRecordResponsePayload {
+  sandbox_id: string;
+  holaboss_user_id: string;
+  cron: string;
+  enabled: boolean;
+  last_run_at: string | null;
+  next_run_at: string | null;
+}
+
+interface ProactiveHeartbeatConfigResponsePayload {
+  holaboss_user_id: string;
+  sandbox_id: string;
+  cronjob: ProactiveHeartbeatCronjobRecordResponsePayload | null;
+  workspaces: ProactiveHeartbeatWorkspacePayload[];
+}
+
 interface TaskProposalStateUpdatePayload {
   proposal: TaskProposalRecordPayload;
 }
@@ -6703,6 +6752,8 @@ async function proactivePreferenceScopeFromRuntimeConfig(): Promise<{
   return { holabossUserId, sandboxId };
 }
 
+const DEFAULT_PROACTIVE_HEARTBEAT_CRON = "0 9 * * *";
+
 function assertProactivePreferenceScopedToInstance(
   response: ProactiveTaskProposalPreferencePayload,
   expected: { holabossUserId: string; sandboxId: string },
@@ -6798,6 +6849,187 @@ async function getProactiveTaskProposalPreference(): Promise<ProactiveTaskPropos
       holaboss_user_id: holabossUserId,
       sandbox_id: sandboxId,
     };
+  }
+}
+
+function assertProactiveHeartbeatScopedToInstance(
+  response: ProactiveHeartbeatConfigResponsePayload,
+  expected: { holabossUserId: string; sandboxId: string },
+) {
+  const responseUserId = (response.holaboss_user_id || "").trim();
+  const responseSandboxId = (response.sandbox_id || "").trim();
+  if (!responseUserId || !responseSandboxId) {
+    throw new Error(
+      "Proactive heartbeat response is missing user/instance scope.",
+    );
+  }
+  if (
+    responseUserId !== expected.holabossUserId ||
+    responseSandboxId !== expected.sandboxId
+  ) {
+    throw new Error(
+      "Proactive heartbeat scope mismatch for current desktop instance.",
+    );
+  }
+}
+
+function normalizeProactiveHeartbeatConfig(
+  response: ProactiveHeartbeatConfigResponsePayload,
+): ProactiveHeartbeatConfigPayload {
+  return {
+    holaboss_user_id: (response.holaboss_user_id || "").trim(),
+    sandbox_id: (response.sandbox_id || "").trim(),
+    has_schedule: Boolean(response.cronjob),
+    cron:
+      (response.cronjob?.cron || "").trim() || DEFAULT_PROACTIVE_HEARTBEAT_CRON,
+    enabled: response.cronjob?.enabled !== false,
+    last_run_at: response.cronjob?.last_run_at || null,
+    next_run_at: response.cronjob?.next_run_at || null,
+    workspaces: (response.workspaces || []).map((workspace) => ({
+      workspace_id: (workspace.workspace_id || "").trim(),
+      workspace_name: (workspace.workspace_name || "").trim() || null,
+      enabled: workspace.enabled !== false,
+      last_seen_at: workspace.last_seen_at || null,
+    })),
+  };
+}
+
+async function listLocalProactiveHeartbeatWorkspaces(): Promise<
+  Array<{ workspace_id: string; workspace_name: string | null }>
+> {
+  const response = await listWorkspacesViaRuntime();
+  return response.items
+    .map((workspace) => ({
+      workspace_id: workspace.id.trim(),
+      workspace_name: (workspace.name || "").trim() || null,
+    }))
+    .filter((workspace) => Boolean(workspace.workspace_id));
+}
+
+async function syncCurrentProactiveHeartbeatWorkspaces(
+  scope: { holabossUserId: string; sandboxId: string },
+): Promise<ProactiveHeartbeatConfigPayload> {
+  try {
+    const workspaces = await listLocalProactiveHeartbeatWorkspaces();
+    const response =
+      await requestControlPlaneJson<ProactiveHeartbeatConfigResponsePayload>({
+        service: "proactive",
+        method: "POST",
+        path: "/api/v1/proactive/heartbeat-cronjobs/current/workspaces/sync",
+        payload: {
+          holaboss_user_id: scope.holabossUserId,
+          sandbox_id: scope.sandboxId,
+          workspaces,
+        },
+      });
+    assertProactiveHeartbeatScopedToInstance(response, scope);
+    return normalizeProactiveHeartbeatConfig(response);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("Service not found") || message.includes("fetch failed")) {
+      throw new Error(
+        "Proactive service is not reachable. Check your network or backend configuration.",
+      );
+    }
+    throw error;
+  }
+}
+
+async function getProactiveHeartbeatConfig(): Promise<ProactiveHeartbeatConfigPayload> {
+  try {
+    const scope = await proactivePreferenceScopeFromRuntimeConfig();
+    return await syncCurrentProactiveHeartbeatWorkspaces(scope);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("Proactive auth is missing")) {
+      throw error;
+    }
+    const runtimeConfig = await readRuntimeConfigFile();
+    const holabossUserId =
+      typeof (runtimeConfig as { user_id?: unknown }).user_id === "string"
+        ? ((runtimeConfig as { user_id: string }).user_id || "").trim()
+        : "";
+    const sandboxId =
+      typeof (runtimeConfig as { sandbox_id?: unknown }).sandbox_id === "string"
+        ? ((runtimeConfig as { sandbox_id: string }).sandbox_id || "").trim()
+        : "";
+    return {
+      holaboss_user_id: holabossUserId,
+      sandbox_id: sandboxId,
+      has_schedule: false,
+      cron: DEFAULT_PROACTIVE_HEARTBEAT_CRON,
+      enabled: false,
+      last_run_at: null,
+      next_run_at: null,
+      workspaces: [],
+    };
+  }
+}
+
+async function setProactiveHeartbeatConfig(
+  payload: ProactiveHeartbeatConfigUpdatePayload,
+): Promise<ProactiveHeartbeatConfigPayload> {
+  const scope = await proactivePreferenceScopeFromRuntimeConfig();
+  await syncCurrentProactiveHeartbeatWorkspaces(scope);
+  try {
+    const response =
+      await requestControlPlaneJson<ProactiveHeartbeatConfigResponsePayload>({
+        service: "proactive",
+        method: "POST",
+        path: "/api/v1/proactive/heartbeat-cronjobs/current",
+        payload: {
+          holaboss_user_id:
+            payload.holaboss_user_id?.trim() || scope.holabossUserId,
+          sandbox_id: payload.sandbox_id?.trim() || scope.sandboxId,
+          cron: payload.cron?.trim() || undefined,
+          enabled: payload.enabled,
+        },
+      });
+    assertProactiveHeartbeatScopedToInstance(response, scope);
+    return normalizeProactiveHeartbeatConfig(response);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("Service not found") || message.includes("fetch failed")) {
+      throw new Error(
+        "Proactive service is not reachable. Check your network or backend configuration.",
+      );
+    }
+    throw error;
+  }
+}
+
+async function setProactiveHeartbeatWorkspaceEnabled(
+  payload: ProactiveHeartbeatWorkspaceUpdatePayload,
+): Promise<ProactiveHeartbeatConfigPayload> {
+  const scope = await proactivePreferenceScopeFromRuntimeConfig();
+  const workspaceId = payload.workspace_id.trim();
+  if (!workspaceId) {
+    throw new Error("workspace_id is required");
+  }
+  try {
+    const response =
+      await requestControlPlaneJson<ProactiveHeartbeatConfigResponsePayload>({
+        service: "proactive",
+        method: "POST",
+        path: `/api/v1/proactive/heartbeat-cronjobs/current/workspaces/${encodeURIComponent(workspaceId)}`,
+        payload: {
+          holaboss_user_id:
+            payload.holaboss_user_id?.trim() || scope.holabossUserId,
+          sandbox_id: payload.sandbox_id?.trim() || scope.sandboxId,
+          workspace_name: payload.workspace_name?.trim() || undefined,
+          enabled: payload.enabled !== false,
+        },
+      });
+    assertProactiveHeartbeatScopedToInstance(response, scope);
+    return normalizeProactiveHeartbeatConfig(response);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("Service not found") || message.includes("fetch failed")) {
+      throw new Error(
+        "Proactive service is not reachable. Check your network or backend configuration.",
+      );
+    }
+    throw error;
   }
 }
 
@@ -10570,8 +10802,12 @@ function getFilePreviewKind(targetPath: string) {
 
 async function readFilePreview(
   targetPath: string,
+  workspaceId?: string | null,
 ): Promise<FilePreviewPayload> {
-  const absolutePath = path.resolve(targetPath);
+  const { absolutePath } = await resolveWorkspaceScopedExplorerPath(
+    targetPath,
+    workspaceId,
+  );
   const stat = await fs.stat(absolutePath);
 
   if (stat.isDirectory()) {
@@ -10679,20 +10915,68 @@ async function readFilePreview(
 async function writeTextFile(
   targetPath: string,
   content: string,
+  workspaceId?: string | null,
 ): Promise<FilePreviewPayload> {
-  const absolutePath = path.resolve(targetPath);
+  const { absolutePath } = await resolveWorkspaceScopedExplorerPath(
+    targetPath,
+    workspaceId,
+  );
   await fs.writeFile(absolutePath, content, "utf-8");
-  return readFilePreview(absolutePath);
+  return readFilePreview(absolutePath, workspaceId);
+}
+
+function isPathWithinRoot(rootPath: string, targetPath: string): boolean {
+  const relativePath = path.relative(rootPath, targetPath);
+  return (
+    relativePath === "" ||
+    (!relativePath.startsWith("..") && !path.isAbsolute(relativePath))
+  );
+}
+
+async function resolveWorkspaceScopedExplorerPath(
+  targetPath?: string | null,
+  workspaceId?: string | null,
+): Promise<{ absolutePath: string; workspaceRoot: string | null }> {
+  const normalizedWorkspaceId =
+    typeof workspaceId === "string" ? workspaceId.trim() : "";
+  const trimmedTargetPath =
+    typeof targetPath === "string" ? targetPath.trim() : "";
+
+  if (!normalizedWorkspaceId) {
+    const fallbackPath = trimmedTargetPath || runtimeSandboxRoot();
+    return {
+      absolutePath: path.resolve(fallbackPath),
+      workspaceRoot: null,
+    };
+  }
+
+  const workspaceRoot = path.resolve(
+    await workspaceDirectoryPath(normalizedWorkspaceId),
+  );
+  const resolvedTargetPath = trimmedTargetPath
+    ? path.resolve(
+        path.isAbsolute(trimmedTargetPath)
+          ? trimmedTargetPath
+          : path.join(workspaceRoot, trimmedTargetPath),
+      )
+    : workspaceRoot;
+
+  if (!isPathWithinRoot(workspaceRoot, resolvedTargetPath)) {
+    throw new Error(`Target path escapes workspace root: ${trimmedTargetPath}`);
+  }
+
+  return {
+    absolutePath: resolvedTargetPath,
+    workspaceRoot,
+  };
 }
 
 async function listDirectory(
   targetPath?: string | null,
+  workspaceId?: string | null,
 ): Promise<DirectoryPayload> {
-  const initialPath =
-    targetPath && targetPath.trim().length > 0
-      ? targetPath
-      : runtimeSandboxRoot();
-  const resolvedPath = path.resolve(initialPath);
+  const { absolutePath: resolvedPath, workspaceRoot } =
+    await resolveWorkspaceScopedExplorerPath(targetPath, workspaceId);
   await fs.mkdir(resolvedPath, { recursive: true });
   const stat = await fs.stat(resolvedPath);
 
@@ -10729,9 +11013,10 @@ async function listDirectory(
     return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
   });
 
-  const parsedRoot = path.parse(resolvedPath).root;
   const normalizedCurrent = path.normalize(resolvedPath);
-  const normalizedRoot = path.normalize(parsedRoot);
+  const normalizedRoot = path.normalize(
+    workspaceRoot ? workspaceRoot : path.parse(resolvedPath).root,
+  );
   const parentPath =
     normalizedCurrent === normalizedRoot
       ? null
@@ -13309,18 +13594,24 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "fs:listDirectory",
     ["main"],
-    async (_event, targetPath?: string | null) => listDirectory(targetPath),
+    async (_event, targetPath?: string | null, workspaceId?: string | null) =>
+      listDirectory(targetPath, workspaceId),
   );
   handleTrustedIpc(
     "fs:readFilePreview",
     ["main"],
-    async (_event, targetPath: string) => readFilePreview(targetPath),
+    async (_event, targetPath: string, workspaceId?: string | null) =>
+      readFilePreview(targetPath, workspaceId),
   );
   handleTrustedIpc(
     "fs:writeTextFile",
     ["main"],
-    async (_event, targetPath: string, content: string) =>
-      writeTextFile(targetPath, content),
+    async (
+      _event,
+      targetPath: string,
+      content: string,
+      workspaceId?: string | null,
+    ) => writeTextFile(targetPath, content, workspaceId),
   );
   handleTrustedIpc("fs:getBookmarks", ["main"], () => fileBookmarks);
   handleTrustedIpc(
@@ -13805,6 +14096,23 @@ app.whenReady().then(async () => {
     "workspace:getProactiveTaskProposalPreference",
     ["main"],
     async () => getProactiveTaskProposalPreference(),
+  );
+  handleTrustedIpc(
+    "workspace:getProactiveHeartbeatConfig",
+    ["main"],
+    async () => getProactiveHeartbeatConfig(),
+  );
+  handleTrustedIpc(
+    "workspace:setProactiveHeartbeatConfig",
+    ["main"],
+    async (_event, payload: ProactiveHeartbeatConfigUpdatePayload) =>
+      setProactiveHeartbeatConfig(payload),
+  );
+  handleTrustedIpc(
+    "workspace:setProactiveHeartbeatWorkspaceEnabled",
+    ["main"],
+    async (_event, payload: ProactiveHeartbeatWorkspaceUpdatePayload) =>
+      setProactiveHeartbeatWorkspaceEnabled(payload),
   );
   handleTrustedIpc(
     "workspace:listRuntimeStates",

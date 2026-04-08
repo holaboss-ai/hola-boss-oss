@@ -165,6 +165,14 @@ test("app shell polls proactive status for the selected workspace", async () => 
   assert.match(source, /runtimeStatus\?\.status/);
 });
 
+test("app shell reloads proactive preference after workspace hydration completes", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /if \(!hasHydratedWorkspaceList\) \{\s*return;\s*\}/);
+  assert.match(source, /workspace\.getProactiveTaskProposalPreference\(\)/);
+  assert.match(source, /\}, \[hasHydratedWorkspaceList, selectedWorkspaceId\]\);/);
+});
+
 test("app shell renames the running panel button to sub-sessions", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 

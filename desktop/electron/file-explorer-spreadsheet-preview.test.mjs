@@ -32,12 +32,33 @@ test("desktop file preview supports tabular spreadsheet kinds", async () => {
   );
 });
 
-test("file explorer opens folders directly on click and renders table previews", async () => {
+test("desktop file explorer enforces the selected workspace root as a filesystem boundary", async () => {
+  const source = await readFile(mainSourcePath, "utf8");
+
+  assert.match(source, /async function resolveWorkspaceScopedExplorerPath\(/);
+  assert.match(source, /await workspaceDirectoryPath\(normalizedWorkspaceId\)/);
+  assert.match(source, /const relativePath = path\.relative\(rootPath, targetPath\);/);
+  assert.match(source, /throw new Error\(`Target path escapes workspace root: \$\{trimmedTargetPath\}`\);/);
+  assert.match(
+    source,
+    /"fs:listDirectory"[\s\S]*async \(_event, targetPath\?: string \| null, workspaceId\?: string \| null\) =>\s*listDirectory\(targetPath, workspaceId\)/,
+  );
+  assert.match(
+    source,
+    /"fs:readFilePreview"[\s\S]*async \(_event, targetPath: string, workspaceId\?: string \| null\) =>\s*readFilePreview\(targetPath, workspaceId\)/,
+  );
+  assert.match(
+    source,
+    /"fs:writeTextFile"[\s\S]*workspaceId\?: string \| null,[\s\S]*writeTextFile\(targetPath, content, workspaceId\)/,
+  );
+});
+
+test("file explorer opens folders on double click and renders table previews", async () => {
   const source = await readFile(fileExplorerPaneSourcePath, "utf8");
 
   assert.match(
     source,
-    /onClick=\{\(\) => \{\s*if \(entry\.isDirectory\) \{\s*void openPath\(entry\.absolutePath\);/,
+    /onDoubleClick=\{\(\) => \{\s*if \(entry\.isDirectory\) \{\s*void openPath\(entry\.absolutePath\);/,
   );
   assert.match(
     source,

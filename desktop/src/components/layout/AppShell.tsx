@@ -91,6 +91,7 @@ const APP_UPDATE_CHANGELOG_BASE_URL =
   "https://github.com/holaboss-ai/holaboss-ai/releases/tag";
 const DEFAULT_NOTIFICATION_TOAST_DURATION_MS = 7_000;
 const CRITICAL_NOTIFICATION_TOAST_DURATION_MS = 12_000;
+const DEFAULT_PROACTIVE_HEARTBEAT_CRON = "0 9 * * *";
 const FIXED_SAFE_TOAST_REGION_WIDTH_PX =
   LEFT_NAVIGATION_RAIL_WIDTH_PX +
   APP_SHELL_SPACE_COLUMN_GAP_PX +
@@ -740,6 +741,13 @@ function AppShellContent() {
   ] = useState(false);
   const [proactiveTaskProposalsError, setProactiveTaskProposalsError] =
     useState("");
+  const [proactiveHeartbeatConfig, setProactiveHeartbeatConfig] =
+    useState<ProactiveHeartbeatConfigPayload | null>(null);
+  const [isLoadingProactiveHeartbeatConfig, setIsLoadingProactiveHeartbeatConfig] =
+    useState(false);
+  const [isUpdatingProactiveHeartbeatConfig, setIsUpdatingProactiveHeartbeatConfig] =
+    useState(false);
+  const [proactiveHeartbeatError, setProactiveHeartbeatError] = useState("");
   const [proactiveStatus, setProactiveStatus] =
     useState<ProactiveAgentStatusPayload | null>(null);
   const [isLoadingProactiveStatus, setIsLoadingProactiveStatus] =
@@ -766,6 +774,43 @@ function AppShellContent() {
   filesPaneWidthRef.current = filesPaneWidth;
   browserPaneWidthRef.current = browserPaneWidth;
   spaceVisibilityRef.current = spaceVisibility;
+
+  const proactiveHeartbeatWorkspaceSyncKey = useMemo(
+    () =>
+      [...workspaces]
+        .map((workspace) => `${workspace.id}:${workspace.name || ""}`)
+        .sort()
+        .join("|"),
+    [workspaces],
+  );
+  const currentProactiveHeartbeatWorkspace = useMemo(
+    () =>
+      proactiveHeartbeatConfig?.workspaces.find(
+        (workspace) => workspace.workspace_id === selectedWorkspaceId,
+      ) ?? null,
+    [proactiveHeartbeatConfig, selectedWorkspaceId],
+  );
+  const proactiveWorkspaceEnabled = useMemo(
+    () =>
+      Boolean(
+        selectedWorkspaceId &&
+          proactiveTaskProposalsEnabled &&
+          (proactiveHeartbeatConfig?.enabled ?? false) &&
+          (currentProactiveHeartbeatWorkspace?.enabled ?? true),
+      ),
+    [
+      currentProactiveHeartbeatWorkspace,
+      proactiveHeartbeatConfig,
+      proactiveTaskProposalsEnabled,
+      selectedWorkspaceId,
+    ],
+  );
+  const isLoadingProactiveWorkspaceEnabled =
+    isLoadingProactiveTaskProposalsEnabled ||
+    isLoadingProactiveHeartbeatConfig;
+  const isUpdatingProactiveWorkspaceEnabled =
+    isUpdatingProactiveTaskProposalsEnabled ||
+    isUpdatingProactiveHeartbeatConfig;
 
   const effectiveAppUpdateStatus = useMemo(
     () =>
@@ -1024,7 +1069,7 @@ function AppShellContent() {
     );
 
     return unsubscribe;
-  }, [selectedWorkspaceId]);
+  }, [hasHydratedWorkspaceList, selectedWorkspaceId]);
 
   useEffect(() => {
     if (!window.electronAPI) {
@@ -1290,7 +1335,7 @@ function AppShellContent() {
   const handleOpenCreateWorkspacePanel = useCallback(() => {
     setCreateWorkspacePanelAnchorWorkspaceId(selectedWorkspaceId || "");
     setCreateWorkspacePanelOpen(true);
-  }, [selectedWorkspaceId]);
+  }, [hasHydratedWorkspaceList, selectedWorkspaceId]);
 
   const handleCloseCreateWorkspacePanel = useCallback(() => {
     setCreateWorkspacePanelOpen(false);
@@ -1366,6 +1411,9 @@ function AppShellContent() {
   }, [selectedWorkspaceId]);
 
   useEffect(() => {
+    if (!hasHydratedWorkspaceList) {
+      return;
+    }
     let cancelled = false;
     const loadPreference = async () => {
       setIsLoadingProactiveTaskProposalsEnabled(true);
@@ -1395,19 +1443,134 @@ function AppShellContent() {
     };
   }, [selectedWorkspaceId]);
 
-  async function handleProactiveTaskProposalsEnabledChange(enabled: boolean) {
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadHeartbeatConfig = async () => {
+      setIsLoadingProactiveHeartbeatConfig(true);
+      try {
+        const config =
+          await window.electronAPI.workspace.getProactiveHeartbeatConfig();
+        if (!cancelled) {
+          setProactiveHeartbeatConfig(config);
+          setProactiveHeartbeatError("");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setProactiveHeartbeatConfig(null);
+          setProactiveHeartbeatError(normalizeErrorMessage(error));
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingProactiveHeartbeatConfig(false);
+        }
+      }
+    };
+
+    void loadHeartbeatConfig();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    hasHydratedWorkspaceList,
+    proactiveHeartbeatWorkspaceSyncKey,
+    runtimeConfig?.sandboxId,
+    runtimeConfig?.userId,
+  ]);
+
+  async function handleProactiveWorkspaceEnabledChange(enabled: boolean) {
+    if (!selectedWorkspaceId) {
+      return;
+    }
+
     setProactiveTaskProposalsError("");
+    setProactiveHeartbeatError("");
     setIsUpdatingProactiveTaskProposalsEnabled(true);
+    setIsUpdatingProactiveHeartbeatConfig(true);
+    let errorTarget: "task-proposals" | "heartbeat" = "heartbeat";
+
     try {
-      const preference =
-        await window.electronAPI.workspace.setProactiveTaskProposalPreference({
-          enabled,
-        });
-      setProactiveTaskProposalsEnabled(preference.enabled !== false);
+      if (enabled) {
+        errorTarget = "task-proposals";
+        const preference =
+          await window.electronAPI.workspace.setProactiveTaskProposalPreference(
+            {
+              enabled: true,
+            },
+          );
+        const nextTaskProposalPreferenceEnabled = preference.enabled !== false;
+        setProactiveTaskProposalsEnabled(nextTaskProposalPreferenceEnabled);
+
+        errorTarget = "heartbeat";
+        let nextHeartbeatConfig =
+          await window.electronAPI.workspace.setProactiveHeartbeatConfig({
+            cron:
+              proactiveHeartbeatConfig?.cron?.trim() ||
+              DEFAULT_PROACTIVE_HEARTBEAT_CRON,
+            enabled: true,
+          });
+        setProactiveHeartbeatConfig(nextHeartbeatConfig);
+
+        nextHeartbeatConfig =
+          await window.electronAPI.workspace.setProactiveHeartbeatWorkspaceEnabled(
+            {
+              workspace_id: selectedWorkspaceId,
+              workspace_name: selectedWorkspace?.name || null,
+              enabled: true,
+            },
+          );
+        setProactiveHeartbeatConfig(nextHeartbeatConfig);
+
+        if (!nextTaskProposalPreferenceEnabled) {
+          setProactiveTaskProposalsError(
+            "Task proposals could not be enabled for this workspace.",
+          );
+        }
+        return;
+      }
+
+      const config =
+        await window.electronAPI.workspace.setProactiveHeartbeatWorkspaceEnabled(
+          {
+            workspace_id: selectedWorkspaceId,
+            workspace_name: selectedWorkspace?.name || null,
+            enabled: false,
+          },
+        );
+      setProactiveHeartbeatConfig(config);
     } catch (error) {
-      setProactiveTaskProposalsError(normalizeErrorMessage(error));
+      const message = normalizeErrorMessage(error);
+      if (errorTarget === "task-proposals") {
+        setProactiveTaskProposalsError(message);
+      } else {
+        setProactiveHeartbeatError(message);
+      }
     } finally {
       setIsUpdatingProactiveTaskProposalsEnabled(false);
+      setIsUpdatingProactiveHeartbeatConfig(false);
+    }
+  }
+
+  async function handleProactiveHeartbeatCronChange(cron: string) {
+    const normalizedCron = cron.trim();
+    if (!normalizedCron) {
+      return;
+    }
+
+    setProactiveHeartbeatError("");
+    setIsUpdatingProactiveHeartbeatConfig(true);
+    try {
+      const config = await window.electronAPI.workspace.setProactiveHeartbeatConfig(
+        {
+          cron: normalizedCron,
+          enabled: proactiveHeartbeatConfig?.enabled ?? false,
+        },
+      );
+      setProactiveHeartbeatConfig(config);
+    } catch (error) {
+      setProactiveHeartbeatError(normalizeErrorMessage(error));
+    } finally {
+      setIsUpdatingProactiveHeartbeatConfig(false);
     }
   }
 
@@ -2420,19 +2583,35 @@ function AppShellContent() {
                   proposals={taskProposals}
                   proactiveStatus={proactiveStatus}
                   isLoadingProactiveStatus={isLoadingProactiveStatus}
-                  proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
-                  isUpdatingProactiveTaskProposalsEnabled={
-                    isLoadingProactiveTaskProposalsEnabled ||
-                    isUpdatingProactiveTaskProposalsEnabled
+                  proactiveWorkspaceEnabled={proactiveWorkspaceEnabled}
+                  isLoadingProactiveWorkspaceEnabled={
+                    isLoadingProactiveWorkspaceEnabled
+                  }
+                  isUpdatingProactiveWorkspaceEnabled={
+                    isUpdatingProactiveWorkspaceEnabled
+                  }
+                  proactiveHeartbeatCron={
+                    proactiveHeartbeatConfig?.cron ||
+                    DEFAULT_PROACTIVE_HEARTBEAT_CRON
+                  }
+                  isLoadingProactiveHeartbeatConfig={
+                    isLoadingProactiveHeartbeatConfig
+                  }
+                  isUpdatingProactiveHeartbeatConfig={
+                    isUpdatingProactiveHeartbeatConfig
                   }
                   proactiveTaskProposalsError={proactiveTaskProposalsError}
+                  proactiveHeartbeatError={proactiveHeartbeatError}
                   isLoadingProposals={isLoadingTaskProposals}
                   isTriggeringProposal={isTriggeringTaskProposal}
                   proposalStatusMessage={taskProposalStatusMessage}
                   proposalAction={proposalAction}
                   onTriggerProposal={() => void triggerRemoteTaskProposal()}
-                  onProactiveTaskProposalsEnabledChange={(enabled) =>
-                    void handleProactiveTaskProposalsEnabledChange(enabled)
+                  onProactiveWorkspaceEnabledChange={(enabled) =>
+                    void handleProactiveWorkspaceEnabledChange(enabled)
+                  }
+                  onProactiveHeartbeatCronChange={(cron) =>
+                    void handleProactiveHeartbeatCronChange(cron)
                   }
                   onAcceptProposal={(proposal) =>
                     void acceptTaskProposal(proposal)

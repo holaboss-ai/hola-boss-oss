@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Loader2, Sparkles } from "lucide-react";
 import {
   Tooltip,
@@ -13,11 +15,16 @@ interface ProactiveLifecyclePanelProps {
   proactiveStatus: ProactiveAgentStatusPayload | null;
   isLoading: boolean;
   workspaceSetup?: ProactiveStatusSnapshotPayload | null;
-  proactiveTaskProposalsEnabled?: boolean;
-  isUpdatingProactiveTaskProposalsEnabled?: boolean;
+  proactiveWorkspaceEnabled?: boolean;
+  isLoadingProactiveWorkspaceEnabled?: boolean;
+  isUpdatingProactiveWorkspaceEnabled?: boolean;
+  proactiveHeartbeatCron?: string;
+  isLoadingProactiveHeartbeatConfig?: boolean;
+  isUpdatingProactiveHeartbeatConfig?: boolean;
   isTriggeringProposal?: boolean;
   onTriggerProposal?: () => void;
-  onProactiveTaskProposalsEnabledChange?: (enabled: boolean) => void;
+  onProactiveWorkspaceEnabledChange?: (enabled: boolean) => void;
+  onProactiveHeartbeatCronChange?: (cron: string) => void;
   compact?: boolean;
 }
 
@@ -71,6 +78,89 @@ function proactiveToggleDotClasses(enabled: boolean): string {
   return enabled ? "bg-emerald-500" : "bg-amber-500";
 }
 
+function ProactiveScheduleEditor({
+  hasWorkspace,
+  proactiveHeartbeatCron = "",
+  isLoadingProactiveHeartbeatConfig = false,
+  isUpdatingProactiveHeartbeatConfig = false,
+  onProactiveHeartbeatCronChange,
+}: {
+  hasWorkspace: boolean;
+  proactiveHeartbeatCron?: string;
+  isLoadingProactiveHeartbeatConfig?: boolean;
+  isUpdatingProactiveHeartbeatConfig?: boolean;
+  onProactiveHeartbeatCronChange?: (cron: string) => void;
+}) {
+  const [cronDraft, setCronDraft] = useState(proactiveHeartbeatCron);
+
+  useEffect(() => {
+    setCronDraft(proactiveHeartbeatCron);
+  }, [proactiveHeartbeatCron]);
+
+  const normalizedCurrentCron = proactiveHeartbeatCron.trim();
+  const normalizedCronDraft = cronDraft.trim();
+  const canSave = Boolean(
+    hasWorkspace &&
+      onProactiveHeartbeatCronChange &&
+      !isLoadingProactiveHeartbeatConfig &&
+      !isUpdatingProactiveHeartbeatConfig &&
+      normalizedCronDraft &&
+      normalizedCronDraft !== normalizedCurrentCron,
+  );
+
+  const handleSave = () => {
+    if (!canSave || !onProactiveHeartbeatCronChange) {
+      return;
+    }
+    onProactiveHeartbeatCronChange(normalizedCronDraft);
+  };
+
+  return (
+    <div className="border-t border-border/40 px-3 py-3">
+      <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+        Schedule
+      </div>
+      <div className="mt-1 text-[11px] leading-5 text-muted-foreground/82">
+        Server cron for this desktop instance.
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <Input
+          value={cronDraft}
+          onChange={(event) => setCronDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter") {
+              return;
+            }
+            event.preventDefault();
+            handleSave();
+          }}
+          placeholder="0 9 * * *"
+          disabled={
+            !hasWorkspace ||
+            isLoadingProactiveHeartbeatConfig ||
+            isUpdatingProactiveHeartbeatConfig
+          }
+          className="h-8 rounded-full bg-background/90 px-3 text-[11px]"
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 rounded-full px-3 text-[11px] font-medium"
+          onClick={handleSave}
+          disabled={!canSave}
+        >
+          {isUpdatingProactiveHeartbeatConfig ? (
+            <Loader2 size={12} className="animate-spin" />
+          ) : (
+            "Save"
+          )}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function lifecycleCopy(params: {
   hasWorkspace: boolean;
   proactiveStatus: ProactiveAgentStatusPayload | null;
@@ -109,11 +199,16 @@ export function ProactiveLifecyclePanel({
   hasWorkspace,
   proactiveStatus,
   isLoading,
-  proactiveTaskProposalsEnabled = true,
-  isUpdatingProactiveTaskProposalsEnabled = false,
+  proactiveWorkspaceEnabled = false,
+  isLoadingProactiveWorkspaceEnabled = false,
+  isUpdatingProactiveWorkspaceEnabled = false,
+  proactiveHeartbeatCron = "",
+  isLoadingProactiveHeartbeatConfig = false,
+  isUpdatingProactiveHeartbeatConfig = false,
   isTriggeringProposal = false,
   onTriggerProposal,
-  onProactiveTaskProposalsEnabledChange,
+  onProactiveWorkspaceEnabledChange,
+  onProactiveHeartbeatCronChange,
   compact = false,
 }: ProactiveLifecyclePanelProps) {
   const { state, summary, detail } = lifecycleCopy({
@@ -134,35 +229,38 @@ export function ProactiveLifecyclePanel({
             {proactiveStateLabel(state)}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            {onProactiveTaskProposalsEnabledChange ? (
+            {onProactiveWorkspaceEnabledChange ? (
               <Button
                 type="button"
                 size="sm"
                 variant="outline"
                 className={`h-8 rounded-full px-3 text-[11px] font-medium ${proactiveToggleClasses(
-                  proactiveTaskProposalsEnabled,
+                  proactiveWorkspaceEnabled,
                 )}`}
                 onClick={() =>
-                  !isUpdatingProactiveTaskProposalsEnabled &&
-                  onProactiveTaskProposalsEnabledChange(
-                    !proactiveTaskProposalsEnabled,
+                  !isUpdatingProactiveWorkspaceEnabled &&
+                  onProactiveWorkspaceEnabledChange(
+                    !proactiveWorkspaceEnabled,
                   )
                 }
-                disabled={isUpdatingProactiveTaskProposalsEnabled}
+                disabled={
+                  isUpdatingProactiveWorkspaceEnabled ||
+                  !hasWorkspace
+                }
               >
-                {isUpdatingProactiveTaskProposalsEnabled ? (
+                {isUpdatingProactiveWorkspaceEnabled ? (
                   <Loader2 size={12} className="animate-spin" />
                 ) : (
                   <span
                     className={`inline-block size-1.5 rounded-full ${
                       proactiveToggleDotClasses(
-                        proactiveTaskProposalsEnabled,
+                        proactiveWorkspaceEnabled,
                       )
                     }`}
                   />
                 )}
                 <span>
-                  {proactiveTaskProposalsEnabled ? "Enabled" : "Paused"}
+                  {proactiveWorkspaceEnabled ? "Enabled" : "Disabled"}
                 </span>
               </Button>
             ) : null}
@@ -192,6 +290,17 @@ export function ProactiveLifecyclePanel({
             ) : null}
           </div>
         </div>
+        <ProactiveScheduleEditor
+          hasWorkspace={hasWorkspace}
+          proactiveHeartbeatCron={proactiveHeartbeatCron}
+          isLoadingProactiveHeartbeatConfig={
+            isLoadingProactiveHeartbeatConfig
+          }
+          isUpdatingProactiveHeartbeatConfig={
+            isUpdatingProactiveHeartbeatConfig
+          }
+          onProactiveHeartbeatCronChange={onProactiveHeartbeatCronChange}
+        />
       </section>
     );
   }
@@ -210,7 +319,7 @@ export function ProactiveLifecyclePanel({
               </div>
             ) : null}
           </div>
-          <div className="flex shrink-0 items-center gap-1.5">
+          <div className="flex shrink-0 flex-col items-end gap-1.5">
             <div
               className={`inline-flex items-center rounded-full border px-3 py-1 text-[10px] font-medium tracking-[0.14em] ${proactiveStateClasses(
                 state,
@@ -218,9 +327,76 @@ export function ProactiveLifecyclePanel({
             >
               {proactiveStateLabel(state)}
             </div>
+            <div className="flex items-center gap-1.5">
+              {onProactiveWorkspaceEnabledChange ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className={`h-8 rounded-full px-3 text-[11px] font-medium ${proactiveToggleClasses(
+                    proactiveWorkspaceEnabled,
+                  )}`}
+                  onClick={() =>
+                    !isUpdatingProactiveWorkspaceEnabled &&
+                    onProactiveWorkspaceEnabledChange(
+                      !proactiveWorkspaceEnabled,
+                    )
+                  }
+                  disabled={
+                    isUpdatingProactiveWorkspaceEnabled || !hasWorkspace
+                  }
+                >
+                  {isUpdatingProactiveWorkspaceEnabled ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <span
+                      className={`inline-block size-1.5 rounded-full ${proactiveToggleDotClasses(
+                        proactiveWorkspaceEnabled,
+                      )}`}
+                    />
+                  )}
+                  <span>
+                    {proactiveWorkspaceEnabled ? "Enabled" : "Disabled"}
+                  </span>
+                </Button>
+              ) : null}
+              {onTriggerProposal ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        type="button"
+                        size="icon-xs"
+                        variant="outline"
+                        aria-label="Run proactive analysis"
+                        onClick={onTriggerProposal}
+                        disabled={!hasWorkspace || isTriggeringProposal}
+                        className="rounded-full border-border/45 bg-background/90 text-muted-foreground hover:border-primary/35 hover:bg-background hover:text-primary"
+                      />
+                    }
+                  >
+                    {isTriggeringProposal ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                      <Sparkles size={12} />
+                    )}
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Run analysis</TooltipContent>
+                </Tooltip>
+              ) : null}
+            </div>
           </div>
         </div>
       </div>
+      <ProactiveScheduleEditor
+        hasWorkspace={hasWorkspace}
+        proactiveHeartbeatCron={proactiveHeartbeatCron}
+        isLoadingProactiveHeartbeatConfig={isLoadingProactiveHeartbeatConfig}
+        isUpdatingProactiveHeartbeatConfig={
+          isUpdatingProactiveHeartbeatConfig
+        }
+        onProactiveHeartbeatCronChange={onProactiveHeartbeatCronChange}
+      />
     </section>
   );
 }

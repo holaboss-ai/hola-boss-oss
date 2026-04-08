@@ -17,5 +17,10 @@ test("proactive status card keeps controls inside the compact lifecycle card", a
   assert.match(source, /Claimed/);
   assert.match(source, /Run proactive analysis/);
   assert.match(source, /Enabled/);
-  assert.match(source, /Paused/);
+  assert.match(source, /Disabled/);
+  assert.match(source, /Schedule/);
+  assert.match(source, /Server cron for this desktop instance\./);
+  assert.match(source, /Save/);
+  assert.doesNotMatch(source, /Scheduled/);
+  assert.doesNotMatch(source, /Workspace Included/);
 });

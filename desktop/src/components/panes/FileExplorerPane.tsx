@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
-  ArrowUp,
+  ChevronRight,
   FileArchive,
   FileAudio2,
   FileBadge2,
@@ -141,6 +141,12 @@ const SPECIAL_POLICY_FILENAMES = new Set([
 type ExplorerIconDescriptor = {
   Icon: LucideIcon;
   className: string;
+};
+
+type FileExplorerBreadcrumb = {
+  label: string;
+  absolutePath: string;
+  isCurrent: boolean;
 };
 
 function getComparableFileName(targetName: string) {
@@ -312,6 +318,55 @@ function resolveWorkspaceTargetPath(workspaceRoot: string, targetPath: string) {
   return `${normalizedRoot}${separator}${normalizedTarget}`;
 }
 
+function buildPathBreadcrumbs(
+  currentPath: string,
+  workspaceRootPath: string | null,
+): FileExplorerBreadcrumb[] {
+  const trimmedCurrentPath = currentPath.trim();
+  if (!trimmedCurrentPath) {
+    return [];
+  }
+
+  const normalizedWorkspaceRoot = workspaceRootPath
+    ? normalizeComparablePath(workspaceRootPath)
+    : "";
+  const breadcrumbs: FileExplorerBreadcrumb[] = [];
+  const seenPaths = new Set<string>();
+  let cursor: string | null = trimmedCurrentPath;
+
+  while (cursor) {
+    const normalizedCursor = normalizeComparablePath(cursor);
+    if (!normalizedCursor || seenPaths.has(normalizedCursor)) {
+      break;
+    }
+    seenPaths.add(normalizedCursor);
+    breadcrumbs.unshift({
+      label: getFolderName(cursor),
+      absolutePath: cursor,
+      isCurrent: false,
+    });
+    if (
+      normalizedWorkspaceRoot &&
+      normalizedCursor === normalizedWorkspaceRoot
+    ) {
+      break;
+    }
+    const parentPath = getParentFolderPath(cursor);
+    if (
+      !parentPath ||
+      normalizeComparablePath(parentPath) === normalizedCursor
+    ) {
+      break;
+    }
+    cursor = parentPath;
+  }
+
+  return breadcrumbs.map((breadcrumb, index) => ({
+    ...breadcrumb,
+    isCurrent: index === breadcrumbs.length - 1,
+  }));
+}
+
 function formatFileSize(size: number) {
   if (size <= 0) return "-";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -392,7 +447,6 @@ export function FileExplorerPane({
   const lastSyncedWorkspaceRootRef = useRef<{ workspaceId: string; rootPath: string } | null>(null);
   const lastProcessedFocusRequestKeyRef = useRef<number | null>(null);
   const [currentPath, setCurrentPath] = useState<string>("");
-  const [parentPath, setParentPath] = useState<string | null>(null);
   const [entries, setEntries] = useState<LocalFileEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState<string>("");
   const [workspaceRootPath, setWorkspaceRootPath] = useState<string | null>(null);
@@ -418,9 +472,11 @@ export function FileExplorerPane({
     setError("");
 
     try {
-      const payload = await window.electronAPI.fs.listDirectory(targetPath ?? null);
+      const payload = await window.electronAPI.fs.listDirectory(
+        targetPath ?? null,
+        selectedWorkspaceId ?? null,
+      );
       setCurrentPath(payload.currentPath);
-      setParentPath(payload.parentPath);
       setEntries(payload.entries);
 
       if (pushHistory) {
@@ -452,7 +508,7 @@ export function FileExplorerPane({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedWorkspaceId]);
 
   useEffect(() => {
     void loadDirectory(null, true);
@@ -514,11 +570,13 @@ export function FileExplorerPane({
 
       refreshInFlight = true;
       try {
-        const payload = await window.electronAPI.fs.listDirectory(currentPath);
+        const payload = await window.electronAPI.fs.listDirectory(
+          currentPath,
+          selectedWorkspaceId ?? null,
+        );
         if (cancelled || payload.currentPath !== currentPath) {
           return;
         }
-        setParentPath(payload.parentPath);
         setEntries(payload.entries);
         setSelectedPath((prev) =>
           !prev || !payload.entries.some((entry) => entry.absolutePath === prev) ? (payload.entries[0]?.absolutePath ?? "") : prev
@@ -538,12 +596,12 @@ export function FileExplorerPane({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [currentPath]);
+  }, [currentPath, selectedWorkspaceId]);
 
   useEffect(() => {
     let mounted = true;
 
-    void window.electronAPI.fs.getBookmarks().then((bookmarks) => {
+    void window.electronAPI.fs.getBookmarks(selectedWorkspaceId ?? null).then((bookmarks) => {
       if (mounted) {
         setFileBookmarks(bookmarks);
       }
@@ -557,7 +615,7 @@ export function FileExplorerPane({
       mounted = false;
       unsubscribe();
     };
-  }, []);
+  }, [selectedWorkspaceId]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -589,6 +647,10 @@ export function FileExplorerPane({
   const isAtWorkspaceRoot = workspaceRootPath
     ? normalizeComparablePath(currentPath) === normalizeComparablePath(workspaceRootPath)
     : false;
+  const breadcrumbs = useMemo(
+    () => buildPathBreadcrumbs(currentPath, workspaceRootPath),
+    [currentPath, workspaceRootPath],
+  );
 
   const filteredEntries = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -686,7 +748,10 @@ export function FileExplorerPane({
     setActiveTableSheetIndex(0);
 
     try {
-      const payload = await window.electronAPI.fs.readFilePreview(targetPath);
+      const payload = await window.electronAPI.fs.readFilePreview(
+        targetPath,
+        selectedWorkspaceId ?? null,
+      );
       setPreview(payload);
       setPreviewDraft(payload.content ?? "");
     } catch (cause) {
@@ -719,7 +784,11 @@ export function FileExplorerPane({
     setPreviewError("");
 
     try {
-      const nextPreview = await window.electronAPI.fs.writeTextFile(preview.absolutePath, previewDraft);
+      const nextPreview = await window.electronAPI.fs.writeTextFile(
+        preview.absolutePath,
+        previewDraft,
+        selectedWorkspaceId ?? null,
+      );
       setPreview(nextPreview);
       setPreviewDraft(nextPreview.content ?? "");
       await loadDirectory(currentPath, false);
@@ -784,7 +853,11 @@ export function FileExplorerPane({
       return;
     }
 
-    await window.electronAPI.fs.addBookmark(bookmarkTargetPath, bookmarkTargetLabel);
+    await window.electronAPI.fs.addBookmark(
+      bookmarkTargetPath,
+      bookmarkTargetLabel,
+      selectedWorkspaceId ?? null,
+    );
   };
 
   const openBookmarkedTarget = async (bookmark: FileBookmarkPayload) => {
@@ -1052,12 +1125,6 @@ export function FileExplorerPane({
               <div className="mb-2 flex min-w-0 items-center gap-0.5">
                 <IconButton icon={<Undo2 size={13} />} label="Back" onClick={() => void onBack()} disabled={!canGoBack} />
                 <IconButton icon={<Forward size={13} />} label="Forward" onClick={() => void onForward()} disabled={!canGoForward} />
-                <IconButton
-                  icon={<ArrowUp size={13} />}
-                  label="Up"
-                  onClick={() => parentPath && !isAtWorkspaceRoot && void openPath(parentPath)}
-                  disabled={!parentPath || isAtWorkspaceRoot}
-                />
                 {!isVeryCompact ? (
                   <IconButton
                     icon={<Home size={13} />}
@@ -1086,8 +1153,36 @@ export function FileExplorerPane({
                   placeholder="Search files"
                 />
               </div>
-              <div className="mt-1.5 truncate text-[10px] uppercase tracking-widest text-muted-foreground/60">
-                {isCompact ? getFolderName(currentPath) : currentPath}
+              <div className="chat-scrollbar-hidden mt-1.5 flex items-center gap-1 overflow-x-auto text-[10px] uppercase tracking-widest text-muted-foreground/60">
+                {breadcrumbs.length > 0 ? (
+                  breadcrumbs.map((breadcrumb) => (
+                    <div
+                      key={breadcrumb.absolutePath}
+                      className="flex shrink-0 items-center gap-1"
+                    >
+                      {breadcrumb !== breadcrumbs[0] ? (
+                        <ChevronRight size={10} className="text-muted-foreground/45" />
+                      ) : null}
+                      {breadcrumb.isCurrent ? (
+                        <span className="truncate text-foreground/78">
+                          {breadcrumb.label}
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void openPath(breadcrumb.absolutePath);
+                          }}
+                          className="truncate transition-colors hover:text-foreground"
+                        >
+                          {breadcrumb.label}
+                        </button>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <span>{isCompact ? getFolderName(currentPath) : currentPath}</span>
+                )}
               </div>
             </div>
 

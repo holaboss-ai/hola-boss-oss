@@ -4215,6 +4215,12 @@ function TraceStepGroup({
   const groupIsLive = live && !groupHasTerminalError;
   const stepCount = steps.length;
   const stepLabel = `${stepCount} step${stepCount === 1 ? "" : "s"}`;
+  const activeStep =
+    [...steps]
+      .reverse()
+      .find(
+        (step) => step.status === "running" || step.status === "waiting",
+      ) ?? null;
   const summarySuffix = groupHasTerminalError
     ? ` (${terminalErrorCount} failed)`
     : recoveredErrorCount > 0
@@ -4236,11 +4242,13 @@ function TraceStepGroup({
           <Check size={13} className="text-emerald-500" />
         )}
         <span>
-          {groupIsLive
-            ? `Working through ${stepLabel}...`
-            : runningCount > 0
-            ? `Running ${stepLabel}...`
-            : `Used ${stepLabel}`}
+          {activeStep
+            ? `${traceStatusLabel(activeStep.status)}: ${activeStep.title}`
+            : groupIsLive
+              ? `Working through ${stepLabel}...`
+              : runningCount > 0
+              ? `Running ${stepLabel}...`
+              : `Used ${stepLabel}`}
           {summarySuffix}
         </span>
         <ChevronDown

@@ -329,6 +329,39 @@ interface ProactiveTaskProposalPreferencePayload {
   sandbox_id: string;
 }
 
+interface ProactiveHeartbeatWorkspacePayload {
+  workspace_id: string;
+  workspace_name: string | null;
+  enabled: boolean;
+  last_seen_at: string | null;
+}
+
+interface ProactiveHeartbeatConfigPayload {
+  holaboss_user_id: string;
+  sandbox_id: string;
+  has_schedule: boolean;
+  cron: string;
+  enabled: boolean;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  workspaces: ProactiveHeartbeatWorkspacePayload[];
+}
+
+interface ProactiveHeartbeatConfigUpdatePayload {
+  cron?: string;
+  enabled?: boolean;
+  holaboss_user_id?: string;
+  sandbox_id?: string;
+}
+
+interface ProactiveHeartbeatWorkspaceUpdatePayload {
+  workspace_id: string;
+  workspace_name?: string | null;
+  enabled: boolean;
+  holaboss_user_id?: string;
+  sandbox_id?: string;
+}
+
 interface TaskProposalStateUpdatePayload {
   proposal: TaskProposalRecordPayload;
 }
@@ -995,6 +1028,24 @@ contextBridge.exposeInMainWorld("electronAPI", {
         "workspace:setProactiveTaskProposalPreference",
         payload,
       ) as Promise<ProactiveTaskProposalPreferencePayload>,
+    getProactiveHeartbeatConfig: () =>
+      ipcRenderer.invoke(
+        "workspace:getProactiveHeartbeatConfig",
+      ) as Promise<ProactiveHeartbeatConfigPayload>,
+    setProactiveHeartbeatConfig: (
+      payload: ProactiveHeartbeatConfigUpdatePayload,
+    ) =>
+      ipcRenderer.invoke(
+        "workspace:setProactiveHeartbeatConfig",
+        payload,
+      ) as Promise<ProactiveHeartbeatConfigPayload>,
+    setProactiveHeartbeatWorkspaceEnabled: (
+      payload: ProactiveHeartbeatWorkspaceUpdatePayload,
+    ) =>
+      ipcRenderer.invoke(
+        "workspace:setProactiveHeartbeatWorkspaceEnabled",
+        payload,
+      ) as Promise<ProactiveHeartbeatConfigPayload>,
     updateTaskProposalState: (proposalId: string, state: string) =>
       ipcRenderer.invoke("workspace:updateTaskProposalState", proposalId, state) as Promise<TaskProposalStateUpdatePayload>,
     requestRemoteTaskProposalGeneration: (
