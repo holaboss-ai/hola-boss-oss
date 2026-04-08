@@ -318,3 +318,38 @@ test("queue route wakes configured queue worker", async () => {
   assert.equal(closeCalls, 1);
   store.close();
 });
+
+test("app lifecycle starts and closes configured durable memory worker", async () => {
+  const root = makeTempDir("hb-runtime-queue-worker-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  let startCalls = 0;
+  let closeCalls = 0;
+  const app = buildRuntimeApiServer({
+    store,
+    queueWorker: null,
+    durableMemoryWorker: {
+      async start() {
+        startCalls += 1;
+      },
+      wake() {},
+      async close() {
+        closeCalls += 1;
+      },
+    },
+    cronWorker: null,
+    bridgeWorker: null,
+  });
+
+  const response = await app.inject({ method: "GET", url: "/healthz" });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(startCalls, 1);
+
+  await app.close();
+  assert.equal(closeCalls, 1);
+  store.close();
+});

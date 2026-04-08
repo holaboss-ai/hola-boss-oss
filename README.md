@@ -174,11 +174,13 @@ One run follows a bounded lifecycle:
 
 1. The desktop or API queues work for a workspace session.
 2. The runtime compiles the workspace from `workspace.yaml` plus referenced files such as `AGENTS.md`, app manifests, and workspace-local skill surfaces.
-3. The runtime evaluates the capability surface for that run, builds prompt sections, computes a `prompt_cache_profile`, and writes a sanitized request snapshot fingerprint.
-4. The harness receives a reduced execution package containing the selected model, `system_prompt`, ordered `context_messages`, prompt layers, capability manifest, and workspace checksum.
-5. When the run finishes, the runtime persists the assistant turn, `turn_results`, token usage, and the terminal event immediately so the run can complete without waiting on follow-up writeback.
-6. Deferred post-run tasks may then persist request snapshots, compaction boundaries, `session-memory`, runtime projections, and durable-memory candidates off the critical path.
-7. On the next run, continuity is restored from the latest prior compaction boundary, a bounded `session-memory` excerpt, and a small recalled-memory subset instead of replaying the full transcript.
+3. The runtime evaluates the capability surface for that run, builds prompt sections, computes a `prompt_cache_profile`, and prepares a sanitized request snapshot fingerprint.
+4. Before the harness starts, the runtime persists the turn request snapshot for that run so the execution package is inspectable even if later work fails.
+5. The harness receives a reduced execution package containing the selected model, `system_prompt`, ordered `context_messages`, prompt layers, capability manifest, and workspace checksum.
+6. When the run finishes, the runtime persists the assistant turn, `turn_results`, token usage, and the terminal event immediately so the run can complete without waiting on follow-up writeback.
+7. The runtime then performs a small immediate continuity writeback inline: compact the turn, refresh runtime projections such as `session-memory`, and persist the current compaction boundary.
+8. After continuity is durable, the runtime enqueues a persistent durable-memory writeback job for heavier follow-up work such as durable extraction, durable-memory promotion, and full `MEMORY.md` index regeneration.
+9. On the next run, continuity is restored from the latest prior compaction boundary, a bounded `session-memory` excerpt, and a small recalled-memory subset instead of replaying the full transcript.
 
 That split is intentional. Post-run continuity work is valuable, but it is not allowed to hold the run open after the agent has already finished outputting. The foreground path ends at committed run state, while continuity-enhancement tasks continue asynchronously as best-effort follow-up work.
 
@@ -187,19 +189,22 @@ graph TD;
     A["User, Desktop, or API"] --> B["Queue workspace session"];
     B --> C["Compile runtime plan"];
     C --> D["Project run-specific capabilities"];
-    D --> E["Assemble prompt package"];
-    E --> F["Execute in harness"];
-    F --> G["Stream events and tool activity"];
-    G --> H["Persist turn result and terminal event"];
-    H --> I["Schedule post-run tasks"];
-    I --> J["Write request snapshots and compaction boundary"];
-    I --> K["Write runtime projections"];
-    I --> L["Promote durable memory"];
-    J --> M["Restore next run"];
-    K --> M;
-    L --> M;
-    M --> N["Restore bounded continuity"];
-    N --> C;
+    D --> E["Persist turn request snapshot"];
+    E --> F["Assemble prompt package"];
+    F --> G["Execute in harness"];
+    G --> H["Stream events and tool activity"];
+    H --> I["Persist turn result and terminal event"];
+    I --> J["Write immediate continuity artifacts"];
+    J --> K["Write compaction boundary"];
+    J --> L["Write runtime projections"];
+    J --> M["Enqueue durable-memory writeback job"];
+    M --> P["Durable-memory worker"];
+    P --> Q["Promote durable memory and refresh indexes"];
+    K --> N["Restore next run"];
+    L --> N;
+    Q --> N;
+    N --> O["Restore bounded continuity"];
+    O --> C;
 ```
 
 ### Why Token Usage Stays Bounded
@@ -439,8 +444,7 @@ Compaction boundaries are the durable handoff point for session continuity. Each
 - `memory/MEMORY.md` is the root durable-memory index
 - `memory/workspace/<workspace-id>/MEMORY.md` indexes durable workspace knowledge
 - `memory/preference/MEMORY.md` indexes durable user preference memory
-
-Identity memories live under `memory/identity/` and are discovered directly at recall time. There is no dedicated `identity/MEMORY.md` index today.
+- `memory/identity/MEMORY.md` indexes durable user identity memory
 
 Runtime files are intentionally excluded from the `MEMORY.md` indexes. The runtime recalls durable memory from workspace knowledge plus user-scoped preference and identity files, while resume or compaction context comes from runtime-owned session artifacts instead of from markdown memory alone.
 
@@ -468,16 +472,75 @@ The current memory lifecycle is:
 1. User input is queued, and strong-signal user-scoped proposals can be captured into runtime-owned pending proposal records in `state/runtime.db`.
 2. The current run can use those pending proposals as ephemeral prompt context without treating them as durable memory yet.
 3. A run finishes and the runtime persists `turn_results`.
-4. Post-turn writeback updates the current compaction boundary and records ordered restoration inputs for later resume.
-5. Post-turn writeback generates volatile runtime projections under `memory/workspace/<workspace-id>/runtime/`, including `session-memory/`.
-6. Model-assisted durable extraction attempts to promote selected workspace-scoped items into `knowledge/` using recent turn context.
-7. Deterministic durable extraction remains as a fallback safety path when model extraction is unavailable or sparse.
-8. Accepted user-scoped proposals are promoted into durable preference memory or into the canonical runtime profile, depending on what they target.
-9. `MEMORY.md` indexes are refreshed for durable memory only.
-10. Future runs restore session continuity from the latest compaction boundary first, then enrich continuity with the current session-memory snapshot.
-11. Future runs recall a small durable subset from markdown memory manifests (model-selected when available, deterministic fallback otherwise) and inject it as prompt context.
+4. An immediate continuity writeback runs inline after the turn result is committed.
+5. That continuity writeback compacts the turn, updates the current compaction boundary, and generates volatile runtime projections under `memory/workspace/<workspace-id>/runtime/`, including `session-memory/`.
+6. The runtime then persists a durable-memory job in `state/runtime.db` so the heavier durable-memory work survives process restarts.
+7. The durable-memory worker reloads the finished turn, recent session state, and current memory catalog state.
+8. It derives deterministic durable candidates from the latest user message and assistant response, such as command facts, business facts, procedures, and repeated permission blockers.
+9. If a background-tasks model is configured, it also runs a model-assisted durable extraction pass using the current instruction, recent user messages, recent turn summaries, and the latest assistant response.
+10. Accepted model-extracted candidates are merged with deterministic durable candidates and persisted into markdown memory plus `memory_entries` catalog rows.
+11. Durable-memory indexes are refreshed by rewriting `memory/MEMORY.md`, `memory/workspace/<workspace-id>/MEMORY.md`, `memory/preference/MEMORY.md`, and `memory/identity/MEMORY.md`.
+12. Future runs restore session continuity from the latest compaction boundary first, then enrich continuity with the current `session-memory` snapshot.
+13. Future runs recall a small durable subset from the indexed markdown memory graph and inject it as prompt context.
 
 This keeps replay, inspection, and durable recall separate instead of overloading one mechanism for all three jobs.
+
+#### Current Post-Run Writeback
+
+The runtime now splits post-run writeback into two phases:
+
+1. `write_turn_continuity`
+   - runs inline after the foreground `turn_results` row is committed
+   - keeps next-run continuity fresh without waiting on LLM extraction
+2. `durable_memory_writeback`
+   - persisted as a queue job in `state/runtime.db`
+   - drained by a dedicated durable-memory worker
+   - handles the heavier durable-memory promotion path
+
+The immediate continuity phase currently performs:
+
+1. Recompute the turn's compacted summary and update the `turn_results` row.
+2. Reload recent turn results and session messages for the same session.
+3. Build runtime projection files such as:
+   - `runtime/session-state`
+   - `runtime/blocker-state`
+   - `runtime/latest-turn`
+   - `runtime/recent-turns`
+   - `runtime/session-memory`
+   - permission-blocker runtime notes
+4. Persist the compaction-boundary artifact used for later session restoration, including restoration ordering and the runtime-owned restored-memory paths written during the immediate phase.
+
+The queued durable-memory phase currently performs:
+
+1. Reload the finished turn plus recent session state.
+2. Build deterministic durable candidates from explicit or strongly patterned content:
+   - workspace command facts
+   - workspace business facts
+   - workspace procedures
+   - repeated permission blockers
+3. Optionally run a model-assisted durable extraction pass when `runtime.background_tasks` resolves to a valid provider/model pair.
+4. Filter and merge accepted model-extracted durable candidates with deterministic durable candidates.
+5. Upsert durable markdown memory files and corresponding `memory_entries` catalog rows in `state/runtime.db`.
+6. Rewrite the durable-memory indexes:
+   - `memory/MEMORY.md`
+   - `memory/workspace/<workspace-id>/MEMORY.md`
+   - `memory/preference/MEMORY.md`
+   - `memory/identity/MEMORY.md`
+7. Patch the existing compaction boundary so its restored-memory path list also reflects the durable-memory and index files written by the queued phase.
+
+This split is intentional:
+
+- request snapshots are not post-run work; the runtime persists the turn request snapshot during bootstrap before the harness starts
+- immediate continuity work stays cheap and close to the completed run so the next turn has a fresh restoration anchor
+- durable-memory promotion is now persisted in a queue, so it no longer depends on an in-process `setImmediate(...)` callback surviving until completion
+- durable-memory writeback still runs for both successful turns and executor-error terminal paths, because failed turns can still contain continuity and durable-memory signals worth preserving
+
+The largest remaining cost centers are now concentrated in the queued durable-memory phase:
+
+- the model-assisted durable extraction call when background tasks are enabled
+- full durable-index regeneration on every durable-memory writeback
+- repeated markdown upserts for durable memories and indexes
+- extra state reloads needed to rebuild durable candidate context
 
 #### Current Durable Memory Types
 
@@ -510,7 +573,7 @@ Durable recall is governed separately from storage:
 - stale references are penalized more aggressively than stable or workspace-sensitive memories
 - recalled durable memory is injected as context, not merged into the base system prompt
 
-Recall selection is manifest-based at query time. The runtime scans durable markdown memory files, reads frontmatter and compact summaries, and builds a bounded manifest. A model selector can choose a small relevant subset from that manifest; if model selection is unavailable, the runtime falls back to deterministic keyword-and-metadata ranking. Recalled entries include a compact selection trace and optional excerpt snippets for debugging and operator visibility. Retrieval stays separate from storage so alternate indexes can be added later without changing canonical markdown memory files.
+Recall selection is staged and model-driven at query time. The runtime reads the durable-memory indexes, selects candidate leaf memories, reads only those leaf files, and then finalizes a small recalled subset for prompt injection. Recalled entries include a compact selection trace and optional excerpt snippets for debugging and operator visibility. Retrieval stays separate from storage so alternate indexes can be added later without changing canonical markdown memory files.
 
 #### What Lives Where
 
@@ -666,6 +729,8 @@ Holaboss already provides model configuration in the desktop app.
 - Open `Settings` -> `Model Providers`.
 - Connect a provider such as OpenAI, Anthropic, OpenRouter, Gemini, or Ollama.
 - Enter your API key and use the built-in provider defaults or edit the model list for that provider.
+- Use the dedicated `Background tasks` panel to choose one connected provider and model for memory recall and post-run tasks.
+- When the first provider is connected, the desktop app automatically seeds background tasks to that provider and its built-in default background model. For `ollama_direct`, the provider can be selected but you must choose a model explicitly before background LLM tasks are enabled.
 - Changes autosave to `runtime-config.json`, and the chat model picker will use the configured provider models.
 
 ### Customization Mode
@@ -713,6 +778,10 @@ You can override that path with:
   - direct provider endpoint, for example `https://api.openai.com/v1`
 - `providers.<id>.api_key`
   - direct provider credential for that configured provider
+- `runtime.background_tasks.provider`
+  - configured provider for durable memory recall and post-run tasks; for example `openai_direct` or `anthropic_direct`
+- `runtime.background_tasks.model`
+  - model id used for that background provider, for example `gpt-5.4-mini` or `claude-sonnet-4-6`
 - `sandbox_id`
   - sandbox identifier propagated into runtime execution context and proxy headers
 - `runtime.default_provider`
@@ -721,6 +790,18 @@ You can override that path with:
   - default model selection, for example `openai/gpt-5.4`
 - `HOLABOSS_DEFAULT_MODEL`
   - environment override for the default model
+
+### Background Task Provider Defaults
+
+When you choose a provider in the desktop `Background tasks` panel, the app seeds the model field with these defaults:
+
+- `holaboss_model_proxy`: `gpt-5.4-mini`
+- `openai_direct`: `gpt-5.4-mini`
+- `anthropic_direct`: `claude-sonnet-4-6`
+- `openrouter_direct`: `openai/gpt-5.4-mini`
+- `gemini_direct`: `gemini-2.5-flash`
+- `minimax_direct`: `MiniMax-M2.7`
+- `ollama_direct`: no default; choose a model explicitly
 
 ### Model String Format
 
@@ -741,12 +822,16 @@ If a model id is unprefixed and does not start with `claude`, the runtime first 
 ```json
 {
   "runtime": {
-    "default_provider": "holaboss",
+    "default_provider": "holaboss_model_proxy",
     "default_model": "holaboss/gpt-5.2",
-    "sandbox_id": "local-sandbox"
+    "sandbox_id": "local-sandbox",
+    "background_tasks": {
+      "provider": "openai_direct",
+      "model": "gpt-5.4-mini"
+    }
   },
   "providers": {
-    "holaboss": {
+    "holaboss_model_proxy": {
       "kind": "holaboss_proxy",
       "base_url": "https://your-proxy.example/api/v1/model-proxy",
       "api_key": "your-holaboss-proxy-token"
@@ -775,12 +860,17 @@ If a model id is unprefixed and does not start with `claude`, the runtime first 
       "kind": "openai_compatible",
       "base_url": "http://localhost:11434/v1",
       "api_key": "ollama"
+    },
+    "minimax_direct": {
+      "kind": "openai_compatible",
+      "base_url": "https://api.minimax.io/v1",
+      "api_key": "sk-your-minimax-api-key"
     }
   },
   "models": {
-    "holaboss/gpt-5.2": { "provider": "holaboss", "model": "gpt-5.2" },
-    "holaboss/gpt-5-mini": { "provider": "holaboss", "model": "gpt-5-mini" },
-    "holaboss/gpt-4.1-mini": { "provider": "holaboss", "model": "gpt-4.1-mini" },
+    "holaboss_model_proxy/gpt-5.2": { "provider": "holaboss_model_proxy", "model": "gpt-5.2" },
+    "holaboss_model_proxy/gpt-5-mini": { "provider": "holaboss_model_proxy", "model": "gpt-5-mini" },
+    "holaboss_model_proxy/gpt-4.1-mini": { "provider": "holaboss_model_proxy", "model": "gpt-4.1-mini" },
     "openai_direct/gpt-5.2": { "provider": "openai_direct", "model": "gpt-5.2" },
     "openai_direct/gpt-5-mini": { "provider": "openai_direct", "model": "gpt-5-mini" },
     "openai_direct/gpt-5-nano": { "provider": "openai_direct", "model": "gpt-5-nano" },
@@ -792,17 +882,17 @@ If a model id is unprefixed and does not start with `claude`, the runtime first 
     "gemini_direct/gemini-2.5-pro": { "provider": "gemini_direct", "model": "gemini-2.5-pro" },
     "gemini_direct/gemini-2.5-flash": { "provider": "gemini_direct", "model": "gemini-2.5-flash" },
     "gemini_direct/gemini-2.5-flash-lite": { "provider": "gemini_direct", "model": "gemini-2.5-flash-lite" },
-    "openrouter_direct/deepseek/deepseek-chat-v3-0324": {
+    "openrouter_direct/openai/gpt-5.4": {
       "provider": "openrouter_direct",
-      "model": "deepseek/deepseek-chat-v3-0324"
+      "model": "openai/gpt-5.4"
     },
-    "openrouter_direct/openai/gpt-5.2": {
+    "openrouter_direct/openai/gpt-5.4-mini": {
       "provider": "openrouter_direct",
-      "model": "openai/gpt-5.2"
+      "model": "openai/gpt-5.4-mini"
     },
-    "openrouter_direct/anthropic/claude-sonnet-4-5": {
+    "openrouter_direct/anthropic/claude-sonnet-4-6": {
       "provider": "openrouter_direct",
-      "model": "anthropic/claude-sonnet-4-5"
+      "model": "anthropic/claude-sonnet-4-6"
     },
     "ollama_direct/qwen2.5:0.5b": {
       "provider": "ollama_direct",

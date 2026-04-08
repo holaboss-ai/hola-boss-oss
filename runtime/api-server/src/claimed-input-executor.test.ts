@@ -14,7 +14,8 @@ const ORIGINAL_ENV = {
   SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE: process.env.SANDBOX_AGENT_RUNNER_COMMAND_TEMPLATE,
   SANDBOX_AGENT_RUN_TIMEOUT_S: process.env.SANDBOX_AGENT_RUN_TIMEOUT_S,
   SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S: process.env.SANDBOX_AGENT_RUN_IDLE_TIMEOUT_S,
-  HB_SANDBOX_ROOT: process.env.HB_SANDBOX_ROOT
+  HB_SANDBOX_ROOT: process.env.HB_SANDBOX_ROOT,
+  HOLABOSS_RUNTIME_CONFIG_PATH: process.env.HOLABOSS_RUNTIME_CONFIG_PATH,
 };
 
 afterEach(() => {
@@ -40,6 +41,11 @@ afterEach(() => {
     delete process.env.HB_SANDBOX_ROOT;
   } else {
     process.env.HB_SANDBOX_ROOT = ORIGINAL_ENV.HB_SANDBOX_ROOT;
+  }
+  if (ORIGINAL_ENV.HOLABOSS_RUNTIME_CONFIG_PATH === undefined) {
+    delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+  } else {
+    process.env.HOLABOSS_RUNTIME_CONFIG_PATH = ORIGINAL_ENV.HOLABOSS_RUNTIME_CONFIG_PATH;
   }
 });
 
@@ -176,7 +182,7 @@ test("claimed input persists runner events, assistant text, and idle state on su
     record: claimed[0],
     claimedBy: "sandbox-agent-ts-worker",
     memoryService,
-    schedulePostRunTasksFn: (options) => {
+    runPostRunTasksFn: async (options) => {
       scheduledPostRunTasks += 1;
       eventTypesAtSchedule = store
         .listOutputEvents({
@@ -739,6 +745,112 @@ test("claimed input hydrates runtime exec context from runtime config", async ()
   assert.equal(runtimeExecContext.sandbox_id, "sandbox-1");
   assert.equal(runtimeExecContext.harness, "pi");
   assert.equal(runtimeExecContext.harness_session_id, "session-main");
+
+  store.close();
+});
+
+test("claimed input resolves post-run model context from the provider background tasks model", async () => {
+  const store = makeStore("hb-claimed-input-background-model-");
+  const sandboxRoot = makeTempDir("hb-claimed-input-background-root-");
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = path.join(sandboxRoot, "state", "runtime-config.json");
+  fs.mkdirSync(path.join(sandboxRoot, "state"), { recursive: true });
+  fs.writeFileSync(
+    process.env.HOLABOSS_RUNTIME_CONFIG_PATH,
+    `${JSON.stringify(
+      {
+        runtime: {
+          background_tasks: {
+            provider: "anthropic_direct",
+            model: "claude-sonnet-4-6",
+          },
+        },
+        providers: {
+          anthropic_direct: {
+            kind: "anthropic_native",
+            base_url: "https://api.anthropic.com",
+            api_key: "sk-ant-test",
+          },
+        },
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+
+  const memoryService: MemoryServiceLike = {
+    async search() { return { results: [] }; },
+    async get() { return { path: "", text: "" }; },
+    async upsert(payload: Record<string, unknown>) {
+      return { path: payload.path, text: payload.content };
+    },
+    async status() { return {}; },
+    async sync() { return {}; },
+    async capture() { return { files: {} }; },
+  };
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello", model: "anthropic_direct/claude-opus-4-6" }
+  });
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300
+  });
+
+  let capturedModelContext: Record<string, unknown> | null = null;
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+    memoryService,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {}
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "run_completed",
+        payload: { status: "ok" }
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true
+      };
+    },
+    runPostRunTasksFn: async (options) => {
+      capturedModelContext = options.modelContext as unknown as Record<string, unknown>;
+    },
+  });
+
+  assert.ok(capturedModelContext);
+  const modelContext = capturedModelContext as { modelClient: unknown };
+  assert.deepEqual(modelContext.modelClient, {
+    baseUrl: "https://api.anthropic.com",
+    apiKey: "sk-ant-test",
+    defaultHeaders: null,
+    modelId: "claude-sonnet-4-6",
+    apiStyle: "anthropic_native",
+  });
 
   store.close();
 });

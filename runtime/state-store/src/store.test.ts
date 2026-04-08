@@ -678,6 +678,105 @@ test("claimInputs can select at most one queued input per session", () => {
   store.close();
 });
 
+test("post-run job queue supports idempotent enqueue, update, and claiming by priority", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const first = store.enqueuePostRunJob({
+    jobType: "durable_memory_writeback",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    payload: { instruction: "hello" },
+    priority: 1,
+    idempotencyKey: "post-run-idem-1"
+  });
+  const deduped = store.enqueuePostRunJob({
+    jobType: "durable_memory_writeback",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    payload: { instruction: "ignored" },
+    priority: 99,
+    idempotencyKey: "post-run-idem-1"
+  });
+  const second = store.enqueuePostRunJob({
+    jobType: "durable_memory_writeback",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-2",
+    payload: { instruction: "urgent" },
+    priority: 5
+  });
+
+  assert.equal(deduped.jobId, first.jobId);
+
+  const updated = store.updatePostRunJob(first.jobId, {
+    status: "QUEUED",
+    claimedBy: "worker-old",
+    payload: { instruction: "hello-updated" }
+  });
+  assert.ok(updated);
+  assert.deepEqual(updated.payload, { instruction: "hello-updated" });
+
+  const claimed = store.claimPostRunJobs({ limit: 2, claimedBy: "worker-1", leaseSeconds: 60 });
+  assert.equal(claimed.length, 2);
+  assert.equal(claimed[0].jobId, second.jobId);
+  assert.equal(claimed[0].status, "CLAIMED");
+  assert.equal(claimed[0].claimedBy, "worker-1");
+  assert.equal(claimed[1].jobId, first.jobId);
+  store.close();
+});
+
+test("state store lists expired claimed post-run jobs", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  store.enqueuePostRunJob({
+    jobType: "durable_memory_writeback",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-queued",
+    payload: {}
+  });
+  const stale = store.enqueuePostRunJob({
+    jobType: "durable_memory_writeback",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-stale",
+    payload: {}
+  });
+  const active = store.enqueuePostRunJob({
+    jobType: "durable_memory_writeback",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-active",
+    payload: {}
+  });
+
+  store.updatePostRunJob(stale.jobId, {
+    status: "CLAIMED",
+    claimedBy: "worker-old",
+    claimedUntil: "2000-01-01T00:00:00.000Z"
+  });
+  store.updatePostRunJob(active.jobId, {
+    status: "CLAIMED",
+    claimedBy: "worker-new",
+    claimedUntil: "2999-01-01T00:00:00.000Z"
+  });
+
+  const expired = store.listExpiredClaimedPostRunJobs("2026-01-01T00:00:00.000Z");
+
+  assert.deepEqual(expired.map((record) => record.jobId), [stale.jobId]);
+  store.close();
+});
+
 test("runtime state round trip supports ensure, update, list, and lookup", () => {
   const root = makeTempDir("hb-state-store-");
   const store = new RuntimeStateStore({

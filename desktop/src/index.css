@@ -273,6 +273,13 @@ body {
   box-shadow: none;
 }
 
+.auth-settings-control:focus,
+.auth-settings-control:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border-color: color-mix(in oklch, var(--border) 78%, var(--ring) 22%);
+}
+
 /* ---- Decorative elements ---- */
 
 .theme-grid {

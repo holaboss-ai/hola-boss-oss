@@ -13,6 +13,13 @@ import openaiLogoMarkup from "@/assets/providers/openai.svg?raw";
 import openrouterLogoMarkup from "@/assets/providers/openrouter.svg?raw";
 import { BillingSummaryCard } from "@/components/billing/BillingSummaryCard";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   useDesktopAuthSession,
   type AuthSession
 } from "@/lib/auth/authClient";
@@ -46,6 +53,7 @@ interface KnownProviderTemplate {
   kind: string;
   defaultBaseUrl: string;
   defaultModels: string[];
+  defaultBackgroundModel: string | null;
   apiKeyPlaceholder: string;
 }
 
@@ -58,6 +66,13 @@ interface ProviderDraft {
 
 type ProviderDraftMap = Record<KnownProviderId, ProviderDraft>;
 
+type BackgroundTasksDraftProviderId = KnownProviderId | "";
+
+interface BackgroundTasksDraft {
+  providerId: BackgroundTasksDraftProviderId;
+  model: string;
+}
+
 const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> = {
   holaboss: {
     id: "holaboss",
@@ -66,6 +81,7 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     kind: "holaboss_proxy",
     defaultBaseUrl: "",
     defaultModels: [],
+    defaultBackgroundModel: "gpt-5.4-mini",
     apiKeyPlaceholder: "hbrt.v1.your-proxy-token"
   },
   openai_direct: {
@@ -75,6 +91,7 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     kind: "openai_compatible",
     defaultBaseUrl: "https://api.openai.com/v1",
     defaultModels: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"],
+    defaultBackgroundModel: "gpt-5.4-mini",
     apiKeyPlaceholder: "sk-your-openai-key"
   },
   anthropic_direct: {
@@ -84,6 +101,7 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     kind: "anthropic_native",
     defaultBaseUrl: "https://api.anthropic.com",
     defaultModels: ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
+    defaultBackgroundModel: "claude-sonnet-4-6",
     apiKeyPlaceholder: "sk-ant-your-anthropic-key"
   },
   openrouter_direct: {
@@ -92,7 +110,8 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     description: "OpenRouter endpoint for provider-aggregated model access.",
     kind: "openrouter",
     defaultBaseUrl: "https://openrouter.ai/api/v1",
-    defaultModels: ["openai/gpt-5.4", "anthropic/claude-sonnet-4-5", "deepseek/deepseek-chat-v3-0324"],
+    defaultModels: ["openai/gpt-5.4", "openai/gpt-5.4-mini", "anthropic/claude-sonnet-4-6"],
+    defaultBackgroundModel: "openai/gpt-5.4-mini",
     apiKeyPlaceholder: "sk-or-your-openrouter-key"
   },
   gemini_direct: {
@@ -102,6 +121,7 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     kind: "openai_compatible",
     defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
     defaultModels: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
+    defaultBackgroundModel: "gemini-2.5-flash",
     apiKeyPlaceholder: "AIza...your-gemini-api-key"
   },
   ollama_direct: {
@@ -111,6 +131,7 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     kind: "openai_compatible",
     defaultBaseUrl: "http://localhost:11434/v1",
     defaultModels: ["llama3.1:8b", "qwen3:8b", "gpt-oss:20b"],
+    defaultBackgroundModel: null,
     apiKeyPlaceholder: "Optional. Use 'ollama' for strict OpenAI SDK compatibility."
   },
   minimax_direct: {
@@ -120,6 +141,7 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     kind: "openai_compatible",
     defaultBaseUrl: "https://api.minimax.io/v1",
     defaultModels: ["MiniMax-M2.7", "MiniMax-M2.7-highspeed"],
+    defaultBackgroundModel: "MiniMax-M2.7",
     apiKeyPlaceholder: "sk-your-minimax-api-key"
   }
 };
@@ -134,44 +156,51 @@ function createDefaultProviderDrafts(): ProviderDraftMap {
       enabled: false,
       baseUrl: "",
       apiKey: "",
-      modelsText: KNOWN_PROVIDER_TEMPLATES.holaboss.defaultModels.join(", ")
+      modelsText: KNOWN_PROVIDER_TEMPLATES.holaboss.defaultModels.join(", "),
     },
     openai_direct: {
       enabled: false,
       baseUrl: KNOWN_PROVIDER_TEMPLATES.openai_direct.defaultBaseUrl,
       apiKey: "",
-      modelsText: KNOWN_PROVIDER_TEMPLATES.openai_direct.defaultModels.join(", ")
+      modelsText: KNOWN_PROVIDER_TEMPLATES.openai_direct.defaultModels.join(", "),
     },
     anthropic_direct: {
       enabled: false,
       baseUrl: KNOWN_PROVIDER_TEMPLATES.anthropic_direct.defaultBaseUrl,
       apiKey: "",
-      modelsText: KNOWN_PROVIDER_TEMPLATES.anthropic_direct.defaultModels.join(", ")
+      modelsText: KNOWN_PROVIDER_TEMPLATES.anthropic_direct.defaultModels.join(", "),
     },
     openrouter_direct: {
       enabled: false,
       baseUrl: KNOWN_PROVIDER_TEMPLATES.openrouter_direct.defaultBaseUrl,
       apiKey: "",
-      modelsText: KNOWN_PROVIDER_TEMPLATES.openrouter_direct.defaultModels.join(", ")
+      modelsText: KNOWN_PROVIDER_TEMPLATES.openrouter_direct.defaultModels.join(", "),
     },
     gemini_direct: {
       enabled: false,
       baseUrl: KNOWN_PROVIDER_TEMPLATES.gemini_direct.defaultBaseUrl,
       apiKey: "",
-      modelsText: KNOWN_PROVIDER_TEMPLATES.gemini_direct.defaultModels.join(", ")
+      modelsText: KNOWN_PROVIDER_TEMPLATES.gemini_direct.defaultModels.join(", "),
     },
     ollama_direct: {
       enabled: false,
       baseUrl: KNOWN_PROVIDER_TEMPLATES.ollama_direct.defaultBaseUrl,
       apiKey: "",
-      modelsText: KNOWN_PROVIDER_TEMPLATES.ollama_direct.defaultModels.join(", ")
+      modelsText: KNOWN_PROVIDER_TEMPLATES.ollama_direct.defaultModels.join(", "),
     },
     minimax_direct: {
       enabled: false,
       baseUrl: KNOWN_PROVIDER_TEMPLATES.minimax_direct.defaultBaseUrl,
       apiKey: "",
-      modelsText: KNOWN_PROVIDER_TEMPLATES.minimax_direct.defaultModels.join(", ")
+      modelsText: KNOWN_PROVIDER_TEMPLATES.minimax_direct.defaultModels.join(", "),
     }
+  };
+}
+
+function createDefaultBackgroundTasksDraft(): BackgroundTasksDraft {
+  return {
+    providerId: "",
+    model: "",
   };
 }
 
@@ -287,6 +316,127 @@ function configuredRuntimeProviderPrefixes(providerId: KnownProviderId): string[
   return [`${providerId}/`];
 }
 
+function runtimeProviderStorageId(providerId: KnownProviderId): string {
+  return providerId === "holaboss" ? "holaboss_model_proxy" : providerId;
+}
+
+function configuredBackgroundModelId(providerId: KnownProviderId, value: string): string {
+  return normalizeConfiguredProviderModelId(providerId, value.trim());
+}
+
+function backgroundTaskProviderDraftId(value: string): BackgroundTasksDraftProviderId {
+  const normalized = value.trim();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized === "holaboss_model_proxy" || normalized === "holaboss") {
+    return "holaboss";
+  }
+  return isKnownProviderId(normalized) ? normalized : "";
+}
+
+function backgroundTaskProviderStorageId(providerId: BackgroundTasksDraftProviderId): string {
+  if (!providerId) {
+    return "";
+  }
+  return runtimeProviderStorageId(providerId);
+}
+
+function backgroundTaskDefaultModel(providerId: BackgroundTasksDraftProviderId): string {
+  if (!providerId) {
+    return "";
+  }
+  return KNOWN_PROVIDER_TEMPLATES[providerId].defaultBackgroundModel ?? "";
+}
+
+function backgroundTaskModelPlaceholder(providerId: BackgroundTasksDraftProviderId): string {
+  const fallbackModel = backgroundTaskDefaultModel(providerId);
+  return fallbackModel ? `Default: ${fallbackModel}` : "Select a model";
+}
+
+function backgroundTaskProviderLabel(providerId: BackgroundTasksDraftProviderId): string {
+  if (!providerId) {
+    return "";
+  }
+  return KNOWN_PROVIDER_TEMPLATES[providerId].label;
+}
+
+function backgroundTaskModelSuggestions(
+  providerId: BackgroundTasksDraftProviderId,
+  providerDrafts: ProviderDraftMap,
+): string[] {
+  if (!providerId) {
+    return [];
+  }
+  const template = KNOWN_PROVIDER_TEMPLATES[providerId];
+  return uniqueValues([
+    ...parseModelsText(providerDrafts[providerId].modelsText),
+    ...template.defaultModels,
+    ...(template.defaultBackgroundModel ? [template.defaultBackgroundModel] : []),
+  ]);
+}
+
+function deriveConfiguredBackgroundTasksDraft(document: Record<string, unknown>): BackgroundTasksDraft {
+  const runtimePayload = asRecord(document.runtime);
+  const backgroundTasksPayload = asRecord(
+    runtimePayload.background_tasks ?? runtimePayload.backgroundTasks,
+  );
+  const providerId = backgroundTaskProviderDraftId(
+    firstNonEmptyString(
+      backgroundTasksPayload.provider as string | undefined,
+      backgroundTasksPayload.provider_id as string | undefined,
+      backgroundTasksPayload.providerId as string | undefined,
+    ),
+  );
+  return {
+    providerId,
+    model: providerId
+      ? configuredBackgroundModelId(
+          providerId,
+          firstNonEmptyString(
+            backgroundTasksPayload.model as string | undefined,
+            backgroundTasksPayload.model_id as string | undefined,
+            backgroundTasksPayload.modelId as string | undefined,
+          ),
+        )
+      : "",
+  };
+}
+
+function deriveLegacyBackgroundTasksDraft(document: Record<string, unknown>): BackgroundTasksDraft {
+  const providersPayload = asRecord(document.providers);
+  const matches: BackgroundTasksDraft[] = [];
+  for (const providerId of KNOWN_PROVIDER_ORDER) {
+    const runtimeProviderId = runtimeProviderStorageId(providerId);
+    const providerPayload = asRecord(
+      providerId === "holaboss"
+        ? providersPayload.holaboss_model_proxy ?? providersPayload.holaboss
+        : providersPayload[runtimeProviderId]
+    );
+    const optionsPayload = asRecord(providerPayload.options);
+    const model = configuredBackgroundModelId(
+      providerId,
+      firstNonEmptyString(
+        providerPayload.background_model as string | undefined,
+        providerPayload.backgroundModel as string | undefined,
+        optionsPayload.background_model as string | undefined,
+        optionsPayload.backgroundModel as string | undefined,
+      ),
+    );
+    if (!model) {
+      continue;
+    }
+    matches.push({
+      providerId,
+      model,
+    });
+  }
+  if (matches.length === 1) {
+    return matches[0];
+  }
+  return createDefaultBackgroundTasksDraft();
+}
+
 function ProviderBrandIcon({ providerId }: { providerId: KnownProviderId }) {
   if (providerId === "holaboss") {
     return <img src={holabossLogoUrl} alt="" className="h-4 w-4 object-contain" aria-hidden="true" />;
@@ -310,6 +460,7 @@ function deriveProviderDraftsFromDocument(
 ): {
   drafts: ProviderDraftMap;
   sandboxId: string;
+  backgroundTasks: BackgroundTasksDraft;
 } {
   const runtimePayload = asRecord(document.runtime);
   const providersPayload = asRecord(document.providers);
@@ -320,10 +471,11 @@ function deriveProviderDraftsFromDocument(
 
   for (const providerId of KNOWN_PROVIDER_ORDER) {
     const template = KNOWN_PROVIDER_TEMPLATES[providerId];
+    const runtimeProviderId = runtimeProviderStorageId(providerId);
     const providerPayload = asRecord(
       providerId === "holaboss"
         ? providersPayload.holaboss_model_proxy ?? providersPayload.holaboss
-        : providersPayload[providerId]
+        : providersPayload[runtimeProviderId]
     );
     const optionsPayload = asRecord(providerPayload.options);
 
@@ -387,13 +539,19 @@ function deriveProviderDraftsFromDocument(
         (providerId === "holaboss" && Boolean((runtimeConfig?.modelProxyBaseUrl || "").trim())),
       baseUrl,
       apiKey,
-      modelsText: (normalizedModelIds.length > 0 ? normalizedModelIds : template.defaultModels).join(", ")
+      modelsText: (normalizedModelIds.length > 0 ? normalizedModelIds : template.defaultModels).join(", "),
     };
   }
 
+  const configuredBackgroundTasks = deriveConfiguredBackgroundTasksDraft(document);
+  const backgroundTasks = configuredBackgroundTasks.providerId
+    ? configuredBackgroundTasks
+    : deriveLegacyBackgroundTasksDraft(document);
+
   return {
     drafts,
-    sandboxId: firstNonEmptyString(runtimePayload.sandbox_id as string | undefined, runtimeConfig?.sandboxId ?? "")
+    sandboxId: firstNonEmptyString(runtimePayload.sandbox_id as string | undefined, runtimeConfig?.sandboxId ?? ""),
+    backgroundTasks,
   };
 }
 
@@ -462,6 +620,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigPayload | null>(null);
   const [runtimeConfigDocument, setRuntimeConfigDocument] = useState("");
   const [providerDrafts, setProviderDrafts] = useState<ProviderDraftMap>(() => createDefaultProviderDrafts());
+  const [backgroundTasksDraft, setBackgroundTasksDraft] = useState<BackgroundTasksDraft>(() =>
+    createDefaultBackgroundTasksDraft(),
+  );
   const [expandedProviderId, setExpandedProviderId] = useState<KnownProviderId | null>(null);
   const [sandboxId, setSandboxId] = useState("");
   const [authError, setAuthError] = useState("");
@@ -565,6 +726,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       return;
     }
     setProviderDrafts(derived.drafts);
+    setBackgroundTasksDraft(derived.backgroundTasks);
     setFailedAutosaveRevision(null);
   }, [effectiveRuntimeConfig, isProviderDraftDirty, runtimeConfigDocument]);
 
@@ -573,6 +735,17 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     providerId === "holaboss" ? isSignedIn : providerDrafts[providerId].enabled;
   const connectedProviderIds = KNOWN_PROVIDER_ORDER.filter((providerId) => providerEnabled(providerId));
   const availableProviderIds = KNOWN_PROVIDER_ORDER.filter((providerId) => !providerEnabled(providerId));
+  const backgroundProviderConnected =
+    backgroundTasksDraft.providerId !== "" &&
+    connectedProviderIds.includes(backgroundTasksDraft.providerId);
+  const backgroundProviderSuggestions = backgroundTaskModelSuggestions(
+    backgroundTasksDraft.providerId,
+    providerDrafts,
+  );
+  const backgroundProviderOptions = backgroundTasksDraft.providerId
+    && !connectedProviderIds.includes(backgroundTasksDraft.providerId)
+      ? [backgroundTasksDraft.providerId, ...connectedProviderIds]
+      : connectedProviderIds;
 
   const showAccountSection = view !== "runtime";
   const showRuntimeSection = view !== "account";
@@ -623,6 +796,13 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     }
   ];
 
+  useEffect(() => {
+    if (isProviderDraftDirty || backgroundTasksDraft.providerId || connectedProviderIds.length === 0) {
+      return;
+    }
+    applyBackgroundTaskProviderSelection(connectedProviderIds[0] ?? "");
+  }, [backgroundTasksDraft.providerId, connectedProviderIds, isProviderDraftDirty]);
+
   async function handleStartSignIn() {
     setIsStartingSignIn(true);
     setAuthError("");
@@ -652,14 +832,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     }
   }
 
-  function updateProviderDraft(providerId: KnownProviderId, update: Partial<ProviderDraft>) {
-    setProviderDrafts((current) => ({
-      ...current,
-      [providerId]: {
-        ...current[providerId],
-        ...update
-      }
-    }));
+  function markProviderSettingsDirty() {
     setIsProviderDraftDirty(true);
     setFailedAutosaveRevision(null);
     setProviderSaveStatus("idle");
@@ -672,7 +845,38 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     });
   }
 
-  async function persistRuntimeProviderSettings(draftsSnapshot: ProviderDraftMap, draftRevision: number, source: "autosave" | "manual") {
+  function updateProviderDraft(providerId: KnownProviderId, update: Partial<ProviderDraft>) {
+    setProviderDrafts((current) => ({
+      ...current,
+      [providerId]: {
+        ...current[providerId],
+        ...update
+      }
+    }));
+    markProviderSettingsDirty();
+  }
+
+  function updateBackgroundTasksDraft(update: Partial<BackgroundTasksDraft>) {
+    setBackgroundTasksDraft((current) => ({
+      ...current,
+      ...update,
+    }));
+    markProviderSettingsDirty();
+  }
+
+  function applyBackgroundTaskProviderSelection(providerId: BackgroundTasksDraftProviderId) {
+    updateBackgroundTasksDraft({
+      providerId,
+      model: backgroundTaskDefaultModel(providerId),
+    });
+  }
+
+  async function persistRuntimeProviderSettings(
+    draftsSnapshot: ProviderDraftMap,
+    backgroundTasksSnapshot: BackgroundTasksDraft,
+    draftRevision: number,
+    source: "autosave" | "manual",
+  ) {
     if (!window.electronAPI) {
       return;
     }
@@ -688,7 +892,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
       const nextProviders: Record<string, unknown> = {};
       for (const [providerId, providerPayload] of Object.entries(currentProviders)) {
-        if (!isKnownProviderId(providerId.trim())) {
+        const normalizedProviderId = providerId.trim();
+        if (!isKnownProviderId(normalizedProviderId) && normalizedProviderId !== "holaboss_model_proxy") {
           nextProviders[providerId] = providerPayload;
         }
       }
@@ -709,51 +914,82 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       const enabledProviders = enabledProviderIdsForDrafts(draftsSnapshot, isSignedIn);
 
       for (const providerId of enabledProviders) {
-        if (providerId === "holaboss") {
-          continue;
-        }
         const providerTemplate = KNOWN_PROVIDER_TEMPLATES[providerId];
         const providerDraft = draftsSnapshot[providerId];
-        const existingProviderPayload = asRecord(currentProviders[providerId]);
+        const runtimeProviderId = runtimeProviderStorageId(providerId);
+        const existingProviderPayload = asRecord(
+          currentProviders[runtimeProviderId] ?? (providerId === "holaboss" ? currentProviders.holaboss : undefined)
+        );
         const existingProviderOptions = asRecord(existingProviderPayload.options);
-        const providerPayload: Record<string, unknown> = {
-          kind: providerTemplate.kind
-        };
-        const normalizedBaseUrl = firstNonEmptyString(
-          existingProviderPayload.base_url as string | undefined,
-          existingProviderPayload.baseURL as string | undefined,
-          existingProviderOptions.base_url as string | undefined,
-          existingProviderOptions.baseURL as string | undefined,
-          providerDraft.baseUrl
-        );
-        const normalizedApiKey = firstNonEmptyString(
-          existingProviderPayload.api_key as string | undefined,
-          existingProviderPayload.auth_token as string | undefined,
-          existingProviderOptions.api_key as string | undefined,
-          existingProviderOptions.apiKey as string | undefined,
-          providerDraft.apiKey
-        );
-        if (normalizedBaseUrl) {
-          providerPayload.base_url = normalizedBaseUrl;
+        const providerOptions =
+          Object.keys(existingProviderOptions).length > 0
+            ? { ...existingProviderOptions }
+            : null;
+        const providerPayload: Record<string, unknown> =
+          providerId === "holaboss"
+            ? { ...existingProviderPayload }
+            : { kind: providerTemplate.kind };
+        if (!firstNonEmptyString(providerPayload.kind as string | undefined)) {
+          providerPayload.kind = providerTemplate.kind;
         }
-        if (normalizedApiKey) {
-          providerPayload.api_key = normalizedApiKey;
+        if (providerId !== "holaboss") {
+          const normalizedBaseUrl = firstNonEmptyString(
+            existingProviderPayload.base_url as string | undefined,
+            existingProviderPayload.baseURL as string | undefined,
+            existingProviderOptions.base_url as string | undefined,
+            existingProviderOptions.baseURL as string | undefined,
+            providerDraft.baseUrl
+          );
+          const normalizedApiKey = firstNonEmptyString(
+            existingProviderPayload.api_key as string | undefined,
+            existingProviderPayload.auth_token as string | undefined,
+            existingProviderOptions.api_key as string | undefined,
+            existingProviderOptions.apiKey as string | undefined,
+            providerDraft.apiKey
+          );
+          if (normalizedBaseUrl) {
+            providerPayload.base_url = normalizedBaseUrl;
+          }
+          if (normalizedApiKey) {
+            providerPayload.api_key = normalizedApiKey;
+          }
         }
-        nextProviders[providerId] = providerPayload;
+        delete providerPayload.background_model;
+        delete providerPayload.backgroundModel;
+        if (providerOptions) {
+          delete providerOptions.background_model;
+          delete providerOptions.backgroundModel;
+          if (Object.keys(providerOptions).length > 0) {
+            providerPayload.options = providerOptions;
+          } else {
+            delete providerPayload.options;
+          }
+        }
+        if (
+          providerId === "holaboss" &&
+          Object.keys(existingProviderPayload).length === 0 &&
+          Object.keys(providerPayload).length === 1 &&
+          providerPayload.kind === providerTemplate.kind
+        ) {
+          continue;
+        }
+        nextProviders[runtimeProviderId] = providerPayload;
 
-        const configuredModels = parseModelsText(providerDraft.modelsText);
-        const modelIds =
-          configuredModels.length > 0
-            ? configuredModels
-            : providerTemplate.defaultModels.length > 0
-              ? [providerTemplate.defaultModels[0]]
-              : [];
-        for (const modelId of modelIds) {
-          const token = `${providerId}/${modelId}`;
-          nextModels[token] = {
-            provider: providerId,
-            model: modelId
-          };
+        if (providerId !== "holaboss") {
+          const configuredModels = parseModelsText(providerDraft.modelsText);
+          const modelIds =
+            configuredModels.length > 0
+              ? configuredModels
+              : providerTemplate.defaultModels.length > 0
+                ? [providerTemplate.defaultModels[0]]
+                : [];
+          for (const modelId of modelIds) {
+            const token = `${providerId}/${modelId}`;
+            nextModels[token] = {
+              provider: providerId,
+              model: modelId
+            };
+          }
         }
       }
 
@@ -764,12 +1000,27 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           runtimeConfig?.sandboxId ?? "",
           `desktop:${crypto.randomUUID()}`
         );
+      const normalizedBackgroundProviderId = backgroundTaskProviderStorageId(backgroundTasksSnapshot.providerId);
+      const normalizedBackgroundModel = backgroundTasksSnapshot.providerId
+        ? configuredBackgroundModelId(backgroundTasksSnapshot.providerId, backgroundTasksSnapshot.model)
+        : "";
+      const nextRuntime: Record<string, unknown> = {
+        ...currentRuntime,
+        sandbox_id: resolvedSandboxId
+      };
+      delete nextRuntime.backgroundTasks;
+      if (normalizedBackgroundProviderId) {
+        nextRuntime.background_tasks = {
+          provider: normalizedBackgroundProviderId,
+          model: normalizedBackgroundModel || null,
+        };
+      } else {
+        delete nextRuntime.background_tasks;
+        delete nextRuntime.backgroundTasks;
+      }
       const nextDocument = {
         ...currentDocument,
-        runtime: {
-          ...currentRuntime,
-          sandbox_id: resolvedSandboxId
-        },
+        runtime: nextRuntime,
         providers: nextProviders,
         models: nextModels
       };
@@ -810,7 +1061,12 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
     setProviderSaveStatus("saving");
     const timeoutId = window.setTimeout(() => {
-      void persistRuntimeProviderSettings(providerDrafts, providerDraftRevision, "autosave");
+      void persistRuntimeProviderSettings(
+        providerDrafts,
+        backgroundTasksDraft,
+        providerDraftRevision,
+        "autosave",
+      );
     }, PROVIDER_AUTOSAVE_DELAY_MS);
 
     return () => {
@@ -822,6 +1078,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     isSavingRuntimeConfigDocument,
     providerDraftRevision,
     providerDrafts,
+    backgroundTasksDraft,
     runtimeConfig,
     runtimeConfigDocument,
     sandboxId,
@@ -857,10 +1114,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   }
 
   function renderProviderDrawerContent(providerId: KnownProviderId): ReactNode {
-    if (providerId === "holaboss") {
-      return null;
-    }
-
     if (!providerEnabled(providerId)) {
       return (
         <div className="rounded-[12px] border border-border/40 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
@@ -871,12 +1124,21 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
     const template = KNOWN_PROVIDER_TEMPLATES[providerId];
     const draft = providerDrafts[providerId];
+    if (providerId === "holaboss") {
+      return (
+        <div className="grid gap-2">
+          <div className="rounded-[12px] border border-border/35 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+            Catalog, base URL, and credentials come from your Holaboss runtime binding.
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="grid gap-2">
         <label className="grid gap-1">
           <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Base URL</span>
           <input
-            className="theme-control-surface h-9 rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground outline-none transition focus:border-primary/55"
+            className="auth-settings-control theme-control-surface h-9 rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground outline-none transition"
             value={draft.baseUrl}
             onChange={(event) => updateProviderDraft(providerId, { baseUrl: event.target.value })}
             placeholder={template.defaultBaseUrl}
@@ -886,7 +1148,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         <label className="grid gap-1">
           <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">API Key</span>
           <input
-            className="theme-control-surface h-9 rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground outline-none transition focus:border-primary/55"
+            className="auth-settings-control theme-control-surface h-9 rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground outline-none transition"
             type="password"
             value={draft.apiKey}
             onChange={(event) => updateProviderDraft(providerId, { apiKey: event.target.value })}
@@ -897,7 +1159,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         <label className="grid gap-1">
           <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Models</span>
           <textarea
-            className="theme-control-surface min-h-[60px] rounded-[10px] border border-border/45 px-2.5 py-2 text-sm leading-5 text-foreground outline-none transition focus:border-primary/55"
+            className="auth-settings-control theme-control-surface min-h-[60px] rounded-[10px] border border-border/45 px-2.5 py-2 text-sm leading-5 text-foreground outline-none transition"
             value={draft.modelsText}
             onChange={(event) => updateProviderDraft(providerId, { modelsText: event.target.value })}
             placeholder={template.defaultModels.join(", ")}
@@ -912,7 +1174,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     const template = KNOWN_PROVIDER_TEMPLATES[providerId];
     const isHolabossProvider = providerId === "holaboss";
     const isEnabled = providerEnabled(providerId);
-    const isExpandable = !isHolabossProvider;
+    const isExpandable = isEnabled;
     const isExpanded = isExpandable && expandedProviderId === providerId;
     const statusText = isHolabossProvider
       ? runtimeBindingReady
@@ -925,8 +1187,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         : "Not connected.";
     const actionButtonClassName =
       "inline-flex h-9 min-w-[128px] shrink-0 items-center justify-center rounded-[10px] px-3 text-sm transition disabled:cursor-not-allowed disabled:opacity-50";
-    const actionBadgeClassName =
-      "inline-flex h-9 min-w-[128px] shrink-0 items-center justify-center rounded-full border px-3 text-xs uppercase tracking-[0.14em]";
 
     return (
       <div
@@ -952,9 +1212,13 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 md:flex-col md:items-end md:justify-center">
             {isHolabossProvider ? (
               isEnabled ? (
-                <div className={`${actionBadgeClassName} border-primary/30 bg-primary/10 text-primary`}>
-                  Enabled
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
+                  className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-primary/35`}
+                >
+                  {isExpanded ? "Hide" : "Edit"}
+                </button>
               ) : (
                 <button
                   type="button"
@@ -989,7 +1253,12 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               <button
                 type="button"
                 onClick={() => {
+                  const shouldSeedBackgroundTasks =
+                    !backgroundTasksDraft.providerId && connectedProviderIds.length === 0;
                   updateProviderDraft(providerId, { enabled: true });
+                  if (shouldSeedBackgroundTasks) {
+                    applyBackgroundTaskProviderSelection(providerId);
+                  }
                   setExpandedProviderId(providerId);
                 }}
                 className={`${actionButtonClassName} border border-border/55 text-foreground hover:border-neon-green/35 hover:text-neon-green`}
@@ -1011,13 +1280,81 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
   const runtimeProviderSettings = (
     <div className="theme-subtle-surface mt-3 grid gap-4 rounded-[20px] border border-border/40 p-4">
-      <div className="rounded-[18px] border border-border/40 bg-card/80 px-4 py-3 text-sm text-muted-foreground">
-        Manage which providers this desktop runtime can use.
-      </div>
-
       <div className="rounded-[18px] border border-border/40 bg-card/80 p-4">
         <div className="text-sm font-medium text-foreground">Connected providers</div>
-        <div className="mt-3 grid gap-2">
+        <div className="mt-3 grid gap-3">
+          <div className="rounded-[14px] border border-border/35 bg-muted/25 p-3">
+            <div className="text-sm font-medium text-foreground">Background tasks</div>
+            <div className="mt-1 text-sm text-muted-foreground">
+              Used for memory recall and post-run tasks.
+            </div>
+            <div className="mt-3 grid gap-2">
+              <label className="grid gap-1">
+                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Provider</span>
+                <Select
+                  value={backgroundTasksDraft.providerId}
+                  onValueChange={(value) =>
+                    applyBackgroundTaskProviderSelection(
+                      backgroundTaskProviderDraftId(value ?? ""),
+                    )
+                  }
+                  disabled={backgroundProviderOptions.length === 0}
+                >
+                  <SelectTrigger className="auth-settings-control theme-control-surface h-9 w-full rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground hover:border-primary/35">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {backgroundProviderOptions.map((providerId) => {
+                      const isConnected = connectedProviderIds.includes(providerId);
+                      const label = isConnected
+                        ? backgroundTaskProviderLabel(providerId)
+                        : `${backgroundTaskProviderLabel(providerId)} (not connected)`;
+                      return (
+                        <SelectItem key={providerId} value={providerId}>
+                          {label}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+              </label>
+
+              <label className="grid gap-1">
+                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Model</span>
+                <input
+                  className="auth-settings-control theme-control-surface h-9 rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground outline-none transition"
+                  value={backgroundTasksDraft.model}
+                  onChange={(event) => updateBackgroundTasksDraft({ model: event.target.value })}
+                  placeholder={backgroundTaskModelPlaceholder(backgroundTasksDraft.providerId)}
+                  spellCheck={false}
+                  list={
+                    backgroundTasksDraft.providerId
+                      ? `background-task-models-${backgroundTasksDraft.providerId}`
+                      : undefined
+                  }
+                  disabled={!backgroundTasksDraft.providerId}
+                />
+                {backgroundTasksDraft.providerId ? (
+                  <datalist id={`background-task-models-${backgroundTasksDraft.providerId}`}>
+                    {backgroundProviderSuggestions.map((modelId) => (
+                      <option key={modelId} value={modelId} />
+                    ))}
+                  </datalist>
+                ) : null}
+              </label>
+
+              {backgroundTasksDraft.providerId && !backgroundProviderConnected ? (
+                <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                  Selected provider is not connected. Background tasks stay disabled until you reconnect it or choose another provider.
+                </div>
+              ) : null}
+              {backgroundTasksDraft.providerId && !backgroundTasksDraft.model.trim() ? (
+                <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                  Select a model to enable background tasks.
+                </div>
+              ) : null}
+            </div>
+          </div>
           {connectedProviderIds.length === 0 ? (
             <div className="rounded-[12px] border border-border/35 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
               No connected providers.

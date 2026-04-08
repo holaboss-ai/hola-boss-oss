@@ -65,6 +65,14 @@ test("desktop runtime config writes Holaboss binding fields back into canonical 
   );
   assert.match(
     writeRuntimeConfigSection,
+    /const currentBackgroundTasks = runtimeConfigObject\(\s*runtimePayload\.background_tasks \?\? runtimePayload\.backgroundTasks,\s*\);/,
+  );
+  assert.match(
+    writeRuntimeConfigSection,
+    /runtimePayload\.background_tasks = \{\s*provider: RUNTIME_HOLABOSS_PROVIDER_ID,\s*model: RUNTIME_HOLABOSS_BACKGROUND_TASK_DEFAULT_MODEL,\s*\};/,
+  );
+  assert.match(
+    writeRuntimeConfigSection,
     /integrations: integrationsPayload,/,
   );
   assert.match(

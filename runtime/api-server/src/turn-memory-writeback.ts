@@ -14,7 +14,11 @@ import type {
 
 import type { MemoryServiceLike } from "./memory.js";
 import { governanceRuleForMemoryType } from "./memory-governance.js";
-import { buildCompactionBoundaryArtifacts, compactTurnSummary } from "./turn-result-summary.js";
+import {
+  buildCompactionBoundaryArtifacts,
+  compactTurnSummary,
+  compactionRestorationContextFromCompactionBoundary,
+} from "./turn-result-summary.js";
 import {
   extractDurableMemoryCandidatesFromModel,
   type DurableMemoryExtractionContext,
@@ -54,6 +58,13 @@ export interface DurableMemoryCandidate {
 interface ModelDurableCandidate {
   extractedCandidate: ExtractedDurableMemoryCandidate;
   durableCandidate: DurableMemoryCandidate;
+}
+
+interface TurnWritebackContext {
+  compactedSummary: string | null;
+  turnResult: TurnResultRecord;
+  recentTurns: TurnResultRecord[];
+  sessionMessages: SessionMessageRecord[];
 }
 
 export interface TurnMemoryWritebackModelContext {
@@ -136,6 +147,10 @@ function rootMemoryIndexPath(): string {
 
 function preferenceMemoryIndexPath(): string {
   return "preference/MEMORY.md";
+}
+
+function identityMemoryIndexPath(): string {
+  return "identity/MEMORY.md";
 }
 
 function workspaceCommandFactPath(turnResult: TurnResultRecord, purpose: WorkspaceCommandPurpose): string {
@@ -1153,7 +1168,7 @@ function renderWorkspaceMemoryIndex(params: {
   }
   for (const entry of params.entries.sort((left, right) => left.path.localeCompare(right.path))) {
     const relativeTarget = path.posix.relative(`workspace/${params.workspaceId}`, entry.path);
-    lines.push(`- [${entry.title}](${relativeTarget}) - ${entry.summary}`);
+    lines.push(renderDurableIndexLine(relativeTarget, entry));
   }
   return `${lines.join("\n").trim()}\n`;
 }
@@ -1171,7 +1186,25 @@ function renderPreferenceMemoryIndex(entries: DurableMemoryCandidate[]): string 
   }
   for (const entry of entries.sort((left, right) => left.path.localeCompare(right.path))) {
     const relativeTarget = path.posix.relative("preference", entry.path);
-    lines.push(`- [${entry.title}](${relativeTarget}) - ${entry.summary}`);
+    lines.push(renderDurableIndexLine(relativeTarget, entry));
+  }
+  return `${lines.join("\n").trim()}\n`;
+}
+
+function renderIdentityMemoryIndex(entries: DurableMemoryCandidate[]): string {
+  const lines = [
+    "# Identity Memory Index",
+    "",
+    `- Indexed memories: ${entries.length}`,
+    "",
+  ];
+  if (entries.length === 0) {
+    lines.push("No durable identity memories indexed yet.");
+    return `${lines.join("\n").trim()}\n`;
+  }
+  for (const entry of entries.sort((left, right) => left.path.localeCompare(right.path))) {
+    const relativeTarget = path.posix.relative("identity", entry.path);
+    lines.push(renderDurableIndexLine(relativeTarget, entry));
   }
   return `${lines.join("\n").trim()}\n`;
 }
@@ -1179,6 +1212,7 @@ function renderPreferenceMemoryIndex(entries: DurableMemoryCandidate[]): string 
 function renderRootMemoryIndex(params: {
   workspaceIndexCounts: Array<{ workspaceId: string; count: number }>;
   preferenceEntryCount: number;
+  identityEntryCount: number;
 }): string {
   const lines = [
     "# Memory Index",
@@ -1191,13 +1225,20 @@ function renderRootMemoryIndex(params: {
       `- [Workspace ${workspaceIndex.workspaceId}](workspace/${workspaceIndex.workspaceId}/MEMORY.md) - ${workspaceIndex.count} durable workspace memories.`
     );
   }
-  if (params.preferenceEntryCount > 0) {
-    lines.push(`- [Preferences](preference/MEMORY.md) - ${params.preferenceEntryCount} durable preference memories.`);
-  }
-  if (lines.length === 4) {
+  lines.push(`- [Preferences](preference/MEMORY.md) - ${params.preferenceEntryCount} durable preference memories.`);
+  lines.push(`- [Identity](identity/MEMORY.md) - ${params.identityEntryCount} durable identity memories.`);
+  if (params.workspaceIndexCounts.every((entry) => entry.count === 0) && params.preferenceEntryCount === 0 && params.identityEntryCount === 0) {
     lines.push("No durable memories indexed yet.");
   }
   return `${lines.join("\n").trim()}\n`;
+}
+
+function renderDurableIndexLine(relativeTarget: string, entry: DurableMemoryCandidate): string {
+  const metadata: string[] = [`[${entry.memoryType}]`, `[verify: ${entry.verificationPolicy}]`];
+  if (entry.tags.length > 0) {
+    metadata.push(`[tags: ${entry.tags.slice(0, 3).join(", ")}]`);
+  }
+  return `- [${entry.title}](${relativeTarget}) ${metadata.join(" ")} - ${entry.summary}`;
 }
 
 async function upsertMemoryIndexes(params: {
@@ -1218,7 +1259,14 @@ async function upsertMemoryIndexes(params: {
       workspaceId,
       count: entries.filter((entry) => entry.scope === "workspace" && entry.workspaceId === workspaceId).length,
     }));
-  const preferenceEntries = entries.filter((entry) => entry.scope === "user");
+  if (!workspaceIndexCounts.some((entry) => entry.workspaceId === params.workspaceId)) {
+    workspaceIndexCounts.push({
+      workspaceId: params.workspaceId,
+      count: workspaceEntries.length,
+    });
+  }
+  const preferenceEntries = entries.filter((entry) => entry.scope === "user" && entry.memoryType === "preference");
+  const identityEntries = entries.filter((entry) => entry.scope === "user" && entry.memoryType === "identity");
   const restoredPaths: string[] = [];
   const workspaceIndexContent = renderWorkspaceMemoryIndex({
     workspaceId: params.workspaceId,
@@ -1277,9 +1325,38 @@ async function upsertMemoryIndexes(params: {
   });
   restoredPaths.push(preferenceMemoryIndexPath());
 
+  const identityIndexContent = renderIdentityMemoryIndex(
+    identityEntries.map((entry) => ({
+      memoryId: entry.memoryId,
+      scope: entry.scope as "workspace" | "user",
+      memoryType: entry.memoryType as MemoryEntryType,
+      subjectKey: entry.subjectKey,
+      path: entry.path,
+      title: entry.title,
+      summary: entry.summary,
+      content: "",
+      tags: entry.tags,
+      verificationPolicy: entry.verificationPolicy as MemoryVerificationPolicy,
+      stalenessPolicy: entry.stalenessPolicy as MemoryStalenessPolicy,
+      staleAfterSeconds: entry.staleAfterSeconds,
+      sourceType: entry.sourceType ?? "manual",
+      observedAt: entry.observedAt,
+      lastVerifiedAt: entry.lastVerifiedAt,
+      confidence: entry.confidence,
+    }))
+  );
+  await params.memoryService.upsert({
+    workspace_id: params.workspaceId,
+    path: identityMemoryIndexPath(),
+    content: identityIndexContent,
+    append: false,
+  });
+  restoredPaths.push(identityMemoryIndexPath());
+
   const rootIndexContent = renderRootMemoryIndex({
     workspaceIndexCounts,
     preferenceEntryCount: preferenceEntries.length,
+    identityEntryCount: identityEntries.length,
   });
   await params.memoryService.upsert({
     workspace_id: params.workspaceId,
@@ -1435,6 +1512,82 @@ async function upsertDurableMemoryCandidate(params: {
   return params.candidate.path;
 }
 
+function loadTurnWritebackContext(store: RuntimeStateStore, turnResult: TurnResultRecord): TurnWritebackContext {
+  const compactedSummary = compactTurnSummary(turnResult);
+  const updatedTurnResult = upsertCompactedSummary(store, turnResult, compactedSummary);
+  const recentTurns = store.listTurnResults({
+    workspaceId: updatedTurnResult.workspaceId,
+    sessionId: updatedTurnResult.sessionId,
+    limit: RECENT_TURNS_LIMIT,
+    offset: 0,
+  });
+  const sessionMessages = store.listSessionMessages({
+    workspaceId: updatedTurnResult.workspaceId,
+    sessionId: updatedTurnResult.sessionId,
+  });
+  return {
+    compactedSummary,
+    turnResult: updatedTurnResult,
+    recentTurns,
+    sessionMessages,
+  };
+}
+
+function mergeUniquePaths(existing: string[], additional: string[]): string[] {
+  const merged: string[] = [];
+  const seen = new Set<string>();
+  for (const value of [...existing, ...additional]) {
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    merged.push(normalized);
+  }
+  return merged;
+}
+
+function appendRestoredMemoryPathsToCompactionBoundary(params: {
+  store: RuntimeStateStore;
+  turnResult: TurnResultRecord;
+  restoredMemoryPaths: string[];
+}): void {
+  if (params.restoredMemoryPaths.length === 0) {
+    return;
+  }
+  const boundaryId = params.turnResult.compactionBoundaryId ?? compactionBoundaryId(params.turnResult);
+  const boundary = params.store.getCompactionBoundary({ boundaryId });
+  if (!boundary) {
+    return;
+  }
+  const restorationContext = compactionRestorationContextFromCompactionBoundary(boundary);
+  const mergedPaths = mergeUniquePaths(restorationContext?.restored_memory_paths ?? [], params.restoredMemoryPaths);
+  const restorationOrder = restorationContext?.restoration_order?.filter(Boolean) ?? [];
+  if (mergedPaths.length > 0 && !restorationOrder.includes("restored_memory_paths")) {
+    restorationOrder.push("restored_memory_paths");
+  }
+  params.store.upsertCompactionBoundary({
+    boundaryId: boundary.boundaryId,
+    workspaceId: boundary.workspaceId,
+    sessionId: boundary.sessionId,
+    inputId: boundary.inputId,
+    boundaryType: boundary.boundaryType,
+    previousBoundaryId: boundary.previousBoundaryId,
+    summary: boundary.summary,
+    recentRuntimeContext: boundary.recentRuntimeContext,
+    restorationContext: {
+      compaction_source: restorationContext?.compaction_source ?? "executor_post_turn",
+      boundary_type: restorationContext?.boundary_type ?? boundary.boundaryType ?? "executor_post_turn",
+      restoration_order: restorationOrder,
+      session_resume_context: restorationContext?.session_resume_context ?? null,
+      restored_memory_paths: mergedPaths,
+    },
+    preservedTurnInputIds: boundary.preservedTurnInputIds,
+    requestSnapshotFingerprint: boundary.requestSnapshotFingerprint,
+    createdAt: boundary.createdAt,
+  });
+}
+
 export async function persistDurableMemoryCandidate(params: {
   store: RuntimeStateStore;
   memoryService: MemoryServiceLike;
@@ -1454,88 +1607,118 @@ export async function refreshMemoryIndexes(params: {
   return upsertMemoryIndexes(params);
 }
 
-export async function writeTurnMemory(params: {
+export async function writeTurnContinuity(params: {
   store: RuntimeStateStore;
   memoryService: MemoryServiceLike;
   turnResult: TurnResultRecord;
-  modelContext?: TurnMemoryWritebackModelContext | null;
 }): Promise<TurnResultRecord> {
-  const compactedSummary = compactTurnSummary(params.turnResult);
-  const updatedTurnResult = upsertCompactedSummary(params.store, params.turnResult, compactedSummary);
-  const recentTurns = params.store.listTurnResults({
-    workspaceId: updatedTurnResult.workspaceId,
-    sessionId: updatedTurnResult.sessionId,
-    limit: RECENT_TURNS_LIMIT,
-    offset: 0,
-  });
-  const sessionMessages = params.store.listSessionMessages({
-    workspaceId: updatedTurnResult.workspaceId,
-    sessionId: updatedTurnResult.sessionId,
-  });
+  const context = loadTurnWritebackContext(params.store, params.turnResult);
   const runtimeCandidates = buildRuntimeMemoryCandidates({
-    turnResult: updatedTurnResult,
-    summary: compactedSummary,
-    recentTurns,
-    sessionMessages,
+    turnResult: context.turnResult,
+    summary: context.compactedSummary,
+    recentTurns: context.recentTurns,
+    sessionMessages: context.sessionMessages,
   });
-  const heuristicDurableCandidates = buildDurableMemoryCandidates({
-    turnResult: updatedTurnResult,
-    summary: compactedSummary,
-    recentTurns,
-    sessionMessages,
-  });
-  const extractedCandidates = await extractedDurableMemoryCandidates({
-    turnResult: updatedTurnResult,
-    recentTurns,
-    sessionMessages,
-    modelContext: params.modelContext ?? null,
-  });
-  const acceptedExtractedCandidates = acceptedModelDurableCandidates({
-    turnResult: updatedTurnResult,
-    modelCandidates: extractedCandidates,
-    heuristicDurableCandidates,
-  });
-  const durableCandidates = mergeDurableCandidates(acceptedExtractedCandidates, heuristicDurableCandidates);
   const restoredMemoryPaths: string[] = [];
 
   try {
     for (const candidate of runtimeCandidates) {
       restoredMemoryPaths.push(await upsertRuntimeMemoryCandidate({
         memoryService: params.memoryService,
-        workspaceId: updatedTurnResult.workspaceId,
+        workspaceId: context.turnResult.workspaceId,
         candidate,
       }));
     }
-    for (const candidate of durableCandidates) {
-      restoredMemoryPaths.push(await upsertDurableMemoryCandidate({
-        store: params.store,
-        memoryService: params.memoryService,
-        workspaceId: updatedTurnResult.workspaceId,
-        sessionId: updatedTurnResult.sessionId,
-        inputId: updatedTurnResult.inputId,
-        candidate,
-      }));
-    }
-    restoredMemoryPaths.push(...await upsertMemoryIndexes({
-      store: params.store,
-      memoryService: params.memoryService,
-      workspaceId: updatedTurnResult.workspaceId,
-    }));
   } catch {
     return upsertCompactionBoundaryArtifact({
       store: params.store,
-      turnResult: updatedTurnResult,
-      recentTurns,
-      sessionMessages,
+      turnResult: context.turnResult,
+      recentTurns: context.recentTurns,
+      sessionMessages: context.sessionMessages,
       restoredMemoryPaths,
     });
   }
 
   return upsertCompactionBoundaryArtifact({
     store: params.store,
-    turnResult: updatedTurnResult,
-    recentTurns,
-    sessionMessages,
+    turnResult: context.turnResult,
+    recentTurns: context.recentTurns,
+    sessionMessages: context.sessionMessages,
     restoredMemoryPaths,
   });
+}
+
+export async function writeTurnDurableMemory(params: {
+  store: RuntimeStateStore;
+  memoryService: MemoryServiceLike;
+  turnResult: TurnResultRecord;
+  modelContext?: TurnMemoryWritebackModelContext | null;
+}): Promise<TurnResultRecord> {
+  const context = loadTurnWritebackContext(params.store, params.turnResult);
+  const heuristicDurableCandidates = buildDurableMemoryCandidates({
+    turnResult: context.turnResult,
+    summary: context.compactedSummary,
+    recentTurns: context.recentTurns,
+    sessionMessages: context.sessionMessages,
+  });
+  const extractedCandidates = await extractedDurableMemoryCandidates({
+    turnResult: context.turnResult,
+    recentTurns: context.recentTurns,
+    sessionMessages: context.sessionMessages,
+    modelContext: params.modelContext ?? null,
+  });
+  const acceptedExtractedCandidates = acceptedModelDurableCandidates({
+    turnResult: context.turnResult,
+    modelCandidates: extractedCandidates,
+    heuristicDurableCandidates,
+  });
+  const durableCandidates = mergeDurableCandidates(acceptedExtractedCandidates, heuristicDurableCandidates);
+  const restoredMemoryPaths: string[] = [];
+
+  for (const candidate of durableCandidates) {
+    restoredMemoryPaths.push(await upsertDurableMemoryCandidate({
+      store: params.store,
+      memoryService: params.memoryService,
+      workspaceId: context.turnResult.workspaceId,
+      sessionId: context.turnResult.sessionId,
+      inputId: context.turnResult.inputId,
+      candidate,
+    }));
+  }
+  restoredMemoryPaths.push(
+    ...(await upsertMemoryIndexes({
+      store: params.store,
+      memoryService: params.memoryService,
+      workspaceId: context.turnResult.workspaceId,
+    }))
+  );
+  appendRestoredMemoryPathsToCompactionBoundary({
+    store: params.store,
+    turnResult: context.turnResult,
+    restoredMemoryPaths,
+  });
+  return params.store.getTurnResult({ inputId: context.turnResult.inputId }) ?? context.turnResult;
+}
+
+export async function writeTurnMemory(params: {
+  store: RuntimeStateStore;
+  memoryService: MemoryServiceLike;
+  turnResult: TurnResultRecord;
+  modelContext?: TurnMemoryWritebackModelContext | null;
+}): Promise<TurnResultRecord> {
+  const updatedTurnResult = await writeTurnContinuity({
+    store: params.store,
+    memoryService: params.memoryService,
+    turnResult: params.turnResult,
+  });
+  try {
+    return await writeTurnDurableMemory({
+      store: params.store,
+      memoryService: params.memoryService,
+      turnResult: updatedTurnResult,
+      modelContext: params.modelContext ?? null,
+    });
+  } catch {
+    return params.store.getTurnResult({ inputId: updatedTurnResult.inputId }) ?? updatedTurnResult;
+  }
 }

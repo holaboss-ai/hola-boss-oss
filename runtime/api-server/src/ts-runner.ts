@@ -74,8 +74,8 @@ import {
   sessionResumeContextFromArtifacts,
   sessionResumeContextFromCompactionBoundary,
 } from "./turn-result-summary.js";
+import { createBackgroundTaskMemoryModelClient } from "./background-task-model.js";
 import { recalledMemoryContextFromManifest } from "./memory-recall-manifest.js";
-import type { MemoryModelClientConfig } from "./memory-model-client.js";
 import { pendingUserMemoryContextFromProposals } from "./user-memory-proposals.js";
 import { NATIVE_WEB_SEARCH_TOOL_IDS } from "../../harnesses/src/native-web-search-tools.js";
 
@@ -812,73 +812,25 @@ function defaultSessionMode(): string {
   return firstNonEmptyString(process.env.HOLABOSS_SESSION_MODE, DEFAULT_SESSION_MODE) ?? DEFAULT_SESSION_MODE;
 }
 
-function normalizeModelIdForSelector(model: string | null): string {
-  const trimmed = (model ?? "").trim();
-  if (!trimmed) {
-    return "";
-  }
-  const slashIndex = trimmed.indexOf("/");
-  return slashIndex >= 0 ? trimmed.slice(slashIndex + 1).trim() : trimmed;
-}
-
-function openAiBaseUrl(baseRoot: string): string {
-  const normalized = baseRoot.trim().replace(/\/+$/, "");
-  if (!normalized) {
-    return "";
-  }
-  if (normalized.endsWith("/openai/v1")) {
-    return normalized;
-  }
-  return `${normalized}/openai/v1`;
-}
-
 function selectorModelClientFromRequest(params: {
   request: TsRunnerRequest;
   workspaceId: string;
   sessionId: string;
   inputId: string;
-}): MemoryModelClientConfig | null {
-  const selectedModel = normalizeModelIdForSelector(
-    firstNonEmptyString(typeof params.request.model === "string" ? params.request.model : "", null)
-  );
-  const runtimeConfig = resolveProductRuntimeConfig({
-    requireAuth: false,
-    requireUser: false,
-    requireBaseUrl: false,
-    includeDefaultBaseUrl: false,
-  });
-  const baseUrl = openAiBaseUrl(runtimeConfig.modelProxyBaseUrl);
-  if (!baseUrl) {
-    return null;
-  }
+}) {
   const runtimeExecContext = isRecord(params.request.context[RUNTIME_EXEC_CONTEXT_KEY])
     ? (params.request.context[RUNTIME_EXEC_CONTEXT_KEY] as Record<string, unknown>)
     : {};
-  const apiKey =
-    firstNonEmptyString(runtimeExecContext.model_proxy_api_key, runtimeConfig.authToken) ||
-    firstNonEmptyString(runtimeConfig.authToken);
-  if (!apiKey) {
-    return null;
-  }
-  const sandboxId = firstNonEmptyString(runtimeExecContext.sandbox_id, runtimeConfig.sandboxId);
-  const defaultHeaders: Record<string, string> = {
-    "X-API-Key": apiKey,
-    "X-Holaboss-Session-Id": params.sessionId,
-    "X-Holaboss-Workspace-Id": params.workspaceId,
-    "X-Holaboss-Input-Id": params.inputId,
-  };
-  if (sandboxId) {
-    defaultHeaders["X-Holaboss-Sandbox-Id"] = sandboxId;
-  }
-  if (runtimeConfig.userId) {
-    defaultHeaders["X-Holaboss-User-Id"] = runtimeConfig.userId;
-  }
-  return {
-    baseUrl,
-    apiKey,
-    defaultHeaders,
-    modelId: selectedModel || normalizeModelIdForSelector(runtimeConfig.defaultModel),
-  };
+  return createBackgroundTaskMemoryModelClient({
+    workspaceId: params.workspaceId,
+    sessionId: params.sessionId,
+    inputId: params.inputId,
+    selectedModel: firstNonEmptyString(typeof params.request.model === "string" ? params.request.model : "", null),
+    defaultProviderId: defaultProviderId(),
+    runtimeExecModelProxyApiKey: firstNonEmptyString(runtimeExecContext.model_proxy_api_key),
+    runtimeExecSandboxId: firstNonEmptyString(runtimeExecContext.sandbox_id),
+    runtimeExecRunId: firstNonEmptyString(runtimeExecContext.run_id),
+  });
 }
 
 function defaultExtraTools(harnessId?: string | null): string[] {

@@ -33,11 +33,18 @@ test("billing summary card exposes web-only billing actions", async () => {
 test("runtime auth panel keeps model provider settings compact", async () => {
   const source = await readFile(AUTH_PANEL_PATH, "utf8");
 
+  assert.match(source, /Background tasks/);
+  assert.match(source, /Used for memory recall and post-run tasks\./);
+  assert.match(source, /Select a model to enable background tasks\./);
   assert.match(source, /Connected providers/);
   assert.match(source, /Available providers/);
-  assert.match(source, /Manage which providers this desktop runtime can use\./);
   assert.match(source, /Changes save automatically/);
   assert.match(source, /Models/);
+  assert.match(source, /applyBackgroundTaskProviderSelection/);
+  assert.match(source, /Selected provider is not connected\. Background tasks stay disabled until you reconnect it or choose another provider\./);
+  assert.doesNotMatch(source, /Background Tasks Model/);
+  assert.doesNotMatch(source, /Recall uses:/);
+  assert.doesNotMatch(source, /Post-run uses:/);
   assert.doesNotMatch(source, /Runtime overview/);
   assert.doesNotMatch(source, /Connected now/);
   assert.doesNotMatch(source, /Ready to connect/);
@@ -75,17 +82,23 @@ test("holaboss proxy models come from the managed runtime catalog instead of loc
     source.match(/holaboss:\s*\{[\s\S]*?apiKeyPlaceholder: "hbrt\.v1\.your-proxy-token"[\s\S]*?\n\s*}/)?.[0] ?? "";
 
   assert.match(holabossTemplate, /defaultModels: \[\]/);
+  assert.match(holabossTemplate, /defaultBackgroundModel: "gpt-5\.4-mini"/);
   assert.doesNotMatch(holabossTemplate, /claude-/);
   assert.match(source, /function configuredRuntimeProviderModelIds\(/);
-  assert.match(source, /if \(providerId === "holaboss"\) \{\s*continue;\s*\}/);
+  assert.match(source, /function runtimeProviderStorageId\(/);
+  assert.match(source, /providerId === "holaboss" \? "holaboss_model_proxy" : providerId/);
+  assert.match(source, /Catalog, base URL, and credentials come from your Holaboss runtime binding\./);
+  assert.doesNotMatch(source, /Managed and ready on this desktop\. Expand to edit the background tasks model\./);
 });
 
-test("direct Anthropic and Gemini defaults advertise current provider model ids", async () => {
+test("direct Anthropic, OpenRouter, and Gemini defaults advertise current provider model ids", async () => {
   const source = await readFile(AUTH_PANEL_PATH, "utf8");
   const providerTemplatesBlock =
     source.match(/const KNOWN_PROVIDER_TEMPLATES:[\s\S]*?function isKnownProviderId/)?.[0] ?? "";
   const anthropicTemplate =
     providerTemplatesBlock.match(/anthropic_direct:\s*\{[\s\S]*?apiKeyPlaceholder: "sk-ant-your-anthropic-key"[\s\S]*?\n\s*}/)?.[0] ?? "";
+  const openrouterTemplate =
+    providerTemplatesBlock.match(/openrouter_direct:\s*\{[\s\S]*?apiKeyPlaceholder: "sk-or-your-openrouter-key"[\s\S]*?\n\s*}/)?.[0] ?? "";
   const geminiTemplate =
     providerTemplatesBlock.match(/gemini_direct:\s*\{[\s\S]*?apiKeyPlaceholder: "AIza\.\.\.your-gemini-api-key"[\s\S]*?\n\s*}/)?.[0] ?? "";
 
@@ -96,6 +109,12 @@ test("direct Anthropic and Gemini defaults advertise current provider model ids"
   assert.match(anthropicTemplate, /defaultBaseUrl: "https:\/\/api\.anthropic\.com"/);
   assert.doesNotMatch(anthropicTemplate, /defaultBaseUrl: "https:\/\/api\.anthropic\.com\/v1"/);
   assert.doesNotMatch(anthropicTemplate, /claude-sonnet-4-5/);
+
+  assert.match(
+    openrouterTemplate,
+    /defaultModels: \["openai\/gpt-5\.4", "openai\/gpt-5\.4-mini", "anthropic\/claude-sonnet-4-6"\]/,
+  );
+  assert.doesNotMatch(openrouterTemplate, /claude-sonnet-4-5/);
 
   assert.match(
     geminiTemplate,

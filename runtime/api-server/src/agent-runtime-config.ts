@@ -84,6 +84,39 @@ export interface AgentRuntimeConfigCliResponse {
   capability_manifest?: AgentCapabilityManifest;
 }
 
+export interface RuntimeModelClientRequest {
+  selectedModel: string;
+  defaultProviderId: string;
+  sessionId: string;
+  workspaceId: string;
+  inputId: string;
+  runtimeExecModelProxyApiKey?: string | null;
+  runtimeExecSandboxId?: string | null;
+  runtimeExecRunId?: string | null;
+}
+
+export interface RuntimeModelClientResolution {
+  providerId: string;
+  configuredProviderId: string | null;
+  modelId: string;
+  modelToken: string;
+  modelProxyProvider: string;
+  modelClient: {
+    model_proxy_provider: string;
+    api_key: string;
+    base_url?: string | null;
+    default_headers?: Record<string, string> | null;
+  };
+}
+
+export interface RuntimeModelReferenceResolution {
+  providerId: string;
+  configuredProviderId: string | null;
+  modelId: string;
+  modelToken: string;
+  modelProxyProvider: string;
+}
+
 const MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE = "openai_compatible";
 const MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE = "anthropic_native";
 const PROVIDER_KIND_HOLABOSS_PROXY = "holaboss_proxy";
@@ -865,7 +898,17 @@ function configuredProviderMissingFieldsMessage(
   return `Direct provider '${provider.id}' is not fully configured (missing: ${missing.join(", ")}).`;
 }
 
-function resolveModelClientConfig(request: AgentRuntimeConfigCliRequest, target: ResolvedRuntimeModelTarget): {
+type ModelClientResolutionContext = Pick<
+  AgentRuntimeConfigCliRequest,
+  | "runtime_exec_model_proxy_api_key"
+  | "runtime_exec_sandbox_id"
+  | "runtime_exec_run_id"
+  | "session_id"
+  | "workspace_id"
+  | "input_id"
+>;
+
+function resolveModelClientConfig(request: ModelClientResolutionContext, target: ResolvedRuntimeModelTarget): {
   model_proxy_provider: string;
   api_key: string;
   base_url?: string | null;
@@ -982,6 +1025,42 @@ function resolveModelClientConfig(request: AgentRuntimeConfigCliRequest, target:
     message += "; OPENAI_API_KEY is also missing for direct fallback.";
   }
   throw new Error(message);
+}
+
+export function resolveRuntimeModelClient(request: RuntimeModelClientRequest): RuntimeModelClientResolution {
+  const target = resolveRuntimeModelTarget(request.selectedModel, request.defaultProviderId);
+  return {
+    providerId: target.providerId,
+    configuredProviderId: target.configuredProvider?.id ?? null,
+    modelId: target.modelId,
+    modelToken: target.modelToken,
+    modelProxyProvider: target.modelProxyProvider,
+    modelClient: resolveModelClientConfig(
+      {
+        runtime_exec_model_proxy_api_key: request.runtimeExecModelProxyApiKey,
+        runtime_exec_sandbox_id: request.runtimeExecSandboxId,
+        runtime_exec_run_id: request.runtimeExecRunId,
+        session_id: request.sessionId,
+        workspace_id: request.workspaceId,
+        input_id: request.inputId,
+      },
+      target
+    ),
+  };
+}
+
+export function resolveRuntimeModelReference(
+  selectedModel: string,
+  defaultProviderId: string
+): RuntimeModelReferenceResolution {
+  const target = resolveRuntimeModelTarget(selectedModel, defaultProviderId);
+  return {
+    providerId: target.providerId,
+    configuredProviderId: target.configuredProvider?.id ?? null,
+    modelId: target.modelId,
+    modelToken: target.modelToken,
+    modelProxyProvider: target.modelProxyProvider,
+  };
 }
 
 function normalizeModelProxyProvider(provider: string): string {

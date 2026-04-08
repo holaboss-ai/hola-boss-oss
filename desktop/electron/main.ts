@@ -94,6 +94,7 @@ const RUNTIME_PROVIDER_KIND_OPENAI_COMPATIBLE = "openai_compatible";
 const RUNTIME_PROVIDER_KIND_ANTHROPIC_NATIVE = "anthropic_native";
 const RUNTIME_PROVIDER_KIND_OPENROUTER = "openrouter";
 const RUNTIME_HOLABOSS_PROVIDER_ID = "holaboss_model_proxy";
+const RUNTIME_HOLABOSS_BACKGROUND_TASK_DEFAULT_MODEL = "gpt-5.4-mini";
 const RUNTIME_HOLABOSS_PROVIDER_ALIASES = [
   "holaboss",
   RUNTIME_HOLABOSS_PROVIDER_ID,
@@ -3586,6 +3587,21 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
   assignOrDelete(holabossProvider, "base_url", next.model_proxy_base_url);
   assignOrDelete(runtimePayload, "sandbox_id", next.sandbox_id);
   assignOrDelete(runtimePayload, "default_model", next.default_model);
+  const currentBackgroundTasks = runtimeConfigObject(
+    runtimePayload.background_tasks ?? runtimePayload.backgroundTasks,
+  );
+  delete runtimePayload.backgroundTasks;
+  if (Object.keys(currentBackgroundTasks).length > 0) {
+    runtimePayload.background_tasks = currentBackgroundTasks;
+  } else if (
+    runtimeModelProxyApiKeyFromConfig(next) &&
+    runtimeConfigField(next.model_proxy_base_url)
+  ) {
+    runtimePayload.background_tasks = {
+      provider: RUNTIME_HOLABOSS_PROVIDER_ID,
+      model: RUNTIME_HOLABOSS_BACKGROUND_TASK_DEFAULT_MODEL,
+    };
+  }
 
   if (
     Object.keys(holabossProvider).length > 0 &&

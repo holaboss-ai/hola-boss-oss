@@ -1,7 +1,8 @@
 import type { RuntimeStateStore, SessionInputRecord, TurnResultRecord } from "@holaboss/runtime-state-store";
 
 import type { MemoryServiceLike } from "./memory.js";
-import { writeTurnMemory, type TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
+import { enqueueDurableMemoryWritebackJob } from "./post-run-durable-memory.js";
+import { writeTurnContinuity, type TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
 
 export interface PostRunTaskContext {
   store: RuntimeStateStore;
@@ -9,6 +10,9 @@ export interface PostRunTaskContext {
   turnResult: TurnResultRecord;
   memoryService?: MemoryServiceLike | null;
   modelContext?: TurnMemoryWritebackModelContext | null;
+  wakeDurableMemoryWorker?: (() => void) | null;
+  enqueueDurableMemoryWritebackJobFn?: typeof enqueueDurableMemoryWritebackJob;
+  writeTurnContinuityFn?: typeof writeTurnContinuity;
 }
 
 export interface PostRunTask {
@@ -30,11 +34,18 @@ export const turnMemoryWritebackPostRunTask: PostRunTask = {
     if (!context.memoryService) {
       return;
     }
-    await writeTurnMemory({
+    const updatedTurnResult = await (context.writeTurnContinuityFn ?? writeTurnContinuity)({
       store: context.store,
       memoryService: context.memoryService,
       turnResult: context.turnResult,
-      modelContext: context.modelContext ?? null,
+    });
+    (context.enqueueDurableMemoryWritebackJobFn ?? enqueueDurableMemoryWritebackJob)({
+      store: context.store,
+      workspaceId: updatedTurnResult.workspaceId,
+      sessionId: updatedTurnResult.sessionId,
+      inputId: updatedTurnResult.inputId,
+      instruction: context.modelContext?.instruction ?? null,
+      wakeWorker: context.wakeDurableMemoryWorker ?? null,
     });
   },
 };

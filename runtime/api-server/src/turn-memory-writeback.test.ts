@@ -173,6 +173,7 @@ test("writeTurnMemory compacts a turn and writes deterministic runtime memory fi
       .filter((filePath) => !filePath.startsWith("workspace/workspace-1/runtime/permission-blockers/"))
       .sort((left, right) => left.localeCompare(right)),
     [
+      "identity/MEMORY.md",
       "MEMORY.md",
       "preference/MEMORY.md",
       "workspace/workspace-1/MEMORY.md",
@@ -191,6 +192,7 @@ test("writeTurnMemory compacts a turn and writes deterministic runtime memory fi
   assert.match(files["workspace/workspace-1/runtime/recent-turns/session-main.md"], /input-1/);
   assert.match(files["workspace/workspace-1/runtime/session-memory/session-main.md"], /Session Memory/);
   assert.match(files["workspace/workspace-1/runtime/session-memory/session-main.md"], /Recent User Requests/);
+  assert.match(files["identity/MEMORY.md"], /No durable identity memories indexed yet/);
   assert.match(files["preference/MEMORY.md"], /No durable preference memories indexed yet/);
   assert.match(files["workspace/workspace-1/MEMORY.md"], /No durable workspace memories indexed yet/);
   assert.match(files["MEMORY.md"], /No durable memories indexed yet/);
@@ -266,6 +268,7 @@ test("writeTurnMemory reuses stable blocker paths across repeated matching denia
     filePaths.filter((filePath) => !filePath.startsWith("workspace/workspace-1/runtime/permission-blockers/")),
     [
       "MEMORY.md",
+      "identity/MEMORY.md",
       "preference/MEMORY.md",
       "workspace/workspace-1/MEMORY.md",
       ...durableBlockerPaths,
@@ -292,6 +295,7 @@ test("writeTurnMemory reuses stable blocker paths across repeated matching denia
   assert.match(files["workspace/workspace-1/runtime/session-memory/session-main.md"], /Session Memory/);
   assert.match(files["workspace/workspace-1/runtime/blockers/session-main.md"], /policy_denied/);
   assert.match(files[durableBlockerPaths[0]], /Recurring Permission Blocker/);
+  assert.match(files["identity/MEMORY.md"], /No durable identity memories indexed yet/);
   assert.match(files["workspace/workspace-1/MEMORY.md"], /Deploy permission blocker/);
   assert.match(files["MEMORY.md"], /Workspace workspace-1/);
 
@@ -490,6 +494,7 @@ test("writeTurnMemory rejects weak uncorroborated model-extracted durable candid
     memoryEntries.some((entry) => entry.path === "workspace/workspace-1/knowledge/reference/untrusted-note.md"),
     false
   );
+  assert.match(files["identity/MEMORY.md"], /No durable identity memories indexed yet/);
   assert.match(files["preference/MEMORY.md"], /No durable preference memories indexed yet/);
 
   store.close();

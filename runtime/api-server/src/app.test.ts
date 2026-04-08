@@ -37,6 +37,7 @@ function buildTestRuntimeApiServer(options: BuildRuntimeApiServerOptions) {
   return buildRuntimeApiServer({
     ...options,
     queueWorker: null,
+    durableMemoryWorker: null,
     cronWorker: null,
     bridgeWorker: null,
     enableAppHealthMonitor: false,
