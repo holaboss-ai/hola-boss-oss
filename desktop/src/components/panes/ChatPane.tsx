@@ -2376,32 +2376,6 @@ export function ChatPane({
           setLiveAgentStatus("Preparing workspace context...");
         } else if (eventType === "run_started") {
           setLiveAgentStatus("Checking workspace context...");
-        } else if (eventType === "auto_compaction_start") {
-          setLiveAgentStatus("Compacting context...");
-        } else if (eventType === "auto_compaction_end") {
-          setLiveAgentStatus(
-            eventPayload.will_retry === true
-              ? "Retrying after compaction..."
-              : "Continuing after compaction...",
-          );
-        } else if (eventType === "compaction_restored") {
-          setLiveAgentStatus("Restored prior context...");
-        } else if (eventType === "compaction_start") {
-          setLiveAgentStatus("Finalizing turn context...");
-        } else if (eventType === "compaction_boundary_written") {
-          setLiveAgentStatus("Saving compaction boundary...");
-        } else if (eventType === "compaction_end") {
-          setLiveAgentStatus(
-            typeof eventPayload.status === "string" &&
-              eventPayload.status.trim().toLowerCase() === "failed"
-              ? "Compaction failed."
-              : "Turn context finalized.",
-          );
-        } else if (
-          eventType === "run_waiting_user" ||
-          eventType === "awaiting_user_input"
-        ) {
-          setLiveAgentStatus("Waiting for your input...");
         }
 
         const phaseStep = phaseTraceStepFromEvent(
@@ -2419,16 +2393,10 @@ export function ChatPane({
           eventSequence,
         );
         if (toolStep) {
-          setLiveAgentStatus(
-            toolStep.status === "completed"
-              ? "Writing response..."
-              : "Using tools...",
-          );
           upsertLiveTraceStep(toolStep);
         }
 
         if (eventType === "output_delta") {
-          setLiveAgentStatus("Writing response...");
           const delta =
             typeof eventPayload.delta === "string" ? eventPayload.delta : "";
           if (!delta) {
@@ -2466,7 +2434,6 @@ export function ChatPane({
         }
 
         if (eventType === "thinking_delta") {
-          setLiveAgentStatus("Thinking...");
           const delta =
             typeof eventPayload.delta === "string" ? eventPayload.delta : "";
           if (!delta) {
@@ -3809,10 +3776,16 @@ function AssistantTurn({
   status?: string;
   live?: boolean;
 }) {
+  const showStatusPlaceholder =
+    Boolean(status) &&
+    !text &&
+    traceSteps.length === 0 &&
+    !thinkingText;
+
   return (
     <div className="flex min-w-0 justify-start">
       <article className="min-w-0 flex-1">
-        {status && !text ? (
+        {showStatusPlaceholder ? (
           <div className="text-[13px] leading-7 text-muted-foreground">
             {status}
           </div>
@@ -3823,6 +3796,7 @@ function AssistantTurn({
             steps={traceSteps}
             collapsedByStepId={collapsedTraceByStepId}
             onToggleStep={onToggleTraceStep}
+            live={live}
           />
         ) : null}
 
@@ -4222,10 +4196,12 @@ function TraceStepGroup({
   steps,
   collapsedByStepId,
   onToggleStep,
+  live = false,
 }: {
   steps: ChatTraceStep[];
   collapsedByStepId: Record<string, boolean>;
   onToggleStep: (stepId: string) => void;
+  live?: boolean;
 }) {
   const [groupExpanded, setGroupExpanded] = useState(false);
   const runningCount = steps.filter((s) => s.status === "running").length;
@@ -4236,6 +4212,7 @@ function TraceStepGroup({
     (step) => step.kind === "tool" && step.status === "error",
   ).length;
   const groupHasTerminalError = terminalErrorCount > 0;
+  const groupIsLive = live && !groupHasTerminalError;
   const stepCount = steps.length;
   const stepLabel = `${stepCount} step${stepCount === 1 ? "" : "s"}`;
   const summarySuffix = groupHasTerminalError
@@ -4251,15 +4228,17 @@ function TraceStepGroup({
         onClick={() => setGroupExpanded((v) => !v)}
         className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 -ml-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60"
       >
-        {runningCount > 0 ? (
-          <Loader2 size={13} className="animate-spin text-muted-foreground" />
-        ) : groupHasTerminalError ? (
+        {groupHasTerminalError ? (
           <AlertTriangle size={13} className="text-destructive" />
+        ) : groupIsLive || runningCount > 0 ? (
+          <Loader2 size={13} className="animate-spin text-muted-foreground" />
         ) : (
           <Check size={13} className="text-emerald-500" />
         )}
         <span>
-          {runningCount > 0
+          {groupIsLive
+            ? `Working through ${stepLabel}...`
+            : runningCount > 0
             ? `Running ${stepLabel}...`
             : `Used ${stepLabel}`}
           {summarySuffix}

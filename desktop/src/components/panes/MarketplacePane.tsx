@@ -112,7 +112,7 @@ export function MarketplacePane() {
   }
 
   return (
-    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
+    <section className="theme-shell neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.03),transparent_24%)]" />
       <div className="relative min-h-0 flex-1 overflow-auto p-4">
         <div className="mx-auto max-w-5xl">
