@@ -36,9 +36,13 @@ test("desktop file explorer enforces the selected workspace root as a filesystem
   const source = await readFile(mainSourcePath, "utf8");
 
   assert.match(source, /async function resolveWorkspaceScopedExplorerPath\(/);
+  assert.match(source, /async function renameExplorerPath\(/);
+  assert.match(source, /async function deleteExplorerPath\(/);
   assert.match(source, /await workspaceDirectoryPath\(normalizedWorkspaceId\)/);
   assert.match(source, /const relativePath = path\.relative\(rootPath, targetPath\);/);
   assert.match(source, /throw new Error\(`Target path escapes workspace root: \$\{trimmedTargetPath\}`\);/);
+  assert.match(source, /throw new Error\("Workspace root cannot be renamed\."\);/);
+  assert.match(source, /throw new Error\("Workspace root cannot be deleted\."\);/);
   assert.match(
     source,
     /"fs:listDirectory"[\s\S]*async \(_event, targetPath\?: string \| null, workspaceId\?: string \| null\) =>\s*listDirectory\(targetPath, workspaceId\)/,
@@ -50,6 +54,14 @@ test("desktop file explorer enforces the selected workspace root as a filesystem
   assert.match(
     source,
     /"fs:writeTextFile"[\s\S]*workspaceId\?: string \| null,[\s\S]*writeTextFile\(targetPath, content, workspaceId\)/,
+  );
+  assert.match(
+    source,
+    /"fs:renamePath"[\s\S]*targetPath: string,[\s\S]*nextName: string,[\s\S]*renameExplorerPath\(targetPath, nextName, workspaceId\)/,
+  );
+  assert.match(
+    source,
+    /"fs:deletePath"[\s\S]*async \(_event, targetPath: string, workspaceId\?: string \| null\) =>\s*deleteExplorerPath\(targetPath, workspaceId\)/,
   );
 });
 

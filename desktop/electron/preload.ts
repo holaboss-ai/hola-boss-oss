@@ -49,6 +49,10 @@ interface FileBookmarkPayload {
   createdAt: string;
 }
 
+interface FileSystemMutationPayload {
+  absolutePath: string;
+}
+
 interface BrowserBoundsPayload {
   x: number;
   y: number;
@@ -864,6 +868,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("fs:readFilePreview", targetPath, workspaceId) as Promise<FilePreviewPayload>,
     writeTextFile: (targetPath: string, content: string, workspaceId?: string | null) =>
       ipcRenderer.invoke("fs:writeTextFile", targetPath, content, workspaceId) as Promise<FilePreviewPayload>,
+    renamePath: (targetPath: string, nextName: string, workspaceId?: string | null) =>
+      ipcRenderer.invoke("fs:renamePath", targetPath, nextName, workspaceId) as Promise<FileSystemMutationPayload>,
+    deletePath: (targetPath: string, workspaceId?: string | null) =>
+      ipcRenderer.invoke("fs:deletePath", targetPath, workspaceId) as Promise<{ deleted: boolean }>,
     getBookmarks: (workspaceId?: string | null) =>
       ipcRenderer.invoke("fs:getBookmarks", workspaceId) as Promise<FileBookmarkPayload[]>,
     addBookmark: (targetPath: string, label?: string, workspaceId?: string | null) =>

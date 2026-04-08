@@ -136,8 +136,49 @@ test("chat trace collapsed summary surfaces the current active step", async () =
   );
   assert.match(
     source,
-    /activeStep\s*\?\s*`\$\{traceStatusLabel\(activeStep\.status\)\}: \$\{activeStep\.title\}`/,
+    /const latestStep = steps\.length > 0 \? steps\[steps\.length - 1\] : null;/,
   );
+  assert.match(
+    source,
+    /const summaryStep = activeStep \?\? \(groupIsLive \? latestStep : null\);/,
+  );
+  assert.match(
+    source,
+    /summaryStep[\s\S]*summaryStep === activeStep \|\| summaryStep\.status === "waiting"[\s\S]*`\$\{traceStatusLabel\(summaryStep\.status\)\}: \$\{summaryStep\.title\}`[\s\S]*groupIsLive[\s\S]*summaryStep\.title/,
+  );
+});
+
+test("chat pane keeps compaction restore inside bootstrap status instead of a standalone phase card", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /eventType === "run_claimed" \|\|\s*eventType === "compaction_restored" \|\|\s*eventType === "run_started"[\s\S]*setLiveAgentStatus\("Checking workspace context"\);/,
+  );
+  assert.doesNotMatch(source, /Preparing workspace context\.\.\./);
+  assert.doesNotMatch(source, /title:\s*"Restored compacted context"/);
+  assert.doesNotMatch(source, /id:\s*"phase:compaction-restored"/);
+});
+
+test("chat pane renders live placeholder status as faint text with animated trailing dots", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /aria-live="polite"/);
+  assert.match(source, /const normalizedStatus = status\.replace\(\/\\\.\+\$\/, ""\)\.trim\(\);/);
+  assert.match(
+    source,
+    /className="inline-flex items-baseline gap-0\.5 text-\[12px\] leading-6 text-muted-foreground\/72"/,
+  );
+  assert.match(source, /function LiveStatusEllipsis\(\)/);
+  assert.match(source, /@keyframes status-dot-wave/);
+  assert.match(source, /30% \{ transform: translateY\(-3px\); \}/);
+  assert.match(source, /animation: "status-dot-wave 1200ms ease-in-out infinite"/);
+  assert.match(source, /animationDelay: `\$\{index \* 120\}ms`/);
+  assert.doesNotMatch(source, /Preparing first question\.\.\./);
+  assert.doesNotMatch(source, /Queued\.\.\./);
+  assert.doesNotMatch(source, /Working\.\.\./);
+  assert.doesNotMatch(source, /Checking workspace context\.\.\./);
+  assert.doesNotMatch(source, /Thinking\.\.\./);
 });
 
 test("chat trace tool errors surface stderr text instead of a generic error label", async () => {

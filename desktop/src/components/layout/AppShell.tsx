@@ -2402,7 +2402,7 @@ function AppShellContent() {
           <div
             className={`relative grid h-full min-h-0 gap-y-3 overflow-hidden transition-[grid-template-columns,column-gap] duration-300 ease-in-out ${
               showOperationsDrawer
-                ? "lg:grid-cols-[60px_minmax(0,1fr)_380px]"
+                ? "lg:grid-cols-[60px_minmax(0,1fr)_336px]"
                 : "lg:grid-cols-[60px_minmax(0,1fr)]"
             }`}
             style={{ columnGap: "0.5rem" }}

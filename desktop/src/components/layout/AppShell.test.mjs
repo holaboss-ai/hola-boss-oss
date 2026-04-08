@@ -178,6 +178,7 @@ test("app shell renames the running panel button to sub-sessions", async () => {
 
   assert.match(source, /aria-label="Open sub-sessions panel"/);
   assert.doesNotMatch(source, /aria-label="Open running panel"/);
+  assert.match(source, /lg:grid-cols-\[60px_minmax\(0,1fr\)_336px\]/);
 });
 
 test("app shell can route new schedule creation into a prefilled workspace chat", async () => {

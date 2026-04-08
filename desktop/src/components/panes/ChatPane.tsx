@@ -975,39 +975,6 @@ function phaseTraceStepFromEvent(
     };
   }
 
-  if (eventType === "compaction_restored") {
-    const boundaryId =
-      typeof payload.boundary_id === "string" ? payload.boundary_id.trim() : "";
-    const source =
-      typeof payload.source === "string" ? payload.source.trim() : "";
-    const restoredMemoryPaths = Array.isArray(payload.restored_memory_paths)
-      ? payload.restored_memory_paths.filter(
-          (item): item is string =>
-            typeof item === "string" && item.trim().length > 0,
-        )
-      : [];
-    if (boundaryId) {
-      details.push(`Boundary: ${boundaryId}`);
-    }
-    if (source) {
-      details.push(`Source: ${source}`);
-    }
-    if (restoredMemoryPaths.length > 0) {
-      details.push(`Restored memory paths: ${restoredMemoryPaths.length}`);
-    }
-    return {
-      id: "phase:compaction-restored",
-      kind: "phase",
-      title: "Restored compacted context",
-      status: "completed",
-      details:
-        details.length > 0
-          ? details
-          : ["Resume context restored from a previous compaction boundary."],
-      order,
-    };
-  }
-
   if (eventType === "run_waiting_user" || eventType === "awaiting_user_input") {
     return {
       id: "phase:awaiting-user",
@@ -1511,10 +1478,10 @@ export function ChatPane({
       setIsResponding(true);
       setLiveAgentStatus(
         shouldAttachOnboardingBootstrapStream
-          ? "Preparing first question..."
+          ? "Preparing first question"
           : currentRuntimeStatus === "QUEUED"
-            ? "Queued..."
-            : "Working...",
+            ? "Queued"
+            : "Working",
       );
       setChatErrorMessage("");
       const stream = await window.electronAPI.workspace.openSessionOutputStream(
@@ -2372,10 +2339,12 @@ export function ChatPane({
           });
         }
 
-        if (eventType === "run_claimed") {
-          setLiveAgentStatus("Preparing workspace context...");
-        } else if (eventType === "run_started") {
-          setLiveAgentStatus("Checking workspace context...");
+        if (
+          eventType === "run_claimed" ||
+          eventType === "compaction_restored" ||
+          eventType === "run_started"
+        ) {
+          setLiveAgentStatus("Checking workspace context");
         }
 
         const phaseStep = phaseTraceStepFromEvent(
@@ -2733,7 +2702,7 @@ export function ChatPane({
       setInput("");
       setPendingAttachments([]);
       setIsResponding(true);
-      setLiveAgentStatus("Thinking...");
+      setLiveAgentStatus("Thinking");
       setChatErrorMessage("");
       activeAssistantMessageIdRef.current = null;
       pendingInputIdRef.current = STREAM_ATTACH_PENDING;
@@ -3511,7 +3480,7 @@ export function ChatPane({
                       onLinkClick={onOpenLinkInBrowser}
                       live
                       status={
-                        liveAgentStatus || (isResponding ? "Working..." : "")
+                        liveAgentStatus || (isResponding ? "Working" : "")
                       }
                     />
                   ) : null}
@@ -3776,8 +3745,9 @@ function AssistantTurn({
   status?: string;
   live?: boolean;
 }) {
+  const normalizedStatus = status.replace(/\.+$/, "").trim();
   const showStatusPlaceholder =
-    Boolean(status) &&
+    Boolean(normalizedStatus) &&
     !text &&
     traceSteps.length === 0 &&
     !thinkingText;
@@ -3786,8 +3756,12 @@ function AssistantTurn({
     <div className="flex min-w-0 justify-start">
       <article className="min-w-0 flex-1">
         {showStatusPlaceholder ? (
-          <div className="text-[13px] leading-7 text-muted-foreground">
-            {status}
+          <div
+            aria-live="polite"
+            className="inline-flex items-baseline gap-0.5 text-[12px] leading-6 text-muted-foreground/72"
+          >
+            <span>{normalizedStatus}</span>
+            <LiveStatusEllipsis />
           </div>
         ) : null}
 
@@ -4192,6 +4166,33 @@ function IntegrationErrorBanner({ details }: { details: string[] }) {
   );
 }
 
+function LiveStatusEllipsis() {
+  return (
+    <>
+      <style>{`
+        @keyframes status-dot-wave {
+          0%, 60%, 100% { transform: translateY(0); }
+          30% { transform: translateY(-3px); }
+        }
+      `}</style>
+      <span aria-hidden="true" className="inline-flex items-baseline">
+        {Array.from({ length: 3 }).map((_, index) => (
+          <span
+            key={`status-dot-${index}`}
+            className="inline-block"
+            style={{
+              animation: "status-dot-wave 1200ms ease-in-out infinite",
+              animationDelay: `${index * 120}ms`,
+            }}
+          >
+            .
+          </span>
+        ))}
+      </span>
+    </>
+  );
+}
+
 function TraceStepGroup({
   steps,
   collapsedByStepId,
@@ -4221,6 +4222,8 @@ function TraceStepGroup({
       .find(
         (step) => step.status === "running" || step.status === "waiting",
       ) ?? null;
+  const latestStep = steps.length > 0 ? steps[steps.length - 1] : null;
+  const summaryStep = activeStep ?? (groupIsLive ? latestStep : null);
   const summarySuffix = groupHasTerminalError
     ? ` (${terminalErrorCount} failed)`
     : recoveredErrorCount > 0
@@ -4242,8 +4245,12 @@ function TraceStepGroup({
           <Check size={13} className="text-emerald-500" />
         )}
         <span>
-          {activeStep
-            ? `${traceStatusLabel(activeStep.status)}: ${activeStep.title}`
+          {summaryStep
+            ? summaryStep === activeStep || summaryStep.status === "waiting"
+              ? `${traceStatusLabel(summaryStep.status)}: ${summaryStep.title}`
+              : groupIsLive
+                ? summaryStep.title
+                : `${traceStatusLabel(summaryStep.status)}: ${summaryStep.title}`
             : groupIsLive
               ? `Working through ${stepLabel}...`
               : runningCount > 0

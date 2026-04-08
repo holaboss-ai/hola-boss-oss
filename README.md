@@ -153,13 +153,14 @@ The architectural distinction is between a run-centric agent and a workspace-cen
 
 That split is deliberate. Long-horizon support depends on keeping different kinds of context in the right system surfaces instead of mixing them together. `workspace.yaml` stays machine-readable as the runtime plan, while `AGENTS.md` stays the root human-authored instruction surface. The runtime compiler rejects inline prompt bodies in `workspace.yaml` and expects workspace instructions to come from `AGENTS.md`, which prevents the workspace plan from turning into an unstructured prompt blob.
 
-Durable memory is also intentionally scoped. The memory service only allows durable paths under:
+Memory access is also intentionally scoped. The memory service only allows paths under:
 
+- `MEMORY.md`
 - `workspace/<workspace-id>/*`
 - `preference/*`
 - `identity/*`
 
-Within those scopes, memory entries are governed by type rather than treated as generic notes:
+Within those scopes, durable recalled memory is governed by type rather than treated as generic notes:
 
 - `preference` and `identity` memories are treated as stable user context
 - `fact`, `procedure`, and `blocker` memories are treated as workspace-sensitive operational knowledge
@@ -384,7 +385,7 @@ Holaboss treats durable memory as a navigable filesystem surface rather than as 
 | file | the canonical markdown body for one durable memory entry |
 | file metadata | frontmatter fields such as scope, memory type, summary, tags, freshness, and verification hints |
 | directory listing | `MEMORY.md` indexes plus the bounded recall manifest built at query time |
-| runtime scratch area | `memory/workspace/<workspace-id>/runtime/`, intentionally excluded from durable recall |
+| runtime scratch area | `memory/workspace/<workspace-id>/runtime/`, allowed for runtime projections but intentionally excluded from durable recall |
 
 This matters because it makes memory inspectable, portable, and path-addressable. Durable workspace knowledge is not trapped inside a database-only retrieval layer. It lives in readable markdown files that can be indexed, packaged, diffed, and moved with the workspace, while the runtime still keeps governance, freshness, and recall selection explicit.
 

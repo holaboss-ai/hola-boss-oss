@@ -50,6 +50,10 @@ declare global {
     createdAt: string;
   }
 
+  interface FileSystemMutationPayload {
+    absolutePath: string;
+  }
+
   interface BrowserBoundsPayload {
     x: number;
     y: number;
@@ -1063,6 +1067,8 @@ declare global {
       listDirectory: (targetPath?: string | null, workspaceId?: string | null) => Promise<LocalDirectoryResponse>;
       readFilePreview: (targetPath: string, workspaceId?: string | null) => Promise<FilePreviewPayload>;
       writeTextFile: (targetPath: string, content: string, workspaceId?: string | null) => Promise<FilePreviewPayload>;
+      renamePath: (targetPath: string, nextName: string, workspaceId?: string | null) => Promise<FileSystemMutationPayload>;
+      deletePath: (targetPath: string, workspaceId?: string | null) => Promise<{ deleted: boolean }>;
       getBookmarks: (workspaceId?: string | null) => Promise<FileBookmarkPayload[]>;
       addBookmark: (targetPath: string, label?: string, workspaceId?: string | null) => Promise<FileBookmarkPayload[]>;
       removeBookmark: (bookmarkId: string) => Promise<FileBookmarkPayload[]>;

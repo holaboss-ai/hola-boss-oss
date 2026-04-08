@@ -39,7 +39,7 @@ test("file explorer polls the current directory to surface live file changes", a
 test("file explorer opens folders on double click instead of single click", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /onClick=\{\(\) => \{\s*setSelectedPath\(entry\.absolutePath\);\s*\}\}/);
+  assert.match(source, /onClick=\{\(\) => \{\s*setSelectedPath\(entry\.absolutePath\);\s*closeContextMenu\(\);\s*\}\}/);
   assert.match(
     source,
     /onDoubleClick=\{\(\) => \{\s*if \(entry\.isDirectory\) \{\s*void openPath\(entry\.absolutePath\);\s*return;\s*\}\s*void openFilePreview\(entry\.absolutePath\);\s*\}\}/
@@ -145,4 +145,27 @@ test("file explorer assigns richer icons for common file types", async () => {
   assert.match(source, /if \(extension === ".pdf"\) \{\s*return \{\s*Icon: FileBadge2,/);
   assert.match(source, /if \(JSON_EXTENSIONS\.has\(extension\)\) \{\s*return \{\s*Icon: FileJson,/);
   assert.match(source, /const \{ Icon, className \} = getExplorerIconDescriptor\(\s*entry\.name,\s*entry\.isDirectory\s*\);/);
+});
+
+test("file explorer exposes right-click rename and delete actions for entries", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /type FileExplorerContextMenuState = \{/);
+  assert.match(source, /const \[contextMenu, setContextMenu\] = useState<FileExplorerContextMenuState \| null>\(null\);/);
+  assert.match(
+    source,
+    /onContextMenu=\{\(event\) => \{\s*event\.preventDefault\(\);\s*setSelectedPath\(entry\.absolutePath\);\s*setContextMenu\(\{\s*entry,\s*x: event\.clientX,\s*y: event\.clientY,\s*\}\);\s*\}\}/,
+  );
+  assert.match(source, /Rename \${entry\.isDirectory \? "folder" : "file"}/);
+  assert.match(source, /Delete folder "\$\{entry\.name\}" and all of its contents\? This cannot be undone\./);
+  assert.match(
+    source,
+    /window\.electronAPI\.fs\.renamePath\(\s*entry\.absolutePath,\s*nextName,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
+  assert.match(
+    source,
+    /window\.electronAPI\.fs\.deletePath\(\s*entry\.absolutePath,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
+  assert.match(source, /Rename…/);
+  assert.match(source, /Delete…/);
 });

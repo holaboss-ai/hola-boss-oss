@@ -12,9 +12,13 @@ import {
   app,
   BrowserView,
   BrowserWindow,
+  Menu,
+  clipboard,
   dialog,
   DownloadItem,
   ipcMain,
+  type ContextMenuParams,
+  type MenuItemConstructorOptions,
   nativeImage,
   screen,
   session,
@@ -171,6 +175,10 @@ interface FileBookmarkPayload {
   createdAt: string;
 }
 
+interface FileSystemMutationPayload {
+  absolutePath: string;
+}
+
 interface BrowserBoundsPayload {
   x: number;
   y: number;
@@ -225,6 +233,14 @@ interface BrowserWorkspaceState {
   downloads: BrowserDownloadPayload[];
   history: BrowserHistoryEntryPayload[];
   downloadTrackingRegistered: boolean;
+  pendingDownloadOverrides: BrowserDownloadOverride[];
+}
+
+interface BrowserDownloadOverride {
+  url: string;
+  defaultPath: string;
+  dialogTitle: string;
+  buttonLabel: string;
 }
 
 interface BrowserBookmarkPayload {
@@ -7907,6 +7923,33 @@ function workspaceDirectoryPath(workspaceId: string) {
   return path.join(runtimeWorkspaceRoot(), workspaceId);
 }
 
+function resolveWorkspaceDownloadTargetPath(
+  workspaceId: string,
+  filename: string,
+): string {
+  const downloadsDir = path.join(
+    workspaceDirectoryPath(workspaceId),
+    "Downloads",
+  );
+  mkdirSync(downloadsDir, { recursive: true });
+
+  const sanitizedFilename = sanitizeAttachmentName(filename || "download");
+  const parsed = path.parse(sanitizedFilename);
+  const basename = parsed.name || "download";
+  const extension = parsed.ext || "";
+
+  let candidate = `${basename}${extension}`;
+  let candidatePath = path.join(downloadsDir, candidate);
+  let index = 2;
+  while (existsSync(candidatePath)) {
+    candidate = `${basename}-${index}${extension}`;
+    candidatePath = path.join(downloadsDir, candidate);
+    index += 1;
+  }
+
+  return candidatePath;
+}
+
 function sanitizeAttachmentName(name: string): string {
   const basename = path.basename(name || "").trim();
   const sanitized = basename
@@ -10614,6 +10657,7 @@ function createBrowserWorkspaceState(
     downloads: [],
     history: [],
     downloadTrackingRegistered: false,
+    pendingDownloadOverrides: [],
   };
 }
 
@@ -10933,6 +10977,35 @@ function isPathWithinRoot(rootPath: string, targetPath: string): boolean {
   );
 }
 
+function shouldAutoRenameBookmarkLabel(
+  bookmark: FileBookmarkPayload,
+  previousTargetPath: string,
+): boolean {
+  return (
+    bookmark.label === path.basename(previousTargetPath) ||
+    bookmark.label === previousTargetPath
+  );
+}
+
+function isSameOrDescendantPath(rootPath: string, targetPath: string): boolean {
+  const relativePath = path.relative(rootPath, targetPath);
+  return (
+    relativePath === "" ||
+    (!relativePath.startsWith("..") && !path.isAbsolute(relativePath))
+  );
+}
+
+async function persistUpdatedFileBookmarks(
+  nextBookmarks: FileBookmarkPayload[],
+): Promise<void> {
+  if (nextBookmarks === fileBookmarks) {
+    return;
+  }
+  fileBookmarks = nextBookmarks;
+  emitFileBookmarksState();
+  await persistFileBookmarks();
+}
+
 async function resolveWorkspaceScopedExplorerPath(
   targetPath?: string | null,
   workspaceId?: string | null,
@@ -10969,6 +11042,136 @@ async function resolveWorkspaceScopedExplorerPath(
     absolutePath: resolvedTargetPath,
     workspaceRoot,
   };
+}
+
+async function renameExplorerPath(
+  targetPath: string,
+  nextName: string,
+  workspaceId?: string | null,
+): Promise<FileSystemMutationPayload> {
+  const trimmedName = nextName.trim();
+  if (!trimmedName) {
+    throw new Error("Name cannot be empty.");
+  }
+  if (
+    trimmedName === "." ||
+    trimmedName === ".." ||
+    trimmedName.includes("/") ||
+    trimmedName.includes("\\")
+  ) {
+    throw new Error("Name must not contain path separators.");
+  }
+
+  const { absolutePath, workspaceRoot } = await resolveWorkspaceScopedExplorerPath(
+    targetPath,
+    workspaceId,
+  );
+
+  if (
+    workspaceRoot &&
+    path.normalize(absolutePath) === path.normalize(workspaceRoot)
+  ) {
+    throw new Error("Workspace root cannot be renamed.");
+  }
+
+  const nextAbsolutePath = path.join(path.dirname(absolutePath), trimmedName);
+  if (path.normalize(nextAbsolutePath) === path.normalize(absolutePath)) {
+    return { absolutePath };
+  }
+
+  if (
+    workspaceRoot &&
+    !isPathWithinRoot(workspaceRoot, nextAbsolutePath)
+  ) {
+    throw new Error("Renamed path escapes workspace root.");
+  }
+
+  try {
+    await fs.access(nextAbsolutePath);
+    throw new Error(`A file or folder named "${trimmedName}" already exists.`);
+  } catch (cause) {
+    const code = cause && typeof cause === "object" && "code" in cause
+      ? String((cause as { code?: unknown }).code ?? "")
+      : "";
+    if (code && code !== "ENOENT") {
+      throw cause;
+    }
+  }
+
+  await fs.rename(absolutePath, nextAbsolutePath);
+
+  let didRewriteBookmarks = false;
+  const nextBookmarks = fileBookmarks.map((bookmark) => {
+    if (!isSameOrDescendantPath(absolutePath, bookmark.targetPath)) {
+      return bookmark;
+    }
+
+    const relativePath = path.relative(absolutePath, bookmark.targetPath);
+    const rewrittenTargetPath = relativePath
+      ? path.join(nextAbsolutePath, relativePath)
+      : nextAbsolutePath;
+    const rewrittenLabel =
+      relativePath === "" && shouldAutoRenameBookmarkLabel(bookmark, absolutePath)
+        ? path.basename(nextAbsolutePath)
+        : bookmark.label === bookmark.targetPath
+          ? rewrittenTargetPath
+          : bookmark.label;
+
+    if (
+      rewrittenTargetPath === bookmark.targetPath &&
+      rewrittenLabel === bookmark.label
+    ) {
+      return bookmark;
+    }
+
+    didRewriteBookmarks = true;
+    return {
+      ...bookmark,
+      targetPath: rewrittenTargetPath,
+      label: rewrittenLabel,
+    };
+  });
+
+  if (didRewriteBookmarks) {
+    await persistUpdatedFileBookmarks(nextBookmarks);
+  }
+
+  return {
+    absolutePath: nextAbsolutePath,
+  };
+}
+
+async function deleteExplorerPath(
+  targetPath: string,
+  workspaceId?: string | null,
+): Promise<{ deleted: boolean }> {
+  const { absolutePath, workspaceRoot } = await resolveWorkspaceScopedExplorerPath(
+    targetPath,
+    workspaceId,
+  );
+
+  if (
+    workspaceRoot &&
+    path.normalize(absolutePath) === path.normalize(workspaceRoot)
+  ) {
+    throw new Error("Workspace root cannot be deleted.");
+  }
+
+  const stat = await fs.stat(absolutePath);
+  if (stat.isDirectory()) {
+    await fs.rm(absolutePath, { recursive: true, force: false });
+  } else {
+    await fs.unlink(absolutePath);
+  }
+
+  const nextBookmarks = fileBookmarks.filter(
+    (bookmark) => !isSameOrDescendantPath(absolutePath, bookmark.targetPath),
+  );
+  if (nextBookmarks.length !== fileBookmarks.length) {
+    await persistUpdatedFileBookmarks(nextBookmarks);
+  }
+
+  return { deleted: true };
 }
 
 async function listDirectory(
@@ -11928,6 +12131,195 @@ function handleBrowserWindowOpenAsTab(
   void persistBrowserWorkspace(workspaceId);
 }
 
+function browserContextSuggestedFilename(context: ContextMenuParams): string {
+  const suggested = context.suggestedFilename.trim();
+  if (suggested) {
+    return sanitizeAttachmentName(suggested);
+  }
+
+  const candidateUrl = context.srcURL.trim() || context.linkURL.trim();
+  if (!candidateUrl) {
+    return context.mediaType === "image" ? "image" : "download";
+  }
+
+  try {
+    const parsed = new URL(candidateUrl);
+    const basename = path.basename(parsed.pathname).trim();
+    if (basename) {
+      return sanitizeAttachmentName(basename);
+    }
+  } catch {
+    // fall through to fallback names below
+  }
+
+  return context.mediaType === "image" ? "image" : "download";
+}
+
+function queueBrowserDownloadPrompt(
+  workspaceId: string,
+  targetUrl: string,
+  options: {
+    defaultFilename: string;
+    dialogTitle: string;
+    buttonLabel: string;
+  },
+) {
+  const workspace = browserWorkspaceFromMap(workspaceId);
+  if (!workspace) {
+    return;
+  }
+  workspace.pendingDownloadOverrides.push({
+    url: targetUrl.trim(),
+    defaultPath: path.join(
+      workspaceDirectoryPath(workspaceId),
+      "Downloads",
+      sanitizeAttachmentName(options.defaultFilename),
+    ),
+    dialogTitle: options.dialogTitle,
+    buttonLabel: options.buttonLabel,
+  });
+}
+
+function consumeBrowserDownloadOverride(
+  workspace: BrowserWorkspaceState,
+  targetUrl: string,
+): BrowserDownloadOverride | null {
+  const normalizedTargetUrl = targetUrl.trim();
+  const overrideIndex = workspace.pendingDownloadOverrides.findIndex(
+    (override) => override.url === normalizedTargetUrl,
+  );
+  if (overrideIndex < 0) {
+    return null;
+  }
+  const [override] = workspace.pendingDownloadOverrides.splice(overrideIndex, 1);
+  return override ?? null;
+}
+
+function showBrowserViewContextMenu(params: {
+  workspaceId: string;
+  view: BrowserView;
+  context: ContextMenuParams;
+}) {
+  const { workspaceId, view, context } = params;
+  const template: MenuItemConstructorOptions[] = [];
+  const selectionText = context.selectionText.trim();
+  const linkUrl = context.linkURL.trim();
+  const canGoBack = view.webContents.navigationHistory.canGoBack();
+  const canGoForward = view.webContents.navigationHistory.canGoForward();
+  const popupX = browserBounds.x + context.x;
+  const popupY = browserBounds.y + context.y;
+  const imageUrl = context.srcURL.trim();
+
+  if (linkUrl) {
+    template.push(
+      {
+        label: "Open Link in New Tab",
+        click: () => handleBrowserWindowOpenAsTab(workspaceId, linkUrl, "foreground-tab"),
+      },
+      {
+        label: "Open Link Externally",
+        click: () => {
+          void shell.openExternal(linkUrl);
+        },
+      },
+      {
+        label: "Copy Link Address",
+        click: () => {
+          clipboard.writeText(linkUrl);
+        },
+      },
+      { type: "separator" },
+    );
+  }
+
+  if (context.mediaType === "image" && imageUrl) {
+    template.push(
+      {
+        label: "Open Image in New Tab",
+        click: () =>
+          handleBrowserWindowOpenAsTab(workspaceId, imageUrl, "foreground-tab"),
+      },
+      {
+        label: "Copy Image Address",
+        click: () => {
+          clipboard.writeText(imageUrl);
+        },
+      },
+      {
+        label: "Save Image As...",
+        click: () => {
+          queueBrowserDownloadPrompt(workspaceId, imageUrl, {
+            defaultFilename: browserContextSuggestedFilename(context),
+            dialogTitle: "Save Image As",
+            buttonLabel: "Save Image",
+          });
+          void view.webContents.downloadURL(imageUrl);
+        },
+      },
+      { type: "separator" },
+    );
+  }
+
+  if (context.isEditable) {
+    template.push(
+      { label: "Undo", role: "undo", enabled: context.editFlags.canUndo },
+      { label: "Redo", role: "redo", enabled: context.editFlags.canRedo },
+      { type: "separator" },
+      { label: "Cut", role: "cut", enabled: context.editFlags.canCut },
+      { label: "Copy", role: "copy", enabled: context.editFlags.canCopy },
+      { label: "Paste", role: "paste", enabled: context.editFlags.canPaste },
+      {
+        label: "Select All",
+        role: "selectAll",
+        enabled: context.editFlags.canSelectAll,
+      },
+    );
+  } else if (selectionText) {
+    template.push(
+      { label: "Copy", role: "copy", enabled: context.editFlags.canCopy },
+      {
+        label: "Select All",
+        role: "selectAll",
+        enabled: context.editFlags.canSelectAll,
+      },
+    );
+  } else {
+    template.push(
+      {
+        label: "Back",
+        enabled: canGoBack,
+        click: () => view.webContents.navigationHistory.goBack(),
+      },
+      {
+        label: "Forward",
+        enabled: canGoForward,
+        click: () => view.webContents.navigationHistory.goForward(),
+      },
+      {
+        label: "Reload",
+        click: () => view.webContents.reload(),
+      },
+      {
+        label: "Select All",
+        role: "selectAll",
+        enabled: context.editFlags.canSelectAll,
+      },
+    );
+  }
+
+  if (template.length === 0) {
+    return;
+  }
+
+  Menu.buildFromTemplate(template).popup({
+    window: mainWindow ?? undefined,
+    frame: context.frame ?? undefined,
+    x: popupX,
+    y: popupY,
+    sourceType: context.menuSourceType,
+  });
+}
+
 function createBrowserTab(
   workspaceId: string,
   options: {
@@ -12062,6 +12454,14 @@ function createBrowserTab(
     syncBrowserState(workspaceId, tabId);
   });
 
+  view.webContents.on("context-menu", (_event, params) => {
+    showBrowserViewContextMenu({
+      workspaceId,
+      view,
+      context: params,
+    });
+  });
+
   view.webContents.on(
     "did-fail-load",
     (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -12122,14 +12522,32 @@ function ensureBrowserWorkspaceDownloadTracking(
 
     const createdAt = new Date().toISOString();
     const downloadId = `download-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const savePath = path.join(app.getPath("downloads"), item.getFilename());
-    item.setSavePath(savePath);
+    const override = consumeBrowserDownloadOverride(
+      currentWorkspace,
+      item.getURL(),
+    );
+    const savePath = override
+      ? ""
+      : resolveWorkspaceDownloadTargetPath(
+          currentWorkspace.workspaceId,
+          item.getFilename(),
+        );
+    if (override) {
+      item.setSaveDialogOptions({
+        title: override.dialogTitle,
+        buttonLabel: override.buttonLabel,
+        defaultPath: override.defaultPath,
+        properties: ["showOverwriteConfirmation"],
+      });
+    } else {
+      item.setSavePath(savePath);
+    }
 
     const payload: BrowserDownloadPayload = {
       id: downloadId,
       url: item.getURL(),
       filename: item.getFilename(),
-      targetPath: savePath,
+      targetPath: item.getSavePath() || savePath,
       status: "progressing",
       receivedBytes: 0,
       totalBytes: item.getTotalBytes(),
@@ -12159,6 +12577,7 @@ function ensureBrowserWorkspaceDownloadTracking(
     item.on("updated", (_updatedEvent, state) => {
       updateDownload({
         status: state === "interrupted" ? "interrupted" : "progressing",
+        targetPath: item.getSavePath() || "",
         receivedBytes: item.getReceivedBytes(),
         totalBytes: item.getTotalBytes(),
       });
@@ -12173,6 +12592,7 @@ function ensureBrowserWorkspaceDownloadTracking(
             : "interrupted";
       updateDownload({
         status: nextStatus,
+        targetPath: item.getSavePath() || "",
         receivedBytes: item.getReceivedBytes(),
         totalBytes: item.getTotalBytes(),
         completedAt:
@@ -13612,6 +14032,22 @@ app.whenReady().then(async () => {
       content: string,
       workspaceId?: string | null,
     ) => writeTextFile(targetPath, content, workspaceId),
+  );
+  handleTrustedIpc(
+    "fs:renamePath",
+    ["main"],
+    async (
+      _event,
+      targetPath: string,
+      nextName: string,
+      workspaceId?: string | null,
+    ) => renameExplorerPath(targetPath, nextName, workspaceId),
+  );
+  handleTrustedIpc(
+    "fs:deletePath",
+    ["main"],
+    async (_event, targetPath: string, workspaceId?: string | null) =>
+      deleteExplorerPath(targetPath, workspaceId),
   );
   handleTrustedIpc("fs:getBookmarks", ["main"], () => fileBookmarks);
   handleTrustedIpc(
