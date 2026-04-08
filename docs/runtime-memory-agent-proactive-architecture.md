@@ -214,6 +214,21 @@ Relevant files:
 - `runtime/api-server/src/user-memory-proposals.ts`
 - `runtime/api-server/src/ts-runner.ts`
 
+### 6. Planned recall indexing direction
+
+One future direction under consideration is a hybrid `sqlite-vec` retrieval index for recall.
+
+The intended shape is:
+- markdown memory files remain the content source of truth
+- `memory_entries` remain the metadata/governance source of truth
+- vector rows are derived/indexed data only
+- vector search would be used to narrow recall candidates
+- final recalled content would still be read from markdown leaves and assembled by the recall workflow
+
+Important non-goal:
+- this is not intended to replace post-run durable-memory extraction
+- it is intended to improve the recall stage
+
 ## Agent Runtime and Resume
 
 ### 1. Terminal semantics

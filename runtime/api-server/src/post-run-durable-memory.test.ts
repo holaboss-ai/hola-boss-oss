@@ -225,6 +225,60 @@ test("sample completed turn writes continuity immediately and durable memory thr
   store.close();
 });
 
+test("queued durable memory writeback skips empty index generation when no durable memories are found", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-post-run-durable-noop-");
+  seedWorkspace(store);
+  store.insertSessionMessage({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    role: "user",
+    text: "Please keep your responses concise.",
+    messageId: "user-1",
+    createdAt: "2026-04-02T12:00:00.000Z",
+  });
+
+  const turnResult = store.upsertTurnResult({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    startedAt: "2026-04-02T12:00:00.000Z",
+    completedAt: "2026-04-02T12:00:05.000Z",
+    status: "completed",
+    stopReason: "ok",
+    assistantText: "Done.",
+  });
+
+  const updatedTurnResult = await writeTurnContinuity({
+    store,
+    memoryService,
+    turnResult,
+  });
+  const queued = enqueueDurableMemoryWritebackJob({
+    store,
+    workspaceId: updatedTurnResult.workspaceId,
+    sessionId: updatedTurnResult.sessionId,
+    inputId: updatedTurnResult.inputId,
+    instruction: "Remember the durable workspace rules from this turn.",
+  });
+
+  await processDurableMemoryWritebackJob({
+    store,
+    record: queued,
+    memoryService,
+  });
+
+  const captured = await memoryService.capture({ workspace_id: "workspace-1" });
+  const files = captured.files as Record<string, string>;
+
+  assert.equal(files["workspace/workspace-1/MEMORY.md"], undefined);
+  assert.equal(files["identity/MEMORY.md"], undefined);
+  assert.equal(files["preference/MEMORY.md"], undefined);
+  assert.equal(files["MEMORY.md"], undefined);
+  assert.deepEqual(store.listMemoryEntries({ status: "active" }), []);
+
+  store.close();
+});
+
 test("post-run durable memory worker marks claimed jobs done after successful execution", async () => {
   const { store, memoryService } = makeRuntimeState("hb-post-run-durable-worker-");
   const queued = store.enqueuePostRunJob({
