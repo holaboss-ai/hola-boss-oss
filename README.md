@@ -24,6 +24,8 @@
 
 Holaboss enables you to build AI workspaces that go beyond one-off task execution. Each workspace packages instructions, tools, apps, memory, and runtime state for sustained long-horizon operation. You can manage multiple workspaces in parallel, and because workspaces and workspace templates are portable, they can be packaged, shared, resumed, and reused across the Holaboss ecosystem.
 
+
+
 ## Marketplace Experience
 
 <p align="center">
@@ -37,6 +39,14 @@ Holaboss enables you to build AI workspaces that go beyond one-off task executio
 <p align="center">
   <img src="docs/images/desktop-workspace.png" alt="Holaboss desktop workspace screenshot" width="1280" />
 </p>
+
+## Star the Repository
+
+<p align="center">
+  <img src="docs/images/star-the-repo.gif" alt="Animated preview from the Holaboss star-the-repo video" width="1280" />
+</p>
+
+<p align="center"><strong>If Holaboss is useful or interesting, a GitHub Star would be greatly appreciated.</strong></p>
 
 ## Table of Contents
 

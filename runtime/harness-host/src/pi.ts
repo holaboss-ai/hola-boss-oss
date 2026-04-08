@@ -73,7 +73,24 @@ const PI_MAX_INLINE_TEXT_BYTES = 128 * 1024;
 const PI_MAX_EXTRACTED_TEXT_CHARS = 120_000;
 const PI_MCP_DISCOVERY_RETRY_INTERVAL_MS = 250;
 const PI_MCP_DISCOVERY_MAX_WAIT_MS = 10000;
+const PI_TODO_STATE_DIR = "todos";
+const PI_TODO_STATE_VERSION = 1;
+const PI_TODO_STATUSES = ["pending", "in_progress", "completed"] as const;
 const require = createRequire(import.meta.url);
+
+type PiTodoStatus = (typeof PI_TODO_STATUSES)[number];
+
+interface PiTodoItem {
+  content: string;
+  status: PiTodoStatus;
+}
+
+interface PiTodoState {
+  version: number;
+  session_id: string;
+  updated_at: string | null;
+  todos: PiTodoItem[];
+}
 
 const PI_TEXT_ATTACHMENT_MIME_TYPES = new Set([
   "application/json",
@@ -701,6 +718,254 @@ function optionalTrimmedString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+function sanitizePiStateSegment(value: string): string {
+  const normalized = value.trim().replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  return normalized || "default";
+}
+
+function resolvePiTodoStatePath(stateDir: string, sessionId: string): string {
+  return path.join(stateDir, PI_TODO_STATE_DIR, `${sanitizePiStateSegment(sessionId)}.json`);
+}
+
+function emptyPiTodoState(sessionId: string): PiTodoState {
+  return {
+    version: PI_TODO_STATE_VERSION,
+    session_id: sessionId,
+    updated_at: null,
+    todos: [],
+  };
+}
+
+function normalizePiTodoStatus(value: unknown): PiTodoStatus | null {
+  const normalized = optionalTrimmedString(value)?.toLowerCase().replace(/[\s-]+/g, "_") ?? "";
+  switch (normalized) {
+    case "pending":
+    case "in_progress":
+    case "completed":
+      return normalized;
+    default:
+      return null;
+  }
+}
+
+function normalizePiTodoItem(value: unknown): PiTodoItem | null {
+  if (typeof value === "string") {
+    const content = optionalTrimmedString(value);
+    return content ? { content, status: "pending" } : null;
+  }
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const content = firstNonEmptyString(value.content, value.text, value.task, value.title);
+  if (!content) {
+    return null;
+  }
+
+  const status =
+    normalizePiTodoStatus(value.status) ??
+    (typeof value.done === "boolean" ? (value.done ? "completed" : "pending") : null) ??
+    "pending";
+  return { content, status };
+}
+
+function readPiTodoState(stateDir: string, sessionId: string): PiTodoState {
+  const statePath = resolvePiTodoStatePath(stateDir, sessionId);
+  let raw: string;
+  try {
+    raw = fs.readFileSync(statePath, "utf8");
+  } catch {
+    return emptyPiTodoState(sessionId);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return emptyPiTodoState(sessionId);
+  }
+  if (!isRecord(parsed)) {
+    return emptyPiTodoState(sessionId);
+  }
+
+  return {
+    version:
+      typeof parsed.version === "number" && Number.isFinite(parsed.version)
+        ? parsed.version
+        : PI_TODO_STATE_VERSION,
+    session_id: firstNonEmptyString(parsed.session_id, sessionId) ?? sessionId,
+    updated_at: optionalTrimmedString(parsed.updated_at) ?? null,
+    todos: Array.isArray(parsed.todos)
+      ? parsed.todos.map((item) => normalizePiTodoItem(item)).filter((item): item is PiTodoItem => Boolean(item))
+      : [],
+  };
+}
+
+function writePiTodoState(params: { stateDir: string; sessionId: string; todos: PiTodoItem[] }): PiTodoState {
+  const statePath = resolvePiTodoStatePath(params.stateDir, params.sessionId);
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
+  const nextState: PiTodoState = {
+    version: PI_TODO_STATE_VERSION,
+    session_id: params.sessionId,
+    updated_at: new Date().toISOString(),
+    todos: params.todos,
+  };
+  const tempPath = `${statePath}.tmp`;
+  fs.writeFileSync(tempPath, `${JSON.stringify(nextState, null, 2)}\n`, "utf8");
+  fs.renameSync(tempPath, statePath);
+  return nextState;
+}
+
+function todoItemsFromWriteParams(toolParams: unknown): unknown[] | null {
+  if (!isRecord(toolParams)) {
+    return null;
+  }
+  if (Array.isArray(toolParams.todos)) {
+    return toolParams.todos;
+  }
+  if (Array.isArray(toolParams.items)) {
+    return toolParams.items;
+  }
+  if (firstNonEmptyString(toolParams.content, toolParams.text, toolParams.task, toolParams.title)) {
+    return [toolParams];
+  }
+  return null;
+}
+
+function parsePiTodoWriteTodos(toolParams: unknown): PiTodoItem[] {
+  const rawTodos = todoItemsFromWriteParams(toolParams);
+  if (!rawTodos) {
+    throw new Error("Todo Write requires a `todos` array.");
+  }
+  if (rawTodos.length === 0) {
+    return [];
+  }
+  const todos = rawTodos.map((item) => normalizePiTodoItem(item)).filter((item): item is PiTodoItem => Boolean(item));
+  if (todos.length === 0) {
+    throw new Error("Todo Write requires at least one non-empty todo item.");
+  }
+  return todos;
+}
+
+function formatPiTodoListText(todos: PiTodoItem[]): string {
+  if (todos.length === 0) {
+    return "No todo items are currently recorded for this session.";
+  }
+  const header = `Current session todo list (${todos.length} item${todos.length === 1 ? "" : "s"}):`;
+  const lines = todos.map((todo, index) => `${index + 1}. [${todo.status}] ${todo.content}`);
+  return [header, ...lines].join("\n");
+}
+
+function todoReadParametersSchema(): Record<string, unknown> {
+  return {
+    type: "object",
+    properties: {},
+    additionalProperties: false,
+  };
+}
+
+function todoWriteParametersSchema(): Record<string, unknown> {
+  return {
+    type: "object",
+    properties: {
+      todos: {
+        type: "array",
+        description:
+          "Replace the current session todo list with this full list. Use an empty array to clear the current todo list.",
+        items: {
+          type: "object",
+          properties: {
+            content: {
+              type: "string",
+              description: "Short standalone task description.",
+            },
+            status: {
+              type: "string",
+              enum: [...PI_TODO_STATUSES],
+              description: "Todo status.",
+            },
+          },
+          required: ["content", "status"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["todos"],
+    additionalProperties: false,
+  };
+}
+
+export function createPiTodoToolDefinitions(params: { stateDir: string; sessionId: string }): ToolDefinition[] {
+  const readDefinition: ToolDefinition = {
+    name: "todoread",
+    label: "Todo Read",
+    description: "Read the current working todo list for this session.",
+    parameters: todoReadParametersSchema() as never,
+    promptSnippet: "todoread: Read the current working todo list for this session.",
+    promptGuidelines: [
+      "Use todoread before changing an existing plan when current todo state may matter.",
+    ],
+    execute: async (_toolCallId, _toolParams, signal) => {
+      if (signal?.aborted) {
+        throw new Error("Todo Read aborted before execution");
+      }
+      const state = readPiTodoState(params.stateDir, params.sessionId);
+      return {
+        content: [{ type: "text", text: formatPiTodoListText(state.todos) }],
+        details: {
+          invocation_type: "todo_read",
+          session_id: state.session_id,
+          updated_at: state.updated_at,
+          todo_count: state.todos.length,
+          todos: state.todos,
+        },
+      };
+    },
+  };
+
+  const writeDefinition: ToolDefinition = {
+    name: "todowrite",
+    label: "Todo Write",
+    description: "Replace the current working todo list for this session.",
+    parameters: todoWriteParametersSchema() as never,
+    promptSnippet: "todowrite: Replace the current working todo list for this session.",
+    promptGuidelines: [
+      "Use todowrite for complex or long-running tasks that benefit from an explicit checklist.",
+      "When updating todos, write the full current list with statuses instead of appending fragments.",
+      "Prefer statuses pending, in_progress, and completed.",
+    ],
+    execute: async (_toolCallId, toolParams, signal) => {
+      if (signal?.aborted) {
+        throw new Error("Todo Write aborted before execution");
+      }
+      const previousState = readPiTodoState(params.stateDir, params.sessionId);
+      const nextTodos = parsePiTodoWriteTodos(toolParams);
+      const nextState = writePiTodoState({
+        stateDir: params.stateDir,
+        sessionId: params.sessionId,
+        todos: nextTodos,
+      });
+      const summary =
+        nextState.todos.length === 0
+          ? "Cleared the current session todo list."
+          : `Saved ${nextState.todos.length} todo item${nextState.todos.length === 1 ? "" : "s"}.`;
+      return {
+        content: [{ type: "text", text: `${summary}\n\n${formatPiTodoListText(nextState.todos)}` }],
+        details: {
+          invocation_type: "todo_write",
+          session_id: nextState.session_id,
+          updated_at: nextState.updated_at,
+          previous_todo_count: previousState.todos.length,
+          todo_count: nextState.todos.length,
+          todos: nextState.todos,
+        },
+      };
+    },
+  };
+
+  return [readDefinition, writeDefinition];
 }
 
 function normalizedWorkspaceDir(workspaceDir: string): { resolved: string; real: string } {
@@ -2125,6 +2390,10 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
   const skillDirs = resolvePiSkillDirs(request);
   const loadedSkills = loadPiSkills(skillDirs);
   const skillMetadataByAlias = buildPiSkillMetadataByAlias(loadedSkills.skills);
+  const todoTools = createPiTodoToolDefinitions({
+    stateDir,
+    sessionId: request.session_id,
+  });
   const browserTools = request.browser_tools_enabled
     ? await resolvePiDesktopBrowserToolDefinitions({
         runtimeApiBaseUrl: request.runtime_api_base_url,
@@ -2163,7 +2432,13 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     createFindTool(request.workspace_dir),
     createLsTool(request.workspace_dir),
   ];
-  const nonSkillCustomTools: ToolDefinition[] = [...browserTools, ...runtimeTools, ...webSearchTools, ...mcpToolset.customTools];
+  const nonSkillCustomTools: ToolDefinition[] = [
+    ...todoTools,
+    ...browserTools,
+    ...runtimeTools,
+    ...webSearchTools,
+    ...mcpToolset.customTools,
+  ];
   const availableToolNames = [...baseTools, ...nonSkillCustomTools].map((tool) => tool.name);
   const availableCommandIds = workspaceCommandIdsFromRunStartedPayload(request.run_started_payload);
   const workspaceBoundaryPolicy = createWorkspaceBoundaryPolicy(
