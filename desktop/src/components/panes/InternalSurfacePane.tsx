@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { FileText, FileWarning, Loader2 } from "lucide-react";
+import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 type InternalSurfaceType = "document" | "preview" | "file" | "event";
@@ -9,6 +10,12 @@ interface InternalSurfacePaneProps {
   resourceId?: string | null;
   htmlContent?: string | null;
 }
+
+const MARKDOWN_PREVIEW_EXTENSIONS = new Set([
+  ".md",
+  ".mdx",
+  ".markdown",
+]);
 
 function resolveWorkspaceTargetPath(workspaceRoot: string, resourceId: string): string {
   const trimmedRoot = workspaceRoot.trim();
@@ -25,12 +32,24 @@ function resolveWorkspaceTargetPath(workspaceRoot: string, resourceId: string): 
   return `${normalizedRoot}${separator}${normalizedResource}`;
 }
 
+function isMarkdownPreviewPayload(
+  preview: Pick<FilePreviewPayload, "kind" | "extension"> | null | undefined,
+): boolean {
+  if (!preview || preview.kind !== "text") {
+    return false;
+  }
+  return MARKDOWN_PREVIEW_EXTENSIONS.has(preview.extension.trim().toLowerCase());
+}
+
 export function InternalSurfacePane({ surface, resourceId, htmlContent }: InternalSurfacePaneProps) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const [preview, setPreview] = useState<FilePreviewPayload | null>(null);
   const [activeTableSheetIndex, setActiveTableSheetIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const openPreviewLink = useCallback((url: string) => {
+    void window.electronAPI.ui.openExternalUrl(url);
+  }, []);
 
   useEffect(() => {
     if (typeof resourceId !== "string" || !resourceId || (surface !== "document" && surface !== "file")) {
@@ -127,6 +146,28 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
     }
 
     if (preview.kind === "text") {
+      if (isMarkdownPreviewPayload(preview)) {
+        return (
+          <div className="grid min-h-0 gap-3">
+            <MetadataRow label="Path" value={preview.absolutePath} />
+            <MetadataRow label="Modified" value={new Date(preview.modifiedAt).toLocaleString()} />
+            <div className="min-h-0 overflow-auto rounded-[18px] border border-border/35 bg-black/10 p-4">
+              {preview.content?.trim() ? (
+                <SimpleMarkdown
+                  className="chat-markdown text-sm text-foreground/90"
+                  onLinkClick={openPreviewLink}
+                >
+                  {preview.content}
+                </SimpleMarkdown>
+              ) : (
+                <div className="grid min-h-[160px] place-items-center text-[12px] text-muted-foreground">
+                  Nothing to preview yet.
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
       return (
         <div className="grid min-h-0 gap-3">
           <MetadataRow label="Path" value={preview.absolutePath} />
@@ -240,7 +281,7 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
         detail={preview.unsupportedReason || "This file type is not yet previewable in the desktop output viewer."}
       />
     );
-  }, [activeTableSheetIndex, errorMessage, htmlContent, isLoading, preview, resourceId, surface]);
+  }, [activeTableSheetIndex, errorMessage, htmlContent, isLoading, openPreviewLink, preview, resourceId, surface]);
 
   return (
     <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">

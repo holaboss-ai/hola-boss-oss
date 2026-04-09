@@ -34,7 +34,6 @@ test("runtime queue worker claims queued inputs and executes them in claim order
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const low = store.enqueueInput({
     workspaceId: "workspace-1",
@@ -80,7 +79,6 @@ test("runtime queue worker executes different sessions concurrently while preser
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   store.enqueueInput({
     workspaceId: "workspace-1",
@@ -135,7 +133,6 @@ test("runtime queue worker marks claimed input failed when delegated execution r
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   store.ensureRuntimeState({
     workspaceId: "workspace-1",
@@ -187,7 +184,6 @@ test("runtime queue worker can pause a queued session input before it is claimed
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: "workspace-1",
@@ -256,7 +252,6 @@ test("runtime queue worker recovers expired claimed input before processing fres
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const stale = store.enqueueInput({
     workspaceId: "workspace-1",
@@ -346,7 +341,6 @@ test("queue route wakes configured queue worker", async () => {
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
 
   let wakeCalls = 0;

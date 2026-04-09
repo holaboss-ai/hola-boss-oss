@@ -9,13 +9,14 @@ test("operations drawer inbox surfaces lifecycle status and trigger feedback", a
 
   assert.match(source, /ProactiveLifecyclePanel/);
   assert.match(source, /proposalStatusMessage \?/);
-  assert.match(source, /label="Sub-Sessions"/);
+  assert.match(source, /label="Sessions"/);
+  assert.match(source, />\s*New Session\s*</);
   assert.match(source, /isLoading=\{isLoadingProactiveStatus\}/);
   assert.doesNotMatch(source, /label="Running"/);
   assert.doesNotMatch(source, /InboxHeaderActions/);
 });
 
-test("operations drawer sub-session rows expose pointer cursor affordance", async () => {
+test("operations drawer session rows expose pointer cursor affordance", async () => {
   const source = await readFile(OPERATIONS_DRAWER_PATH, "utf8");
 
   assert.match(

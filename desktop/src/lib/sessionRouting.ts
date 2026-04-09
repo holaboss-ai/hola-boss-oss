@@ -1,5 +1,10 @@
 const ONBOARDING_ACTIVE_STATUSES = new Set(["pending", "awaiting_confirmation", "in_progress"]);
 
+function isPrimaryChatSessionKind(kind: string | null | undefined): boolean {
+  const normalized = (kind || "").trim().toLowerCase();
+  return !normalized || normalized === "workspace_session";
+}
+
 export function sessionSelectionUsesOnboarding(workspace: WorkspaceRecordPayload | null): boolean {
   if (!workspace) {
     return false;
@@ -14,10 +19,11 @@ export function sessionSelectionUsesOnboarding(workspace: WorkspaceRecordPayload
 
 export function preferredSessionId(
   workspace: WorkspaceRecordPayload | null,
-  runtimeStates: SessionRuntimeRecordPayload[]
+  runtimeStates: SessionRuntimeRecordPayload[],
+  sessions: AgentSessionRecordPayload[] = []
 ): string | null {
   if (!workspace) {
-    return runtimeStates[0]?.session_id ?? null;
+    return runtimeStates[0]?.session_id ?? sessions[0]?.session_id ?? null;
   }
   if (sessionSelectionUsesOnboarding(workspace)) {
     const onboardingSessionId = (workspace.onboarding_session_id || "").trim();
@@ -26,13 +32,27 @@ export function preferredSessionId(
     }
   }
 
-  const mainSessionId = (workspace.main_session_id || "").trim();
-  if (mainSessionId) {
-    return mainSessionId;
+  const onboardingSessionId = (workspace.onboarding_session_id || "").trim();
+  const preferredPrimary = sessions.find((session) => {
+    if (session.session_id === onboardingSessionId) {
+      return false;
+    }
+    return isPrimaryChatSessionKind(session.kind);
+  });
+  if (preferredPrimary) {
+    return preferredPrimary.session_id;
   }
 
-  if (runtimeStates.length > 0) {
-    return runtimeStates[0]?.session_id ?? null;
+  const runtimeFallback = runtimeStates.find(
+    (state) => state.session_id !== onboardingSessionId,
+  );
+  if (runtimeFallback) {
+    return runtimeFallback.session_id;
   }
-  return null;
+
+  const sessionFallback =
+    sessions.find((session) => session.session_id !== onboardingSessionId) ??
+    sessions[0] ??
+    null;
+  return sessionFallback?.session_id ?? null;
 }

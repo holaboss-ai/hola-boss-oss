@@ -49,11 +49,11 @@ interface OperationsDrawerProps {
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
   onOpenRunningSession: (sessionId: string) => void;
+  onCreateSession: () => void;
   activeRunningSessionId: string | null;
   hasWorkspace: boolean;
   selectedWorkspaceId: string | null;
   selectedWorkspaceName: string | null;
-  mainSessionId: string | null;
 }
 
 interface RunningSessionEntry {
@@ -89,11 +89,11 @@ export function OperationsDrawer({
   onAcceptProposal,
   onDismissProposal,
   onOpenRunningSession,
+  onCreateSession,
   activeRunningSessionId,
   hasWorkspace,
   selectedWorkspaceId,
   selectedWorkspaceName,
-  mainSessionId,
 }: OperationsDrawerProps) {
   const {
     data: authSession,
@@ -141,20 +141,8 @@ export function OperationsDrawer({
             session,
           ]),
         );
-        const normalizedMainSessionId = (mainSessionId || "").trim();
         const nextEntries = runtimeStatesResponse.items
-          .filter((state) => {
-            if (
-              normalizedMainSessionId &&
-              state.session_id === normalizedMainSessionId
-            ) {
-              return false;
-            }
-            const sessionKind = (sessionById.get(state.session_id)?.kind || "")
-              .trim()
-              .toLowerCase();
-            return sessionKind !== "main";
-          })
+          .filter((state) => Boolean(state.session_id.trim()))
           .map((state) => {
             const session = sessionById.get(state.session_id);
             return {
@@ -192,7 +180,7 @@ export function OperationsDrawer({
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [activeTab, mainSessionId, selectedWorkspaceId]);
+  }, [activeTab, selectedWorkspaceId]);
 
   return (
     <aside className="theme-shell neon-border relative flex h-full min-h-0 min-w-[296px] max-w-[336px] flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
@@ -207,7 +195,7 @@ export function OperationsDrawer({
           <DrawerTabButton
             active={activeTab === "running"}
             icon={<Clock3 size={14} />}
-            label="Sub-Sessions"
+            label="Sessions"
             onClick={() => onTabChange("running")}
           />
         </div>
@@ -264,6 +252,7 @@ export function OperationsDrawer({
             sessions={runningSessions}
             errorMessage={runningSessionsError}
             onOpenSession={onOpenRunningSession}
+            onCreateSession={onCreateSession}
             activeSessionId={activeRunningSessionId}
           />
         ) : null}
@@ -305,9 +294,6 @@ function defaultSessionTitle(
   }
   if (kind === "task_proposal") {
     return "Task proposal run";
-  }
-  if (kind === "main") {
-    return "Main session";
   }
   return `Session ${sessionId.slice(0, 8)}`;
 }
@@ -644,6 +630,7 @@ function RunningPanel({
   sessions,
   errorMessage,
   onOpenSession,
+  onCreateSession,
   activeSessionId,
 }: {
   hasWorkspace: boolean;
@@ -651,15 +638,31 @@ function RunningPanel({
   sessions: RunningSessionEntry[];
   errorMessage: string;
   onOpenSession: (sessionId: string) => void;
+  onCreateSession: () => void;
   activeSessionId: string | null;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/40 px-4 py-3">
+        <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+          Sessions
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={onCreateSession}
+          disabled={!hasWorkspace}
+          className="rounded-full border border-border/55 px-3 text-xs"
+        >
+          <span>New Session</span>
+        </Button>
+      </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {!hasWorkspace ? (
           <EmptyNotice
             icon={<FolderOpen size={24} strokeWidth={1.5} />}
-            message="Choose a workspace to inspect sub-sessions."
+            message="Choose a workspace to inspect sessions."
           />
         ) : errorMessage ? (
           <EmptyNotice
@@ -673,12 +676,12 @@ function RunningPanel({
             icon={
               <Loader2 size={24} strokeWidth={1.5} className="animate-spin" />
             }
-            message="Loading sub-sessions..."
+            message="Loading sessions..."
           />
         ) : sessions.length === 0 ? (
           <EmptyNotice
             icon={<Clock size={24} strokeWidth={1.5} />}
-            message="No sub-sessions."
+            message="No sessions yet."
           />
         ) : (
           <div className="divide-y divide-border/30">

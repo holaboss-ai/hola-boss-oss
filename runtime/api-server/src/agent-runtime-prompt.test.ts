@@ -32,7 +32,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
         tool_name: "lookup",
       },
     ],
-    sessionKind: "main",
+    sessionKind: "workspace_session",
     sessionMode: "code",
     harnessId: "pi",
     capabilityManifest,
@@ -136,7 +136,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     /Do not create skills for transient runtime state, one-off task details, or information that only belongs in session continuity\./
   );
   assert.match(prompt.systemPrompt, /Session policy:/);
-  assert.match(prompt.systemPrompt, /This is the main workspace session/i);
+  assert.match(prompt.systemPrompt, /This is a workspace session/i);
   assert.match(prompt.systemPrompt, /Capability policy for this run:/);
   assert.match(prompt.systemPrompt, /Workspace instructions from AGENTS\.md:/);
   assert.doesNotMatch(prompt.systemPrompt, /OpenCode MCP tool naming:/);
@@ -419,7 +419,7 @@ test("composeBaseAgentPrompt includes cronjob delivery routing guidance when cro
     extraTools: ["holaboss_cronjobs_create"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
-    sessionKind: "main",
+    sessionKind: "workspace_session",
     harnessId: "pi",
   });
 
@@ -428,7 +428,7 @@ test("composeBaseAgentPrompt includes cronjob delivery routing guidance when cro
     extraTools: ["holaboss_cronjobs_create"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
-    sessionKind: "main",
+    sessionKind: "workspace_session",
     sessionMode: "code",
     harnessId: "pi",
     capabilityManifest,
@@ -444,7 +444,7 @@ test("composeBaseAgentPrompt includes cronjob delivery routing guidance when cro
 test("composeBaseAgentPrompt requires proactive fallback when partial retrieval cannot satisfy required facts", () => {
   const capabilityManifest = buildAgentCapabilityManifest({
     harnessId: "pi",
-    sessionKind: "main",
+    sessionKind: "workspace_session",
     browserToolsAvailable: true,
     browserToolIds: ["browser_get_state"],
     defaultTools: ["read"],
@@ -458,7 +458,7 @@ test("composeBaseAgentPrompt requires proactive fallback when partial retrieval 
     extraTools: ["browser_get_state", "web_search"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
-    sessionKind: "main",
+    sessionKind: "workspace_session",
     sessionMode: "code",
     harnessId: "pi",
     capabilityManifest,

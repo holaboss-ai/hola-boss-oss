@@ -60,7 +60,6 @@ interface WorkspaceRecordPayload {
   name: string;
   status: string;
   harness: string | null;
-  main_session_id: string | null;
   error_message: string | null;
   onboarding_status: string;
   onboarding_session_id: string | null;

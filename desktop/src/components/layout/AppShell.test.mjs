@@ -212,10 +212,10 @@ test("app shell reloads proactive preference after workspace hydration completes
   assert.match(source, /\}, \[hasHydratedWorkspaceList, selectedWorkspaceId\]\);/);
 });
 
-test("app shell renames the running panel button to sub-sessions", async () => {
+test("app shell renames the running panel button to sessions", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /aria-label="Open sub-sessions panel"/);
+  assert.match(source, /aria-label="Open sessions panel"/);
   assert.doesNotMatch(source, /aria-label="Open running panel"/);
   assert.match(source, /lg:grid-cols-\[60px_minmax\(0,1fr\)_336px\]/);
 });
@@ -234,14 +234,25 @@ test("app shell can route new schedule creation into a prefilled workspace chat"
 
   assert.match(source, /const \[chatComposerPrefillRequest, setChatComposerPrefillRequest\] =\s*useState<ChatComposerPrefillRequest \| null>\(null\);/);
   assert.match(source, /const handleCreateScheduleInChat = useCallback\(\(\) => \{/);
-  assert.match(source, /const mainSessionId = \(selectedWorkspace\?\.main_session_id \|\| ""\)\.trim\(\);/);
   assert.match(source, /setActiveLeftRailItem\("space"\);/);
   assert.match(source, /setSpaceVisibility\(\(previous\) => \(\{\s*\.\.\.previous,\s*agent: true,\s*\}\)\);/);
   assert.match(source, /setAgentView\(\{ type: "chat" \}\);/);
   assert.match(source, /setChatSessionJumpRequest\(null\);/);
-  assert.match(source, /setChatSessionOpenRequest\(\(previous\) =>\s*mainSessionId\s*\?\s*\{\s*sessionId: mainSessionId,\s*requestKey: \(previous\?\.requestKey \?\? 0\) \+ 1,\s*\}\s*:\s*null,\s*\);/);
+  assert.match(source, /setChatSessionOpenRequest\(\(previous\) =>\s*activeChatSessionId\s*\?\s*\{\s*sessionId: activeChatSessionId,\s*requestKey: \(previous\?\.requestKey \?\? 0\) \+ 1,\s*\}\s*:\s*null,\s*\);/);
   assert.match(source, /setChatComposerPrefillRequest\(\(previous\) => \(\{\s*text: "Create a cronjob for ",\s*requestKey: \(previous\?\.requestKey \?\? 0\) \+ 1,\s*\}\)\);/);
   assert.match(source, /composerPrefillRequest=\{chatComposerPrefillRequest\}/);
   assert.match(source, /onComposerPrefillConsumed=\{handleChatComposerPrefillConsumed\}/);
   assert.match(source, /onCreateSchedule=\{handleCreateScheduleInChat\}/);
+});
+
+test("app shell can create and open a new session from the right panel", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /type ChatSessionOpenRequest = \{\s*sessionId: string;\s*requestKey: number;\s*mode\?: "session" \| "draft";\s*parentSessionId\?: string \| null;\s*\};/);
+  assert.match(source, /const handleCreateSession = useCallback\(\(\) => \{/);
+  assert.match(source, /setChatSessionOpenRequest\(\(previous\) => \(\{\s*sessionId: "",\s*mode: "draft",\s*parentSessionId: null,\s*requestKey: \(previous\?\.requestKey \?\? 0\) \+ 1,\s*\}\)\);/);
+  assert.match(source, /setChatFocusRequestKey\(\(current\) => current \+ 1\);/);
+  assert.doesNotMatch(source, /const \[isCreatingSession, setIsCreatingSession\] = useState\(false\);/);
+  assert.doesNotMatch(source, /window\.electronAPI\.workspace\.createAgentSession\(\{/);
+  assert.match(source, /onCreateSession=\{\(\) => void handleCreateSession\(\)\}/);
 });

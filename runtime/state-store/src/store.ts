@@ -14,7 +14,6 @@ export interface WorkspaceRecord {
   name: string;
   status: string;
   harness: string | null;
-  mainSessionId: string | null;
   errorMessage: string | null;
   onboardingStatus: string;
   onboardingSessionId: string | null;
@@ -407,7 +406,6 @@ export interface CreateWorkspaceParams {
   name: string;
   harness: string;
   status?: string;
-  mainSessionId?: string | null;
   onboardingStatus?: string;
   onboardingSessionId?: string | null;
   errorMessage?: string | null;
@@ -422,7 +420,6 @@ export interface RuntimeStateStoreOptions {
 
 type WorkspaceUpdateFields = Partial<{
   status: string | null;
-  mainSessionId: string | null;
   errorMessage: string | null;
   deletedAtUtc: string | null;
   onboardingStatus: string | null;
@@ -499,7 +496,6 @@ type WorkspaceRow = {
   name: string;
   status: string;
   harness: string | null;
-  main_session_id: string | null;
   error_message: string | null;
   onboarding_status: string;
   onboarding_session_id: string | null;
@@ -572,7 +568,7 @@ export class RuntimeStateStore {
     this.ensureWorkspaceMetadataReady();
     const rows = this.db()
       .prepare<[], WorkspaceRow>(`
-        SELECT id, workspace_path, name, status, harness, main_session_id, error_message,
+        SELECT id, workspace_path, name, status, harness, error_message,
                onboarding_status, onboarding_session_id, onboarding_completed_at,
                onboarding_completion_summary, onboarding_requested_at, onboarding_requested_by,
                created_at, updated_at, deleted_at_utc
@@ -592,7 +588,7 @@ export class RuntimeStateStore {
     this.ensureWorkspaceMetadataReady();
     const row = this.db()
       .prepare<[string], WorkspaceRow>(`
-        SELECT id, workspace_path, name, status, harness, main_session_id, error_message,
+        SELECT id, workspace_path, name, status, harness, error_message,
                onboarding_status, onboarding_session_id, onboarding_completed_at,
                onboarding_completion_summary, onboarding_requested_at, onboarding_requested_by,
                created_at, updated_at, deleted_at_utc
@@ -626,7 +622,6 @@ export class RuntimeStateStore {
       name: params.name,
       status: params.status ?? "provisioning",
       harness: params.harness,
-      mainSessionId: params.mainSessionId ?? null,
       errorMessage: params.errorMessage ?? null,
       onboardingStatus: params.onboardingStatus ?? "not_required",
       onboardingSessionId: params.onboardingSessionId ?? null,
@@ -666,9 +661,6 @@ export class RuntimeStateStore {
       switch (typedKey) {
         case "status":
           next.status = value as string;
-          break;
-        case "mainSessionId":
-          next.mainSessionId = value as string | null;
           break;
         case "errorMessage":
           next.errorMessage = value as string | null;
@@ -3455,7 +3447,6 @@ export class RuntimeStateStore {
           name TEXT NOT NULL,
           status TEXT NOT NULL,
           harness TEXT,
-          main_session_id TEXT,
           error_message TEXT,
           onboarding_status TEXT NOT NULL,
           onboarding_session_id TEXT,
@@ -4346,7 +4337,6 @@ export class RuntimeStateStore {
           name TEXT NOT NULL,
           status TEXT NOT NULL,
           harness TEXT,
-          main_session_id TEXT,
           error_message TEXT,
           onboarding_status TEXT NOT NULL,
           onboarding_session_id TEXT,
@@ -4382,7 +4372,6 @@ export class RuntimeStateStore {
               name TEXT NOT NULL,
               status TEXT NOT NULL,
               harness TEXT,
-              main_session_id TEXT,
               error_message TEXT,
               onboarding_status TEXT NOT NULL,
               onboarding_session_id TEXT,
@@ -4401,7 +4390,6 @@ export class RuntimeStateStore {
               name,
               status,
               harness,
-              main_session_id,
               error_message,
               onboarding_status,
               onboarding_session_id,
@@ -4419,7 +4407,6 @@ export class RuntimeStateStore {
               name,
               status,
               harness,
-              main_session_id,
               error_message,
               onboarding_status,
               onboarding_session_id,
@@ -4435,6 +4422,73 @@ export class RuntimeStateStore {
           DROP TABLE workspaces_legacy_no_path;
         `);
       }
+    }
+
+    const refreshedColumns = new Set<string>(
+      (db.prepare("PRAGMA table_info(workspaces)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+    if (refreshedColumns.has("main_session_id")) {
+      db.exec(`
+        ALTER TABLE workspaces RENAME TO workspaces_legacy_main_session;
+
+        CREATE TABLE workspaces (
+            id TEXT PRIMARY KEY,
+            workspace_path TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            status TEXT NOT NULL,
+            harness TEXT,
+            error_message TEXT,
+            onboarding_status TEXT NOT NULL,
+            onboarding_session_id TEXT,
+            onboarding_completed_at TEXT,
+            onboarding_completion_summary TEXT,
+            onboarding_requested_at TEXT,
+            onboarding_requested_by TEXT,
+            created_at TEXT,
+            updated_at TEXT,
+            deleted_at_utc TEXT
+        );
+
+        INSERT INTO workspaces (
+            id,
+            workspace_path,
+            name,
+            status,
+            harness,
+            error_message,
+            onboarding_status,
+            onboarding_session_id,
+            onboarding_completed_at,
+            onboarding_completion_summary,
+            onboarding_requested_at,
+            onboarding_requested_by,
+            created_at,
+            updated_at,
+            deleted_at_utc
+        )
+        SELECT
+            id,
+            workspace_path,
+            name,
+            status,
+            harness,
+            error_message,
+            onboarding_status,
+            onboarding_session_id,
+            onboarding_completed_at,
+            onboarding_completion_summary,
+            onboarding_requested_at,
+            onboarding_requested_by,
+            created_at,
+            updated_at,
+            deleted_at_utc
+        FROM workspaces_legacy_main_session;
+
+        DROP TABLE workspaces_legacy_main_session;
+
+        CREATE INDEX IF NOT EXISTS idx_workspaces_updated
+            ON workspaces (updated_at DESC, created_at DESC);
+      `);
     }
 
     this.migrateWorkspacesTable(db);
@@ -4501,7 +4555,6 @@ export class RuntimeStateStore {
       name: String(row.name),
       status: String(row.status),
       harness: row.harness == null ? null : String(row.harness),
-      mainSessionId: row.main_session_id == null ? null : String(row.main_session_id),
       errorMessage: row.error_message == null ? null : String(row.error_message),
       onboardingStatus: String(row.onboarding_status),
       onboardingSessionId: row.onboarding_session_id == null ? null : String(row.onboarding_session_id),
@@ -4522,7 +4575,6 @@ export class RuntimeStateStore {
       name: String(data.name),
       status: String(data.status),
       harness: data.harness == null ? null : String(data.harness),
-      mainSessionId: data.main_session_id == null ? null : String(data.main_session_id),
       errorMessage: data.error_message == null ? null : String(data.error_message),
       onboardingStatus: String(data.onboarding_status),
       onboardingSessionId: data.onboarding_session_id == null ? null : String(data.onboarding_session_id),
@@ -4551,17 +4603,16 @@ export class RuntimeStateStore {
   private upsertWorkspaceRow(record: WorkspaceRecord, workspacePath: string, db = this.db()): void {
     db.prepare(`
       INSERT INTO workspaces (
-          id, workspace_path, name, status, harness, main_session_id, error_message,
+          id, workspace_path, name, status, harness, error_message,
           onboarding_status, onboarding_session_id, onboarding_completed_at,
           onboarding_completion_summary, onboarding_requested_at, onboarding_requested_by,
           created_at, updated_at, deleted_at_utc
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
           workspace_path = excluded.workspace_path,
           name = excluded.name,
           status = excluded.status,
           harness = excluded.harness,
-          main_session_id = excluded.main_session_id,
           error_message = excluded.error_message,
           onboarding_status = excluded.onboarding_status,
           onboarding_session_id = excluded.onboarding_session_id,
@@ -4578,7 +4629,6 @@ export class RuntimeStateStore {
       record.name,
       record.status,
       record.harness,
-      record.mainSessionId,
       record.errorMessage,
       record.onboardingStatus,
       record.onboardingSessionId,
@@ -4645,7 +4695,6 @@ export class RuntimeStateStore {
       name: workspaceId,
       status: "active",
       harness: this.sandboxAgentHarness,
-      mainSessionId: null,
       errorMessage: null,
       onboardingStatus: "not_required",
       onboardingSessionId: null,

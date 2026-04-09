@@ -417,7 +417,7 @@ test("projectAgentRuntimeConfig omits workspace and recent-runtime layers when n
       session_id: "session-1",
       workspace_id: "workspace-1",
       input_id: "input-1",
-      session_kind: "main",
+      session_kind: "workspace_session",
       harness_id: "pi",
       browser_tools_available: false,
       browser_tool_ids: [],
@@ -452,7 +452,7 @@ test("projectAgentRuntimeConfig omits workspace and recent-runtime layers when n
     assert.equal(result.prompt_sections?.some((section) => section.id === "recent_runtime_context"), false);
     assert.equal(result.prompt_sections?.some((section) => section.id === "resume_context"), false);
     assert.deepEqual(result.context_messages, []);
-    assert.match(result.system_prompt, /This is the main workspace session/i);
+    assert.match(result.system_prompt, /This is a workspace session/i);
   } finally {
     delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
   }

@@ -166,6 +166,8 @@ type AgentView =
 type ChatSessionOpenRequest = {
   sessionId: string;
   requestKey: number;
+  mode?: "session" | "draft";
+  parentSessionId?: string | null;
 };
 
 type ChatComposerPrefillRequest = {
@@ -1707,8 +1709,7 @@ function AppShellContent() {
         task_name: proposal.task_name,
         task_prompt: proposal.task_prompt,
         session_id: proposalSessionId,
-        parent_session_id:
-          (selectedWorkspace.main_session_id || "").trim() || null,
+        parent_session_id: activeChatSessionId?.trim() || null,
         priority: 0,
         model: runtimeConfig?.defaultModel ?? null,
       });
@@ -1954,8 +1955,6 @@ function AppShellContent() {
   }, []);
 
   const handleCreateScheduleInChat = useCallback(() => {
-    const mainSessionId = (selectedWorkspace?.main_session_id || "").trim();
-
     setActiveLeftRailItem("space");
     setSpaceVisibility((previous) => ({
       ...previous,
@@ -1964,9 +1963,9 @@ function AppShellContent() {
     setAgentView({ type: "chat" });
     setChatSessionJumpRequest(null);
     setChatSessionOpenRequest((previous) =>
-      mainSessionId
+      activeChatSessionId
         ? {
-            sessionId: mainSessionId,
+            sessionId: activeChatSessionId,
             requestKey: (previous?.requestKey ?? 0) + 1,
           }
         : null,
@@ -1976,7 +1975,28 @@ function AppShellContent() {
       requestKey: (previous?.requestKey ?? 0) + 1,
     }));
     setChatFocusRequestKey((current) => current + 1);
-  }, [selectedWorkspace?.main_session_id]);
+  }, [activeChatSessionId]);
+
+  const handleCreateSession = useCallback(() => {
+    if (!selectedWorkspaceId) {
+      return;
+    }
+
+    setActiveLeftRailItem("space");
+    setSpaceVisibility((previous) => ({
+      ...previous,
+      agent: true,
+    }));
+    setAgentView({ type: "chat" });
+    setChatSessionJumpRequest(null);
+    setChatSessionOpenRequest((previous) => ({
+      sessionId: "",
+      mode: "draft",
+      parentSessionId: null,
+      requestKey: (previous?.requestKey ?? 0) + 1,
+    }));
+    setChatFocusRequestKey((current) => current + 1);
+  }, [selectedWorkspaceId]);
 
   const handleChatComposerPrefillConsumed = useCallback((requestKey: number) => {
     setChatComposerPrefillRequest((current) =>
@@ -2066,6 +2086,7 @@ function AppShellContent() {
     setAgentView({ type: "chat" });
     setChatSessionOpenRequest((previous) => ({
       sessionId: normalizedSessionId,
+      mode: "session",
       requestKey: (previous?.requestKey ?? 0) + 1,
     }));
   };
@@ -2609,7 +2630,7 @@ function AppShellContent() {
                       <button
                         type="button"
                         onClick={() => openOperationsDrawerTab("running")}
-                        aria-label="Open sub-sessions panel"
+                        aria-label="Open sessions panel"
                         className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-border/45 text-muted-foreground transition-all duration-200 hover:border-primary/45 hover:text-primary active:scale-95"
                       >
                         <Clock3 size={13} />
@@ -2673,13 +2694,11 @@ function AppShellContent() {
                     void dismissTaskProposal(proposal)
                   }
                   onOpenRunningSession={handleOpenRunningSession}
+                  onCreateSession={() => void handleCreateSession()}
                   activeRunningSessionId={activeChatSessionId}
                   hasWorkspace={hasSelectedWorkspace}
                   selectedWorkspaceId={selectedWorkspaceId}
                   selectedWorkspaceName={selectedWorkspace?.name || null}
-                  mainSessionId={
-                    (selectedWorkspace?.main_session_id || "").trim() || null
-                  }
                 />
               </div>
             ) : null}

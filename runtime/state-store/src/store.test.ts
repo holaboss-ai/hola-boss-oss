@@ -820,7 +820,6 @@ test("runtime state migration expands the status check constraint to include pau
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main",
   });
   store.ensureRuntimeState({
     workspaceId: "workspace-1",

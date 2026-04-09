@@ -52,9 +52,9 @@ import {
   emitTsRunnerEventWithPush
 } from "./ts-runner-events.js";
 import {
-  clearWorkspaceMainSessionId,
-  persistWorkspaceMainSessionId,
-  readWorkspaceMainSessionId,
+  clearWorkspaceHarnessSessionId,
+  persistWorkspaceHarnessSessionId,
+  readWorkspaceHarnessSessionId,
   workspaceDirForId
 } from "./ts-runner-session-state.js";
 import { resolveWorkspaceSkills } from "./workspace-skills.js";
@@ -1233,7 +1233,7 @@ export function resolveTsRunnerBootstrapState(
   const harness = selectedHarness(request);
   requireRuntimeHarnessAdapter(harness);
   const workspaceDir = workspaceDirForId(request.workspace_id);
-  const persistedHarnessSessionId = readWorkspaceMainSessionId({
+  const persistedHarnessSessionId = readWorkspaceHarnessSessionId({
     workspaceDir,
     harness,
     logger
@@ -1259,7 +1259,7 @@ export async function relayTsRunnerEvent(params: {
   await params.emitEvent(params.event);
   const sessionId = terminalHarnessSessionId(params.event);
   if (params.event.event_type === "run_failed") {
-    clearWorkspaceMainSessionId({
+    clearWorkspaceHarnessSessionId({
       workspaceDir: params.workspaceDir,
       harness: params.harness,
       logger: params.logger
@@ -1269,7 +1269,7 @@ export async function relayTsRunnerEvent(params: {
   if (!sessionId) {
     return;
   }
-  persistWorkspaceMainSessionId({
+  persistWorkspaceHarnessSessionId({
     workspaceDir: params.workspaceDir,
     harness: params.harness,
     sessionId,

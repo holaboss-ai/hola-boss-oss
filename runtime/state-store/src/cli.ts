@@ -25,7 +25,6 @@ function toWorkspaceRecord(record: ReturnType<RuntimeStateStore["getWorkspace"]>
     name: record.name,
     status: record.status,
     harness: record.harness,
-    main_session_id: record.mainSessionId,
     error_message: record.errorMessage,
     onboarding_status: record.onboardingStatus,
     onboarding_session_id: record.onboardingSessionId,
@@ -249,7 +248,6 @@ export function handleRequest(operation: string, envelope: RequestEnvelope): Jso
             name: String(envelope.name),
             harness: String(envelope.harness),
             status: typeof envelope.status === "string" ? envelope.status : undefined,
-            mainSessionId: typeof envelope.main_session_id === "string" ? envelope.main_session_id : null,
             onboardingStatus: typeof envelope.onboarding_status === "string" ? envelope.onboarding_status : undefined,
             onboardingSessionId:
               typeof envelope.onboarding_session_id === "string" ? envelope.onboarding_session_id : null,
@@ -273,12 +271,6 @@ export function handleRequest(operation: string, envelope: RequestEnvelope): Jso
         return toWorkspaceRecord(
           store.updateWorkspace(String(envelope.workspace_id), {
             status: typeof fields.status === "string" ? fields.status : fields.status === null ? null : undefined,
-            mainSessionId:
-              typeof fields.main_session_id === "string"
-                ? fields.main_session_id
-                : fields.main_session_id === null
-                ? null
-                : undefined,
             errorMessage:
               typeof fields.error_message === "string"
                 ? fields.error_message

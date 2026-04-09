@@ -360,7 +360,6 @@ test("runtime image generation tool writes a generated image into the workspace"
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main",
   });
 
   const configPath = path.join(root, "state", "runtime-config.json");
@@ -456,7 +455,6 @@ test("runtime image generation tool uses native Gemini image generation for gemi
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main",
   });
 
   const configPath = path.join(root, "state", "runtime-config.json");
@@ -586,7 +584,6 @@ test("runtime image generation tool uses OpenRouter chat image generation for op
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main",
   });
 
   const configPath = path.join(root, "state", "runtime-config.json");
@@ -1198,8 +1195,7 @@ test("workspace CRUD routes preserve local payload shape", async () => {
     payload: {
       name: "Workspace 1",
       harness: "pi",
-      status: "provisioning",
-      main_session_id: "session-main"
+      status: "provisioning"
     }
   });
   assert.equal(created.statusCode, 200);
@@ -1258,7 +1254,6 @@ test("workspace delete stops installed apps and clears local workspace files", a
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const workspaceDir = store.workspaceDir(workspace.id);
   const appId = "app-a";
@@ -1353,7 +1348,6 @@ test("runtime states and history endpoints read TS state store", async () => {
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   store.upsertBinding({
     workspaceId: workspace.id,
@@ -1652,7 +1646,6 @@ test("output events endpoint supports incremental fetches and tail mode", async 
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   store.appendOutputEvent({
     workspaceId: workspace.id,
@@ -1706,7 +1699,6 @@ test("output stream endpoint emits SSE events and stops on terminal", async () =
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   store.appendOutputEvent({
     workspaceId: workspace.id,
@@ -1752,7 +1744,6 @@ test("outputs, folders, and artifacts routes preserve local payload shape", asyn
     name: "Workspace Outputs",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   store.ensureRuntimeState({
     workspaceId: workspace.id,
@@ -1861,7 +1852,6 @@ test("cronjobs, task proposals, and session state routes preserve local payload 
     name: "Workspace Jobs",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   store.upsertBinding({
     workspaceId: workspace.id,
@@ -3684,7 +3674,6 @@ test("queue route persists input, user message, and runtime state", async () => 
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
 
   const response = await app.inject({
@@ -3711,7 +3700,8 @@ test("queue route persists input, user message, and runtime state", async () => 
 
   const session = store.getSession({ workspaceId: workspace.id, sessionId: "session-main" });
   assert.ok(session);
-  assert.equal(session.kind, "main");
+  assert.equal(session.kind, "workspace_session");
+  assert.equal(session.title, "hello world");
 
   const binding = store.getBinding({ workspaceId: workspace.id, sessionId: "session-main" });
   assert.ok(binding);
@@ -3721,6 +3711,46 @@ test("queue route persists input, user message, and runtime state", async () => 
   assert.equal(history.length, 1);
   assert.equal(history[0].role, "user");
   assert.equal(history[0].text, "hello world");
+
+  await app.close();
+  store.close();
+});
+
+test("queue route preserves an existing explicit session title", async () => {
+  const root = makeTempDir("hb-runtime-api-session-title-preserve-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    kind: "workspace_session",
+    title: "Pinned title",
+  });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/agent-sessions/queue",
+    payload: {
+      workspace_id: workspace.id,
+      session_id: "session-main",
+      text: "replace me if you can"
+    }
+  });
+
+  assert.equal(response.statusCode, 200);
+  const session = store.getSession({ workspaceId: workspace.id, sessionId: "session-main" });
+  assert.ok(session);
+  assert.equal(session.title, "Pinned title");
 
   await app.close();
   store.close();
@@ -3737,7 +3767,6 @@ test("pause route delegates to the configured queue worker", async () => {
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -3801,7 +3830,6 @@ test("queue route creates pending user memory proposals from strong preference s
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
 
   const response = await app.inject({
@@ -3858,7 +3886,6 @@ test("accept task proposal creates a child session with queued work", async () =
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   store.upsertBinding({
     workspaceId: workspace.id,
@@ -3959,7 +3986,6 @@ test("queue route rejects inputs while workspace apps are still building", async
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
 
   const workspaceDir = store.workspaceDir(workspace.id);
@@ -4011,7 +4037,6 @@ test("queue route accepts staged attachments and history hydrates attachment met
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   store.upsertBinding({
     workspaceId: workspace.id,

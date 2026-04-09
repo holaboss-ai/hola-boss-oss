@@ -263,26 +263,23 @@ test("chat pane binds in-flight stream attach to the current runtime input on se
   );
 });
 
-test("chat pane exposes a return path from sub-sessions back to the main session", async () => {
+test("chat pane can create a workspace session when none exists yet", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /const showMainSessionReturn =[\s\S]*activeSessionId !== mainSessionId;/);
   assert.match(
     source,
-    /You are viewing a separate run session\.[\s\S]*Return to the main[\s\S]*workspace chat to continue there\./,
+    /async function createWorkspaceSession\(\s*workspaceId: string,\s*parentSessionId\?: string \| null,\s*\): Promise<string \| null>/,
   );
-  assert.match(source, /Back to main session/);
-  assert.match(
+  assert.match(source, /window\.electronAPI\.workspace\.createAgentSession\(\{/);
+  assert.match(source, /parent_session_id: parentSessionId\?\.trim\(\) \|\| null,/);
+  assert.match(source, /const resolvedSessionId = nextSessionId \|\| null;/);
+  assert.doesNotMatch(
     source,
-    /showMainSessionReturn \? \(\s*<div className="shrink-0 px-4 pt-3 sm:px-5">\s*<div className="bg-muted\/72 flex flex-col items-start gap-3/,
-  );
-  assert.match(
-    source,
-    /await loadSessionConversation\(\s*mainSessionId,\s*selectedWorkspaceId,\s*runtimeStates\.items,\s*\);/,
+    /const resolvedSessionId =\s*nextSessionId \|\| \(await createWorkspaceSession\(selectedWorkspaceId\)\);/,
   );
   assert.match(
     source,
-    /const targetSessionId =[\s\S]*activeSessionIdRef\.current \|\| preferredSessionId\(selectedWorkspace, \[\]\);/,
+    /if \(!targetSessionId && selectedWorkspace\) \{\s*targetSessionId = await createWorkspaceSession\(\s*selectedWorkspace\.id,\s*draftParentSessionIdRef\.current,\s*\);/,
   );
 });
 
@@ -456,13 +453,23 @@ test("chat pane can jump to a requested sub-session run", async () => {
   assert.match(source, /sessionJumpSessionId = null/);
   assert.match(source, /sessionJumpRequestKey = 0/);
   assert.match(source, /const lastHandledSessionJumpRequestKeyRef = useRef\(0\);/);
+  assert.match(source, /const lastHandledSessionOpenRequestKeyRef = useRef\(0\);/);
+  assert.match(source, /const draftParentSessionIdRef = useRef<string \| null>\(null\);/);
   assert.match(
     source,
     /const hasSessionJumpRequest =[\s\S]*sessionJumpRequestKey > 0[\s\S]*sessionJumpRequestKey !== lastHandledSessionJumpRequestKeyRef\.current/,
   );
   assert.match(
     source,
-    /const requestedOpenSessionId =[\s\S]*sessionOpenRequest\?\.sessionId \|\| ""[\s\S]*\.trim\(\);[\s\S]*const nextSessionId =[\s\S]*hasSessionJumpRequest && requestedSessionId[\s\S]*\? requestedSessionId[\s\S]*: requestedOpenSessionId\)[\s\S]*preferredSessionId\(selectedWorkspaceRef\.current, runtimeStates\.items\);/,
+    /const requestMode = sessionOpenRequest\?\.mode \?\? "session";[\s\S]*const requestedParentSessionId =[\s\S]*sessionOpenRequest\?\.parentSessionId\?\.trim\(\) \|\| null;/,
+  );
+  assert.match(
+    source,
+    /if \(requestMode === "draft"\) \{\s*draftParentSessionIdRef\.current = requestedParentSessionId;\s*clearSessionView\(\);\s*setActiveSession\(null\);\s*requestHistoryViewportRestore\(\);\s*historyLoaded = true;\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /const nextSessionId =\s*\(hasSessionJumpRequest && requestedSessionId\s*\?\s*requestedSessionId\s*:\s*null\)\s*\|\|\s*preferredSessionId\(\s*selectedWorkspaceRef\.current,\s*runtimeStates\.items,\s*sessionsResponse\.items,\s*\);[\s\S]*const resolvedSessionId = nextSessionId \|\| null;/,
   );
 });
 

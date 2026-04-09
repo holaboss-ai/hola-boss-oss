@@ -58,7 +58,7 @@ test("requireRuntimeHarnessPlugin uses extended timeouts for task proposal runs"
       request: {
         workspace_id: "workspace-1",
         session_id: "session-main",
-        session_kind: "main",
+        session_kind: "workspace_session",
         input_id: "input-1",
         instruction: "Inspect the project"
       }
@@ -76,5 +76,50 @@ test("requireRuntimeHarnessPlugin uses extended timeouts for task proposal runs"
       }
     }),
     600
+  );
+});
+
+test("requireRuntimeHarnessPlugin stages browser tools only for workspace sessions", () => {
+  const plugin = requireRuntimeHarnessPlugin("pi");
+  const browserConfig = {
+    desktopBrowserEnabled: true,
+    desktopBrowserUrl: "http://127.0.0.1:3555",
+    desktopBrowserAuthToken: "token"
+  };
+
+  assert.deepEqual(
+    plugin.stageBrowserTools({
+      workspaceDir: "/tmp/workspace-1",
+      sessionKind: "workspace_session",
+      browserConfig
+    }),
+    {
+      changed: false,
+      toolIds: [
+        "browser_navigate",
+        "browser_open_tab",
+        "browser_get_state",
+        "browser_click",
+        "browser_type",
+        "browser_press",
+        "browser_scroll",
+        "browser_back",
+        "browser_forward",
+        "browser_reload",
+        "browser_screenshot",
+        "browser_list_tabs"
+      ]
+    }
+  );
+  assert.deepEqual(
+    plugin.stageBrowserTools({
+      workspaceDir: "/tmp/workspace-1",
+      sessionKind: "onboarding",
+      browserConfig
+    }),
+    {
+      changed: false,
+      toolIds: []
+    }
   );
 });

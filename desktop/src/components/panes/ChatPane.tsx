@@ -1562,6 +1562,8 @@ function hasActiveChatSelection(container: HTMLDivElement | null) {
 interface ChatPaneSessionOpenRequest {
   sessionId: string;
   requestKey: number;
+  mode?: "session" | "draft";
+  parentSessionId?: string | null;
 }
 
 interface ChatPaneComposerPrefillRequest {
@@ -1685,7 +1687,9 @@ export function ChatPane({
   const isOnboardingVariant = variant === "onboarding";
   const pendingFocusRequestKeyRef = useRef<number | null>(focusRequestKey);
   const lastHandledSessionJumpRequestKeyRef = useRef(0);
+  const lastHandledSessionOpenRequestKeyRef = useRef(0);
   const lastHandledComposerPrefillRequestKeyRef = useRef(0);
+  const draftParentSessionIdRef = useRef<string | null>(null);
   const liveAssistantTextRef = useRef("");
   const liveThinkingTextRef = useRef("");
   const liveThinkingExpandedRef = useRef(false);
@@ -2017,52 +2021,18 @@ export function ChatPane({
     }
   }
 
-  async function returnToMainSession() {
-    const mainSessionId = (selectedWorkspace?.main_session_id || "").trim();
-    if (
-      !selectedWorkspaceId ||
-      !mainSessionId ||
-      activeSessionIdRef.current === mainSessionId
-    ) {
-      return;
-    }
-
-    let historyLoaded = false;
-    beginHistoryViewportRestore();
-    setIsLoadingHistory(true);
-    setChatErrorMessage("");
-    pendingInputIdRef.current = null;
-    activeAssistantMessageIdRef.current = null;
-    setIsResponding(false);
-
-    const activeStreamId = activeStreamIdRef.current;
-    activeStreamIdRef.current = null;
-    if (activeStreamId) {
-      await closeStreamWithReason(
-        activeStreamId,
-        "chatpane_return_to_main_session",
-      ).catch(() => undefined);
-    }
-
-    try {
-      const runtimeStates =
-        await window.electronAPI.workspace.listRuntimeStates(
-          selectedWorkspaceId,
-        );
-      await loadSessionConversation(
-        mainSessionId,
-        selectedWorkspaceId,
-        runtimeStates.items,
-      );
-      historyLoaded = true;
-    } catch (error) {
-      setChatErrorMessage(normalizeErrorMessage(error));
-    } finally {
-      if (!historyLoaded) {
-        cancelHistoryViewportRestore();
-      }
-      setIsLoadingHistory(false);
-    }
+  async function createWorkspaceSession(
+    workspaceId: string,
+    parentSessionId?: string | null,
+  ): Promise<string | null> {
+    const created = await window.electronAPI.workspace.createAgentSession({
+      workspace_id: workspaceId,
+      kind: "workspace_session",
+      parent_session_id: parentSessionId?.trim() || null,
+      created_by: "workspace_user",
+    });
+    const sessionId = created.session.session_id.trim();
+    return sessionId || null;
   }
 
   function appendLiveAssistantDelta(delta: string) {
@@ -2442,6 +2412,8 @@ export function ChatPane({
       setActiveSession(null);
       pendingInputIdRef.current = null;
       lastHandledSessionJumpRequestKeyRef.current = 0;
+      lastHandledSessionOpenRequestKeyRef.current = 0;
+      draftParentSessionIdRef.current = null;
       return;
     }
 
@@ -2476,24 +2448,27 @@ export function ChatPane({
           }
         }
 
-        const runtimeStates =
-          await window.electronAPI.workspace.listRuntimeStates(
-            selectedWorkspaceId,
-          );
+        const [runtimeStates, sessionsResponse] = await Promise.all([
+          window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId),
+          window.electronAPI.workspace.listAgentSessions(selectedWorkspaceId),
+        ]);
         if (cancelled) {
           return;
         }
 
-        const requestedOpenSessionId = (
-          sessionOpenRequest?.sessionId || ""
-        ).trim();
         const nextSessionId =
           (hasSessionJumpRequest && requestedSessionId
             ? requestedSessionId
-            : requestedOpenSessionId) ||
-          preferredSessionId(selectedWorkspaceRef.current, runtimeStates.items);
+            : null) ||
+          preferredSessionId(
+            selectedWorkspaceRef.current,
+            runtimeStates.items,
+            sessionsResponse.items,
+          );
+        const resolvedSessionId = nextSessionId || null;
+        draftParentSessionIdRef.current = null;
         await loadSessionConversation(
-          nextSessionId,
+          resolvedSessionId,
           selectedWorkspaceId,
           runtimeStates.items,
           {
@@ -2523,25 +2498,29 @@ export function ChatPane({
     isOnboardingVariant,
     sessionJumpRequestKey,
     sessionJumpSessionId,
-    sessionOpenRequest?.sessionId,
     selectedWorkspaceId,
-    selectedWorkspace?.main_session_id,
     selectedWorkspace?.onboarding_session_id,
     selectedWorkspace?.onboarding_status,
   ]);
 
   useEffect(() => {
     const requestedSessionId = (sessionOpenRequest?.sessionId || "").trim();
-    if (!selectedWorkspaceId || !requestedSessionId) {
+    const requestKey = sessionOpenRequest?.requestKey ?? 0;
+    const requestMode = sessionOpenRequest?.mode ?? "session";
+    const requestedParentSessionId =
+      sessionOpenRequest?.parentSessionId?.trim() || null;
+    if (
+      !selectedWorkspaceId ||
+      requestKey <= 0 ||
+      requestKey === lastHandledSessionOpenRequestKeyRef.current
+    ) {
       return;
     }
 
     let cancelled = false;
 
     async function openRequestedSession() {
-      if (activeSessionIdRef.current === requestedSessionId) {
-        return;
-      }
+      lastHandledSessionOpenRequestKeyRef.current = requestKey;
 
       let historyLoaded = false;
       beginHistoryViewportRestore();
@@ -2561,6 +2540,27 @@ export function ChatPane({
       }
 
       try {
+        if (requestMode === "draft") {
+          draftParentSessionIdRef.current = requestedParentSessionId;
+          clearSessionView();
+          setActiveSession(null);
+          requestHistoryViewportRestore();
+          historyLoaded = true;
+          return;
+        }
+
+        if (!requestedSessionId) {
+          historyLoaded = true;
+          return;
+        }
+
+        draftParentSessionIdRef.current = null;
+        if (activeSessionIdRef.current === requestedSessionId) {
+          requestHistoryViewportRestore();
+          historyLoaded = true;
+          return;
+        }
+
         const runtimeStates =
           await window.electronAPI.workspace.listRuntimeStates(
             selectedWorkspaceId,
@@ -2596,6 +2596,8 @@ export function ChatPane({
     selectedWorkspaceId,
     sessionOpenRequest?.requestKey,
     sessionOpenRequest?.sessionId,
+    sessionOpenRequest?.mode,
+    sessionOpenRequest?.parentSessionId,
   ]);
 
   useEffect(() => {
@@ -3168,8 +3170,17 @@ export function ChatPane({
       );
       return;
     }
-    const targetSessionId =
-      activeSessionIdRef.current || preferredSessionId(selectedWorkspace, []);
+    let targetSessionId = activeSessionIdRef.current;
+    if (!targetSessionId && selectedWorkspace) {
+      targetSessionId = await createWorkspaceSession(
+        selectedWorkspace.id,
+        draftParentSessionIdRef.current,
+      );
+      if (targetSessionId) {
+        draftParentSessionIdRef.current = null;
+        setActiveSession(targetSessionId);
+      }
+    }
     if (!targetSessionId) {
       setChatErrorMessage("No active session found for this workspace.");
       return;
@@ -3726,12 +3737,6 @@ export function ChatPane({
   const textareaPlaceholder = isOnboardingVariant
     ? "Answer the onboarding prompt or share setup details"
     : "Ask anything";
-  const mainSessionId = (selectedWorkspace?.main_session_id || "").trim();
-  const showMainSessionReturn =
-    !isOnboardingVariant &&
-    Boolean(mainSessionId) &&
-    Boolean(activeSessionId) &&
-    activeSessionId !== mainSessionId;
   const showHistoryRestoreScreen =
     isLoadingHistory || isHistoryViewportPending;
   const chatScrollRange = Math.max(
@@ -3866,30 +3871,6 @@ export function ChatPane({
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
-        ) : null}
-
-        {showMainSessionReturn ? (
-          <div className="shrink-0 px-4 pt-3 sm:px-5">
-            <div className="bg-muted/72 flex flex-col items-start gap-3 rounded-[16px] border border-border/55 px-3 py-2.5">
-              <div className="min-w-0">
-                <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                  Sub-session
-                </div>
-                <div className="mt-1 text-[12px] leading-5 text-muted-foreground">
-                  You are viewing a separate run session. Return to the main
-                  workspace chat to continue there.
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => void returnToMainSession()}
-                disabled={isLoadingHistory}
-                className="inline-flex items-center rounded-full border border-border/60 bg-background px-3 py-1.5 text-[12px] font-medium text-foreground transition hover:border-primary/35 hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Back to main session
-              </button>
             </div>
           </div>
         ) : null}

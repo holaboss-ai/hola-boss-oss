@@ -286,7 +286,6 @@ declare global {
     name: string;
     status: string;
     harness: string | null;
-    main_session_id: string | null;
     error_message: string | null;
     onboarding_status: string;
     onboarding_session_id: string | null;
@@ -421,6 +420,19 @@ declare global {
   interface AgentSessionListResponsePayload {
     items: AgentSessionRecordPayload[];
     count: number;
+  }
+
+  interface CreateAgentSessionPayload {
+    workspace_id: string;
+    session_id?: string | null;
+    kind?: string | null;
+    title?: string | null;
+    parent_session_id?: string | null;
+    created_by?: string | null;
+  }
+
+  interface CreateAgentSessionResponsePayload {
+    session: AgentSessionRecordPayload;
   }
 
   interface TaskProposalAcceptPayload {
@@ -649,8 +661,6 @@ declare global {
     harness: string;
     harness_session_id: string;
     source: string;
-    main_session_id: string | null;
-    is_main_session: boolean;
     messages: SessionHistoryMessagePayload[];
     count: number;
     total: number;
@@ -1202,6 +1212,7 @@ declare global {
         payload: RemoteTaskProposalGenerationRequestPayload
       ) => Promise<RemoteTaskProposalGenerationResponsePayload>;
       listAgentSessions: (workspaceId: string) => Promise<AgentSessionListResponsePayload>;
+      createAgentSession: (payload: CreateAgentSessionPayload) => Promise<CreateAgentSessionResponsePayload>;
       listRuntimeStates: (workspaceId: string) => Promise<SessionRuntimeStateListResponsePayload>;
       getSessionHistory: (payload: { sessionId: string; workspaceId: string }) => Promise<SessionHistoryResponsePayload>;
       getSessionOutputEvents: (payload: { sessionId: string }) => Promise<SessionOutputEventListResponsePayload>;

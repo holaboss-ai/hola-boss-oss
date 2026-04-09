@@ -208,9 +208,6 @@ function inferSessionKind(params: {
     return persistedKind;
   }
   const sessionId = params.sessionId.trim();
-  if (sessionId && sessionId === (params.workspace.mainSessionId ?? "").trim()) {
-    return "main";
-  }
   const onboardingSessionId = (params.workspace.onboardingSessionId ?? "").trim();
   const onboardingStatus = (params.workspace.onboardingStatus ?? "").trim().toLowerCase();
   if (sessionId && sessionId === onboardingSessionId && ["pending", "awaiting_confirmation", "in_progress"].includes(onboardingStatus)) {

@@ -142,22 +142,22 @@ function sessionPolicyPromptSection(request: ComposeBaseAgentPromptRequest): str
   switch (normalizedKind) {
     case "main":
       lines.push(
-        "This is the main workspace session. You can operate broadly across the workspace, and browser tooling may be available only in this session."
+        "This is a legacy main workspace session. Treat it like a broad workspace session for scope, but do not assume browser tooling is available unless the capability manifest exposes it."
       );
       break;
     case "onboarding":
       lines.push(
-        "This is an onboarding session. Prioritize onboarding progress, use onboarding-specific runtime tools when available, and keep the conversation anchored to setup and confirmation work."
+        "This is an onboarding session. Prioritize onboarding progress, use onboarding-specific runtime tools when available, keep the conversation anchored to setup and confirmation work, and do not assume browser tooling is available."
       );
       break;
     case "task_proposal":
       lines.push(
-        "This is a task proposal session. Stay tightly scoped to the delegated task and avoid unrelated workspace mutations unless the task clearly requires them."
+        "This is a task proposal session. Stay tightly scoped to the delegated task, do not assume browser tooling is available, and avoid unrelated workspace mutations unless the task clearly requires them."
       );
       break;
     case "workspace_session":
       lines.push(
-        "This is a non-main workspace session. Keep work scoped to the active session context and do not assume browser tooling or broad workspace authority is available."
+        "This is a workspace session. You can operate broadly across the workspace, and browser tooling may be available in this session when the capability manifest exposes it."
       );
       break;
     default:

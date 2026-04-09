@@ -394,7 +394,7 @@ const BROWSER_TOOL_DEFINITIONS = new Map<string, ToolCapabilityDefinition>(
       title: titleFromToken(toolDef.id),
       description: toolDef.description,
       availability: {
-        sessionKinds: toolDef.session_scope === "main_only" ? ["main"] : undefined,
+        sessionKinds: toolDef.session_scope === "workspace_session_only" ? ["workspace_session"] : undefined,
       },
     },
   ])

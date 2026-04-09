@@ -196,10 +196,10 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     [marketplaceTemplates, selectedMarketplaceTemplateName]
   );
   const onboardingModeActive = useMemo(() => isOnboardingMode(selectedWorkspace), [selectedWorkspace]);
-  const sessionModeLabel = onboardingModeActive ? "onboarding" : "main";
+  const sessionModeLabel = onboardingModeActive ? "onboarding" : "session";
   const sessionTargetId = onboardingModeActive
     ? (selectedWorkspace?.onboarding_session_id || "").trim()
-    : (selectedWorkspace?.main_session_id || "").trim();
+    : "";
   const runtimeReadyForWorkspaceData = runtimeStatus?.status === "running";
   const workspaceLifecycleMatchesSelection = Boolean(selectedWorkspaceId) && workspaceLifecycleWorkspaceId === selectedWorkspaceId;
   const workspaceAppsReady = workspaceLifecycleMatchesSelection && workspaceAppsReadyState;

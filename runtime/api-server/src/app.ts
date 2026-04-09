@@ -225,6 +225,8 @@ interface SessionInputAttachmentPayload {
   workspace_path: string;
 }
 
+const SESSION_TITLE_MAX_LENGTH = 80;
+
 function defaultWorkspaceRoot(): string | undefined {
   const sandboxRoot = (process.env.HB_SANDBOX_ROOT ?? "").trim();
   if (!sandboxRoot) {
@@ -266,6 +268,31 @@ function nullableString(value: unknown): string | null | undefined {
     return null;
   }
   return typeof value === "string" ? value : undefined;
+}
+
+function normalizedSessionTitleSnippet(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= SESSION_TITLE_MAX_LENGTH) {
+    return normalized;
+  }
+  return `${normalized.slice(0, SESSION_TITLE_MAX_LENGTH - 3).trimEnd()}...`;
+}
+
+function sessionTitleFromFirstUserInput(
+  text: string,
+  attachments: SessionInputAttachmentPayload[],
+): string | null {
+  if (text.trim()) {
+    return normalizedSessionTitleSnippet(text);
+  }
+  if (attachments.length === 1) {
+    return normalizedSessionTitleSnippet(attachments[0]?.name?.trim() || "Attachment");
+  }
+  if (attachments.length > 1) {
+    const firstName = attachments[0]?.name?.trim() || "Attachment";
+    return normalizedSessionTitleSnippet(`${firstName} +${attachments.length - 1} more`);
+  }
+  return null;
 }
 
 function optionalBoolean(value: unknown, defaultValue = false): boolean {
@@ -471,7 +498,6 @@ function workspaceRecordPayload(workspace: WorkspaceRecord): Record<string, unkn
     name: workspace.name,
     status: workspace.status,
     harness: workspace.harness,
-    main_session_id: workspace.mainSessionId,
     error_message: workspace.errorMessage,
     onboarding_status: workspace.onboardingStatus,
     onboarding_session_id: workspace.onboardingSessionId,
@@ -767,18 +793,56 @@ function resolvedWorkspaceHarness(workspace: WorkspaceRecord): string {
   return harness || "pi";
 }
 
+function sessionSelectionUsesOnboarding(workspace: WorkspaceRecord): boolean {
+  const onboardingSessionId = (workspace.onboardingSessionId ?? "").trim();
+  if (!onboardingSessionId) {
+    return false;
+  }
+  const onboardingStatus = (workspace.onboardingStatus ?? "").trim().toLowerCase();
+  return ["pending", "awaiting_confirmation", "in_progress"].includes(onboardingStatus);
+}
+
 function inferredSessionKind(workspace: WorkspaceRecord, sessionId: string): string {
   const trimmedSessionId = sessionId.trim();
   const onboardingSessionId = (workspace.onboardingSessionId ?? "").trim();
-  const onboardingStatus = (workspace.onboardingStatus ?? "").trim().toLowerCase();
-  if (onboardingSessionId && onboardingSessionId === trimmedSessionId && ["pending", "awaiting_confirmation", "in_progress"].includes(onboardingStatus)) {
+  if (onboardingSessionId && onboardingSessionId === trimmedSessionId && sessionSelectionUsesOnboarding(workspace)) {
     return "onboarding";
   }
-  const mainSessionId = (workspace.mainSessionId ?? "").trim();
-  if (mainSessionId && mainSessionId === trimmedSessionId) {
-    return "main";
-  }
   return "workspace_session";
+}
+
+function isPrimaryChatSessionKind(kind: string | null | undefined): boolean {
+  const normalized = (kind ?? "").trim().toLowerCase();
+  return !normalized || normalized === "workspace_session";
+}
+
+function preferredWorkspaceSessionId(params: {
+  store: RuntimeStateStore;
+  workspace: WorkspaceRecord;
+}): string | null {
+  if (sessionSelectionUsesOnboarding(params.workspace)) {
+    return (params.workspace.onboardingSessionId ?? "").trim() || null;
+  }
+
+  const onboardingSessionId = (params.workspace.onboardingSessionId ?? "").trim();
+  const sessions = params.store.listSessions({
+    workspaceId: params.workspace.id,
+    includeArchived: false,
+    limit: 200,
+    offset: 0,
+  });
+  const preferredPrimary = sessions.find((session) => {
+    if (session.sessionId === onboardingSessionId) {
+      return false;
+    }
+    return isPrimaryChatSessionKind(session.kind);
+  });
+  if (preferredPrimary) {
+    return preferredPrimary.sessionId;
+  }
+
+  const fallback = sessions.find((session) => session.sessionId !== onboardingSessionId) ?? sessions[0] ?? null;
+  return fallback?.sessionId ?? null;
 }
 
 function outputTypeForArtifact(artifactType: string): string {
@@ -812,22 +876,15 @@ function resolveOutputInputId(params: {
   return runtimeState?.currentInputId?.trim() || null;
 }
 
-function resolveQueueSessionId(requestedSessionId: string | undefined, workspace: WorkspaceRecord): string {
+function resolveQueueSessionId(
+  requestedSessionId: string | undefined,
+  store: RuntimeStateStore,
+  workspace: WorkspaceRecord,
+): string {
   if (requestedSessionId && requestedSessionId.trim()) {
     return requestedSessionId.trim();
   }
-  const onboardingStatus = (workspace.onboardingStatus ?? "").trim().toLowerCase();
-  if (
-    ["pending", "awaiting_confirmation"].includes(onboardingStatus) &&
-    workspace.onboardingSessionId &&
-    workspace.onboardingSessionId.trim()
-  ) {
-    return workspace.onboardingSessionId;
-  }
-  if (workspace.mainSessionId && workspace.mainSessionId.trim()) {
-    return workspace.mainSessionId;
-  }
-  throw new Error("workspace main_session_id is not configured");
+  return preferredWorkspaceSessionId({ store, workspace }) ?? randomUUID();
 }
 
 function activeUserPreferenceMemoryMatchesProposal(params: {
@@ -2783,7 +2840,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         name: requiredString(request.body.name, "name"),
         harness: requiredString(request.body.harness, "harness"),
         status: optionalString(request.body.status) ?? "provisioning",
-        mainSessionId: nullableString(request.body.main_session_id) ?? null,
         onboardingStatus: optionalString(request.body.onboarding_status) ?? "not_required",
         onboardingSessionId: nullableString(request.body.onboarding_session_id) ?? null,
         errorMessage: nullableString(request.body.error_message) ?? null
@@ -2864,9 +2920,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       if (hasOwn(request.body, "status")) {
         fields.status = nullableString(request.body.status);
       }
-      if (hasOwn(request.body, "main_session_id")) {
-        fields.mainSessionId = nullableString(request.body.main_session_id);
-      }
       if (hasOwn(request.body, "error_message")) {
         fields.errorMessage = nullableString(request.body.error_message) ?? null;
       }
@@ -2912,7 +2965,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
           name: workspace?.name ?? params.workspaceId,
           status: "deleted",
           harness: workspace?.harness ?? null,
-          main_session_id: workspace?.mainSessionId ?? null,
           error_message: null,
           onboarding_status: workspace?.onboardingStatus ?? "not_required",
           onboarding_session_id: null,
@@ -3603,6 +3655,49 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     };
   });
 
+  app.post("/api/v1/agent-sessions", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+
+    const workspaceId = requiredString(request.body.workspace_id, "workspace_id");
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    const sessionId = optionalString(request.body.session_id) ?? randomUUID();
+    if (store.getSession({ workspaceId, sessionId })) {
+      return sendError(reply, 409, "session_id is already in use");
+    }
+
+    const session = store.ensureSession({
+      workspaceId,
+      sessionId,
+      kind: optionalString(request.body.kind) ?? inferredSessionKind(workspace, sessionId),
+      title: nullableString(request.body.title) ?? null,
+      parentSessionId: nullableString(request.body.parent_session_id) ?? null,
+      createdBy: nullableString(request.body.created_by) ?? "workspace_user",
+    });
+    if (!store.getBinding({ workspaceId, sessionId })) {
+      store.upsertBinding({
+        workspaceId,
+        sessionId,
+        harness: resolvedWorkspaceHarness(workspace),
+        harnessSessionId: sessionId,
+      });
+    }
+    store.ensureRuntimeState({
+      workspaceId,
+      sessionId,
+      status: "IDLE",
+    });
+
+    return {
+      session: agentSessionPayload(session),
+    };
+  });
+
   app.post("/api/v1/agent-sessions/queue", async (request, reply) => {
     if (!isRecord(request.body)) {
       return sendError(reply, 400, "request body must be an object");
@@ -3619,9 +3714,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
     let resolvedSessionId: string;
     try {
-      resolvedSessionId = resolveQueueSessionId(optionalString(request.body.session_id), workspace);
+      resolvedSessionId = resolveQueueSessionId(optionalString(request.body.session_id), store, workspace);
     } catch (error) {
-      return sendError(reply, 409, error instanceof Error ? error.message : "workspace main_session_id is not configured");
+      return sendError(reply, 409, error instanceof Error ? error.message : "workspace session is not configured");
     }
 
     const workspaceDir = store.workspaceDir(workspaceId);
@@ -3636,16 +3731,18 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 422, "text or attachments are required");
     }
 
+    const existingSession = store.getSession({
+      workspaceId,
+      sessionId: resolvedSessionId
+    });
+    const inferredKind = inferredSessionKind(workspace, resolvedSessionId);
+    const generatedSessionTitle = sessionTitleFromFirstUserInput(trimmedText, attachments);
+
     store.ensureSession({
       workspaceId,
       sessionId: resolvedSessionId,
-      kind: inferredSessionKind(workspace, resolvedSessionId),
-      title:
-        inferredSessionKind(workspace, resolvedSessionId) === "onboarding"
-          ? "Onboarding"
-          : inferredSessionKind(workspace, resolvedSessionId) === "main"
-          ? "Main"
-          : null
+      kind: inferredKind,
+      title: existingSession?.title?.trim() ? undefined : generatedSessionTitle
     });
     if (!store.getBinding({ workspaceId, sessionId: resolvedSessionId })) {
       store.upsertBinding({
@@ -3824,8 +3921,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       harness: binding.harness,
       harness_session_id: binding.harnessSessionId,
       source: "sandbox_local_storage",
-      main_session_id: workspace.mainSessionId,
-      is_main_session: workspace.mainSessionId === params.sessionId,
       messages,
       count: messages.length,
       total: allMessages.length,

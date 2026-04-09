@@ -71,7 +71,6 @@ test("runtime cron worker queues due session_run cronjobs and updates bookkeepin
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const job = store.createCronjob({
     workspaceId: workspace.id,
@@ -142,7 +141,6 @@ test("runtime cron worker inherits the main-session model when cronjob metadata 
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   store.upsertTurnRequestSnapshot({
     workspaceId: workspace.id,
@@ -198,7 +196,6 @@ test("runtime cron worker persists system_notification cronjobs as unread notifi
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const job = store.createCronjob({
     workspaceId: workspace.id,
@@ -245,7 +242,6 @@ test("runtime cron worker records failures for unsupported delivery channels", a
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const job = store.createCronjob({
     workspaceId: "workspace-1",
@@ -280,7 +276,6 @@ test("cronjob routes compute next_run_at and cron worker lifecycle hooks run", a
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
 
   let startCalls = 0;

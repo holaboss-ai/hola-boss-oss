@@ -1758,7 +1758,6 @@ interface WorkspaceRecordPayload {
   name: string;
   status: string;
   harness: string | null;
-  main_session_id: string | null;
   error_message: string | null;
   onboarding_status: string;
   onboarding_session_id: string | null;
@@ -2186,8 +2185,6 @@ interface SessionHistoryResponsePayload {
   harness: string;
   harness_session_id: string;
   source: string;
-  main_session_id: string | null;
-  is_main_session: boolean;
   messages: SessionHistoryMessagePayload[];
   count: number;
   total: number;
@@ -2689,7 +2686,6 @@ function migrateLocalWorkspacesTable(database: Database.Database) {
       name TEXT NOT NULL,
       status TEXT NOT NULL,
       harness TEXT,
-      main_session_id TEXT,
       error_message TEXT,
       onboarding_status TEXT NOT NULL,
       onboarding_session_id TEXT,
@@ -2707,7 +2703,6 @@ function migrateLocalWorkspacesTable(database: Database.Database) {
       name,
       status,
       harness,
-      main_session_id,
       error_message,
       onboarding_status,
       onboarding_session_id,
@@ -2724,7 +2719,6 @@ function migrateLocalWorkspacesTable(database: Database.Database) {
       name,
       status,
       harness,
-      main_session_id,
       error_message,
       onboarding_status,
       onboarding_session_id,
@@ -2842,7 +2836,6 @@ async function bootstrapRuntimeDatabase() {
         name TEXT NOT NULL,
         status TEXT NOT NULL,
         harness TEXT,
-        main_session_id TEXT,
         error_message TEXT,
         onboarding_status TEXT NOT NULL,
         onboarding_session_id TEXT,
@@ -8872,7 +8865,6 @@ function getWorkspaceRecord(
           name,
           status,
           harness,
-          main_session_id,
           error_message,
           onboarding_status,
           onboarding_session_id,
@@ -9486,7 +9478,6 @@ function renderEmptyOnboardingGuide() {
 async function createWorkspace(
   payload: HolabossCreateWorkspacePayload,
 ): Promise<WorkspaceResponsePayload> {
-  const mainSessionId = crypto.randomUUID();
   const harness = normalizeRequestedWorkspaceHarness(payload.harness);
   const templateMode = requestedWorkspaceTemplateMode(payload);
   const templateRootPath = payload.template_root_path?.trim() || "";
@@ -9545,7 +9536,6 @@ async function createWorkspace(
         name: payload.name,
         harness,
         status: "provisioning",
-        main_session_id: mainSessionId,
         onboarding_status: "not_required",
       },
     });
@@ -9806,6 +9796,23 @@ async function listAgentSessions(
   });
 }
 
+async function createAgentSession(
+  payload: CreateAgentSessionPayload,
+): Promise<CreateAgentSessionResponsePayload> {
+  return requestRuntimeJson<CreateAgentSessionResponsePayload>({
+    method: "POST",
+    path: "/api/v1/agent-sessions",
+    payload: {
+      workspace_id: payload.workspace_id,
+      session_id: payload.session_id ?? undefined,
+      kind: payload.kind ?? undefined,
+      title: payload.title ?? undefined,
+      parent_session_id: payload.parent_session_id ?? undefined,
+      created_by: payload.created_by ?? undefined,
+    },
+  });
+}
+
 function isMissingSessionBindingError(error: unknown): boolean {
   return (
     error instanceof Error &&
@@ -9830,8 +9837,6 @@ function emptySessionHistoryPayload(
     harness: "",
     harness_session_id: "",
     source: "sandbox_local_storage",
-    main_session_id: sessionId,
-    is_main_session: true,
     messages: [],
     count: 0,
     total: 0,
@@ -11219,6 +11224,7 @@ const TEXT_FILE_EXTENSIONS = new Set([
   ".txt",
   ".md",
   ".mdx",
+  ".markdown",
   ".json",
   ".js",
   ".jsx",
@@ -15300,6 +15306,12 @@ app.whenReady().then(async () => {
     "workspace:listAgentSessions",
     ["main"],
     async (_event, workspaceId: string) => listAgentSessions(workspaceId),
+  );
+  handleTrustedIpc(
+    "workspace:createAgentSession",
+    ["main"],
+    async (_event, payload: CreateAgentSessionPayload) =>
+      createAgentSession(payload),
   );
   handleTrustedIpc(
     "workspace:getSessionHistory",

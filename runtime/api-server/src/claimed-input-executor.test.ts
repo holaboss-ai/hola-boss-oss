@@ -76,7 +76,6 @@ test("claimed input marks missing workspace failed and runtime error", async () 
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -149,7 +148,6 @@ test("claimed input persists runner events, assistant text, and idle state on su
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -312,7 +310,6 @@ test("claimed input creates a completion notification for successful cronjob ses
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const job = store.createCronjob({
     workspaceId: workspace.id,
@@ -388,7 +385,6 @@ test("claimed input creates a completion notification for failed cronjob session
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const job = store.createCronjob({
     workspaceId: workspace.id,
@@ -462,7 +458,6 @@ test("claimed input persists waiting_user terminal status for harnesses that sup
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -513,7 +508,6 @@ test("claimed input persists a paused turn when the run is aborted mid-execution
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -599,7 +593,6 @@ test("claimed input captures file outputs and persists an assistant turn for out
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -672,7 +665,6 @@ test("claimed input records skill-policy denial audit in tool usage summary", as
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -754,7 +746,6 @@ test("claimed input synthesizes run_failed when runner exits without terminal ev
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -814,7 +805,6 @@ test("claimed input succeeds when runner emits terminal event but keeps the proc
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -876,7 +866,6 @@ test("claimed input fails when runner becomes idle after run_started", async () 
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -944,7 +933,6 @@ test("claimed input hydrates runtime exec context from runtime config", async ()
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -1030,7 +1018,6 @@ test("claimed input resolves post-run model context from the provider background
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -1098,7 +1085,6 @@ test("claimed onboarding input instructs native onboarding tools directly", asyn
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main",
     onboardingStatus: "pending",
     onboardingSessionId: "session-onboarding"
   });
@@ -1157,7 +1143,6 @@ test("claimed onboarding input includes ONBOARD.md verbatim", async () => {
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main",
     onboardingStatus: "pending",
     onboardingSessionId: "session-onboarding"
   });
@@ -1215,7 +1200,6 @@ test("claimed input persists replacement harness session id from terminal runner
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   store.upsertBinding({
     workspaceId: workspace.id,
@@ -1265,7 +1249,6 @@ test("claimed input passes persisted child session kind into the runner payload"
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   store.ensureSession({
     workspaceId: workspace.id,
@@ -1320,7 +1303,6 @@ test("claimed input resets harness session binding to the local session after ru
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   store.upsertBinding({
     workspaceId: workspace.id,

@@ -5,9 +5,9 @@ import path from "node:path";
 import { afterEach, test } from "node:test";
 
 import {
-  clearWorkspaceMainSessionId,
-  persistWorkspaceMainSessionId,
-  readWorkspaceMainSessionId,
+  clearWorkspaceHarnessSessionId,
+  persistWorkspaceHarnessSessionId,
+  readWorkspaceHarnessSessionId,
   readWorkspaceSessionState,
   workspaceSessionStatePath
 } from "./ts-runner-session-state.js";
@@ -22,12 +22,12 @@ afterEach(() => {
   }
 });
 
-test("persistWorkspaceMainSessionId writes the expected session state payload", () => {
+test("persistWorkspaceHarnessSessionId writes the expected session state payload", () => {
   const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-state-"));
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   const workspaceDir = path.join(sandboxRoot, "workspace", "workspace-1");
 
-  persistWorkspaceMainSessionId({
+  persistWorkspaceHarnessSessionId({
     workspaceDir,
     harness: "pi",
     sessionId: "session-123"
@@ -37,14 +37,14 @@ test("persistWorkspaceMainSessionId writes the expected session state payload", 
     version: 2,
     harness_sessions: {
       pi: {
-        main_session_id: "session-123"
+        session_id: "session-123"
       }
     }
   });
-  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "pi" }), "session-123");
+  assert.equal(readWorkspaceHarnessSessionId({ workspaceDir, harness: "pi" }), "session-123");
 });
 
-test("readWorkspaceMainSessionId keeps legacy harness payloads readable", () => {
+test("readWorkspaceHarnessSessionId keeps legacy harness payloads readable", () => {
   const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-state-mismatch-"));
   const statePath = workspaceSessionStatePath(workspaceDir);
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
@@ -58,10 +58,10 @@ test("readWorkspaceMainSessionId keeps legacy harness payloads readable", () => 
     "utf8"
   );
 
-  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "pi" }), null);
+  assert.equal(readWorkspaceHarnessSessionId({ workspaceDir, harness: "pi" }), null);
 });
 
-test("persistWorkspaceMainSessionId stores multiple harness session ids side by side", () => {
+test("persistWorkspaceHarnessSessionId stores multiple harness session ids side by side", () => {
   const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-state-refuse-"));
   const statePath = workspaceSessionStatePath(workspaceDir);
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
@@ -75,7 +75,7 @@ test("persistWorkspaceMainSessionId stores multiple harness session ids side by 
     "utf8"
   );
 
-  persistWorkspaceMainSessionId({
+  persistWorkspaceHarnessSessionId({
     workspaceDir,
     harness: "pi",
     sessionId: "session-456"
@@ -85,32 +85,32 @@ test("persistWorkspaceMainSessionId stores multiple harness session ids side by 
     version: 2,
     harness_sessions: {
       pi: {
-        main_session_id: "session-456"
+        session_id: "session-456"
       },
       other: {
-        main_session_id: "session-123"
+        session_id: "session-123"
       }
     }
   });
-  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "other" }), "session-123");
-  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "pi" }), "session-456");
+  assert.equal(readWorkspaceHarnessSessionId({ workspaceDir, harness: "other" }), "session-123");
+  assert.equal(readWorkspaceHarnessSessionId({ workspaceDir, harness: "pi" }), "session-456");
 });
 
-test("clearWorkspaceMainSessionId removes only the targeted harness entry", () => {
+test("clearWorkspaceHarnessSessionId removes only the targeted harness entry", () => {
   const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-state-clear-"));
 
-  persistWorkspaceMainSessionId({
+  persistWorkspaceHarnessSessionId({
     workspaceDir,
     harness: "other",
     sessionId: "session-123"
   });
-  persistWorkspaceMainSessionId({
+  persistWorkspaceHarnessSessionId({
     workspaceDir,
     harness: "pi",
     sessionId: "session-456"
   });
 
-  clearWorkspaceMainSessionId({
+  clearWorkspaceHarnessSessionId({
     workspaceDir,
     harness: "pi"
   });
@@ -119,10 +119,10 @@ test("clearWorkspaceMainSessionId removes only the targeted harness entry", () =
     version: 2,
     harness_sessions: {
       other: {
-        main_session_id: "session-123"
+        session_id: "session-123"
       }
     }
   });
-  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "pi" }), null);
-  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "other" }), "session-123");
+  assert.equal(readWorkspaceHarnessSessionId({ workspaceDir, harness: "pi" }), null);
+  assert.equal(readWorkspaceHarnessSessionId({ workspaceDir, harness: "other" }), "session-123");
 });
