@@ -54,6 +54,7 @@ import {
   AppLifecycleExecutorError,
   appBuildHasCompletedSetup,
   isAppHealthy,
+  killPortListeners,
   type AppLifecycleExecutorLike,
   RuntimeAppLifecycleExecutor
 } from "./app-lifecycle-worker.js";
@@ -634,6 +635,7 @@ function externalIdFromOutputRecord(record: OutputRecord): string {
 function sessionArtifactPayload(record: OutputRecord): Record<string, unknown> {
   return {
     id: record.artifactId ?? record.id,
+    output_id: record.id,
     session_id: record.sessionId,
     workspace_id: record.workspaceId,
     input_id: record.inputId,
@@ -1454,6 +1456,50 @@ async function executeWorkspaceCommand(command: string, cwd: string, timeoutSeco
   });
 }
 
+/**
+ * Kill processes that are still listening on ports allocated to deleted or
+ * non-existent workspaces.  Runs once at startup to recover from unclean
+ * shutdowns where the normal stopApp cleanup never ran.
+ */
+async function cleanupOrphanAppProcesses(
+  store: RuntimeStateStore,
+  log: { info: (...args: unknown[]) => void; debug: (...args: unknown[]) => void }
+): Promise<void> {
+  const allPorts = store.listAllAppPorts();
+  if (allPorts.length === 0) {
+    return;
+  }
+
+  const activeWorkspaceIds = new Set(
+    store.listWorkspaces({ includeDeleted: false }).map((ws) => ws.id)
+  );
+
+  const orphanPorts: number[] = [];
+  const orphanRecords: Array<{ workspaceId: string; appId: string }> = [];
+
+  for (const record of allPorts) {
+    if (!activeWorkspaceIds.has(record.workspaceId)) {
+      orphanPorts.push(record.port);
+      orphanRecords.push({ workspaceId: record.workspaceId, appId: record.appId });
+    }
+  }
+
+  if (orphanPorts.length === 0) {
+    return;
+  }
+
+  log.info(
+    { orphanPorts, count: orphanPorts.length },
+    "cleaning up orphan app processes from deleted workspaces"
+  );
+
+  await killPortListeners(orphanPorts);
+
+  for (const record of orphanRecords) {
+    store.deleteAppPort({ workspaceId: record.workspaceId, appId: record.appId });
+  }
+}
+
 export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}): FastifyInstance {
   const ownsStore = !options.store;
   const store =
@@ -1551,6 +1597,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         appDir: resolved.appDir,
         httpPort: resolved.ports.http,
         mcpPort: resolved.ports.mcp,
+        workspaceId,
         resolvedApp: resolved.resolvedApp,
         skipSetup: true
       });
@@ -1669,6 +1716,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       await appLifecycleExecutor.stopApp({
         appId,
         appDir: resolved.appDir,
+        workspaceId: params.workspaceId,
         resolvedApp: resolved.resolvedApp
       });
       store.upsertAppBuild({ workspaceId: params.workspaceId, appId, status: "stopped" });
@@ -1680,6 +1728,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     workspaceId: string;
     workspaceDir: string;
   }): Promise<void> {
+    // Collect all port records BEFORE any cleanup so we can force-kill as a safety net
+    // even if the normal stopApp flow fails or in-memory maps are stale.
+    const allocatedPorts: number[] = store
+      .listAppPorts({ workspaceId: params.workspaceId })
+      .map((p) => p.port);
+
     let entries: Array<Record<string, unknown>> = [];
     try {
       entries = listWorkspaceApplications(params.workspaceDir);
@@ -1712,13 +1766,15 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         await appLifecycleExecutor.stopApp({
           appId,
           appDir: resolved.appDir,
+          workspaceId: params.workspaceId,
           resolvedApp: resolved.resolvedApp
         });
       } catch (error) {
         try {
           await appLifecycleExecutor.stopApp({
             appId,
-            appDir: fallbackAppDir
+            appDir: fallbackAppDir,
+            workspaceId: params.workspaceId
           });
         } catch (fallbackError) {
           app.log.debug(
@@ -1734,6 +1790,20 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       } finally {
         releaseWorkspaceAppPorts({ store, workspaceId: params.workspaceId, appId });
         store.deleteAppBuild({ workspaceId: params.workspaceId, appId });
+      }
+    }
+
+    // Safety net: force-kill any process still listening on the allocated ports.
+    // This handles the case where stopApp failed, in-memory maps were stale after
+    // a runtime restart, or multiple workspaces had colliding appId keys.
+    if (allocatedPorts.length > 0) {
+      try {
+        await killPortListeners(allocatedPorts);
+      } catch {
+        app.log.debug(
+          { workspaceId: params.workspaceId, ports: allocatedPorts },
+          "best-effort port kill during workspace delete"
+        );
       }
     }
 
@@ -1851,6 +1921,14 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     await bridgeWorker?.start();
     if (options.enableAppHealthMonitor !== false) {
       startHealthMonitor();
+    }
+
+    // Clean up orphan processes from deleted workspaces whose ports were
+    // never properly released (e.g. runtime crashed before cleanup finished).
+    try {
+      await cleanupOrphanAppProcesses(store, app.log);
+    } catch (err) {
+      app.log.error({ err: err instanceof Error ? err.message : String(err) }, "orphan app process cleanup failed");
     }
 
     if (options.startAppsOnReady !== false) {
@@ -3204,6 +3282,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         httpPort: resolvedApp.ports.http,
         mcpPort: resolvedApp.ports.mcp,
         holabossUserId,
+        workspaceId,
         resolvedApp: resolvedApp.resolvedApp,
         skipSetup: appBuildHasCompletedSetup(build?.status)
       });
@@ -3255,6 +3334,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       const result = await appLifecycleExecutor.stopApp({
         appId,
         appDir: resolvedApp.appDir,
+        workspaceId,
         resolvedApp: resolvedApp.resolvedApp
       });
       store.upsertAppBuild({
@@ -3504,6 +3584,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       await appLifecycleExecutor.stopApp({
         appId,
         appDir: resolvedApp.appDir,
+        workspaceId,
         resolvedApp: resolvedApp.resolvedApp
       });
     } catch {
@@ -4141,12 +4222,17 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!isRecord(request.body)) {
       return sendError(reply, 400, "request body must be an object");
     }
+    const moduleId = nullableString(request.body.module_id) ?? null;
+    const metadata = optionalDict(request.body.metadata) ?? {};
+    if (moduleId && !metadata.origin_type) {
+      metadata.origin_type = "app";
+    }
     const output = store.createOutput({
       workspaceId: requiredString(request.body.workspace_id, "workspace_id"),
       outputType: requiredString(request.body.output_type, "output_type"),
       title: optionalString(request.body.title) ?? "",
       status: optionalString(request.body.status) ?? "draft",
-      moduleId: nullableString(request.body.module_id) ?? null,
+      moduleId,
       moduleResourceId: nullableString(request.body.module_resource_id) ?? null,
       filePath: nullableString(request.body.file_path) ?? null,
       htmlContent: nullableString(request.body.html_content) ?? null,
@@ -4155,7 +4241,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       artifactId: nullableString(request.body.artifact_id) ?? null,
       folderId: nullableString(request.body.folder_id) ?? null,
       platform: nullableString(request.body.platform) ?? null,
-      metadata: optionalDict(request.body.metadata) ?? {}
+      metadata
     });
     return { output: outputPayload(output) };
   });
@@ -4165,6 +4251,24 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     const params = request.params as { outputId: string };
+    let patchMetadata: Record<string, unknown> | undefined;
+    if (hasOwn(request.body, "metadata")) {
+      const incoming = optionalDict(request.body.metadata) ?? {};
+      // Preserve origin_type from existing output if not provided in the patch,
+      // so that app updates don't accidentally strip it.
+      const existing = store.getOutput(params.outputId);
+      if (existing && !incoming.origin_type && existing.metadata.origin_type) {
+        incoming.origin_type = existing.metadata.origin_type;
+      }
+      // Also preserve artifact_type and change_type
+      if (existing && !incoming.artifact_type && existing.metadata.artifact_type) {
+        incoming.artifact_type = existing.metadata.artifact_type;
+      }
+      if (existing && !incoming.change_type && existing.metadata.change_type) {
+        incoming.change_type = existing.metadata.change_type;
+      }
+      patchMetadata = incoming;
+    }
     const output = store.updateOutput({
       outputId: params.outputId,
       title: nullableString(request.body.title),
@@ -4172,7 +4276,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       moduleResourceId: nullableString(request.body.module_resource_id),
       filePath: nullableString(request.body.file_path),
       htmlContent: nullableString(request.body.html_content),
-      metadata: hasOwn(request.body, "metadata") ? (optionalDict(request.body.metadata) ?? {}) : undefined,
+      metadata: patchMetadata,
       folderId: nullableString(request.body.folder_id)
     });
     if (!output) {

@@ -12,6 +12,7 @@ import { TopTabsBar } from "@/components/layout/TopTabsBar";
 import { appShellMainGridClassName } from "@/components/layout/appShellLayout";
 import { FirstWorkspacePane } from "@/components/onboarding";
 import { AppSurfacePane } from "@/components/panes/AppSurfacePane";
+import { resolveAppSurfacePath } from "@/components/panes/appSurfaceRoute";
 import { AutomationsPane } from "@/components/panes/AutomationsPane";
 import { BrowserPane } from "@/components/panes/BrowserPane";
 import { ChatPane } from "@/components/panes/ChatPane";
@@ -2003,48 +2004,69 @@ function AppShellContent() {
   const handleOpenWorkspaceOutput = useCallback(
     (output: WorkspaceOutputRecordPayload) => {
       const target = workspaceOutputNavigationTarget(output, installedAppIds);
-      if (target.type === "app") {
-        setActiveLeftRailItem("app");
-        setAgentView({
-          type: "app",
-          appId: target.appId,
-          resourceId: target.resourceId,
+      if (target.type === "app" && selectedWorkspaceId) {
+        // target.resourceId is already a full route path (e.g. "/drafts/abc")
+        // when derived from presentation.path — pass it as `path` so
+        // resolveAppSurfacePath uses it directly instead of nesting it under view.
+        const routePath = resolveAppSurfacePath({
+          path: target.resourceId,
           view: target.view,
         });
+        void window.electronAPI.appSurface
+          .resolveUrl(selectedWorkspaceId, target.appId, routePath)
+          .then((url) => {
+            revealBrowserPane();
+            void window.electronAPI.browser
+              .setActiveWorkspace(selectedWorkspaceId)
+              .then(() => window.electronAPI.browser.navigate(url))
+              .catch(() => undefined);
+          })
+          .catch(() => {
+            // Fallback: open in full app view if URL resolution fails
+            setActiveLeftRailItem("app");
+            setAgentView({
+              type: "app",
+              appId: target.appId,
+              resourceId: target.resourceId,
+              view: target.view,
+            });
+          });
         return;
       }
 
-      if (
-        (target.surface === "document" || target.surface === "file") &&
-        target.resourceId?.trim()
-      ) {
+      if (target.type === "internal") {
+        if (
+          (target.surface === "document" || target.surface === "file") &&
+          target.resourceId?.trim()
+        ) {
+          setActiveLeftRailItem("space");
+          setSpaceVisibility((previous) => ({
+            ...previous,
+            agent: true,
+            files: true,
+          }));
+          setAgentView({ type: "chat" });
+          setFileExplorerFocusRequest({
+            path: target.resourceId,
+            requestKey: Date.now(),
+          });
+          return;
+        }
+
         setActiveLeftRailItem("space");
         setSpaceVisibility((previous) => ({
           ...previous,
           agent: true,
-          files: true,
         }));
-        setAgentView({ type: "chat" });
-        setFileExplorerFocusRequest({
-          path: target.resourceId,
-          requestKey: Date.now(),
+        setAgentView({
+          type: "internal",
+          surface: target.surface,
+          resourceId: target.resourceId ?? output.id,
+          htmlContent: target.htmlContent,
         });
-        return;
       }
-
-      setActiveLeftRailItem("space");
-      setSpaceVisibility((previous) => ({
-        ...previous,
-        agent: true,
-      }));
-      setAgentView({
-        type: "internal",
-        surface: target.surface,
-        resourceId: target.resourceId ?? output.id,
-        htmlContent: target.htmlContent,
-      });
     },
-    [installedAppIds],
+    [installedAppIds, selectedWorkspaceId, revealBrowserPane],
   );
 
   const handleOpenRunningSession = (sessionId: string) => {

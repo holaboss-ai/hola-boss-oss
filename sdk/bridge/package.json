@@ -1,6 +1,6 @@
 {
   "name": "@holaboss/bridge",
-  "version": "0.1.0",
+  "version": "0.1.1-beta.0",
   "description": "Holaboss Bridge SDK — integration proxy and workspace output helpers for module apps",
   "type": "module",
   "main": "./dist/index.cjs",

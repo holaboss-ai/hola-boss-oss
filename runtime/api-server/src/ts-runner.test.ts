@@ -11,6 +11,7 @@ import { decodeTsRunnerRequest, validateTsRunnerRequest } from "./ts-runner-cont
 import type { TsRunnerEvent, TsRunnerRequest } from "./ts-runner-contracts.js";
 import {
   relayTsRunnerEvent,
+  resolvedApplicationMcpHeaders,
   resolveTsRunnerBootstrapState,
   runTsRunnerCli,
   type TsRunnerExecutionDeps
@@ -2714,6 +2715,15 @@ test("runTsRunnerCli appends bootstrapped app MCP servers into the harness-host 
   assert.ok(capturedRequestPayload);
   const mcpServers = (capturedRequestPayload as { mcp_servers: Array<Record<string, unknown>> }).mcp_servers;
   assert.deepEqual(mcpServers.map((server) => server.name), ["app-a"]);
+});
+
+test("resolvedApplicationMcpHeaders includes Holaboss turn context for app MCP calls", () => {
+  assert.deepEqual(resolvedApplicationMcpHeaders(baseRequest()), {
+    "X-Workspace-Id": "workspace-1",
+    "X-Holaboss-Workspace-Id": "workspace-1",
+    "X-Holaboss-Session-Id": "session-1",
+    "X-Holaboss-Input-Id": "input-1",
+  });
 });
 
 test("runTsRunnerCli emits validation failures as run_failed JSONL", async () => {

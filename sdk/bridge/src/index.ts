@@ -1,13 +1,21 @@
 export { createIntegrationClient } from "./integration-proxy"
-export { createAppOutput, updateAppOutput } from "./workspace-outputs"
 export { buildAppResourcePresentation } from "./presentation"
+export { resolveHolabossTurnContext } from "./turn-context"
+export {
+  createAppOutput,
+  publishSessionArtifact,
+  updateAppOutput,
+} from "./workspace-outputs"
 
 export type {
+  AppOutputPresentationInput,
+  CreateAppOutputRequest,
+  HolabossTurnContext,
+  IntegrationClient,
   ProxyRequest,
   ProxyResponse,
-  IntegrationClient,
-  AppOutputPresentationInput,
-  WorkspaceOutputPayload,
-  CreateAppOutputRequest,
+  PublishSessionArtifactRequest,
+  SessionArtifactPayload,
   UpdateAppOutputRequest,
+  WorkspaceOutputPayload,
 } from "./types"

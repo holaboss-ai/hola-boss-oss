@@ -262,6 +262,7 @@ export async function bootstrapResolvedApplications(params: {
       httpPort: preparedStart.ports.http,
       mcpPort: preparedStart.ports.mcp,
       holabossUserId,
+      workspaceId: params.workspaceId,
       resolvedApp: preparedStart.resolvedApp,
       skipSetup: appBuildHasCompletedSetup(build?.status)
     });
