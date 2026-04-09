@@ -26,7 +26,7 @@ import {
 } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import {
   createServer,
@@ -5893,6 +5893,74 @@ async function listMarketplaceTemplates(): Promise<TemplateListResponsePayload> 
     method: "GET",
     path: "/api/v1/marketplace/templates",
   });
+}
+
+interface AppTemplateListResponsePayload {
+  templates: AppTemplateMetadataPayload[];
+}
+
+async function listAppTemplatesViaControlPlane(): Promise<AppTemplateListResponsePayload> {
+  const baseUrl = marketplaceBaseUrl();
+  try {
+    const res = await fetch(`${baseUrl}/api/v1/marketplace/app-templates`, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (res.ok) {
+      return (await res.json()) as AppTemplateListResponsePayload;
+    }
+  } catch {
+    // Fall through to authenticated path.
+  }
+  await ensureRuntimeBindingReadyForWorkspaceFlow("marketplace_app_templates", {
+    allowProvisionWhenUnmanaged: true,
+    waitForStartupSync: true,
+  });
+  return requestControlPlaneJson<AppTemplateListResponsePayload>({
+    service: "marketplace",
+    method: "GET",
+    path: "/api/v1/marketplace/app-templates",
+  });
+}
+
+async function downloadAppArchive(url: string, appId: string): Promise<string> {
+  const dir = path.join(os.tmpdir(), "holaboss-app-archives");
+  mkdirSync(dir, { recursive: true });
+  const filePath = path.join(dir, `${appId}-${Date.now()}.tar.gz`);
+
+  const res = await fetch(url, { method: "GET" });
+  if (!res.ok || !res.body) {
+    throw new Error(`Download failed: ${res.status} ${res.statusText}`);
+  }
+  const totalHeader = res.headers.get("content-length");
+  const total = totalHeader ? Number.parseInt(totalHeader, 10) : 0;
+  let received = 0;
+
+  const fileStream = createWriteStream(filePath);
+  const reader = res.body.getReader();
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) {
+        fileStream.write(value);
+        received += value.byteLength;
+        mainWindow?.webContents.send("app-install-progress", {
+          appId,
+          phase: "downloading",
+          bytes: received,
+          total,
+        });
+      }
+    }
+  } finally {
+    fileStream.end();
+    await new Promise<void>((resolve, reject) => {
+      fileStream.on("finish", () => resolve());
+      fileStream.on("error", reject);
+    });
+  }
+  return filePath;
 }
 
 async function listTaskProposals(
