@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
+import * as tar from "tar";
 import yauzl from "yauzl";
 
 import {
@@ -3410,6 +3411,102 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return await ensureAllAppsRunning(workspaceId);
     } catch (error) {
       return sendError(reply, 500, error instanceof Error ? error.message : "failed to ensure apps running");
+    }
+  });
+
+  app.post("/api/v1/apps/install-archive", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const workspaceId = requiredString(request.body.workspace_id, "workspace_id");
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    let appId: string;
+    try {
+      appId = sanitizeAppId(requiredString(request.body.app_id, "app_id"));
+    } catch (error) {
+      return sendError(reply, 400, error instanceof Error ? error.message : "invalid app_id");
+    }
+
+    const archivePath = requiredString(request.body.archive_path, "archive_path");
+    if (!isAllowedArchivePath(archivePath)) {
+      return sendError(reply, 400, "archive_path outside allowed roots");
+    }
+    if (!fs.existsSync(archivePath) || !fs.statSync(archivePath).isFile()) {
+      return sendError(reply, 400, "archive_path does not exist");
+    }
+
+    const workspaceDir = store.workspaceDir(workspaceId);
+    const appDir = path.join(workspaceDir, "apps", appId);
+    if (fs.existsSync(appDir) && fs.readdirSync(appDir).length > 0) {
+      return sendError(reply, 409, "app already installed — uninstall first");
+    }
+    fs.mkdirSync(appDir, { recursive: true });
+
+    try {
+      await tar.x({ file: archivePath, cwd: appDir, strict: true });
+    } catch (error) {
+      fs.rmSync(appDir, { recursive: true, force: true });
+      return sendError(
+        reply,
+        400,
+        `archive extraction failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    const appYamlPath = path.join(appDir, "app.runtime.yaml");
+    if (!fs.existsSync(appYamlPath)) {
+      fs.rmSync(appDir, { recursive: true, force: true });
+      return sendError(reply, 400, "app.runtime.yaml not found in archive root");
+    }
+
+    let parsed: ParsedInstalledApp;
+    try {
+      parsed = parseInstalledAppRuntime(
+        fs.readFileSync(appYamlPath, "utf8"),
+        appId,
+        `apps/${appId}/app.runtime.yaml`,
+      );
+    } catch (error) {
+      fs.rmSync(appDir, { recursive: true, force: true });
+      return sendError(
+        reply,
+        400,
+        error instanceof Error ? error.message : "invalid app.runtime.yaml",
+      );
+    }
+
+    const lifecycle: Record<string, string> = {};
+    if (parsed.lifecycle.setup) lifecycle.setup = parsed.lifecycle.setup;
+    if (parsed.lifecycle.start) lifecycle.start = parsed.lifecycle.start;
+    if (parsed.lifecycle.stop) lifecycle.stop = parsed.lifecycle.stop;
+    appendWorkspaceApplication(workspaceDir, {
+      appId,
+      configPath: parsed.configPath,
+      lifecycle: Object.keys(lifecycle).length > 0 ? lifecycle : null,
+    });
+
+    try {
+      await ensureAppRunning(workspaceId, appId);
+      return {
+        app_id: appId,
+        status: "enabled",
+        detail: "App installed and running",
+        ready: true,
+        error: null,
+      };
+    } catch (error) {
+      const message = (error instanceof Error ? error.message : String(error)).slice(0, 2000);
+      return {
+        app_id: appId,
+        status: "enabled",
+        detail: message,
+        ready: false,
+        error: message,
+      };
     }
   });
 
