@@ -279,6 +279,21 @@ export interface AppPortRecord {
   updatedAt: string;
 }
 
+export interface AppCatalogEntryRecord {
+  appId: string;
+  source: "marketplace" | "local";
+  name: string;
+  description: string | null;
+  icon: string | null;
+  category: string | null;
+  tags: string[];
+  version: string | null;
+  archiveUrl: string | null;
+  archivePath: string | null;
+  target: string;
+  cachedAt: string;
+}
+
 export interface CronjobRecord {
   id: string;
   workspaceId: string;
@@ -3550,6 +3565,25 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_app_ports_workspace
           ON app_ports (workspace_id);
+
+      CREATE TABLE IF NOT EXISTS app_catalog (
+          app_id        TEXT NOT NULL,
+          source        TEXT NOT NULL,
+          name          TEXT NOT NULL,
+          description   TEXT,
+          icon          TEXT,
+          category      TEXT,
+          tags_json     TEXT NOT NULL DEFAULT '[]',
+          version       TEXT,
+          archive_url   TEXT,
+          archive_path  TEXT,
+          target        TEXT NOT NULL,
+          cached_at     TEXT NOT NULL,
+          PRIMARY KEY (source, app_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_app_catalog_source
+          ON app_catalog (source);
 
       CREATE TABLE IF NOT EXISTS cronjobs (
           id TEXT PRIMARY KEY,
