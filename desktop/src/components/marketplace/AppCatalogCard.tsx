@@ -52,7 +52,7 @@ export function AppCatalogCard({ entry, state, disabled, onInstall }: AppCatalog
             type="button"
             disabled={disabled}
             onClick={onInstall}
-            className="inline-flex h-8 items-center gap-2 rounded-md border border-[rgba(247,90,84,0.38)] bg-[rgba(247,90,84,0.9)] px-3 text-xs font-medium text-white transition-colors hover:bg-[rgba(247,90,84,1)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex h-8 items-center gap-2 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Download size={13} />
             Install
