@@ -1,6 +1,7 @@
 export {
   type AgentSessionRecord,
   type AppBuildRecord,
+  type AppCatalogEntryRecord,
   type AppPortRecord,
   type IntegrationBindingRecord,
   type IntegrationConnectionRecord,
