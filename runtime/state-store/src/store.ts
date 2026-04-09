@@ -2634,6 +2634,132 @@ export class RuntimeStateStore {
     return result.changes > 0;
   }
 
+  // --- App Catalog ---
+
+  upsertAppCatalogEntry(params: {
+    appId: string;
+    source: "marketplace" | "local";
+    name: string;
+    description: string | null;
+    icon: string | null;
+    category: string | null;
+    tags: string[];
+    version: string | null;
+    archiveUrl: string | null;
+    archivePath: string | null;
+    target: string;
+    cachedAt: string;
+  }): AppCatalogEntryRecord {
+    const tagsJson = JSON.stringify(params.tags ?? []);
+    this.db().prepare(`
+      INSERT INTO app_catalog (
+        app_id, source, name, description, icon, category,
+        tags_json, version, archive_url, archive_path, target, cached_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(source, app_id) DO UPDATE SET
+        name = excluded.name,
+        description = excluded.description,
+        icon = excluded.icon,
+        category = excluded.category,
+        tags_json = excluded.tags_json,
+        version = excluded.version,
+        archive_url = excluded.archive_url,
+        archive_path = excluded.archive_path,
+        target = excluded.target,
+        cached_at = excluded.cached_at
+    `).run(
+      params.appId,
+      params.source,
+      params.name,
+      params.description,
+      params.icon,
+      params.category,
+      tagsJson,
+      params.version,
+      params.archiveUrl,
+      params.archivePath,
+      params.target,
+      params.cachedAt,
+    );
+    return {
+      appId: params.appId,
+      source: params.source,
+      name: params.name,
+      description: params.description,
+      icon: params.icon,
+      category: params.category,
+      tags: [...(params.tags ?? [])],
+      version: params.version,
+      archiveUrl: params.archiveUrl,
+      archivePath: params.archivePath,
+      target: params.target,
+      cachedAt: params.cachedAt,
+    };
+  }
+
+  listAppCatalogEntries(
+    params: { source?: "marketplace" | "local" } = {},
+  ): AppCatalogEntryRecord[] {
+    const rows = params.source
+      ? this.db()
+          .prepare<[string], Record<string, unknown>>(
+            "SELECT * FROM app_catalog WHERE source = ? ORDER BY app_id",
+          )
+          .all(params.source)
+      : this.db()
+          .prepare<[], Record<string, unknown>>(
+            "SELECT * FROM app_catalog ORDER BY source, app_id",
+          )
+          .all();
+    return rows.map((row) => this.rowToAppCatalog(row));
+  }
+
+  clearAppCatalogSource(source: "marketplace" | "local"): number {
+    const result = this.db()
+      .prepare("DELETE FROM app_catalog WHERE source = ?")
+      .run(source);
+    return result.changes;
+  }
+
+  deleteAppCatalogEntry(params: { source: string; appId: string }): boolean {
+    const result = this.db()
+      .prepare("DELETE FROM app_catalog WHERE source = ? AND app_id = ?")
+      .run(params.source, params.appId);
+    return result.changes > 0;
+  }
+
+  private rowToAppCatalog(row: Record<string, unknown>): AppCatalogEntryRecord {
+    let tags: string[] = [];
+    const tagsRaw = row.tags_json;
+    if (typeof tagsRaw === "string" && tagsRaw.length > 0) {
+      try {
+        const parsed = JSON.parse(tagsRaw);
+        if (Array.isArray(parsed)) {
+          tags = parsed.filter((t): t is string => typeof t === "string");
+        }
+      } catch {
+        tags = [];
+      }
+    }
+    const sourceRaw = row.source == null ? "" : String(row.source);
+    const source: "marketplace" | "local" =
+      sourceRaw === "marketplace" || sourceRaw === "local" ? sourceRaw : "marketplace";
+    return {
+      appId: String(row.app_id ?? ""),
+      source,
+      name: String(row.name ?? ""),
+      description: row.description == null ? null : String(row.description),
+      icon: row.icon == null ? null : String(row.icon),
+      category: row.category == null ? null : String(row.category),
+      tags,
+      version: row.version == null ? null : String(row.version),
+      archiveUrl: row.archive_url == null ? null : String(row.archive_url),
+      archivePath: row.archive_path == null ? null : String(row.archive_path),
+      target: String(row.target ?? ""),
+      cachedAt: String(row.cached_at ?? ""),
+    };
+  }
+
   private findAvailablePort(): number {
     const BASE_PORT = 38080;
     const MAX_PORT = 38979;
