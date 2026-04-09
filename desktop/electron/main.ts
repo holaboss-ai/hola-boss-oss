@@ -13947,6 +13947,28 @@ app.whenReady().then(async () => {
       removeInstalledApp(workspaceId, appId),
   );
   handleTrustedIpc(
+    "workspace:listAppCatalog",
+    ["main"],
+    async (_event, params: { source?: "marketplace" | "local" }) =>
+      listAppCatalog(params),
+  );
+  handleTrustedIpc(
+    "workspace:syncAppCatalog",
+    ["main"],
+    async (_event, params: { source: "marketplace" | "local" }) =>
+      syncAppCatalog(params),
+  );
+  handleTrustedIpc(
+    "workspace:installAppFromCatalog",
+    ["main"],
+    async (_event, params: InstallAppFromCatalogRequest) =>
+      installAppFromCatalog({
+        workspaceId: params.workspaceId,
+        appId: params.appId,
+        source: params.source,
+      }),
+  );
+  handleTrustedIpc(
     "appSurface:navigate",
     ["main"],
     async (_event, workspaceId: string, appId: string, urlPath?: string) =>
