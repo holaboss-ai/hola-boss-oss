@@ -37,3 +37,14 @@ test("simple markdown preserves the md-* styling hooks used by chat and marketpl
   assert.match(source, /target="_blank"/);
   assert.match(source, /rel="noopener noreferrer"/);
 });
+
+test("simple markdown memoizes renderer components to keep chat content stable during parent rerenders", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /import \{ memo, useMemo \} from "react";/);
+  assert.match(
+    source,
+    /const components = useMemo\(\s*\(\) => createMarkdownComponents\(onLinkClick\),\s*\[onLinkClick\],\s*\);/,
+  );
+  assert.match(source, /export const SimpleMarkdown = memo\(SimpleMarkdownComponent\);/);
+});

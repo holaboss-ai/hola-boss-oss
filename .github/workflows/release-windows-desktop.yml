@@ -177,9 +177,24 @@ jobs:
             throw "No Windows installer .exe was produced under desktop/out/release."
           }
 
+          $installerPath = $installer.FullName
           $stablePath = Join-Path $PWD "out/release/$env:DESKTOP_RELEASE_ASSET_NAME"
-          Copy-Item -LiteralPath $installer.FullName -Destination $stablePath -Force
+          Copy-Item -LiteralPath $installerPath -Destination $stablePath -Force
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "generated_installer_path=$installerPath"
           Add-Content -Path $env:GITHUB_OUTPUT -Value "installer_path=$stablePath"
+
+      - name: Validate Windows auto-update artifacts
+        shell: pwsh
+        run: |
+          $manifestPath = Join-Path $PWD "desktop/out/release/latest.yml"
+          if (-not (Test-Path -LiteralPath $manifestPath)) {
+            throw "latest.yml was not generated"
+          }
+
+          $blockmaps = Get-ChildItem -Path desktop/out/release -File -Filter *.blockmap
+          if (-not $blockmaps) {
+            throw "No Windows blockmap was produced under desktop/out/release."
+          }
 
       - name: Upload Windows desktop installer artifact
         uses: actions/upload-artifact@v7
@@ -195,10 +210,33 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          GENERATED_INSTALLER_PATH: ${{ steps.build_windows_installer.outputs.generated_installer_path }}
           INSTALLER_PATH: ${{ steps.build_windows_installer.outputs.installer_path }}
         run: |
           if (-not $env:INSTALLER_PATH) {
             throw "Installer path output was not set."
           }
 
-          gh release upload $env:RELEASE_TAG $env:INSTALLER_PATH --clobber
+          if (-not $env:GENERATED_INSTALLER_PATH) {
+            throw "Generated installer path output was not set."
+          }
+
+          $manifestPath = Join-Path $PWD "desktop/out/release/latest.yml"
+          if (-not (Test-Path -LiteralPath $manifestPath)) {
+            throw "latest.yml was not generated"
+          }
+
+          $uploadPaths = @($env:INSTALLER_PATH)
+          if ($env:GENERATED_INSTALLER_PATH -ne $env:INSTALLER_PATH) {
+            $uploadPaths += $env:GENERATED_INSTALLER_PATH
+          }
+          $uploadPaths += $manifestPath
+
+          $blockmapPaths = Get-ChildItem -Path desktop/out/release -File -Filter *.blockmap |
+            ForEach-Object { $_.FullName }
+          if (-not $blockmapPaths) {
+            throw "No Windows blockmap was produced under desktop/out/release."
+          }
+          $uploadPaths += $blockmapPaths
+
+          gh release upload $env:RELEASE_TAG @uploadPaths --clobber

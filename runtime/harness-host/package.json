@@ -18,10 +18,14 @@
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"
   },
+  "overrides": {
+    "@mariozechner/pi-agent-core": "0.66.0",
+    "@mariozechner/pi-tui": "0.66.0"
+  },
   "dependencies": {
     "@sinclair/typebox": "^0.34.41",
-    "@mariozechner/pi-ai": "^0.62.0",
-    "@mariozechner/pi-coding-agent": "^0.62.0",
+    "@mariozechner/pi-ai": "0.66.0",
+    "@mariozechner/pi-coding-agent": "0.66.0",
     "exceljs": "^4.4.0",
     "jszip": "^3.10.1",
     "mcporter": "^0.7.3",

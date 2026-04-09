@@ -20,6 +20,7 @@ import {
   Check,
   ChevronDown,
   Clock3,
+  Copy,
   FileText,
   Image as ImageIcon,
   Lightbulb,
@@ -62,6 +63,7 @@ interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
+  createdAt?: string;
   attachments?: ChatAttachment[];
   thinkingText?: string;
   traceSteps?: ChatTraceStep[];
@@ -507,6 +509,10 @@ function outputSecondaryLabel(output: WorkspaceOutputRecordPayload) {
   if (sizeLabel) {
     parts.push(sizeLabel);
   }
+  const timeLabel = chatMessageTimeLabel(output.created_at);
+  if (timeLabel) {
+    parts.push(timeLabel);
+  }
   return parts.join(" · ");
 }
 
@@ -516,6 +522,17 @@ function sortOutputs(outputs: WorkspaceOutputRecordPayload[]) {
     const rightTime = Date.parse(right.created_at || "") || 0;
     if (leftTime !== rightTime) {
       return leftTime - rightTime;
+    }
+    return left.title.localeCompare(right.title);
+  });
+}
+
+function sortOutputsLatestFirst(outputs: WorkspaceOutputRecordPayload[]) {
+  return [...outputs].sort((left, right) => {
+    const leftTime = Date.parse(left.created_at || "") || 0;
+    const rightTime = Date.parse(right.created_at || "") || 0;
+    if (leftTime !== rightTime) {
+      return rightTime - leftTime;
     }
     return left.title.localeCompare(right.title);
   });
@@ -1487,6 +1504,61 @@ function isNearChatBottom(container: HTMLDivElement) {
   return remaining <= CHAT_AUTO_SCROLL_THRESHOLD_PX;
 }
 
+function chatMessageTimeLabel(value: string | null | undefined): string {
+  const timestamp = Date.parse(value || "");
+  if (Number.isNaN(timestamp)) {
+    return "";
+  }
+  return new Date(timestamp).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+async function copyTextToClipboard(value: string) {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  if (typeof document === "undefined") {
+    throw new Error("Clipboard is unavailable.");
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+
+  if (!copied) {
+    throw new Error("Clipboard copy failed.");
+  }
+}
+
+function hasActiveChatSelection(container: HTMLDivElement | null) {
+  if (!container || typeof window === "undefined") {
+    return false;
+  }
+
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed) {
+    return false;
+  }
+
+  return (
+    container.contains(selection.anchorNode) ||
+    container.contains(selection.focusNode)
+  );
+}
+
 interface ChatPaneSessionOpenRequest {
   sessionId: string;
   requestKey: number;
@@ -1603,6 +1675,7 @@ export function ChatPane({
   const composerBlockRef = useRef<HTMLDivElement>(null);
   const composerIsComposingRef = useRef(false);
   const shouldAutoScrollRef = useRef(true);
+  const lastChatScrollTopRef = useRef(0);
   const activeSessionIdRef = useRef<string | null>(null);
   const activeStreamIdRef = useRef<string | null>(null);
   const activeAssistantMessageIdRef = useRef<string | null>(null);
@@ -1768,6 +1841,7 @@ export function ChatPane({
             `history-${message.created_at ?? crypto.randomUUID()}`,
           role: message.role as ChatMessage["role"],
           text: message.text,
+          createdAt: message.created_at || undefined,
           attachments,
         };
 
@@ -2173,6 +2247,8 @@ export function ChatPane({
       return;
     }
 
+    lastChatScrollTopRef.current = target.scrollTop;
+
     setChatScrollMetrics((previous) => {
       const next = {
         scrollTop: target.scrollTop,
@@ -2206,7 +2282,11 @@ export function ChatPane({
 
   useEffect(() => {
     const container = messagesRef.current;
-    if (!container || !shouldAutoScrollRef.current) {
+    if (
+      !container ||
+      !shouldAutoScrollRef.current ||
+      hasActiveChatSelection(container)
+    ) {
       return;
     }
 
@@ -3185,6 +3265,7 @@ export function ChatPane({
         id: `user-${Date.now()}`,
         role: "user",
         text: trimmed,
+        createdAt: new Date().toISOString(),
         attachments: stagedAttachments,
       };
 
@@ -3897,11 +3978,18 @@ export function ChatPane({
           <div className="min-h-0 flex-1 overflow-hidden">
             <div
               ref={messagesRef}
+              onWheelCapture={(event) => {
+                if (event.deltaY < 0) {
+                  shouldAutoScrollRef.current = false;
+                }
+              }}
               onScroll={(event) => {
-                shouldAutoScrollRef.current = isNearChatBottom(
-                  event.currentTarget,
-                );
-                syncChatScrollMetrics(event.currentTarget);
+                const { currentTarget } = event;
+                const scrolledUp =
+                  currentTarget.scrollTop < lastChatScrollTopRef.current;
+                const nearBottom = isNearChatBottom(currentTarget);
+                shouldAutoScrollRef.current = scrolledUp ? false : nearBottom;
+                syncChatScrollMetrics(currentTarget);
               }}
               className={`chat-scrollbar-hidden h-full min-h-0 overflow-x-hidden overflow-y-auto ${hasMessages ? "" : "flex items-center justify-center"}`}
             >
@@ -3917,6 +4005,7 @@ export function ChatPane({
                       <UserTurn
                         key={message.id}
                         text={message.text}
+                        createdAt={message.createdAt}
                         attachments={message.attachments ?? []}
                         onLinkClick={onOpenLinkInBrowser}
                       />
@@ -4234,15 +4323,50 @@ interface ThinkingPanelProps {
 
 function UserTurn({
   text,
+  createdAt,
   attachments,
   onLinkClick,
 }: {
   text: string;
+  createdAt?: string;
   attachments: ChatAttachment[];
   onLinkClick?: (url: string) => void;
 }) {
+  const [copyFeedbackVisible, setCopyFeedbackVisible] = useState(false);
+  const copyResetTimerRef = useRef<number | null>(null);
+  const timeLabel = chatMessageTimeLabel(createdAt);
+  const canCopy = text.trim().length > 0;
+
+  useEffect(() => {
+    return () => {
+      if (copyResetTimerRef.current !== null) {
+        window.clearTimeout(copyResetTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopy = async () => {
+    if (!canCopy) {
+      return;
+    }
+
+    try {
+      await copyTextToClipboard(text);
+    } catch {
+      return;
+    }
+    setCopyFeedbackVisible(true);
+    if (copyResetTimerRef.current !== null) {
+      window.clearTimeout(copyResetTimerRef.current);
+    }
+    copyResetTimerRef.current = window.setTimeout(() => {
+      setCopyFeedbackVisible(false);
+      copyResetTimerRef.current = null;
+    }, 1600);
+  };
+
   return (
-    <div className="flex min-w-0 justify-end">
+    <div className="group/user-turn flex min-w-0 justify-end">
       <div className="flex min-w-0 max-w-[420px] flex-col items-end gap-2 sm:max-w-[560px] lg:max-w-[680px]">
         {text ? (
           <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full rounded-[18px] border px-4 py-3 text-foreground/95">
@@ -4256,6 +4380,35 @@ function UserTurn({
         ) : null}
         {attachments.length > 0 ? (
           <AttachmentList attachments={attachments} className="justify-end" />
+        ) : null}
+        {canCopy || timeLabel ? (
+          <div className="flex min-h-6 items-center justify-end gap-2 pr-1 text-[11px] text-muted-foreground/72 opacity-0 pointer-events-none transition duration-150 group-hover/user-turn:opacity-100 group-hover/user-turn:pointer-events-auto group-focus-within/user-turn:opacity-100 group-focus-within/user-turn:pointer-events-auto">
+            {canCopy ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={
+                  copyFeedbackVisible
+                    ? "Copied user message"
+                    : "Copy user message"
+                }
+                onClick={() => {
+                  void handleCopy();
+                }}
+                className="size-6 rounded-[10px] text-muted-foreground/72 hover:bg-foreground/6 hover:text-foreground"
+              >
+                {copyFeedbackVisible ? (
+                  <Check size={13} strokeWidth={1.9} />
+                ) : (
+                  <Copy size={13} strokeWidth={1.9} />
+                )}
+              </Button>
+            ) : null}
+            {timeLabel ? (
+              <span className="select-none tabular-nums">{timeLabel}</span>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </div>
@@ -4479,7 +4632,7 @@ function AssistantTurnOutputs({
               {output.title || "Untitled artifact"}
             </div>
             <div className="text-[11px] text-muted-foreground">
-              {outputKindLabel(output)}
+              {outputSecondaryLabel(output)}
             </div>
           </div>
         </button>
@@ -4758,12 +4911,13 @@ function ArtifactBrowserModal({
     { id: "links", label: "Links" },
     { id: "apps", label: "Apps" },
   ];
-  const filteredOutputs =
+  const filteredOutputs = sortOutputsLatestFirst(
     filter === "all"
       ? outputs
       : outputs.filter(
           (output) => outputBrowserFilterForOutput(output) === filter,
-        );
+        ),
+  );
 
   return (
     <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/45 px-4 py-6 backdrop-blur-[2px]">

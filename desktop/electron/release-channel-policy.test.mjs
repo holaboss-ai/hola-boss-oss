@@ -33,7 +33,7 @@ test("desktop updater uses electron-updater and exposes install-now state", asyn
   const source = await readFile(mainSourcePath, "utf8");
 
   assert.match(source, /import \{[\s\S]*autoUpdater,[\s\S]*\} from "electron-updater";/);
-  assert.match(source, /const APP_UPDATE_SUPPORTED_PLATFORMS = new Set\(\["darwin"\]\);/);
+  assert.match(source, /const APP_UPDATE_SUPPORTED_PLATFORMS = new Set\(\["darwin", "win32"\]\);/);
   assert.match(source, /autoUpdater\.autoDownload = true;/);
   assert.match(source, /autoUpdater\.autoInstallOnAppQuit = true;/);
   assert.match(source, /autoUpdater\.allowPrerelease = false;/);
@@ -87,4 +87,19 @@ test("desktop release workflow uploads the macOS auto-update artifacts", async (
   assert.match(source, /desktop\/out\/release\/\*\.blockmap/);
   assert.match(source, /desktop\/out\/release\/latest-mac\.yml/);
   assert.match(source, /upload_paths=\([\s\S]*"\$\{manifest_path\}"/);
+});
+
+test("desktop release workflow uploads the Windows auto-update artifacts", async () => {
+  const source = await readFile(
+    path.join(__dirname, "..", "..", ".github", "workflows", "release-windows-desktop.yml"),
+    "utf8",
+  );
+
+  assert.match(source, /generated_installer_path=/);
+  assert.match(source, /latest\.yml was not generated/);
+  assert.match(source, /desktop\/out\/release\/\*\.yml/);
+  assert.match(source, /desktop\/out\/release\/\*\.blockmap/);
+  assert.match(source, /\$manifestPath = Join-Path \$PWD "desktop\/out\/release\/latest\.yml"/);
+  assert.match(source, /\$uploadPaths \+= \$manifestPath/);
+  assert.match(source, /gh release upload \$env:RELEASE_TAG @uploadPaths --clobber/);
 });

@@ -480,7 +480,7 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
   assert.deepEqual(
     mapPiSessionEvent(
       {
-        type: "auto_compaction_start",
+        type: "compaction_start",
         reason: "threshold",
       },
       sessionFile,
@@ -501,7 +501,8 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
   assert.deepEqual(
     mapPiSessionEvent(
       {
-        type: "auto_compaction_end",
+        type: "compaction_end",
+        reason: "threshold",
         result: {
           summary: "Kept the latest implementation details.",
           firstKeptEntryId: "entry-1",
@@ -1064,7 +1065,10 @@ test("buildPiProviderConfig registers runtime-configured ollama models for the P
     };
 
     const authStorage = AuthStorage.create(path.join(stateDir, "auth.json"));
-    const modelRegistry = new ModelRegistry(authStorage, path.join(stateDir, "models.json"));
+    const modelRegistry = ModelRegistry.create(
+      authStorage,
+      path.join(stateDir, "models.json"),
+    );
     modelRegistry.registerProvider(request.provider_id, buildPiProviderConfig(request));
 
     const model = modelRegistry.find("ollama_direct", "qwen2.5:0.5b");
@@ -1328,11 +1332,12 @@ test("runPi emits run_started and terminal success when the session completes", 
         },
       });
       this.listener?.({
-        type: "auto_compaction_start",
+        type: "compaction_start",
         reason: "threshold",
       });
       this.listener?.({
-        type: "auto_compaction_end",
+        type: "compaction_end",
+        reason: "threshold",
         result: {
           summary: "Compacted older context.",
           firstKeptEntryId: "entry-1",

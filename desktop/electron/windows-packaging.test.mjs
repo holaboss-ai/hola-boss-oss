@@ -34,5 +34,9 @@ test("windows packaging config and release workflow support optional signing and
   assert.match(workflowSource, /DESKTOP_RELEASE_ASSET_NAME: Holaboss-windows-x64-setup\.exe/);
   assert.match(workflowSource, /CSC_LINK: \$\{\{ env\.WINDOWS_CERTIFICATE \}\}/);
   assert.match(workflowSource, /npm run dist:win:local/);
-  assert.match(workflowSource, /gh release upload \$env:RELEASE_TAG \$env:INSTALLER_PATH --clobber/);
+  assert.match(workflowSource, /generated_installer_path=/);
+  assert.match(workflowSource, /latest\.yml was not generated/);
+  assert.match(workflowSource, /Get-ChildItem -Path desktop\/out\/release -File -Filter \*\.blockmap/);
+  assert.match(workflowSource, /\$uploadPaths \+= \$manifestPath/);
+  assert.match(workflowSource, /gh release upload \$env:RELEASE_TAG @uploadPaths --clobber/);
 });

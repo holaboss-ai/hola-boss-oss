@@ -3051,7 +3051,10 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
   const authStorage = AuthStorage.create(path.join(stateDir, "auth.json"));
   authStorage.setRuntimeApiKey(request.provider_id, request.model_client.api_key);
 
-  const modelRegistry = new ModelRegistry(authStorage, path.join(stateDir, "models.json"));
+  const modelRegistry = ModelRegistry.create(
+    authStorage,
+    path.join(stateDir, "models.json"),
+  );
   modelRegistry.registerProvider(request.provider_id, buildPiProviderConfig(request));
 
   const model = resolvePiModel(request, modelRegistry);
@@ -3461,7 +3464,7 @@ function mapPiEvent(
       }
       return mapped;
     }
-    case "auto_compaction_start":
+    case "compaction_start":
       return [
         {
           event_type: "auto_compaction_start",
@@ -3472,7 +3475,7 @@ function mapPiEvent(
           },
         },
       ];
-    case "auto_compaction_end":
+    case "compaction_end":
       return [
         {
           event_type: "auto_compaction_end",
