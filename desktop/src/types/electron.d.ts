@@ -685,6 +685,68 @@ declare global {
     count: number;
   }
 
+  interface AppTemplateArchivePayload {
+    target: string;
+    url: string;
+  }
+
+  interface AppCatalogEntryPayload {
+    app_id: string;
+    source: "marketplace" | "local";
+    name: string;
+    description: string | null;
+    icon: string | null;
+    category: string | null;
+    tags: string[];
+    version: string | null;
+    archive_url: string | null;
+    archive_path: string | null;
+    target: string;
+    cached_at: string;
+  }
+
+  interface AppCatalogListResponse {
+    entries: AppCatalogEntryPayload[];
+    count: number;
+  }
+
+  interface AppCatalogSyncResponse {
+    synced: number;
+    source: "marketplace" | "local";
+    target: string;
+  }
+
+  interface InstallAppFromCatalogRequest {
+    workspaceId: string;
+    appId: string;
+    source: "marketplace" | "local";
+  }
+
+  interface InstallAppFromCatalogResponse {
+    app_id: string;
+    status: string;
+    detail: string;
+    ready: boolean;
+    error: string | null;
+  }
+
+  interface AppTemplateMetadataPayload {
+    name: string;
+    repo: string;
+    path: string;
+    default_ref: string;
+    description: string | null;
+    readme: string | null;
+    is_hidden: boolean;
+    is_coming_soon: boolean;
+    allowed_user_ids: string[];
+    icon: string | null;
+    category: string;
+    tags: string[];
+    version?: string | null;
+    archives?: AppTemplateArchivePayload[];
+  }
+
   interface WorkspaceLifecycleBlockingAppPayload {
     app_id: string;
     status: string;
@@ -1089,6 +1151,9 @@ declare global {
       activateWorkspace: (workspaceId: string) => Promise<WorkspaceLifecyclePayload>;
       listInstalledApps: (workspaceId: string) => Promise<InstalledWorkspaceAppListResponsePayload>;
       removeInstalledApp: (workspaceId: string, appId: string) => Promise<void>;
+      listAppCatalog: (params: { source?: "marketplace" | "local" }) => Promise<AppCatalogListResponse>;
+      syncAppCatalog: (params: { source: "marketplace" | "local" }) => Promise<AppCatalogSyncResponse>;
+      installAppFromCatalog: (params: InstallAppFromCatalogRequest) => Promise<InstallAppFromCatalogResponse>;
       listOutputs: (payload: string | WorkspaceOutputListRequestPayload) => Promise<WorkspaceOutputListResponsePayload>;
       listSkills: (workspaceId: string) => Promise<WorkspaceSkillListResponsePayload>;
       getWorkspaceRoot: (workspaceId: string) => Promise<string>;
