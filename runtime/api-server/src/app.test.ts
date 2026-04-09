@@ -3688,3 +3688,81 @@ test("GET /api/v1/apps/catalog returns entries filtered by source", async () => 
   await app.close();
   store.close();
 });
+
+test("POST /api/v1/apps/catalog/sync replaces all entries for a source", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  store.upsertAppCatalogEntry({
+    appId: "old",
+    source: "marketplace",
+    name: "Old",
+    description: null,
+    icon: null,
+    category: null,
+    tags: [],
+    version: "v0.0.1",
+    archiveUrl: "https://example.test/old.tar.gz",
+    archivePath: null,
+    target: "darwin-arm64",
+    cachedAt: "2026-04-08T00:00:00Z",
+  });
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/catalog/sync",
+    payload: {
+      source: "marketplace",
+      target: "darwin-arm64",
+      entries: [
+        {
+          app_id: "twitter",
+          name: "Twitter / X",
+          description: "Tweet stuff",
+          icon: null,
+          category: "social",
+          tags: ["social"],
+          version: "v0.1.0",
+          archive_url: "https://example.test/twitter.tar.gz",
+          archive_path: null,
+        },
+      ],
+    },
+  });
+  assert.equal(res.statusCode, 200);
+  const body = res.json();
+  assert.equal(body.synced, 1);
+  assert.equal(body.source, "marketplace");
+
+  const remaining = store.listAppCatalogEntries({ source: "marketplace" });
+  assert.equal(remaining.length, 1);
+  assert.equal(remaining[0].appId, "twitter");
+
+  await app.close();
+  store.close();
+});
+
+test("POST /api/v1/apps/catalog/sync rejects invalid source", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/catalog/sync",
+    payload: { source: "bogus", target: "darwin-arm64", entries: [] },
+  });
+  assert.equal(res.statusCode, 400);
+
+  await app.close();
+  store.close();
+});
