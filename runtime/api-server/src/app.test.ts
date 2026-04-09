@@ -574,6 +574,127 @@ test("runtime image generation tool uses native Gemini image generation for gemi
   }
 });
 
+test("runtime image generation tool uses OpenRouter chat image generation for openrouter_direct", async () => {
+  const root = makeTempDir("hb-runtime-api-openrouter-image-tools-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-main",
+  });
+
+  const configPath = path.join(root, "state", "runtime-config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify({
+      runtime: {
+        image_generation: {
+          provider: "openrouter_direct",
+          model: "google/gemini-3.1-flash-image-preview",
+        },
+      },
+      providers: {
+        openrouter_direct: {
+          kind: "openrouter",
+          base_url: "https://openrouter.ai/api/v1",
+          api_key: "sk-or-test",
+        },
+      },
+    }, null, 2)}\n`,
+    "utf8",
+  );
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+
+  const originalFetch = globalThis.fetch;
+  let recordedUrl = "";
+  let recordedRequestBody: Record<string, unknown> | null = null;
+  globalThis.fetch = (async (input, init) => {
+    recordedUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    recordedRequestBody =
+      typeof init?.body === "string"
+        ? (JSON.parse(init.body) as Record<string, unknown>)
+        : null;
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content: "Here is your image.",
+              images: [
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yJ3sAAAAASUVORK5CYII=",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }) as typeof fetch;
+
+  const app = buildTestRuntimeApiServer({ store });
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/images/generate",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+        "x-holaboss-session-id": "session-main",
+        "x-holaboss-selected-model": "openrouter_direct/openai/gpt-5.4",
+      },
+      payload: {
+        prompt: "Generate a Nano Banana 2 style image",
+        filename: "openrouter-sample-output",
+        size: "1024x1024",
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(recordedUrl, "https://openrouter.ai/api/v1/chat/completions");
+    assert.ok(recordedRequestBody);
+    assert.deepEqual(recordedRequestBody, {
+      model: "google/gemini-3.1-flash-image-preview",
+      messages: [
+        {
+          role: "user",
+          content: "Generate a Nano Banana 2 style image",
+        },
+      ],
+      modalities: ["image", "text"],
+      image_config: {
+        aspect_ratio: "1:1",
+        image_size: "1K",
+      },
+    });
+    assert.equal(response.json().file_path, "outputs/images/openrouter-sample-output.png");
+    assert.equal(response.json().provider_id, "openrouter_direct");
+    assert.equal(response.json().model_id, "google/gemini-3.1-flash-image-preview");
+    assert.ok(
+      fs.existsSync(path.join(workspaceRoot, "workspace-1", "outputs/images/openrouter-sample-output.png")),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    await app.close();
+    store.close();
+  }
+});
+
 test("buildAppSetupEnv uses an app-local npm cache", () => {
   const appDir = makeTempDir("hb-app-env-");
   const env = buildAppSetupEnv(appDir, { PATH: process.env.PATH });

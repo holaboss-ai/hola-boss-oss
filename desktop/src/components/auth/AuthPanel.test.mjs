@@ -42,7 +42,10 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.match(source, /Select a model to enable background tasks\./);
   assert.match(source, /Connected providers/);
   assert.match(source, /Available providers/);
-  assert.match(source, /Changes save automatically/);
+  assert.match(source, /Edit settings, then click Save changes\./);
+  assert.match(source, /Save changes/);
+  assert.match(source, /Click Connect to configure settings\./);
+  assert.match(source, /This provider will be disconnected when you save changes\./);
   assert.match(source, /Models/);
   assert.match(source, /applyBackgroundTaskProviderSelection/);
   assert.match(source, /applyImageGenerationProviderSelection/);
@@ -78,15 +81,15 @@ test("auth panel derives runtime readiness from the shared desktop runtime state
   assert.match(source, /const effectiveRuntimeConfig = sharedRuntimeConfig \?\? runtimeConfig;/);
   assert.match(source, /const \[hasLoadedRuntimeConfigDocument, setHasLoadedRuntimeConfigDocument\] = useState\(false\);/);
   assert.match(source, /const \[hydratedRuntimeConfigDocument, setHydratedRuntimeConfigDocument\] = useState<string \| null>\(null\);/);
+  assert.match(source, /const hasHydratedProviderDrafts =\s*hasLoadedRuntimeConfigDocument &&\s*hydratedRuntimeConfigDocument === runtimeConfigDocument;/);
   assert.match(source, /Boolean\(effectiveRuntimeConfig\?\.authTokenPresent\)/);
   assert.match(source, /deriveProviderDraftsFromDocument\(\s*parseRuntimeConfigDocument\(runtimeConfigDocument\),\s*effectiveRuntimeConfig,\s*\)/);
   assert.match(source, /setHasLoadedRuntimeConfigDocument\(true\);/);
   assert.match(source, /setHydratedRuntimeConfigDocument\(runtimeConfigDocument\);/);
-  assert.match(source, /if \(!hasLoadedRuntimeConfigDocument\) \{\s*return;\s*\}/);
-  assert.match(source, /if \(hydratedRuntimeConfigDocument !== runtimeConfigDocument\) \{\s*return;\s*\}/);
+  assert.match(source, /if \(!hasHydratedProviderDrafts\) \{\s*return;\s*\}/);
 });
 
-test("auth panel autosave prefers edited provider credentials over previously persisted values", async () => {
+test("auth panel manual save prefers edited provider credentials over previously persisted values", async () => {
   const source = await readFile(AUTH_PANEL_PATH, "utf8");
 
   assert.match(
@@ -97,6 +100,70 @@ test("auth panel autosave prefers edited provider credentials over previously pe
     source,
     /const normalizedApiKey = firstNonEmptyString\(\s*providerDraft\.apiKey,\s*existingProviderPayload\.api_key as string \| undefined,\s*existingProviderPayload\.auth_token as string \| undefined,\s*existingProviderOptions\.api_key as string \| undefined,\s*existingProviderOptions\.apiKey as string \| undefined,\s*\);/,
   );
+  assert.match(
+    source,
+    /const currentDocumentText = await window\.electronAPI\.runtime\.getConfigDocument\(\);/,
+  );
+  assert.match(
+    source,
+    /const nextProviders: Record<string, unknown> = \{ \.\.\.currentProviders \};/,
+  );
+  assert.match(
+    source,
+    /delete nextProviders\[runtimeProviderStorageId\(providerId\)\];/,
+  );
+  assert.match(
+    source,
+    /const nextModels: Record<string, unknown> = \{ \.\.\.currentModels \};/,
+  );
+  assert.match(
+    source,
+    /if \(\s*isKnownProviderId\(normalizedModelProviderId\) \|\|\s*normalizedModelProviderId === "holaboss_model_proxy"\s*\) \{\s*delete nextModels\[token\];\s*\}/,
+  );
+  assert.match(
+    source,
+    /async function handleSaveRuntimeSettings\(providerId\?: KnownProviderId\) \{/,
+  );
+  assert.match(
+    source,
+    /function providerDraftValidationError\(providerId: KnownProviderId\): string \{/,
+  );
+  assert.match(
+    source,
+    /requires an API key before it can be connected\./,
+  );
+  assert.match(
+    source,
+    /requires a base URL before it can be connected\./,
+  );
+  assert.match(
+    source,
+    /requires at least one model before it can be connected\./,
+  );
+  assert.match(
+    source,
+    /const draftsToSave = providerId\s*\?/,
+  );
+  assert.match(
+    source,
+    /await persistRuntimeProviderSettings\(\s*draftsToSave,\s*backgroundTasksToSave,\s*imageGenerationToSave,\s*\);/,
+  );
+});
+
+test("auth panel keeps direct providers disconnected until manual save", async () => {
+  const source = await readFile(AUTH_PANEL_PATH, "utf8");
+
+  assert.match(source, /const persistedProviderDrafts = deriveProviderDraftsFromDocument\(/);
+  assert.match(source, /const providerConnected = \(providerId: KnownProviderId\) =>/);
+  assert.match(source, /const providerDraftEnabled = \(providerId: KnownProviderId\) =>/);
+  assert.match(source, /const hasPendingConnection = !isConnected && draftEnabled;/);
+  assert.match(source, /const hasPendingDisconnect = isConnected && !draftEnabled;/);
+  assert.match(source, /Enter an API key and save to connect\./);
+  assert.match(source, /Disconnect pending\. Save changes to apply\./);
+  assert.match(source, /onClick=\{\(\) => void handleSaveRuntimeSettings\(providerId\)\}/);
+  assert.match(source, /onClick=\{\(\) => handleCancelProviderEditing\(providerId\)\}/);
+  assert.match(source, /Cancel/);
+  assert.match(source, /Undo/);
 });
 
 test("runtime auth panel keeps provider cards readable in dark themes", async () => {
@@ -144,7 +211,7 @@ test("holaboss proxy models come from the managed runtime catalog instead of loc
   assert.match(source, /markProviderSettingsDirty\(\);/);
   assert.match(source, /shouldAutoselectHolabossBackgroundDefault/);
   assert.match(source, /shouldAutoselectHolabossImageDefault/);
-  assert.match(source, /hydratedRuntimeConfigDocument !== runtimeConfigDocument/);
+  assert.match(source, /hasHydratedProviderDrafts/);
   assert.match(source, /if \(providerId !== "holaboss" && normalizedModelIds.length === 0\)/);
   assert.match(source, /function runtimeProviderStorageId\(/);
   assert.match(source, /providerId === "holaboss" \? "holaboss_model_proxy" : providerId/);
@@ -180,6 +247,11 @@ test("direct Anthropic, OpenRouter, and Gemini defaults advertise current provid
   assert.match(
     openrouterTemplate,
     /defaultModels: \["openai\/gpt-5\.4", "openai\/gpt-5\.4-mini", "anthropic\/claude-sonnet-4-6"\]/,
+  );
+  assert.match(openrouterTemplate, /defaultImageModel: "google\/gemini-3\.1-flash-image-preview"/);
+  assert.match(
+    openrouterTemplate,
+    /imageModelSuggestions: \["google\/gemini-3\.1-flash-image-preview"\]/,
   );
   assert.doesNotMatch(openrouterTemplate, /claude-sonnet-4-5/);
 

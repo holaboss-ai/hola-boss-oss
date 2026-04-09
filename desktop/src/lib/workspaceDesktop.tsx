@@ -460,6 +460,17 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     setDeletingWorkspaceId(trimmedWorkspaceId);
     setWorkspaceErrorMessage("");
     try {
+      if (selectedWorkspaceId === trimmedWorkspaceId) {
+        const fallbackWorkspaceId =
+          workspaces.find((workspace) => workspace.id !== trimmedWorkspaceId)?.id ??
+          "";
+        setSelectedWorkspaceId(fallbackWorkspaceId);
+        setInstalledApps([]);
+        setIsLoadingInstalledApps(false);
+        setWorkspaceLifecycleWorkspaceId("");
+        setWorkspaceAppsReadyState(false);
+        setWorkspaceBlockingReasonState("");
+      }
       await window.electronAPI.workspace.deleteWorkspace(trimmedWorkspaceId);
       await loadWorkspaceData({ preserveSelection: true, allowEmpty: true });
     } catch (error) {

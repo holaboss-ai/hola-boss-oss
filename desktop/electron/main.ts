@@ -2436,6 +2436,7 @@ let lastRuntimeBindingRefreshUserId = "";
 let lastRuntimeBindingRefreshFailureAtMs = 0;
 let lastRuntimeBindingRefreshFailureUserId = "";
 let runtimeBindingRefreshPromise: Promise<void> | null = null;
+let runtimeConfigMutationPromise: Promise<void> | null = null;
 let runtimeLifecycleChain: Promise<void> = Promise.resolve();
 let startupAuthSyncPromise: Promise<void> | null = null;
 
@@ -3136,49 +3137,62 @@ async function readRuntimeConfigDocument(): Promise<Record<string, unknown>> {
   }
 }
 
+async function writeRuntimeConfigTextAtomically(nextText: string): Promise<void> {
+  const configPath = runtimeConfigPath();
+  await fs.mkdir(path.dirname(configPath), { recursive: true });
+  const tempPath = `${configPath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tempPath, nextText, "utf-8");
+  try {
+    await fs.rename(tempPath, configPath);
+  } catch {
+    await fs.rm(configPath, { force: true }).catch(() => undefined);
+    await fs.rename(tempPath, configPath);
+  } finally {
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
+  }
+}
+
 async function updateDesktopBrowserCapabilityConfig(update: {
   enabled: boolean;
   url?: string;
   authToken?: string;
 }): Promise<void> {
-  const currentDocument = await readRuntimeConfigDocument();
-  const capabilities =
-    typeof currentDocument.capabilities === "object" &&
-    currentDocument.capabilities
-      ? { ...(currentDocument.capabilities as Record<string, unknown>) }
-      : {};
-  const desktopBrowser =
-    typeof capabilities.desktop_browser === "object" &&
-    capabilities.desktop_browser
-      ? { ...(capabilities.desktop_browser as Record<string, unknown>) }
-      : {};
+  await withRuntimeConfigMutationLock(async () => {
+    const currentDocument = await readRuntimeConfigDocument();
+    const capabilities =
+      typeof currentDocument.capabilities === "object" &&
+      currentDocument.capabilities
+        ? { ...(currentDocument.capabilities as Record<string, unknown>) }
+        : {};
+    const desktopBrowser =
+      typeof capabilities.desktop_browser === "object" &&
+      capabilities.desktop_browser
+        ? { ...(capabilities.desktop_browser as Record<string, unknown>) }
+        : {};
 
-  desktopBrowser.enabled = update.enabled;
-  if (update.url && update.url.trim()) {
-    desktopBrowser.url = update.url.trim();
-  } else {
-    delete desktopBrowser.url;
-  }
-  if (update.authToken && update.authToken.trim()) {
-    desktopBrowser.auth_token = update.authToken.trim();
-  } else {
-    delete desktopBrowser.auth_token;
-  }
-  delete desktopBrowser.mcp_url;
+    desktopBrowser.enabled = update.enabled;
+    if (update.url && update.url.trim()) {
+      desktopBrowser.url = update.url.trim();
+    } else {
+      delete desktopBrowser.url;
+    }
+    if (update.authToken && update.authToken.trim()) {
+      desktopBrowser.auth_token = update.authToken.trim();
+    } else {
+      delete desktopBrowser.auth_token;
+    }
+    delete desktopBrowser.mcp_url;
 
-  capabilities.desktop_browser = desktopBrowser;
-  const nextDocument = {
-    ...currentDocument,
-    capabilities,
-  };
+    capabilities.desktop_browser = desktopBrowser;
+    const nextDocument = {
+      ...currentDocument,
+      capabilities,
+    };
 
-  const configPath = runtimeConfigPath();
-  await fs.mkdir(path.dirname(configPath), { recursive: true });
-  await fs.writeFile(
-    configPath,
-    `${JSON.stringify(nextDocument, null, 2)}\n`,
-    "utf-8",
-  );
+    await writeRuntimeConfigTextAtomically(
+      `${JSON.stringify(nextDocument, null, 2)}\n`,
+    );
+  });
 }
 
 function desktopBrowserServiceTokenFromRequest(
@@ -3630,171 +3644,169 @@ function canUsePersistedRuntimeBindingWithoutAuth(
 }
 
 async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
-  const current = await readRuntimeConfigFile();
-  const currentDocument = await readRuntimeConfigDocument();
-  const runtimePayload = runtimeConfigObject(currentDocument.runtime);
-  const providersPayload = runtimeConfigObject(currentDocument.providers);
-  const integrationsPayload = runtimeConfigObject(currentDocument.integrations);
-  const holabossIntegration = runtimeConfigObject(integrationsPayload.holaboss);
-  const holabossProvider = runtimeConfigObject(
-    providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID],
-  );
-  const next = { ...current };
-  const entries: Array<[keyof RuntimeConfigUpdatePayload, string]> = [
-    ["authToken", "auth_token"],
-    ["modelProxyApiKey", "model_proxy_api_key"],
-    ["userId", "user_id"],
-    ["sandboxId", "sandbox_id"],
-    ["modelProxyBaseUrl", "model_proxy_base_url"],
-    ["defaultModel", "default_model"],
-    ["controlPlaneBaseUrl", "control_plane_base_url"],
-  ];
+  return withRuntimeConfigMutationLock(async () => {
+    const current = await readRuntimeConfigFile();
+    const currentDocument = await readRuntimeConfigDocument();
+    const runtimePayload = runtimeConfigObject(currentDocument.runtime);
+    const providersPayload = runtimeConfigObject(currentDocument.providers);
+    const integrationsPayload = runtimeConfigObject(currentDocument.integrations);
+    const holabossIntegration = runtimeConfigObject(integrationsPayload.holaboss);
+    const holabossProvider = runtimeConfigObject(
+      providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID],
+    );
+    const next = { ...current };
+    const entries: Array<[keyof RuntimeConfigUpdatePayload, string]> = [
+      ["authToken", "auth_token"],
+      ["modelProxyApiKey", "model_proxy_api_key"],
+      ["userId", "user_id"],
+      ["sandboxId", "sandbox_id"],
+      ["modelProxyBaseUrl", "model_proxy_base_url"],
+      ["defaultModel", "default_model"],
+      ["controlPlaneBaseUrl", "control_plane_base_url"],
+    ];
 
-  for (const [inputKey, fileKey] of entries) {
-    const value = update[inputKey];
-    if (value === undefined) {
-      continue;
+    for (const [inputKey, fileKey] of entries) {
+      const value = update[inputKey];
+      if (value === undefined) {
+        continue;
+      }
+      const normalized = typeof value === "string" ? value.trim() : "";
+      if (normalized) {
+        next[fileKey] = normalized;
+      } else {
+        delete next[fileKey];
+      }
     }
-    const normalized = typeof value === "string" ? value.trim() : "";
-    if (normalized) {
-      next[fileKey] = normalized;
+
+    const modelProxyApiKey = runtimeModelProxyApiKeyFromConfig(next);
+    const managedDefaultBackgroundModel = normalizeRuntimeHolabossCatalogDefaultModelId(
+      update.defaultBackgroundModel,
+    );
+    const managedDefaultImageModel = normalizeRuntimeHolabossCatalogDefaultModelId(
+      update.defaultImageModel,
+    );
+    if (modelProxyApiKey) {
+      next.auth_token = modelProxyApiKey;
+      next.model_proxy_api_key = modelProxyApiKey;
     } else {
-      delete next[fileKey];
+      delete next.auth_token;
+      delete next.model_proxy_api_key;
     }
-  }
 
-  const modelProxyApiKey = runtimeModelProxyApiKeyFromConfig(next);
-  const managedDefaultBackgroundModel = normalizeRuntimeHolabossCatalogDefaultModelId(
-    update.defaultBackgroundModel,
-  );
-  const managedDefaultImageModel = normalizeRuntimeHolabossCatalogDefaultModelId(
-    update.defaultImageModel,
-  );
-  if (modelProxyApiKey) {
-    next.auth_token = modelProxyApiKey;
-    next.model_proxy_api_key = modelProxyApiKey;
-  } else {
-    delete next.auth_token;
-    delete next.model_proxy_api_key;
-  }
+    const assignOrDelete = (
+      target: Record<string, unknown>,
+      key: string,
+      value: string | undefined,
+    ) => {
+      const normalized = runtimeConfigField(value);
+      if (normalized) {
+        target[key] = normalized;
+      } else {
+        delete target[key];
+      }
+    };
 
-  const assignOrDelete = (
-    target: Record<string, unknown>,
-    key: string,
-    value: string | undefined,
-  ) => {
-    const normalized = runtimeConfigField(value);
-    if (normalized) {
-      target[key] = normalized;
+    assignOrDelete(holabossIntegration, "auth_token", next.auth_token);
+    assignOrDelete(holabossIntegration, "user_id", next.user_id);
+    assignOrDelete(holabossIntegration, "sandbox_id", next.sandbox_id);
+    assignOrDelete(holabossProvider, "api_key", next.auth_token);
+    assignOrDelete(holabossProvider, "base_url", next.model_proxy_base_url);
+    assignOrDelete(runtimePayload, "sandbox_id", next.sandbox_id);
+    assignOrDelete(runtimePayload, "default_model", next.default_model);
+    const currentBackgroundTasks = runtimeConfigObject(
+      runtimePayload.background_tasks ?? runtimePayload.backgroundTasks,
+    );
+    const currentBackgroundProviderId = canonicalRuntimeProviderId(
+      runtimeFirstNonEmptyString(
+        currentBackgroundTasks.provider as string | undefined,
+        currentBackgroundTasks.provider_id as string | undefined,
+        currentBackgroundTasks.providerId as string | undefined,
+      ),
+    );
+    const currentBackgroundModel = runtimeFirstNonEmptyString(
+      currentBackgroundTasks.model as string | undefined,
+      currentBackgroundTasks.model_id as string | undefined,
+      currentBackgroundTasks.modelId as string | undefined,
+    );
+    const currentImageGeneration = runtimeConfigObject(
+      runtimePayload.image_generation ?? runtimePayload.imageGeneration,
+    );
+    const currentImageGenerationProviderId = canonicalRuntimeProviderId(
+      runtimeFirstNonEmptyString(
+        currentImageGeneration.provider as string | undefined,
+        currentImageGeneration.provider_id as string | undefined,
+        currentImageGeneration.providerId as string | undefined,
+      ),
+    );
+    const currentImageGenerationModel = runtimeFirstNonEmptyString(
+      currentImageGeneration.model as string | undefined,
+      currentImageGeneration.model_id as string | undefined,
+      currentImageGeneration.modelId as string | undefined,
+    );
+    delete runtimePayload.backgroundTasks;
+    delete runtimePayload.imageGeneration;
+    if (
+      managedDefaultBackgroundModel &&
+      runtimeModelProxyApiKeyFromConfig(next) &&
+      runtimeConfigField(next.model_proxy_base_url) &&
+      (
+        Object.keys(currentBackgroundTasks).length === 0 ||
+        (isHolabossProviderAlias(currentBackgroundProviderId) && !currentBackgroundModel)
+      )
+    ) {
+      runtimePayload.background_tasks = {
+        provider: RUNTIME_HOLABOSS_PROVIDER_ID,
+        model: managedDefaultBackgroundModel,
+      };
+    } else if (Object.keys(currentBackgroundTasks).length > 0) {
+      runtimePayload.background_tasks = currentBackgroundTasks;
+    }
+    if (
+      managedDefaultImageModel &&
+      runtimeModelProxyApiKeyFromConfig(next) &&
+      runtimeConfigField(next.model_proxy_base_url) &&
+      (
+        Object.keys(currentImageGeneration).length === 0 ||
+        (isHolabossProviderAlias(currentImageGenerationProviderId) && !currentImageGenerationModel)
+      )
+    ) {
+      runtimePayload.image_generation = {
+        provider: RUNTIME_HOLABOSS_PROVIDER_ID,
+        model: managedDefaultImageModel,
+      };
+    } else if (Object.keys(currentImageGeneration).length > 0) {
+      runtimePayload.image_generation = currentImageGeneration;
+    }
+
+    if (
+      Object.keys(holabossProvider).length > 0 &&
+      !runtimeConfigField(holabossProvider.kind as string | undefined)
+    ) {
+      holabossProvider.kind = RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY;
+    }
+    if (Object.keys(holabossIntegration).length > 0) {
+      integrationsPayload.holaboss = holabossIntegration;
     } else {
-      delete target[key];
+      delete integrationsPayload.holaboss;
     }
-  };
+    if (Object.keys(holabossProvider).length > 0) {
+      providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID] = holabossProvider;
+    } else {
+      delete providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID];
+    }
 
-  assignOrDelete(holabossIntegration, "auth_token", next.auth_token);
-  assignOrDelete(holabossIntegration, "user_id", next.user_id);
-  assignOrDelete(holabossIntegration, "sandbox_id", next.sandbox_id);
-  assignOrDelete(holabossProvider, "api_key", next.auth_token);
-  assignOrDelete(holabossProvider, "base_url", next.model_proxy_base_url);
-  assignOrDelete(runtimePayload, "sandbox_id", next.sandbox_id);
-  assignOrDelete(runtimePayload, "default_model", next.default_model);
-  const currentBackgroundTasks = runtimeConfigObject(
-    runtimePayload.background_tasks ?? runtimePayload.backgroundTasks,
-  );
-  const currentBackgroundProviderId = canonicalRuntimeProviderId(
-    runtimeFirstNonEmptyString(
-      currentBackgroundTasks.provider as string | undefined,
-      currentBackgroundTasks.provider_id as string | undefined,
-      currentBackgroundTasks.providerId as string | undefined,
-    ),
-  );
-  const currentBackgroundModel = runtimeFirstNonEmptyString(
-    currentBackgroundTasks.model as string | undefined,
-    currentBackgroundTasks.model_id as string | undefined,
-    currentBackgroundTasks.modelId as string | undefined,
-  );
-  const currentImageGeneration = runtimeConfigObject(
-    runtimePayload.image_generation ?? runtimePayload.imageGeneration,
-  );
-  const currentImageGenerationProviderId = canonicalRuntimeProviderId(
-    runtimeFirstNonEmptyString(
-      currentImageGeneration.provider as string | undefined,
-      currentImageGeneration.provider_id as string | undefined,
-      currentImageGeneration.providerId as string | undefined,
-    ),
-  );
-  const currentImageGenerationModel = runtimeFirstNonEmptyString(
-    currentImageGeneration.model as string | undefined,
-    currentImageGeneration.model_id as string | undefined,
-    currentImageGeneration.modelId as string | undefined,
-  );
-  delete runtimePayload.backgroundTasks;
-  delete runtimePayload.imageGeneration;
-  if (
-    managedDefaultBackgroundModel &&
-    runtimeModelProxyApiKeyFromConfig(next) &&
-    runtimeConfigField(next.model_proxy_base_url) &&
-    (
-      Object.keys(currentBackgroundTasks).length === 0 ||
-      (isHolabossProviderAlias(currentBackgroundProviderId) && !currentBackgroundModel)
-    )
-  ) {
-    runtimePayload.background_tasks = {
-      provider: RUNTIME_HOLABOSS_PROVIDER_ID,
-      model: managedDefaultBackgroundModel,
+    const nextDocument = {
+      ...currentDocument,
+      runtime: runtimePayload,
+      providers: providersPayload,
+      integrations: integrationsPayload,
+      holaboss: next,
     };
-  } else if (Object.keys(currentBackgroundTasks).length > 0) {
-    runtimePayload.background_tasks = currentBackgroundTasks;
-  }
-  if (
-    managedDefaultImageModel &&
-    runtimeModelProxyApiKeyFromConfig(next) &&
-    runtimeConfigField(next.model_proxy_base_url) &&
-    (
-      Object.keys(currentImageGeneration).length === 0 ||
-      (isHolabossProviderAlias(currentImageGenerationProviderId) && !currentImageGenerationModel)
-    )
-  ) {
-    runtimePayload.image_generation = {
-      provider: RUNTIME_HOLABOSS_PROVIDER_ID,
-      model: managedDefaultImageModel,
-    };
-  } else if (Object.keys(currentImageGeneration).length > 0) {
-    runtimePayload.image_generation = currentImageGeneration;
-  }
-
-  if (
-    Object.keys(holabossProvider).length > 0 &&
-    !runtimeConfigField(holabossProvider.kind as string | undefined)
-  ) {
-    holabossProvider.kind = RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY;
-  }
-  if (Object.keys(holabossIntegration).length > 0) {
-    integrationsPayload.holaboss = holabossIntegration;
-  } else {
-    delete integrationsPayload.holaboss;
-  }
-  if (Object.keys(holabossProvider).length > 0) {
-    providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID] = holabossProvider;
-  } else {
-    delete providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID];
-  }
-
-  const configPath = runtimeConfigPath();
-  await fs.mkdir(path.dirname(configPath), { recursive: true });
-  const nextDocument = {
-    ...currentDocument,
-    runtime: runtimePayload,
-    providers: providersPayload,
-    integrations: integrationsPayload,
-    holaboss: next,
-  };
-  await fs.writeFile(
-    configPath,
-    `${JSON.stringify(nextDocument, null, 2)}\n`,
-    "utf-8",
-  );
-  return next;
+    await writeRuntimeConfigTextAtomically(
+      `${JSON.stringify(nextDocument, null, 2)}\n`,
+    );
+    return next;
+  });
 }
 
 function runtimeConfigField(value: string | undefined): string {
@@ -4644,6 +4656,26 @@ async function withRuntimeBindingRefreshLock<T>(
   }
 }
 
+async function withRuntimeConfigMutationLock<T>(
+  work: () => Promise<T>,
+): Promise<T> {
+  while (runtimeConfigMutationPromise) {
+    await runtimeConfigMutationPromise;
+  }
+
+  let releaseLock = () => {};
+  runtimeConfigMutationPromise = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+
+  try {
+    return await work();
+  } finally {
+    releaseLock();
+    runtimeConfigMutationPromise = null;
+  }
+}
+
 async function getRuntimeConfig(): Promise<RuntimeConfigPayload> {
   const configPath = runtimeConfigPath();
   const loaded = await readRuntimeConfigFile();
@@ -4710,17 +4742,22 @@ async function setRuntimeConfigDocument(
     throw new Error("Runtime config must be a JSON object.");
   }
 
-  const configPath = runtimeConfigPath();
   const nextText = `${JSON.stringify(parsed, null, 2)}\n`;
-  const currentDocument = await readRuntimeConfigDocument();
-  const currentText =
-    Object.keys(currentDocument).length > 0
-      ? `${JSON.stringify(currentDocument, null, 2)}\n`
-      : "";
+  let shouldRestartRuntime = false;
+  await withRuntimeConfigMutationLock(async () => {
+    const currentDocument = await readRuntimeConfigDocument();
+    const currentText =
+      Object.keys(currentDocument).length > 0
+        ? `${JSON.stringify(currentDocument, null, 2)}\n`
+        : "";
 
-  if (currentText !== nextText) {
-    await fs.mkdir(path.dirname(configPath), { recursive: true });
-    await fs.writeFile(configPath, nextText, "utf-8");
+    if (currentText !== nextText) {
+      await writeRuntimeConfigTextAtomically(nextText);
+      shouldRestartRuntime = true;
+    }
+  });
+
+  if (shouldRestartRuntime) {
     await stopEmbeddedRuntime();
     void startEmbeddedRuntime();
   }
@@ -9605,44 +9642,6 @@ async function createWorkspace(
 async function deleteWorkspace(
   workspaceId: string,
 ): Promise<WorkspaceResponsePayload> {
-  const holabossUserId = await controlPlaneWorkspaceUserId();
-  if (holabossUserId) {
-    // Delete via control plane — soft-deletes in the backend DB.
-    // Returns 204 on success; we synthesize the expected payload shape.
-    await requestControlPlaneJson<null>({
-      service: "projects",
-      method: "DELETE",
-      path: `/api/v1/projects/workspaces/${encodeURIComponent(workspaceId)}`,
-    }).catch((err: unknown) => {
-      console.warn("[deleteWorkspace] control-plane delete failed (may already be gone):", err);
-    });
-    // Also try cleaning up local runtime state (best-effort).
-    await requestRuntimeJson<WorkspaceResponsePayload>({
-      method: "DELETE",
-      path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`,
-    }).catch((err: unknown) => {
-      console.warn("[deleteWorkspace] local runtime delete failed (may not exist locally):", err);
-    });
-    return {
-      workspace: {
-        id: workspaceId,
-        name: workspaceId,
-        status: "deleted",
-        harness: null,
-        main_session_id: null,
-        error_message: null,
-        onboarding_status: "not_required",
-        onboarding_session_id: null,
-        onboarding_completed_at: null,
-        onboarding_completion_summary: null,
-        onboarding_requested_at: null,
-        onboarding_requested_by: null,
-        created_at: null,
-        updated_at: null,
-        deleted_at_utc: new Date().toISOString(),
-      } as WorkspaceRecordPayload,
-    };
-  }
   return requestRuntimeJson<WorkspaceResponsePayload>({
     method: "DELETE",
     path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`,

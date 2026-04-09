@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   Loader2,
   LogOut,
@@ -35,7 +35,6 @@ interface AuthPanelProps {
 
 const KNOWN_PROVIDER_ORDER = ["holaboss", "openai_direct", "anthropic_direct", "openrouter_direct", "gemini_direct", "ollama_direct", "minimax_direct"] as const;
 type KnownProviderId = (typeof KNOWN_PROVIDER_ORDER)[number];
-const PROVIDER_AUTOSAVE_DELAY_MS = 800;
 const AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME =
   "auth-settings-control theme-control-surface relative isolate h-9 w-full overflow-hidden rounded-[10px] border border-border/45 bg-muted px-2.5 text-sm text-foreground shadow-none transition-colors hover:border-border/65 focus-visible:border-border/65 focus-visible:ring-0 focus-visible:ring-transparent aria-invalid:border-border/45 aria-invalid:ring-0";
 const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string>> = {
@@ -93,6 +92,7 @@ interface BackgroundTasksDraft {
 const IMAGE_GENERATION_PROVIDER_IDS = [
   "holaboss",
   "openai_direct",
+  "openrouter_direct",
   "gemini_direct",
 ] as const;
 
@@ -102,6 +102,12 @@ type ImageGenerationDraftProviderId =
 interface ImageGenerationDraft {
   providerId: ImageGenerationDraftProviderId;
   model: string;
+}
+
+interface ProviderSettingsSnapshot {
+  drafts: ProviderDraftMap;
+  backgroundTasks: BackgroundTasksDraft;
+  imageGeneration: ImageGenerationDraft;
 }
 
 const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> = {
@@ -149,8 +155,8 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     defaultBaseUrl: "https://openrouter.ai/api/v1",
     defaultModels: ["openai/gpt-5.4", "openai/gpt-5.4-mini", "anthropic/claude-sonnet-4-6"],
     defaultBackgroundModel: "openai/gpt-5.4-mini",
-    defaultImageModel: null,
-    imageModelSuggestions: [],
+    defaultImageModel: "google/gemini-3.1-flash-image-preview",
+    imageModelSuggestions: ["google/gemini-3.1-flash-image-preview"],
     apiKeyPlaceholder: "sk-or-your-openrouter-key"
   },
   gemini_direct: {
@@ -359,6 +365,10 @@ function enabledProviderIdsForDrafts(providerDrafts: ProviderDraftMap, isSignedI
   );
 }
 
+function directProviderRequiresManualFields(providerId: KnownProviderId): boolean {
+  return providerId !== "holaboss";
+}
+
 function providerBrandIconMarkup(providerId: KnownProviderId): string | null {
   if (providerId === "openai_direct") {
     return openaiLogoMarkup;
@@ -411,6 +421,17 @@ function configuredRuntimeProviderPrefixes(providerId: KnownProviderId): string[
 
 function runtimeProviderStorageId(providerId: KnownProviderId): string {
   return providerId === "holaboss" ? "holaboss_model_proxy" : providerId;
+}
+
+function canonicalDraftProviderStorageId(providerId: string): string {
+  const normalized = providerId.trim();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized === "holaboss" || normalized === "holaboss_model_proxy") {
+    return "holaboss_model_proxy";
+  }
+  return normalized;
 }
 
 function configuredBackgroundModelId(providerId: KnownProviderId, value: string): string {
@@ -911,11 +932,11 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const [isSavingRuntimeConfigDocument, setIsSavingRuntimeConfigDocument] = useState(false);
   const [isExchangingRuntimeBinding, setIsExchangingRuntimeBinding] = useState(false);
   const [isProviderDraftDirty, setIsProviderDraftDirty] = useState(false);
-  const [providerDraftRevision, setProviderDraftRevision] = useState(0);
-  const [failedAutosaveRevision, setFailedAutosaveRevision] = useState<number | null>(null);
   const [providerSaveStatus, setProviderSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const latestProviderDraftRevisionRef = useRef(0);
   const effectiveRuntimeConfig = sharedRuntimeConfig ?? runtimeConfig;
+  const hasHydratedProviderDrafts =
+    hasLoadedRuntimeConfigDocument &&
+    hydratedRuntimeConfigDocument === runtimeConfigDocument;
 
   async function refreshRuntimeConfig() {
     if (!window.electronAPI) {
@@ -933,7 +954,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
   async function handleReloadRuntimeSettings() {
     setIsProviderDraftDirty(false);
-    setFailedAutosaveRevision(null);
     setProviderSaveStatus("idle");
     setAuthError("");
     setAuthMessage("");
@@ -1011,14 +1031,13 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     setProviderDrafts(derived.drafts);
     setBackgroundTasksDraft(derived.backgroundTasks);
     setImageGenerationDraft(derived.imageGeneration);
-    setFailedAutosaveRevision(null);
     setHydratedRuntimeConfigDocument(runtimeConfigDocument);
   }, [effectiveRuntimeConfig, isProviderDraftDirty, runtimeConfigDocument]);
 
   useEffect(() => {
     if (
       !window.electronAPI ||
-      !hasLoadedRuntimeConfigDocument ||
+      !hasHydratedProviderDrafts ||
       isProviderDraftDirty ||
       isSavingRuntimeConfigDocument
     ) {
@@ -1072,7 +1091,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     markProviderSettingsDirty();
   }, [
     backgroundTasksDraft.model,
-    hasLoadedRuntimeConfigDocument,
+    hasHydratedProviderDrafts,
     imageGenerationDraft.model,
     isProviderDraftDirty,
     isSavingRuntimeConfigDocument,
@@ -1080,10 +1099,16 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   ]);
 
   const isSignedIn = Boolean(sessionUserId(session));
-  const providerEnabled = (providerId: KnownProviderId) =>
+  const persistedProviderDrafts = deriveProviderDraftsFromDocument(
+    parseRuntimeConfigDocument(runtimeConfigDocument),
+    effectiveRuntimeConfig,
+  ).drafts;
+  const providerConnected = (providerId: KnownProviderId) =>
+    providerId === "holaboss" ? isSignedIn : persistedProviderDrafts[providerId].enabled;
+  const providerDraftEnabled = (providerId: KnownProviderId) =>
     providerId === "holaboss" ? isSignedIn : providerDrafts[providerId].enabled;
-  const connectedProviderIds = KNOWN_PROVIDER_ORDER.filter((providerId) => providerEnabled(providerId));
-  const availableProviderIds = KNOWN_PROVIDER_ORDER.filter((providerId) => !providerEnabled(providerId));
+  const connectedProviderIds = KNOWN_PROVIDER_ORDER.filter((providerId) => providerConnected(providerId));
+  const availableProviderIds = KNOWN_PROVIDER_ORDER.filter((providerId) => !providerConnected(providerId));
   const backgroundProviderConnected =
     backgroundTasksDraft.providerId !== "" &&
     connectedProviderIds.includes(backgroundTasksDraft.providerId);
@@ -1154,10 +1179,12 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     providerSaveStatus === "saving"
       ? "Saving changes..."
       : providerSaveStatus === "saved"
-        ? "Changes saved automatically"
+        ? "Changes saved."
         : providerSaveStatus === "error"
-          ? "Autosave failed. Edit again to retry."
-          : "Changes save automatically";
+          ? "Save failed. Review the settings and try again."
+          : isProviderDraftDirty
+            ? "Unsaved changes."
+            : "Edit settings, then click Save changes.";
 
   const infoRows = [
     {
@@ -1171,10 +1198,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   ];
 
   useEffect(() => {
-    if (!hasLoadedRuntimeConfigDocument) {
-      return;
-    }
-    if (hydratedRuntimeConfigDocument !== runtimeConfigDocument) {
+    if (!hasHydratedProviderDrafts) {
       return;
     }
     if (isProviderDraftDirty || backgroundTasksDraft.providerId || connectedProviderIds.length === 0) {
@@ -1184,17 +1208,12 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   }, [
     backgroundTasksDraft.providerId,
     connectedProviderIds,
-    hasLoadedRuntimeConfigDocument,
-    hydratedRuntimeConfigDocument,
+    hasHydratedProviderDrafts,
     isProviderDraftDirty,
-    runtimeConfigDocument,
   ]);
 
   useEffect(() => {
-    if (!hasLoadedRuntimeConfigDocument) {
-      return;
-    }
-    if (hydratedRuntimeConfigDocument !== runtimeConfigDocument) {
+    if (!hasHydratedProviderDrafts) {
       return;
     }
     if (isProviderDraftDirty || imageGenerationDraft.providerId || connectedImageProviderIds.length === 0) {
@@ -1203,11 +1222,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     applyImageGenerationProviderSelection(connectedImageProviderIds[0] ?? "");
   }, [
     connectedImageProviderIds,
-    hasLoadedRuntimeConfigDocument,
-    hydratedRuntimeConfigDocument,
+    hasHydratedProviderDrafts,
     imageGenerationDraft.providerId,
     isProviderDraftDirty,
-    runtimeConfigDocument,
   ]);
 
   async function handleStartSignIn() {
@@ -1241,15 +1258,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
   function markProviderSettingsDirty() {
     setIsProviderDraftDirty(true);
-    setFailedAutosaveRevision(null);
     setProviderSaveStatus("idle");
     setAuthError("");
     setAuthMessage("");
-    setProviderDraftRevision((current) => {
-      const nextRevision = current + 1;
-      latestProviderDraftRevisionRef.current = nextRevision;
-      return nextRevision;
-    });
   }
 
   function updateProviderDraft(providerId: KnownProviderId, update: Partial<ProviderDraft>) {
@@ -1293,35 +1304,111 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     });
   }
 
+  function persistedProviderSettingsSnapshot(
+    documentText = runtimeConfigDocument,
+    runtimeConfigSnapshot = effectiveRuntimeConfig,
+  ): ProviderSettingsSnapshot {
+    const derived = deriveProviderDraftsFromDocument(
+      parseRuntimeConfigDocument(documentText),
+      runtimeConfigSnapshot,
+    );
+    return {
+      drafts: derived.drafts,
+      backgroundTasks: derived.backgroundTasks,
+      imageGeneration: derived.imageGeneration,
+    };
+  }
+
+  function providerSettingsSnapshotIsDirty(
+    snapshot: ProviderSettingsSnapshot,
+    documentText = runtimeConfigDocument,
+    runtimeConfigSnapshot = effectiveRuntimeConfig,
+  ): boolean {
+    const persisted = persistedProviderSettingsSnapshot(
+      documentText,
+      runtimeConfigSnapshot,
+    );
+    return (
+      JSON.stringify(snapshot.drafts) !== JSON.stringify(persisted.drafts) ||
+      JSON.stringify(snapshot.backgroundTasks) !==
+        JSON.stringify(persisted.backgroundTasks) ||
+      JSON.stringify(snapshot.imageGeneration) !==
+        JSON.stringify(persisted.imageGeneration)
+    );
+  }
+
+  function providerDraftValidationError(providerId: KnownProviderId): string {
+    if (!directProviderRequiresManualFields(providerId)) {
+      return "";
+    }
+    const draft = providerDrafts[providerId];
+    const label = KNOWN_PROVIDER_TEMPLATES[providerId].label;
+    if (!draft.baseUrl.trim()) {
+      return `${label} requires a base URL before it can be connected.`;
+    }
+    if (!draft.apiKey.trim()) {
+      return `${label} requires an API key before it can be connected.`;
+    }
+    if (parseModelsText(draft.modelsText).length === 0) {
+      return `${label} requires at least one model before it can be connected.`;
+    }
+    return "";
+  }
+
+  function handleCancelProviderEditing(providerId: KnownProviderId) {
+    const persisted = persistedProviderSettingsSnapshot();
+    const nextDrafts = {
+      ...providerDrafts,
+      [providerId]: persisted.drafts[providerId],
+    };
+    setProviderDrafts(nextDrafts);
+    setExpandedProviderId((current) => (current === providerId ? null : current));
+    setAuthError("");
+    setAuthMessage("");
+    setProviderSaveStatus("idle");
+    setIsProviderDraftDirty(
+      providerSettingsSnapshotIsDirty({
+        drafts: nextDrafts,
+        backgroundTasks: backgroundTasksDraft,
+        imageGeneration: imageGenerationDraft,
+      }),
+    );
+  }
+
   async function persistRuntimeProviderSettings(
     draftsSnapshot: ProviderDraftMap,
     backgroundTasksSnapshot: BackgroundTasksDraft,
     imageGenerationSnapshot: ImageGenerationDraft,
-    draftRevision: number,
-    source: "autosave" | "manual",
-  ) {
+  ): Promise<
+    | {
+        nextConfig: RuntimeConfigPayload;
+        nextDocumentText: string;
+      }
+    | null
+  > {
     if (!window.electronAPI) {
-      return;
+      return null;
     }
 
     setIsSavingRuntimeConfigDocument(true);
     setAuthError("");
     setAuthMessage("");
     try {
-      const currentDocument = parseRuntimeConfigDocument(runtimeConfigDocument);
+      const currentDocumentText = await window.electronAPI.runtime.getConfigDocument();
+      const currentDocument = parseRuntimeConfigDocument(currentDocumentText);
       const currentRuntime = asRecord(currentDocument.runtime);
       const currentProviders = asRecord(currentDocument.providers);
       const currentModels = asRecord(currentDocument.models);
 
-      const nextProviders: Record<string, unknown> = {};
-      for (const [providerId, providerPayload] of Object.entries(currentProviders)) {
-        const normalizedProviderId = providerId.trim();
-        if (!isKnownProviderId(normalizedProviderId) && normalizedProviderId !== "holaboss_model_proxy") {
-          nextProviders[providerId] = providerPayload;
+      const nextProviders: Record<string, unknown> = { ...currentProviders };
+      for (const providerId of KNOWN_PROVIDER_ORDER) {
+        delete nextProviders[runtimeProviderStorageId(providerId)];
+        if (providerId === "holaboss") {
+          delete nextProviders.holaboss;
         }
       }
 
-      const nextModels: Record<string, unknown> = {};
+      const nextModels: Record<string, unknown> = { ...currentModels };
       for (const [token, modelPayload] of Object.entries(currentModels)) {
         const parsedModelPayload = asRecord(modelPayload);
         const modelProviderId = firstNonEmptyString(
@@ -1329,12 +1416,17 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           parsedModelPayload.provider_id as string | undefined,
           token.includes("/") ? token.split("/")[0]?.trim() : ""
         );
-        if (modelProviderId && !isKnownProviderId(modelProviderId)) {
-          nextModels[token] = modelPayload;
+        const normalizedModelProviderId = canonicalDraftProviderStorageId(modelProviderId);
+        if (
+          isKnownProviderId(normalizedModelProviderId) ||
+          normalizedModelProviderId === "holaboss_model_proxy"
+        ) {
+          delete nextModels[token];
         }
       }
 
       const enabledProviders = enabledProviderIdsForDrafts(draftsSnapshot, isSignedIn);
+      const enabledProviderSet = new Set<KnownProviderId>(enabledProviders);
 
       for (const providerId of enabledProviders) {
         const providerTemplate = KNOWN_PROVIDER_TEMPLATES[providerId];
@@ -1427,13 +1519,21 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           runtimeConfig?.sandboxId ?? "",
           `desktop:${crypto.randomUUID()}`
         );
-      const normalizedBackgroundProviderId = backgroundTaskProviderStorageId(backgroundTasksSnapshot.providerId);
-      const normalizedBackgroundModel = backgroundTasksSnapshot.providerId
-        ? configuredBackgroundModelId(backgroundTasksSnapshot.providerId, backgroundTasksSnapshot.model)
+      const enabledBackgroundProviderId =
+        backgroundTasksSnapshot.providerId && enabledProviderSet.has(backgroundTasksSnapshot.providerId)
+          ? backgroundTasksSnapshot.providerId
+          : "";
+      const normalizedBackgroundProviderId = backgroundTaskProviderStorageId(enabledBackgroundProviderId);
+      const normalizedBackgroundModel = enabledBackgroundProviderId
+        ? configuredBackgroundModelId(enabledBackgroundProviderId, backgroundTasksSnapshot.model)
         : "";
-      const normalizedImageGenerationProviderId = imageGenerationProviderStorageId(imageGenerationSnapshot.providerId);
-      const normalizedImageGenerationModel = imageGenerationSnapshot.providerId
-        ? configuredImageGenerationModelId(imageGenerationSnapshot.providerId, imageGenerationSnapshot.model)
+      const enabledImageGenerationProviderId =
+        imageGenerationSnapshot.providerId && enabledProviderSet.has(imageGenerationSnapshot.providerId)
+          ? imageGenerationSnapshot.providerId
+          : "";
+      const normalizedImageGenerationProviderId = imageGenerationProviderStorageId(enabledImageGenerationProviderId);
+      const normalizedImageGenerationModel = enabledImageGenerationProviderId
+        ? configuredImageGenerationModelId(enabledImageGenerationProviderId, imageGenerationSnapshot.model)
         : "";
       const nextRuntime: Record<string, unknown> = {
         ...currentRuntime,
@@ -1470,63 +1570,96 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       setRuntimeConfig(nextConfig);
       setRuntimeConfigDocument(nextDocumentText);
       setSandboxId(resolvedSandboxId);
-      if (latestProviderDraftRevisionRef.current === draftRevision) {
-        setIsProviderDraftDirty(false);
-        setFailedAutosaveRevision(null);
-        setProviderSaveStatus("saved");
-      }
-      if (source === "manual") {
-        setAuthMessage("Runtime provider settings saved. The runtime was restarted with the new settings.");
-      }
+      return {
+        nextConfig,
+        nextDocumentText,
+      };
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Failed to save runtime provider settings.");
-      if (source === "autosave" && latestProviderDraftRevisionRef.current === draftRevision) {
-        setFailedAutosaveRevision(draftRevision);
-        setProviderSaveStatus("error");
-      }
+      setProviderSaveStatus("error");
+      return null;
     } finally {
       setIsSavingRuntimeConfigDocument(false);
     }
   }
 
-  useEffect(() => {
+  async function handleSaveRuntimeSettings(providerId?: KnownProviderId) {
     if (!window.electronAPI) {
       return;
     }
-    if (!isProviderDraftDirty || isSavingRuntimeConfigDocument) {
-      return;
-    }
-    if (failedAutosaveRevision === providerDraftRevision) {
-      return;
+
+    const persisted = persistedProviderSettingsSnapshot();
+    const draftsToSave = providerId
+      ? {
+          ...persisted.drafts,
+          [providerId]: providerDrafts[providerId],
+        }
+      : providerDrafts;
+    const backgroundTasksToSave = providerId
+      ? persisted.backgroundTasks
+      : backgroundTasksDraft;
+    const imageGenerationToSave = providerId
+      ? persisted.imageGeneration
+      : imageGenerationDraft;
+    const providersToValidate = providerId
+      ? [providerId]
+      : KNOWN_PROVIDER_ORDER;
+
+    for (const currentProviderId of providersToValidate) {
+      if (!draftsToSave[currentProviderId].enabled) {
+        continue;
+      }
+      const validationError = providerDraftValidationError(currentProviderId);
+      if (validationError) {
+        setAuthError(validationError);
+        setAuthMessage("");
+        setProviderSaveStatus("error");
+        return;
+      }
     }
 
     setProviderSaveStatus("saving");
-    const timeoutId = window.setTimeout(() => {
-      void persistRuntimeProviderSettings(
-        providerDrafts,
-        backgroundTasksDraft,
-        imageGenerationDraft,
-        providerDraftRevision,
-        "autosave",
-      );
-    }, PROVIDER_AUTOSAVE_DELAY_MS);
+    const result = await persistRuntimeProviderSettings(
+      draftsToSave,
+      backgroundTasksToSave,
+      imageGenerationToSave,
+    );
+    if (!result) {
+      return;
+    }
 
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [
-    failedAutosaveRevision,
-    isProviderDraftDirty,
-    isSavingRuntimeConfigDocument,
-    providerDraftRevision,
-    providerDrafts,
-    backgroundTasksDraft,
-    imageGenerationDraft,
-    runtimeConfig,
-    runtimeConfigDocument,
-    sandboxId,
-    isSignedIn
-  ]);
+    const nextSnapshot: ProviderSettingsSnapshot = providerId
+      ? {
+          drafts: {
+            ...providerDrafts,
+            [providerId]: draftsToSave[providerId],
+          },
+          backgroundTasks: backgroundTasksDraft,
+          imageGeneration: imageGenerationDraft,
+        }
+      : {
+          drafts: providerDrafts,
+          backgroundTasks: backgroundTasksDraft,
+          imageGeneration: imageGenerationDraft,
+        };
+    const hasRemainingUnsavedChanges = providerSettingsSnapshotIsDirty(
+      nextSnapshot,
+      result.nextDocumentText,
+      result.nextConfig,
+    );
+    setIsProviderDraftDirty(hasRemainingUnsavedChanges);
+    setProviderSaveStatus(hasRemainingUnsavedChanges ? "idle" : "saved");
+    if (providerId) {
+      setExpandedProviderId((current) => (current === providerId ? null : current));
+      setAuthMessage(
+        hasRemainingUnsavedChanges
+          ? `${KNOWN_PROVIDER_TEMPLATES[providerId].label} settings saved. Other changes are still unsaved.`
+          : `${KNOWN_PROVIDER_TEMPLATES[providerId].label} settings saved.`,
+      );
+      return;
+    }
+    setAuthMessage("Runtime provider settings saved. The runtime was restarted with the new settings.");
+  }
 
   async function handleExchangeRuntimeBinding() {
     if (!window.electronAPI) {
@@ -1557,10 +1690,37 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   }
 
   function renderProviderDrawerContent(providerId: KnownProviderId): ReactNode {
-    if (!providerEnabled(providerId)) {
+    if (!providerDraftEnabled(providerId)) {
+      if (providerConnected(providerId) && providerId !== "holaboss") {
+        return (
+          <div className="grid gap-2">
+            <div className="rounded-[12px] border border-border/40 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+              This provider will be disconnected when you save changes.
+            </div>
+            <div className="flex flex-wrap gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => void handleSaveRuntimeSettings(providerId)}
+                disabled={isSavingRuntimeConfigDocument}
+                className="theme-control-surface rounded-[10px] border border-primary/30 bg-primary/8 px-3 py-2 text-sm text-foreground transition hover:border-primary/45 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isSavingRuntimeConfigDocument ? "Saving..." : "Save"}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleCancelProviderEditing(providerId)}
+                disabled={isSavingRuntimeConfigDocument}
+                className="theme-control-surface rounded-[10px] border border-border/45 px-3 py-2 text-sm text-foreground transition hover:border-border/70 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        );
+      }
       return (
         <div className="rounded-[12px] border border-border/40 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-          Connect to edit settings.
+          Click Connect to configure settings.
         </div>
       );
     }
@@ -1609,6 +1769,24 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             spellCheck={false}
           />
         </label>
+        <div className="flex flex-wrap gap-2 pt-1">
+          <button
+            type="button"
+            onClick={() => void handleSaveRuntimeSettings(providerId)}
+            disabled={isSavingRuntimeConfigDocument}
+            className="theme-control-surface rounded-[10px] border border-primary/30 bg-primary/8 px-3 py-2 text-sm text-foreground transition hover:border-primary/45 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isSavingRuntimeConfigDocument ? "Saving..." : "Save"}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleCancelProviderEditing(providerId)}
+            disabled={isSavingRuntimeConfigDocument}
+            className="theme-control-surface rounded-[10px] border border-border/45 px-3 py-2 text-sm text-foreground transition hover:border-border/70 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        </div>
       </div>
     );
   }
@@ -1616,8 +1794,11 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   function renderProviderCard(providerId: KnownProviderId) {
     const template = KNOWN_PROVIDER_TEMPLATES[providerId];
     const isHolabossProvider = providerId === "holaboss";
-    const isEnabled = providerEnabled(providerId);
-    const isExpandable = isEnabled;
+    const isConnected = providerConnected(providerId);
+    const draftEnabled = providerDraftEnabled(providerId);
+    const hasPendingConnection = !isConnected && draftEnabled;
+    const hasPendingDisconnect = isConnected && !draftEnabled;
+    const isExpandable = isHolabossProvider ? isConnected : draftEnabled || isConnected;
     const isExpanded = isExpandable && expandedProviderId === providerId;
     const statusText = isHolabossProvider
       ? runtimeBindingReady
@@ -1625,9 +1806,13 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         : isSignedIn
           ? "Signed in. Refresh runtime binding to finish setup."
           : "Sign in to enable the managed provider."
-      : isEnabled
-        ? "Connected. Expand to edit settings."
-        : "Not connected.";
+      : hasPendingDisconnect
+        ? "Disconnect pending. Save changes to apply."
+        : hasPendingConnection
+          ? "Enter an API key and save to connect."
+          : isConnected
+            ? "Connected. Expand to edit settings."
+            : "Not connected.";
     const actionButtonClassName =
       "inline-flex h-9 min-w-[128px] shrink-0 items-center justify-center rounded-[10px] px-3 text-sm transition disabled:cursor-not-allowed disabled:opacity-50";
     const actionBadgeClassName =
@@ -1656,7 +1841,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 md:flex-col md:items-end md:justify-center">
             {isHolabossProvider ? (
-              isEnabled ? (
+              isConnected ? (
                 <div className={`${actionBadgeClassName} border-primary/30 bg-primary/10 text-primary`}>
                   Enabled
                 </div>
@@ -1670,7 +1855,27 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   {isStartingSignIn ? "Opening..." : "Sign in"}
                 </button>
               )
-            ) : isEnabled ? (
+            ) : isConnected ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
+                  className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-primary/35`}
+                >
+                  {isExpanded ? "Hide" : "Edit"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    updateProviderDraft(providerId, { enabled: hasPendingDisconnect });
+                    setExpandedProviderId(providerId);
+                  }}
+                  className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-destructive/40 hover:text-destructive`}
+                >
+                  {hasPendingDisconnect ? "Undo" : "Disconnect"}
+                </button>
+              </>
+            ) : hasPendingConnection ? (
               <>
                 <button
                   type="button"
@@ -1687,26 +1892,14 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   }}
                   className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-destructive/40 hover:text-destructive`}
                 >
-                  Disconnect
+                  Cancel
                 </button>
               </>
             ) : (
               <button
                 type="button"
                 onClick={() => {
-                  const shouldSeedBackgroundTasks =
-                    !backgroundTasksDraft.providerId && connectedProviderIds.length === 0;
-                  const shouldSeedImageGeneration =
-                    !imageGenerationDraft.providerId &&
-                    connectedImageProviderIds.length === 0 &&
-                    isImageGenerationProviderId(providerId);
                   updateProviderDraft(providerId, { enabled: true });
-                  if (shouldSeedBackgroundTasks) {
-                    applyBackgroundTaskProviderSelection(providerId);
-                  }
-                  if (shouldSeedImageGeneration) {
-                    applyImageGenerationProviderSelection(providerId);
-                  }
                   setExpandedProviderId(providerId);
                 }}
                 className={`${actionButtonClassName} border border-border/55 text-foreground hover:border-neon-green/35 hover:text-neon-green`}
@@ -1717,7 +1910,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           </div>
         </div>
 
-        {isExpanded && isEnabled && (
+        {isExpanded && isExpandable && (
           <div className="border-t border-border/35 px-4 pb-4 pt-3">
             {renderProviderDrawerContent(providerId)}
           </div>
@@ -1964,6 +2157,14 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         <div className="min-w-0 text-sm text-muted-foreground">{providerAutosaveMessage}</div>
 
         <div className="flex flex-wrap gap-2">
+          <button
+            className="theme-control-surface rounded-[14px] border border-primary/30 bg-primary/8 px-3 py-2 text-sm text-foreground transition hover:border-primary/45 disabled:cursor-not-allowed disabled:opacity-50"
+            type="button"
+            onClick={() => void handleSaveRuntimeSettings()}
+            disabled={isSavingRuntimeConfigDocument || !isProviderDraftDirty}
+          >
+            {isSavingRuntimeConfigDocument ? "Saving..." : "Save changes"}
+          </button>
           <button
             className="theme-control-surface rounded-[14px] border border-border/45 px-3 py-2 text-sm text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
             type="button"

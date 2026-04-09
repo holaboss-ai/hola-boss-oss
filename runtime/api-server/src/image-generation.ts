@@ -131,6 +131,17 @@ function googleImageConfigFromSize(value: string): { aspectRatio: string; imageS
   };
 }
 
+function splitDataUrl(value: string): { mimeType: string; data: string } | null {
+  const match = value.trim().match(/^data:([^;,]+);base64,(.+)$/i);
+  if (!match || !match[1] || !match[2]) {
+    return null;
+  }
+  return {
+    mimeType: match[1].trim().toLowerCase(),
+    data: match[2].trim(),
+  };
+}
+
 function googleNativeImagePayload(params: { modelId: string; prompt: string; size?: string | null }): Record<string, unknown> {
   const generationConfig: Record<string, unknown> = {
     responseModalities: ["TEXT", "IMAGE"],
@@ -178,6 +189,65 @@ function googleNativeImageResult(payload: unknown): { b64: string; revisedPrompt
           revisedPrompt: textFragments.join("").trim() || null,
         };
       }
+    }
+  }
+  return null;
+}
+
+function openRouterImagePayload(params: { modelId: string; prompt: string; size?: string | null }): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    model: params.modelId,
+    messages: [
+      {
+        role: "user",
+        content: params.prompt,
+      },
+    ],
+    modalities: ["image", "text"],
+  };
+  const imageConfig = params.size ? googleImageConfigFromSize(params.size) : null;
+  if (imageConfig) {
+    payload.image_config = {
+      aspect_ratio: imageConfig.aspectRatio,
+      image_size: imageConfig.imageSize,
+    };
+  }
+  return payload;
+}
+
+function openRouterImageResult(payload: unknown): { b64: string; mimeType: string | null; revisedPrompt: string | null } | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+  const choices = Array.isArray(payload.choices) ? payload.choices : [];
+  for (const choice of choices) {
+    if (!isRecord(choice)) {
+      continue;
+    }
+    const message = isRecord(choice.message) ? choice.message : null;
+    if (!message) {
+      continue;
+    }
+    const revisedPrompt = firstString(message.content) || null;
+    const images = Array.isArray(message.images) ? message.images : [];
+    for (const image of images) {
+      if (!isRecord(image)) {
+        continue;
+      }
+      const imageUrlPayload = isRecord(image.image_url)
+        ? image.image_url
+        : isRecord(image.imageUrl)
+          ? image.imageUrl
+          : null;
+      const dataUrl = splitDataUrl(firstString(imageUrlPayload?.url));
+      if (!dataUrl) {
+        continue;
+      }
+      return {
+        b64: dataUrl.data,
+        mimeType: dataUrl.mimeType,
+        revisedPrompt,
+      };
     }
   }
   return null;
@@ -247,6 +317,13 @@ export async function generateWorkspaceImage(
       prompt,
       size: params.size,
     });
+  } else if (client.apiStyle === "openrouter_image") {
+    endpoint = `${baseUrl}/chat/completions`;
+    requestBody = openRouterImagePayload({
+      modelId: client.modelId,
+      prompt,
+      size: params.size,
+    });
   } else if (!hasExplicitAuthHeader(headers) && client.apiKey.trim()) {
     headers.Authorization = `Bearer ${client.apiKey.trim()}`;
   }
@@ -266,15 +343,23 @@ export async function generateWorkspaceImage(
     ? payload.data[0]
     : null;
   const googleImageData = client.apiStyle === "google_native" ? googleNativeImageResult(payload) : null;
-  const b64 = firstString(openAiImageData?.b64_json, googleImageData?.b64);
+  const openRouterImageData = client.apiStyle === "openrouter_image" ? openRouterImageResult(payload) : null;
+  const b64 = firstString(openAiImageData?.b64_json, googleImageData?.b64, openRouterImageData?.b64);
   if (!b64) {
     throw new Error("image generation did not return b64_json output");
   }
 
   const buffer = Buffer.from(b64, "base64");
-  const detectedFormat = detectImageFormat(buffer);
+  const detectedFormat =
+    openRouterImageData?.mimeType === "image/png"
+      ? { extension: ".png", mimeType: "image/png" }
+      : openRouterImageData?.mimeType === "image/jpeg"
+        ? { extension: ".jpg", mimeType: "image/jpeg" }
+        : openRouterImageData?.mimeType === "image/webp"
+          ? { extension: ".webp", mimeType: "image/webp" }
+          : detectImageFormat(buffer);
   const revisedPrompt =
-    firstString(openAiImageData?.revised_prompt, googleImageData?.revisedPrompt) || null;
+    firstString(openAiImageData?.revised_prompt, googleImageData?.revisedPrompt, openRouterImageData?.revisedPrompt) || null;
   const { absolutePath, relativePath } = outputFilePath({
     workspaceRoot: params.workspaceRoot,
     workspaceId: params.workspaceId,

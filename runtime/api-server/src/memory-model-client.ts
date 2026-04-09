@@ -5,7 +5,7 @@ export interface MemoryModelClientConfig {
   apiKey: string;
   defaultHeaders?: Record<string, string> | null;
   modelId: string;
-  apiStyle?: "openai_compatible" | "anthropic_native" | "google_native" | null;
+  apiStyle?: "openai_compatible" | "anthropic_native" | "google_native" | "openrouter_image" | null;
 }
 
 export interface MemoryModelJsonQuery {

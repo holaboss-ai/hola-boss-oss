@@ -169,6 +169,41 @@ test("image generation model client resolves Gemini direct providers with native
   });
 });
 
+test("image generation model client resolves OpenRouter image providers with OpenRouter chat image calls", () => {
+  const root = makeTempDir("hb-image-model-openrouter-");
+  writeRuntimeConfig(root, {
+    runtime: {
+      image_generation: {
+        provider: "openrouter_direct",
+        model: "google/gemini-3.1-flash-image-preview",
+      },
+    },
+    providers: {
+      openrouter_direct: {
+        kind: "openrouter",
+        base_url: "https://openrouter.ai/api/v1",
+        api_key: "sk-or-test",
+      },
+    },
+  });
+
+  const client = createImageGenerationModelClient({
+    workspaceId: "workspace-1",
+    sessionId: "session-1",
+    inputId: "input-1",
+    selectedModel: "openrouter_direct/openai/gpt-5.4",
+    defaultProviderId: "openrouter_direct",
+  });
+
+  assert.deepEqual(client, {
+    baseUrl: "https://openrouter.ai/api/v1",
+    apiKey: "sk-or-test",
+    defaultHeaders: null,
+    modelId: "google/gemini-3.1-flash-image-preview",
+    apiStyle: "openrouter_image",
+  });
+});
+
 test("image generation model client routes managed Holaboss Gemini image models to the Google proxy path", () => {
   const root = makeTempDir("hb-image-model-holaboss-google-");
   writeRuntimeConfig(root, {

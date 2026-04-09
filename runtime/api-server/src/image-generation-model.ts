@@ -11,6 +11,7 @@ const HOLABOSS_PROVIDER_ID = "holaboss_model_proxy";
 const IMAGE_GENERATION_ALLOWED_PROVIDER_IDS = new Set([
   HOLABOSS_PROVIDER_ID,
   "openai_direct",
+  "openrouter_direct",
   "gemini_direct",
 ]);
 const PROVIDER_ID_ALIASES: Record<string, string> = {
@@ -18,6 +19,8 @@ const PROVIDER_ID_ALIASES: Record<string, string> = {
   [HOLABOSS_PROVIDER_ID]: HOLABOSS_PROVIDER_ID,
   openai: "openai_direct",
   openai_direct: "openai_direct",
+  openrouter: "openrouter_direct",
+  openrouter_direct: "openrouter_direct",
   gemini: "gemini_direct",
   google: "gemini_direct",
   gemini_direct: "gemini_direct",
@@ -31,6 +34,7 @@ const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string
 const IMAGE_GENERATION_MODEL_DEFAULTS: Record<string, string | null> = {
   [HOLABOSS_PROVIDER_ID]: "gpt-image-1.5",
   openai_direct: "gpt-image-1.5",
+  openrouter_direct: "google/gemini-3.1-flash-image-preview",
   gemini_direct: "gemini-3.1-flash-image-preview",
 };
 const OPENAI_COMPATIBLE_MODEL_PROXY_PROVIDERS = new Set([
@@ -357,6 +361,16 @@ export function createImageGenerationModelClient(
       defaultHeaders: resolved.modelClient.default_headers ?? null,
       modelId: resolved.modelId,
       apiStyle: "google_native",
+    };
+  }
+
+  if (selection.providerId === "openrouter_direct") {
+    return {
+      baseUrl,
+      apiKey,
+      defaultHeaders: resolved.modelClient.default_headers ?? null,
+      modelId: resolved.modelId,
+      apiStyle: "openrouter_image",
     };
   }
 
