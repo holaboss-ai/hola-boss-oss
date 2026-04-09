@@ -176,6 +176,75 @@ test("runtime queue worker marks claimed input failed when delegated execution r
   store.close();
 });
 
+test("runtime queue worker can pause a queued session input before it is claimed", async () => {
+  const root = makeTempDir("hb-runtime-queue-worker-pause-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  const queued = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    payload: { text: "pause this" }
+  });
+  store.updateRuntimeState({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    status: "QUEUED",
+    currentInputId: queued.inputId,
+    currentWorkerId: null,
+    leaseUntil: null,
+    heartbeatAt: null,
+    lastError: null,
+  });
+
+  const worker = new RuntimeQueueWorker({ store });
+  const paused = await worker.pauseSessionRun({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+  });
+  const updated = store.getInput(queued.inputId);
+  const runtimeState = store.getRuntimeState({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+  });
+  const events = store.listOutputEvents({
+    sessionId: "session-main",
+    inputId: queued.inputId,
+  });
+  const turnResult = store.getTurnResult({ inputId: queued.inputId });
+
+  assert.deepEqual(paused, {
+    inputId: queued.inputId,
+    sessionId: "session-main",
+    status: "PAUSED",
+  });
+  assert.ok(updated);
+  assert.equal(updated.status, "PAUSED");
+  assert.ok(runtimeState);
+  assert.equal(runtimeState.status, "PAUSED");
+  assert.equal(runtimeState.currentInputId, null);
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.eventType, "run_completed");
+  assert.deepEqual(events[0]?.payload, {
+    status: "paused",
+    stop_reason: "paused",
+    message: "Run paused by user request",
+  });
+  assert.ok(turnResult);
+  assert.equal(turnResult.status, "paused");
+  assert.equal(turnResult.stopReason, "paused");
+
+  store.close();
+});
+
 test("runtime queue worker recovers expired claimed input before processing fresh queue work", async () => {
   const root = makeTempDir("hb-runtime-queue-worker-");
   const store = new RuntimeStateStore({

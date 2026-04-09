@@ -3356,6 +3356,68 @@ test("queue route persists input, user message, and runtime state", async () => 
   store.close();
 });
 
+test("pause route delegates to the configured queue worker", async () => {
+  const root = makeTempDir("hb-runtime-api-pause-route-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "hello world" }
+  });
+
+  let pausedParams: { workspaceId: string; sessionId: string } | null = null;
+  const app = buildRuntimeApiServer({
+    store,
+    queueWorker: {
+      async start() {},
+      wake() {},
+      async close() {},
+      async pauseSessionRun(params) {
+        pausedParams = params;
+        return {
+          inputId: queued.inputId,
+          sessionId: params.sessionId,
+          status: "PAUSING",
+        };
+      },
+    },
+    cronWorker: null,
+    bridgeWorker: null,
+  });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/v1/agent-sessions/session-main/pause",
+    payload: {
+      workspace_id: workspace.id,
+    },
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(pausedParams, {
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+  });
+  assert.deepEqual(response.json(), {
+    input_id: queued.inputId,
+    session_id: "session-main",
+    status: "PAUSING",
+  });
+
+  await app.close();
+  store.close();
+});
+
 test("queue route creates pending user memory proposals from strong preference signals", async () => {
   const root = makeTempDir("hb-runtime-api-memory-proposals-");
   const store = new RuntimeStateStore({

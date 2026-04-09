@@ -356,6 +356,92 @@ test("claimed input ignores waiting_user terminal status for harnesses that do n
   store.close();
 });
 
+test("claimed input persists a paused turn when the run is aborted mid-execution", async () => {
+  const store = makeStore("hb-claimed-input-paused-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "pause this run" }
+  });
+  setNodeRunnerCommand([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'pause this run' } }) + '\\n');`,
+    "setInterval(() => {}, 1000);"
+  ]);
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300
+  });
+  const controller = new AbortController();
+  let postRunCalls = 0;
+  const execution = processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+    abortSignal: controller.signal,
+    runPostRunTasksFn: async () => {
+      postRunCalls += 1;
+    },
+  });
+
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (
+      store.listOutputEvents({
+        sessionId: "session-main",
+        inputId: queued.inputId,
+      }).length > 0
+    ) {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  controller.abort("user_requested_pause");
+  await execution;
+
+  const updated = store.getInput(queued.inputId);
+  const runtimeState = store.getRuntimeState({
+    workspaceId: workspace.id,
+    sessionId: "session-main"
+  });
+  const events = store.listOutputEvents({
+    sessionId: "session-main",
+    inputId: queued.inputId
+  });
+  const turnResult = store.getTurnResult({ inputId: queued.inputId });
+
+  assert.equal(postRunCalls, 1);
+  assert.ok(updated);
+  assert.equal(updated.status, "PAUSED");
+  assert.ok(runtimeState);
+  assert.equal(runtimeState.status, "PAUSED");
+  assert.equal(runtimeState.currentInputId, null);
+  assert.equal(runtimeState.lastError, null);
+  assert.deepEqual(
+    events.map((event) => event.eventType),
+    ["run_started", "run_completed"]
+  );
+  assert.deepEqual(events[1]?.payload, {
+    status: "paused",
+    stop_reason: "paused",
+    message: "Run paused by user request",
+  });
+  assert.ok(turnResult);
+  assert.equal(turnResult.status, "paused");
+  assert.equal(turnResult.stopReason, "paused");
+
+  store.close();
+});
+
 test("claimed input captures file outputs and persists an assistant turn for output-only runs", async () => {
   const store = makeStore("hb-claimed-input-file-output-");
   const workspace = store.createWorkspace({

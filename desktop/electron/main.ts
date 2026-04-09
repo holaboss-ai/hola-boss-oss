@@ -2157,6 +2157,12 @@ interface EnqueueSessionInputResponsePayload {
   status: string;
 }
 
+interface PauseSessionRunResponsePayload {
+  input_id: string;
+  session_id: string;
+  status: string;
+}
+
 interface HolabossClientConfigPayload {
   projectsUrl: string;
   marketplaceUrl: string;
@@ -2337,6 +2343,11 @@ interface HolabossQueueSessionInputPayload {
   idempotency_key?: string | null;
   priority?: number;
   model?: string | null;
+}
+
+interface HolabossPauseSessionRunPayload {
+  workspace_id: string;
+  session_id: string;
 }
 
 interface HolabossStreamSessionOutputsPayload {
@@ -9513,6 +9524,18 @@ async function queueSessionInput(
   });
 }
 
+async function pauseSessionRun(
+  payload: HolabossPauseSessionRunPayload,
+): Promise<PauseSessionRunResponsePayload> {
+  return requestRuntimeJson<PauseSessionRunResponsePayload>({
+    method: "POST",
+    path: `/api/v1/agent-sessions/${encodeURIComponent(payload.session_id)}/pause`,
+    payload: {
+      workspace_id: payload.workspace_id,
+    },
+  });
+}
+
 async function* iterSseEvents(stream: NodeJS.ReadableStream) {
   const decoder = new TextDecoder();
   let buffer = "";
@@ -14671,6 +14694,12 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, payload: HolabossQueueSessionInputPayload) =>
       queueSessionInput(payload),
+  );
+  handleTrustedIpc(
+    "workspace:pauseSessionRun",
+    ["main"],
+    async (_event, payload: HolabossPauseSessionRunPayload) =>
+      pauseSessionRun(payload),
   );
   handleTrustedIpc(
     "workspace:openSessionOutputStream",

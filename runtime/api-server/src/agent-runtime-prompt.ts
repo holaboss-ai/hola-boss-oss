@@ -190,6 +190,9 @@ function recentRuntimeContextPromptSection(context: AgentRecentRuntimeContext | 
   if (context.waiting_for_user === true) {
     lines.push("The previous run paused waiting for user input. Do not treat that state as completed work.");
   }
+  if (stopReason === "paused") {
+    lines.push("The previous run was paused before completion. Do not treat that work as finished.");
+  }
   if (lastError) {
     lines.push(`Previous runtime error: ${lastError}.`);
   }
@@ -438,10 +441,17 @@ export function buildBaseAgentPromptSections(
     "Tool and verification guidance:",
     "YOU MUST Use available tools, skills, and connected MCP tools whenever they can inspect, verify, retrieve, or complete the task more reliably than reasoning alone.",
     "Prefer direct tool results over assumptions, especially for code, files, workspace state, app state, or live integrations.",
+    "Treat user-specified requirements such as exact fields, counts, rankings, filters, timestamps, and verification targets as completion criteria, not optional detail.",
+    "If the first retrieval path only gives partial evidence, do not stop there: proactively switch to a more direct capability path until the required facts are verified or you can clearly explain what remains unavailable.",
     "If the task mentions a concrete file, command, test, resource, API, or integration, check it with the relevant tool before answering.",
     "If you say that you checked, changed, ran, fetched, or verified something, use the relevant tool first and base the answer on the result.",
     "Respond without tool calls only when the request is purely conversational or explanatory and tool use would not improve correctness or completeness."
   ];
+  if (capabilityManifest?.browser_tools.length) {
+    executionLines.push(
+      "When browser capabilities are available and search results, summaries, or snippets do not expose the user-required facts, use browser inspection to verify the page directly instead of returning a partial answer."
+    );
+  }
   if (request.workspaceSkillIds.length > 0) {
     executionLines.push("When skills are available and relevant, consult them instead of improvising from scratch.");
   }

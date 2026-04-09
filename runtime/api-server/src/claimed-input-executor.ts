@@ -3,7 +3,12 @@ import path from "node:path";
 
 import type { RuntimeStateStore, SessionInputRecord, TurnResultRecord, WorkspaceRecord } from "@holaboss/runtime-state-store";
 
-import { buildRunFailedEvent, executeRunnerRequest, type RunnerEvent } from "./runner-worker.js";
+import {
+  buildRunCompletedEvent,
+  buildRunFailedEvent,
+  executeRunnerRequest,
+  type RunnerEvent,
+} from "./runner-worker.js";
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
 import { normalizeHarnessId, resolveRuntimeHarnessAdapter } from "./harness-registry.js";
 import type { MemoryServiceLike } from "./memory.js";
@@ -245,14 +250,20 @@ function tokenUsageFromPayload(payload: Record<string, unknown>): Record<string,
 function stopReasonForTerminalEvent(params: {
   eventType: string;
   payload: Record<string, unknown>;
-  terminalStatus: "IDLE" | "WAITING_USER" | "ERROR";
+  terminalStatus: "IDLE" | "WAITING_USER" | "PAUSED" | "ERROR";
 }): string | null {
   if (params.eventType === "run_completed") {
     const status = typeof params.payload.status === "string" ? params.payload.status.trim().toLowerCase() : "";
     if (status) {
       return status;
     }
-    return params.terminalStatus === "WAITING_USER" ? "waiting_user" : "completed";
+    if (params.terminalStatus === "WAITING_USER") {
+      return "waiting_user";
+    }
+    if (params.terminalStatus === "PAUSED") {
+      return "paused";
+    }
+    return "completed";
   }
   if (params.eventType === "run_failed") {
     if (typeof params.payload.type === "string" && params.payload.type.trim()) {
@@ -422,7 +433,7 @@ function persistTurnResult(params: {
   record: SessionInputRecord;
   startedAt: string;
   completedAt: string | null;
-  terminalStatus: "IDLE" | "WAITING_USER" | "ERROR";
+  terminalStatus: "IDLE" | "WAITING_USER" | "PAUSED" | "ERROR";
   stopReason: string | null;
   assistantText: string;
   toolUsageSummary: Record<string, unknown>;
@@ -444,6 +455,8 @@ function persistTurnResult(params: {
         ? "failed"
         : params.terminalStatus === "WAITING_USER"
         ? "waiting_user"
+        : params.terminalStatus === "PAUSED"
+        ? "paused"
         : "completed",
     stopReason: params.stopReason,
     assistantText: params.assistantText,
@@ -482,8 +495,11 @@ function appendNextOutputEvent(params: {
 function terminalStatusForCompletedPayload(
   payload: Record<string, unknown>,
   supportsWaitingUser: boolean
-): "IDLE" | "WAITING_USER" {
+): "IDLE" | "WAITING_USER" | "PAUSED" {
   const status = typeof payload.status === "string" ? payload.status.trim().toLowerCase() : "";
+  if (status === "paused") {
+    return "PAUSED";
+  }
   return supportsWaitingUser && status === "waiting_user" ? "WAITING_USER" : "IDLE";
 }
 
@@ -529,6 +545,7 @@ export async function processClaimedInput(params: {
   onPostRunTaskError?: (taskName: string, error: unknown) => void;
   executeRunnerRequestFn?: typeof executeRunnerRequest;
   resolveProductRuntimeConfigFn?: typeof resolveProductRuntimeConfig;
+  abortSignal?: AbortSignal;
 }): Promise<void> {
   const { store, record } = params;
   const turnStartedAt = new Date().toISOString();
@@ -649,7 +666,7 @@ export async function processClaimedInput(params: {
   });
 
   const assistantParts: string[] = [];
-  let terminalStatus: "IDLE" | "WAITING_USER" | "ERROR" = "IDLE";
+  let terminalStatus: "IDLE" | "WAITING_USER" | "PAUSED" | "ERROR" = "IDLE";
   let lastError: Record<string, unknown> | null = null;
   let lastSequence = 0;
   let completedAt: string | null = null;
@@ -679,6 +696,7 @@ export async function processClaimedInput(params: {
   try {
     const executeRunner = params.executeRunnerRequestFn ?? executeRunnerRequest;
     const execution = await executeRunner(payload, {
+      signal: params.abortSignal,
       onHeartbeat: () => {
         store.updateRuntimeState({
           workspaceId: record.workspaceId,
@@ -857,7 +875,34 @@ export async function processClaimedInput(params: {
       }
     });
 
-    if (!execution.sawTerminal) {
+    if (execution.aborted && !execution.sawTerminal) {
+      const pausedAt = new Date().toISOString();
+      const completed = buildRunCompletedEvent({
+        sessionId: record.sessionId,
+        inputId: record.inputId,
+        sequence: lastSequence + 1,
+        payload: {
+          status: "paused",
+          stop_reason: "paused",
+          message: "Run paused by user request",
+        },
+      });
+      const completedPayload = payloadForEvent(completed);
+      lastSequence = Math.max(lastSequence, typeof completed.sequence === "number" ? completed.sequence : lastSequence + 1);
+      deferredTerminalEvent = {
+        eventType: "run_completed",
+        payload: completedPayload,
+        createdAt: pausedAt,
+      };
+      terminalStatus = "PAUSED";
+      lastError = null;
+      completedAt = pausedAt;
+      stopReason = stopReasonForTerminalEvent({
+        eventType: "run_completed",
+        payload: completedPayload,
+        terminalStatus,
+      });
+    } else if (!execution.sawTerminal) {
       const details = execution.skippedLines.length > 0 ? execution.skippedLines.slice(0, 3).join("; ") : "";
       const suffix = details ? ` (skipped output: ${details})` : "";
       const failure = buildRunFailedEvent({
@@ -888,7 +933,7 @@ export async function processClaimedInput(params: {
     }
 
     store.updateInput(record.inputId, {
-      status: terminalStatus === "ERROR" ? "FAILED" : "DONE",
+      status: terminalStatus === "ERROR" ? "FAILED" : terminalStatus === "PAUSED" ? "PAUSED" : "DONE",
       claimedUntil: null
     });
     store.updateRuntimeState({

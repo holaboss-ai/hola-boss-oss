@@ -7,6 +7,7 @@ import { afterEach, test } from "node:test";
 import {
   buildRunnerEnv,
   currentRuntimeApiUrl,
+  executeRunnerRequest,
   NativeRunnerExecutor,
   RunnerExecutorError
 } from "./runner-worker.js";
@@ -174,6 +175,37 @@ test("native runner executor synthesizes failed stream terminal event", async ()
   assert.match(body, /event: run_started/);
   assert.match(body, /event: run_failed/);
   assert.match(body, /runner stream ended before terminal event/);
+});
+
+test("executeRunnerRequest aborts an in-flight runner immediately", async () => {
+  setNodeRunnerTemplate([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    "process.stdout.write(JSON.stringify({ session_id: 'session-1', input_id: 'input-1', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'hello' } }) + '\\n');",
+    "setInterval(() => {}, 1000);"
+  ]);
+
+  const controller = new AbortController();
+  const seenEvents: string[] = [];
+  const executionPromise = executeRunnerRequest(payload(), {
+    signal: controller.signal,
+    onEvent: async (event) => {
+      seenEvents.push(String(event.event_type));
+      if (event.event_type === "run_started") {
+        controller.abort("user_requested_pause");
+      }
+    },
+  });
+
+  const execution = await executionPromise;
+
+  assert.deepEqual(seenEvents, ["run_started"]);
+  assert.equal(execution.sawTerminal, false);
+  assert.equal(execution.aborted, true);
+  assert.equal(execution.abortReason, "user_requested_pause");
+  assert.equal(execution.returnCode, 130);
+  assert.equal(execution.events.length, 1);
+  assert.equal(execution.events[0]?.event_type, "run_started");
 });
 
 test("native runner executor reports invalid command templates", async () => {

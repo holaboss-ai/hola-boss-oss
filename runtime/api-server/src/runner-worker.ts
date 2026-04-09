@@ -37,6 +37,8 @@ export interface RunnerExecutionResult {
   stderr: string;
   returnCode: number;
   sawTerminal: boolean;
+  aborted?: boolean;
+  abortReason?: string | null;
 }
 
 export type RunnerEvent = Record<string, unknown>;
@@ -292,6 +294,21 @@ export function buildRunFailedEvent(params: {
   };
 }
 
+export function buildRunCompletedEvent(params: {
+  sessionId: string;
+  inputId: string;
+  sequence: number;
+  payload?: Record<string, unknown>;
+}): RunnerEvent {
+  return {
+    session_id: params.sessionId,
+    input_id: params.inputId,
+    sequence: params.sequence,
+    event_type: "run_completed",
+    payload: params.payload ?? {},
+  };
+}
+
 function sseEvent(event: RunnerEvent): string {
   const eventType = typeof event.event_type === "string" ? event.event_type : "message";
   const inputId = typeof event.input_id === "string" ? event.input_id : "unknown";
@@ -354,9 +371,24 @@ export async function executeRunnerRequest(
   options: {
     onEvent?: (event: RunnerEvent) => void | Promise<void>;
     onHeartbeat?: () => void | Promise<void>;
+    signal?: AbortSignal;
   } = {}
 ): Promise<RunnerExecutionResult> {
   validateRunnerPayload(payload);
+  if (options.signal?.aborted) {
+    return {
+      events: [],
+      skippedLines: [],
+      stderr: "runner command aborted by caller",
+      returnCode: 130,
+      sawTerminal: false,
+      aborted: true,
+      abortReason:
+        typeof options.signal.reason === "string" && options.signal.reason.trim()
+          ? options.signal.reason.trim()
+          : null,
+    };
+  }
   const command = runnerCommand(payload);
   const env = buildRunnerEnv();
   const workspaceId = typeof payload.workspace_id === "string" ? payload.workspace_id.trim() : "";
@@ -383,6 +415,7 @@ export async function executeRunnerRequest(
   let timedOut = false;
   let idleTimedOut = false;
   let sawTerminal = false;
+  let aborted = false;
   const timeout = setTimeout(() => {
     timedOut = true;
     killChildProcess(child, "SIGKILL");
@@ -404,6 +437,14 @@ export async function executeRunnerRequest(
   const heartbeat = setInterval(() => {
     void options.onHeartbeat?.();
   }, HEARTBEAT_INTERVAL_MS);
+  const abortChild = () => {
+    if (sawTerminal || timedOut || idleTimedOut || aborted) {
+      return;
+    }
+    aborted = true;
+    killChildProcess(child, "SIGKILL");
+  };
+  options.signal?.addEventListener("abort", abortChild, { once: true });
 
   const stderrPromise = (async () => {
     const chunks: Buffer[] = [];
@@ -464,6 +505,7 @@ export async function executeRunnerRequest(
       clearTimeout(idleTimeout);
     }
     clearInterval(heartbeat);
+    options.signal?.removeEventListener("abort", abortChild);
   }
 
   const returnCode = await closePromise;
@@ -471,14 +513,21 @@ export async function executeRunnerRequest(
     ? "runner command timed out"
     : idleTimedOut
       ? `runner command became idle for ${Math.round(idleTimeoutMs / 1000)}s without a terminal event`
-      : await stderrPromise;
+      : aborted
+        ? "runner command aborted by caller"
+        : await stderrPromise;
 
   return {
     events,
     skippedLines,
     stderr: stderrText,
-    returnCode: timedOut || idleTimedOut ? 124 : returnCode,
-    sawTerminal
+    returnCode: timedOut || idleTimedOut ? 124 : aborted ? 130 : returnCode,
+    sawTerminal,
+    aborted,
+    abortReason:
+      aborted && typeof options.signal?.reason === "string" && options.signal.reason.trim()
+        ? options.signal.reason.trim()
+        : null,
   };
 }
 

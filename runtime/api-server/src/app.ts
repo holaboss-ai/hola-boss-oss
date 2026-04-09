@@ -3595,6 +3595,38 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     };
   });
 
+  app.post("/api/v1/agent-sessions/:sessionId/pause", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { sessionId: string };
+    const workspaceId = optionalString(request.body.workspace_id);
+    if (!workspaceId) {
+      return sendError(reply, 400, "workspace_id is required");
+    }
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+    if (!queueWorker?.pauseSessionRun) {
+      return sendError(reply, 409, "runtime pause is not available");
+    }
+
+    const paused = await queueWorker.pauseSessionRun({
+      workspaceId,
+      sessionId: params.sessionId,
+    });
+    if (!paused) {
+      return sendError(reply, 409, "session is not currently running");
+    }
+
+    return {
+      input_id: paused.inputId,
+      session_id: paused.sessionId,
+      status: paused.status,
+    };
+  });
+
   app.get("/api/v1/agent-sessions", async (request, reply) => {
     const query = isRecord(request.query) ? request.query : {};
     const workspaceId = optionalString(query.workspace_id);

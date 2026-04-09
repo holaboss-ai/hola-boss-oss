@@ -246,6 +246,8 @@ function renderBlockerState(turnResult: TurnResultRecord): string {
 
   if (turnResult.status === "waiting_user") {
     lines.push("The latest run is paused waiting for user input.");
+  } else if (turnResult.status === "paused") {
+    lines.push("The latest run was paused by the user before completion.");
   } else if (turnResult.status === "failed") {
     lines.push(
       turnResult.stopReason ? `The latest run failed with stop reason \`${turnResult.stopReason}\`.` : "The latest run failed."

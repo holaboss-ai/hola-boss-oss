@@ -193,6 +193,18 @@ export interface CompactionBoundaryRecord {
 
 export type CompactionBoundaryType = "executor_post_turn" | "harness_auto_compaction";
 
+const SESSION_RUNTIME_STATE_STATUSES = [
+  "IDLE",
+  "BUSY",
+  "WAITING_USER",
+  "ERROR",
+  "QUEUED",
+  "PAUSED",
+] as const;
+const SESSION_RUNTIME_STATE_STATUS_SQL = SESSION_RUNTIME_STATE_STATUSES.map(
+  (status) => `'${status}'`,
+).join(", ");
+
 export type RuntimeUserProfileNameSource = "manual" | "agent" | "auth_fallback";
 
 export interface RuntimeUserProfileRecord {
@@ -3575,7 +3587,7 @@ export class RuntimeStateStore {
       CREATE TABLE IF NOT EXISTS session_runtime_state (
           workspace_id TEXT NOT NULL,
           session_id TEXT NOT NULL,
-          status TEXT NOT NULL CHECK (status IN ('IDLE', 'BUSY', 'WAITING_USER', 'ERROR', 'QUEUED')),
+          status TEXT NOT NULL CHECK (status IN (${SESSION_RUNTIME_STATE_STATUS_SQL})),
           current_input_id TEXT,
           current_worker_id TEXT,
           lease_until TEXT,
@@ -3916,9 +3928,76 @@ export class RuntimeStateStore {
           updated_at TEXT NOT NULL
       );
     `);
+    this.ensureSessionRuntimeStateTableSchema(db);
     this.migrateLegacySessionArtifactsToOutputs(db);
     this.migrateRuntimeNotificationPriority(db);
     this.migrateCronjobInstructions(db);
+  }
+
+  private ensureSessionRuntimeStateTableSchema(db: Database.Database): void {
+    const row = db
+      .prepare<[string], { sql: string | null }>(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1"
+      )
+      .get("session_runtime_state");
+    const normalizedSql = (row?.sql ?? "").toUpperCase();
+    if (!normalizedSql || normalizedSql.includes("'PAUSED'")) {
+      return;
+    }
+
+    db.exec(`
+      ALTER TABLE session_runtime_state RENAME TO session_runtime_state_legacy_no_paused;
+
+      CREATE TABLE session_runtime_state (
+          workspace_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN (${SESSION_RUNTIME_STATE_STATUS_SQL})),
+          current_input_id TEXT,
+          current_worker_id TEXT,
+          lease_until TEXT,
+          heartbeat_at TEXT,
+          last_error TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, session_id)
+      );
+
+      INSERT INTO session_runtime_state (
+          workspace_id,
+          session_id,
+          status,
+          current_input_id,
+          current_worker_id,
+          lease_until,
+          heartbeat_at,
+          last_error,
+          created_at,
+          updated_at
+      )
+      SELECT
+          workspace_id,
+          session_id,
+          CASE
+            WHEN UPPER(status) IN (${SESSION_RUNTIME_STATE_STATUS_SQL}) THEN UPPER(status)
+            ELSE 'IDLE'
+          END,
+          current_input_id,
+          current_worker_id,
+          lease_until,
+          heartbeat_at,
+          last_error,
+          created_at,
+          updated_at
+      FROM session_runtime_state_legacy_no_paused;
+
+      DROP TABLE session_runtime_state_legacy_no_paused;
+
+      CREATE INDEX IF NOT EXISTS session_runtime_state_workspace_session_idx
+          ON session_runtime_state (workspace_id, session_id);
+
+      CREATE INDEX IF NOT EXISTS session_runtime_state_session_id_idx
+          ON session_runtime_state (session_id);
+    `);
   }
 
   private migrateRuntimeNotificationPriority(db: Database.Database): void {

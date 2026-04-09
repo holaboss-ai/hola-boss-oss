@@ -667,6 +667,12 @@ declare global {
     status: string;
   }
 
+  interface PauseSessionRunResponsePayload {
+    input_id: string;
+    session_id: string;
+    status: string;
+  }
+
   interface HolabossClientConfigPayload {
     projectsUrl: string;
     marketplaceUrl: string;
@@ -854,6 +860,11 @@ declare global {
     inputId?: string | null;
     includeHistory?: boolean;
     stopOnTerminal?: boolean;
+  }
+
+  interface HolabossPauseSessionRunPayload {
+    workspace_id: string;
+    session_id: string;
   }
 
   interface HolabossSessionStreamHandlePayload {
@@ -1184,6 +1195,7 @@ declare global {
         payload: StageSessionAttachmentPathsPayload
       ) => Promise<StageSessionAttachmentsResponsePayload>;
       queueSessionInput: (payload: HolabossQueueSessionInputPayload) => Promise<EnqueueSessionInputResponsePayload>;
+      pauseSessionRun: (payload: HolabossPauseSessionRunPayload) => Promise<PauseSessionRunResponsePayload>;
       openSessionOutputStream: (payload: HolabossStreamSessionOutputsPayload) => Promise<HolabossSessionStreamHandlePayload>;
       closeSessionOutputStream: (streamId: string, reason?: string) => Promise<void>;
       getSessionStreamDebug: () => Promise<HolabossSessionStreamDebugEntry[]>;

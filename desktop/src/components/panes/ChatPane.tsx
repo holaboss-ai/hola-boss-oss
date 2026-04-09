@@ -26,6 +26,7 @@ import {
   Paperclip,
   PencilLine,
   Search,
+  Square,
   Waypoints,
   X,
 } from "lucide-react";
@@ -1208,6 +1209,23 @@ function phaseTraceStepFromEvent(
     };
   }
 
+  if (eventType === "run_completed") {
+    const status =
+      typeof payload.status === "string"
+        ? payload.status.trim().toLowerCase()
+        : "";
+    if (status === "paused") {
+      return {
+        id: "phase:user-paused",
+        kind: "phase",
+        title: "Run paused",
+        status: "waiting",
+        details: ["The run was paused before completion and can be continued in a later turn."],
+        order,
+      };
+    }
+  }
+
   if (eventType === "run_failed") {
     const errorText = runFailedDetail(payload);
     if (errorText) {
@@ -1248,7 +1266,7 @@ function upsertTraceStep(previous: ChatTraceStep[], step: ChatTraceStep) {
 
 function finalizeTraceSteps(
   previous: ChatTraceStep[],
-  status: Extract<ChatTraceStepStatus, "completed" | "error">,
+  status: Extract<ChatTraceStepStatus, "completed" | "error" | "waiting">,
 ) {
   return previous.map((step) =>
     step.status === "running"
@@ -1299,7 +1317,14 @@ function assistantHistoryStateFromOutputEvents(
     }
 
     if (event.event_type === "run_completed") {
-      traceSteps = finalizeTraceSteps(traceSteps, "completed");
+      const completedStatus =
+        typeof eventPayload.status === "string"
+          ? eventPayload.status.trim().toLowerCase()
+          : "";
+      traceSteps = finalizeTraceSteps(
+        traceSteps,
+        completedStatus === "paused" ? "waiting" : "completed",
+      );
     } else if (event.event_type === "run_failed") {
       traceSteps = finalizeTraceSteps(traceSteps, "error");
     }
@@ -1390,6 +1415,7 @@ export function ChatPane({
   >([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
+  const [isPausePending, setIsPausePending] = useState(false);
   const [chatErrorMessage, setChatErrorMessage] = useState("");
   const [verboseTelemetryEnabled, setVerboseTelemetryEnabled] = useState(false);
   const [composerBlockHeight, setComposerBlockHeight] = useState(0);
@@ -1999,7 +2025,7 @@ export function ChatPane({
   }
 
   function finalizeLiveTraceSteps(
-    status: Extract<ChatTraceStepStatus, "completed" | "error">,
+    status: Extract<ChatTraceStepStatus, "completed" | "error" | "waiting">,
   ) {
     const next = finalizeTraceSteps(liveTraceStepsRef.current, status);
     setLiveTraceStepsState(next);
@@ -2026,6 +2052,12 @@ export function ChatPane({
   useEffect(() => {
     selectedWorkspaceRef.current = selectedWorkspace;
   }, [selectedWorkspace]);
+
+  useEffect(() => {
+    if (!isResponding) {
+      setIsPausePending(false);
+    }
+  }, [isResponding]);
 
   useEffect(() => {
     setPendingAttachments([]);
@@ -2698,7 +2730,13 @@ export function ChatPane({
         }
 
         if (eventType === "run_completed") {
-          finalizeLiveTraceSteps("completed");
+          const completedStatus =
+            typeof eventPayload.status === "string"
+              ? eventPayload.status.trim().toLowerCase()
+              : "";
+          finalizeLiveTraceSteps(
+            completedStatus === "paused" ? "waiting" : "completed",
+          );
           commitLiveAssistantMessage();
           setIsResponding(false);
           activeStreamIdRef.current = null;
@@ -3041,6 +3079,29 @@ export function ChatPane({
         action: "send_failed",
         detail: normalizeErrorMessage(error),
       });
+    }
+  }
+
+  async function pauseCurrentRun() {
+    const sessionId = activeSessionIdRef.current || activeSessionId;
+    if (!selectedWorkspaceId || !sessionId || isPausePending) {
+      return;
+    }
+
+    const previousStatus = liveAgentStatus;
+    setChatErrorMessage("");
+    setLiveAgentStatus("Pausing");
+    setIsPausePending(true);
+
+    try {
+      await window.electronAPI.workspace.pauseSessionRun({
+        workspace_id: selectedWorkspaceId,
+        session_id: sessionId,
+      });
+    } catch (error) {
+      setIsPausePending(false);
+      setLiveAgentStatus(previousStatus || "Working");
+      setChatErrorMessage(normalizeErrorMessage(error));
     }
   }
 
@@ -3756,6 +3817,10 @@ export function ChatPane({
                         input={input}
                         attachments={pendingAttachmentItems}
                         isResponding={isResponding}
+                        pausePending={isPausePending}
+                        pauseDisabled={
+                          pendingInputIdRef.current === STREAM_ATTACH_PENDING
+                        }
                         disabled={composerDisabled}
                         disabledReason={composerDisabledReason}
                         selectedModel={effectiveChatModelPreference}
@@ -3786,6 +3851,7 @@ export function ChatPane({
                         onCompositionStart={onComposerCompositionStart}
                         onCompositionEnd={onComposerCompositionEnd}
                         onAttachmentInputChange={onAttachmentInputChange}
+                        onPause={pauseCurrentRun}
                         onAddDroppedFiles={appendPendingLocalFiles}
                         onAddExplorerAttachments={
                           appendPendingExplorerAttachments
@@ -3830,6 +3896,10 @@ export function ChatPane({
                     input={input}
                     attachments={pendingAttachmentItems}
                     isResponding={isResponding}
+                    pausePending={isPausePending}
+                    pauseDisabled={
+                      pendingInputIdRef.current === STREAM_ATTACH_PENDING
+                    }
                     disabled={composerDisabled}
                     disabledReason={composerDisabledReason}
                     selectedModel={effectiveChatModelPreference}
@@ -3856,6 +3926,7 @@ export function ChatPane({
                     onCompositionStart={onComposerCompositionStart}
                     onCompositionEnd={onComposerCompositionEnd}
                     onAttachmentInputChange={onAttachmentInputChange}
+                    onPause={pauseCurrentRun}
                     onAddDroppedFiles={appendPendingLocalFiles}
                     onAddExplorerAttachments={appendPendingExplorerAttachments}
                     onRemoveAttachment={removePendingAttachment}
@@ -3888,6 +3959,8 @@ interface ComposerProps {
     size_bytes: number;
   }>;
   isResponding: boolean;
+  pausePending: boolean;
+  pauseDisabled: boolean;
   disabled: boolean;
   disabledReason?: string;
   selectedModel: string;
@@ -3908,6 +3981,7 @@ interface ComposerProps {
   onCompositionStart: (event: CompositionEvent<HTMLTextAreaElement>) => void;
   onCompositionEnd: (event: CompositionEvent<HTMLTextAreaElement>) => void;
   onAttachmentInputChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onPause: () => void;
   onAddDroppedFiles: (files: File[]) => void;
   onAddExplorerAttachments: (files: ExplorerAttachmentDragPayload[]) => void;
   onRemoveAttachment: (attachmentId: string) => void;
@@ -4202,7 +4276,7 @@ function CurrentTodoPanel({
         </div>
         <ChevronDown
           size={14}
-          className={`mt-0.5 shrink-0 text-muted-foreground transition ${expanded ? "rotate-180" : ""}`}
+          className={`mt-0.5 shrink-0 text-muted-foreground transition ${expanded ? "rotate-0" : "-rotate-90"}`}
         />
       </button>
 
@@ -4988,6 +5062,8 @@ function Composer({
   input,
   attachments,
   isResponding,
+  pausePending,
+  pauseDisabled,
   disabled,
   disabledReason = "",
   selectedModel,
@@ -5008,6 +5084,7 @@ function Composer({
   onCompositionStart,
   onCompositionEnd,
   onAttachmentInputChange,
+  onPause,
   onAddDroppedFiles,
   onAddExplorerAttachments,
   onRemoveAttachment,
@@ -5201,22 +5278,34 @@ function Composer({
           >
             <Paperclip size={15} />
           </Button>
-          <Button
-            size="icon"
-            disabled={
-              (!input.trim() && attachments.length === 0) ||
-              isResponding ||
-              disabled
-            }
-            render={<button type="submit" />}
-            className="rounded-full"
-          >
-            {isResponding ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : (
+          {isResponding ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={pausePending || pauseDisabled}
+              onClick={onPause}
+              className="rounded-full px-3"
+            >
+              {pausePending ? (
+                <Loader2 size={14} className="mr-1.5 animate-spin" />
+              ) : (
+                <Square size={12} className="mr-1.5 fill-current" />
+              )}
+              Pause
+            </Button>
+          ) : (
+            <Button
+              size="icon"
+              disabled={
+                (!input.trim() && attachments.length === 0) || disabled
+              }
+              render={<button type="submit" />}
+              className="rounded-full"
+            >
               <ArrowUp size={16} />
-            )}
-          </Button>
+            </Button>
+          )}
         </div>
       </div>
     </div>

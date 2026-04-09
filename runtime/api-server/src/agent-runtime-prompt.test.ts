@@ -191,6 +191,29 @@ test("composeBaseAgentPrompt includes recent runtime context only when provided"
   assert.match(prompt.contextMessages.join("\n\n"), /Previous runtime error: config parse error\./);
 });
 
+test("composeBaseAgentPrompt warns when the previous run was user-paused", () => {
+  const prompt = composeBaseAgentPrompt("", {
+    defaultTools: ["read"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    recentRuntimeContext: {
+      summary: "Run was paused by the user before completion.",
+      last_stop_reason: "paused",
+      last_error: null,
+      waiting_for_user: null,
+    },
+  });
+
+  assert.match(prompt.contextMessages.join("\n\n"), /Previous stop reason: paused\./);
+  assert.match(
+    prompt.contextMessages.join("\n\n"),
+    /The previous run was paused before completion\. Do not treat that work as finished\./,
+  );
+});
+
 test("composeBaseAgentPrompt includes current user context when provided", () => {
   const prompt = composeBaseAgentPrompt("", {
     defaultTools: ["read"],
@@ -404,4 +427,41 @@ test("composeBaseAgentPrompt includes cronjob delivery routing guidance when cro
   assert.match(prompt.systemPrompt, /Use `system_notification` only for lightweight reminders or notifications/i);
   assert.match(prompt.systemPrompt, /put the executable task in `instruction`/i);
   assert.match(prompt.systemPrompt, /Do not repeat schedule wording/i);
+});
+
+test("composeBaseAgentPrompt requires proactive fallback when partial retrieval cannot satisfy required facts", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "main",
+    browserToolsAvailable: true,
+    browserToolIds: ["browser_get_state"],
+    defaultTools: ["read"],
+    extraTools: ["browser_get_state", "web_search"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const prompt = composeBaseAgentPrompt("", {
+    defaultTools: ["read"],
+    extraTools: ["browser_get_state", "web_search"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "main",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+  });
+
+  assert.match(
+    prompt.systemPrompt,
+    /Treat user-specified requirements such as exact fields, counts, rankings, filters, timestamps, and verification targets as completion criteria, not optional detail\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /If the first retrieval path only gives partial evidence, do not stop there: proactively switch to a more direct capability path until the required facts are verified or you can clearly explain what remains unavailable\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /When browser capabilities are available and search results, summaries, or snippets do not expose the user-required facts, use browser inspection to verify the page directly instead of returning a partial answer\./
+  );
 });
