@@ -13,6 +13,7 @@ import yauzl from "yauzl";
 import {
   type AgentSessionRecord,
   type AppBuildRecord,
+  type AppCatalogEntryRecord,
   type CompactionBoundaryRecord,
   type CronjobRecord,
   type MemoryUpdateProposalRecord,
@@ -1084,6 +1085,23 @@ async function extractTemplateZipArchive(zipPath: string, workspaceDir: string):
 
     zipFile.readEntry();
   });
+}
+
+function appCatalogEntryToWire(record: AppCatalogEntryRecord): Record<string, unknown> {
+  return {
+    app_id: record.appId,
+    source: record.source,
+    name: record.name,
+    description: record.description,
+    icon: record.icon,
+    category: record.category,
+    tags: record.tags,
+    version: record.version,
+    archive_url: record.archiveUrl,
+    archive_path: record.archivePath,
+    target: record.target,
+    cached_at: record.cachedAt,
+  };
 }
 
 function sanitizeAppId(appId: string): string {
@@ -3274,6 +3292,15 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const entry = listWorkspaceApplications(store.workspaceDir(workspaceId)).find((candidate) => candidate.app_id === appId) ?? null;
     const record = store.getAppBuild({ workspaceId, appId });
     return record ? appBuildPayload(record) : { status: entry ? fallbackAppBuildStatus(entry) : "unknown" };
+  });
+
+  app.get("/api/v1/apps/catalog", async (request) => {
+    const query = isRecord(request.query) ? request.query : {};
+    const rawSource = typeof query.source === "string" ? query.source.trim() : "";
+    const source =
+      rawSource === "marketplace" || rawSource === "local" ? rawSource : undefined;
+    const entries = store.listAppCatalogEntries(source ? { source } : undefined);
+    return { entries: entries.map(appCatalogEntryToWire), count: entries.length };
   });
 
   app.get("/api/v1/apps", async (request, reply) => {
