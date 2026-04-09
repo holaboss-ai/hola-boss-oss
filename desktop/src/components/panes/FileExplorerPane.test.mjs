@@ -92,7 +92,7 @@ test("file explorer accepts one-shot focus requests for artifact files", async (
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /export type FileExplorerFocusRequest = \{\s*path: string;\s*requestKey: number;\s*\};/);
-  assert.match(source, /interface FileExplorerPaneProps \{\s*focusRequest\?: FileExplorerFocusRequest \| null;\s*onFocusRequestConsumed\?: \(requestKey: number\) => void;\s*onClosePane\?: \(\(\) => void\) \| undefined;\s*\}/);
+  assert.match(source, /interface FileExplorerPaneProps \{\s*focusRequest\?: FileExplorerFocusRequest \| null;\s*onFocusRequestConsumed\?: \(requestKey: number\) => void;\s*\}/);
   assert.match(source, /const request = focusRequest;\s*if \(lastProcessedFocusRequestKeyRef\.current === request\.requestKey\) \{\s*return;\s*\}/);
   assert.match(source, /const workspaceRoot =\s*workspaceRootPath \?\?\s*\(await window\.electronAPI\.workspace\.getWorkspaceRoot\(selectedWorkspaceId\)\);/);
   assert.match(source, /targetPath = resolveWorkspaceTargetPath\(workspaceRoot, targetPath\);/);
@@ -182,10 +182,11 @@ test("file explorer exposes right-click rename and delete actions for entries", 
   assert.match(source, /Delete…/);
 });
 
-test("file explorer exposes an optional close action for both preview and list modes", async () => {
+test("file explorer does not expose a pane-level close action", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /interface FileExplorerPaneProps \{\s*focusRequest\?: FileExplorerFocusRequest \| null;\s*onFocusRequestConsumed\?: \(requestKey: number\) => void;\s*onClosePane\?: \(\(\) => void\) \| undefined;\s*\}/);
-  assert.match(source, /export function FileExplorerPane\(\{\s*focusRequest = null,\s*onFocusRequestConsumed,\s*onClosePane,\s*}: FileExplorerPaneProps\)/);
-  assert.match(source, /label="Close file explorer"/);
+  assert.match(source, /interface FileExplorerPaneProps \{\s*focusRequest\?: FileExplorerFocusRequest \| null;\s*onFocusRequestConsumed\?: \(requestKey: number\) => void;\s*\}/);
+  assert.match(source, /export function FileExplorerPane\(\{\s*focusRequest = null,\s*onFocusRequestConsumed,\s*}: FileExplorerPaneProps\)/);
+  assert.doesNotMatch(source, /label="Close file explorer"/);
+  assert.doesNotMatch(source, /icon=\{<X size=\{1[23]\} \/>/);
 });

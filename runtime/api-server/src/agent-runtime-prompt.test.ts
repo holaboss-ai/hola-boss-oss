@@ -115,6 +115,14 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     prompt.systemPrompt,
     /Only cross the workspace boundary when the user explicitly insists, and then keep scope minimal and clearly tied to that instruction\./
   );
+  assert.match(
+    prompt.systemPrompt,
+    /If you create or resume a todo, treat it as the active execution contract: continue working through its unfinished items until the todo is complete or a real blocker requires user or external input\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not stop merely to provide an intermediate progress update or ask whether to continue while executable todo items remain\./
+  );
   assert.doesNotMatch(
     prompt.systemPrompt,
     /Check repository state with git before and after substantial edits/
@@ -211,6 +219,10 @@ test("composeBaseAgentPrompt warns when the previous run was user-paused", () =>
   assert.match(
     prompt.contextMessages.join("\n\n"),
     /The previous run was paused before completion\. Do not treat that work as finished\./,
+  );
+  assert.match(
+    prompt.contextMessages.join("\n\n"),
+    /If the user's latest message clearly redirects to a new unrelated task, handle that new request first, keep the unfinished prior work marked unfinished, and then propose continuing it after the new task is done\./,
   );
 });
 

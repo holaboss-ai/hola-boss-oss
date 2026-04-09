@@ -79,13 +79,13 @@ const THEMES = [
   "bubblegum-dark",
   "bubblegum-light",
 ] as const;
-const MIN_FILES_PANE_WIDTH = 320;
-const MIN_BROWSER_PANE_WIDTH = 200;
+const MIN_FILES_PANE_WIDTH = 300;
+const MIN_BROWSER_PANE_WIDTH = 120;
 const MAX_UTILITY_PANE_WIDTH = 720;
 const LEGACY_DEFAULT_FILES_PANE_WIDTH = 420;
 const DEFAULT_FILES_PANE_WIDTH = MIN_FILES_PANE_WIDTH;
 const DEFAULT_BROWSER_PANE_WIDTH = 460;
-const MIN_AGENT_CONTENT_WIDTH = 120;
+const MIN_AGENT_CONTENT_WIDTH = 380;
 const UTILITY_PANE_RESIZER_WIDTH = 16;
 const APP_UPDATE_CHANGELOG_BASE_URL =
   "https://github.com/holaboss-ai/holaboss-ai/releases/tag";
@@ -983,6 +983,28 @@ function AppShellContent() {
     [],
   );
 
+  const syncUtilityPaneWidths = useCallback(() => {
+    const visiblePaneIds = FIXED_SPACE_ORDER.filter(
+      (pane) => spaceVisibilityRef.current[pane],
+    );
+    if (visiblePaneIds.length === 0) {
+      return;
+    }
+
+    const flexPaneId = visiblePaneIds.includes("agent")
+      ? "agent"
+      : (visiblePaneIds[visiblePaneIds.length - 1] ?? null);
+
+    if (spaceVisibilityRef.current.files && flexPaneId !== "files") {
+      setFilesPaneWidth((current) => clampUtilityPaneWidth("files", current));
+    }
+    if (spaceVisibilityRef.current.browser && flexPaneId !== "browser") {
+      setBrowserPaneWidth((current) =>
+        clampUtilityPaneWidth("browser", current),
+      );
+    }
+  }, [clampUtilityPaneWidth]);
+
   useEffect(() => {
     if (!window.electronAPI) {
       return;
@@ -1333,13 +1355,6 @@ function AppShellContent() {
 
   const handleOpenExternalUrl = useCallback((url: string) => {
     void window.electronAPI.ui.openExternalUrl(url);
-  }, []);
-
-  const hideUtilityPane = useCallback((paneId: UtilityPaneId) => {
-    setSpaceVisibility((previous) => ({
-      ...previous,
-      [paneId]: false,
-    }));
   }, []);
 
   const toggleUtilityPaneVisibility = useCallback((paneId: UtilityPaneId) => {
@@ -2195,9 +2210,6 @@ function AppShellContent() {
                   current?.requestKey === requestKey ? null : current,
                 );
               }}
-              onClosePane={() => {
-                hideUtilityPane("files");
-              }}
             />
           ) : (
             <BrowserPane
@@ -2212,7 +2224,6 @@ function AppShellContent() {
       fileExplorerFocusRequest,
       filesPaneWidth,
       flexSpacePaneId,
-      hideUtilityPane,
       shouldSuspendBrowserNativeView,
       showOperationsDrawer,
       visibleSpacePaneIds,
@@ -2279,26 +2290,27 @@ function AppShellContent() {
       return;
     }
 
-    const syncWidth = () => {
-      if (spaceVisibility.files && flexSpacePaneId !== "files") {
-        setFilesPaneWidth((current) => clampUtilityPaneWidth("files", current));
-      }
-      if (spaceVisibility.browser && flexSpacePaneId !== "browser") {
-        setBrowserPaneWidth((current) =>
-          clampUtilityPaneWidth("browser", current),
-        );
-      }
-    };
+    syncUtilityPaneWidths();
+    window.addEventListener("resize", syncUtilityPaneWidths);
 
-    syncWidth();
-    window.addEventListener("resize", syncWidth);
+    const host = utilityPaneHostRef.current;
+    const observer =
+      host && typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            syncUtilityPaneWidths();
+          })
+        : null;
+    if (observer && host) {
+      observer.observe(host);
+    }
+
     return () => {
-      window.removeEventListener("resize", syncWidth);
+      observer?.disconnect();
+      window.removeEventListener("resize", syncUtilityPaneWidths);
     };
   }, [
-    clampUtilityPaneWidth,
-    flexSpacePaneId,
-    spaceVisibility,
+    showOperationsDrawer,
+    syncUtilityPaneWidths,
     visibleSpacePaneIds.length,
   ]);
 
@@ -2454,38 +2466,40 @@ function AppShellContent() {
             <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
               <div className="min-h-0 flex-1 overflow-hidden">
                 {spaceMode ? (
-                  <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
-                    <div className="mb-2 flex flex-wrap items-center gap-2 px-0.5">
+                  <div className="relative flex h-full min-h-0 min-w-0 overflow-hidden">
+                    <div className="mr-1.5 flex w-9 shrink-0 flex-col items-center gap-1.5 py-1">
                       <button
                         type="button"
+                        aria-label="Toggle files pane"
                         aria-pressed={spaceVisibility.files}
+                        title="Files"
                         onClick={() => toggleUtilityPaneVisibility("files")}
-                        className={`inline-flex h-8 items-center gap-2 rounded-full border px-3 text-[12px] font-medium transition ${
+                        className={`inline-flex size-8 items-center justify-center rounded-lg transition-colors ${
                           spaceVisibility.files
-                            ? "border-primary/40 bg-primary/10 text-primary"
-                            : "border-border/45 bg-background/75 text-muted-foreground hover:border-primary/28 hover:text-foreground"
+                            ? "bg-primary/12 text-primary"
+                            : "text-muted-foreground hover:bg-accent/36 hover:text-accent-foreground"
                         }`}
                       >
-                        <FileText size={13} />
-                        <span>Files</span>
+                        <FileText size={14} />
                       </button>
                       <button
                         type="button"
+                        aria-label="Toggle browser pane"
                         aria-pressed={spaceVisibility.browser}
+                        title="Browser"
                         onClick={() => toggleUtilityPaneVisibility("browser")}
-                        className={`inline-flex h-8 items-center gap-2 rounded-full border px-3 text-[12px] font-medium transition ${
+                        className={`inline-flex size-8 items-center justify-center rounded-lg transition-colors ${
                           spaceVisibility.browser
-                            ? "border-primary/40 bg-primary/10 text-primary"
-                            : "border-border/45 bg-background/75 text-muted-foreground hover:border-primary/28 hover:text-foreground"
+                            ? "bg-primary/12 text-primary"
+                            : "text-muted-foreground hover:bg-accent/36 hover:text-accent-foreground"
                         }`}
                       >
-                        <Globe size={13} />
-                        <span>Browser</span>
+                        <Globe size={14} />
                       </button>
                     </div>
                     <div
                       ref={utilityPaneHostRef}
-                      className="min-h-0 flex-1 overflow-hidden"
+                      className="min-h-0 min-w-0 flex-1 overflow-hidden"
                     >
                       {spacePanes.length > 0 ? (
                         <div className="flex h-full min-h-0 min-w-0 items-stretch overflow-hidden">
@@ -2501,7 +2515,9 @@ function AppShellContent() {
                                   className={`relative min-h-0 min-w-0 overflow-hidden rounded-[var(--radius-xl)] ${pane.flex ? "flex-1" : "shrink-0"}`}
                                   style={
                                     pane.flex
-                                      ? undefined
+                                      ? {
+                                          minWidth: `${MIN_AGENT_CONTENT_WIDTH}px`,
+                                        }
                                       : { width: `${pane.width}px` }
                                   }
                                 >

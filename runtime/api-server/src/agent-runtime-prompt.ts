@@ -193,6 +193,11 @@ function recentRuntimeContextPromptSection(context: AgentRecentRuntimeContext | 
   if (stopReason === "paused") {
     lines.push("The previous run was paused before completion. Do not treat that work as finished.");
   }
+  if (context.waiting_for_user === true || stopReason === "paused") {
+    lines.push(
+      "If the user's latest message clearly redirects to a new unrelated task, handle that new request first, keep the unfinished prior work marked unfinished, and then propose continuing it after the new task is done."
+    );
+  }
   if (lastError) {
     lines.push(`Previous runtime error: ${lastError}.`);
   }
@@ -435,6 +440,8 @@ export function buildBaseAgentPromptSections(
     "Block path traversal and cross-workspace access by default, including parent-directory paths, absolute external paths, and symlink escapes.",
     "Only cross the workspace boundary when the user explicitly insists, and then keep scope minimal and clearly tied to that instruction.",
     "Keep plans and missing decisions explicit: use coordination capabilities such as question, todo, and skill access instead of relying on hidden state.",
+    "If you create or resume a todo, treat it as the active execution contract: continue working through its unfinished items until the todo is complete or a real blocker requires user or external input.",
+    "Do not stop merely to provide an intermediate progress update or ask whether to continue while executable todo items remain.",
     "If a task requires the user's name or other personal identity details and current user context does not provide them, ask the user explicitly instead of guessing.",
     "On the first strong signal that user input describes a reusable workflow, procedure, or operating pattern, proactively create or update a workspace-local skill instead of waiting for an explicit skill request.",
     "Do not create skills for transient runtime state, one-off task details, or information that only belongs in session continuity.",

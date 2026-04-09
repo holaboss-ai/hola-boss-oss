@@ -357,13 +357,13 @@ const BUILTIN_CAPABILITY_DEFINITIONS: Record<string, ToolCapabilityDefinition> =
     kind: "builtin_tool",
     policy: "coordinate",
     title: "Todo Write",
-    description: "Create or update a phased working plan.",
+    description: "Create or update the current working todo.",
   },
   todoread: {
     kind: "builtin_tool",
     policy: "coordinate",
     title: "Todo Read",
-    description: "Read the current phased working plan.",
+    description: "Read the current working todo.",
   },
   skill: {
     kind: "builtin_tool",

@@ -783,6 +783,9 @@ function resumeTodoReadInstruction(request: HarnessHostPiRequest): string {
     "A persisted phased todo plan already exists for this session.",
     "Before any other substantive work, call `todoread` to restore that plan.",
     "Continue from the restored plan, and update it with `todowrite` if it is stale before proceeding.",
+    "After restoring the plan, continue executing it until the recorded work is complete or genuinely blocked.",
+    "Do not stop only to give progress updates or ask whether to continue while executable todo items remain.",
+    "If the user's newest message clearly redirects to unrelated work, handle that new request first after restoring the todo, keep the restored todo marked unfinished, and then propose continuing it once the unrelated request is complete.",
   ].join("\n");
 }
 
@@ -1507,6 +1510,9 @@ export function createPiTodoToolDefinitions(params: { stateDir: string; sessionI
     promptGuidelines: [
       "Use todoread before changing an existing phased plan when current todo state may matter.",
       "When resuming a session that already has todo state, call todoread before other substantive work.",
+      "After reading an existing todo, continue executing it until the recorded work is complete or genuinely blocked.",
+      "Do not stop only to give progress updates or ask whether to continue while executable todo items remain.",
+      "If the user's newest message is clearly unrelated to the unfinished todo, preserve that todo as unfinished, handle the new request first, and then propose continuing the unfinished work.",
     ],
     execute: async (_toolCallId, _toolParams, signal) => {
       if (signal?.aborted) {
@@ -1538,6 +1544,10 @@ export function createPiTodoToolDefinitions(params: { stateDir: string; sessionI
     promptSnippet: "todowrite: Update the current phased todo plan for this session.",
     promptGuidelines: [
       "Use todowrite for complex or long-running tasks that benefit from an explicit phased plan.",
+      "The top-level phases are grouped tasks, and each phase's `tasks` entries are the actionable task items within that grouped task.",
+      "When you choose to use a todo, keep executing it until the recorded work is complete or genuinely blocked.",
+      "Do not stop only to give progress updates or ask whether to continue while executable todo items remain.",
+      "If a new user message clearly redirects to unrelated work, do that work first without marking the existing unfinished todo complete, then propose resuming the unfinished work afterward.",
       "Use `replace` for the initial plan and incremental ops such as `update` or `add_task` once work is underway.",
       "Keep exactly one task `in_progress` whenever unfinished tasks remain unless the current task is blocked on user input or another external dependency.",
     ],

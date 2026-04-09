@@ -20,7 +20,6 @@ import {
   Search,
   Shield,
   Star,
-  X,
   type LucideIcon,
   Undo2
 } from "lucide-react";
@@ -41,7 +40,6 @@ export type FileExplorerFocusRequest = {
 interface FileExplorerPaneProps {
   focusRequest?: FileExplorerFocusRequest | null;
   onFocusRequestConsumed?: (requestKey: number) => void;
-  onClosePane?: (() => void) | undefined;
 }
 
 const SPREADSHEET_EXTENSIONS = new Set([
@@ -469,7 +467,6 @@ function createAttachmentDragPreview(entry: LocalFileEntry) {
 export function FileExplorerPane({
   focusRequest = null,
   onFocusRequestConsumed,
-  onClosePane,
 }: FileExplorerPaneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1168,13 +1165,6 @@ export function FileExplorerPane({
                   {saving ? "Saving" : "Save"}
                 </button>
               ) : null}
-              {onClosePane ? (
-                <IconButton
-                  icon={<X size={12} />}
-                  label="Close file explorer"
-                  onClick={onClosePane}
-                />
-              ) : null}
             </>
           ) : undefined
         }
@@ -1365,13 +1355,6 @@ export function FileExplorerPane({
                   onClick={() => void toggleBookmark()}
                   disabled={!bookmarkTargetPath}
                 />
-                {onClosePane ? (
-                  <IconButton
-                    icon={<X size={13} />}
-                    label="Close file explorer"
-                    onClick={onClosePane}
-                  />
-                ) : null}
               </div>
               <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs transition-colors focus-within:border-ring">
                 <Search size={13} className="shrink-0 text-muted-foreground" />
