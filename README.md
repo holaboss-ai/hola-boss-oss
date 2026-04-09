@@ -179,7 +179,7 @@ One run follows a bounded lifecycle:
 5. The harness receives a reduced execution package containing the selected model, `system_prompt`, ordered `context_messages`, prompt layers, capability manifest, and workspace checksum.
 6. When the run finishes, the runtime persists the assistant turn, `turn_results`, token usage, and the terminal event immediately so the run can complete without waiting on follow-up writeback.
 7. The runtime then performs a small immediate continuity writeback inline: compact the turn, refresh runtime projections such as `session-memory`, and persist the current compaction boundary.
-8. After continuity is durable, the runtime enqueues a persistent durable-memory writeback job for heavier follow-up work such as durable extraction, durable-memory promotion, and full `MEMORY.md` index regeneration.
+8. After continuity is durable, the runtime enqueues a persistent durable-memory writeback job for heavier follow-up work such as durable extraction, durable-memory promotion, and scope-aware durable-index refresh.
 9. On the next run, continuity is restored from the latest prior compaction boundary, a bounded `session-memory` excerpt, and a small recalled-memory subset instead of replaying the full transcript.
 
 That split is intentional. Post-run continuity work is valuable, but it is not allowed to hold the run open after the agent has already finished outputting. The foreground path ends at committed run state, while continuity-enhancement tasks continue asynchronously as best-effort follow-up work.
@@ -479,7 +479,7 @@ The current memory lifecycle is:
 8. It derives deterministic durable candidates from the latest user message and assistant response, such as command facts, business facts, procedures, and repeated permission blockers.
 9. If a background-tasks model is configured, it also runs a model-assisted durable extraction pass using the current instruction, recent user messages, recent turn summaries, and the latest assistant response.
 10. Accepted model-extracted candidates are merged with deterministic durable candidates and persisted into markdown memory plus `memory_entries` catalog rows.
-11. Durable-memory indexes are refreshed by rewriting `memory/MEMORY.md`, `memory/workspace/<workspace-id>/MEMORY.md`, `memory/preference/MEMORY.md`, and `memory/identity/MEMORY.md`.
+11. Durable-memory indexes are then refreshed from the catalog using paged reads so large scopes are not truncated, but only for the scopes that actually changed in the current durable writeback.
 12. Future runs restore session continuity from the latest compaction boundary first, then enrich continuity with the current `session-memory` snapshot.
 13. Future runs recall a small durable subset from the indexed markdown memory graph and inject it as prompt context.
 
@@ -518,15 +518,16 @@ The queued durable-memory phase currently performs:
    - workspace business facts
    - workspace procedures
    - repeated permission blockers
-3. Optionally run a model-assisted durable extraction pass when `runtime.background_tasks` resolves to a valid provider/model pair.
+3. On a strict cadence, optionally run a model-assisted durable extraction pass when `runtime.background_tasks` resolves to a valid provider/model pair. The current policy only runs this extraction on every fifth completed turn for the session, while deterministic durable extraction still runs on every turn.
 4. Filter and merge accepted model-extracted durable candidates with deterministic durable candidates.
 5. Upsert durable markdown memory files and corresponding `memory_entries` catalog rows in `state/runtime.db`.
-6. Rewrite the durable-memory indexes:
-   - `memory/MEMORY.md`
-   - `memory/workspace/<workspace-id>/MEMORY.md`
-   - `memory/preference/MEMORY.md`
-   - `memory/identity/MEMORY.md`
-7. Patch the existing compaction boundary so its restored-memory path list also reflects the durable-memory and index files written by the queued phase.
+6. Refresh only the durable-memory indexes whose metadata actually changed:
+   - rebuild `memory/workspace/<workspace-id>/MEMORY.md` only for changed workspaces
+   - rebuild `memory/preference/MEMORY.md` only if preference memory changed
+   - rebuild `memory/identity/MEMORY.md` only if identity memory changed
+   - rebuild root `memory/MEMORY.md` only when indexed scope counts changed
+7. Use paged catalog reads during index refresh so large memory scopes are fully indexed instead of being truncated at a fixed row cap.
+8. Patch the existing compaction boundary so its restored-memory path list also reflects the durable-memory and index files written by the queued phase.
 
 This split is intentional:
 
@@ -538,9 +539,12 @@ This split is intentional:
 The largest remaining cost centers are now concentrated in the queued durable-memory phase:
 
 - the model-assisted durable extraction call when background tasks are enabled
-- full durable-index regeneration on every durable-memory writeback
+- the cadence turns that still pay for model extraction
+- scoped durable-index regeneration as workspace or user memory catalogs grow
 - repeated markdown upserts for durable memories and indexes
 - extra state reloads needed to rebuild durable candidate context
+
+The index-refresh path no longer scans a single fixed `500`-row slice and no longer rebuilds unrelated scope indexes by default. It now pages through the full active catalog for each affected scope and regenerates only the indexes touched by the current durable-memory diff. In practice, that means one new workspace durable memory normally rebuilds the current workspace index plus the root index, while leaving `preference/MEMORY.md` and `identity/MEMORY.md` untouched.
 
 #### Current Durable Memory Types
 
@@ -573,7 +577,7 @@ Durable recall is governed separately from storage:
 - stale references are penalized more aggressively than stable or workspace-sensitive memories
 - recalled durable memory is injected as context, not merged into the base system prompt
 
-Recall selection is staged and model-driven at query time. The runtime reads the durable-memory indexes, selects candidate leaf memories, reads only those leaf files, and then finalizes a small recalled subset for prompt injection. Recalled entries include a compact selection trace and optional excerpt snippets for debugging and operator visibility. Retrieval stays separate from storage so alternate indexes can be added later without changing canonical markdown memory files.
+Recall selection is staged and model-driven at query time. The runtime reads the durable-memory indexes, selects candidate leaf memories, reads only those leaf files, and then finalizes a small recalled subset for prompt injection. Recalled entries include a compact selection trace and optional excerpt snippets for debugging and operator visibility. Retrieval stays separate from storage so alternate indexes can be added later without changing canonical markdown memory files or the `memory_entries` governance catalog.
 
 #### What Lives Where
 

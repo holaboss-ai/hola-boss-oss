@@ -8,7 +8,11 @@ import { afterEach, test } from "node:test";
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
 import { FilesystemMemoryService } from "./memory.js";
-import { writeTurnMemory, type TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
+import {
+  refreshMemoryIndexes,
+  writeTurnMemory,
+  type TurnMemoryWritebackModelContext,
+} from "./turn-memory-writeback.js";
 
 const tempDirs: string[] = [];
 
@@ -173,10 +177,6 @@ test("writeTurnMemory compacts a turn and writes deterministic runtime memory fi
       .filter((filePath) => !filePath.startsWith("workspace/workspace-1/runtime/permission-blockers/"))
       .sort((left, right) => left.localeCompare(right)),
     [
-      "identity/MEMORY.md",
-      "MEMORY.md",
-      "preference/MEMORY.md",
-      "workspace/workspace-1/MEMORY.md",
       "workspace/workspace-1/runtime/blockers/session-main.md",
       "workspace/workspace-1/runtime/latest-turn.md",
       "workspace/workspace-1/runtime/recent-turns/session-main.md",
@@ -192,10 +192,10 @@ test("writeTurnMemory compacts a turn and writes deterministic runtime memory fi
   assert.match(files["workspace/workspace-1/runtime/recent-turns/session-main.md"], /input-1/);
   assert.match(files["workspace/workspace-1/runtime/session-memory/session-main.md"], /Session Memory/);
   assert.match(files["workspace/workspace-1/runtime/session-memory/session-main.md"], /Recent User Requests/);
-  assert.match(files["identity/MEMORY.md"], /No durable identity memories indexed yet/);
-  assert.match(files["preference/MEMORY.md"], /No durable preference memories indexed yet/);
-  assert.match(files["workspace/workspace-1/MEMORY.md"], /No durable workspace memories indexed yet/);
-  assert.match(files["MEMORY.md"], /No durable memories indexed yet/);
+  assert.equal(files["identity/MEMORY.md"], undefined);
+  assert.equal(files["preference/MEMORY.md"], undefined);
+  assert.equal(files["workspace/workspace-1/MEMORY.md"], undefined);
+  assert.equal(files["MEMORY.md"], undefined);
   assert.match(String(permissionBlockerPath), /permission-blockers\/[a-f0-9]{16}\.md$/);
   assert.match(files[permissionBlockerPath as string], /permission denied by policy/);
 
@@ -268,8 +268,6 @@ test("writeTurnMemory reuses stable blocker paths across repeated matching denia
     filePaths.filter((filePath) => !filePath.startsWith("workspace/workspace-1/runtime/permission-blockers/")),
     [
       "MEMORY.md",
-      "identity/MEMORY.md",
-      "preference/MEMORY.md",
       "workspace/workspace-1/MEMORY.md",
       ...durableBlockerPaths,
       "workspace/workspace-1/runtime/blockers/session-main.md",
@@ -295,7 +293,8 @@ test("writeTurnMemory reuses stable blocker paths across repeated matching denia
   assert.match(files["workspace/workspace-1/runtime/session-memory/session-main.md"], /Session Memory/);
   assert.match(files["workspace/workspace-1/runtime/blockers/session-main.md"], /policy_denied/);
   assert.match(files[durableBlockerPaths[0]], /Recurring Permission Blocker/);
-  assert.match(files["identity/MEMORY.md"], /No durable identity memories indexed yet/);
+  assert.equal(files["identity/MEMORY.md"], undefined);
+  assert.equal(files["preference/MEMORY.md"], undefined);
   assert.match(files["workspace/workspace-1/MEMORY.md"], /Deploy permission blocker/);
   assert.match(files["MEMORY.md"], /Workspace workspace-1/);
 
@@ -450,11 +449,23 @@ test("writeTurnMemory rejects weak uncorroborated model-extracted durable candid
     messageId: "user-1",
     createdAt: "2026-04-02T12:00:00.000Z",
   });
+  for (let index = 1; index <= 4; index += 1) {
+    store.upsertTurnResult({
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      inputId: `prior-${index}`,
+      startedAt: `2026-04-02T11:5${index}:00.000Z`,
+      completedAt: `2026-04-02T11:5${index}:05.000Z`,
+      status: "completed",
+      stopReason: "ok",
+      assistantText: `Prior turn ${index}.`,
+    });
+  }
 
   const turnResult = store.upsertTurnResult({
     workspaceId: "workspace-1",
     sessionId: "session-main",
-    inputId: "input-1",
+    inputId: "input-5",
     startedAt: "2026-04-02T12:00:00.000Z",
     completedAt: "2026-04-02T12:00:05.000Z",
     status: "completed",
@@ -494,8 +505,8 @@ test("writeTurnMemory rejects weak uncorroborated model-extracted durable candid
     memoryEntries.some((entry) => entry.path === "workspace/workspace-1/knowledge/reference/untrusted-note.md"),
     false
   );
-  assert.match(files["identity/MEMORY.md"], /No durable identity memories indexed yet/);
-  assert.match(files["preference/MEMORY.md"], /No durable preference memories indexed yet/);
+  assert.equal(files["identity/MEMORY.md"], undefined);
+  assert.equal(files["preference/MEMORY.md"], undefined);
 
   store.close();
 });
@@ -511,11 +522,23 @@ test("writeTurnMemory accepts corroborated model-extracted durable candidates wi
     messageId: "user-1",
     createdAt: "2026-04-02T12:00:00.000Z",
   });
+  for (let index = 1; index <= 4; index += 1) {
+    store.upsertTurnResult({
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      inputId: `prior-${index}`,
+      startedAt: `2026-04-02T11:5${index}:00.000Z`,
+      completedAt: `2026-04-02T11:5${index}:05.000Z`,
+      status: "completed",
+      stopReason: "ok",
+      assistantText: `Prior turn ${index}.`,
+    });
+  }
 
   const turnResult = store.upsertTurnResult({
     workspaceId: "workspace-1",
     sessionId: "session-main",
-    inputId: "input-1",
+    inputId: "input-5",
     startedAt: "2026-04-02T12:00:00.000Z",
     completedAt: "2026-04-02T12:00:05.000Z",
     status: "completed",
@@ -558,6 +581,286 @@ test("writeTurnMemory accepts corroborated model-extracted durable candidates wi
   assert.match(files[verificationFactPath], /npm run test:ci/);
   assert.equal(verificationFact?.title, "Verification command (model)");
   assert.equal(verificationFact?.confidence, 0.61);
+
+  store.close();
+});
+
+test("writeTurnMemory skips model extraction before the first cadence turn", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-turn-memory-model-cadence-skip-");
+  seedWorkspace(store);
+  store.insertSessionMessage({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    role: "user",
+    text: "Remember that the primary vendor escalation contact is Alicia Park.",
+    messageId: "user-1",
+    createdAt: "2026-04-02T12:00:00.000Z",
+  });
+
+  const turnResult = store.upsertTurnResult({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    startedAt: "2026-04-02T12:00:00.000Z",
+    completedAt: "2026-04-02T12:00:05.000Z",
+    status: "completed",
+    stopReason: "ok",
+    assistantText: "Captured the escalation contact.",
+  });
+
+  await withModelExtractionResponse({
+    memories: [
+      {
+        scope: "workspace",
+        memory_type: "fact",
+        subject_key: "vendor-escalations.primary-contact",
+        title: "Primary vendor escalation contact",
+        summary: "Primary vendor escalation contact is Alicia Park.",
+        tags: ["vendor", "escalation"],
+        evidence: "The user explicitly stated that the primary vendor escalation contact is Alicia Park for future reference.",
+        confidence: 0.98,
+      },
+    ],
+    run: async (modelContext) => {
+      await writeTurnMemory({
+        store,
+        memoryService,
+        turnResult,
+        modelContext,
+      });
+    },
+  });
+
+  const captured = await memoryService.capture({ workspace_id: "workspace-1" });
+  const files = captured.files as Record<string, string>;
+
+  assert.equal(files["workspace/workspace-1/knowledge/facts/vendor-escalations.primary-contact.md"], undefined);
+  assert.equal(files["workspace/workspace-1/MEMORY.md"], undefined);
+  assert.deepEqual(store.listMemoryEntries({ status: "active" }), []);
+
+  store.close();
+});
+
+test("writeTurnMemory runs model extraction on cadence turns", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-turn-memory-model-cadence-run-");
+  seedWorkspace(store);
+  store.insertSessionMessage({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    role: "user",
+    text: "Remember that the primary vendor escalation contact is Alicia Park.",
+    messageId: "user-1",
+    createdAt: "2026-04-02T12:00:00.000Z",
+  });
+
+  for (let index = 1; index <= 4; index += 1) {
+    store.upsertTurnResult({
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      inputId: `input-${index}`,
+      startedAt: `2026-04-02T11:5${index}:00.000Z`,
+      completedAt: `2026-04-02T11:5${index}:05.000Z`,
+      status: "completed",
+      stopReason: "ok",
+      assistantText: `Prior turn ${index}.`,
+    });
+  }
+  const turnResult = store.upsertTurnResult({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-5",
+    startedAt: "2026-04-02T12:00:00.000Z",
+    completedAt: "2026-04-02T12:00:05.000Z",
+    status: "completed",
+    stopReason: "ok",
+    assistantText: "Captured the escalation contact.",
+  });
+
+  await withModelExtractionResponse({
+    memories: [
+      {
+        scope: "workspace",
+        memory_type: "fact",
+        subject_key: "vendor-escalations.primary-contact",
+        title: "Primary vendor escalation contact",
+        summary: "Primary vendor escalation contact is Alicia Park.",
+        tags: ["vendor", "escalation"],
+        evidence: "The user explicitly stated that the primary vendor escalation contact is Alicia Park for future reference.",
+        confidence: 0.98,
+      },
+    ],
+    run: async (modelContext) => {
+      await writeTurnMemory({
+        store,
+        memoryService,
+        turnResult,
+        modelContext,
+      });
+    },
+  });
+
+  const captured = await memoryService.capture({ workspace_id: "workspace-1" });
+  const files = captured.files as Record<string, string>;
+  const memoryEntry = store
+    .listMemoryEntries({ status: "active" })
+    .find((entry) => entry.path === "workspace/workspace-1/knowledge/facts/vendor-escalations.primary-contact.md");
+
+  assert.ok(files["workspace/workspace-1/knowledge/facts/vendor-escalations.primary-contact.md"]);
+  assert.match(files["workspace/workspace-1/knowledge/facts/vendor-escalations.primary-contact.md"], /Alicia Park/);
+  assert.match(files["workspace/workspace-1/MEMORY.md"], /Primary vendor escalation contact/);
+  assert.equal(memoryEntry?.title, "Primary vendor escalation contact");
+
+  store.close();
+});
+
+test("refreshMemoryIndexes paginates workspace entries beyond 500 rows without truncation", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-turn-memory-index-pagination-");
+  seedWorkspace(store);
+
+  for (let index = 0; index < 550; index += 1) {
+    const slug = `fact-${String(index).padStart(3, "0")}`;
+    store.upsertMemoryEntry({
+      memoryId: `memory-${slug}`,
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      scope: "workspace",
+      memoryType: "fact",
+      subjectKey: slug,
+      path: `workspace/workspace-1/knowledge/facts/${slug}.md`,
+      title: `Fact ${slug}`,
+      summary: `Summary for ${slug}.`,
+      tags: ["scale"],
+      verificationPolicy: "check_before_use",
+      stalenessPolicy: "workspace_sensitive",
+      staleAfterSeconds: 30 * 24 * 60 * 60,
+      sourceTurnInputId: "input-seed",
+      sourceType: "manual",
+      observedAt: "2026-04-09T10:00:00.000Z",
+      lastVerifiedAt: "2026-04-09T10:00:00.000Z",
+      confidence: 0.9,
+      fingerprint: `fingerprint-${slug}`,
+    });
+  }
+
+  const restoredPaths = await refreshMemoryIndexes({
+    store,
+    memoryService,
+    workspaceId: "workspace-1",
+  });
+  const captured = await memoryService.capture({ workspace_id: "workspace-1" });
+  const files = captured.files as Record<string, string>;
+  const workspaceIndex = files["workspace/workspace-1/MEMORY.md"];
+
+  assert.ok(restoredPaths.includes("workspace/workspace-1/MEMORY.md"));
+  assert.match(workspaceIndex, /Indexed memories: 550/);
+  assert.match(workspaceIndex, /Fact fact-000/);
+  assert.match(workspaceIndex, /Fact fact-549/);
+  assert.match(files["MEMORY.md"], /550 durable workspace memories/);
+
+  store.close();
+});
+
+test("writeTurnMemory rebuilds only changed workspace indexes and root", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-turn-memory-incremental-indexes-");
+  seedWorkspace(store);
+
+  store.upsertMemoryEntry({
+    memoryId: "preference-response-style",
+    workspaceId: null,
+    sessionId: "session-main",
+    scope: "user",
+    memoryType: "preference",
+    subjectKey: "response-style",
+    path: "preference/response-style.md",
+    title: "Response style",
+    summary: "Prefer concise responses.",
+    tags: ["style"],
+    verificationPolicy: "none",
+    stalenessPolicy: "stable",
+    staleAfterSeconds: null,
+    sourceTurnInputId: "input-seed",
+    sourceType: "manual",
+    observedAt: "2026-04-09T10:00:00.000Z",
+    lastVerifiedAt: "2026-04-09T10:00:00.000Z",
+    confidence: 0.95,
+    fingerprint: "pref-seed",
+  });
+  store.upsertMemoryEntry({
+    memoryId: "identity-name",
+    workspaceId: null,
+    sessionId: "session-main",
+    scope: "user",
+    memoryType: "identity",
+    subjectKey: "name",
+    path: "identity/name.md",
+    title: "Name",
+    summary: "Jeffrey",
+    tags: ["profile"],
+    verificationPolicy: "none",
+    stalenessPolicy: "stable",
+    staleAfterSeconds: null,
+    sourceTurnInputId: "input-seed",
+    sourceType: "manual",
+    observedAt: "2026-04-09T10:00:00.000Z",
+    lastVerifiedAt: "2026-04-09T10:00:00.000Z",
+    confidence: 0.95,
+    fingerprint: "identity-seed",
+  });
+  await memoryService.upsert({
+    workspace_id: "workspace-1",
+    path: "preference/response-style.md",
+    content: "# Response style\n\nPrefer concise responses.\n",
+    append: false,
+  });
+  await memoryService.upsert({
+    workspace_id: "workspace-1",
+    path: "identity/name.md",
+    content: "# Name\n\nJeffrey\n",
+    append: false,
+  });
+  await refreshMemoryIndexes({
+    store,
+    memoryService,
+    workspaceId: "workspace-1",
+  });
+
+  store.insertSessionMessage({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    role: "user",
+    text: "For verification, use `npm run test`.",
+    messageId: "user-1",
+    createdAt: "2026-04-09T10:01:00.000Z",
+  });
+  const turnResult = store.upsertTurnResult({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    startedAt: "2026-04-09T10:01:00.000Z",
+    completedAt: "2026-04-09T10:01:05.000Z",
+    status: "completed",
+    stopReason: "ok",
+    assistantText: "Captured verification guidance.",
+  });
+
+  const updated = await writeTurnMemory({
+    store,
+    memoryService,
+    turnResult,
+  });
+  const boundary = store.getCompactionBoundary({
+    boundaryId: updated.compactionBoundaryId ?? `compaction:${updated.inputId}`,
+  });
+  const restorationContext = boundary?.restorationContext as Record<string, unknown> | null;
+  const restoredMemoryPaths = Array.isArray(restorationContext?.restored_memory_paths)
+    ? (restorationContext?.restored_memory_paths as string[])
+    : [];
+
+  assert.ok(restoredMemoryPaths.includes("workspace/workspace-1/MEMORY.md"));
+  assert.ok(restoredMemoryPaths.includes("MEMORY.md"));
+  assert.ok(restoredMemoryPaths.includes("workspace/workspace-1/knowledge/facts/verification-command.md"));
+  assert.ok(!restoredMemoryPaths.includes("preference/MEMORY.md"));
+  assert.ok(!restoredMemoryPaths.includes("identity/MEMORY.md"));
 
   store.close();
 });
