@@ -3314,6 +3314,70 @@ function assistantMessageText(content: unknown): string {
     .trim();
 }
 
+function parseJsonIfPossible(value: string): unknown {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+    return null;
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+function extractProviderErrorMessage(value: unknown, depth = 0): string | null {
+  if (depth > 6 || value == null) {
+    return null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const parsed = parseJsonIfPossible(trimmed);
+    if (parsed !== null) {
+      const nested = extractProviderErrorMessage(parsed, depth + 1);
+      if (nested) {
+        return nested;
+      }
+    }
+    return trimmed;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nested = extractProviderErrorMessage(item, depth + 1);
+      if (nested) {
+        return nested;
+      }
+    }
+    return null;
+  }
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  for (const key of ["error", "errors", "message", "detail", "details", "error_message", "body", "cause"] as const) {
+    const nested = extractProviderErrorMessage(value[key], depth + 1);
+    if (nested) {
+      return nested;
+    }
+  }
+  return null;
+}
+
+function normalizeAssistantFailureMessage(errorMessage: unknown, content: unknown, stopReason: string): string {
+  return (
+    extractProviderErrorMessage(errorMessage) ??
+    firstNonEmptyString(
+      typeof errorMessage === "string" ? errorMessage : undefined,
+      assistantMessageText(content),
+      `Assistant message ended with stop reason ${stopReason}`
+    ) ??
+    `Assistant message ended with stop reason ${stopReason}`
+  );
+}
+
 function maybeMapAssistantTerminalFailure(
   event: AgentSessionEvent,
   sessionFile: string,
@@ -3334,12 +3398,7 @@ function maybeMapAssistantTerminalFailure(
     return [];
   }
   state.terminalState = "failed";
-  const failureMessage =
-    firstNonEmptyString(
-      message.errorMessage,
-      assistantMessageText(message.content),
-      `Assistant message ended with stop reason ${stopReason}`
-    ) ?? `Assistant message ended with stop reason ${stopReason}`;
+  const failureMessage = normalizeAssistantFailureMessage(message.errorMessage, message.content, stopReason);
   return [
     {
       event_type: "run_failed",

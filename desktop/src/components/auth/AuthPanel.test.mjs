@@ -45,7 +45,6 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.match(source, /Connected providers/);
   assert.match(source, /Available providers/);
   assert.match(source, /Click Connect to configure settings\./);
-  assert.match(source, /This provider will be disconnected when you save changes\./);
   assert.match(source, /Models/);
   assert.match(source, /applyBackgroundTaskProviderSelection/);
   assert.match(source, /applyImageGenerationProviderSelection/);
@@ -75,6 +74,7 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.doesNotMatch(source, /providerAutosaveMessage/);
   assert.doesNotMatch(source, /Edit settings, then click Save changes\./);
   assert.doesNotMatch(source, /Reload settings/);
+  assert.doesNotMatch(source, /This provider will be disconnected when you save changes\./);
   assert.match(source, /const setupLoadingPanel = \(/);
   assert.match(source, /Connecting your Holaboss account\.\.\./);
   assert.match(source, /Finalizing your desktop session and runtime binding\. This should only take a moment\./);
@@ -170,20 +170,28 @@ test("auth panel manual save prefers edited provider credentials over previously
   );
 });
 
-test("auth panel keeps direct providers disconnected until manual save", async () => {
+test("auth panel disconnects connected providers immediately while keeping new direct providers staged until manual save", async () => {
   const source = await readFile(AUTH_PANEL_PATH, "utf8");
 
   assert.match(source, /const persistedProviderDrafts = deriveProviderDraftsFromDocument\(/);
   assert.match(source, /const providerConnected = \(providerId: KnownProviderId\) =>/);
   assert.match(source, /const providerDraftEnabled = \(providerId: KnownProviderId\) =>/);
   assert.match(source, /const hasPendingConnection = !isConnected && draftEnabled;/);
-  assert.match(source, /const hasPendingDisconnect = isConnected && !draftEnabled;/);
+  assert.match(source, /const isDisconnecting = disconnectingProviderId === providerId;/);
   assert.match(source, /Enter an API key and save to connect\./);
-  assert.match(source, /Disconnect pending\. Save changes to apply\./);
+  assert.match(source, /Disconnecting now\./);
+  assert.match(source, /async function handleDisconnectRuntimeProvider\(providerId: KnownProviderId\) \{/);
+  assert.match(source, /setDisconnectingProviderId\(providerId\);/);
+  assert.match(source, /setDisconnectingProviderId\(null\);/);
+  assert.match(source, /persistedBeforeDisconnect\.backgroundTasks/);
+  assert.match(source, /persistedBeforeDisconnect\.imageGeneration/);
+  assert.match(source, /KNOWN_PROVIDER_TEMPLATES\[providerId\]\.label} disconnected\./);
   assert.match(source, /onClick=\{\(\) => void handleSaveRuntimeSettings\(providerId\)\}/);
-  assert.match(source, /onClick=\{\(\) => handleCancelProviderEditing\(providerId\)\}/);
+  assert.match(source, /onClick=\{\(\) => void handleDisconnectRuntimeProvider\(providerId\)\}/);
   assert.match(source, /Cancel/);
-  assert.match(source, /Undo/);
+  assert.match(source, /Disconnecting\.\.\./);
+  assert.doesNotMatch(source, /Disconnect pending\. Save changes to apply\./);
+  assert.doesNotMatch(source, /Undo/);
 });
 
 test("runtime auth panel keeps provider cards readable in dark themes", async () => {

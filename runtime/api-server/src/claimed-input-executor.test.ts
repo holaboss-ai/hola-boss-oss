@@ -305,6 +305,156 @@ test("claimed input persists runner events, assistant text, and idle state on su
   store.close();
 });
 
+test("claimed input creates a completion notification for successful cronjob session runs", async () => {
+  const store = makeStore("hb-claimed-input-cronjob-success-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  const job = store.createCronjob({
+    workspaceId: workspace.id,
+    initiatedBy: "workspace_agent",
+    name: "daily-sync",
+    cron: "0 9 * * *",
+    description: "Daily sync",
+    instruction: "Sync the workspace.",
+    delivery: { channel: "session_run" },
+    metadata: {
+      notification_title: "Daily Run",
+      notification_priority: "high",
+    },
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-cron",
+    kind: "cronjob",
+    title: "Daily sync",
+    createdBy: "workspace_agent",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-cron",
+    payload: {
+      text: "Sync the workspace.",
+      context: {
+        source: "cronjob",
+        cronjob_id: job.id,
+      },
+    },
+  });
+  setNodeRunnerCommand([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    `process.stdout.write(JSON.stringify({ session_id: 'session-cron', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'Sync the workspace.' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-cron', input_id: '${queued.inputId}', sequence: 2, event_type: 'output_delta', payload: { delta: 'Hello from cron' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-cron', input_id: '${queued.inputId}', sequence: 3, event_type: 'run_completed', payload: { status: 'ok' } }) + '\\n');`,
+  ]);
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+  });
+
+  const notifications = store.listRuntimeNotifications({ workspaceId: workspace.id });
+
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0]?.title, "Daily Run Completed");
+  assert.equal(notifications[0]?.message, "Hello from cron");
+  assert.equal(notifications[0]?.level, "success");
+  assert.equal(notifications[0]?.priority, "high");
+  assert.equal(notifications[0]?.cronjobId, job.id);
+  assert.equal(notifications[0]?.metadata.session_id, "session-cron");
+  assert.equal(notifications[0]?.metadata.input_id, queued.inputId);
+  assert.equal(notifications[0]?.metadata.turn_status, "completed");
+  assert.equal(notifications[0]?.metadata.stop_reason, "ok");
+
+  store.close();
+});
+
+test("claimed input creates a completion notification for failed cronjob session runs", async () => {
+  const store = makeStore("hb-claimed-input-cronjob-failure-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-main"
+  });
+  const job = store.createCronjob({
+    workspaceId: workspace.id,
+    initiatedBy: "workspace_agent",
+    name: "daily-sync",
+    cron: "0 9 * * *",
+    description: "Daily sync",
+    instruction: "Sync the workspace.",
+    delivery: { channel: "session_run" },
+    metadata: {
+      notification_title: "Daily Run",
+    },
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-cron",
+    kind: "cronjob",
+    title: "Daily sync",
+    createdBy: "workspace_agent",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-cron",
+    payload: {
+      text: "Sync the workspace.",
+      context: {
+        source: "cronjob",
+        cronjob_id: job.id,
+      },
+    },
+  });
+  setNodeRunnerCommand([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    `process.stdout.write(JSON.stringify({ session_id: 'session-cron', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'Sync the workspace.' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-cron', input_id: '${queued.inputId}', sequence: 2, event_type: 'run_failed', payload: { type: 'ProviderError', message: 'boom' } }) + '\\n');`,
+  ]);
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+  });
+
+  const notifications = store.listRuntimeNotifications({ workspaceId: workspace.id });
+
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0]?.title, "Daily Run Failed");
+  assert.equal(notifications[0]?.message, "Run failed: ProviderError.");
+  assert.equal(notifications[0]?.level, "error");
+  assert.equal(notifications[0]?.priority, "normal");
+  assert.equal(notifications[0]?.cronjobId, job.id);
+  assert.equal(notifications[0]?.metadata.session_id, "session-cron");
+  assert.equal(notifications[0]?.metadata.input_id, queued.inputId);
+  assert.equal(notifications[0]?.metadata.turn_status, "failed");
+  assert.equal(notifications[0]?.metadata.stop_reason, "ProviderError");
+
+  store.close();
+});
+
 test("claimed input persists waiting_user terminal status for harnesses that support it", async () => {
   const store = makeStore("hb-claimed-input-pi-waiting-user-");
   const workspace = store.createWorkspace({

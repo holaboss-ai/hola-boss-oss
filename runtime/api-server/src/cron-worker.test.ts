@@ -126,14 +126,7 @@ test("runtime cron worker queues due session_run cronjobs and updates bookkeepin
   assert.match(String(queued[0].payload.text), /^Say hello/);
   assert.match(String(queued[0].payload.text), /\[Cronjob Metadata\]/);
   assert.match(String(history[0].text), /^Say hello/);
-  assert.equal(notifications.length, 1);
-  assert.equal(notifications[0]?.title, "Daily");
-  assert.equal(notifications[0]?.message, "Daily check");
-  assert.equal(notifications[0]?.state, "unread");
-  assert.equal(notifications[0]?.cronjobId, job.id);
-  assert.equal(notifications[0]?.sourceType, "cronjob");
-  assert.equal(notifications[0]?.metadata.session_id, "session-cron");
-  assert.equal(notifications[0]?.metadata.cronjob_instruction, "Say hello");
+  assert.equal(notifications.length, 0);
 
   store.close();
 });

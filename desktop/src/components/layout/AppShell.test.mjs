@@ -112,6 +112,10 @@ test("app shell no longer reserves a separate safe pane region for update toasts
     source,
     /const effectiveAppUpdateStatus = useMemo\(/,
   );
+  assert.match(
+    source,
+    /const shouldShowAppUpdateReminder = Boolean\(\s*effectiveAppUpdateStatus &&\s*effectiveAppUpdateStatus\.downloaded,\s*\);/,
+  );
   assert.doesNotMatch(source, /shouldUseSafeToastAnchor/);
   assert.doesNotMatch(source, /LEFT_NAVIGATION_RAIL_WIDTH_PX/);
   assert.doesNotMatch(source, /APP_SHELL_SPACE_COLUMN_GAP_PX/);

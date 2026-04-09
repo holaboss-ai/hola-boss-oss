@@ -295,6 +295,30 @@ function modelProxyProviderForProviderKind(kind: string, modelToken: string): st
   return MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE;
 }
 
+function configuredProviderUsesGoogleCompatibleApi(provider: ConfiguredRuntimeProvider): boolean {
+  const normalizedProviderId = provider.id.trim().toLowerCase();
+  if (normalizedProviderId === "gemini_direct") {
+    return true;
+  }
+  const baseUrl = provider.baseUrl.trim();
+  if (!baseUrl) {
+    return false;
+  }
+  try {
+    const parsed = new URL(baseUrl);
+    return parsed.hostname.toLowerCase() === GEMINI_OPENAI_COMPAT_HOST;
+  } catch {
+    return baseUrl.toLowerCase().includes(GEMINI_OPENAI_COMPAT_HOST);
+  }
+}
+
+function modelProxyProviderForConfiguredProvider(provider: ConfiguredRuntimeProvider, modelToken: string): string {
+  if (configuredProviderUsesGoogleCompatibleApi(provider)) {
+    return MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE;
+  }
+  return modelProxyProviderForProviderKind(provider.kind, modelToken);
+}
+
 function providerRequiresUnscopedModelId(kind: string): boolean {
   const normalizedKind = kind.trim().toLowerCase();
   return (
@@ -491,7 +515,7 @@ function configuredRuntimeModelCatalog(defaultProviderHint: string): RuntimeMode
       token: normalizeConfiguredProviderModelToken(provider.id, token, normalizedModelId),
       providerId,
       modelId: normalizedModelId,
-      modelProxyProvider: modelProxyProviderForProviderKind(provider.kind, normalizedModelId)
+      modelProxyProvider: modelProxyProviderForConfiguredProvider(provider, normalizedModelId)
     });
   }
 
@@ -605,7 +629,7 @@ function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: stri
 
     if (configuredProvider) {
       assertCanonicalConfiguredModelId(configuredProvider, modelId);
-      const modelProxyProvider = modelProxyProviderForProviderKind(configuredProvider.kind, modelId);
+      const modelProxyProvider = modelProxyProviderForConfiguredProvider(configuredProvider, modelId);
       return {
         providerId: runtimeProviderIdForConfiguredProvider(configuredProvider, modelProxyProvider),
         modelId,
@@ -661,7 +685,7 @@ function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: stri
     const anthropicProvider = firstConfiguredProviderByKind(catalog, PROVIDER_KIND_ANTHROPIC_NATIVE) ?? defaultProvider;
     if (anthropicProvider) {
       const normalizedModelId = normalizeConfiguredProviderModelId(anthropicProvider.id, token);
-      const modelProxyProvider = modelProxyProviderForProviderKind(anthropicProvider.kind, normalizedModelId);
+      const modelProxyProvider = modelProxyProviderForConfiguredProvider(anthropicProvider, normalizedModelId);
       return {
         providerId: runtimeProviderIdForConfiguredProvider(anthropicProvider, modelProxyProvider),
         modelId: normalizedModelId,
@@ -681,7 +705,7 @@ function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: stri
 
   if (defaultProvider) {
     const normalizedModelId = normalizeConfiguredProviderModelId(defaultProvider.id, token);
-    const modelProxyProvider = modelProxyProviderForProviderKind(defaultProvider.kind, normalizedModelId);
+    const modelProxyProvider = modelProxyProviderForConfiguredProvider(defaultProvider, normalizedModelId);
     return {
       providerId: runtimeProviderIdForConfiguredProvider(defaultProvider, modelProxyProvider),
       modelId: normalizedModelId,

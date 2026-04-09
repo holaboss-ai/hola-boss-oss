@@ -16,6 +16,7 @@ import { createBackgroundTaskMemoryModelClient } from "./background-task-model.j
 import type { TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
 import { runPostRunTasks } from "./post-run-tasks.js";
 import { collectWorkspaceFileManifest, detectWorkspaceFileOutputs, type WorkspaceFileManifest } from "./turn-output-capture.js";
+import { compactTurnSummary } from "./turn-result-summary.js";
 
 const ONBOARD_PROMPT_HEADER = "[Holaboss Workspace Onboarding v1]";
 const RUNTIME_EXEC_CONTEXT_KEY = "_sandbox_runtime_exec_v1";
@@ -305,6 +306,124 @@ function optionalString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+function titleCaseWords(value: string): string {
+  return value.replace(/\b([a-z])/g, (match) => match.toUpperCase());
+}
+
+function cronjobNotificationPriority(value: unknown): "low" | "normal" | "high" | "critical" {
+  const normalized = optionalString(value)?.toLowerCase();
+  if (normalized === "low" || normalized === "high" || normalized === "critical") {
+    return normalized;
+  }
+  return "normal";
+}
+
+function cronjobNotificationBaseTitle(job: { name: string; metadata: Record<string, unknown> }): string {
+  const explicitTitle = optionalString(job.metadata.notification_title);
+  if (explicitTitle) {
+    return explicitTitle;
+  }
+  const name = optionalString(job.name);
+  if (name) {
+    return titleCaseWords(name.replace(/[_-]+/g, " ").replace(/\s+/g, " "));
+  }
+  return "Cronjob Run";
+}
+
+function cronjobCompletionNotificationTitle(turnResult: TurnResultRecord, baseTitle: string): string {
+  if (turnResult.status === "failed") {
+    return `${baseTitle} Failed`;
+  }
+  if (turnResult.status === "waiting_user") {
+    return `${baseTitle} Needs Input`;
+  }
+  if (turnResult.status === "paused") {
+    return `${baseTitle} Paused`;
+  }
+  return `${baseTitle} Completed`;
+}
+
+function cronjobCompletionNotificationLevel(
+  turnResult: TurnResultRecord,
+): "info" | "success" | "warning" | "error" {
+  if (turnResult.status === "failed") {
+    return "error";
+  }
+  if (turnResult.status === "waiting_user" || turnResult.status === "paused") {
+    return "warning";
+  }
+  return "success";
+}
+
+function cronjobCompletionNotificationMessage(turnResult: TurnResultRecord): string {
+  const summary = compactTurnSummary(turnResult);
+  if (summary) {
+    return summary;
+  }
+  if (turnResult.status === "failed") {
+    return "Cronjob run failed.";
+  }
+  if (turnResult.status === "waiting_user") {
+    return "Cronjob run is waiting for user input.";
+  }
+  if (turnResult.status === "paused") {
+    return "Cronjob run was paused.";
+  }
+  return "Cronjob run completed.";
+}
+
+function maybeCreateCronjobCompletionNotification(params: {
+  store: RuntimeStateStore;
+  record: SessionInputRecord;
+  turnResult: TurnResultRecord;
+}): void {
+  const context = isRecord(params.record.payload.context) ? params.record.payload.context : null;
+  const source = optionalString(context?.source)?.toLowerCase();
+  const cronjobId = optionalString(context?.cronjob_id);
+  if (source !== "cronjob" || !cronjobId) {
+    return;
+  }
+
+  const session = params.store.getSession({
+    workspaceId: params.record.workspaceId,
+    sessionId: params.record.sessionId,
+  });
+  if (optionalString(session?.kind)?.toLowerCase() !== "cronjob") {
+    return;
+  }
+
+  const job = params.store.getCronjob(cronjobId);
+  const workspace = params.store.getWorkspace(params.record.workspaceId);
+  if (!job || !workspace) {
+    return;
+  }
+
+  const metadata = isRecord(job.metadata) ? job.metadata : {};
+  const baseTitle = cronjobNotificationBaseTitle({ name: job.name, metadata });
+  params.store.createRuntimeNotification({
+    workspaceId: params.record.workspaceId,
+    cronjobId: job.id,
+    sourceType: "cronjob",
+    sourceLabel: workspace.name.trim() || null,
+    title: cronjobCompletionNotificationTitle(params.turnResult, baseTitle),
+    message: cronjobCompletionNotificationMessage(params.turnResult),
+    level: cronjobCompletionNotificationLevel(params.turnResult),
+    priority: cronjobNotificationPriority(metadata.notification_priority),
+    metadata: {
+      cronjob_id: job.id,
+      cronjob_name: job.name,
+      cronjob_description: job.description,
+      cronjob_instruction: job.instruction,
+      session_id: params.record.sessionId,
+      input_id: params.record.inputId,
+      turn_status: params.turnResult.status,
+      stop_reason: params.turnResult.stopReason,
+      delivery: job.delivery,
+      cronjob_metadata: metadata,
+    },
+  });
 }
 
 type SkillInvocationSummaryEntry = {
@@ -1032,6 +1151,11 @@ export async function processClaimedInput(params: {
       wakeDurableMemoryWorker: params.wakeDurableMemoryWorker ?? null,
       onTaskError: params.onPostRunTaskError,
     });
+    maybeCreateCronjobCompletionNotification({
+      store,
+      record,
+      turnResult,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     store.updateInput(record.inputId, {
@@ -1080,6 +1204,11 @@ export async function processClaimedInput(params: {
       modelContext: memoryWritebackModelContext,
       wakeDurableMemoryWorker: params.wakeDurableMemoryWorker ?? null,
       onTaskError: params.onPostRunTaskError,
+    });
+    maybeCreateCronjobCompletionNotification({
+      store,
+      record,
+      turnResult,
     });
   }
 }

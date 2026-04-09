@@ -81,6 +81,54 @@ test("pi normalizes array-wrapped openai-compatible error bodies", async () => {
   });
 });
 
+test("mapPiSessionEvent extracts nested Gemini provider error messages", () => {
+  const sessionFile = "/tmp/pi-session.jsonl";
+
+  assert.deepEqual(
+    mapPiSessionEvent(
+      {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [],
+          api: "google-generative-ai",
+          provider: "gemini_direct",
+          model: "gemini-2.5-flash",
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: "error",
+          errorMessage:
+            "{\"error\":{\"message\":\"{\\n  \\\"error\\\": {\\n    \\\"code\\\": 400,\\n    \\\"message\\\": \\\"User location is not supported for the API use.\\\",\\n    \\\"status\\\": \\\"FAILED_PRECONDITION\\\"\\n  }\\n}\\n\",\"code\":400,\"status\":\"Bad Request\"}}",
+          timestamp: Date.now(),
+        },
+      } as never,
+      sessionFile,
+      createPiEventMapperState()
+    ),
+    [
+      {
+        event_type: "run_failed",
+        payload: {
+          type: "ProviderError",
+          message: "User location is not supported for the API use.",
+          stop_reason: "error",
+          provider: "gemini_direct",
+          model: "gemini-2.5-flash",
+          event: "message_end",
+          source: "pi",
+          harness_session_id: sessionFile,
+        },
+      },
+    ]
+  );
+});
+
 async function createDocxBuffer(lines: string[]): Promise<Buffer> {
   const zip = new JSZip();
   const body = lines.map((line) => `<w:p><w:r><w:t>${line}</w:t></w:r></w:p>`).join("");

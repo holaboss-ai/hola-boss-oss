@@ -2089,8 +2089,7 @@ function AppShellContent() {
     spaceMode && spaceVisibility.agent && operationsDrawerOpen;
   const shouldShowAppUpdateReminder = Boolean(
     effectiveAppUpdateStatus &&
-      (effectiveAppUpdateStatus.available ||
-        effectiveAppUpdateStatus.downloaded),
+      effectiveAppUpdateStatus.downloaded,
   );
   const appVersionLabel =
     effectiveAppUpdateStatus?.currentVersion?.trim() || "";

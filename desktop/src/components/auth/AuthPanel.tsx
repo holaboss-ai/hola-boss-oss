@@ -934,6 +934,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const [isStartingSignIn, setIsStartingSignIn] = useState(false);
   const [isSavingRuntimeConfigDocument, setIsSavingRuntimeConfigDocument] = useState(false);
   const [isExchangingRuntimeBinding, setIsExchangingRuntimeBinding] = useState(false);
+  const [disconnectingProviderId, setDisconnectingProviderId] = useState<KnownProviderId | null>(null);
   const [isProviderDraftDirty, setIsProviderDraftDirty] = useState(false);
   const [providerSaveStatus, setProviderSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const effectiveRuntimeConfig = sharedRuntimeConfig ?? runtimeConfig;
@@ -1670,6 +1671,72 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     setAuthMessage("Runtime provider settings saved. The runtime was restarted with the new settings.");
   }
 
+  async function handleDisconnectRuntimeProvider(providerId: KnownProviderId) {
+    if (!window.electronAPI || providerId === "holaboss") {
+      return;
+    }
+
+    const persistedBeforeDisconnect = persistedProviderSettingsSnapshot();
+    const draftsToSave = {
+      ...persistedBeforeDisconnect.drafts,
+      [providerId]: {
+        ...persistedBeforeDisconnect.drafts[providerId],
+        enabled: false,
+      },
+    };
+
+    setDisconnectingProviderId(providerId);
+    setProviderSaveStatus("saving");
+    const result = await persistRuntimeProviderSettings(
+      draftsToSave,
+      persistedBeforeDisconnect.backgroundTasks,
+      persistedBeforeDisconnect.imageGeneration,
+    );
+    setDisconnectingProviderId(null);
+    if (!result) {
+      return;
+    }
+
+    const persistedAfterDisconnect = persistedProviderSettingsSnapshot(
+      result.nextDocumentText,
+      result.nextConfig,
+    );
+    const nextProviderDrafts = {
+      ...providerDrafts,
+      [providerId]: persistedAfterDisconnect.drafts[providerId],
+    };
+    const nextBackgroundTasksDraft =
+      JSON.stringify(backgroundTasksDraft) === JSON.stringify(persistedBeforeDisconnect.backgroundTasks)
+        ? persistedAfterDisconnect.backgroundTasks
+        : backgroundTasksDraft;
+    const nextImageGenerationDraft =
+      JSON.stringify(imageGenerationDraft) === JSON.stringify(persistedBeforeDisconnect.imageGeneration)
+        ? persistedAfterDisconnect.imageGeneration
+        : imageGenerationDraft;
+    const nextSnapshot: ProviderSettingsSnapshot = {
+      drafts: nextProviderDrafts,
+      backgroundTasks: nextBackgroundTasksDraft,
+      imageGeneration: nextImageGenerationDraft,
+    };
+    const hasRemainingUnsavedChanges = providerSettingsSnapshotIsDirty(
+      nextSnapshot,
+      result.nextDocumentText,
+      result.nextConfig,
+    );
+
+    setProviderDrafts(nextProviderDrafts);
+    setBackgroundTasksDraft(nextBackgroundTasksDraft);
+    setImageGenerationDraft(nextImageGenerationDraft);
+    setExpandedProviderId((current) => (current === providerId ? null : current));
+    setIsProviderDraftDirty(hasRemainingUnsavedChanges);
+    setProviderSaveStatus(hasRemainingUnsavedChanges ? "idle" : "saved");
+    setAuthMessage(
+      hasRemainingUnsavedChanges
+        ? `${KNOWN_PROVIDER_TEMPLATES[providerId].label} disconnected. Other changes are still unsaved.`
+        : `${KNOWN_PROVIDER_TEMPLATES[providerId].label} disconnected. The runtime was restarted with the new settings.`,
+    );
+  }
+
   async function handleExchangeRuntimeBinding() {
     if (!window.electronAPI) {
       return;
@@ -1700,33 +1767,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
   function renderProviderDrawerContent(providerId: KnownProviderId): ReactNode {
     if (!providerDraftEnabled(providerId)) {
-      if (providerConnected(providerId) && providerId !== "holaboss") {
-        return (
-          <div className="grid gap-2">
-            <div className="rounded-[12px] border border-border/40 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-              This provider will be disconnected when you save changes.
-            </div>
-            <div className="flex flex-wrap gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => void handleSaveRuntimeSettings(providerId)}
-                disabled={isSavingRuntimeConfigDocument}
-                className="theme-control-surface rounded-[10px] border border-primary/30 bg-primary/8 px-3 py-2 text-sm text-foreground transition hover:border-primary/45 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {isSavingRuntimeConfigDocument ? "Saving..." : "Save"}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleCancelProviderEditing(providerId)}
-                disabled={isSavingRuntimeConfigDocument}
-                className="theme-control-surface rounded-[10px] border border-border/45 px-3 py-2 text-sm text-foreground transition hover:border-border/70 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        );
-      }
       return (
         <div className="rounded-[12px] border border-border/40 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
           Click Connect to configure settings.
@@ -1805,8 +1845,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     const isHolabossProvider = providerId === "holaboss";
     const isConnected = providerConnected(providerId);
     const draftEnabled = providerDraftEnabled(providerId);
+    const isDisconnecting = disconnectingProviderId === providerId;
     const hasPendingConnection = !isConnected && draftEnabled;
-    const hasPendingDisconnect = isConnected && !draftEnabled;
     const isExpandable = isHolabossProvider ? isConnected : draftEnabled || isConnected;
     const isExpanded = isExpandable && expandedProviderId === providerId;
     const statusText = isHolabossProvider
@@ -1815,8 +1855,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         : isSignedIn
           ? "Signed in. Refresh runtime binding to finish setup."
           : "Sign in to enable the managed provider."
-      : hasPendingDisconnect
-        ? "Disconnect pending. Save changes to apply."
+      : isDisconnecting
+        ? "Disconnecting now."
         : hasPendingConnection
           ? "Enter an API key and save to connect."
           : isConnected
@@ -1869,19 +1909,18 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 <button
                   type="button"
                   onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
+                  disabled={isSavingRuntimeConfigDocument}
                   className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-primary/35`}
                 >
                   {isExpanded ? "Hide" : "Edit"}
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    updateProviderDraft(providerId, { enabled: hasPendingDisconnect });
-                    setExpandedProviderId(providerId);
-                  }}
+                  onClick={() => void handleDisconnectRuntimeProvider(providerId)}
+                  disabled={isSavingRuntimeConfigDocument}
                   className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-destructive/40 hover:text-destructive`}
                 >
-                  {hasPendingDisconnect ? "Undo" : "Disconnect"}
+                  {isDisconnecting ? "Disconnecting..." : "Disconnect"}
                 </button>
               </>
             ) : hasPendingConnection ? (
@@ -1889,6 +1928,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 <button
                   type="button"
                   onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
+                  disabled={isSavingRuntimeConfigDocument}
                   className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-primary/35`}
                 >
                   {isExpanded ? "Hide" : "Edit"}
@@ -1899,6 +1939,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                     updateProviderDraft(providerId, { enabled: false });
                     setExpandedProviderId((current) => (current === providerId ? null : current));
                   }}
+                  disabled={isSavingRuntimeConfigDocument}
                   className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-destructive/40 hover:text-destructive`}
                 >
                   Cancel
@@ -1911,6 +1952,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   updateProviderDraft(providerId, { enabled: true });
                   setExpandedProviderId(providerId);
                 }}
+                disabled={isSavingRuntimeConfigDocument}
                 className={`${actionButtonClassName} border border-border/55 text-foreground hover:border-neon-green/35 hover:text-neon-green`}
               >
                 Connect

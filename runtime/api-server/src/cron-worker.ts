@@ -315,13 +315,10 @@ export function executeLocalCronjobDelivery(
   const channel = typeof delivery.channel === "string" ? delivery.channel : null;
   if (channel === "session_run") {
     const sessionId = queueLocalCronjobRun(store, job, now, wakeQueueWorker);
-    const notification = deliverLocalCronjobNotification(store, job, {
-      sessionId,
-    });
     return {
       channel,
       sessionId,
-      notificationId: notification.id,
+      notificationId: null,
     };
   }
   if (channel === "system_notification") {
