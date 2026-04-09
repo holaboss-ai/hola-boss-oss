@@ -458,10 +458,22 @@ test("composeBaseAgentPrompt requires proactive fallback when partial retrieval 
   );
   assert.match(
     prompt.systemPrompt,
+    /Before answering, compare the evidence you gathered against the user's requested fields, constraints, thresholds, rankings, timestamps, and verification targets\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not present partial evidence as task completion\./
+  );
+  assert.match(
+    prompt.systemPrompt,
     /If the first retrieval path only gives partial evidence, do not stop there: proactively switch to a more direct capability path until the required facts are verified or you can clearly explain what remains unavailable\./
   );
   assert.match(
     prompt.systemPrompt,
-    /When browser capabilities are available and search results, summaries, or snippets do not expose the user-required facts, use browser inspection to verify the page directly instead of returning a partial answer\./
+    /If a more direct capability is unavailable or blocked, explicitly name which required facts or constraints remain unverified\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /When browser capabilities are available, use them as the direct verification path for site-specific or UI-dependent requirements that search or summary tools cannot fully prove\./
   );
 });

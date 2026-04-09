@@ -67,6 +67,8 @@ test("Pi desktop browser tools execute through the runtime capability API", asyn
 
   const getStateTool = tools.find((tool) => tool.name === "browser_get_state");
   assert.ok(getStateTool);
+  assert.match(getStateTool.description ?? "", /live page state, exact values, filters, rankings, thresholds/i);
+  assert.match(getStateTool.description ?? "", /search results cannot fully verify/i);
   const result = await getStateTool.execute("call-1", { include_screenshot: true }, undefined, undefined, {} as never);
 
   assert.deepEqual(requests, [
@@ -129,6 +131,7 @@ test("Pi desktop browser tools fall back to node http when no fetch implementati
 
     const getStateTool = tools.find((tool) => tool.name === "browser_get_state");
     assert.ok(getStateTool);
+    assert.match(getStateTool.description ?? "", /live page state, exact values, filters, rankings, thresholds/i);
     const result = await getStateTool.execute("call-1", { include_screenshot: false }, undefined, undefined, {} as never);
 
     assert.deepEqual(requests, [

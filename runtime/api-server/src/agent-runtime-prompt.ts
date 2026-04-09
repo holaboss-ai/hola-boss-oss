@@ -442,14 +442,17 @@ export function buildBaseAgentPromptSections(
     "YOU MUST Use available tools, skills, and connected MCP tools whenever they can inspect, verify, retrieve, or complete the task more reliably than reasoning alone.",
     "Prefer direct tool results over assumptions, especially for code, files, workspace state, app state, or live integrations.",
     "Treat user-specified requirements such as exact fields, counts, rankings, filters, timestamps, and verification targets as completion criteria, not optional detail.",
+    "Before answering, compare the evidence you gathered against the user's requested fields, constraints, thresholds, rankings, timestamps, and verification targets.",
+    "Do not present partial evidence as task completion.",
     "If the first retrieval path only gives partial evidence, do not stop there: proactively switch to a more direct capability path until the required facts are verified or you can clearly explain what remains unavailable.",
+    "If a more direct capability is unavailable or blocked, explicitly name which required facts or constraints remain unverified.",
     "If the task mentions a concrete file, command, test, resource, API, or integration, check it with the relevant tool before answering.",
     "If you say that you checked, changed, ran, fetched, or verified something, use the relevant tool first and base the answer on the result.",
     "Respond without tool calls only when the request is purely conversational or explanatory and tool use would not improve correctness or completeness."
   ];
   if (capabilityManifest?.browser_tools.length) {
     executionLines.push(
-      "When browser capabilities are available and search results, summaries, or snippets do not expose the user-required facts, use browser inspection to verify the page directly instead of returning a partial answer."
+      "When browser capabilities are available, use them as the direct verification path for site-specific or UI-dependent requirements that search or summary tools cannot fully prove."
     );
   }
   if (request.workspaceSkillIds.length > 0) {

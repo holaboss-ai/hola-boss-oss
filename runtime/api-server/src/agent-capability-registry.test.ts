@@ -150,8 +150,29 @@ test("buildAgentCapabilityManifest includes native web search as a custom tool",
   const capability = manifest.custom_tools.find((entry) => entry.id === "web_search");
   assert.ok(capability);
   assert.equal(capability.title, "Web Search");
-  assert.match(capability.description, /Search the public web/i);
+  assert.match(capability.description, /discover and summarize information across multiple sources/i);
+  assert.match(capability.description, /exact live values, platform-native rankings or filters, UI-only state/i);
+  assert.match(capability.description, /escalate to browser tools or another more direct capability/i);
   assert.equal(buildEnabledToolMapFromManifest(manifest).web_search, true);
+});
+
+test("buildAgentCapabilityManifest carries browser tool descriptions that emphasize live verification", () => {
+  const manifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "main",
+    browserToolsAvailable: true,
+    browserToolIds: ["browser_get_state"],
+    runtimeToolIds: [],
+    defaultTools: ["read"],
+    extraTools: ["browser_get_state"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const capability = manifest.browser_tools.find((entry) => entry.id === "browser_get_state");
+  assert.ok(capability);
+  assert.match(capability.description, /specific sites, live page state, exact values, filters, rankings, thresholds/i);
+  assert.match(capability.description, /search results cannot fully verify/i);
 });
 
 test("evaluateAgentCapabilities keeps command and skill surfaces while excluding non-staged browser tools", () => {

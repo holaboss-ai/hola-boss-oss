@@ -26,7 +26,8 @@ export interface DesktopBrowserToolDefinition {
 export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = [
   {
     id: "browser_navigate",
-    description: "Navigate the desktop browser to a URL.",
+    description:
+      "Navigate the desktop browser to a URL for direct inspection or interaction on a specific live site when search results are not enough.",
     policy: "mutate",
     session_scope: "main_only",
     input_schema: {
@@ -40,7 +41,8 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   },
   {
     id: "browser_open_tab",
-    description: "Open a URL in a new desktop browser tab.",
+    description:
+      "Open a URL in a new desktop browser tab so you can inspect or compare specific live pages without losing the current page state.",
     policy: "mutate",
     session_scope: "main_only",
     input_schema: {
@@ -55,7 +57,8 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   },
   {
     id: "browser_get_state",
-    description: "Read the current desktop browser page, visible interactive elements, and optional screenshot.",
+    description:
+      "Read the current desktop browser page, visible interactive elements, and optional screenshot. Use browser tools for specific sites, live page state, exact values, filters, rankings, thresholds, or UI-only data that search results cannot fully verify.",
     policy: "inspect",
     session_scope: "main_only",
     input_schema: {
@@ -68,7 +71,8 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   },
   {
     id: "browser_click",
-    description: "Click an interactive element from browser_get_state by index.",
+    description:
+      "Click an interactive element from browser_get_state by index to follow links, apply filters, reveal hidden data, paginate, or continue a live browser workflow.",
     policy: "mutate",
     session_scope: "main_only",
     input_schema: {
@@ -82,7 +86,8 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   },
   {
     id: "browser_type",
-    description: "Type text into an interactive element from browser_get_state by index.",
+    description:
+      "Type text into an interactive element from browser_get_state by index to search, filter, fill inputs, or continue a live browser workflow.",
     policy: "mutate",
     session_scope: "main_only",
     input_schema: {
@@ -99,7 +104,8 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   },
   {
     id: "browser_press",
-    description: "Send a keyboard key to the currently focused element.",
+    description:
+      "Send a keyboard key to the currently focused element to submit forms, confirm dialogs, or continue keyboard-driven browser interaction.",
     policy: "mutate",
     session_scope: "main_only",
     input_schema: {
@@ -113,7 +119,8 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   },
   {
     id: "browser_scroll",
-    description: "Scroll the current page vertically.",
+    description:
+      "Scroll the current page vertically to load, inspect, or reach additional live content that is not yet visible.",
     policy: "mutate",
     session_scope: "main_only",
     input_schema: {
@@ -128,7 +135,7 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   },
   {
     id: "browser_back",
-    description: "Go back in the active browser tab history.",
+    description: "Go back in the active browser tab history while preserving the live browser session state.",
     policy: "mutate",
     session_scope: "main_only",
     input_schema: {
@@ -139,7 +146,7 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   },
   {
     id: "browser_forward",
-    description: "Go forward in the active browser tab history.",
+    description: "Go forward in the active browser tab history while preserving the live browser session state.",
     policy: "mutate",
     session_scope: "main_only",
     input_schema: {
@@ -150,7 +157,7 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   },
   {
     id: "browser_reload",
-    description: "Reload the active browser tab.",
+    description: "Reload the active browser tab to refresh live page state before re-checking exact details.",
     policy: "mutate",
     session_scope: "main_only",
     input_schema: {
@@ -161,7 +168,8 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   },
   {
     id: "browser_screenshot",
-    description: "Capture a screenshot of the active browser tab.",
+    description:
+      "Capture a screenshot of the active browser tab when visual verification is needed in addition to DOM and text state.",
     policy: "inspect",
     session_scope: "main_only",
     input_schema: {
@@ -175,7 +183,7 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   },
   {
     id: "browser_list_tabs",
-    description: "List open browser tabs and the active tab id.",
+    description: "List open browser tabs and the active tab id so you can manage multi-tab browser workflows.",
     policy: "inspect",
     session_scope: "main_only",
     input_schema: {
