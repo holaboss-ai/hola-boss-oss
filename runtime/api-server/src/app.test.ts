@@ -1853,6 +1853,12 @@ test("cronjobs, task proposals, and session state routes preserve local payload 
     harness: "pi",
     status: "active",
   });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    kind: "workspace_session",
+    title: "Workspace 1",
+  });
   store.upsertBinding({
     workspaceId: workspace.id,
     sessionId: "session-main",
@@ -1932,7 +1938,7 @@ test("cronjobs, task proposals, and session state routes preserve local payload 
     payload: { state: "read" }
   });
   assert.equal(listedNotifications.statusCode, 200);
-  assert.equal(listedNotifications.json().count, 2);
+  assert.equal(listedNotifications.json().count, 1);
   assert.ok(
     listedNotifications
       .json()
@@ -3686,28 +3692,31 @@ test("queue route persists input, user message, and runtime state", async () => 
   });
 
   assert.equal(response.statusCode, 200);
-  assert.equal(response.json().session_id, "session-main");
   assert.equal(response.json().status, "QUEUED");
+  const sessionId = response.json().session_id;
+  assert.ok(typeof sessionId === "string" && sessionId.trim().length > 0);
 
   const queued = store.getInput(response.json().input_id);
   assert.ok(queued);
   assert.equal(queued.payload.text, "hello world");
   assert.equal("holaboss_user_id" in queued.payload, false);
+  assert.equal(queued.sessionId, sessionId);
 
   const runtimeStates = store.listRuntimeStates(workspace.id);
   assert.equal(runtimeStates[0].status, "QUEUED");
   assert.equal(runtimeStates[0].currentInputId, response.json().input_id);
+  assert.equal(runtimeStates[0].sessionId, sessionId);
 
-  const session = store.getSession({ workspaceId: workspace.id, sessionId: "session-main" });
+  const session = store.getSession({ workspaceId: workspace.id, sessionId });
   assert.ok(session);
   assert.equal(session.kind, "workspace_session");
   assert.equal(session.title, "hello world");
 
-  const binding = store.getBinding({ workspaceId: workspace.id, sessionId: "session-main" });
+  const binding = store.getBinding({ workspaceId: workspace.id, sessionId });
   assert.ok(binding);
-  assert.equal(binding.harnessSessionId, "session-main");
+  assert.equal(binding.harnessSessionId, sessionId);
 
-  const history = store.listSessionMessages({ workspaceId: workspace.id, sessionId: "session-main" });
+  const history = store.listSessionMessages({ workspaceId: workspace.id, sessionId });
   assert.equal(history.length, 1);
   assert.equal(history[0].role, "user");
   assert.equal(history[0].text, "hello world");
@@ -3842,9 +3851,11 @@ test("queue route creates pending user memory proposals from strong preference s
   });
 
   assert.equal(response.statusCode, 200);
+  const sessionId = response.json().session_id;
+  assert.ok(typeof sessionId === "string" && sessionId.trim().length > 0);
   const proposals = store.listMemoryUpdateProposals({
     workspaceId: workspace.id,
-    sessionId: "session-main",
+    sessionId,
     inputId: response.json().input_id,
     limit: 10,
     offset: 0
