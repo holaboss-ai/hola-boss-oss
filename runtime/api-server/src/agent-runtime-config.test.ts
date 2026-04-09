@@ -280,6 +280,7 @@ test("projectAgentRuntimeConfig includes resume context sections when provided",
         "Previous run stopped for confirmation.",
         "Previous stop reason: waiting_user.",
         "The previous run paused waiting for user input. Do not treat that state as completed work.",
+        "If the user's latest message clearly redirects to a new unrelated task, handle that new request first, keep the unfinished prior work marked unfinished, and then propose continuing it after the new task is done.",
       ].join("\n"),
       [
         "Session resume context:",

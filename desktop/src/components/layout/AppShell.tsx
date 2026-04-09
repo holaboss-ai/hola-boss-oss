@@ -79,7 +79,7 @@ const THEMES = [
   "bubblegum-dark",
   "bubblegum-light",
 ] as const;
-const MIN_FILES_PANE_WIDTH = 300;
+const MIN_FILES_PANE_WIDTH = 220;
 const MIN_BROWSER_PANE_WIDTH = 120;
 const MAX_UTILITY_PANE_WIDTH = 720;
 const LEGACY_DEFAULT_FILES_PANE_WIDTH = 420;

@@ -128,7 +128,7 @@ test("app shell no longer reserves a separate safe pane region for update toasts
 test("app shell uses a wider minimum for the file explorer than for the browser pane", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /const MIN_FILES_PANE_WIDTH = 300;/);
+  assert.match(source, /const MIN_FILES_PANE_WIDTH = 220;/);
   assert.match(source, /const MIN_BROWSER_PANE_WIDTH = 120;/);
   assert.match(source, /const MIN_AGENT_CONTENT_WIDTH = 380;/);
   assert.match(source, /const DEFAULT_FILES_PANE_WIDTH = MIN_FILES_PANE_WIDTH;/);
