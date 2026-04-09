@@ -53,6 +53,14 @@ interface WorkspaceDesktopContextValue {
   workspaceAppsReady: boolean;
   workspaceBlockingReason: string;
   refreshInstalledApps: () => Promise<void>;
+  appCatalog: AppCatalogEntryPayload[];
+  isLoadingAppCatalog: boolean;
+  appCatalogError: string;
+  appCatalogSource: "marketplace" | "local";
+  setAppCatalogSource: (source: "marketplace" | "local") => void;
+  refreshAppCatalog: () => Promise<void>;
+  installingAppId: string | null;
+  installAppFromCatalog: (appId: string) => Promise<void>;
   templateSourceMode: TemplateSourceMode;
   setTemplateSourceMode: (value: TemplateSourceMode) => void;
   createHarnessOptions: WorkspaceHarnessOption[];
@@ -160,6 +168,11 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [workspaces, setWorkspaces] = useState<WorkspaceRecordPayload[]>([]);
   const [hasHydratedWorkspaceList, setHasHydratedWorkspaceList] = useState(false);
   const [installedApps, setInstalledApps] = useState<WorkspaceInstalledAppDefinition[]>([]);
+  const [appCatalog, setAppCatalog] = useState<AppCatalogEntryPayload[]>([]);
+  const [isLoadingAppCatalog, setIsLoadingAppCatalog] = useState(false);
+  const [appCatalogError, setAppCatalogError] = useState("");
+  const [appCatalogSource, setAppCatalogSourceState] = useState<"marketplace" | "local">("marketplace");
+  const [installingAppId, setInstallingAppId] = useState<string | null>(null);
   const [templateSourceMode, setTemplateSourceModeState] = useState<TemplateSourceMode>("local");
   const [selectedCreateHarness, setSelectedCreateHarnessState] = useState<WorkspaceHarnessId>(DEFAULT_WORKSPACE_HARNESS);
   const [selectedTemplateFolder, setSelectedTemplateFolder] = useState<TemplateFolderSelectionPayload | null>(null);
@@ -216,6 +229,12 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   function setSelectedCreateHarness(value: string) {
     setWorkspaceErrorMessage("");
     setSelectedCreateHarnessState(normalizeWorkspaceHarness(value));
+  }
+
+  function setAppCatalogSource(source: "marketplace" | "local") {
+    setAppCatalogSourceState(source);
+    setAppCatalogError("");
+    setAppCatalog([]);
   }
 
   function selectMarketplaceTemplate(templateName: string) {
@@ -489,6 +508,47 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       await refreshInstalledApps();
     } catch (error) {
       setWorkspaceErrorMessage(normalizeErrorMessage(error));
+    }
+  }
+
+  async function refreshAppCatalog() {
+    setIsLoadingAppCatalog(true);
+    setAppCatalogError("");
+    try {
+      await window.electronAPI.workspace.syncAppCatalog({ source: appCatalogSource });
+      const response = await window.electronAPI.workspace.listAppCatalog({
+        source: appCatalogSource,
+      });
+      setAppCatalog(response.entries);
+    } catch (error) {
+      setAppCatalog([]);
+      setAppCatalogError(normalizeErrorMessage(error));
+    } finally {
+      setIsLoadingAppCatalog(false);
+    }
+  }
+
+  async function installAppFromCatalog(appId: string) {
+    if (!selectedWorkspaceId) {
+      setAppCatalogError("Select a workspace first.");
+      return;
+    }
+    if (installingAppId) {
+      return;
+    }
+    setInstallingAppId(appId);
+    setAppCatalogError("");
+    try {
+      await window.electronAPI.workspace.installAppFromCatalog({
+        workspaceId: selectedWorkspaceId,
+        appId,
+        source: appCatalogSource,
+      });
+      await refreshInstalledApps();
+    } catch (error) {
+      setAppCatalogError(normalizeErrorMessage(error));
+    } finally {
+      setInstallingAppId(null);
     }
   }
 
@@ -902,6 +962,14 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       workspaceAppsReady,
       workspaceBlockingReason,
       refreshInstalledApps,
+      appCatalog,
+      isLoadingAppCatalog,
+      appCatalogError,
+      appCatalogSource,
+      setAppCatalogSource,
+      refreshAppCatalog,
+      installingAppId,
+      installAppFromCatalog,
       templateSourceMode,
       setTemplateSourceMode,
       createHarnessOptions: WORKSPACE_HARNESS_OPTIONS,
@@ -954,6 +1022,14 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       workspaceAppsReady,
       workspaceBlockingReason,
       refreshInstalledApps,
+      appCatalog,
+      isLoadingAppCatalog,
+      appCatalogError,
+      appCatalogSource,
+      setAppCatalogSource,
+      refreshAppCatalog,
+      installingAppId,
+      installAppFromCatalog,
       templateSourceMode,
       selectedCreateHarness,
       selectedTemplateFolder,
