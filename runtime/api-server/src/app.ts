@@ -3303,6 +3303,52 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     return { entries: entries.map(appCatalogEntryToWire), count: entries.length };
   });
 
+  app.post("/api/v1/apps/catalog/sync", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const rawSource = requiredString(request.body.source, "source");
+    if (rawSource !== "marketplace" && rawSource !== "local") {
+      return sendError(reply, 400, "source must be 'marketplace' or 'local'");
+    }
+    const source: "marketplace" | "local" = rawSource;
+    const target = requiredString(request.body.target, "target");
+    const entries = Array.isArray(request.body.entries) ? request.body.entries : [];
+
+    store.clearAppCatalogSource(source);
+    const now = new Date().toISOString();
+    let synced = 0;
+    for (const raw of entries) {
+      if (!isRecord(raw)) continue;
+      let appId: string;
+      try {
+        appId = sanitizeAppId(requiredString(raw.app_id, "app_id"));
+      } catch {
+        continue;
+      }
+      const tagsRaw = raw.tags;
+      const tags = Array.isArray(tagsRaw)
+        ? tagsRaw.filter((t): t is string => typeof t === "string")
+        : [];
+      store.upsertAppCatalogEntry({
+        appId,
+        source,
+        name: requiredString(raw.name, "name"),
+        description: typeof raw.description === "string" ? raw.description : null,
+        icon: typeof raw.icon === "string" ? raw.icon : null,
+        category: typeof raw.category === "string" ? raw.category : null,
+        tags,
+        version: typeof raw.version === "string" ? raw.version : null,
+        archiveUrl: typeof raw.archive_url === "string" ? raw.archive_url : null,
+        archivePath: typeof raw.archive_path === "string" ? raw.archive_path : null,
+        target,
+        cachedAt: now,
+      });
+      synced += 1;
+    }
+    return { synced, source, target };
+  });
+
   app.get("/api/v1/apps", async (request, reply) => {
     const query = isRecord(request.query) ? request.query : {};
     const workspaceId = requiredString(query.workspace_id, "workspace_id");
