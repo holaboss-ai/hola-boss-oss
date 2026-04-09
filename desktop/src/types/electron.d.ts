@@ -225,6 +225,11 @@ declare global {
     description: string;
   }
 
+  interface TemplateAppEntryPayload {
+    name: string;
+    required: boolean;
+  }
+
   interface TemplateMetadataPayload {
     name: string;
     repo: string;
@@ -236,7 +241,8 @@ declare global {
     allowed_user_ids: string[];
     icon: string;
     emoji: string | null;
-    apps: string[];
+    apps: TemplateAppEntryPayload[];
+    min_optional_apps: number;
     tags: string[];
     category: string;
     long_description: string | null;

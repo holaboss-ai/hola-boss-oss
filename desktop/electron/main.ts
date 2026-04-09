@@ -1534,6 +1534,11 @@ interface TemplateViewInfoPayload {
   description: string;
 }
 
+interface TemplateAppEntryPayload {
+  name: string;
+  required: boolean;
+}
+
 interface TemplateMetadataPayload {
   name: string;
   repo: string;
@@ -1545,7 +1550,8 @@ interface TemplateMetadataPayload {
   allowed_user_ids: string[];
   icon: string;
   emoji: string | null;
-  apps: string[];
+  apps: TemplateAppEntryPayload[];
+  min_optional_apps: number;
   tags: string[];
   category: string;
   long_description: string | null;
@@ -5848,6 +5854,7 @@ async function parseLocalTemplateMetadata(
     icon: "folder",
     emoji: null,
     apps: [],
+    min_optional_apps: 0,
     tags,
     category: "local",
     long_description: description,

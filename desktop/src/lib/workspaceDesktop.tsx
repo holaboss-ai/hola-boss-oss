@@ -88,6 +88,8 @@ interface WorkspaceDesktopContextValue {
   createWorkspace: () => Promise<void>;
   deleteWorkspace: (workspaceId: string) => Promise<void>;
   removeInstalledApp: (appId: string) => Promise<void>;
+  selectedApps: Set<string>;
+  setSelectedApps: (value: Set<string> | ((prev: Set<string>) => Set<string>)) => void;
   pendingIntegrations: ResolveTemplateIntegrationsResult | null;
   isResolvingIntegrations: boolean;
   resolveIntegrationsBeforeCreate: () => Promise<ResolveTemplateIntegrationsResult | null>;
@@ -163,6 +165,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [selectedTemplateFolder, setSelectedTemplateFolder] = useState<TemplateFolderSelectionPayload | null>(null);
   const [marketplaceTemplates, setMarketplaceTemplates] = useState<TemplateMetadataPayload[]>([]);
   const [selectedMarketplaceTemplateName, setSelectedMarketplaceTemplateName] = useState("");
+  const [selectedApps, setSelectedApps] = useState<Set<string>>(new Set());
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const [isLoadingBootstrap, setIsLoadingBootstrap] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -218,6 +221,13 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   function selectMarketplaceTemplate(templateName: string) {
     setWorkspaceErrorMessage("");
     setSelectedMarketplaceTemplateName(templateName);
+    // Initialize selected apps: all apps selected by default
+    const tpl = marketplaceTemplates.find((t) => t.name === templateName);
+    if (tpl) {
+      setSelectedApps(new Set(tpl.apps.map((a) => a.name)));
+    } else {
+      setSelectedApps(new Set());
+    }
   }
 
   function applyWorkspaceLifecycle(lifecycle: WorkspaceLifecyclePayload) {
@@ -514,7 +524,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
           name: trimmedName,
           template_mode: "template",
           template_name: selectedMarketplaceTemplate.name,
-          template_apps: selectedMarketplaceTemplate.apps
+          template_apps: [...selectedApps]
         };
       } else if (selectedTemplateFolder?.rootPath) {
         payload = {
@@ -552,7 +562,16 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
         if (cancelled) {
           return;
         }
-        const visibleTemplates = response.templates.filter((template) => !template.is_hidden);
+        const visibleTemplates = response.templates
+          .filter((template) => !template.is_hidden)
+          .map((template) => ({
+            ...template,
+            // Normalize apps: backend may return string[] (legacy) or {name,required}[]
+            apps: template.apps.map((a: unknown) =>
+              typeof a === "string" ? { name: a, required: true } : a
+            ) as TemplateAppEntryPayload[],
+            min_optional_apps: template.min_optional_apps ?? 0,
+          }));
         setMarketplaceTemplates(visibleTemplates);
         setSelectedMarketplaceTemplateName((current) => {
           if (current && visibleTemplates.some((template) => template.name === current)) {
@@ -915,6 +934,8 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       createWorkspace,
       deleteWorkspace,
       removeInstalledApp,
+      selectedApps,
+      setSelectedApps,
       pendingIntegrations,
       isResolvingIntegrations,
       resolveIntegrationsBeforeCreate,
@@ -962,6 +983,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       createWorkspace,
       deleteWorkspace,
       removeInstalledApp,
+      selectedApps,
       pendingIntegrations,
       isResolvingIntegrations,
       resolveIntegrationsBeforeCreate,

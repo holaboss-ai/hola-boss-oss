@@ -25,7 +25,12 @@ export const FALLBACK_TEMPLATES: TemplateMetadataPayload[] = [
     allowed_user_ids: [],
     icon: "Megaphone01Icon",
     emoji: emojiUrl("Megaphone"),
-    apps: ["twitter", "linkedin", "reddit"],
+    apps: [
+      { name: "twitter", required: false },
+      { name: "linkedin", required: false },
+      { name: "reddit", required: false },
+    ],
+    min_optional_apps: 1,
     tags: ["social media", "automation", "content"],
     category: "marketing",
     long_description:
@@ -50,7 +55,8 @@ export const FALLBACK_TEMPLATES: TemplateMetadataPayload[] = [
     allowed_user_ids: [],
     icon: "Mail01Icon",
     emoji: emojiUrl("E-mail"),
-    apps: ["gmail"],
+    apps: [{ name: "gmail", required: true }],
+    min_optional_apps: 0,
     tags: ["gmail", "email", "mcp"],
     category: "productivity",
     long_description:
@@ -74,7 +80,12 @@ export const FALLBACK_TEMPLATES: TemplateMetadataPayload[] = [
     allowed_user_ids: [],
     icon: "StartUp02Icon",
     emoji: emojiUrl("Rocket"),
-    apps: ["github", "twitter"],
+    apps: [
+      { name: "github", required: true },
+      { name: "twitter", required: false },
+      { name: "linkedin", required: false },
+    ],
+    min_optional_apps: 0,
     tags: ["developer", "github", "content"],
     category: "marketing",
     long_description:
@@ -98,6 +109,7 @@ export const FALLBACK_TEMPLATES: TemplateMetadataPayload[] = [
     icon: "StartUp02Icon",
     emoji: emojiUrl("Glowing%20star"),
     apps: [],
+    min_optional_apps: 0,
     tags: ["starter", "developer"],
     category: "featured",
     long_description:
@@ -117,7 +129,11 @@ export const FALLBACK_TEMPLATES: TemplateMetadataPayload[] = [
     allowed_user_ids: [],
     icon: "Contact02Icon",
     emoji: emojiUrl("Handshake"),
-    apps: ["gmail", "sheets"],
+    apps: [
+      { name: "gmail", required: true },
+      { name: "sheets", required: true },
+    ],
+    min_optional_apps: 0,
     tags: ["crm", "email", "contacts"],
     category: "productivity",
     long_description:

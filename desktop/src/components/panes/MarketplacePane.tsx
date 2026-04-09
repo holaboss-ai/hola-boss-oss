@@ -169,7 +169,7 @@ export function MarketplacePane() {
                     <KitEmoji emoji={detailTemplate.emoji} size={28} />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[13px] font-medium text-foreground">{detailTemplate.name}</div>
-                      <div className="truncate text-[11px] text-muted-foreground/72">{detailTemplate.apps.join(", ")}</div>
+                      <div className="truncate text-[11px] text-muted-foreground/72">{detailTemplate.apps.map((a) => a.name).join(", ")}</div>
                     </div>
                     <button
                       type="button"
