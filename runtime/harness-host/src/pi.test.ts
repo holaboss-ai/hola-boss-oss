@@ -559,7 +559,7 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
   );
 });
 
-test("createPiTodoToolDefinitions persists session todo state", async () => {
+test("createPiTodoToolDefinitions persists phased session todo state", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-todo-"));
   const stateDir = path.join(root, ".holaboss", "pi-agent");
   const [todoRead, todoWrite] = createPiTodoToolDefinitions({
@@ -575,35 +575,115 @@ test("createPiTodoToolDefinitions persists session todo state", async () => {
   const writeResult = await todoWrite.execute(
     "call-write",
     {
-      todos: [
-        { content: "Inspect todowrite wiring", status: "in_progress" },
-        { title: "Add tests" },
-        { text: "Verify session persistence", done: true },
+      ops: [
+        {
+          op: "replace",
+          phases: [
+            {
+              name: "Investigation",
+              tasks: [
+                {
+                  content: "Inspect todowrite wiring",
+                  status: "in_progress",
+                  details: "runtime/harness-host/src/pi.ts",
+                },
+                {
+                  content: "Add tests",
+                },
+              ],
+            },
+            {
+              name: "Verification",
+              tasks: [
+                {
+                  content: "Verify session persistence",
+                },
+              ],
+            },
+          ],
+        },
       ],
     },
     undefined,
     undefined,
     {} as never
   );
-  assert.match(textBlock(writeResult).text, /Saved 3 todo items\./);
+  assert.match(textBlock(writeResult).text, /Updated todo plan with 3 tasks across 2 phases\./);
 
   const rereadResult = await todoRead.execute("call-read", {}, undefined, undefined, {} as never);
+  assert.deepEqual((rereadResult.details as { phases: unknown[] }).phases, [
+    {
+      id: "phase-1",
+      name: "Investigation",
+      tasks: [
+        {
+          id: "task-1",
+          content: "Inspect todowrite wiring",
+          status: "in_progress",
+          details: "runtime/harness-host/src/pi.ts",
+        },
+        {
+          id: "task-2",
+          content: "Add tests",
+          status: "pending",
+        },
+      ],
+    },
+    {
+      id: "phase-2",
+      name: "Verification",
+      tasks: [
+        {
+          id: "task-3",
+          content: "Verify session persistence",
+          status: "pending",
+        },
+      ],
+    },
+  ]);
   assert.deepEqual((rereadResult.details as { todos: unknown[] }).todos, [
     { content: "Inspect todowrite wiring", status: "in_progress" },
     { content: "Add tests", status: "pending" },
-    { content: "Verify session persistence", status: "completed" },
+    { content: "Verify session persistence", status: "pending" },
   ]);
 
   const persistedStatePath = path.join(stateDir, "todos", "session-1.json");
   assert.deepEqual(JSON.parse(fs.readFileSync(persistedStatePath, "utf8")), {
-    version: 1,
+    version: 2,
     session_id: "session-1",
     updated_at: (rereadResult.details as { updated_at: string }).updated_at,
-    todos: [
-      { content: "Inspect todowrite wiring", status: "in_progress" },
-      { content: "Add tests", status: "pending" },
-      { content: "Verify session persistence", status: "completed" },
+    phases: [
+      {
+        id: "phase-1",
+        name: "Investigation",
+        tasks: [
+          {
+            id: "task-1",
+            content: "Inspect todowrite wiring",
+            status: "in_progress",
+            details: "runtime/harness-host/src/pi.ts",
+          },
+          {
+            id: "task-2",
+            content: "Add tests",
+            status: "pending",
+          },
+        ],
+      },
+      {
+        id: "phase-2",
+        name: "Verification",
+        tasks: [
+          {
+            id: "task-3",
+            content: "Verify session persistence",
+            status: "pending",
+          },
+        ],
+      },
     ],
+    next_task_id: 4,
+    next_phase_id: 3,
   });
 
   const [otherSessionRead] = createPiTodoToolDefinitions({
@@ -613,10 +693,136 @@ test("createPiTodoToolDefinitions persists session todo state", async () => {
   const otherSessionResult = await otherSessionRead.execute("call-read-other", {}, undefined, undefined, {} as never);
   assert.deepEqual((otherSessionResult.details as { todos: unknown[] }).todos, []);
 
-  await todoWrite.execute("call-clear", { todos: [] }, undefined, undefined, {} as never);
+  await todoWrite.execute(
+    "call-clear",
+    {
+      ops: [
+        {
+          op: "replace",
+          phases: [],
+        },
+      ],
+    },
+    undefined,
+    undefined,
+    {} as never
+  );
   const clearedResult = await todoRead.execute("call-read-cleared", {}, undefined, undefined, {} as never);
   assert.equal(textBlock(clearedResult).text, "No todo items are currently recorded for this session.");
   assert.deepEqual((clearedResult.details as { todos: unknown[] }).todos, []);
+});
+
+test("createPiTodoToolDefinitions applies incremental phased todo ops", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-todo-ops-"));
+  const stateDir = path.join(root, ".holaboss", "pi-agent");
+  const [todoRead, todoWrite] = createPiTodoToolDefinitions({
+    stateDir,
+    sessionId: "session-1",
+  });
+
+  await todoWrite.execute(
+    "call-replace",
+    {
+      ops: [
+        {
+          op: "replace",
+          phases: [
+            {
+              name: "Implementation",
+              tasks: [{ content: "Wire host todo state" }, { content: "Run host tests" }],
+            },
+          ],
+        },
+      ],
+    },
+    undefined,
+    undefined,
+    {} as never
+  );
+
+  await todoWrite.execute(
+    "call-update",
+    {
+      ops: [
+        { op: "update", id: "task-1", status: "completed" },
+        { op: "add_phase", name: "Verification", tasks: [{ content: "Smoke test runtime flows" }] },
+        { op: "add_task", phase: "phase-2", content: "Document the phased todo contract" },
+        { op: "remove_task", id: "task-2" },
+      ],
+    },
+    undefined,
+    undefined,
+    {} as never
+  );
+
+  const rereadResult = await todoRead.execute("call-read", {}, undefined, undefined, {} as never);
+  assert.deepEqual((rereadResult.details as { phases: unknown[] }).phases, [
+    {
+      id: "phase-1",
+      name: "Implementation",
+      tasks: [
+        {
+          id: "task-1",
+          content: "Wire host todo state",
+          status: "completed",
+        },
+      ],
+    },
+    {
+      id: "phase-2",
+      name: "Verification",
+      tasks: [
+        {
+          id: "task-3",
+          content: "Smoke test runtime flows",
+          status: "in_progress",
+        },
+        {
+          id: "task-4",
+          content: "Document the phased todo contract",
+          status: "pending",
+        },
+      ],
+    },
+  ]);
+  assert.deepEqual((rereadResult.details as { todos: unknown[] }).todos, [
+    { content: "Wire host todo state", status: "completed" },
+    { content: "Smoke test runtime flows", status: "in_progress" },
+    { content: "Document the phased todo contract", status: "pending" },
+  ]);
+});
+
+test("createPiTodoToolDefinitions rejects legacy todo payload aliases", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-todo-invalid-"));
+  const stateDir = path.join(root, ".holaboss", "pi-agent");
+  const [, todoWrite] = createPiTodoToolDefinitions({
+    stateDir,
+    sessionId: "session-1",
+  });
+
+  await assert.rejects(
+    () =>
+      todoWrite.execute(
+        "call-invalid",
+        {
+          ops: [
+            {
+              op: "replace",
+              phases: [
+                {
+                  title: "Implementation",
+                  tasks: [{ title: "Wire host todo state" }],
+                },
+              ],
+            },
+          ],
+        },
+        undefined,
+        undefined,
+        {} as never
+      ),
+    /Todo phases require a non-empty `name`\./
+  );
 });
 
 test("buildPiMcpServerBindings converts remote and local MCP payloads into mcporter definitions", () => {

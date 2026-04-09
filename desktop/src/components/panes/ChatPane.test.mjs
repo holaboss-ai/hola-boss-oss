@@ -372,3 +372,38 @@ test("chat pane can jump to a requested sub-session run", async () => {
     /const requestedOpenSessionId =[\s\S]*sessionOpenRequest\?\.sessionId \|\| ""[\s\S]*\.trim\(\);[\s\S]*const nextSessionId =[\s\S]*hasSessionJumpRequest && requestedSessionId[\s\S]*\? requestedSessionId[\s\S]*: requestedOpenSessionId\)[\s\S]*preferredSessionId\(selectedWorkspaceRef\.current, runtimeStates\.items\);/,
   );
 });
+
+test("chat pane restores the current todo plan from session output events and keeps it live from tool calls", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const \[currentTodoPlan, setCurrentTodoPlan\] = useState<ChatTodoPlan \| null>\(\s*null,\s*\);/,
+  );
+  assert.match(
+    source,
+    /function todoPlanFromOutputEvents\(outputEvents: SessionOutputEventPayload\[\]\)/,
+  );
+  assert.match(
+    source,
+    /setCurrentTodoPlan\(todoPlanFromOutputEvents\(outputEventHistory\.items\)\);/,
+  );
+  assert.match(
+    source,
+    /const nextTodoPlan = todoPlanFromToolPayload\(eventPayload\);[\s\S]*if \(nextTodoPlan !== undefined\) \{\s*setCurrentTodoPlan\(nextTodoPlan\);\s*\}/,
+  );
+  assert.match(source, /clearSessionView\(\) \{[\s\S]*setCurrentTodoPlan\(null\);/);
+});
+
+test("chat pane renders a collapsed current todo panel above the composer", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /function CurrentTodoPanel\(/);
+  assert.match(source, /<span>Current working todo<\/span>/);
+  assert.match(
+    source,
+    /<div className="space-y-3">[\s\S]*\{currentTodoPlan \? \(\s*<CurrentTodoPanel[\s\S]*todoPlan=\{currentTodoPlan\}[\s\S]*expanded=\{todoPanelExpanded\}[\s\S]*onToggle=\{\(\) =>[\s\S]*setTodoPanelExpanded\(\(value\) => !value\)[\s\S]*\}\s*\/>\s*\) : null\}[\s\S]*<Composer/,
+  );
+  assert.match(source, /aria-expanded=\{expanded\}/);
+  assert.match(source, /All tracked todo items are complete\./);
+});

@@ -74,22 +74,33 @@ const PI_MAX_EXTRACTED_TEXT_CHARS = 120_000;
 const PI_MCP_DISCOVERY_RETRY_INTERVAL_MS = 250;
 const PI_MCP_DISCOVERY_MAX_WAIT_MS = 10000;
 const PI_TODO_STATE_DIR = "todos";
-const PI_TODO_STATE_VERSION = 1;
-const PI_TODO_STATUSES = ["pending", "in_progress", "completed"] as const;
+const PI_TODO_STATE_VERSION = 2;
+const PI_TODO_STATUSES = ["pending", "in_progress", "completed", "abandoned"] as const;
 const require = createRequire(import.meta.url);
 
 type PiTodoStatus = (typeof PI_TODO_STATUSES)[number];
 
 interface PiTodoItem {
+  id: string;
   content: string;
   status: PiTodoStatus;
+  notes?: string;
+  details?: string;
+}
+
+interface PiTodoPhase {
+  id: string;
+  name: string;
+  tasks: PiTodoItem[];
 }
 
 interface PiTodoState {
   version: number;
   session_id: string;
   updated_at: string | null;
-  todos: PiTodoItem[];
+  phases: PiTodoPhase[];
+  next_task_id: number;
+  next_phase_id: number;
 }
 
 const PI_TEXT_ATTACHMENT_MIME_TYPES = new Set([
@@ -734,7 +745,9 @@ function emptyPiTodoState(sessionId: string): PiTodoState {
     version: PI_TODO_STATE_VERSION,
     session_id: sessionId,
     updated_at: null,
-    todos: [],
+    phases: [],
+    next_task_id: 1,
+    next_phase_id: 1,
   };
 }
 
@@ -744,31 +757,149 @@ function normalizePiTodoStatus(value: unknown): PiTodoStatus | null {
     case "pending":
     case "in_progress":
     case "completed":
+    case "abandoned":
       return normalized;
     default:
       return null;
   }
 }
 
-function normalizePiTodoItem(value: unknown): PiTodoItem | null {
-  if (typeof value === "string") {
-    const content = optionalTrimmedString(value);
-    return content ? { content, status: "pending" } : null;
+function clonePiTodoPhases(phases: PiTodoPhase[]): PiTodoPhase[] {
+  return phases.map((phase) => ({
+    id: phase.id,
+    name: phase.name,
+    tasks: phase.tasks.map((task) => ({ ...task })),
+  }));
+}
+
+function countPiTodoTasks(phases: PiTodoPhase[]): number {
+  return phases.reduce((total, phase) => total + phase.tasks.length, 0);
+}
+
+function flattenPiTodoSummaries(phases: PiTodoPhase[]): Array<{ content: string; status: PiTodoStatus }> {
+  return phases.flatMap((phase) =>
+    phase.tasks.map((task) => ({
+      content: task.content,
+      status: task.status,
+    }))
+  );
+}
+
+function nextPiTodoIds(phases: PiTodoPhase[]): { nextTaskId: number; nextPhaseId: number } {
+  let maxTaskId = 0;
+  let maxPhaseId = 0;
+
+  for (const phase of phases) {
+    const phaseMatch = /^phase-(\d+)$/u.exec(phase.id);
+    if (phaseMatch) {
+      maxPhaseId = Math.max(maxPhaseId, Number.parseInt(phaseMatch[1] ?? "0", 10));
+    }
+    for (const task of phase.tasks) {
+      const taskMatch = /^task-(\d+)$/u.exec(task.id);
+      if (taskMatch) {
+        maxTaskId = Math.max(maxTaskId, Number.parseInt(taskMatch[1] ?? "0", 10));
+      }
+    }
   }
+
+  return { nextTaskId: maxTaskId + 1, nextPhaseId: maxPhaseId + 1 };
+}
+
+function normalizePersistedPiTodoItem(value: unknown, fallbackId: string): PiTodoItem | null {
   if (!isRecord(value)) {
     return null;
   }
-
   const content = firstNonEmptyString(value.content, value.text, value.task, value.title);
   if (!content) {
     return null;
   }
+  const status = normalizePiTodoStatus(value.status) ?? "pending";
+  const notes = optionalTrimmedString(value.notes) ?? undefined;
+  const details = optionalTrimmedString(value.details) ?? undefined;
+  const id = firstNonEmptyString(value.id, fallbackId) ?? fallbackId;
+  return {
+    id,
+    content,
+    status,
+    ...(notes ? { notes } : {}),
+    ...(details ? { details } : {}),
+  };
+}
 
-  const status =
-    normalizePiTodoStatus(value.status) ??
-    (typeof value.done === "boolean" ? (value.done ? "completed" : "pending") : null) ??
-    "pending";
-  return { content, status };
+function normalizePersistedPiTodoPhase(
+  value: unknown,
+  fallbackId: string,
+  nextTaskId: number
+): { phase: PiTodoPhase | null; nextTaskId: number } {
+  if (!isRecord(value)) {
+    return { phase: null, nextTaskId };
+  }
+  const name = firstNonEmptyString(value.name, value.title);
+  if (!name) {
+    return { phase: null, nextTaskId };
+  }
+  const tasks: PiTodoItem[] = [];
+  let localNextTaskId = nextTaskId;
+  if (Array.isArray(value.tasks)) {
+    for (const rawTask of value.tasks) {
+      const task = normalizePersistedPiTodoItem(rawTask, `task-${localNextTaskId}`);
+      localNextTaskId += 1;
+      if (task) {
+        tasks.push(task);
+      }
+    }
+  }
+  return {
+    phase: {
+      id: firstNonEmptyString(value.id, fallbackId) ?? fallbackId,
+      name,
+      tasks,
+    },
+    nextTaskId: localNextTaskId,
+  };
+}
+
+function normalizeLegacyPiTodoPhases(todos: unknown[]): PiTodoPhase[] {
+  const tasks: PiTodoItem[] = [];
+  let nextTaskId = 1;
+  for (const rawTask of todos) {
+    const task = normalizePersistedPiTodoItem(rawTask, `task-${nextTaskId}`);
+    nextTaskId += 1;
+    if (task) {
+      tasks.push(task);
+    }
+  }
+  return tasks.length > 0
+    ? [
+        {
+          id: "phase-1",
+          name: "Tasks",
+          tasks,
+        },
+      ]
+    : [];
+}
+
+function normalizeInProgressPiTodoTask(phases: PiTodoPhase[]): void {
+  const orderedTasks = phases.flatMap((phase) => phase.tasks);
+  if (orderedTasks.length === 0) {
+    return;
+  }
+
+  const inProgressTasks = orderedTasks.filter((task) => task.status === "in_progress");
+  if (inProgressTasks.length > 1) {
+    for (const task of inProgressTasks.slice(1)) {
+      task.status = "pending";
+    }
+  }
+  if (inProgressTasks.length > 0) {
+    return;
+  }
+
+  const firstPendingTask = orderedTasks.find((task) => task.status === "pending");
+  if (firstPendingTask) {
+    firstPendingTask.status = "in_progress";
+  }
 }
 
 function readPiTodoState(stateDir: string, sessionId: string): PiTodoState {
@@ -790,27 +921,56 @@ function readPiTodoState(stateDir: string, sessionId: string): PiTodoState {
     return emptyPiTodoState(sessionId);
   }
 
+  const normalizedSessionId = firstNonEmptyString(parsed.session_id, sessionId) ?? sessionId;
+  let phases: PiTodoPhase[] = [];
+  let nextTaskId = 1;
+
+  if (Array.isArray(parsed.phases)) {
+    for (const rawPhase of parsed.phases) {
+      const normalized = normalizePersistedPiTodoPhase(rawPhase, `phase-${phases.length + 1}`, nextTaskId);
+      nextTaskId = normalized.nextTaskId;
+      if (normalized.phase) {
+        phases.push(normalized.phase);
+      }
+    }
+  } else if (Array.isArray(parsed.todos)) {
+    phases = normalizeLegacyPiTodoPhases(parsed.todos);
+  }
+
+  normalizeInProgressPiTodoTask(phases);
+  const computedIds = nextPiTodoIds(phases);
   return {
     version:
       typeof parsed.version === "number" && Number.isFinite(parsed.version)
         ? parsed.version
         : PI_TODO_STATE_VERSION,
-    session_id: firstNonEmptyString(parsed.session_id, sessionId) ?? sessionId,
+    session_id: normalizedSessionId,
     updated_at: optionalTrimmedString(parsed.updated_at) ?? null,
-    todos: Array.isArray(parsed.todos)
-      ? parsed.todos.map((item) => normalizePiTodoItem(item)).filter((item): item is PiTodoItem => Boolean(item))
-      : [],
+    phases,
+    next_task_id:
+      typeof parsed.next_task_id === "number" && Number.isFinite(parsed.next_task_id)
+        ? Math.max(parsed.next_task_id, computedIds.nextTaskId)
+        : computedIds.nextTaskId,
+    next_phase_id:
+      typeof parsed.next_phase_id === "number" && Number.isFinite(parsed.next_phase_id)
+        ? Math.max(parsed.next_phase_id, computedIds.nextPhaseId)
+        : computedIds.nextPhaseId,
   };
 }
 
-function writePiTodoState(params: { stateDir: string; sessionId: string; todos: PiTodoItem[] }): PiTodoState {
+function writePiTodoState(params: { stateDir: string; sessionId: string; phases: PiTodoPhase[] }): PiTodoState {
   const statePath = resolvePiTodoStatePath(params.stateDir, params.sessionId);
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
+  const phases = clonePiTodoPhases(params.phases);
+  normalizeInProgressPiTodoTask(phases);
+  const ids = nextPiTodoIds(phases);
   const nextState: PiTodoState = {
     version: PI_TODO_STATE_VERSION,
     session_id: params.sessionId,
     updated_at: new Date().toISOString(),
-    todos: params.todos,
+    phases,
+    next_task_id: ids.nextTaskId,
+    next_phase_id: ids.nextPhaseId,
   };
   const tempPath = `${statePath}.tmp`;
   fs.writeFileSync(tempPath, `${JSON.stringify(nextState, null, 2)}\n`, "utf8");
@@ -818,44 +978,292 @@ function writePiTodoState(params: { stateDir: string; sessionId: string; todos: 
   return nextState;
 }
 
-function todoItemsFromWriteParams(toolParams: unknown): unknown[] | null {
-  if (!isRecord(toolParams)) {
-    return null;
+function parsePiTodoInputTask(value: unknown, fallbackId: string): PiTodoItem {
+  if (!isRecord(value)) {
+    throw new Error("Todo task entries must be objects.");
   }
-  if (Array.isArray(toolParams.todos)) {
-    return toolParams.todos;
+  const content = optionalTrimmedString(value.content);
+  if (!content) {
+    throw new Error("Todo tasks require a non-empty `content`.");
   }
-  if (Array.isArray(toolParams.items)) {
-    return toolParams.items;
+  const status = value.status === undefined ? "pending" : normalizePiTodoStatus(value.status);
+  if (!status) {
+    throw new Error(`Unsupported todo status: ${String(value.status)}`);
   }
-  if (firstNonEmptyString(toolParams.content, toolParams.text, toolParams.task, toolParams.title)) {
-    return [toolParams];
-  }
-  return null;
+  const notes = optionalTrimmedString(value.notes) ?? undefined;
+  const details = optionalTrimmedString(value.details) ?? undefined;
+  const id = firstNonEmptyString(value.id, fallbackId) ?? fallbackId;
+  return {
+    id,
+    content,
+    status,
+    ...(notes ? { notes } : {}),
+    ...(details ? { details } : {}),
+  };
 }
 
-function parsePiTodoWriteTodos(toolParams: unknown): PiTodoItem[] {
-  const rawTodos = todoItemsFromWriteParams(toolParams);
-  if (!rawTodos) {
-    throw new Error("Todo Write requires a `todos` array.");
+function buildPiTodoPhaseFromInput(
+  value: unknown,
+  phaseId: string,
+  nextTaskId: number
+): { phase: PiTodoPhase; nextTaskId: number } {
+  if (!isRecord(value)) {
+    throw new Error("Todo phases must be objects.");
   }
-  if (rawTodos.length === 0) {
-    return [];
+  const name = optionalTrimmedString(value.name);
+  if (!name) {
+    throw new Error("Todo phases require a non-empty `name`.");
   }
-  const todos = rawTodos.map((item) => normalizePiTodoItem(item)).filter((item): item is PiTodoItem => Boolean(item));
-  if (todos.length === 0) {
-    throw new Error("Todo Write requires at least one non-empty todo item.");
+  const tasks: PiTodoItem[] = [];
+  let localNextTaskId = nextTaskId;
+  const rawTasks = Array.isArray(value.tasks) ? value.tasks : [];
+  for (const rawTask of rawTasks) {
+    tasks.push(parsePiTodoInputTask(rawTask, `task-${localNextTaskId}`));
+    localNextTaskId += 1;
   }
-  return todos;
+  return {
+    phase: {
+      id: firstNonEmptyString(value.id, phaseId) ?? phaseId,
+      name,
+      tasks,
+    },
+    nextTaskId: localNextTaskId,
+  };
 }
 
-function formatPiTodoListText(todos: PiTodoItem[]): string {
-  if (todos.length === 0) {
+function parsePiTodoWriteOps(toolParams: unknown): Array<Record<string, unknown>> {
+  if (!isRecord(toolParams) || !Array.isArray(toolParams.ops)) {
+    throw new Error("Todo Write requires an `ops` array.");
+  }
+  if (toolParams.ops.length === 0) {
+    throw new Error("Todo Write requires at least one op.");
+  }
+  return toolParams.ops.map((op) => {
+    if (!isRecord(op)) {
+      throw new Error("Todo ops must be objects.");
+    }
+    return op;
+  });
+}
+
+function findPiTodoTask(phases: PiTodoPhase[], id: string): PiTodoItem | undefined {
+  for (const phase of phases) {
+    const task = phase.tasks.find((entry) => entry.id === id);
+    if (task) {
+      return task;
+    }
+  }
+  return undefined;
+}
+
+function applyPiTodoOps(
+  currentState: PiTodoState,
+  ops: Array<Record<string, unknown>>
+): { phases: PiTodoPhase[]; nextTaskId: number; nextPhaseId: number } {
+  const nextState = {
+    phases: clonePiTodoPhases(currentState.phases),
+    nextTaskId: currentState.next_task_id,
+    nextPhaseId: currentState.next_phase_id,
+  };
+
+  for (const op of ops) {
+    const opName = firstNonEmptyString(op.op);
+    switch (opName) {
+      case "replace": {
+        if (!Array.isArray(op.phases)) {
+          throw new Error("Todo replace requires a `phases` array.");
+        }
+        nextState.phases = [];
+        nextState.nextTaskId = 1;
+        nextState.nextPhaseId = 1;
+        for (const rawPhase of op.phases) {
+          const built = buildPiTodoPhaseFromInput(rawPhase, `phase-${nextState.nextPhaseId}`, nextState.nextTaskId);
+          nextState.nextPhaseId += 1;
+          nextState.nextTaskId = built.nextTaskId;
+          nextState.phases.push(built.phase);
+        }
+        break;
+      }
+      case "add_phase": {
+        const built = buildPiTodoPhaseFromInput(op, `phase-${nextState.nextPhaseId}`, nextState.nextTaskId);
+        nextState.nextPhaseId += 1;
+        nextState.nextTaskId = built.nextTaskId;
+        nextState.phases.push(built.phase);
+        break;
+      }
+      case "add_task": {
+        const phaseId = firstNonEmptyString(op.phase);
+        if (!phaseId) {
+          throw new Error("Todo add_task requires a `phase` id.");
+        }
+        const phase = nextState.phases.find((entry) => entry.id === phaseId);
+        if (!phase) {
+          throw new Error(`Todo phase "${phaseId}" was not found.`);
+        }
+        phase.tasks.push(parsePiTodoInputTask(op, `task-${nextState.nextTaskId}`));
+        nextState.nextTaskId += 1;
+        break;
+      }
+      case "update": {
+        const taskId = firstNonEmptyString(op.id);
+        if (!taskId) {
+          throw new Error("Todo update requires an `id`.");
+        }
+        const task = findPiTodoTask(nextState.phases, taskId);
+        if (!task) {
+          throw new Error(`Todo task "${taskId}" was not found.`);
+        }
+        if (op.status !== undefined) {
+          const status = normalizePiTodoStatus(op.status);
+          if (!status) {
+            throw new Error(`Unsupported todo status: ${String(op.status)}`);
+          }
+          task.status = status;
+        }
+        if (Object.prototype.hasOwnProperty.call(op, "content")) {
+          const content = optionalTrimmedString(op.content);
+          if (!content) {
+            throw new Error("Todo update requires a non-empty `content` when provided.");
+          }
+          task.content = content;
+        }
+        if (Object.prototype.hasOwnProperty.call(op, "notes")) {
+          const notes = optionalTrimmedString(op.notes);
+          if (notes) {
+            task.notes = notes;
+          } else {
+            delete task.notes;
+          }
+        }
+        if (Object.prototype.hasOwnProperty.call(op, "details")) {
+          const details = optionalTrimmedString(op.details);
+          if (details) {
+            task.details = details;
+          } else {
+            delete task.details;
+          }
+        }
+        break;
+      }
+      case "remove_task": {
+        const taskId = firstNonEmptyString(op.id);
+        if (!taskId) {
+          throw new Error("Todo remove_task requires an `id`.");
+        }
+        let removed = false;
+        for (const phase of nextState.phases) {
+          const taskIndex = phase.tasks.findIndex((task) => task.id === taskId);
+          if (taskIndex === -1) {
+            continue;
+          }
+          phase.tasks.splice(taskIndex, 1);
+          removed = true;
+          break;
+        }
+        if (!removed) {
+          throw new Error(`Todo task "${taskId}" was not found.`);
+        }
+        break;
+      }
+      default:
+        throw new Error(`Unsupported todo op "${String(op.op ?? "")}".`);
+    }
+    normalizeInProgressPiTodoTask(nextState.phases);
+  }
+
+  return nextState;
+}
+
+function currentPiTodoPhaseIndex(phases: PiTodoPhase[]): number {
+  const currentIndex = phases.findIndex((phase) =>
+    phase.tasks.some((task) => task.status === "pending" || task.status === "in_progress")
+  );
+  if (currentIndex !== -1) {
+    return currentIndex;
+  }
+  return phases.length === 0 ? -1 : phases.length - 1;
+}
+
+function formatPiTodoMarker(status: PiTodoStatus): string {
+  switch (status) {
+    case "completed":
+      return "[x]";
+    case "in_progress":
+      return "[>]";
+    case "abandoned":
+      return "[-]";
+    default:
+      return "[ ]";
+  }
+}
+
+function formatPiTodoListText(phases: PiTodoPhase[]): string {
+  const taskCount = countPiTodoTasks(phases);
+  if (taskCount === 0) {
     return "No todo items are currently recorded for this session.";
   }
-  const header = `Current session todo list (${todos.length} item${todos.length === 1 ? "" : "s"}):`;
-  const lines = todos.map((todo, index) => `${index + 1}. [${todo.status}] ${todo.content}`);
-  return [header, ...lines].join("\n");
+
+  const lines = [
+    `Current session todo plan (${taskCount} task${taskCount === 1 ? "" : "s"} across ${phases.length} phase${phases.length === 1 ? "" : "s"}):`,
+  ];
+  for (const [index, phase] of phases.entries()) {
+    const completedTasks = phase.tasks.filter(
+      (task) => task.status === "completed" || task.status === "abandoned"
+    ).length;
+    lines.push(`Phase ${index + 1}/${phases.length} "${phase.name}" - ${completedTasks}/${phase.tasks.length} complete`);
+    for (const task of phase.tasks) {
+      lines.push(`  ${formatPiTodoMarker(task.status)} ${task.id} ${task.content}`);
+      if (task.status === "in_progress" && task.details) {
+        for (const detailLine of task.details.split("\n")) {
+          lines.push(`      ${detailLine}`);
+        }
+      }
+    }
+  }
+  return lines.join("\n");
+}
+
+function formatPiTodoWriteText(nextState: PiTodoState): string {
+  const taskCount = countPiTodoTasks(nextState.phases);
+  if (taskCount === 0) {
+    return "Todo plan cleared.";
+  }
+
+  const incomplete = nextState.phases.flatMap((phase) =>
+    phase.tasks
+      .filter((task) => task.status === "pending" || task.status === "in_progress")
+      .map((task) => ({ ...task, phaseName: phase.name }))
+  );
+  const currentPhaseIndex = currentPiTodoPhaseIndex(nextState.phases);
+  const lines = [
+    `Updated todo plan with ${taskCount} task${taskCount === 1 ? "" : "s"} across ${nextState.phases.length} phase${nextState.phases.length === 1 ? "" : "s"}.`,
+  ];
+
+  if (incomplete.length === 0) {
+    lines.push("Remaining items: none.");
+  } else {
+    lines.push(`Remaining items (${incomplete.length}):`);
+    for (const task of incomplete) {
+      lines.push(`  - ${task.id} ${task.content} [${task.status}] (${task.phaseName})`);
+      if (task.status === "in_progress" && task.details) {
+        for (const detailLine of task.details.split("\n")) {
+          lines.push(`      ${detailLine}`);
+        }
+      }
+    }
+  }
+
+  if (currentPhaseIndex !== -1) {
+    const currentPhase = nextState.phases[currentPhaseIndex];
+    const completedTasks = currentPhase.tasks.filter(
+      (task) => task.status === "completed" || task.status === "abandoned"
+    ).length;
+    lines.push(`Current phase: ${currentPhase.name} (${completedTasks}/${currentPhase.tasks.length} complete).`);
+  }
+
+  lines.push("");
+  lines.push(formatPiTodoListText(nextState.phases));
+  return lines.join("\n");
 }
 
 function todoReadParametersSchema(): Record<string, unknown> {
@@ -870,29 +1278,107 @@ function todoWriteParametersSchema(): Record<string, unknown> {
   return {
     type: "object",
     properties: {
-      todos: {
+      ops: {
         type: "array",
-        description:
-          "Replace the current session todo list with this full list. Use an empty array to clear the current todo list.",
+        description: "Incremental phased todo operations over the current session plan.",
         items: {
-          type: "object",
-          properties: {
-            content: {
-              type: "string",
-              description: "Short standalone task description.",
+          anyOf: [
+            {
+              type: "object",
+              properties: {
+                op: { const: "replace" },
+                phases: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      name: { type: "string" },
+                      tasks: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            content: { type: "string" },
+                            status: { type: "string", enum: [...PI_TODO_STATUSES] },
+                            notes: { type: "string" },
+                            details: { type: "string" },
+                          },
+                          required: ["content"],
+                          additionalProperties: false,
+                        },
+                      },
+                    },
+                    required: ["name"],
+                    additionalProperties: false,
+                  },
+                },
+              },
+              required: ["op", "phases"],
+              additionalProperties: false,
             },
-            status: {
-              type: "string",
-              enum: [...PI_TODO_STATUSES],
-              description: "Todo status.",
+            {
+              type: "object",
+              properties: {
+                op: { const: "add_phase" },
+                name: { type: "string" },
+                tasks: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      content: { type: "string" },
+                      status: { type: "string", enum: [...PI_TODO_STATUSES] },
+                      notes: { type: "string" },
+                      details: { type: "string" },
+                    },
+                    required: ["content"],
+                    additionalProperties: false,
+                  },
+                },
+              },
+              required: ["op", "name"],
+              additionalProperties: false,
             },
-          },
-          required: ["content", "status"],
-          additionalProperties: false,
+            {
+              type: "object",
+              properties: {
+                op: { const: "add_task" },
+                phase: { type: "string" },
+                content: { type: "string" },
+                status: { type: "string", enum: [...PI_TODO_STATUSES] },
+                notes: { type: "string" },
+                details: { type: "string" },
+              },
+              required: ["op", "phase", "content"],
+              additionalProperties: false,
+            },
+            {
+              type: "object",
+              properties: {
+                op: { const: "update" },
+                id: { type: "string" },
+                status: { type: "string", enum: [...PI_TODO_STATUSES] },
+                content: { type: "string" },
+                notes: { type: "string" },
+                details: { type: "string" },
+              },
+              required: ["op", "id"],
+              additionalProperties: false,
+            },
+            {
+              type: "object",
+              properties: {
+                op: { const: "remove_task" },
+                id: { type: "string" },
+              },
+              required: ["op", "id"],
+              additionalProperties: false,
+            },
+          ],
         },
       },
     },
-    required: ["todos"],
+    required: ["ops"],
     additionalProperties: false,
   };
 }
@@ -901,25 +1387,29 @@ export function createPiTodoToolDefinitions(params: { stateDir: string; sessionI
   const readDefinition: ToolDefinition = {
     name: "todoread",
     label: "Todo Read",
-    description: "Read the current working todo list for this session.",
+    description: "Read the current phased todo plan for this session.",
     parameters: todoReadParametersSchema() as never,
-    promptSnippet: "todoread: Read the current working todo list for this session.",
+    promptSnippet: "todoread: Read the current phased todo plan for this session.",
     promptGuidelines: [
-      "Use todoread before changing an existing plan when current todo state may matter.",
+      "Use todoread before changing an existing phased plan when current todo state may matter.",
     ],
     execute: async (_toolCallId, _toolParams, signal) => {
       if (signal?.aborted) {
         throw new Error("Todo Read aborted before execution");
       }
       const state = readPiTodoState(params.stateDir, params.sessionId);
+      const todoCount = countPiTodoTasks(state.phases);
       return {
-        content: [{ type: "text", text: formatPiTodoListText(state.todos) }],
+        content: [{ type: "text", text: formatPiTodoListText(state.phases) }],
         details: {
           invocation_type: "todo_read",
           session_id: state.session_id,
           updated_at: state.updated_at,
-          todo_count: state.todos.length,
-          todos: state.todos,
+          phase_count: state.phases.length,
+          task_count: todoCount,
+          todo_count: todoCount,
+          phases: state.phases,
+          todos: flattenPiTodoSummaries(state.phases),
         },
       };
     },
@@ -928,38 +1418,42 @@ export function createPiTodoToolDefinitions(params: { stateDir: string; sessionI
   const writeDefinition: ToolDefinition = {
     name: "todowrite",
     label: "Todo Write",
-    description: "Replace the current working todo list for this session.",
+    description: "Update the current phased todo plan for this session.",
     parameters: todoWriteParametersSchema() as never,
-    promptSnippet: "todowrite: Replace the current working todo list for this session.",
+    promptSnippet: "todowrite: Update the current phased todo plan for this session.",
     promptGuidelines: [
-      "Use todowrite for complex or long-running tasks that benefit from an explicit checklist.",
-      "When updating todos, write the full current list with statuses instead of appending fragments.",
-      "Prefer statuses pending, in_progress, and completed.",
+      "Use todowrite for complex or long-running tasks that benefit from an explicit phased plan.",
+      "Use `replace` for the initial plan and incremental ops such as `update` or `add_task` once work is underway.",
+      "Keep exactly one task `in_progress` whenever unfinished tasks remain.",
     ],
     execute: async (_toolCallId, toolParams, signal) => {
       if (signal?.aborted) {
         throw new Error("Todo Write aborted before execution");
       }
       const previousState = readPiTodoState(params.stateDir, params.sessionId);
-      const nextTodos = parsePiTodoWriteTodos(toolParams);
+      const ops = parsePiTodoWriteOps(toolParams);
+      const nextPlan = applyPiTodoOps(previousState, ops);
       const nextState = writePiTodoState({
         stateDir: params.stateDir,
         sessionId: params.sessionId,
-        todos: nextTodos,
+        phases: nextPlan.phases,
       });
-      const summary =
-        nextState.todos.length === 0
-          ? "Cleared the current session todo list."
-          : `Saved ${nextState.todos.length} todo item${nextState.todos.length === 1 ? "" : "s"}.`;
+      const previousTodoCount = countPiTodoTasks(previousState.phases);
+      const nextTodoCount = countPiTodoTasks(nextState.phases);
       return {
-        content: [{ type: "text", text: `${summary}\n\n${formatPiTodoListText(nextState.todos)}` }],
+        content: [{ type: "text", text: formatPiTodoWriteText(nextState) }],
         details: {
           invocation_type: "todo_write",
           session_id: nextState.session_id,
           updated_at: nextState.updated_at,
-          previous_todo_count: previousState.todos.length,
-          todo_count: nextState.todos.length,
-          todos: nextState.todos,
+          previous_phase_count: previousState.phases.length,
+          phase_count: nextState.phases.length,
+          previous_task_count: previousTodoCount,
+          task_count: nextTodoCount,
+          previous_todo_count: previousTodoCount,
+          todo_count: nextTodoCount,
+          phases: nextState.phases,
+          todos: flattenPiTodoSummaries(nextState.phases),
         },
       };
     },
