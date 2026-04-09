@@ -21,6 +21,12 @@ import type { RunnerExecutorLike } from "./runner-worker.js";
 
 const tempDirs: string[] = [];
 
+const MINIMAL_APP_FIXTURE = path.join(
+  path.dirname(new URL(import.meta.url).pathname),
+  "__fixtures__",
+  "minimal-app.tar.gz",
+);
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -3773,4 +3779,152 @@ test("isAllowedArchivePath accepts tmpdir and rejects arbitrary paths", async ()
   assert.equal(isAllowedArchivePath(tmp), true);
   assert.equal(isAllowedArchivePath("/etc/passwd"), false);
   assert.equal(isAllowedArchivePath(""), false);
+});
+
+test("POST /apps/install-archive rejects path outside allowed roots", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/install-archive",
+    payload: {
+      workspace_id: workspace.id,
+      app_id: "minimal",
+      archive_path: "/etc/passwd",
+    },
+  });
+  assert.equal(res.statusCode, 400);
+  const body = res.json();
+  const msg = body.error || body.detail || body.message || "";
+  assert.match(String(msg), /outside allowed roots/);
+
+  await app.close();
+  store.close();
+});
+
+test("POST /apps/install-archive rejects missing file", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/install-archive",
+    payload: {
+      workspace_id: workspace.id,
+      app_id: "minimal",
+      archive_path: path.join(os.tmpdir(), `does-not-exist-${Date.now()}.tar.gz`),
+    },
+  });
+  assert.equal(res.statusCode, 400);
+
+  await app.close();
+  store.close();
+});
+
+test("POST /apps/install-archive extracts tarball and registers in workspace.yaml", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const stagedArchive = path.join(os.tmpdir(), `install-archive-test-${Date.now()}.tar.gz`);
+  fs.copyFileSync(MINIMAL_APP_FIXTURE, stagedArchive);
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/install-archive",
+    payload: {
+      workspace_id: workspace.id,
+      app_id: "minimal",
+      archive_path: stagedArchive,
+    },
+  });
+  assert.equal(res.statusCode, 200);
+  const body = res.json();
+  assert.equal(body.app_id, "minimal");
+  assert.equal(body.status, "enabled");
+
+  const appDir = path.join(workspaceDir, "apps", "minimal");
+  assert.equal(fs.existsSync(path.join(appDir, "app.runtime.yaml")), true);
+  assert.equal(fs.existsSync(path.join(appDir, "package.json")), true);
+
+  const yamlBody = fs.readFileSync(path.join(workspaceDir, "workspace.yaml"), "utf8");
+  assert.match(yamlBody, /app_id:\s*["']?minimal["']?/);
+
+  fs.rmSync(stagedArchive, { force: true });
+
+  await app.close();
+  store.close();
+});
+
+test("POST /apps/install-archive rejects re-install when apps/{id} already exists", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  const preDir = path.join(workspaceDir, "apps", "minimal");
+  fs.mkdirSync(preDir, { recursive: true });
+  fs.writeFileSync(path.join(preDir, "sentinel.txt"), "existing");
+  const app = buildTestRuntimeApiServer({ store });
+
+  const stagedArchive = path.join(os.tmpdir(), `install-archive-reinstall-${Date.now()}.tar.gz`);
+  fs.copyFileSync(MINIMAL_APP_FIXTURE, stagedArchive);
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/install-archive",
+    payload: {
+      workspace_id: workspace.id,
+      app_id: "minimal",
+      archive_path: stagedArchive,
+    },
+  });
+  assert.equal(res.statusCode, 409);
+  fs.rmSync(stagedArchive, { force: true });
+
+  await app.close();
+  store.close();
 });
