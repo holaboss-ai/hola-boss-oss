@@ -60,6 +60,17 @@ interface ModelDurableCandidate {
   durableCandidate: DurableMemoryCandidate;
 }
 
+type IndexedMemoryScope =
+  | { kind: "workspace"; workspaceId: string }
+  | { kind: "preference" }
+  | { kind: "identity" };
+
+interface DurableMemoryPersistResult {
+  path: string;
+  changedIndexedScopes: IndexedMemoryScope[];
+  rootCountChanged: boolean;
+}
+
 interface TurnWritebackContext {
   compactedSummary: string | null;
   turnResult: TurnResultRecord;
@@ -76,6 +87,7 @@ export interface TurnMemoryWritebackModelContext {
 const RECENT_TURNS_LIMIT = 5;
 const RECENT_USER_MESSAGES_LIMIT = 6;
 const MODEL_EXTRACTION_INTERVAL_TURNS = 5;
+const MEMORY_INDEX_PAGE_SIZE = 250;
 const MODEL_EXTRACTION_MIN_CONFIDENCE = 0.82;
 const MODEL_EXTRACTION_MIN_CONFIDENCE_CORROBORATED = 0.6;
 const MODEL_EXTRACTION_MIN_EVIDENCE_CHARS = 36;
@@ -1272,6 +1284,105 @@ function durableIndexEntryFromRecord(record: ReturnType<RuntimeStateStore["listM
   };
 }
 
+function indexedScopeKey(scope: IndexedMemoryScope): string {
+  if (scope.kind === "workspace") {
+    return `workspace:${scope.workspaceId}`;
+  }
+  return scope.kind;
+}
+
+function indexedScopeChanged(left: IndexedMemoryScope | null, right: IndexedMemoryScope | null): boolean {
+  if (!left && !right) {
+    return false;
+  }
+  if (!left || !right) {
+    return true;
+  }
+  return indexedScopeKey(left) !== indexedScopeKey(right);
+}
+
+function indexedScopeForMemory(params: {
+  scope: MemoryEntryScope;
+  memoryType: MemoryEntryType;
+  workspaceId: string | null;
+}): IndexedMemoryScope | null {
+  if (params.scope === "workspace") {
+    return params.workspaceId ? { kind: "workspace", workspaceId: params.workspaceId } : null;
+  }
+  if (params.scope !== "user") {
+    return null;
+  }
+  if (params.memoryType === "preference") {
+    return { kind: "preference" };
+  }
+  if (params.memoryType === "identity") {
+    return { kind: "identity" };
+  }
+  return null;
+}
+
+function indexedScopeForRecord(
+  record: ReturnType<RuntimeStateStore["getMemoryEntry"]>,
+): IndexedMemoryScope | null {
+  if (!record || record.status !== "active") {
+    return null;
+  }
+  return indexedScopeForMemory({
+    scope: record.scope,
+    memoryType: record.memoryType,
+    workspaceId: record.workspaceId ?? null,
+  });
+}
+
+function indexedScopeForCandidate(
+  candidate: DurableMemoryCandidate,
+  workspaceId: string,
+): IndexedMemoryScope | null {
+  return indexedScopeForMemory({
+    scope: candidate.scope,
+    memoryType: candidate.memoryType,
+    workspaceId: candidate.scope === "workspace" ? workspaceId : null,
+  });
+}
+
+function indexVisibleMetadataChanged(params: {
+  existing: NonNullable<ReturnType<RuntimeStateStore["getMemoryEntry"]>>;
+  candidate: DurableMemoryCandidate;
+  workspaceId: string;
+}): boolean {
+  return (
+    params.existing.scope !== params.candidate.scope ||
+    params.existing.memoryType !== params.candidate.memoryType ||
+    (params.existing.workspaceId ?? null) !== (params.candidate.scope === "workspace" ? params.workspaceId : null) ||
+    params.existing.path !== params.candidate.path ||
+    params.existing.title !== params.candidate.title ||
+    params.existing.summary !== params.candidate.summary ||
+    params.existing.verificationPolicy !== params.candidate.verificationPolicy ||
+    JSON.stringify(params.existing.tags ?? []) !== JSON.stringify(params.candidate.tags)
+  );
+}
+
+function listAllMemoryEntries(
+  store: RuntimeStateStore,
+  params: Parameters<RuntimeStateStore["listMemoryEntries"]>[0],
+): ReturnType<RuntimeStateStore["listMemoryEntries"]> {
+  const entries: ReturnType<RuntimeStateStore["listMemoryEntries"]> = [];
+  let offset = 0;
+  while (true) {
+    const page = store.listMemoryEntries({
+      ...params,
+      limit: MEMORY_INDEX_PAGE_SIZE,
+      offset,
+    });
+    entries.push(...page);
+    if (page.length < MEMORY_INDEX_PAGE_SIZE) {
+      break;
+    }
+    offset += MEMORY_INDEX_PAGE_SIZE;
+  }
+  return entries;
+}
+
 async function upsertMemoryFileIfChanged(params: {
   memoryService: MemoryServiceLike;
   workspaceId: string;
@@ -1297,84 +1408,111 @@ async function upsertMemoryIndexes(params: {
   store: RuntimeStateStore;
   memoryService: MemoryServiceLike;
   workspaceId: string;
+  changedWorkspaceIds?: string[];
+  rebuildPreference?: boolean;
+  rebuildIdentity?: boolean;
+  rebuildRoot?: boolean;
 }): Promise<string[]> {
-  const workspaceEntries = params.store.listMemoryEntries({
-    workspaceId: params.workspaceId,
-    scope: "workspace",
-    status: "active",
-    limit: 500,
-    offset: 0,
-  });
-  const workspaceIndexCounts = params.store.listWorkspaceMemoryEntryCounts({
-    status: "active",
-  });
-  if (!workspaceIndexCounts.some((entry) => entry.workspaceId === params.workspaceId)) {
-    workspaceIndexCounts.push({
-      workspaceId: params.workspaceId,
-      count: workspaceEntries.length,
-    });
+  const workspaceIds = Array.from(new Set(
+    params.changedWorkspaceIds !== undefined
+      ? params.changedWorkspaceIds
+      : [params.workspaceId],
+  ));
+  const rebuildPreference = params.rebuildPreference ?? true;
+  const rebuildIdentity = params.rebuildIdentity ?? true;
+  const rebuildRoot = params.rebuildRoot ?? true;
+  if (workspaceIds.length === 0 && !rebuildPreference && !rebuildIdentity && !rebuildRoot) {
+    return [];
   }
-  const preferenceEntries = params.store.listMemoryEntries({
-    scope: "user",
-    memoryType: "preference",
-    status: "active",
-    limit: 500,
-    offset: 0,
-  });
-  const identityEntries = params.store.listMemoryEntries({
-    scope: "user",
-    memoryType: "identity",
-    status: "active",
-    limit: 500,
-    offset: 0,
-  });
+
+  let preferenceEntries: DurableMemoryCandidate[] | null = null;
+  let identityEntries: DurableMemoryCandidate[] | null = null;
   const restoredPaths: string[] = [];
-  const workspaceIndexContent = renderWorkspaceMemoryIndex({
-    workspaceId: params.workspaceId,
-    entries: workspaceEntries.map(durableIndexEntryFromRecord),
-  });
-  await upsertMemoryFileIfChanged({
-    memoryService: params.memoryService,
-    workspaceId: params.workspaceId,
-    path: workspaceMemoryIndexPath(params.workspaceId),
-    content: workspaceIndexContent,
-  });
-  restoredPaths.push(workspaceMemoryIndexPath(params.workspaceId));
+  for (const workspaceId of workspaceIds) {
+    const workspaceEntries = listAllMemoryEntries(params.store, {
+      workspaceId,
+      scope: "workspace",
+      status: "active",
+    });
+    const workspaceIndexContent = renderWorkspaceMemoryIndex({
+      workspaceId,
+      entries: workspaceEntries.map(durableIndexEntryFromRecord),
+    });
+    await upsertMemoryFileIfChanged({
+      memoryService: params.memoryService,
+      workspaceId: params.workspaceId,
+      path: workspaceMemoryIndexPath(workspaceId),
+      content: workspaceIndexContent,
+    });
+    restoredPaths.push(workspaceMemoryIndexPath(workspaceId));
+  }
 
-  const preferenceIndexContent = renderPreferenceMemoryIndex(
-    preferenceEntries.map(durableIndexEntryFromRecord)
-  );
-  await upsertMemoryFileIfChanged({
-    memoryService: params.memoryService,
-    workspaceId: params.workspaceId,
-    path: preferenceMemoryIndexPath(),
-    content: preferenceIndexContent,
-  });
-  restoredPaths.push(preferenceMemoryIndexPath());
+  if (rebuildPreference || rebuildRoot) {
+    preferenceEntries = listAllMemoryEntries(params.store, {
+      scope: "user",
+      memoryType: "preference",
+      status: "active",
+    }).map(durableIndexEntryFromRecord);
+  }
+  if (rebuildPreference) {
+    const preferenceIndexContent = renderPreferenceMemoryIndex(preferenceEntries ?? []);
+    await upsertMemoryFileIfChanged({
+      memoryService: params.memoryService,
+      workspaceId: params.workspaceId,
+      path: preferenceMemoryIndexPath(),
+      content: preferenceIndexContent,
+    });
+    restoredPaths.push(preferenceMemoryIndexPath());
+  }
 
-  const identityIndexContent = renderIdentityMemoryIndex(
-    identityEntries.map(durableIndexEntryFromRecord)
-  );
-  await upsertMemoryFileIfChanged({
-    memoryService: params.memoryService,
-    workspaceId: params.workspaceId,
-    path: identityMemoryIndexPath(),
-    content: identityIndexContent,
-  });
-  restoredPaths.push(identityMemoryIndexPath());
+  if (rebuildIdentity || rebuildRoot) {
+    identityEntries = listAllMemoryEntries(params.store, {
+      scope: "user",
+      memoryType: "identity",
+      status: "active",
+    }).map(durableIndexEntryFromRecord);
+  }
+  if (rebuildIdentity) {
+    const identityIndexContent = renderIdentityMemoryIndex(identityEntries ?? []);
+    await upsertMemoryFileIfChanged({
+      memoryService: params.memoryService,
+      workspaceId: params.workspaceId,
+      path: identityMemoryIndexPath(),
+      content: identityIndexContent,
+    });
+    restoredPaths.push(identityMemoryIndexPath());
+  }
 
-  const rootIndexContent = renderRootMemoryIndex({
-    workspaceIndexCounts,
-    preferenceEntryCount: preferenceEntries.length,
-    identityEntryCount: identityEntries.length,
-  });
-  await upsertMemoryFileIfChanged({
-    memoryService: params.memoryService,
-    workspaceId: params.workspaceId,
-    path: rootMemoryIndexPath(),
-    content: rootIndexContent,
-  });
-  restoredPaths.push(rootMemoryIndexPath());
+  if (rebuildRoot) {
+    const workspaceIndexCounts = params.store.listWorkspaceMemoryEntryCounts({
+      status: "active",
+    });
+    for (const workspaceId of workspaceIds) {
+      if (!workspaceIndexCounts.some((entry) => entry.workspaceId === workspaceId)) {
+        const workspaceEntries = listAllMemoryEntries(params.store, {
+          workspaceId,
+          scope: "workspace",
+          status: "active",
+        });
+        workspaceIndexCounts.push({
+          workspaceId,
+          count: workspaceEntries.length,
+        });
+      }
+    }
+    const rootIndexContent = renderRootMemoryIndex({
+      workspaceIndexCounts,
+      preferenceEntryCount: (preferenceEntries ?? []).length,
+      identityEntryCount: (identityEntries ?? []).length,
+    });
+    await upsertMemoryFileIfChanged({
+      memoryService: params.memoryService,
+      workspaceId: params.workspaceId,
+      path: rootMemoryIndexPath(),
+      content: rootIndexContent,
+    });
+    restoredPaths.push(rootMemoryIndexPath());
+  }
 
   return restoredPaths;
 }
@@ -1490,13 +1628,24 @@ async function upsertDurableMemoryCandidate(params: {
   sessionId: string;
   inputId: string;
   candidate: DurableMemoryCandidate;
-}): Promise<string> {
+}): Promise<DurableMemoryPersistResult> {
+  const existing = params.store.getMemoryEntry({
+    memoryId: params.candidate.memoryId,
+  });
+  const existingIndexedScope = indexedScopeForRecord(existing);
+  const nextIndexedScope = indexedScopeForCandidate(params.candidate, params.workspaceId);
+  const metadataChanged = !existing || indexVisibleMetadataChanged({
+    existing,
+    candidate: params.candidate,
+    workspaceId: params.workspaceId,
+  });
   await upsertMemoryFileIfChanged({
     memoryService: params.memoryService,
     workspaceId: params.workspaceId,
     path: params.candidate.path,
     content: params.candidate.content,
   });
+  const fingerprint = fingerprintText(params.candidate.content);
   params.store.upsertMemoryEntry({
     memoryId: params.candidate.memoryId,
     workspaceId: params.candidate.scope === "workspace" ? params.workspaceId : null,
@@ -1517,9 +1666,20 @@ async function upsertDurableMemoryCandidate(params: {
     observedAt: params.candidate.observedAt,
     lastVerifiedAt: params.candidate.lastVerifiedAt,
     confidence: params.candidate.confidence,
-    fingerprint: fingerprintText(params.candidate.content),
+    fingerprint,
   });
-  return params.candidate.path;
+  const changedScopes = new Map<string, IndexedMemoryScope>();
+  if (existingIndexedScope && (metadataChanged || indexedScopeKey(existingIndexedScope) !== indexedScopeKey(nextIndexedScope ?? existingIndexedScope))) {
+    changedScopes.set(indexedScopeKey(existingIndexedScope), existingIndexedScope);
+  }
+  if (nextIndexedScope && (!existingIndexedScope || metadataChanged || indexedScopeKey(existingIndexedScope) !== indexedScopeKey(nextIndexedScope))) {
+    changedScopes.set(indexedScopeKey(nextIndexedScope), nextIndexedScope);
+  }
+  return {
+    path: params.candidate.path,
+    changedIndexedScopes: Array.from(changedScopes.values()),
+    rootCountChanged: indexedScopeChanged(existingIndexedScope, nextIndexedScope),
+  };
 }
 
 function loadTurnWritebackContext(store: RuntimeStateStore, turnResult: TurnResultRecord): TurnWritebackContext {
@@ -1614,7 +1774,7 @@ export async function persistDurableMemoryCandidate(params: {
   inputId: string;
   candidate: DurableMemoryCandidate;
 }): Promise<string> {
-  return upsertDurableMemoryCandidate(params);
+  return (await upsertDurableMemoryCandidate(params)).path;
 }
 
 export async function refreshMemoryIndexes(params: {
@@ -1696,24 +1856,45 @@ export async function writeTurnDurableMemory(params: {
     return params.store.getTurnResult({ inputId: context.turnResult.inputId }) ?? context.turnResult;
   }
   const restoredMemoryPaths: string[] = [];
+  const changedWorkspaceIds = new Set<string>();
+  let rebuildPreference = false;
+  let rebuildIdentity = false;
+  let rebuildRoot = false;
 
   for (const candidate of durableCandidates) {
-    restoredMemoryPaths.push(await upsertDurableMemoryCandidate({
+    const persisted = await upsertDurableMemoryCandidate({
       store: params.store,
       memoryService: params.memoryService,
       workspaceId: context.turnResult.workspaceId,
       sessionId: context.turnResult.sessionId,
       inputId: context.turnResult.inputId,
       candidate,
-    }));
+    });
+    restoredMemoryPaths.push(persisted.path);
+    for (const indexedScope of persisted.changedIndexedScopes) {
+      if (indexedScope.kind === "workspace") {
+        changedWorkspaceIds.add(indexedScope.workspaceId);
+      } else if (indexedScope.kind === "preference") {
+        rebuildPreference = true;
+      } else if (indexedScope.kind === "identity") {
+        rebuildIdentity = true;
+      }
+    }
+    rebuildRoot = rebuildRoot || persisted.rootCountChanged;
   }
-  restoredMemoryPaths.push(
-    ...(await upsertMemoryIndexes({
-      store: params.store,
-      memoryService: params.memoryService,
-      workspaceId: context.turnResult.workspaceId,
-    }))
-  );
+  if (changedWorkspaceIds.size > 0 || rebuildPreference || rebuildIdentity || rebuildRoot) {
+    restoredMemoryPaths.push(
+      ...(await upsertMemoryIndexes({
+        store: params.store,
+        memoryService: params.memoryService,
+        workspaceId: context.turnResult.workspaceId,
+        changedWorkspaceIds: Array.from(changedWorkspaceIds),
+        rebuildPreference,
+        rebuildIdentity,
+        rebuildRoot,
+      }))
+    );
+  }
   appendRestoredMemoryPathsToCompactionBoundary({
     store: params.store,
     turnResult: context.turnResult,
