@@ -1118,6 +1118,27 @@ function sanitizeAppId(appId: string): string {
   return value;
 }
 
+export function isAllowedArchivePath(p: string): boolean {
+  if (!p) return false;
+  const abs = path.resolve(p);
+  const candidates: string[] = [];
+  candidates.push(path.resolve(os.tmpdir()));
+  const envOverride = process.env.HOLABOSS_APP_ARCHIVE_DIR;
+  if (envOverride && envOverride.trim().length > 0) {
+    candidates.push(path.resolve(envOverride.trim()));
+  }
+  const home = process.env.HOME || process.env.USERPROFILE;
+  if (home && home.trim().length > 0) {
+    candidates.push(path.resolve(home.trim(), ".holaboss", "downloads"));
+  }
+  for (const root of candidates) {
+    if (abs === root || abs.startsWith(root + path.sep)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function collectSystemStatus(workspaceRoot: string, store: RuntimeStateStore): Record<string, unknown> {
   return {
     cpu: getCpuInfo(),

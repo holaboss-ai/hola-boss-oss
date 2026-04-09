@@ -3766,3 +3766,11 @@ test("POST /api/v1/apps/catalog/sync rejects invalid source", async () => {
   await app.close();
   store.close();
 });
+
+test("isAllowedArchivePath accepts tmpdir and rejects arbitrary paths", async () => {
+  const { isAllowedArchivePath } = await import("./app.js");
+  const tmp = path.join(os.tmpdir(), "holaboss-test-archive.tar.gz");
+  assert.equal(isAllowedArchivePath(tmp), true);
+  assert.equal(isAllowedArchivePath("/etc/passwd"), false);
+  assert.equal(isAllowedArchivePath(""), false);
+});
