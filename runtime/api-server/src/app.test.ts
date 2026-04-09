@@ -3639,3 +3639,52 @@ test("queue route accepts staged attachments and history hydrates attachment met
   await app.close();
   store.close();
 });
+
+test("GET /api/v1/apps/catalog returns entries filtered by source", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  store.upsertAppCatalogEntry({
+    appId: "twitter",
+    source: "marketplace",
+    name: "Twitter / X",
+    description: null,
+    icon: null,
+    category: null,
+    tags: ["social"],
+    version: "v0.1.0",
+    archiveUrl: "https://example.test/twitter-module-darwin-arm64.tar.gz",
+    archivePath: null,
+    target: "darwin-arm64",
+    cachedAt: "2026-04-09T00:00:00Z",
+  });
+  store.upsertAppCatalogEntry({
+    appId: "linkedin",
+    source: "local",
+    name: "LinkedIn",
+    description: null,
+    icon: null,
+    category: null,
+    tags: [],
+    version: null,
+    archiveUrl: null,
+    archivePath: "/tmp/linkedin-module-darwin-arm64.tar.gz",
+    target: "darwin-arm64",
+    cachedAt: "2026-04-09T00:00:00Z",
+  });
+
+  const res = await app.inject({ method: "GET", url: "/api/v1/apps/catalog?source=marketplace" });
+  assert.equal(res.statusCode, 200);
+  const body = res.json();
+  assert.equal(body.count, 1);
+  assert.equal(body.entries[0].app_id, "twitter");
+  assert.deepEqual(body.entries[0].tags, ["social"]);
+
+  await app.close();
+  store.close();
+});
