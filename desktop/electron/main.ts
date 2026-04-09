@@ -8230,6 +8230,135 @@ async function listWorkspacesViaRuntime(): Promise<WorkspaceListResponsePayload>
   });
 }
 
+const STATIC_APP_CATALOG: Record<string, {
+  name: string;
+  description: string | null;
+  icon: string | null;
+  category: string | null;
+  tags: string[];
+}> = {
+  twitter: {
+    name: "Twitter / X",
+    description: "Short-form post drafting and thread editing.",
+    icon: null,
+    category: "social",
+    tags: ["social media", "twitter"],
+  },
+  linkedin: {
+    name: "LinkedIn",
+    description: "Long-form post drafting and professional publishing.",
+    icon: null,
+    category: "social",
+    tags: ["social media", "linkedin"],
+  },
+  reddit: {
+    name: "Reddit",
+    description: "Subreddit posts, comments and community replies.",
+    icon: null,
+    category: "social",
+    tags: ["social media", "reddit"],
+  },
+  gmail: {
+    name: "Gmail",
+    description: "Email drafts, replies, and thread management.",
+    icon: null,
+    category: "communication",
+    tags: ["email", "gmail"],
+  },
+  sheets: {
+    name: "Google Sheets",
+    description: "Spreadsheet data as a lightweight database.",
+    icon: null,
+    category: "productivity",
+    tags: ["spreadsheet", "google sheets"],
+  },
+  github: {
+    name: "GitHub",
+    description: "Repository activity tracking and release notes.",
+    icon: null,
+    category: "developer",
+    tags: ["github", "developer"],
+  },
+};
+
+function staticCatalogMeta(appId: string) {
+  return (
+    STATIC_APP_CATALOG[appId] ?? {
+      name: appId,
+      description: null,
+      icon: null,
+      category: null,
+      tags: [] as string[],
+    }
+  );
+}
+
+async function listAppCatalog(params: {
+  source?: "marketplace" | "local";
+}): Promise<AppCatalogListResponse> {
+  const query: Record<string, string> = {};
+  if (params.source) query.source = params.source;
+  return requestRuntimeJson<AppCatalogListResponse>({
+    method: "GET",
+    path: "/api/v1/apps/catalog",
+    params: query,
+  });
+}
+
+async function syncAppCatalog(params: {
+  source: "marketplace" | "local";
+}): Promise<AppCatalogSyncResponse> {
+  const target = resolveLocalArchiveTarget();
+
+  if (params.source === "marketplace") {
+    const resp = await listAppTemplatesViaControlPlane();
+    const entries: Array<Record<string, unknown>> = [];
+    for (const tmpl of resp.templates) {
+      const archives = Array.isArray(tmpl.archives) ? tmpl.archives : [];
+      const matching = archives.find((a) => a?.target === target);
+      if (!matching) continue;
+      const meta = staticCatalogMeta(tmpl.name);
+      entries.push({
+        app_id: tmpl.name,
+        name: meta.name,
+        description: tmpl.description ?? meta.description,
+        icon: tmpl.icon ?? meta.icon,
+        category: tmpl.category ?? meta.category,
+        tags: Array.isArray(tmpl.tags) && tmpl.tags.length > 0 ? tmpl.tags : meta.tags,
+        version: tmpl.version ?? null,
+        archive_url: matching.url,
+        archive_path: null,
+      });
+    }
+    return requestRuntimeJson<AppCatalogSyncResponse>({
+      method: "POST",
+      path: "/api/v1/apps/catalog/sync",
+      payload: { source: "marketplace", target, entries },
+    });
+  }
+
+  const scanned = await scanLocalAppArchives();
+  const entries = scanned.map((row) => {
+    const meta = staticCatalogMeta(row.appId);
+    return {
+      app_id: row.appId,
+      name: meta.name,
+      description: meta.description,
+      icon: meta.icon,
+      category: meta.category,
+      tags: meta.tags,
+      version: null,
+      archive_url: null,
+      archive_path: row.filePath,
+    };
+  });
+  return requestRuntimeJson<AppCatalogSyncResponse>({
+    method: "POST",
+    path: "/api/v1/apps/catalog/sync",
+    payload: { source: "local", target, entries },
+  });
+}
+
 async function listInstalledApps(
   workspaceId: string,
 ): Promise<InstalledWorkspaceAppListResponsePayload> {
