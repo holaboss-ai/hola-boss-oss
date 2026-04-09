@@ -41,8 +41,9 @@ import {
 } from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { URL } from "node:url";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { ensureWorkspaceGitRepo } from "./workspace-git.js";
@@ -11293,81 +11294,125 @@ function toPreviewTableCellValue(value: unknown): string {
   return String(value);
 }
 
-function buildTablePreviewSheets(
+function trimTrailingEmptyTableCells(row: string[]): string[] {
+  let lastNonEmptyIndex = row.length - 1;
+  while (lastNonEmptyIndex >= 0 && row[lastNonEmptyIndex] === "") {
+    lastNonEmptyIndex -= 1;
+  }
+  return row.slice(0, lastNonEmptyIndex + 1);
+}
+
+function worksheetPreviewRows(worksheet: ExcelJS.Worksheet): string[][] {
+  const rows: string[][] = [];
+  worksheet.eachRow({ includeEmpty: false }, (row) => {
+    const values: string[] = [];
+    row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
+      values[columnNumber - 1] = toPreviewTableCellValue(cell.text);
+    });
+    rows.push(trimTrailingEmptyTableCells(values));
+  });
+  return rows;
+}
+
+function tablePreviewSheetFromRows(
+  sheetName: string,
+  sheetIndex: number,
+  rawRows: string[][],
+  totalSheetCount: number,
+): FilePreviewTableSheetPayload {
+  const totalColumns = rawRows.reduce(
+    (max, row) => Math.max(max, row.length),
+    0,
+  );
+  const visibleColumnCount = Math.min(
+    Math.max(totalColumns, 1),
+    MAX_TABLE_PREVIEW_COLUMNS,
+  );
+  const paddedRows = rawRows.map((row) =>
+    Array.from(
+      { length: visibleColumnCount },
+      (_unused, columnIndex) => row[columnIndex] ?? "",
+    ),
+  );
+  const hasHeaderRow =
+    paddedRows.length > 0 &&
+    paddedRows[0].some((cell) => cell.trim().length > 0);
+  const columns = hasHeaderRow
+    ? paddedRows[0].map(
+        (value, columnIndex) => value.trim() || `Column ${columnIndex + 1}`,
+      )
+    : Array.from(
+        { length: visibleColumnCount },
+        (_unused, columnIndex) => `Column ${columnIndex + 1}`,
+      );
+  const allRows = hasHeaderRow ? paddedRows.slice(1) : paddedRows;
+  const rows = allRows.slice(0, MAX_TABLE_PREVIEW_ROWS);
+  const truncated =
+    allRows.length > rows.length ||
+    totalColumns > visibleColumnCount ||
+    totalSheetCount > MAX_TABLE_PREVIEW_SHEETS;
+
+  return {
+    name: sheetName || `Sheet ${sheetIndex + 1}`,
+    index: sheetIndex,
+    columns,
+    rows,
+    totalRows: allRows.length,
+    totalColumns,
+    truncated,
+  };
+}
+
+async function buildWorkbookPreviewSheets(
   buffer: Buffer,
-): FilePreviewTableSheetPayload[] {
-  const workbook = XLSX.read(buffer, {
-    type: "buffer",
-    cellDates: true,
-    dense: true,
+): Promise<FilePreviewTableSheetPayload[]> {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(
+    buffer as unknown as Parameters<ExcelJS.Workbook["xlsx"]["load"]>[0],
+  );
+
+  const worksheets = workbook.worksheets.slice(0, MAX_TABLE_PREVIEW_SHEETS);
+  return worksheets.map((worksheet, sheetIndex) =>
+    tablePreviewSheetFromRows(
+      worksheet.name,
+      sheetIndex,
+      worksheetPreviewRows(worksheet),
+      workbook.worksheets.length,
+    ),
+  );
+}
+
+async function buildCsvPreviewSheets(
+  buffer: Buffer,
+): Promise<FilePreviewTableSheetPayload[]> {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = await workbook.csv.read(Readable.from([buffer.toString("utf8")]), {
+    parserOptions: {
+      delimiter: ",",
+      quote: '"',
+      escape: '"',
+      trim: false,
+    },
   });
 
-  const sheets: FilePreviewTableSheetPayload[] = [];
-  const limitedSheetNames = workbook.SheetNames.slice(
-    0,
-    MAX_TABLE_PREVIEW_SHEETS,
-  );
-  for (const [sheetIndex, sheetName] of limitedSheetNames.entries()) {
-    const worksheet = workbook.Sheets[sheetName];
-    if (!worksheet) {
-      continue;
-    }
-
-    const matrix = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
-      header: 1,
-      blankrows: false,
-      defval: "",
-      raw: false,
-    });
-    const normalizedRows = matrix.map((row) =>
-      Array.isArray(row) ? row.map(toPreviewTableCellValue) : [],
-    );
-    const totalColumns = normalizedRows.reduce(
-      (max, row) => Math.max(max, row.length),
+  return [
+    tablePreviewSheetFromRows(
+      worksheet.name,
       0,
-    );
-    const visibleColumnCount = Math.min(
-      Math.max(totalColumns, 1),
-      MAX_TABLE_PREVIEW_COLUMNS,
-    );
-    const paddedRows = normalizedRows.map((row) =>
-      Array.from(
-        { length: visibleColumnCount },
-        (_unused, columnIndex) => row[columnIndex] ?? "",
-      ),
-    );
+      worksheetPreviewRows(worksheet),
+      1,
+    ),
+  ];
+}
 
-    const hasHeaderRow =
-      paddedRows.length > 0 &&
-      paddedRows[0].some((cell) => cell.trim().length > 0);
-    const columns = hasHeaderRow
-      ? paddedRows[0].map(
-          (value, columnIndex) => value.trim() || `Column ${columnIndex + 1}`,
-        )
-      : Array.from(
-          { length: visibleColumnCount },
-          (_unused, columnIndex) => `Column ${columnIndex + 1}`,
-        );
-
-    const allRows = hasHeaderRow ? paddedRows.slice(1) : paddedRows;
-    const rows = allRows.slice(0, MAX_TABLE_PREVIEW_ROWS);
-    const truncated =
-      allRows.length > rows.length ||
-      totalColumns > visibleColumnCount ||
-      workbook.SheetNames.length > MAX_TABLE_PREVIEW_SHEETS;
-
-    sheets.push({
-      name: sheetName || `Sheet ${sheetIndex + 1}`,
-      index: sheetIndex,
-      columns,
-      rows,
-      totalRows: allRows.length,
-      totalColumns,
-      truncated,
-    });
+async function buildTablePreviewSheets(
+  buffer: Buffer,
+  extension: string,
+): Promise<FilePreviewTableSheetPayload[]> {
+  if (extension === ".csv") {
+    return buildCsvPreviewSheets(buffer);
   }
-
-  return sheets;
+  return buildWorkbookPreviewSheets(buffer);
 }
 
 function getFilePreviewKind(targetPath: string) {
@@ -11435,7 +11480,7 @@ async function readFilePreview(
 
     try {
       const buffer = await fs.readFile(absolutePath);
-      const tableSheets = buildTablePreviewSheets(buffer);
+      const tableSheets = await buildTablePreviewSheets(buffer, extension);
       if (tableSheets.length === 0) {
         return {
           ...basePayload,

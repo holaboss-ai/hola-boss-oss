@@ -28,7 +28,7 @@ test("desktop file preview supports tabular spreadsheet kinds", async () => {
   );
   assert.match(
     source,
-    /if \(kind === "table"\) \{[\s\S]*const tableSheets = buildTablePreviewSheets\(buffer\);/,
+    /if \(kind === "table"\) \{[\s\S]*const tableSheets = await buildTablePreviewSheets\(buffer, extension\);/,
   );
 });
 

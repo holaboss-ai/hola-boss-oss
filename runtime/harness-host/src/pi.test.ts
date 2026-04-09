@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import JSZip from "jszip";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 
 import type { HarnessHostPiRequest } from "./contracts.js";
@@ -102,11 +102,14 @@ async function createPptxBuffer(slides: string[]): Promise<Buffer> {
   return Buffer.from(await zip.generateAsync({ type: "uint8array" }));
 }
 
-function createXlsxBuffer(rows: string[][]): Buffer {
-  const workbook = XLSX.utils.book_new();
-  const worksheet = XLSX.utils.aoa_to_sheet(rows);
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Sheet1");
-  return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
+async function createXlsxBuffer(rows: string[][]): Promise<Buffer> {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("Sheet1");
+  rows.forEach((row) => {
+    worksheet.addRow(row);
+  });
+  const output = await workbook.xlsx.writeBuffer();
+  return Buffer.isBuffer(output) ? output : Buffer.from(output);
 }
 
 function createPdfBuffer(text: string): Buffer {
@@ -1587,7 +1590,7 @@ test("buildPiPromptPayload inlines native images, extracts common document forma
   const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   const docxBytes = await createDocxBuffer(["Quarterly plan", "Ship the feature"]);
   const pptxBytes = await createPptxBuffer(["Roadmap", "Launch"]);
-  const xlsxBytes = createXlsxBuffer([
+  const xlsxBytes = await createXlsxBuffer([
     ["Name", "Value"],
     ["alpha", "1"],
   ]);
