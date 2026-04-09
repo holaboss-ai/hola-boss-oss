@@ -33,6 +33,9 @@ interface AuthPanelProps {
   view?: AuthPanelView;
 }
 
+const AUTH_BROWSER_SIGN_IN_MESSAGE =
+  "Sign-in opened in the browser. Complete the flow on the Holaboss sign-in page.";
+
 const KNOWN_PROVIDER_ORDER = ["holaboss", "openai_direct", "anthropic_direct", "openrouter_direct", "gemini_direct", "ollama_direct", "minimax_direct"] as const;
 type KnownProviderId = (typeof KNOWN_PROVIDER_ORDER)[number];
 const AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME =
@@ -952,14 +955,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     setSandboxId(config.sandboxId ?? `desktop:${crypto.randomUUID()}`);
   }
 
-  async function handleReloadRuntimeSettings() {
-    setIsProviderDraftDirty(false);
-    setProviderSaveStatus("idle");
-    setAuthError("");
-    setAuthMessage("");
-    await refreshRuntimeConfig();
-  }
-
   useEffect(() => {
     if (!window.electronAPI) {
       return;
@@ -1153,8 +1148,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     Boolean(effectiveRuntimeConfig?.authTokenPresent) &&
     Boolean((effectiveRuntimeConfig?.sandboxId || "").trim()) &&
     Boolean((effectiveRuntimeConfig?.modelProxyBaseUrl || "").trim());
-  const isFinishingSetup = isSignedIn && !runtimeBindingReady && !authError;
-  const statusTone = authError ? "error" : runtimeBindingReady ? "ready" : isFinishingSetup ? "syncing" : "idle";
+  const isRuntimeSetupPending = isSignedIn && !runtimeBindingReady && !authError;
+  const showsSetupLoadingState = isRuntimeSetupPending;
+  const statusTone = authError ? "error" : runtimeBindingReady ? "ready" : isRuntimeSetupPending ? "syncing" : "idle";
 
   const statusBadgeLabel = sessionState.isPending
     ? "Checking session"
@@ -1163,7 +1159,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       : runtimeBindingReady
         ? "Connected"
         : isSignedIn
-          ? "Finishing setup"
+          ? "Connecting"
           : "Signed out";
 
   const badgeClassName =
@@ -1175,16 +1171,15 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           ? "border-amber-300/35 bg-amber-400/10 text-amber-300"
           : "border-border/45 bg-muted/40 text-muted-foreground";
 
-  const providerAutosaveMessage =
-    providerSaveStatus === "saving"
-      ? "Saving changes..."
-      : providerSaveStatus === "saved"
-        ? "Changes saved."
-        : providerSaveStatus === "error"
-          ? "Save failed. Review the settings and try again."
-          : isProviderDraftDirty
-            ? "Unsaved changes."
-            : "Edit settings, then click Save changes.";
+  useEffect(() => {
+    if (
+      authMessage === AUTH_BROWSER_SIGN_IN_MESSAGE &&
+      isSignedIn &&
+      !showsSetupLoadingState
+    ) {
+      setAuthMessage("");
+    }
+  }, [authMessage, isSignedIn, showsSetupLoadingState]);
 
   const infoRows = [
     {
@@ -1193,9 +1188,23 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     },
     {
       label: "Runtime",
-      value: runtimeBindingReady ? "Ready on this desktop" : isSignedIn ? "Finishing setup" : "Offline"
+      value: runtimeBindingReady ? "Ready on this desktop" : isSignedIn ? "Connecting desktop" : "Offline"
     }
   ];
+
+  const setupLoadingPanel = (
+    <div className="theme-subtle-surface flex flex-col items-center gap-3 rounded-[20px] border border-border/40 px-5 py-8 text-center">
+      <div className="flex size-11 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-primary">
+        <Loader2 size={18} className="animate-spin" />
+      </div>
+      <div className="text-base font-medium text-foreground">
+        {isExchangingRuntimeBinding ? "Refreshing desktop connection..." : "Connecting your Holaboss account..."}
+      </div>
+      <div className="max-w-[520px] text-sm leading-6 text-muted-foreground">
+        Finalizing your desktop session and runtime binding. This should only take a moment.
+      </div>
+    </div>
+  );
 
   useEffect(() => {
     if (!hasHydratedProviderDrafts) {
@@ -1233,7 +1242,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     setAuthMessage("");
     try {
       await sessionState.requestAuth();
-      setAuthMessage("Sign-in opened in the browser. Complete the flow on the Holaboss sign-in page.");
+      setAuthMessage(AUTH_BROWSER_SIGN_IN_MESSAGE);
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Failed to start sign-in.");
     } finally {
@@ -1920,223 +1929,223 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   }
 
   const runtimeProviderSettings = (
-    <div className="theme-subtle-surface mt-3 grid gap-4 rounded-[20px] border border-border/40 p-4">
+    <div className="mt-3 grid gap-4">
       <div className="rounded-[18px] border border-border/40 bg-card/80 p-4">
+        <div className="grid gap-3">
         <div className="text-sm font-medium text-foreground">Connected providers</div>
-        <div className="mt-3 grid gap-3">
-          <div className="rounded-[14px] border border-border/35 bg-muted/25 p-3">
-            <div className="text-sm font-medium text-foreground">Background tasks</div>
-            <div className="mt-1 text-sm text-muted-foreground">
-              Used for memory recall and post-run tasks.
-            </div>
-            <div className="mt-3 grid gap-2">
-              <label className="grid gap-1">
-                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Provider</span>
+        <div className="rounded-[14px] border border-border/35 bg-muted/25 p-3">
+          <div className="text-sm font-medium text-foreground">Background tasks</div>
+          <div className="mt-1 text-sm text-muted-foreground">
+            Used for memory recall and post-run tasks.
+          </div>
+          <div className="mt-3 grid gap-2">
+            <label className="grid gap-1">
+              <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Provider</span>
+              <Select
+                value={backgroundTasksDraft.providerId}
+                onValueChange={(value) =>
+                  applyBackgroundTaskProviderSelection(
+                    backgroundTaskProviderDraftId(value ?? ""),
+                  )
+                }
+                disabled={backgroundProviderOptions.length === 0}
+              >
+                <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {backgroundProviderOptions.map((providerId) => {
+                    const isConnected = connectedProviderIds.includes(providerId);
+                    const label = isConnected
+                      ? backgroundTaskProviderLabel(providerId)
+                      : `${backgroundTaskProviderLabel(providerId)} (not connected)`;
+                    return (
+                      <SelectItem key={providerId} value={providerId}>
+                        {label}
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+            </label>
+
+            <label className="grid gap-1">
+              <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Model</span>
+              {backgroundTaskUsesManagedModelPicker ? (
                 <Select
-                  value={backgroundTasksDraft.providerId}
+                  value={backgroundTasksDraft.model || undefined}
                   onValueChange={(value) =>
-                    applyBackgroundTaskProviderSelection(
-                      backgroundTaskProviderDraftId(value ?? ""),
-                    )
+                    updateBackgroundTasksDraft({ model: value ?? "" })
                   }
-                  disabled={backgroundProviderOptions.length === 0}
+                  disabled={!backgroundTasksDraft.providerId}
                 >
                   <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {backgroundProviderOptions.map((providerId) => {
-                      const isConnected = connectedProviderIds.includes(providerId);
-                      const label = isConnected
-                        ? backgroundTaskProviderLabel(providerId)
-                        : `${backgroundTaskProviderLabel(providerId)} (not connected)`;
-                      return (
-                        <SelectItem key={providerId} value={providerId}>
-                          {label}
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
-              </label>
-
-              <label className="grid gap-1">
-                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Model</span>
-                {backgroundTaskUsesManagedModelPicker ? (
-                  <Select
-                    value={backgroundTasksDraft.model || undefined}
-                    onValueChange={(value) =>
-                      updateBackgroundTasksDraft({ model: value ?? "" })
-                    }
-                    disabled={!backgroundTasksDraft.providerId}
-                  >
-                    <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
-                      <SelectValue
-                        placeholder={backgroundTaskModelPlaceholder(
-                          backgroundTasksDraft.providerId,
-                          effectiveRuntimeConfig,
-                        )}
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {backgroundTaskModelOptions.map((modelId) => (
-                        <SelectItem key={modelId} value={modelId}>
-                          {modelId}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <>
-                    <input
-                      className="auth-settings-control theme-control-surface h-9 rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground outline-none transition"
-                      value={backgroundTasksDraft.model}
-                      onChange={(event) => updateBackgroundTasksDraft({ model: event.target.value })}
+                    <SelectValue
                       placeholder={backgroundTaskModelPlaceholder(
                         backgroundTasksDraft.providerId,
                         effectiveRuntimeConfig,
                       )}
-                      spellCheck={false}
-                      list={
-                        backgroundTasksDraft.providerId
-                          ? `background-task-models-${backgroundTasksDraft.providerId}`
-                          : undefined
-                      }
-                      disabled={!backgroundTasksDraft.providerId}
                     />
-                    {backgroundTasksDraft.providerId ? (
-                      <datalist id={`background-task-models-${backgroundTasksDraft.providerId}`}>
-                        {backgroundProviderSuggestions.map((modelId) => (
-                          <option key={modelId} value={modelId} />
-                        ))}
-                      </datalist>
-                    ) : null}
-                  </>
-                )}
-              </label>
-
-              {backgroundTasksDraft.providerId && !backgroundProviderConnected ? (
-                <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-                  Selected provider is not connected. Background tasks stay disabled until you reconnect it or choose another provider.
-                </div>
-              ) : null}
-              {backgroundTasksDraft.providerId && !backgroundTasksDraft.model.trim() ? (
-                <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-                  Select a model to enable background tasks.
-                </div>
-              ) : null}
-            </div>
-          </div>
-          <div className="rounded-[14px] border border-border/35 bg-muted/25 p-3">
-            <div className="text-sm font-medium text-foreground">Image generation</div>
-            <div className="mt-1 text-sm text-muted-foreground">
-              Used when the agent generates new images into the workspace.
-            </div>
-            <div className="mt-3 grid gap-2">
-              <label className="grid gap-1">
-                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Provider</span>
-                <Select
-                  value={imageGenerationDraft.providerId}
-                  onValueChange={(value) =>
-                    applyImageGenerationProviderSelection(
-                      imageGenerationProviderDraftId(value ?? ""),
-                    )
-                  }
-                  disabled={imageGenerationProviderOptions.length === 0}
-                >
-                  <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
-                    <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {imageGenerationProviderOptions.map((providerId) => {
-                      const isConnected = connectedImageProviderIds.includes(providerId);
-                      const label = isConnected
-                        ? imageGenerationProviderLabel(providerId)
-                        : `${imageGenerationProviderLabel(providerId)} (not connected)`;
-                      return (
-                        <SelectItem key={providerId} value={providerId}>
-                          {label}
-                        </SelectItem>
-                      );
-                    })}
+                    {backgroundTaskModelOptions.map((modelId) => (
+                      <SelectItem key={modelId} value={modelId}>
+                        {modelId}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
-              </label>
-
-              <label className="grid gap-1">
-                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Model</span>
-                {imageGenerationUsesManagedModelPicker ? (
-                  <Select
-                    value={imageGenerationDraft.model || undefined}
-                    onValueChange={(value) =>
-                      updateImageGenerationDraft({ model: value ?? "" })
+              ) : (
+                <>
+                  <input
+                    className="auth-settings-control theme-control-surface h-9 rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground outline-none transition"
+                    value={backgroundTasksDraft.model}
+                    onChange={(event) => updateBackgroundTasksDraft({ model: event.target.value })}
+                    placeholder={backgroundTaskModelPlaceholder(
+                      backgroundTasksDraft.providerId,
+                      effectiveRuntimeConfig,
+                    )}
+                    spellCheck={false}
+                    list={
+                      backgroundTasksDraft.providerId
+                        ? `background-task-models-${backgroundTasksDraft.providerId}`
+                        : undefined
                     }
-                    disabled={!imageGenerationDraft.providerId}
-                  >
-                    <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
-                      <SelectValue
-                        placeholder={imageGenerationModelPlaceholder(
-                          imageGenerationDraft.providerId,
-                          effectiveRuntimeConfig,
-                        )}
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {imageGenerationModelOptions.map((modelId) => (
-                        <SelectItem key={modelId} value={modelId}>
-                          {modelId}
-                        </SelectItem>
+                    disabled={!backgroundTasksDraft.providerId}
+                  />
+                  {backgroundTasksDraft.providerId ? (
+                    <datalist id={`background-task-models-${backgroundTasksDraft.providerId}`}>
+                      {backgroundProviderSuggestions.map((modelId) => (
+                        <option key={modelId} value={modelId} />
                       ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <>
-                    <input
-                      className="auth-settings-control theme-control-surface h-9 rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground outline-none transition"
-                      value={imageGenerationDraft.model}
-                      onChange={(event) => updateImageGenerationDraft({ model: event.target.value })}
+                    </datalist>
+                  ) : null}
+                </>
+              )}
+            </label>
+
+            {backgroundTasksDraft.providerId && !backgroundProviderConnected ? (
+              <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                Selected provider is not connected. Background tasks stay disabled until you reconnect it or choose another provider.
+              </div>
+            ) : null}
+            {backgroundTasksDraft.providerId && !backgroundTasksDraft.model.trim() ? (
+              <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                Select a model to enable background tasks.
+              </div>
+            ) : null}
+          </div>
+        </div>
+        <div className="rounded-[14px] border border-border/35 bg-muted/25 p-3">
+          <div className="text-sm font-medium text-foreground">Image generation</div>
+          <div className="mt-1 text-sm text-muted-foreground">
+            Used when the agent generates new images into the workspace.
+          </div>
+          <div className="mt-3 grid gap-2">
+            <label className="grid gap-1">
+              <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Provider</span>
+              <Select
+                value={imageGenerationDraft.providerId}
+                onValueChange={(value) =>
+                  applyImageGenerationProviderSelection(
+                    imageGenerationProviderDraftId(value ?? ""),
+                  )
+                }
+                disabled={imageGenerationProviderOptions.length === 0}
+              >
+                <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {imageGenerationProviderOptions.map((providerId) => {
+                    const isConnected = connectedImageProviderIds.includes(providerId);
+                    const label = isConnected
+                      ? imageGenerationProviderLabel(providerId)
+                      : `${imageGenerationProviderLabel(providerId)} (not connected)`;
+                    return (
+                      <SelectItem key={providerId} value={providerId}>
+                        {label}
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+            </label>
+
+            <label className="grid gap-1">
+              <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Model</span>
+              {imageGenerationUsesManagedModelPicker ? (
+                <Select
+                  value={imageGenerationDraft.model || undefined}
+                  onValueChange={(value) =>
+                    updateImageGenerationDraft({ model: value ?? "" })
+                  }
+                  disabled={!imageGenerationDraft.providerId}
+                >
+                  <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
+                    <SelectValue
                       placeholder={imageGenerationModelPlaceholder(
                         imageGenerationDraft.providerId,
                         effectiveRuntimeConfig,
                       )}
-                      spellCheck={false}
-                      list={
-                        imageGenerationDraft.providerId
-                          ? `image-generation-models-${imageGenerationDraft.providerId}`
-                          : undefined
-                      }
-                      disabled={!imageGenerationDraft.providerId}
                     />
-                    {imageGenerationDraft.providerId ? (
-                      <datalist id={`image-generation-models-${imageGenerationDraft.providerId}`}>
-                        {imageGenerationProviderSuggestions.map((modelId) => (
-                          <option key={modelId} value={modelId} />
-                        ))}
-                      </datalist>
-                    ) : null}
-                  </>
-                )}
-              </label>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {imageGenerationModelOptions.map((modelId) => (
+                      <SelectItem key={modelId} value={modelId}>
+                        {modelId}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <>
+                  <input
+                    className="auth-settings-control theme-control-surface h-9 rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground outline-none transition"
+                    value={imageGenerationDraft.model}
+                    onChange={(event) => updateImageGenerationDraft({ model: event.target.value })}
+                    placeholder={imageGenerationModelPlaceholder(
+                      imageGenerationDraft.providerId,
+                      effectiveRuntimeConfig,
+                    )}
+                    spellCheck={false}
+                    list={
+                      imageGenerationDraft.providerId
+                        ? `image-generation-models-${imageGenerationDraft.providerId}`
+                        : undefined
+                    }
+                    disabled={!imageGenerationDraft.providerId}
+                  />
+                  {imageGenerationDraft.providerId ? (
+                    <datalist id={`image-generation-models-${imageGenerationDraft.providerId}`}>
+                      {imageGenerationProviderSuggestions.map((modelId) => (
+                        <option key={modelId} value={modelId} />
+                      ))}
+                    </datalist>
+                  ) : null}
+                </>
+              )}
+            </label>
 
-              {imageGenerationDraft.providerId && !imageGenerationProviderConnected ? (
-                <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-                  Selected provider is not connected. Image generation stays disabled until you reconnect it or choose another provider.
-                </div>
-              ) : null}
-              {imageGenerationDraft.providerId && !imageGenerationDraft.model.trim() ? (
-                <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-                  Select a model to enable image generation.
-                </div>
-              ) : null}
-            </div>
+            {imageGenerationDraft.providerId && !imageGenerationProviderConnected ? (
+              <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                Selected provider is not connected. Image generation stays disabled until you reconnect it or choose another provider.
+              </div>
+            ) : null}
+            {imageGenerationDraft.providerId && !imageGenerationDraft.model.trim() ? (
+              <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                Select a model to enable image generation.
+              </div>
+            ) : null}
           </div>
-          {connectedProviderIds.length === 0 ? (
-            <div className="rounded-[12px] border border-border/35 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-              No connected providers.
-            </div>
-          ) : (
-            connectedProviderIds.map((providerId) => renderProviderCard(providerId))
-          )}
+        </div>
+        {connectedProviderIds.length === 0 ? (
+          <div className="rounded-[12px] border border-border/35 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+            No connected providers.
+          </div>
+        ) : (
+          connectedProviderIds.map((providerId) => renderProviderCard(providerId))
+        )}
         </div>
       </div>
 
@@ -2153,42 +2162,21 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         </div>
       </div>
 
-      <div className="flex flex-col gap-3 rounded-[18px] border border-border/40 bg-card/70 p-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0 text-sm text-muted-foreground">{providerAutosaveMessage}</div>
-
-        <div className="flex flex-wrap gap-2">
-          <button
-            className="theme-control-surface rounded-[14px] border border-primary/30 bg-primary/8 px-3 py-2 text-sm text-foreground transition hover:border-primary/45 disabled:cursor-not-allowed disabled:opacity-50"
-            type="button"
-            onClick={() => void handleSaveRuntimeSettings()}
-            disabled={isSavingRuntimeConfigDocument || !isProviderDraftDirty}
-          >
-            {isSavingRuntimeConfigDocument ? "Saving..." : "Save changes"}
-          </button>
-          <button
-            className="theme-control-surface rounded-[14px] border border-border/45 px-3 py-2 text-sm text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
-            type="button"
-            onClick={() => void handleReloadRuntimeSettings()}
-          >
-            Reload settings
-          </button>
-          <button
-            className="theme-control-surface rounded-[14px] border border-border/45 px-3 py-2 text-sm text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
-            type="button"
-            onClick={() => void handleExchangeRuntimeBinding()}
-            disabled={isExchangingRuntimeBinding || !isSignedIn}
-          >
-            {isExchangingRuntimeBinding ? "Refreshing..." : "Refresh runtime binding"}
-          </button>
-        </div>
-      </div>
     </div>
   );
 
   if (view === "account") {
+    if (showsSetupLoadingState) {
+      return (
+        <section className="grid w-full max-w-[1080px] gap-5">
+          {setupLoadingPanel}
+        </section>
+      );
+    }
+
     return (
       <section className="grid w-full max-w-[1080px] gap-5">
-        <div className="rounded-[28px] border border-border/35 bg-card/95 px-5 py-5 shadow-sm">
+        <div className="grid gap-4">
           <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
             <div className="flex min-w-0 items-center gap-4">
               <div className="grid h-16 w-16 shrink-0 place-items-center rounded-full border border-border/30 bg-muted/70 text-2xl font-semibold text-foreground">
@@ -2252,7 +2240,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 </>
               ) : (
                 <button
-                  className="inline-flex h-11 items-center justify-center rounded-full border border-foreground bg-foreground px-5 text-sm font-medium text-background transition hover:opacity-92 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex h-10 items-center justify-center rounded-full border border-primary/35 bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                   type="button"
                   onClick={() => void handleStartSignIn()}
                   disabled={isStartingSignIn}
@@ -2262,22 +2250,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               )}
             </div>
           </div>
-
-          {isFinishingSetup && !isExchangingRuntimeBinding ? (
-            <div className="mt-4 flex flex-col gap-3 rounded-[22px] border border-amber-300/20 bg-amber-400/8 px-4 py-4 md:flex-row md:items-center md:justify-between">
-              <div className="text-sm text-amber-300">
-                Sign-in completed. Holaboss is finishing local runtime setup.
-              </div>
-              <button
-                className="inline-flex h-10 items-center justify-center rounded-full border border-amber-300/30 px-4 text-sm font-medium text-amber-200 transition hover:bg-amber-400/10 disabled:cursor-not-allowed disabled:opacity-50"
-                type="button"
-                onClick={() => void handleExchangeRuntimeBinding()}
-                disabled={isExchangingRuntimeBinding}
-              >
-                {isExchangingRuntimeBinding ? "Refreshing..." : "Retry setup"}
-              </button>
-            </div>
-          ) : null}
 
           {(authMessage || authError) && (
             <div
@@ -2306,8 +2278,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   if (runtimeOnlyView) {
     return (
       <div className="w-full">
-        {runtimeProviderSettings}
-        {(authMessage || authError) && (
+        {showsSetupLoadingState ? setupLoadingPanel : runtimeProviderSettings}
+        {!showsSetupLoadingState && (authMessage || authError) && (
           <div
             className={`mt-3 rounded-[16px] border px-4 py-3 text-sm ${
               authError
@@ -2319,6 +2291,16 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           </div>
         )}
       </div>
+    );
+  }
+
+  if (showsSetupLoadingState) {
+    return (
+      <section className="theme-shell w-full max-w-none overflow-hidden rounded-[24px] border border-border/40 text-sm text-foreground shadow-card">
+        <div className="px-4 py-5">
+          {setupLoadingPanel}
+        </div>
+      </section>
     );
   }
 
@@ -2370,17 +2352,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 </button>
               )}
 
-              {isSignedIn && !runtimeBindingReady && (
-                <button
-                  className="inline-flex h-10 items-center justify-center rounded-[16px] border border-primary/40 bg-primary/10 px-4 text-sm text-primary transition hover:bg-primary/16 disabled:cursor-not-allowed disabled:opacity-50"
-                  type="button"
-                  onClick={() => void handleExchangeRuntimeBinding()}
-                  disabled={isExchangingRuntimeBinding}
-                >
-                  {isExchangingRuntimeBinding ? "Retrying setup..." : "Retry setup"}
-                </button>
-              )}
-
               <button
                 className="theme-control-surface inline-flex h-10 items-center justify-center rounded-[16px] border border-border/45 px-4 text-sm text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
                 type="button"
@@ -2399,12 +2370,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 Sign out
               </button>
             </div>
-
-            {isFinishingSetup && !isExchangingRuntimeBinding && (
-              <div className="mt-3 rounded-[16px] border border-amber-300/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-300">
-                Sign-in completed. Holaboss is finishing local runtime setup.
-              </div>
-            )}
 
             {(authMessage || authError) && (
               <div

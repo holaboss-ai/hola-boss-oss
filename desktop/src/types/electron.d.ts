@@ -82,9 +82,18 @@ declare global {
     error: string;
   }
 
+  type BrowserSpaceId = "user" | "agent";
+
+  interface BrowserTabCountsPayload {
+    user: number;
+    agent: number;
+  }
+
   interface BrowserTabListPayload {
+    space: BrowserSpaceId;
     activeTabId: string;
     tabs: BrowserStatePayload[];
+    tabCounts: BrowserTabCountsPayload;
   }
 
   interface BrowserBookmarkPayload {
@@ -222,6 +231,7 @@ declare global {
   interface WorkbenchOpenBrowserPayload {
     workspaceId?: string | null;
     url?: string | null;
+    space?: BrowserSpaceId | null;
   }
 
   interface TemplateAgentInfoPayload {
@@ -1256,7 +1266,7 @@ declare global {
       onError: (callback: (context: AuthErrorPayload) => unknown) => () => void;
     };
     browser: {
-      setActiveWorkspace: (workspaceId?: string | null) => Promise<BrowserTabListPayload>;
+      setActiveWorkspace: (workspaceId?: string | null, space?: BrowserSpaceId | null) => Promise<BrowserTabListPayload>;
       getState: () => Promise<BrowserTabListPayload>;
       setBounds: (bounds: BrowserBoundsPayload) => Promise<BrowserTabListPayload>;
       navigate: (targetUrl: string) => Promise<BrowserTabListPayload>;

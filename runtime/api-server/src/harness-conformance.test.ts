@@ -91,7 +91,7 @@ test("shared harness definitions expose only the pi harness", () => {
         capabilities: {
           requiresBackend: false,
           supportsStructuredOutput: false,
-          supportsWaitingUser: false,
+          supportsWaitingUser: true,
           supportsSkills: true,
           supportsMcpTools: true,
         },

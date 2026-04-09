@@ -87,9 +87,18 @@ interface BrowserStatePayload {
   error: string;
 }
 
+type BrowserSpaceId = "user" | "agent";
+
+interface BrowserTabCountsPayload {
+  user: number;
+  agent: number;
+}
+
 interface BrowserTabListPayload {
+  space: BrowserSpaceId;
   activeTabId: string;
   tabs: BrowserStatePayload[];
+  tabCounts: BrowserTabCountsPayload;
 }
 
 interface BrowserBookmarkPayload {
@@ -203,6 +212,7 @@ interface AppUpdateStatusPayload {
 interface WorkbenchOpenBrowserPayload {
   workspaceId?: string | null;
   url?: string | null;
+  space?: BrowserSpaceId | null;
 }
 
 interface TemplateAgentInfoPayload {
@@ -1192,8 +1202,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
   browser: {
-    setActiveWorkspace: (workspaceId?: string | null) =>
-      ipcRenderer.invoke("browser:setActiveWorkspace", workspaceId) as Promise<BrowserTabListPayload>,
+    setActiveWorkspace: (workspaceId?: string | null, space?: BrowserSpaceId | null) =>
+      ipcRenderer.invoke("browser:setActiveWorkspace", workspaceId, space) as Promise<BrowserTabListPayload>,
     getState: () => ipcRenderer.invoke("browser:getState") as Promise<BrowserTabListPayload>,
     setBounds: (bounds: BrowserBoundsPayload) => ipcRenderer.invoke("browser:setBounds", bounds) as Promise<BrowserTabListPayload>,
     navigate: (targetUrl: string) => ipcRenderer.invoke("browser:navigate", targetUrl) as Promise<BrowserTabListPayload>,

@@ -171,8 +171,9 @@ test("buildAgentCapabilityManifest carries browser tool descriptions that emphas
 
   const capability = manifest.browser_tools.find((entry) => entry.id === "browser_get_state");
   assert.ok(capability);
-  assert.match(capability.description, /specific sites, live page state, exact values, filters, rankings, thresholds/i);
-  assert.match(capability.description, /search results cannot fully verify/i);
+  assert.match(capability.description, /DOM-first browser inspection tool for actions and structured extraction/i);
+  assert.match(capability.description, /include_screenshot=true/i);
+  assert.match(capability.description, /visual appearance, layout, prominence, overlays, canvas\/chart\/PDF content/i);
 });
 
 test("evaluateAgentCapabilities keeps command and skill surfaces while excluding non-staged browser tools", () => {

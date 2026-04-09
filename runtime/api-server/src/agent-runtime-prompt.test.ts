@@ -476,4 +476,16 @@ test("composeBaseAgentPrompt requires proactive fallback when partial retrieval 
     prompt.systemPrompt,
     /When browser capabilities are available, use them as the direct verification path for site-specific or UI-dependent requirements that search or summary tools cannot fully prove\./
   );
+  assert.match(
+    prompt.systemPrompt,
+    /Within browser workflows, prefer DOM and structured page state for actions and routine extraction\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Use browser_get_state with include_screenshot=true, or browser_screenshot, only when visual appearance, layout, prominence, overlays, canvas\/chart\/PDF content, or user-visible confirmation matters, or when DOM signals remain ambiguous or unreliable\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Even in screenshot-assisted browser work, keep using DOM-grounded browser actions for clicking, typing, scrolling, and stable extraction whenever possible\./
+  );
 });

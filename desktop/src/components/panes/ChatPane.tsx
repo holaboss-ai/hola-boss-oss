@@ -82,6 +82,7 @@ interface ChatTraceStep {
 type ChatTodoStatus =
   | "pending"
   | "in_progress"
+  | "blocked"
   | "completed"
   | "abandoned";
 
@@ -662,6 +663,7 @@ function normalizeChatTodoStatus(value: unknown): ChatTodoStatus | null {
   switch (normalized) {
     case "pending":
     case "in_progress":
+    case "blocked":
     case "completed":
     case "abandoned":
       return normalized;
@@ -718,7 +720,10 @@ function todoRemainingTaskCount(phases: ChatTodoPhase[]) {
     (total, phase) =>
       total +
       phase.tasks.filter(
-        (task) => task.status === "pending" || task.status === "in_progress",
+        (task) =>
+          task.status === "pending" ||
+          task.status === "in_progress" ||
+          task.status === "blocked",
       ).length,
     0,
   );
@@ -743,6 +748,12 @@ function currentTodoEntry(phases: ChatTodoPhase[]) {
     );
     if (inProgressTask) {
       return { phase, task: inProgressTask };
+    }
+  }
+  for (const phase of phases) {
+    const blockedTask = phase.tasks.find((task) => task.status === "blocked");
+    if (blockedTask) {
+      return { phase, task: blockedTask };
     }
   }
   for (const phase of phases) {
@@ -828,6 +839,8 @@ function todoStatusLabel(status: ChatTodoStatus) {
   switch (status) {
     case "in_progress":
       return "In progress";
+    case "blocked":
+      return "Blocked";
     case "completed":
       return "Completed";
     case "abandoned":
@@ -841,6 +854,8 @@ function todoStatusTone(status: ChatTodoStatus) {
   switch (status) {
     case "in_progress":
       return "border-primary/25 bg-primary/10 text-primary";
+    case "blocked":
+      return "border-amber-400/35 bg-amber-400/12 text-amber-700";
     case "completed":
       return "border-emerald-500/18 bg-emerald-500/10 text-emerald-600";
     case "abandoned":
@@ -1260,6 +1275,16 @@ function phaseTraceStepFromEvent(
       typeof payload.status === "string"
         ? payload.status.trim().toLowerCase()
         : "";
+    if (status === "waiting_user") {
+      return {
+        id: "phase:awaiting-user",
+        kind: "phase",
+        title: "Waiting for your input",
+        status: "waiting",
+        details: ["The agent needs a follow-up answer before it can continue."],
+        order,
+      };
+    }
     if (status === "paused") {
       return {
         id: "phase:user-paused",
@@ -1369,7 +1394,9 @@ function assistantHistoryStateFromOutputEvents(
           : "";
       traceSteps = finalizeTraceSteps(
         traceSteps,
-        completedStatus === "paused" ? "waiting" : "completed",
+        completedStatus === "paused" || completedStatus === "waiting_user"
+          ? "waiting"
+          : "completed",
       );
     } else if (event.event_type === "run_failed") {
       traceSteps = finalizeTraceSteps(traceSteps, "error");

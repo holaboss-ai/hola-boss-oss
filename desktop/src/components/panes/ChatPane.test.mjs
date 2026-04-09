@@ -403,6 +403,11 @@ test("chat pane restores the current todo plan from session output events and ke
     source,
     /const nextTodoPlan = todoPlanFromToolPayload\(eventPayload\);[\s\S]*if \(nextTodoPlan !== undefined\) \{\s*setCurrentTodoPlan\(nextTodoPlan\);\s*\}/,
   );
+  assert.match(source, /case "blocked":\s*return "Blocked";/);
+  assert.match(
+    source,
+    /case "blocked":\s*return "border-amber-400\/35 bg-amber-400\/12 text-amber-700";/,
+  );
   assert.match(source, /clearSessionView\(\) \{[\s\S]*setCurrentTodoPlan\(null\);/);
 });
 
@@ -441,4 +446,12 @@ test("chat pane renders a collapsed current todo panel above the composer", asyn
     /className=\{`mt-0\.5 shrink-0 text-muted-foreground transition \$\{expanded \? "rotate-0" : "-rotate-90"\}`\}/,
   );
   assert.match(source, /All tracked todo items are complete\./);
+  assert.match(
+    source,
+    /task\.status === "pending" \|\|\s*task\.status === "in_progress" \|\|\s*task\.status === "blocked"/,
+  );
+  assert.match(
+    source,
+    /completedStatus === "paused" \|\| completedStatus === "waiting_user"/,
+  );
 });

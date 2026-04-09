@@ -58,7 +58,7 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   {
     id: "browser_get_state",
     description:
-      "Read the current desktop browser page, visible interactive elements, and optional screenshot. Use browser tools for specific sites, live page state, exact values, filters, rankings, thresholds, or UI-only data that search results cannot fully verify.",
+      "Read the current desktop browser page, visible interactive elements, and optional screenshot. Prefer this as the DOM-first browser inspection tool for actions and structured extraction. Set include_screenshot=true when visual appearance, layout, prominence, overlays, canvas/chart/PDF content, or user-visible confirmation matters, or when DOM signals are ambiguous or unreliable.",
     policy: "inspect",
     session_scope: "main_only",
     input_schema: {
@@ -169,7 +169,7 @@ export const DESKTOP_BROWSER_TOOL_DEFINITIONS: DesktopBrowserToolDefinition[] = 
   {
     id: "browser_screenshot",
     description:
-      "Capture a screenshot of the active browser tab when visual verification is needed in addition to DOM and text state.",
+      "Capture a screenshot of the active browser tab when visual verification or interpretation is needed. Do not use it by default for routine navigation or straightforward structured extraction when DOM and text state already suffice.",
     policy: "inspect",
     session_scope: "main_only",
     input_schema: {

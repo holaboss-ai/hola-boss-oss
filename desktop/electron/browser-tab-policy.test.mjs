@@ -25,3 +25,12 @@ test("desktop browser service exposes explicit tab creation endpoint", async () 
     /if \(method === "POST" && pathname === "\/api\/v1\/browser\/tabs"\)/,
   );
 });
+
+test("desktop browser overflow popup exposes downloads and history actions", async () => {
+  const source = await readFile(mainSourcePath, "utf8");
+
+  assert.match(source, /<button class="item" id="downloads"><span class="icon">⭳<\/span><span>Downloads<\/span><\/button>/);
+  assert.match(source, /window\.overflowPopup\.openDownloads\(\)/);
+  assert.match(source, /ipcMain\.handle\("browser:overflowOpenDownloads", \(\) => \{/);
+  assert.match(source, /toggleDownloadsPopup\(overflowAnchorBounds\);/);
+});

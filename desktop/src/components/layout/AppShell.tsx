@@ -38,6 +38,8 @@ import {
 import {
     CircleCheck,
     Clock3,
+    FileText,
+    Globe,
     Inbox as InboxIcon,
     Loader2,
     PanelRightClose,
@@ -85,17 +87,11 @@ const DEFAULT_FILES_PANE_WIDTH = MIN_FILES_PANE_WIDTH;
 const DEFAULT_BROWSER_PANE_WIDTH = 460;
 const MIN_AGENT_CONTENT_WIDTH = 120;
 const UTILITY_PANE_RESIZER_WIDTH = 16;
-const LEFT_NAVIGATION_RAIL_WIDTH_PX = 60;
-const APP_SHELL_SPACE_COLUMN_GAP_PX = 8;
 const APP_UPDATE_CHANGELOG_BASE_URL =
   "https://github.com/holaboss-ai/holaboss-ai/releases/tag";
 const DEFAULT_NOTIFICATION_TOAST_DURATION_MS = 7_000;
 const CRITICAL_NOTIFICATION_TOAST_DURATION_MS = 12_000;
 const DEFAULT_PROACTIVE_HEARTBEAT_CRON = "0 9 * * *";
-const FIXED_SAFE_TOAST_REGION_WIDTH_PX =
-  LEFT_NAVIGATION_RAIL_WIDTH_PX +
-  APP_SHELL_SPACE_COLUMN_GAP_PX +
-  MIN_FILES_PANE_WIDTH;
 
 type SpaceComponentId = "agent" | "files" | "browser";
 type UtilityPaneId = "files" | "browser";
@@ -253,6 +249,29 @@ function notificationActivationState(
 }
 
 function loadSpaceVisibility(): SpaceVisibilityState {
+  try {
+    const raw = localStorage.getItem(SPACE_VISIBILITY_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<
+        Record<SpaceComponentId, unknown>
+      >;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return {
+          agent: true,
+          files:
+            typeof parsed.files === "boolean"
+              ? parsed.files
+              : DEFAULT_SPACE_VISIBILITY.files,
+          browser:
+            typeof parsed.browser === "boolean"
+              ? parsed.browser
+              : DEFAULT_SPACE_VISIBILITY.browser,
+        };
+      }
+    }
+  } catch {
+    // ignore invalid persisted layout state
+  }
   return DEFAULT_SPACE_VISIBILITY;
 }
 
@@ -1054,6 +1073,8 @@ function AppShellContent() {
             browser: true,
           }));
         };
+        const targetBrowserSpace =
+          payload.space === "agent" ? "agent" : "user";
 
         const requestedUrl =
           typeof payload.url === "string" ? payload.url.trim() : "";
@@ -1062,12 +1083,19 @@ function AppShellContent() {
           void window.electronAPI.browser
             .setActiveWorkspace(
               payload.workspaceId ?? selectedWorkspaceId ?? null,
+              targetBrowserSpace,
             )
             .then(() => window.electronAPI.browser.navigate(requestedUrl))
             .catch(() => undefined);
           return;
         }
         openBrowserPane();
+        void window.electronAPI.browser
+          .setActiveWorkspace(
+            payload.workspaceId ?? selectedWorkspaceId ?? null,
+            targetBrowserSpace,
+          )
+          .catch(() => undefined);
       },
     );
 
@@ -1307,6 +1335,22 @@ function AppShellContent() {
     void window.electronAPI.ui.openExternalUrl(url);
   }, []);
 
+  const hideUtilityPane = useCallback((paneId: UtilityPaneId) => {
+    setSpaceVisibility((previous) => ({
+      ...previous,
+      [paneId]: false,
+    }));
+  }, []);
+
+  const toggleUtilityPaneVisibility = useCallback((paneId: UtilityPaneId) => {
+    setActiveLeftRailItem("space");
+    setSpaceVisibility((previous) => ({
+      ...previous,
+      agent: true,
+      [paneId]: !previous[paneId],
+    }));
+  }, []);
+
   const revealBrowserPane = useCallback(() => {
     setActiveLeftRailItem("space");
     setSpaceVisibility((previous) => ({
@@ -1328,7 +1372,7 @@ function AppShellContent() {
           ? workspaceIdOverride
           : selectedWorkspaceId || null;
       void window.electronAPI.browser
-        .setActiveWorkspace(targetWorkspaceId)
+        .setActiveWorkspace(targetWorkspaceId, "user")
         .then(() => window.electronAPI.browser.navigate(normalizedUrl))
         .catch(() => undefined);
     },
@@ -2023,16 +2067,6 @@ function AppShellContent() {
     : (visibleSpacePaneIds[visibleSpacePaneIds.length - 1] ?? null);
   const showOperationsDrawer =
     spaceMode && spaceVisibility.agent && operationsDrawerOpen;
-  const shouldUseSafeToastAnchor =
-    hasWorkspaces && (!spaceMode || visibleSpacePaneIds.includes("files"));
-  const anchoredToastStackClassName = shouldUseSafeToastAnchor
-    ? "pointer-events-none absolute bottom-4 left-0 z-20 flex max-w-full flex-col gap-3 sm:bottom-6"
-    : undefined;
-  const anchoredToastStackStyle = shouldUseSafeToastAnchor
-    ? {
-        width: FIXED_SAFE_TOAST_REGION_WIDTH_PX,
-      }
-    : undefined;
   const shouldShowAppUpdateReminder = Boolean(
     effectiveAppUpdateStatus &&
       (effectiveAppUpdateStatus.available ||
@@ -2161,6 +2195,9 @@ function AppShellContent() {
                   current?.requestKey === requestKey ? null : current,
                 );
               }}
+              onClosePane={() => {
+                hideUtilityPane("files");
+              }}
             />
           ) : (
             <BrowserPane
@@ -2172,16 +2209,13 @@ function AppShellContent() {
     [
       agentContent,
       browserPaneWidth,
+      fileExplorerFocusRequest,
       filesPaneWidth,
       flexSpacePaneId,
-      publishOpen,
-      isUtilityPaneResizing,
-      createWorkspacePanelOpen,
-      settingsDialogOpen,
+      hideUtilityPane,
       shouldSuspendBrowserNativeView,
       showOperationsDrawer,
       visibleSpacePaneIds,
-      workspaceSwitcherOpen,
     ],
   );
 
@@ -2358,8 +2392,6 @@ function AppShellContent() {
           onActivateNotification={(notificationId) => {
             void handleActivateNotification(notificationId);
           }}
-          className={anchoredToastStackClassName}
-          style={anchoredToastStackStyle}
         />
 
         {hasWorkspaces ? (
@@ -2423,6 +2455,34 @@ function AppShellContent() {
               <div className="min-h-0 flex-1 overflow-hidden">
                 {spaceMode ? (
                   <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
+                    <div className="mb-2 flex flex-wrap items-center gap-2 px-0.5">
+                      <button
+                        type="button"
+                        aria-pressed={spaceVisibility.files}
+                        onClick={() => toggleUtilityPaneVisibility("files")}
+                        className={`inline-flex h-8 items-center gap-2 rounded-full border px-3 text-[12px] font-medium transition ${
+                          spaceVisibility.files
+                            ? "border-primary/40 bg-primary/10 text-primary"
+                            : "border-border/45 bg-background/75 text-muted-foreground hover:border-primary/28 hover:text-foreground"
+                        }`}
+                      >
+                        <FileText size={13} />
+                        <span>Files</span>
+                      </button>
+                      <button
+                        type="button"
+                        aria-pressed={spaceVisibility.browser}
+                        onClick={() => toggleUtilityPaneVisibility("browser")}
+                        className={`inline-flex h-8 items-center gap-2 rounded-full border px-3 text-[12px] font-medium transition ${
+                          spaceVisibility.browser
+                            ? "border-primary/40 bg-primary/10 text-primary"
+                            : "border-border/45 bg-background/75 text-muted-foreground hover:border-primary/28 hover:text-foreground"
+                        }`}
+                      >
+                        <Globe size={13} />
+                        <span>Browser</span>
+                      </button>
+                    </div>
                     <div
                       ref={utilityPaneHostRef}
                       className="min-h-0 flex-1 overflow-hidden"

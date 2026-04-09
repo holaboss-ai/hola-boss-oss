@@ -305,7 +305,7 @@ test("claimed input persists runner events, assistant text, and idle state on su
   store.close();
 });
 
-test("claimed input ignores waiting_user terminal status for harnesses that do not support it", async () => {
+test("claimed input persists waiting_user terminal status for harnesses that support it", async () => {
   const store = makeStore("hb-claimed-input-pi-waiting-user-");
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
@@ -348,9 +348,9 @@ test("claimed input ignores waiting_user terminal status for harnesses that do n
   assert.ok(updated);
   assert.equal(updated.status, "DONE");
   assert.ok(runtimeState);
-  assert.equal(runtimeState.status, "IDLE");
+  assert.equal(runtimeState.status, "WAITING_USER");
   assert.ok(turnResult);
-  assert.equal(turnResult.status, "completed");
+  assert.equal(turnResult.status, "waiting_user");
   assert.equal(turnResult.stopReason, "waiting_user");
 
   store.close();

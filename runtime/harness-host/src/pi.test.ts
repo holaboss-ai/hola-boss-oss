@@ -792,6 +792,76 @@ test("createPiTodoToolDefinitions applies incremental phased todo ops", async ()
   ]);
 });
 
+test("createPiTodoToolDefinitions preserves blocked tasks without auto-promoting later pending work", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-todo-blocked-"));
+  const stateDir = path.join(root, ".holaboss", "pi-agent");
+  const [todoRead, todoWrite] = createPiTodoToolDefinitions({
+    stateDir,
+    sessionId: "session-1",
+  });
+
+  await todoWrite.execute(
+    "call-replace",
+    {
+      ops: [
+        {
+          op: "replace",
+          phases: [
+            {
+              name: "Implementation",
+              tasks: [
+                { content: "Wait for approval" },
+                { content: "Continue after approval" },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    undefined,
+    undefined,
+    {} as never
+  );
+
+  await todoWrite.execute(
+    "call-block",
+    {
+      ops: [
+        {
+          op: "update",
+          id: "task-1",
+          status: "blocked",
+          details: "Blocked waiting for approval.",
+        },
+      ],
+    },
+    undefined,
+    undefined,
+    {} as never
+  );
+
+  const rereadResult = await todoRead.execute("call-read", {}, undefined, undefined, {} as never);
+  assert.deepEqual((rereadResult.details as { phases: unknown[] }).phases, [
+    {
+      id: "phase-1",
+      name: "Implementation",
+      tasks: [
+        {
+          id: "task-1",
+          content: "Wait for approval",
+          status: "blocked",
+          details: "Blocked waiting for approval.",
+        },
+        {
+          id: "task-2",
+          content: "Continue after approval",
+          status: "pending",
+        },
+      ],
+    },
+  ]);
+});
+
 test("createPiTodoToolDefinitions rejects legacy todo payload aliases", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-todo-invalid-"));
   const stateDir = path.join(root, ".holaboss", "pi-agent");
@@ -1392,6 +1462,118 @@ test("runPi emits terminal failure from assistant error messages and suppresses 
   }
 });
 
+test("runPi emits waiting_user and blocks the active todo when the question tool completes", async () => {
+  const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-run-waiting-user-"));
+  const stateDir = path.join(workspaceDir, ".holaboss", "pi-agent");
+  const [, todoWrite] = createPiTodoToolDefinitions({
+    stateDir,
+    sessionId: "session-1",
+  });
+  await todoWrite.execute(
+    "call-seed",
+    {
+      ops: [
+        {
+          op: "replace",
+          phases: [
+            {
+              name: "Implementation",
+              tasks: [
+                {
+                  content: "Wait for deploy confirmation",
+                  status: "in_progress",
+                },
+                {
+                  content: "Only continue after confirmation",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    undefined,
+    undefined,
+    {} as never
+  );
+
+  const request = {
+    ...baseRequest(),
+    workspace_dir: workspaceDir,
+  };
+  const events: Array<{ event_type: string; payload: Record<string, unknown> }> = [];
+  const originalWrite = process.stdout.write.bind(process.stdout);
+  const fakeSession = {
+    subscribe(listener: (event: unknown) => void) {
+      this.listener = listener;
+      return () => {};
+    },
+    async sendUserMessage() {
+      this.listener?.({
+        type: "tool_execution_start",
+        toolCallId: "question-1",
+        toolName: "question",
+        args: { question: "Should I deploy to production?" },
+      });
+      this.listener?.({
+        type: "tool_execution_end",
+        toolCallId: "question-1",
+        toolName: "question",
+        result: { question: "Should I deploy to production?" },
+        isError: false,
+      });
+      this.listener?.({
+        type: "agent_end",
+        messages: [],
+      });
+    },
+    async abort() {},
+    dispose() {},
+    listener: undefined as ((event: unknown) => void) | undefined,
+  };
+
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    const lines = String(chunk)
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { event_type: string; payload: Record<string, unknown> });
+    events.push(...lines);
+    return true;
+  }) as typeof process.stdout.write;
+
+  try {
+    const exitCode = await runPi(request, {
+      createSession: async () => ({
+        session: fakeSession as never,
+        sessionFile: "/tmp/pi-session.jsonl",
+        mcpToolMetadata: new Map(),
+        skillMetadataByAlias: new Map(),
+        dispose: async () => {},
+      }),
+    });
+
+    assert.equal(exitCode, 0);
+    assert.deepEqual(
+      events.map((event) => event.event_type),
+      ["run_started", "tool_call", "tool_call", "run_completed"]
+    );
+    assert.equal(events[3]?.payload.status, "waiting_user");
+
+    const persistedStatePath = path.join(stateDir, "todos", "session-1.json");
+    const persisted = JSON.parse(fs.readFileSync(persistedStatePath, "utf8"));
+    assert.equal(persisted.phases[0]?.tasks[0]?.status, "blocked");
+    assert.equal(persisted.phases[0]?.tasks[1]?.status, "pending");
+    assert.match(
+      String(persisted.phases[0]?.tasks[0]?.details ?? ""),
+      /Blocked waiting for user input: Should I deploy to production\?/,
+    );
+  } finally {
+    process.stdout.write = originalWrite;
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("buildPiPromptPayload inlines native images, extracts common document formats, and falls back for binary files", async () => {
   const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-attachments-"));
   const attachmentsDir = path.join(workspaceDir, ".holaboss", "input-attachments", "batch-1");
@@ -1509,6 +1691,52 @@ test("buildPiPromptPayload inlines native images, extracts common document forma
         mimeType: "image/png",
       },
     ]);
+  } finally {
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("buildPiPromptPayload requires todoread first when resuming with persisted todo state", async () => {
+  const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-pi-resume-todo-"));
+  const stateDir = path.join(workspaceDir, ".holaboss", "pi-agent");
+  fs.mkdirSync(path.join(workspaceDir, ".holaboss", "pi-sessions"), { recursive: true });
+  const persistedSessionPath = path.join(workspaceDir, ".holaboss", "pi-sessions", "session-1.jsonl");
+  fs.writeFileSync(persistedSessionPath, "", "utf8");
+
+  const [, todoWrite] = createPiTodoToolDefinitions({
+    stateDir,
+    sessionId: "session-1",
+  });
+  await todoWrite.execute(
+    "call-seed",
+    {
+      ops: [
+        {
+          op: "replace",
+          phases: [
+            {
+              name: "Implementation",
+              tasks: [{ content: "Resume the existing work" }],
+            },
+          ],
+        },
+      ],
+    },
+    undefined,
+    undefined,
+    {} as never
+  );
+
+  try {
+    const prompt = await buildPiPromptPayload({
+      ...baseRequest(),
+      workspace_dir: workspaceDir,
+      persisted_harness_session_id: persistedSessionPath,
+    });
+
+    assert.match(prompt.text, /Resumed session requirement:/);
+    assert.match(prompt.text, /call `todoread` to restore that plan/i);
+    assert.match(prompt.text, /Continue from the restored plan, and update it with `todowrite`/i);
   } finally {
     fs.rmSync(workspaceDir, { recursive: true, force: true });
   }

@@ -452,7 +452,10 @@ export function buildBaseAgentPromptSections(
   ];
   if (capabilityManifest?.browser_tools.length) {
     executionLines.push(
-      "When browser capabilities are available, use them as the direct verification path for site-specific or UI-dependent requirements that search or summary tools cannot fully prove."
+      "When browser capabilities are available, use them as the direct verification path for site-specific or UI-dependent requirements that search or summary tools cannot fully prove.",
+      "Within browser workflows, prefer DOM and structured page state for actions and routine extraction.",
+      "Use browser_get_state with include_screenshot=true, or browser_screenshot, only when visual appearance, layout, prominence, overlays, canvas/chart/PDF content, or user-visible confirmation matters, or when DOM signals remain ambiguous or unreliable.",
+      "Even in screenshot-assisted browser work, keep using DOM-grounded browser actions for clicking, typing, scrolling, and stable extraction whenever possible."
     );
   }
   if (request.workspaceSkillIds.length > 0) {

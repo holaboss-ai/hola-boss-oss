@@ -22,7 +22,7 @@ export const piHarnessDefinition: HarnessDefinition = {
     capabilities: {
       requiresBackend: false,
       supportsStructuredOutput: false,
-      supportsWaitingUser: false,
+      supportsWaitingUser: true,
       supportsSkills: true,
       supportsMcpTools: true,
     },

@@ -50,6 +50,7 @@ export type PiEventMapperState = {
   mcpToolMetadata: ReadonlyMap<string, PiMcpToolMetadata>;
   skillMetadataByAlias: ReadonlyMap<string, PiSkillMetadata>;
   terminalState: "completed" | "failed" | null;
+  waitingForUser: boolean;
 };
 
 export interface PiSessionHandle {
@@ -75,7 +76,13 @@ const PI_MCP_DISCOVERY_RETRY_INTERVAL_MS = 250;
 const PI_MCP_DISCOVERY_MAX_WAIT_MS = 10000;
 const PI_TODO_STATE_DIR = "todos";
 const PI_TODO_STATE_VERSION = 2;
-const PI_TODO_STATUSES = ["pending", "in_progress", "completed", "abandoned"] as const;
+const PI_TODO_STATUSES = [
+  "pending",
+  "in_progress",
+  "blocked",
+  "completed",
+  "abandoned",
+] as const;
 const require = createRequire(import.meta.url);
 
 type PiTodoStatus = (typeof PI_TODO_STATUSES)[number];
@@ -506,6 +513,11 @@ export async function buildPiPromptPayload(request: HarnessHostPiRequest): Promi
   const fallbackLines: string[] = [];
   const images: ImageContent[] = [];
 
+  const todoResumeInstruction = resumeTodoReadInstruction(request);
+  if (todoResumeInstruction) {
+    sections.push(todoResumeInstruction);
+  }
+
   const instruction = request.instruction.trim();
   if (instruction) {
     sections.push(instruction);
@@ -751,11 +763,41 @@ function emptyPiTodoState(sessionId: string): PiTodoState {
   };
 }
 
+function hasPersistedPiTodoState(stateDir: string, sessionId: string): boolean {
+  return countPiTodoTasks(readPiTodoState(stateDir, sessionId).phases) > 0;
+}
+
+function shouldRequireTodoReadBeforePrompt(request: HarnessHostPiRequest): boolean {
+  return Boolean(
+    resolveRequestedSessionFile(request) &&
+      hasPersistedPiTodoState(resolvePiStateDir(request.workspace_dir), request.session_id)
+  );
+}
+
+function resumeTodoReadInstruction(request: HarnessHostPiRequest): string {
+  if (!shouldRequireTodoReadBeforePrompt(request)) {
+    return "";
+  }
+  return [
+    "Resumed session requirement:",
+    "A persisted phased todo plan already exists for this session.",
+    "Before any other substantive work, call `todoread` to restore that plan.",
+    "Continue from the restored plan, and update it with `todowrite` if it is stale before proceeding.",
+  ].join("\n");
+}
+
+function effectiveSystemPromptForRequest(request: HarnessHostPiRequest): string {
+  const basePrompt = request.system_prompt.trim();
+  const todoResumeInstruction = resumeTodoReadInstruction(request);
+  return [basePrompt, todoResumeInstruction].filter(Boolean).join("\n\n");
+}
+
 function normalizePiTodoStatus(value: unknown): PiTodoStatus | null {
   const normalized = optionalTrimmedString(value)?.toLowerCase().replace(/[\s-]+/g, "_") ?? "";
   switch (normalized) {
     case "pending":
     case "in_progress":
+    case "blocked":
     case "completed":
     case "abandoned":
       return normalized;
@@ -896,10 +938,70 @@ function normalizeInProgressPiTodoTask(phases: PiTodoPhase[]): void {
     return;
   }
 
+  const hasBlockedTask = orderedTasks.some((task) => task.status === "blocked");
+  if (hasBlockedTask) {
+    return;
+  }
+
   const firstPendingTask = orderedTasks.find((task) => task.status === "pending");
   if (firstPendingTask) {
     firstPendingTask.status = "in_progress";
   }
+}
+
+function summarizeQuestionPrompt(args: JsonValue | null, result: unknown): string | null {
+  const candidates: unknown[] = [];
+  if (isRecord(args)) {
+    candidates.push(args.question, args.prompt, args.message, args.text, args.content);
+  }
+  if (isRecord(result)) {
+    candidates.push(result.question, result.prompt, result.message, result.text, result.content);
+    if (isRecord(result.details)) {
+      candidates.push(
+        result.details.question,
+        result.details.prompt,
+        result.details.message,
+        result.details.text,
+        result.details.content
+      );
+    }
+  }
+  for (const candidate of candidates) {
+    const normalized = optionalTrimmedString(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return null;
+}
+
+function blockActivePiTodoTask(params: {
+  stateDir: string;
+  sessionId: string;
+  detail: string;
+}): PiTodoState | null {
+  const currentState = readPiTodoState(params.stateDir, params.sessionId);
+  if (countPiTodoTasks(currentState.phases) === 0) {
+    return null;
+  }
+  const nextPhases = clonePiTodoPhases(currentState.phases);
+  const activeTask =
+    nextPhases.flatMap((phase) => phase.tasks).find((task) => task.status === "in_progress") ??
+    nextPhases.flatMap((phase) => phase.tasks).find((task) => task.status === "pending");
+  if (!activeTask) {
+    return null;
+  }
+  activeTask.status = "blocked";
+  const existingDetails = optionalTrimmedString(activeTask.details);
+  activeTask.details =
+    existingDetails && existingDetails !== params.detail
+      ? `${existingDetails}\n${params.detail}`
+      : params.detail;
+  return writePiTodoState({
+    stateDir: params.stateDir,
+    sessionId: params.sessionId,
+    phases: nextPhases,
+  });
 }
 
 function readPiTodoState(stateDir: string, sessionId: string): PiTodoState {
@@ -1176,7 +1278,12 @@ function applyPiTodoOps(
 
 function currentPiTodoPhaseIndex(phases: PiTodoPhase[]): number {
   const currentIndex = phases.findIndex((phase) =>
-    phase.tasks.some((task) => task.status === "pending" || task.status === "in_progress")
+    phase.tasks.some(
+      (task) =>
+        task.status === "pending" ||
+        task.status === "in_progress" ||
+        task.status === "blocked"
+    )
   );
   if (currentIndex !== -1) {
     return currentIndex;
@@ -1190,6 +1297,8 @@ function formatPiTodoMarker(status: PiTodoStatus): string {
       return "[x]";
     case "in_progress":
       return "[>]";
+    case "blocked":
+      return "[!]";
     case "abandoned":
       return "[-]";
     default:
@@ -1213,7 +1322,7 @@ function formatPiTodoListText(phases: PiTodoPhase[]): string {
     lines.push(`Phase ${index + 1}/${phases.length} "${phase.name}" - ${completedTasks}/${phase.tasks.length} complete`);
     for (const task of phase.tasks) {
       lines.push(`  ${formatPiTodoMarker(task.status)} ${task.id} ${task.content}`);
-      if (task.status === "in_progress" && task.details) {
+      if ((task.status === "in_progress" || task.status === "blocked") && task.details) {
         for (const detailLine of task.details.split("\n")) {
           lines.push(`      ${detailLine}`);
         }
@@ -1231,7 +1340,12 @@ function formatPiTodoWriteText(nextState: PiTodoState): string {
 
   const incomplete = nextState.phases.flatMap((phase) =>
     phase.tasks
-      .filter((task) => task.status === "pending" || task.status === "in_progress")
+      .filter(
+        (task) =>
+          task.status === "pending" ||
+          task.status === "in_progress" ||
+          task.status === "blocked"
+      )
       .map((task) => ({ ...task, phaseName: phase.name }))
   );
   const currentPhaseIndex = currentPiTodoPhaseIndex(nextState.phases);
@@ -1245,7 +1359,7 @@ function formatPiTodoWriteText(nextState: PiTodoState): string {
     lines.push(`Remaining items (${incomplete.length}):`);
     for (const task of incomplete) {
       lines.push(`  - ${task.id} ${task.content} [${task.status}] (${task.phaseName})`);
-      if (task.status === "in_progress" && task.details) {
+      if ((task.status === "in_progress" || task.status === "blocked") && task.details) {
         for (const detailLine of task.details.split("\n")) {
           lines.push(`      ${detailLine}`);
         }
@@ -1392,6 +1506,7 @@ export function createPiTodoToolDefinitions(params: { stateDir: string; sessionI
     promptSnippet: "todoread: Read the current phased todo plan for this session.",
     promptGuidelines: [
       "Use todoread before changing an existing phased plan when current todo state may matter.",
+      "When resuming a session that already has todo state, call todoread before other substantive work.",
     ],
     execute: async (_toolCallId, _toolParams, signal) => {
       if (signal?.aborted) {
@@ -1424,7 +1539,7 @@ export function createPiTodoToolDefinitions(params: { stateDir: string; sessionI
     promptGuidelines: [
       "Use todowrite for complex or long-running tasks that benefit from an explicit phased plan.",
       "Use `replace` for the initial plan and incremental ops such as `update` or `add_task` once work is underway.",
-      "Keep exactly one task `in_progress` whenever unfinished tasks remain.",
+      "Keep exactly one task `in_progress` whenever unfinished tasks remain unless the current task is blocked on user input or another external dependency.",
     ],
     execute: async (_toolCallId, toolParams, signal) => {
       if (signal?.aborted) {
@@ -2936,7 +3051,7 @@ async function defaultCreateSession(request: HarnessHostPiRequest): Promise<PiSe
     noPromptTemplates: true,
     noThemes: true,
     skillsOverride: () => loadedSkills,
-    systemPromptOverride: () => request.system_prompt,
+    systemPromptOverride: () => effectiveSystemPromptForRequest(request),
   });
   await resourceLoader.reload();
 
@@ -3282,12 +3397,13 @@ function mapPiEvent(
       const args = state.toolArgsByCallId.get(callId) ?? null;
       state.toolArgsByCallId.delete(callId);
       const metadata = state.mcpToolMetadata.get(event.toolName);
+      const toolName = metadata?.toolName ?? event.toolName;
       const mapped: PiMappedEvent[] = [
         {
           event_type: "tool_call",
           payload: {
             phase: "completed",
-            tool_name: metadata?.toolName ?? event.toolName,
+            tool_name: toolName,
             tool_args: args,
             result: jsonValue(event.result),
             error: Boolean(event.isError),
@@ -3304,6 +3420,9 @@ function mapPiEvent(
           },
         },
       ];
+      if (!event.isError && toolName.trim().toLowerCase() === "question") {
+        state.waitingForUser = true;
+      }
       const skillMapped = maybeMapSkillInvocationEnd(event, args, state);
       if (skillMapped) {
         mapped.push(skillMapped);
@@ -3344,7 +3463,7 @@ function mapPiEvent(
         {
           event_type: "run_completed",
           payload: {
-            status: "success",
+            status: state.waitingForUser ? "waiting_user" : "success",
             event: "agent_end",
             source: "pi",
             harness_session_id: sessionFile,
@@ -3365,6 +3484,7 @@ export function createPiEventMapperState(
     mcpToolMetadata,
     skillMetadataByAlias,
     terminalState: null,
+    waitingForUser: false,
   };
 }
 
@@ -3388,8 +3508,29 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
   const handle = await deps.createSession(request);
   const state = createPiEventMapperState(handle.mcpToolMetadata, handle.skillMetadataByAlias);
   let terminalEmitted = false;
+  const stateDir = resolvePiStateDir(request.workspace_dir);
   const unsubscribe = handle.session.subscribe((event) => {
     for (const mapped of mapPiEvent(event, handle.sessionFile, state)) {
+      if (
+        mapped.event_type === "tool_call" &&
+        mapped.payload.phase === "completed" &&
+        mapped.payload.error !== true &&
+        typeof mapped.payload.tool_name === "string" &&
+        mapped.payload.tool_name.trim().toLowerCase() === "question"
+      ) {
+        const questionText = summarizeQuestionPrompt(
+          (mapped.payload.tool_args as JsonValue | null) ?? null,
+          mapped.payload.result
+        );
+        const detail = questionText
+          ? `Blocked waiting for user input: ${questionText}`
+          : "Blocked waiting for user input.";
+        blockActivePiTodoTask({
+          stateDir,
+          sessionId: request.session_id,
+          detail,
+        });
+      }
       if (mapped.event_type === "run_completed" || mapped.event_type === "run_failed") {
         terminalEmitted = true;
       }
@@ -3415,7 +3556,7 @@ export async function runPi(request: HarnessHostPiRequest, deps: PiDeps = defaul
     await handle.session.sendUserMessage(await promptContentForRequest(request));
     if (!terminalEmitted) {
       emitRunnerEvent(request, nextSequence(), "run_completed", {
-        status: "success",
+        status: state.waitingForUser ? "waiting_user" : "success",
         source: "pi",
         event: "send_user_message_resolved",
         harness_session_id: handle.sessionFile,

@@ -103,7 +103,7 @@ export function NotificationToastStack({
   return (
     <div
       className={cn(
-        "pointer-events-none fixed bottom-4 left-4 z-[90] flex w-[min(340px,calc(100vw-2rem))] flex-col gap-3 sm:bottom-6 sm:left-6",
+        "pointer-events-none fixed right-4 top-4 z-[90] flex w-[min(340px,calc(100vw-2rem))] flex-col gap-3 sm:right-6 sm:top-6",
         className,
       )}
       style={style}

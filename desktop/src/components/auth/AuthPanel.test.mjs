@@ -33,6 +33,8 @@ test("billing summary card exposes web-only billing actions", async () => {
 
 test("runtime auth panel keeps model provider settings compact", async () => {
   const source = await readFile(AUTH_PANEL_PATH, "utf8");
+  const runtimeProviderSettingsBlock =
+    source.match(/const runtimeProviderSettings = \([\s\S]*?\n  \);\n\n  if \(view === "account"\)/)?.[0] ?? "";
 
   assert.match(source, /Background tasks/);
   assert.match(source, /Used for memory recall and post-run tasks\./);
@@ -42,8 +44,6 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.match(source, /Select a model to enable background tasks\./);
   assert.match(source, /Connected providers/);
   assert.match(source, /Available providers/);
-  assert.match(source, /Edit settings, then click Save changes\./);
-  assert.match(source, /Save changes/);
   assert.match(source, /Click Connect to configure settings\./);
   assert.match(source, /This provider will be disconnected when you save changes\./);
   assert.match(source, /Models/);
@@ -71,6 +71,26 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.doesNotMatch(source, /Ready to connect/);
   assert.doesNotMatch(source, /Connection details/);
   assert.doesNotMatch(source, /Recommended models configured/);
+  assert.doesNotMatch(source, /async function handleReloadRuntimeSettings\(\)/);
+  assert.doesNotMatch(source, /providerAutosaveMessage/);
+  assert.doesNotMatch(source, /Edit settings, then click Save changes\./);
+  assert.doesNotMatch(source, /Reload settings/);
+  assert.match(source, /const setupLoadingPanel = \(/);
+  assert.match(source, /Connecting your Holaboss account\.\.\./);
+  assert.match(source, /Finalizing your desktop session and runtime binding\. This should only take a moment\./);
+  assert.doesNotMatch(source, /Finishing setup/);
+  assert.doesNotMatch(source, /Retry setup/);
+  assert.doesNotMatch(source, /Sign-in completed\. Holaboss is finishing local runtime setup\./);
+  assert.match(runtimeProviderSettingsBlock, /<div className="mt-3 grid gap-4">/);
+  assert.doesNotMatch(runtimeProviderSettingsBlock, /theme-subtle-surface mt-3 grid gap-4 rounded-\[20px\] border border-border\/40 p-4/);
+  assert.match(
+    runtimeProviderSettingsBlock,
+    /<div className="rounded-\[18px\] border border-border\/40 bg-card\/80 p-4">\s*<div className="grid gap-3">\s*<div className="text-sm font-medium text-foreground">Connected providers<\/div>/,
+  );
+  assert.match(
+    runtimeProviderSettingsBlock,
+    /<div className="rounded-\[18px\] border border-border\/40 bg-card\/80 p-4">\s*<div className="text-sm font-medium text-foreground">Available providers<\/div>/,
+  );
 });
 
 test("auth panel derives runtime readiness from the shared desktop runtime state", async () => {
@@ -218,6 +238,23 @@ test("holaboss proxy models come from the managed runtime catalog instead of loc
   assert.match(source, /return \["openai\/", "google\/", "anthropic\/", "holaboss\/", "holaboss_model_proxy\/"\]/);
   assert.match(source, /Catalog, base URL, and credentials come from your Holaboss runtime binding\./);
   assert.doesNotMatch(source, /Managed and ready on this desktop\. Expand to edit the background tasks model\./);
+});
+
+test("account view uses an inline profile header and theme-colored sign-in action", async () => {
+  const source = await readFile(AUTH_PANEL_PATH, "utf8");
+
+  assert.match(source, /if \(view === "account"\) \{/);
+  assert.match(source, /if \(showsSetupLoadingState\) \{\s*return \(\s*<section className="grid w-full max-w-\[1080px\] gap-5">\s*\{setupLoadingPanel\}/);
+  assert.match(source, /<div className="grid gap-4">/);
+  assert.doesNotMatch(source, /rounded-\[28px\] border border-border\/35 bg-card\/95 px-5 py-5 shadow-sm/);
+  assert.match(
+    source,
+    /className="inline-flex h-10 items-center justify-center rounded-full border border-primary\/35 bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"/,
+  );
+  assert.doesNotMatch(
+    source,
+    /className="inline-flex h-11 items-center justify-center rounded-full border border-foreground bg-foreground px-5 text-sm font-medium text-background transition hover:opacity-92 disabled:cursor-not-allowed disabled:opacity-50"/,
+  );
 });
 
 test("direct Anthropic, OpenRouter, and Gemini defaults advertise current provider model ids", async () => {
