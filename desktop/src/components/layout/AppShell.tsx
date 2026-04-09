@@ -39,8 +39,6 @@ import {
 import {
     CircleCheck,
     Clock3,
-    FileText,
-    Globe,
     Inbox as InboxIcon,
     Loader2,
     PanelRightClose,
@@ -259,14 +257,8 @@ function loadSpaceVisibility(): SpaceVisibilityState {
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         return {
           agent: true,
-          files:
-            typeof parsed.files === "boolean"
-              ? parsed.files
-              : DEFAULT_SPACE_VISIBILITY.files,
-          browser:
-            typeof parsed.browser === "boolean"
-              ? parsed.browser
-              : DEFAULT_SPACE_VISIBILITY.browser,
+          files: true,
+          browser: true,
         };
       }
     }
@@ -1356,15 +1348,6 @@ function AppShellContent() {
 
   const handleOpenExternalUrl = useCallback((url: string) => {
     void window.electronAPI.ui.openExternalUrl(url);
-  }, []);
-
-  const toggleUtilityPaneVisibility = useCallback((paneId: UtilityPaneId) => {
-    setActiveLeftRailItem("space");
-    setSpaceVisibility((previous) => ({
-      ...previous,
-      agent: true,
-      [paneId]: !previous[paneId],
-    }));
   }, []);
 
   const revealBrowserPane = useCallback(() => {
@@ -2489,36 +2472,6 @@ function AppShellContent() {
               <div className="min-h-0 flex-1 overflow-hidden">
                 {spaceMode ? (
                   <div className="relative flex h-full min-h-0 min-w-0 overflow-hidden">
-                    <div className="mr-1.5 flex w-9 shrink-0 flex-col items-center gap-1.5 py-1">
-                      <button
-                        type="button"
-                        aria-label="Toggle files pane"
-                        aria-pressed={spaceVisibility.files}
-                        title="Files"
-                        onClick={() => toggleUtilityPaneVisibility("files")}
-                        className={`inline-flex size-8 items-center justify-center rounded-lg transition-colors ${
-                          spaceVisibility.files
-                            ? "bg-primary/12 text-primary"
-                            : "text-muted-foreground hover:bg-accent/36 hover:text-accent-foreground"
-                        }`}
-                      >
-                        <FileText size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Toggle browser pane"
-                        aria-pressed={spaceVisibility.browser}
-                        title="Browser"
-                        onClick={() => toggleUtilityPaneVisibility("browser")}
-                        className={`inline-flex size-8 items-center justify-center rounded-lg transition-colors ${
-                          spaceVisibility.browser
-                            ? "bg-primary/12 text-primary"
-                            : "text-muted-foreground hover:bg-accent/36 hover:text-accent-foreground"
-                        }`}
-                      >
-                        <Globe size={14} />
-                      </button>
-                    </div>
                     <div
                       ref={utilityPaneHostRef}
                       className="min-h-0 min-w-0 flex-1 overflow-hidden"

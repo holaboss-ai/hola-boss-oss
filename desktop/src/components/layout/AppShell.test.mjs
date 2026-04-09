@@ -158,29 +158,23 @@ test("app shell requests remote task proposal generation without a separate succ
   assert.doesNotMatch(source, /Pending cloud jobs/);
 });
 
-test("app shell restores pane visibility and exposes manual files and browser surface controls", async () => {
+test("app shell restores pane visibility without manual files and browser toggles", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(source, /function loadSpaceVisibility\(\): SpaceVisibilityState \{/);
   assert.match(source, /localStorage\.getItem\(SPACE_VISIBILITY_STORAGE_KEY\)/);
-  assert.match(source, /agent: true,/);
-  assert.match(source, /const toggleUtilityPaneVisibility = useCallback\(\(paneId: UtilityPaneId\) => \{/);
-  assert.match(source, /setActiveLeftRailItem\("space"\);/);
-  assert.match(source, /className="mr-1\.5 flex w-9 shrink-0 flex-col items-center gap-1\.5 py-1"/);
-  assert.match(source, /aria-label="Toggle files pane"/);
-  assert.match(source, /title="Files"/);
-  assert.match(source, /aria-pressed=\{spaceVisibility\.files\}/);
-  assert.match(source, /onClick=\{\(\) => toggleUtilityPaneVisibility\("files"\)\}/);
-  assert.match(source, /aria-label="Toggle browser pane"/);
-  assert.match(source, /title="Browser"/);
-  assert.match(source, /aria-pressed=\{spaceVisibility\.browser\}/);
-  assert.match(source, /onClick=\{\(\) => toggleUtilityPaneVisibility\("browser"\)\}/);
+  assert.match(
+    source,
+    /if \(parsed && typeof parsed === "object" && !Array\.isArray\(parsed\)\) \{\s*return \{\s*agent: true,\s*files: true,\s*browser: true,\s*\};/,
+  );
+  assert.doesNotMatch(source, /const toggleUtilityPaneVisibility = useCallback\(\(paneId: UtilityPaneId\) => \{/);
+  assert.doesNotMatch(source, /className="mr-1\.5 flex w-9 shrink-0 flex-col items-center gap-1\.5 py-1"/);
+  assert.doesNotMatch(source, /aria-label="Toggle files pane"/);
+  assert.doesNotMatch(source, /aria-label="Toggle browser pane"/);
   assert.match(source, /<FileExplorerPane[\s\S]*focusRequest=\{fileExplorerFocusRequest\}/);
   assert.doesNotMatch(source, /<FileExplorerPane[\s\S]*onClosePane=/);
   assert.match(source, /<BrowserPane[\s\S]*layoutSyncKey=\{/);
   assert.doesNotMatch(source, /<BrowserPane[\s\S]*onClosePane=/);
-  assert.match(source, /spaceVisibility\.files[\s\S]*\? "bg-primary\/12 text-primary"[\s\S]*: "text-muted-foreground hover:bg-accent\/36 hover:text-accent-foreground"/);
-  assert.match(source, /spaceVisibility\.browser[\s\S]*\? "bg-primary\/12 text-primary"[\s\S]*: "text-muted-foreground hover:bg-accent\/36 hover:text-accent-foreground"/);
   assert.doesNotMatch(source, /inline-flex h-8 items-center gap-2 rounded-full border px-3/);
   assert.doesNotMatch(source, /spaceDrawerToggleLabel/);
   assert.doesNotMatch(source, /utilityPaneRenderWidth/);

@@ -94,21 +94,17 @@ test("chat pane falls back to provider setup instead of holaboss pending state w
   );
 });
 
-test("chat trace summary treats recovered tool errors separately from terminal run failures", async () => {
+test("chat trace summary only surfaces terminal run failures in the summary label", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(
     source,
     /const terminalErrorCount = steps\.filter\(\s*\(step\) => step\.kind === "phase" && step\.status === "error"/,
   );
-  assert.match(
-    source,
-    /const recoveredErrorCount = steps\.filter\(\s*\(step\) => step\.kind === "tool" && step\.status === "error"/,
-  );
   assert.match(source, /const groupHasTerminalError = terminalErrorCount > 0;/);
   assert.match(
     source,
-    /const summarySuffix = groupHasTerminalError[\s\S]*`\s*\(\$\{recoveredErrorCount\} recovered\)`/,
+    /const summarySuffix = groupHasTerminalError[\s\S]*`\s*\(\$\{terminalErrorCount\} failed\)`[\s\S]*:\s*"";/,
   );
   assert.match(
     source,
@@ -290,6 +286,36 @@ test("chat pane exposes a return path from sub-sessions back to the main session
   );
 });
 
+test("chat pane hides restored history until the viewport snaps to the latest message", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /useLayoutEffect/);
+  assert.match(source, /const \[isHistoryViewportPending, setIsHistoryViewportPending\] =\s*useState\(false\);/);
+  assert.match(source, /const \[historyViewportRestoreGeneration, setHistoryViewportRestoreGeneration\] =\s*useState\(0\);/);
+  assert.match(source, /const historyViewportGenerationRef = useRef\(0\);/);
+  assert.match(source, /function beginHistoryViewportRestore\(\)/);
+  assert.match(source, /function requestHistoryViewportRestore\(\)/);
+  assert.match(source, /function cancelHistoryViewportRestore\(\)/);
+  assert.match(source, /function HistoryRestoreSkeleton\(\)/);
+  assert.match(
+    source,
+    /useLayoutEffect\(\(\) => \{[\s\S]*container\.scrollTo\(\{\s*top: container\.scrollHeight,\s*behavior: "auto",\s*\}\);[\s\S]*setIsHistoryViewportPending\(false\);[\s\S]*\}, \[historyViewportRestoreGeneration, isHistoryViewportPending\]\);/,
+  );
+  assert.match(
+    source,
+    /behavior:\s*isResponding \|\| isHistoryViewportPending \? "auto" : "smooth"/,
+  );
+  assert.match(
+    source,
+    /const showHistoryRestoreScreen =\s*isLoadingHistory \|\| isHistoryViewportPending;/,
+  );
+  assert.match(source, /role="status"/);
+  assert.match(source, /aria-label="Loading conversation"/);
+  assert.match(source, /animate-pulse/);
+  assert.match(source, /showHistoryRestoreScreen \? <HistoryRestoreSkeleton \/> : null/);
+  assert.match(source, /showHistoryRestoreScreen \? "invisible" : ""/);
+});
+
 test("chat pane shows hosted billing warnings and blocks managed sends when credits are exhausted", async () => {
   const source = await readFile(sourcePath, "utf8");
 
@@ -337,7 +363,7 @@ test("chat thread uses the full pane width for normal messages", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /className=\{`chat-scrollbar-hidden h-full min-h-0 overflow-x-hidden overflow-y-auto \$\{hasMessages \? "" : "flex items-center justify-center"\}`\}/);
-  assert.match(source, /messagesContentRef\}[\s\S]*className="flex min-w-0 w-full flex-col gap-7 px-6 pb-3 pt-5"/);
+  assert.match(source, /messagesContentRef\}[\s\S]*className=\{`flex min-w-0 w-full flex-col gap-7 px-6 pb-3 pt-5 \$\{\s*showHistoryRestoreScreen \? "invisible" : ""\s*\}`\}/);
   assert.match(source, /<form onSubmit=\{onSubmit\} className="w-full">/);
   assert.match(source, /<div className="flex min-w-0 justify-start">[\s\S]*<article className="min-w-0 flex-1">/);
   assert.match(source, /<div className="flex min-w-0 justify-end">[\s\S]*max-w-\[420px\][\s\S]*sm:max-w-\[560px\][\s\S]*lg:max-w-\[680px\]/);
@@ -406,8 +432,11 @@ test("chat pane restores the current todo plan from session output events and ke
   assert.match(source, /case "blocked":\s*return "Blocked";/);
   assert.match(
     source,
-    /case "blocked":\s*return "border-amber-400\/35 bg-amber-400\/12 text-amber-700";/,
+    /case "blocked":\s*return "text-amber-700";/,
   );
+  assert.match(source, /function TodoStatusIcon\(\{ status \}: \{ status: ChatTodoStatus \}\)/);
+  assert.match(source, /aria-label=\{label\}/);
+  assert.match(source, /<TodoStatusIcon status=\{task\.status\} \/>/);
   assert.match(source, /clearSessionView\(\) \{[\s\S]*setCurrentTodoPlan\(null\);/);
 });
 
@@ -435,7 +464,11 @@ test("chat pane renders a collapsed current todo panel above the composer", asyn
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /function CurrentTodoPanel\(/);
-  assert.match(source, /<span>Current working todo<\/span>/);
+  assert.match(source, /function currentTodoPosition\(phases: ChatTodoPhase\[\]\)/);
+  assert.match(source, /function latestCompletedTodoEntry\(phases: ChatTodoPhase\[\]\)/);
+  assert.match(source, /const summaryLabel = activeEntry/);
+  assert.match(source, /: latestCompletedEntry\?\.task\.content \|\|/);
+  assert.match(source, /const progressLabel =\s*totalTaskCount > 0 \? `\$\{currentTaskPosition\}\/\$\{totalTaskCount\}` : "0\/0";/);
   assert.match(
     source,
     /<div className="space-y-3">[\s\S]*\{currentTodoPlan \? \(\s*<CurrentTodoPanel[\s\S]*todoPlan=\{currentTodoPlan\}[\s\S]*expanded=\{todoPanelExpanded\}[\s\S]*onToggle=\{\(\) =>[\s\S]*setTodoPanelExpanded\(\(value\) => !value\)[\s\S]*\}\s*\/>\s*\) : null\}[\s\S]*<Composer/,
@@ -443,7 +476,7 @@ test("chat pane renders a collapsed current todo panel above the composer", asyn
   assert.match(source, /aria-expanded=\{expanded\}/);
   assert.match(
     source,
-    /className=\{`mt-0\.5 shrink-0 text-muted-foreground transition \$\{expanded \? "rotate-0" : "-rotate-90"\}`\}/,
+    /className=\{`shrink-0 text-muted-foreground transition \$\{expanded \? "rotate-0" : "-rotate-90"\}`\}/,
   );
   assert.match(source, /All tracked todo items are complete\./);
   assert.match(

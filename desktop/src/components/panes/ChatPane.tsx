@@ -6,6 +6,7 @@ import {
   KeyboardEvent,
   type RefObject,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -733,18 +734,6 @@ function todoRemainingTaskCount(phases: ChatTodoPhase[]) {
   );
 }
 
-function todoCompletedTaskCount(phases: ChatTodoPhase[]) {
-  return phases.reduce(
-    (total, phase) =>
-      total +
-      phase.tasks.filter(
-        (task) =>
-          task.status === "completed" || task.status === "abandoned",
-      ).length,
-    0,
-  );
-}
-
 function currentTodoEntry(phases: ChatTodoPhase[]) {
   for (const phase of phases) {
     const inProgressTask = phase.tasks.find(
@@ -766,6 +755,57 @@ function currentTodoEntry(phases: ChatTodoPhase[]) {
       return { phase, task: pendingTask };
     }
   }
+  return null;
+}
+
+function currentTodoPosition(phases: ChatTodoPhase[]) {
+  let position = 0;
+
+  for (const phase of phases) {
+    for (const task of phase.tasks) {
+      position += 1;
+      if (
+        task.status === "in_progress" ||
+        task.status === "blocked" ||
+        task.status === "pending"
+      ) {
+        return position;
+      }
+    }
+  }
+
+  return position;
+}
+
+function latestCompletedTodoEntry(phases: ChatTodoPhase[]) {
+  for (let phaseIndex = phases.length - 1; phaseIndex >= 0; phaseIndex -= 1) {
+    const phase = phases[phaseIndex];
+    for (
+      let taskIndex = phase.tasks.length - 1;
+      taskIndex >= 0;
+      taskIndex -= 1
+    ) {
+      const task = phase.tasks[taskIndex];
+      if (task.status === "completed") {
+        return { phase, task };
+      }
+    }
+  }
+
+  for (let phaseIndex = phases.length - 1; phaseIndex >= 0; phaseIndex -= 1) {
+    const phase = phases[phaseIndex];
+    for (
+      let taskIndex = phase.tasks.length - 1;
+      taskIndex >= 0;
+      taskIndex -= 1
+    ) {
+      const task = phase.tasks[taskIndex];
+      if (task.status === "abandoned") {
+        return { phase, task };
+      }
+    }
+  }
+
   return null;
 }
 
@@ -857,16 +897,44 @@ function todoStatusLabel(status: ChatTodoStatus) {
 function todoStatusTone(status: ChatTodoStatus) {
   switch (status) {
     case "in_progress":
-      return "border-primary/25 bg-primary/10 text-primary";
+      return "text-primary";
     case "blocked":
-      return "border-amber-400/35 bg-amber-400/12 text-amber-700";
+      return "text-amber-700";
     case "completed":
-      return "border-emerald-500/18 bg-emerald-500/10 text-emerald-600";
+      return "text-emerald-600";
     case "abandoned":
-      return "border-border/40 bg-muted text-muted-foreground";
+      return "text-muted-foreground";
     default:
-      return "border-border/45 bg-background text-muted-foreground";
+      return "text-muted-foreground";
   }
+}
+
+function TodoStatusIcon({ status }: { status: ChatTodoStatus }) {
+  const label = todoStatusLabel(status);
+  const icon =
+    status === "in_progress" ? (
+      <Loader2 size={12} className="animate-spin" />
+    ) : status === "blocked" ? (
+      <AlertTriangle size={12} />
+    ) : status === "completed" ? (
+      <Check size={12} />
+    ) : status === "abandoned" ? (
+      <X size={12} />
+    ) : (
+      <Clock3 size={12} />
+    );
+
+  return (
+    <span
+      aria-label={label}
+      title={label}
+      className={`inline-flex size-5 shrink-0 items-center justify-center ${todoStatusTone(
+        status,
+      )}`}
+    >
+      {icon}
+    </span>
+  );
 }
 
 function runFailedContextLabel(payload: Record<string, unknown>): string {
@@ -1499,6 +1567,10 @@ export function ChatPane({
   const [chatModelPreference, setChatModelPreference] = useState(
     loadStoredChatModelPreference,
   );
+  const [isHistoryViewportPending, setIsHistoryViewportPending] =
+    useState(false);
+  const [historyViewportRestoreGeneration, setHistoryViewportRestoreGeneration] =
+    useState(0);
   const [chatScrollMetrics, setChatScrollMetrics] = useState({
     scrollTop: 0,
     scrollHeight: 0,
@@ -1545,6 +1617,7 @@ export function ChatPane({
   const liveThinkingTextRef = useRef("");
   const liveThinkingExpandedRef = useRef(false);
   const liveTraceStepsRef = useRef<ChatTraceStep[]>([]);
+  const historyViewportGenerationRef = useRef(0);
   const [activeSessionId, setActiveSessionId] = useState("");
 
   function appendStreamTelemetry(
@@ -1589,6 +1662,21 @@ export function ChatPane({
     activeSessionIdRef.current = sessionId;
     setActiveSessionId(sessionId ?? "");
     onActiveSessionIdChange?.(sessionId);
+  }
+
+  function beginHistoryViewportRestore() {
+    historyViewportGenerationRef.current += 1;
+    shouldAutoScrollRef.current = true;
+    setIsHistoryViewportPending(true);
+  }
+
+  function requestHistoryViewportRestore() {
+    setHistoryViewportRestoreGeneration(historyViewportGenerationRef.current);
+  }
+
+  function cancelHistoryViewportRestore() {
+    historyViewportGenerationRef.current += 1;
+    setIsHistoryViewportPending(false);
   }
 
   function resetLiveTurn() {
@@ -1740,6 +1828,7 @@ export function ChatPane({
     }
     setActiveSession(nextSessionId);
     if (!nextSessionId) {
+      requestHistoryViewportRestore();
       return;
     }
 
@@ -1778,6 +1867,7 @@ export function ChatPane({
     setCurrentTodoPlan(todoPlanFromOutputEvents(outputEventHistory.items));
     setMessages(nextMessages);
     resetLiveTurn();
+    requestHistoryViewportRestore();
 
     const onboardingSessionId = (
       selectedWorkspaceRef.current?.onboarding_session_id || ""
@@ -1863,6 +1953,8 @@ export function ChatPane({
       return;
     }
 
+    let historyLoaded = false;
+    beginHistoryViewportRestore();
     setIsLoadingHistory(true);
     setChatErrorMessage("");
     pendingInputIdRef.current = null;
@@ -1888,9 +1980,13 @@ export function ChatPane({
         selectedWorkspaceId,
         runtimeStates.items,
       );
+      historyLoaded = true;
     } catch (error) {
       setChatErrorMessage(normalizeErrorMessage(error));
     } finally {
+      if (!historyLoaded) {
+        cancelHistoryViewportRestore();
+      }
       setIsLoadingHistory(false);
     }
   }
@@ -2116,15 +2212,46 @@ export function ChatPane({
 
     container.scrollTo({
       top: container.scrollHeight,
-      behavior: isResponding ? "auto" : "smooth",
+      behavior:
+        isResponding || isHistoryViewportPending ? "auto" : "smooth",
     });
   }, [
+    isHistoryViewportPending,
     isResponding,
     liveAssistantText,
     liveThinkingText,
     liveTraceSteps,
     messages,
   ]);
+
+  useLayoutEffect(() => {
+    if (!isHistoryViewportPending || historyViewportRestoreGeneration <= 0) {
+      return;
+    }
+
+    const container = messagesRef.current;
+    if (!container) {
+      return;
+    }
+
+    const restoreGeneration = historyViewportRestoreGeneration;
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: "auto",
+    });
+    syncChatScrollMetrics(container);
+
+    const frameId = window.requestAnimationFrame(() => {
+      if (historyViewportGenerationRef.current !== restoreGeneration) {
+        return;
+      }
+      setIsHistoryViewportPending(false);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [historyViewportRestoreGeneration, isHistoryViewportPending]);
 
   useEffect(() => {
     selectedWorkspaceRef.current = selectedWorkspace;
@@ -2229,6 +2356,7 @@ export function ChatPane({
 
   useEffect(() => {
     if (!selectedWorkspaceId) {
+      cancelHistoryViewportRestore();
       clearSessionView();
       setPendingAttachments([]);
       setActiveSession(null);
@@ -2240,6 +2368,8 @@ export function ChatPane({
     let cancelled = false;
 
     async function loadHistory() {
+      let historyLoaded = false;
+      beginHistoryViewportRestore();
       setIsLoadingHistory(true);
       setChatErrorMessage("");
 
@@ -2290,12 +2420,16 @@ export function ChatPane({
             cancelled: () => cancelled,
           },
         );
+        historyLoaded = true;
       } catch (error) {
         if (!cancelled) {
           setChatErrorMessage(normalizeErrorMessage(error));
         }
       } finally {
         if (!cancelled) {
+          if (!historyLoaded) {
+            cancelHistoryViewportRestore();
+          }
           setIsLoadingHistory(false);
         }
       }
@@ -2329,6 +2463,8 @@ export function ChatPane({
         return;
       }
 
+      let historyLoaded = false;
+      beginHistoryViewportRestore();
       setIsLoadingHistory(true);
       setChatErrorMessage("");
       pendingInputIdRef.current = null;
@@ -2357,12 +2493,16 @@ export function ChatPane({
             cancelled: () => cancelled,
           },
         );
+        historyLoaded = true;
       } catch (error) {
         if (!cancelled) {
           setChatErrorMessage(normalizeErrorMessage(error));
         }
       } finally {
         if (!cancelled) {
+          if (!historyLoaded) {
+            cancelHistoryViewportRestore();
+          }
           setIsLoadingHistory(false);
         }
       }
@@ -3511,12 +3651,17 @@ export function ChatPane({
     Boolean(mainSessionId) &&
     Boolean(activeSessionId) &&
     activeSessionId !== mainSessionId;
+  const showHistoryRestoreScreen =
+    isLoadingHistory || isHistoryViewportPending;
   const chatScrollRange = Math.max(
     0,
     chatScrollMetrics.scrollHeight - chatScrollMetrics.clientHeight,
   );
   const showCustomChatScrollbar =
-    hasMessages && chatScrollMetrics.clientHeight > 0 && chatScrollRange > 1;
+    !showHistoryRestoreScreen &&
+    hasMessages &&
+    chatScrollMetrics.clientHeight > 0 &&
+    chatScrollRange > 1;
   const chatScrollbarRailInset =
     composerBlockHeight > 0 ? composerBlockHeight / 2 : 0;
   const chatScrollbarRailHeight = chatScrollMetrics.clientHeight;
@@ -3763,7 +3908,9 @@ export function ChatPane({
               {hasMessages ? (
                 <div
                   ref={messagesContentRef}
-                  className="flex min-w-0 w-full flex-col gap-7 px-6 pb-3 pt-5"
+                  className={`flex min-w-0 w-full flex-col gap-7 px-6 pb-3 pt-5 ${
+                    showHistoryRestoreScreen ? "invisible" : ""
+                  }`}
                 >
                   {messages.map((message) =>
                     message.role === "user" ? (
@@ -3864,7 +4011,11 @@ export function ChatPane({
                   ) : null}
                 </div>
               ) : (
-                <div className="w-full px-4 pb-10 pt-10 sm:px-5">
+                <div
+                  className={`w-full px-4 pb-10 pt-10 sm:px-5 ${
+                    showHistoryRestoreScreen ? "invisible" : ""
+                  }`}
+                >
                   <div className="mx-auto mb-6 max-w-[560px] text-center">
                     <div className="text-xl font-medium text-foreground">
                       {isLoadingBootstrap || isLoadingHistory
@@ -3960,7 +4111,12 @@ export function ChatPane({
           ) : null}
 
           {hasMessages ? (
-            <div ref={composerBlockRef} className="shrink-0 px-6 pb-5 pt-3">
+            <div
+              ref={composerBlockRef}
+              className={`shrink-0 px-6 pb-5 pt-3 ${
+                showHistoryRestoreScreen ? "invisible" : ""
+              }`}
+            >
               <form onSubmit={onSubmit} className="w-full">
                 <div className="space-y-3">
                   {currentTodoPlan ? (
@@ -4015,6 +4171,8 @@ export function ChatPane({
               </form>
             </div>
           ) : null}
+
+          {showHistoryRestoreScreen ? <HistoryRestoreSkeleton /> : null}
 
           <ArtifactBrowserModal
             open={artifactBrowserOpen}
@@ -4248,6 +4406,52 @@ function OutputArtifactIcon({
   return <FileText size={16} className="shrink-0 text-primary/72" />;
 }
 
+function HistoryRestoreSkeleton() {
+  return (
+    <div
+      role="status"
+      aria-label="Loading conversation"
+      className="absolute inset-0 z-30 overflow-hidden px-6 pb-5 pt-5"
+    >
+      <div className="flex h-full flex-col">
+        <div className="animate-pulse space-y-6">
+          <div className="flex items-start justify-between gap-6">
+            <div className="h-5 w-28 rounded-md bg-muted/70" />
+            <div className="h-11 w-52 rounded-2xl bg-muted/70" />
+          </div>
+          <div className="space-y-3 px-3">
+            <div className="flex items-center gap-2">
+              <div className="h-5 w-6 rounded-md bg-muted/70" />
+              <div className="h-5 w-14 rounded-md bg-muted/70" />
+            </div>
+            <div className="h-5 w-full rounded-md bg-muted/70" />
+            <div className="h-5 w-full rounded-md bg-muted/70" />
+            <div className="h-5 w-[42%] rounded-md bg-muted/70" />
+          </div>
+        </div>
+
+        <div className="mt-auto">
+          <div className="rounded-[22px] border border-border/35 bg-muted/50 p-4">
+            <div className="animate-pulse space-y-3">
+              <div className="h-6 w-full rounded-lg bg-muted/80" />
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <div className="size-8 rounded-full bg-muted/80" />
+                  <div className="size-8 rounded-full bg-muted/80" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="size-8 rounded-full bg-muted/80" />
+                  <div className="size-8 rounded-full bg-muted/80" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AssistantTurnOutputs({
   outputs,
   sessionOutputs,
@@ -4308,49 +4512,51 @@ function CurrentTodoPanel({
 }) {
   const totalTaskCount = todoTaskCount(todoPlan.phases);
   const remainingTaskCount = todoRemainingTaskCount(todoPlan.phases);
-  const completedTaskCount = todoCompletedTaskCount(todoPlan.phases);
   const activeEntry = currentTodoEntry(todoPlan.phases);
+  const latestCompletedEntry = latestCompletedTodoEntry(todoPlan.phases);
+  const currentTaskPosition = currentTodoPosition(todoPlan.phases);
+  const summaryLabel = activeEntry
+    ? activeEntry.task.content
+    : latestCompletedEntry?.task.content ||
+      "All tracked todo items are complete.";
+  const progressLabel =
+    totalTaskCount > 0 ? `${currentTaskPosition}/${totalTaskCount}` : "0/0";
 
   return (
-    <div className="overflow-hidden rounded-[20px] border border-border/35 bg-card/78 shadow-sm backdrop-blur-sm">
+    <div className="overflow-hidden rounded-[18px] border border-border/35 bg-muted/50">
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={expanded}
-        className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-muted/30"
+        className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-background/30"
       >
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-            {remainingTaskCount > 0 ? (
-              <Clock3 size={12} className="shrink-0" />
-            ) : (
-              <Check size={12} className="shrink-0 text-emerald-500" />
-            )}
-            <span>Current working todo</span>
-          </div>
-          <div className="mt-1 truncate text-[13px] font-medium text-foreground">
-            {activeEntry
-              ? activeEntry.task.content
-              : "All tracked todo items are complete."}
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-            {activeEntry ? (
-              <span className="truncate">{activeEntry.phase.name}</span>
-            ) : null}
-            <span>
-              {remainingTaskCount} remaining of {totalTaskCount}
-            </span>
-            <span>{completedTaskCount} complete</span>
-          </div>
+        <div
+          className={`inline-flex size-5 shrink-0 items-center justify-center rounded-full ${
+            remainingTaskCount > 0
+              ? "text-muted-foreground"
+              : "text-emerald-500"
+          }`}
+        >
+          {remainingTaskCount > 0 ? (
+            <Clock3 size={13} className="shrink-0" />
+          ) : (
+            <Check size={13} className="shrink-0" />
+          )}
+        </div>
+        <div className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
+          {summaryLabel}
+        </div>
+        <div className="shrink-0 text-[11px] font-medium tabular-nums text-muted-foreground">
+          {progressLabel}
         </div>
         <ChevronDown
           size={14}
-          className={`mt-0.5 shrink-0 text-muted-foreground transition ${expanded ? "rotate-0" : "-rotate-90"}`}
+          className={`shrink-0 text-muted-foreground transition ${expanded ? "rotate-0" : "-rotate-90"}`}
         />
       </button>
 
       {expanded ? (
-        <div className="border-t border-border/20 px-4 py-3">
+        <div className="border-t border-border/20 px-3 py-3">
           <div className="space-y-3">
             {todoPlan.phases.map((phase) => {
               const phaseCompletedCount = phase.tasks.filter(
@@ -4360,7 +4566,7 @@ function CurrentTodoPanel({
               return (
                 <div
                   key={phase.id}
-                  className="rounded-[16px] border border-border/25 bg-muted/28 px-3 py-3"
+                  className="rounded-[16px] border border-border/25 bg-muted/50 px-3 py-3"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-[12px] font-medium text-foreground">
@@ -4373,19 +4579,16 @@ function CurrentTodoPanel({
                   <div className="mt-3 space-y-2">
                     {phase.tasks.map((task) => {
                       const isActiveTask = activeEntry?.task.id === task.id;
+                      const hasVisibleDetails = isActiveTask && Boolean(task.details);
                       return (
                         <div
                           key={task.id}
-                          className="flex items-start gap-2 text-[12px] leading-5"
+                          className={`flex gap-3 text-[12px] leading-5 ${hasVisibleDetails ? "items-start" : "items-center"}`}
                         >
-                          <span
-                            className={`mt-0.5 inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${todoStatusTone(task.status)}`}
-                          >
-                            {todoStatusLabel(task.status)}
-                          </span>
+                          <TodoStatusIcon status={task.status} />
                           <div className="min-w-0 flex-1">
                             <div className="text-foreground">{task.content}</div>
-                            {isActiveTask && task.details ? (
+                            {hasVisibleDetails ? (
                               <div className="mt-1 whitespace-pre-wrap text-[11px] text-muted-foreground">
                                 {task.details}
                               </div>
@@ -4721,9 +4924,6 @@ function TraceStepGroup({
   const terminalErrorCount = steps.filter(
     (step) => step.kind === "phase" && step.status === "error",
   ).length;
-  const recoveredErrorCount = steps.filter(
-    (step) => step.kind === "tool" && step.status === "error",
-  ).length;
   const groupHasTerminalError = terminalErrorCount > 0;
   const groupIsLive = live && !groupHasTerminalError;
   const stepCount = steps.length;
@@ -4738,9 +4938,7 @@ function TraceStepGroup({
   const summaryStep = activeStep ?? (groupIsLive ? latestStep : null);
   const summarySuffix = groupHasTerminalError
     ? ` (${terminalErrorCount} failed)`
-    : recoveredErrorCount > 0
-      ? ` (${recoveredErrorCount} recovered)`
-      : "";
+    : "";
 
   return (
     <div className="mt-3">
