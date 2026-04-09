@@ -33,7 +33,15 @@ test("desktop runtime consumes the authoritative model catalog from exchange and
   );
   assert.match(
     source,
-    /interface RuntimeBindingExchangePayload \{[\s\S]*catalog_version\?: string;[\s\S]*provider_model_groups\?: RuntimeProviderModelGroupPayload\[];/,
+    /interface RuntimeBindingExchangePayload \{[\s\S]*default_background_model\?: string;[\s\S]*default_image_model\?: string;[\s\S]*catalog_version\?: string;[\s\S]*provider_model_groups\?: RuntimeProviderModelGroupPayload\[];/,
+  );
+  assert.match(
+    source,
+    /interface RuntimeModelCatalogPayload \{[\s\S]*defaultBackgroundModel: string \| null;[\s\S]*defaultImageModel: string \| null;[\s\S]*providerModelGroups: RuntimeProviderModelGroupPayload\[];/,
+  );
+  assert.match(
+    source,
+    /interface RuntimeProviderModelPayload \{[\s\S]*capabilities\?: string\[];/,
   );
   assert.match(
     source,

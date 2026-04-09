@@ -835,6 +835,48 @@ test("buildPiProviderConfig preserves direct OpenRouter endpoints and headers", 
   assert.equal(providerConfig.models[0]?.compat, undefined);
 });
 
+test("buildPiProviderConfig uses pi-ai native Google provider for direct Gemini models", () => {
+  const request: HarnessHostPiRequest = {
+    ...baseRequest(),
+    provider_id: "gemini_direct",
+    model_id: "gemini-2.5-flash",
+    model_client: {
+      model_proxy_provider: "google_compatible",
+      api_key: "gemini-test-key",
+      base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+    },
+  };
+
+  const providerConfig = buildPiProviderConfig(request);
+
+  assert.equal(providerConfig.baseUrl, "https://generativelanguage.googleapis.com/v1beta");
+  assert.equal(providerConfig.api, "google-generative-ai");
+  assert.equal(providerConfig.authHeader, false);
+  assert.equal(providerConfig.models[0]?.api, "google-generative-ai");
+  assert.equal(providerConfig.models[0]?.compat, undefined);
+});
+
+test("buildPiProviderConfig disables store for Google-compatible proxy routes", () => {
+  const request: HarnessHostPiRequest = {
+    ...baseRequest(),
+    provider_id: "openai",
+    model_id: "gemini-2.5-flash",
+    model_client: {
+      model_proxy_provider: "google_compatible",
+      api_key: "hbmk-test-key",
+      base_url: "http://127.0.0.1:3060/api/v1/model-proxy/google/v1",
+    },
+  };
+
+  const providerConfig = buildPiProviderConfig(request);
+
+  assert.equal(providerConfig.baseUrl, "http://127.0.0.1:3060/api/v1/model-proxy/google/v1");
+  assert.equal(providerConfig.api, "openai-completions");
+  assert.deepEqual(providerConfig.models[0]?.compat, {
+    supportsStore: false,
+  });
+});
+
 test("createPiMcpCustomTools filters discovery to allowlisted tools and forwards calls via mcporter", async () => {
   const request: HarnessHostPiRequest = {
     ...baseRequest(),

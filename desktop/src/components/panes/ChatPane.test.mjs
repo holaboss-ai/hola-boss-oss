@@ -221,6 +221,8 @@ test("chat pane suppresses claude options for the holaboss proxy fallback path",
     source.match(/const CHAT_MODEL_PRESETS = \[[\s\S]*?\] as const;/)?.[0] ?? "";
 
   assert.doesNotMatch(presetBlock, /claude-/);
+  assert.match(source, /normalized\.startsWith\("google\/"\)/);
+  assert.match(source, /normalized\.startsWith\("gemini-"\)/);
   assert.match(source, /function isClaudeChatModel\(model: string\)/);
   assert.match(
     source,
@@ -231,6 +233,15 @@ test("chat pane suppresses claude options for the holaboss proxy fallback path",
     source,
     /!isClaudeChatModel\(model\) &&[\s\S]*holabossProxyModelsAvailable \|\| !isHolabossProxyModel\(model\)/,
   );
+});
+
+test("chat pane filters managed catalog entries that are not chat-capable", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /function runtimeModelHasChatCapability\(model: RuntimeProviderModelPayload\)/);
+  assert.match(source, /const capabilities = runtimeModelCapabilities\(model\);/);
+  assert.match(source, /return capabilities.length === 0 \|\| capabilities.includes\("chat"\);/);
+  assert.match(source, /if \(!runtimeModelHasChatCapability\(model\)\) \{\s*return false;\s*\}/);
 });
 
 test("chat pane prefixes run failures with provider and model context", async () => {

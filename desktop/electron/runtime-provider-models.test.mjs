@@ -29,6 +29,8 @@ test("desktop runtime normalizes stale direct-provider model aliases for Anthrop
   assert.match(source, /anthropic_direct:\s*\{[\s\S]*"claude-sonnet-4-5": "claude-sonnet-4-6"/);
   assert.match(source, /gemini_direct:\s*\{[\s\S]*"gemini-3.1-pro-preview": "gemini-2.5-pro"/);
   assert.match(source, /function normalizeRuntimeProviderModelId\(/);
+  assert.match(source, /function normalizeRuntimeModelCapabilities\(/);
+  assert.match(source, /function upsertRuntimeProviderModel\(/);
 });
 
 test("desktop runtime recognizes minimax provider label and strips minimax token prefix", async () => {

@@ -156,6 +156,17 @@ const CHAT_MODEL_PRESETS = [
   "openai/gpt-5",
   "openai/gpt-5.2",
 ] as const;
+const RUNTIME_MODEL_CAPABILITY_ALIASES: Record<string, string> = {
+  chat: "chat",
+  text: "chat",
+  completion: "chat",
+  completions: "chat",
+  responses: "chat",
+  image: "image_generation",
+  images: "image_generation",
+  image_generation: "image_generation",
+  image_gen: "image_generation",
+};
 
 function sessionUserId(
   session: { user?: { id?: string | null } | null } | null | undefined,
@@ -170,9 +181,11 @@ function isHolabossProxyModel(model: string) {
   }
   return (
     normalized.startsWith("openai/") ||
+    normalized.startsWith("google/") ||
     normalized.startsWith("anthropic/") ||
     normalized.startsWith("gpt-") ||
-    normalized.startsWith("claude-")
+    normalized.startsWith("claude-") ||
+    normalized.startsWith("gemini-")
   );
 }
 
@@ -198,6 +211,39 @@ function isUnsupportedHolabossProxyModel(providerId: string, model: string) {
 
 function isDeprecatedChatModel(model: string) {
   return DEPRECATED_CHAT_MODELS.has(model.trim().toLowerCase());
+}
+
+function normalizeRuntimeModelCapability(value: string) {
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (!normalized) {
+    return "";
+  }
+  return RUNTIME_MODEL_CAPABILITY_ALIASES[normalized] ?? normalized;
+}
+
+function runtimeModelCapabilities(model: RuntimeProviderModelPayload) {
+  if (!Array.isArray(model.capabilities)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const capabilities: string[] = [];
+  for (const value of model.capabilities) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const normalized = normalizeRuntimeModelCapability(value);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    capabilities.push(normalized);
+  }
+  return capabilities;
+}
+
+function runtimeModelHasChatCapability(model: RuntimeProviderModelPayload) {
+  const capabilities = runtimeModelCapabilities(model);
+  return capabilities.length === 0 || capabilities.includes("chat");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -2966,6 +3012,9 @@ export function ChatPane({
       models: providerGroup.models.filter((model) => {
         const normalizedToken = model.token.trim();
         if (!normalizedToken || isDeprecatedChatModel(normalizedToken)) {
+          return false;
+        }
+        if (!runtimeModelHasChatCapability(model)) {
           return false;
         }
         if (

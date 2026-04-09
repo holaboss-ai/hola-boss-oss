@@ -94,7 +94,6 @@ const RUNTIME_PROVIDER_KIND_OPENAI_COMPATIBLE = "openai_compatible";
 const RUNTIME_PROVIDER_KIND_ANTHROPIC_NATIVE = "anthropic_native";
 const RUNTIME_PROVIDER_KIND_OPENROUTER = "openrouter";
 const RUNTIME_HOLABOSS_PROVIDER_ID = "holaboss_model_proxy";
-const RUNTIME_HOLABOSS_BACKGROUND_TASK_DEFAULT_MODEL = "gpt-5.4-mini";
 const RUNTIME_HOLABOSS_PROVIDER_ALIASES = [
   "holaboss",
   RUNTIME_HOLABOSS_PROVIDER_ID,
@@ -389,6 +388,8 @@ interface RuntimeConfigPayload {
   sandboxId: string | null;
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
+  defaultBackgroundModel: string | null;
+  defaultImageModel: string | null;
   controlPlaneBaseUrl: string | null;
   catalogVersion: string | null;
   providerModelGroups: RuntimeProviderModelGroupPayload[];
@@ -397,6 +398,7 @@ interface RuntimeConfigPayload {
 interface RuntimeProviderModelPayload {
   token: string;
   modelId: string;
+  capabilities?: string[];
 }
 
 interface RuntimeProviderModelGroupPayload {
@@ -413,6 +415,8 @@ interface RuntimeConfigUpdatePayload {
   sandboxId?: string | null;
   modelProxyBaseUrl?: string | null;
   defaultModel?: string | null;
+  defaultBackgroundModel?: string | null;
+  defaultImageModel?: string | null;
   controlPlaneBaseUrl?: string | null;
 }
 
@@ -533,6 +537,8 @@ let appUpdateEventsConfigured = false;
 let appUpdatePreferences: AppUpdatePreferencesPayload = {};
 let runtimeModelCatalogState: RuntimeModelCatalogPayload = {
   catalogVersion: null,
+  defaultBackgroundModel: null,
+  defaultImageModel: null,
   providerModelGroups: [],
   fetchedAt: null,
 };
@@ -828,6 +834,8 @@ function loadRuntimeModelCatalogCache(): RuntimeModelCatalogPayload {
     if (!existsSync(cachePath)) {
       return {
         catalogVersion: null,
+        defaultBackgroundModel: null,
+        defaultImageModel: null,
         providerModelGroups: [],
         fetchedAt: null,
       };
@@ -839,6 +847,20 @@ function loadRuntimeModelCatalogCache(): RuntimeModelCatalogPayload {
         runtimeConfigField(payload.catalogVersion as string | undefined) ||
         runtimeConfigField(payload.catalog_version as string | undefined) ||
         null,
+      defaultBackgroundModel:
+        normalizeRuntimeHolabossCatalogDefaultModelId(
+          runtimeFirstNonEmptyString(
+            payload.defaultBackgroundModel as string | undefined,
+            payload.default_background_model as string | undefined,
+          ),
+        ) || null,
+      defaultImageModel:
+        normalizeRuntimeHolabossCatalogDefaultModelId(
+          runtimeFirstNonEmptyString(
+            payload.defaultImageModel as string | undefined,
+            payload.default_image_model as string | undefined,
+          ),
+        ) || null,
       providerModelGroups: normalizeRuntimeProviderModelGroups(
         Array.isArray(payload.providerModelGroups)
           ? payload.providerModelGroups
@@ -852,6 +874,8 @@ function loadRuntimeModelCatalogCache(): RuntimeModelCatalogPayload {
   } catch {
     return {
       catalogVersion: null,
+      defaultBackgroundModel: null,
+      defaultImageModel: null,
       providerModelGroups: [],
       fetchedAt: null,
     };
@@ -1250,6 +1274,8 @@ interface RuntimeBindingExchangePayload {
   auth_token?: string;
   model_proxy_base_url: string;
   default_model: string;
+  default_background_model?: string;
+  default_image_model?: string;
   instance_id: string;
   provider: string;
   catalog_version?: string;
@@ -1258,11 +1284,15 @@ interface RuntimeBindingExchangePayload {
 
 interface RuntimeModelCatalogResponsePayload {
   catalog_version?: string;
+  default_background_model?: string;
+  default_image_model?: string;
   provider_model_groups?: RuntimeProviderModelGroupPayload[];
 }
 
 interface RuntimeModelCatalogPayload {
   catalogVersion: string | null;
+  defaultBackgroundModel: string | null;
+  defaultImageModel: string | null;
   providerModelGroups: RuntimeProviderModelGroupPayload[];
   fetchedAt: string | null;
 }
@@ -3634,6 +3664,12 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
   }
 
   const modelProxyApiKey = runtimeModelProxyApiKeyFromConfig(next);
+  const managedDefaultBackgroundModel = normalizeRuntimeHolabossCatalogDefaultModelId(
+    update.defaultBackgroundModel,
+  );
+  const managedDefaultImageModel = normalizeRuntimeHolabossCatalogDefaultModelId(
+    update.defaultImageModel,
+  );
   if (modelProxyApiKey) {
     next.auth_token = modelProxyApiKey;
     next.model_proxy_api_key = modelProxyApiKey;
@@ -3665,17 +3701,66 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
   const currentBackgroundTasks = runtimeConfigObject(
     runtimePayload.background_tasks ?? runtimePayload.backgroundTasks,
   );
+  const currentBackgroundProviderId = canonicalRuntimeProviderId(
+    runtimeFirstNonEmptyString(
+      currentBackgroundTasks.provider as string | undefined,
+      currentBackgroundTasks.provider_id as string | undefined,
+      currentBackgroundTasks.providerId as string | undefined,
+    ),
+  );
+  const currentBackgroundModel = runtimeFirstNonEmptyString(
+    currentBackgroundTasks.model as string | undefined,
+    currentBackgroundTasks.model_id as string | undefined,
+    currentBackgroundTasks.modelId as string | undefined,
+  );
+  const currentImageGeneration = runtimeConfigObject(
+    runtimePayload.image_generation ?? runtimePayload.imageGeneration,
+  );
+  const currentImageGenerationProviderId = canonicalRuntimeProviderId(
+    runtimeFirstNonEmptyString(
+      currentImageGeneration.provider as string | undefined,
+      currentImageGeneration.provider_id as string | undefined,
+      currentImageGeneration.providerId as string | undefined,
+    ),
+  );
+  const currentImageGenerationModel = runtimeFirstNonEmptyString(
+    currentImageGeneration.model as string | undefined,
+    currentImageGeneration.model_id as string | undefined,
+    currentImageGeneration.modelId as string | undefined,
+  );
   delete runtimePayload.backgroundTasks;
-  if (Object.keys(currentBackgroundTasks).length > 0) {
-    runtimePayload.background_tasks = currentBackgroundTasks;
-  } else if (
+  delete runtimePayload.imageGeneration;
+  if (
+    managedDefaultBackgroundModel &&
     runtimeModelProxyApiKeyFromConfig(next) &&
-    runtimeConfigField(next.model_proxy_base_url)
+    runtimeConfigField(next.model_proxy_base_url) &&
+    (
+      Object.keys(currentBackgroundTasks).length === 0 ||
+      (isHolabossProviderAlias(currentBackgroundProviderId) && !currentBackgroundModel)
+    )
   ) {
     runtimePayload.background_tasks = {
       provider: RUNTIME_HOLABOSS_PROVIDER_ID,
-      model: RUNTIME_HOLABOSS_BACKGROUND_TASK_DEFAULT_MODEL,
+      model: managedDefaultBackgroundModel,
     };
+  } else if (Object.keys(currentBackgroundTasks).length > 0) {
+    runtimePayload.background_tasks = currentBackgroundTasks;
+  }
+  if (
+    managedDefaultImageModel &&
+    runtimeModelProxyApiKeyFromConfig(next) &&
+    runtimeConfigField(next.model_proxy_base_url) &&
+    (
+      Object.keys(currentImageGeneration).length === 0 ||
+      (isHolabossProviderAlias(currentImageGenerationProviderId) && !currentImageGenerationModel)
+    )
+  ) {
+    runtimePayload.image_generation = {
+      provider: RUNTIME_HOLABOSS_PROVIDER_ID,
+      model: managedDefaultImageModel,
+    };
+  } else if (Object.keys(currentImageGeneration).length > 0) {
+    runtimePayload.image_generation = currentImageGeneration;
   }
 
   if (
@@ -3938,6 +4023,65 @@ function isUnsupportedHolabossRuntimeModel(
   );
 }
 
+const RUNTIME_MODEL_CAPABILITY_ALIASES: Record<string, string> = {
+  chat: "chat",
+  text: "chat",
+  completion: "chat",
+  completions: "chat",
+  responses: "chat",
+  image: "image_generation",
+  images: "image_generation",
+  image_generation: "image_generation",
+  image_gen: "image_generation",
+};
+
+function normalizeRuntimeModelCapability(value: string): string {
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (!normalized) {
+    return "";
+  }
+  return RUNTIME_MODEL_CAPABILITY_ALIASES[normalized] ?? normalized;
+}
+
+function normalizeRuntimeModelCapabilities(rawValues: unknown[]): string[] {
+  const seen = new Set<string>();
+  const capabilities: string[] = [];
+  for (const value of rawValues) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const normalized = normalizeRuntimeModelCapability(value);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    capabilities.push(normalized);
+  }
+  return capabilities;
+}
+
+function runtimeModelCapabilityList(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function upsertRuntimeProviderModel(
+  models: Map<string, RuntimeProviderModelPayload>,
+  payload: RuntimeProviderModelPayload,
+): void {
+  const existing = models.get(payload.token);
+  const mergedCapabilities = normalizeRuntimeModelCapabilities([
+    ...(Array.isArray(existing?.capabilities) ? existing.capabilities : []),
+    ...(Array.isArray(payload.capabilities) ? payload.capabilities : []),
+  ]);
+  models.set(payload.token, {
+    token: payload.token,
+    modelId: payload.modelId,
+    ...(mergedCapabilities.length > 0
+      ? { capabilities: mergedCapabilities }
+      : {}),
+  });
+}
+
 function normalizeRuntimeProviderModelGroups(
   rawGroups: unknown[],
 ): RuntimeProviderModelGroupPayload[] {
@@ -4019,9 +4163,16 @@ function normalizeRuntimeProviderModelGroups(
         ),
         modelId,
       );
-      ensureProviderGroup(providerId).set(token, {
+      const capabilities = normalizeRuntimeModelCapabilities([
+        ...runtimeModelCapabilityList(modelPayload.capabilities),
+        ...runtimeModelCapabilityList(modelPayload.model_capabilities),
+        ...runtimeModelCapabilityList(modelPayload.modalities),
+        ...runtimeModelCapabilityList(modelPayload.model_modalities),
+      ]);
+      upsertRuntimeProviderModel(ensureProviderGroup(providerId), {
         token,
         modelId,
+        ...(capabilities.length > 0 ? { capabilities } : {}),
       });
     }
   }
@@ -4040,6 +4191,27 @@ function normalizeRuntimeProviderModelGroups(
     });
   }
   return groups;
+}
+
+function normalizeRuntimeHolabossCatalogDefaultModelId(
+  value: string | null | undefined,
+): string {
+  const normalized = runtimeFirstNonEmptyString(value);
+  if (!normalized) {
+    return "";
+  }
+  const modelId = normalizeRuntimeProviderModelId(
+    RUNTIME_HOLABOSS_PROVIDER_ID,
+    runtimeModelIdFromToken(normalized),
+  );
+  if (
+    !modelId ||
+    isUnsupportedHolabossRuntimeModel(RUNTIME_HOLABOSS_PROVIDER_ID, modelId) ||
+    isDeprecatedRuntimeModelId(modelId)
+  ) {
+    return "";
+  }
+  return modelId;
 }
 
 function runtimeProviderModelGroups(
@@ -4066,7 +4238,12 @@ function runtimeProviderModelGroups(
     }
     return groupedModels.get(providerId)!;
   };
-  const addModel = (providerId: string, token: string, modelId: string) => {
+  const addModel = (
+    providerId: string,
+    token: string,
+    modelId: string,
+    capabilities?: string[],
+  ) => {
     const normalizedProviderId = canonicalRuntimeProviderId(providerId);
     const normalizedModelId = normalizeRuntimeProviderModelId(
       normalizedProviderId,
@@ -4096,12 +4273,13 @@ function runtimeProviderModelGroups(
       return;
     }
     const group = ensureProviderGroup(normalizedProviderId);
-    if (!group.has(normalizedToken)) {
-      group.set(normalizedToken, {
-        token: normalizedToken,
-        modelId: normalizedModelId,
-      });
-    }
+    upsertRuntimeProviderModel(group, {
+      token: normalizedToken,
+      modelId: normalizedModelId,
+      ...(Array.isArray(capabilities) && capabilities.length > 0
+        ? { capabilities }
+        : {}),
+    });
   };
   const mergeManagedCatalog = (
     groups: RuntimeProviderModelGroupPayload[],
@@ -4119,7 +4297,12 @@ function runtimeProviderModelGroups(
         });
       }
       for (const model of group.models) {
-        addModel(providerId, model.token, model.modelId);
+        addModel(
+          providerId,
+          model.token,
+          model.modelId,
+          Array.isArray(model.capabilities) ? model.capabilities : [],
+        );
       }
     }
   };
@@ -4225,6 +4408,17 @@ function runtimeModelCatalogPayloadFromResponse(
     catalogVersion:
       runtimeConfigField(payload?.catalog_version as string | undefined) ||
       null,
+    defaultBackgroundModel:
+      normalizeRuntimeHolabossCatalogDefaultModelId(
+        runtimeConfigField(
+          payload?.default_background_model as string | undefined,
+        ) || "",
+      ) || null,
+    defaultImageModel:
+      normalizeRuntimeHolabossCatalogDefaultModelId(
+        runtimeConfigField(payload?.default_image_model as string | undefined) ||
+          "",
+      ) || null,
     providerModelGroups: normalizeRuntimeProviderModelGroups(
       Array.isArray(payload?.provider_model_groups)
         ? payload.provider_model_groups
@@ -4238,7 +4432,12 @@ async function syncRuntimeModelCatalogFromBinding(
   binding: RuntimeBindingExchangePayload,
 ): Promise<void> {
   const payload = runtimeModelCatalogPayloadFromResponse(binding);
-  if (payload.catalogVersion || payload.providerModelGroups.length > 0) {
+  if (
+    payload.catalogVersion ||
+    payload.defaultBackgroundModel ||
+    payload.defaultImageModel ||
+    payload.providerModelGroups.length > 0
+  ) {
     await persistRuntimeModelCatalog(payload);
     return;
   }
@@ -4253,6 +4452,8 @@ async function persistRuntimeModelCatalog(
   lastRuntimeModelCatalogRefreshFailureAtMs = 0;
   await writeJsonFile(runtimeModelCatalogCachePath(), {
     catalogVersion: payload.catalogVersion,
+    defaultBackgroundModel: payload.defaultBackgroundModel,
+    defaultImageModel: payload.defaultImageModel,
     providerModelGroups: payload.providerModelGroups,
     fetchedAt: payload.fetchedAt,
   });
@@ -4261,6 +4462,8 @@ async function persistRuntimeModelCatalog(
 async function clearRuntimeModelCatalog(): Promise<void> {
   runtimeModelCatalogState = {
     catalogVersion: null,
+    defaultBackgroundModel: null,
+    defaultImageModel: null,
     providerModelGroups: [],
     fetchedAt: null,
   };
@@ -4457,6 +4660,8 @@ async function getRuntimeConfig(): Promise<RuntimeConfigPayload> {
     sandboxId: loaded.sandbox_id ?? null,
     modelProxyBaseUrl: loaded.model_proxy_base_url ?? null,
     defaultModel: loaded.default_model ?? null,
+    defaultBackgroundModel: managedCatalog.defaultBackgroundModel,
+    defaultImageModel: managedCatalog.defaultImageModel,
     controlPlaneBaseUrl: loaded.control_plane_base_url ?? null,
     catalogVersion: managedCatalog.catalogVersion,
     providerModelGroups: runtimeProviderModelGroups(
@@ -5141,6 +5346,63 @@ function runtimeConfigIsControlPlaneManaged(
   return modelProxyBaseUrl.includes("/api/v1/model-proxy");
 }
 
+function runtimeBindingNeedsManagedHolabossDefaultsRefresh(
+  config: Record<string, string>,
+  document: Record<string, unknown>,
+): boolean {
+  if (!runtimeConfigIsControlPlaneManaged(config)) {
+    return false;
+  }
+  if (
+    runtimeModelCatalogState.providerModelGroups.length > 0 &&
+    (
+      !runtimeModelCatalogState.defaultBackgroundModel ||
+      !runtimeModelCatalogState.defaultImageModel
+    )
+  ) {
+    return true;
+  }
+
+  const runtimePayload = runtimeConfigObject(document.runtime);
+  const currentBackgroundTasks = runtimeConfigObject(
+    runtimePayload.background_tasks ?? runtimePayload.backgroundTasks,
+  );
+  const currentImageGeneration = runtimeConfigObject(
+    runtimePayload.image_generation ?? runtimePayload.imageGeneration,
+  );
+  const currentBackgroundProviderId = canonicalRuntimeProviderId(
+    runtimeFirstNonEmptyString(
+      currentBackgroundTasks.provider as string | undefined,
+      currentBackgroundTasks.provider_id as string | undefined,
+      currentBackgroundTasks.providerId as string | undefined,
+    ),
+  );
+  const currentBackgroundModel = runtimeFirstNonEmptyString(
+    currentBackgroundTasks.model as string | undefined,
+    currentBackgroundTasks.model_id as string | undefined,
+    currentBackgroundTasks.modelId as string | undefined,
+  );
+  const currentImageGenerationProviderId = canonicalRuntimeProviderId(
+    runtimeFirstNonEmptyString(
+      currentImageGeneration.provider as string | undefined,
+      currentImageGeneration.provider_id as string | undefined,
+      currentImageGeneration.providerId as string | undefined,
+    ),
+  );
+  const currentImageGenerationModel = runtimeFirstNonEmptyString(
+    currentImageGeneration.model as string | undefined,
+    currentImageGeneration.model_id as string | undefined,
+    currentImageGeneration.modelId as string | undefined,
+  );
+
+  return (
+    (isHolabossProviderAlias(currentBackgroundProviderId) &&
+      !currentBackgroundModel) ||
+    (isHolabossProviderAlias(currentImageGenerationProviderId) &&
+      !currentImageGenerationModel)
+  );
+}
+
 function configuredProviderIdForRuntimeModelToken(
   modelToken: string | null | undefined,
 ): string {
@@ -5267,10 +5529,17 @@ async function provisionRuntimeBindingForAuthenticatedUser(
     const forceNewSandbox = Boolean(options?.forceNewSandbox);
     const forceRefresh = Boolean(options?.forceRefresh);
     const currentConfig = await readRuntimeConfigFile();
+    const currentDocument = await readRuntimeConfigDocument();
+    const managedDefaultsNeedRefresh =
+      runtimeBindingNeedsManagedHolabossDefaultsRefresh(
+        currentConfig,
+        currentDocument,
+      );
     if (
       !forceNewSandbox &&
       !forceRefresh &&
-      !runtimeConfigNeedsBindingRefresh(currentConfig, userId)
+      !runtimeConfigNeedsBindingRefresh(currentConfig, userId) &&
+      !managedDefaultsNeedRefresh
     ) {
       await refreshRuntimeModelCatalogIfNeeded().catch(() => undefined);
       await syncRuntimeUserProfileFromAuth(user);
@@ -5309,6 +5578,8 @@ async function provisionRuntimeBindingForAuthenticatedUser(
           "127.0.0.1",
         ),
         defaultModel: binding.default_model,
+        defaultBackgroundModel: binding.default_background_model ?? null,
+        defaultImageModel: binding.default_image_model ?? null,
         controlPlaneBaseUrl: DESKTOP_CONTROL_PLANE_BASE_URL,
       });
       await syncRuntimeModelCatalogFromBinding(binding);
@@ -14414,6 +14685,8 @@ app.whenReady().then(async () => {
           "127.0.0.1",
         ),
         defaultModel: binding.default_model,
+        defaultBackgroundModel: binding.default_background_model ?? null,
+        defaultImageModel: binding.default_image_model ?? null,
         controlPlaneBaseUrl: DESKTOP_CONTROL_PLANE_BASE_URL,
       });
       await syncRuntimeModelCatalogFromBinding(binding);

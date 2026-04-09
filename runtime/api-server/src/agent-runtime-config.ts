@@ -118,6 +118,7 @@ export interface RuntimeModelReferenceResolution {
 }
 
 const MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE = "openai_compatible";
+const MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE = "google_compatible";
 const MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE = "anthropic_native";
 const PROVIDER_KIND_HOLABOSS_PROXY = "holaboss_proxy";
 const PROVIDER_KIND_OPENAI_COMPATIBLE = "openai_compatible";
@@ -269,6 +270,9 @@ function inferModelProxyProviderFromToken(token: string): string {
     return MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE;
   }
   const scopedToken = trimmed.includes("/") ? trimmed.split("/").slice(1).join("/") : trimmed;
+  if (trimmed.startsWith("google/") || trimmed.startsWith("gemini-") || scopedToken.startsWith("gemini-")) {
+    return MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE;
+  }
   if (
     trimmed.startsWith("anthropic/") ||
     trimmed.startsWith("claude") ||
@@ -314,7 +318,13 @@ function assertCanonicalConfiguredModelId(provider: ConfiguredRuntimeProvider, m
 }
 
 function modelProxyProviderRouteSegment(modelProxyProvider: string): string {
-  return modelProxyProvider === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE ? "anthropic" : "openai";
+  if (modelProxyProvider === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE) {
+    return "anthropic";
+  }
+  if (modelProxyProvider === MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE) {
+    return "google";
+  }
+  return "openai";
 }
 
 function runtimeConfigDocument(): Record<string, unknown> {
@@ -493,7 +503,13 @@ function configuredRuntimeModelCatalog(defaultProviderHint: string): RuntimeMode
 }
 
 function legacyRuntimeProviderId(modelProxyProvider: string): string {
-  return modelProxyProvider === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE ? "anthropic" : "openai";
+  if (modelProxyProvider === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE) {
+    return "anthropic";
+  }
+  if (modelProxyProvider === MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE) {
+    return "google";
+  }
+  return "openai";
 }
 
 function runtimeProviderIdForConfiguredProvider(
@@ -627,6 +643,7 @@ function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: stri
     const normalizedModelProxyProvider = normalizeModelProxyProvider(normalizedProviderToken);
     if (
       normalizedModelProxyProvider === MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE ||
+      normalizedModelProxyProvider === MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE ||
       normalizedModelProxyProvider === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE
     ) {
       return {
@@ -676,9 +693,11 @@ function resolveRuntimeModelTarget(modelToken: string, defaultProviderHint: stri
 
   const normalizedDefaultProvider = normalizeModelProxyProvider(defaultProviderHint);
   const defaultModelProxyProvider =
+    normalizedDefaultProvider === MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE ||
+    normalizedDefaultProvider === MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE ||
     normalizedDefaultProvider === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE
-      ? MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE
-      : MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE;
+      ? normalizedDefaultProvider
+      : inferModelProxyProviderFromToken(token);
   return {
     providerId: legacyRuntimeProviderId(defaultModelProxyProvider),
     modelId: token,
@@ -694,7 +713,13 @@ function directOpenaiFallbackEnabled(): boolean {
 }
 
 function providerPathSegment(provider: string): string {
-  return provider === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE ? "anthropic" : "openai";
+  if (provider === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE) {
+    return "anthropic";
+  }
+  if (provider === MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE) {
+    return "google";
+  }
+  return "openai";
 }
 
 function shouldTreatAsDirectProviderBaseUrl(baseRoot: string): boolean {
@@ -917,11 +942,12 @@ function resolveModelClientConfig(request: ModelClientResolutionContext, target:
   const normalizedProvider = normalizeModelProxyProvider(target.modelProxyProvider);
   if (
     normalizedProvider !== MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE &&
+    normalizedProvider !== MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE &&
     normalizedProvider !== MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE
   ) {
     throw new Error(
       `resolved model proxy provider=${target.modelProxyProvider} is unsupported; expected one of: ` +
-        `${MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE}, ${MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE}`
+        `${MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE}, ${MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE}, ${MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE}`
     );
   }
 
@@ -1067,6 +1093,9 @@ function normalizeModelProxyProvider(provider: string): string {
   const normalized = provider.trim().toLowerCase();
   if (normalized === "openai" || normalized === MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE) {
     return MODEL_PROXY_PROVIDER_OPENAI_COMPATIBLE;
+  }
+  if (normalized === "google" || normalized === MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE) {
+    return MODEL_PROXY_PROVIDER_GOOGLE_COMPATIBLE;
   }
   if (normalized === "anthropic" || normalized === MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE) {
     return MODEL_PROXY_PROVIDER_ANTHROPIC_NATIVE;

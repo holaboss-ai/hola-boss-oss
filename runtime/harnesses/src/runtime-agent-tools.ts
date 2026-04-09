@@ -33,6 +33,11 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS = [
     id: "holaboss_cronjobs_delete",
     description: "Delete one local cronjob by id.",
     policy: "mutate"
+  },
+  {
+    id: "image_generate",
+    description: "Generate an image file in the current workspace using the configured image generation provider and model.",
+    policy: "mutate"
   }
 ] as const;
 

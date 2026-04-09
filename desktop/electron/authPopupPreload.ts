@@ -24,6 +24,8 @@ interface RuntimeConfigPayload {
   sandboxId: string | null;
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
+  defaultBackgroundModel: string | null;
+  defaultImageModel: string | null;
   controlPlaneBaseUrl: string | null;
 }
 
@@ -34,6 +36,8 @@ interface RuntimeConfigUpdatePayload {
   sandboxId?: string | null;
   modelProxyBaseUrl?: string | null;
   defaultModel?: string | null;
+  defaultBackgroundModel?: string | null;
+  defaultImageModel?: string | null;
   controlPlaneBaseUrl?: string | null;
 }
 

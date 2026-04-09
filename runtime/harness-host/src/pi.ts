@@ -2305,10 +2305,29 @@ function piApiForRequest(request: HarnessHostPiRequest): Api {
   if (normalizedProvider === "anthropic_native") {
     return "anthropic-messages";
   }
+  if (shouldUseNativeGoogleProvider(request)) {
+    return "google-generative-ai";
+  }
   return "openai-completions";
 }
 
+function shouldUseNativeGoogleProvider(request: HarnessHostPiRequest): boolean {
+  const normalizedProvider = request.model_client.model_proxy_provider.trim().toLowerCase();
+  const providerId = request.provider_id.trim().toLowerCase();
+  return normalizedProvider === "google_compatible" && providerId === "gemini_direct";
+}
+
+function piGoogleGenerativeAiBaseUrlForRequest(request: HarnessHostPiRequest): string {
+  const baseUrl = firstNonEmptyString(request.model_client.base_url);
+  const normalized = baseUrl ? baseUrl.replace(/\/+$/, "") : "";
+  if (!normalized) {
+    return "https://generativelanguage.googleapis.com/v1beta";
+  }
+  return normalized.replace(/\/openai$/i, "") || "https://generativelanguage.googleapis.com/v1beta";
+}
+
 function piOpenAiCompatForRequest(request: HarnessHostPiRequest): Model<"openai-completions">["compat"] | undefined {
+  const modelProxyProvider = request.model_client.model_proxy_provider.trim().toLowerCase();
   const providerId = request.provider_id.trim().toLowerCase();
   const baseUrl = firstNonEmptyString(request.model_client.base_url)?.toLowerCase() ?? "";
   if (providerId.includes("ollama") || baseUrl.includes("localhost:11434") || baseUrl.includes("ollama")) {
@@ -2316,6 +2335,16 @@ function piOpenAiCompatForRequest(request: HarnessHostPiRequest): Model<"openai-
       supportsStore: false,
       supportsDeveloperRole: false,
       supportsReasoningEffort: false,
+    };
+  }
+  if (
+    modelProxyProvider === "google_compatible" ||
+    providerId.includes("gemini") ||
+    providerId.includes("google") ||
+    baseUrl.includes("generativelanguage.googleapis.com")
+  ) {
+    return {
+      supportsStore: false,
     };
   }
   return undefined;
@@ -2333,12 +2362,15 @@ export function buildPiProviderConfig(request: HarnessHostPiRequest) {
     const normalizedHeaderName = headerName.trim().toLowerCase();
     return normalizedHeaderName === "x-api-key" || normalizedHeaderName === "authorization";
   });
-  const baseUrl = firstNonEmptyString(request.model_client.base_url);
+  const api = piApiForRequest(request);
+  const baseUrl =
+    api === "google-generative-ai"
+      ? piGoogleGenerativeAiBaseUrlForRequest(request)
+      : firstNonEmptyString(request.model_client.base_url);
   if (!baseUrl) {
     throw new Error(`Pi provider ${request.provider_id} is missing a model client base URL`);
   }
 
-  const api = piApiForRequest(request);
   const compat = api === "openai-completions" ? piOpenAiCompatForRequest(request) : undefined;
 
   return {
@@ -2347,7 +2379,7 @@ export function buildPiProviderConfig(request: HarnessHostPiRequest) {
     api,
     headers: providerHeaders,
     // Prefer runtime-managed auth headers when provided by the server, otherwise let Pi attach auth from api_key.
-    authHeader: !hasExplicitAuthHeader,
+    authHeader: api !== "google-generative-ai" && !hasExplicitAuthHeader,
     models: [
       {
         id: request.model_id,

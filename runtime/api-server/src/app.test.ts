@@ -20,10 +20,24 @@ import type { RuntimeConfigServiceLike } from "./runtime-config.js";
 import type { RunnerExecutorLike } from "./runner-worker.js";
 
 const tempDirs: string[] = [];
+const ORIGINAL_ENV = {
+  HB_SANDBOX_ROOT: process.env.HB_SANDBOX_ROOT,
+  HOLABOSS_RUNTIME_CONFIG_PATH: process.env.HOLABOSS_RUNTIME_CONFIG_PATH,
+};
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+  if (ORIGINAL_ENV.HB_SANDBOX_ROOT === undefined) {
+    delete process.env.HB_SANDBOX_ROOT;
+  } else {
+    process.env.HB_SANDBOX_ROOT = ORIGINAL_ENV.HB_SANDBOX_ROOT;
+  }
+  if (ORIGINAL_ENV.HOLABOSS_RUNTIME_CONFIG_PATH === undefined) {
+    delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+  } else {
+    process.env.HOLABOSS_RUNTIME_CONFIG_PATH = ORIGINAL_ENV.HOLABOSS_RUNTIME_CONFIG_PATH;
   }
 });
 
@@ -267,6 +281,11 @@ test("runtime tools capability routes expose local onboarding and cronjob action
       .json()
       .tools.some((tool: { id: string }) => tool.id === "holaboss_onboarding_complete")
   );
+  assert.ok(
+    capabilityStatus
+      .json()
+      .tools.some((tool: { id: string }) => tool.id === "image_generate")
+  );
 
   const onboardingStatus = await app.inject({
     method: "GET",
@@ -327,6 +346,232 @@ test("runtime tools capability routes expose local onboarding and cronjob action
 
   await app.close();
   store.close();
+});
+
+test("runtime image generation tool writes a generated image into the workspace", async () => {
+  const root = makeTempDir("hb-runtime-api-image-tools-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-main",
+  });
+
+  const configPath = path.join(root, "state", "runtime-config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify({
+      runtime: {
+        image_generation: {
+          provider: "openai_direct",
+          model: "gpt-image-1.5",
+        },
+      },
+      providers: {
+        openai_direct: {
+          kind: "openai_compatible",
+          base_url: "https://api.openai.com/v1",
+          api_key: "sk-openai",
+        },
+      },
+    }, null, 2)}\n`,
+    "utf8",
+  );
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+
+  const originalFetch = globalThis.fetch;
+  let recordedRequestBody: Record<string, unknown> | null = null;
+  globalThis.fetch = (async (input, init) => {
+    recordedRequestBody =
+      typeof init?.body === "string"
+        ? (JSON.parse(init.body) as Record<string, unknown>)
+        : null;
+    return new Response(
+      JSON.stringify({
+        data: [
+          {
+            b64_json: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yJ3sAAAAASUVORK5CYII=",
+            revised_prompt: "A tiny generated test image",
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }) as typeof fetch;
+
+  const app = buildTestRuntimeApiServer({ store });
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/images/generate",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+        "x-holaboss-session-id": "session-main",
+        "x-holaboss-selected-model": "openai_direct/gpt-5.4",
+      },
+      payload: {
+        prompt: "Generate a tiny test image",
+        filename: "sample-output",
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.ok(recordedRequestBody);
+    assert.equal(recordedRequestBody["model"], "gpt-image-1.5");
+    assert.equal(recordedRequestBody["prompt"], "Generate a tiny test image");
+    assert.ok(!Object.hasOwn(recordedRequestBody, "response_format"));
+    assert.equal(response.json().file_path, "outputs/images/sample-output.png");
+    assert.equal(response.json().provider_id, "openai_direct");
+    assert.equal(response.json().model_id, "gpt-image-1.5");
+    assert.ok(
+      fs.existsSync(path.join(workspaceRoot, "workspace-1", "outputs/images/sample-output.png")),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    await app.close();
+    store.close();
+  }
+});
+
+test("runtime image generation tool uses native Gemini image generation for gemini_direct", async () => {
+  const root = makeTempDir("hb-runtime-api-gemini-image-tools-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-main",
+  });
+
+  const configPath = path.join(root, "state", "runtime-config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify({
+      runtime: {
+        image_generation: {
+          provider: "gemini_direct",
+          model: "gemini-3.1-flash-image-preview",
+        },
+      },
+      providers: {
+        gemini_direct: {
+          kind: "openai_compatible",
+          base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+          api_key: "gemini-key",
+        },
+      },
+    }, null, 2)}\n`,
+    "utf8",
+  );
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+
+  const originalFetch = globalThis.fetch;
+  let recordedUrl = "";
+  let recordedHeaders: Record<string, string> | null = null;
+  let recordedRequestBody: Record<string, unknown> | null = null;
+  globalThis.fetch = (async (input, init) => {
+    recordedUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    recordedHeaders = init?.headers && !Array.isArray(init.headers)
+      ? Object.fromEntries(Object.entries(init.headers as Record<string, string>))
+      : null;
+    recordedRequestBody =
+      typeof init?.body === "string"
+        ? (JSON.parse(init.body) as Record<string, unknown>)
+        : null;
+    return new Response(
+      JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                { text: "A tiny generated Gemini test image" },
+                {
+                  inlineData: {
+                    mimeType: "image/png",
+                    data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+yJ3sAAAAASUVORK5CYII=",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }) as typeof fetch;
+
+  const app = buildTestRuntimeApiServer({ store });
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/images/generate",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+        "x-holaboss-session-id": "session-main",
+        "x-holaboss-selected-model": "gemini_direct/gemini-2.5-flash",
+      },
+      payload: {
+        prompt: "Generate a tiny Gemini test image",
+        filename: "gemini-sample-output",
+        size: "1024x1024",
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(
+      recordedUrl,
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent",
+    );
+    assert.ok(recordedHeaders);
+    assert.equal(recordedHeaders["x-goog-api-key"], "gemini-key");
+    assert.ok(recordedRequestBody);
+    assert.deepEqual(recordedRequestBody, {
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: "Generate a tiny Gemini test image" }],
+        },
+      ],
+      generationConfig: {
+        responseModalities: ["TEXT", "IMAGE"],
+        imageConfig: {
+          aspectRatio: "1:1",
+          imageSize: "1K",
+        },
+      },
+    });
+    assert.equal(response.json().file_path, "outputs/images/gemini-sample-output.png");
+    assert.equal(response.json().provider_id, "gemini_direct");
+    assert.equal(response.json().model_id, "gemini-3.1-flash-image-preview");
+    assert.ok(
+      fs.existsSync(path.join(workspaceRoot, "workspace-1", "outputs/images/gemini-sample-output.png")),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    await app.close();
+    store.close();
+  }
 });
 
 test("buildAppSetupEnv uses an app-local npm cache", () => {

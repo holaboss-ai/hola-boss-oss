@@ -277,7 +277,7 @@ body {
 .auth-settings-control:focus-visible {
   outline: none;
   box-shadow: none;
-  border-color: color-mix(in oklch, var(--border) 78%, var(--ring) 22%);
+  border-color: color-mix(in oklch, var(--border) 72%, var(--foreground) 28%);
 }
 
 /* ---- Decorative elements ---- */
