@@ -6908,6 +6908,61 @@ function resolveLocalModulesRoot() {
   return null;
 }
 
+function resolveLocalArchiveTarget(): "darwin-arm64" | "linux-x64" | "win32-x64" {
+  const { platform, arch } = process;
+  if (platform === "darwin" && arch === "arm64") return "darwin-arm64";
+  if (platform === "linux" && arch === "x64") return "linux-x64";
+  if (platform === "win32" && arch === "x64") return "win32-x64";
+  throw new Error(`Unsupported app archive target: ${platform}/${arch}`);
+}
+
+function localAppsRootCandidates() {
+  return [
+    internalOverride("HOLABOSS_APPS_ROOT"),
+    path.resolve(process.cwd(), "..", "..", "hola-boss-apps"),
+    path.resolve(process.cwd(), "..", "hola-boss-apps"),
+    path.resolve(app.getAppPath(), "..", "..", "..", "..", "hola-boss-apps"),
+  ].filter(Boolean) as string[];
+}
+
+function resolveLocalAppsRoot(): string | null {
+  for (const candidate of localAppsRootCandidates()) {
+    const resolved = path.resolve(candidate);
+    if (existsSync(resolved)) {
+      return resolved;
+    }
+  }
+  return null;
+}
+
+interface LocalAppArchiveScanEntry {
+  appId: string;
+  filePath: string;
+  target: string;
+}
+
+async function scanLocalAppArchives(): Promise<LocalAppArchiveScanEntry[]> {
+  const root = resolveLocalAppsRoot();
+  if (!root) return [];
+  const distDir = path.join(root, "dist");
+  if (!existsSync(distDir)) return [];
+  let target: string;
+  try {
+    target = resolveLocalArchiveTarget();
+  } catch {
+    return [];
+  }
+  const files = await fs.readdir(distDir);
+  const pattern = new RegExp(`^(.+)-module-${target}\\.tar\\.gz$`);
+  const out: LocalAppArchiveScanEntry[] = [];
+  for (const name of files) {
+    const match = name.match(pattern);
+    if (!match) continue;
+    out.push({ appId: match[1], filePath: path.join(distDir, name), target });
+  }
+  return out;
+}
+
 async function collectLocalTrackedFiles(
   sourceRoot: string,
 ): Promise<MaterializedTemplateFilePayload[]> {
