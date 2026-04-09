@@ -7,8 +7,9 @@ import { buildRunFailedEvent, executeRunnerRequest, type RunnerEvent } from "./r
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
 import { normalizeHarnessId, resolveRuntimeHarnessAdapter } from "./harness-registry.js";
 import type { MemoryServiceLike } from "./memory.js";
+import { createBackgroundTaskMemoryModelClient } from "./background-task-model.js";
 import type { TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
-import { schedulePostRunTasks } from "./post-run-tasks.js";
+import { runPostRunTasks } from "./post-run-tasks.js";
 import { collectWorkspaceFileManifest, detectWorkspaceFileOutputs, type WorkspaceFileManifest } from "./turn-output-capture.js";
 
 const ONBOARD_PROMPT_HEADER = "[Holaboss Workspace Onboarding v1]";
@@ -75,26 +76,6 @@ function selectedHarness(): string {
   return normalizeHarnessId(process.env.SANDBOX_AGENT_HARNESS);
 }
 
-function normalizeModelIdForWriteback(value: unknown): string {
-  if (typeof value !== "string") {
-    return "";
-  }
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return "";
-  }
-  const slashIndex = trimmed.indexOf("/");
-  return slashIndex >= 0 ? trimmed.slice(slashIndex + 1).trim() : trimmed;
-}
-
-function openAiMemoryModelBaseUrl(baseRoot: string): string {
-  const normalized = baseRoot.trim().replace(/\/+$/, "");
-  if (!normalized) {
-    return "";
-  }
-  return normalized.endsWith("/openai/v1") ? normalized : `${normalized}/openai/v1`;
-}
-
 function writebackModelContext(params: {
   workspaceId: string;
   sessionId: string;
@@ -107,50 +88,30 @@ function writebackModelContext(params: {
     sandboxId: string;
     modelProxyBaseUrl: string;
     defaultModel: string;
+    defaultProvider: string;
   };
   runtimeExecContext: Record<string, unknown>;
 }): TurnMemoryWritebackModelContext | null {
-  const baseUrl = openAiMemoryModelBaseUrl(params.runtimeBinding.modelProxyBaseUrl);
-  if (!baseUrl) {
+  const modelClient = createBackgroundTaskMemoryModelClient({
+    workspaceId: params.workspaceId,
+    sessionId: params.sessionId,
+    inputId: params.inputId,
+    selectedModel: typeof params.model === "string" ? params.model : params.runtimeBinding.defaultModel,
+    defaultProviderId: params.runtimeBinding.defaultProvider,
+    runtimeExecModelProxyApiKey:
+      typeof params.runtimeExecContext[RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY] === "string"
+        ? params.runtimeExecContext[RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY]
+        : params.runtimeBinding.authToken,
+    runtimeExecSandboxId:
+      typeof params.runtimeExecContext[RUNTIME_EXEC_SANDBOX_ID_KEY] === "string"
+        ? params.runtimeExecContext[RUNTIME_EXEC_SANDBOX_ID_KEY]
+        : params.runtimeBinding.sandboxId,
+  });
+  if (!modelClient) {
     return null;
-  }
-  const apiKey =
-    (typeof params.runtimeExecContext[RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY] === "string"
-      ? params.runtimeExecContext[RUNTIME_EXEC_MODEL_PROXY_API_KEY_KEY]
-      : params.runtimeBinding.authToken
-    ).trim();
-  if (!apiKey) {
-    return null;
-  }
-  const modelId =
-    normalizeModelIdForWriteback(params.model) || normalizeModelIdForWriteback(params.runtimeBinding.defaultModel);
-  if (!modelId) {
-    return null;
-  }
-  const headers: Record<string, string> = {
-    "X-API-Key": apiKey,
-    "X-Holaboss-Session-Id": params.sessionId,
-    "X-Holaboss-Workspace-Id": params.workspaceId,
-    "X-Holaboss-Input-Id": params.inputId,
-  };
-  const sandboxId =
-    typeof params.runtimeExecContext[RUNTIME_EXEC_SANDBOX_ID_KEY] === "string" &&
-    params.runtimeExecContext[RUNTIME_EXEC_SANDBOX_ID_KEY].trim()
-      ? params.runtimeExecContext[RUNTIME_EXEC_SANDBOX_ID_KEY].trim()
-      : params.runtimeBinding.sandboxId.trim();
-  if (sandboxId) {
-    headers["X-Holaboss-Sandbox-Id"] = sandboxId;
-  }
-  if (params.runtimeBinding.userId.trim()) {
-    headers["X-Holaboss-User-Id"] = params.runtimeBinding.userId.trim();
   }
   return {
-    modelClient: {
-      baseUrl,
-      apiKey,
-      defaultHeaders: headers,
-      modelId,
-    },
+    modelClient,
     instruction: params.instruction,
   };
 }
@@ -563,7 +524,9 @@ export async function processClaimedInput(params: {
   record: SessionInputRecord;
   claimedBy?: string;
   memoryService?: MemoryServiceLike | null;
-  schedulePostRunTasksFn?: typeof schedulePostRunTasks;
+  runPostRunTasksFn?: typeof runPostRunTasks;
+  wakeDurableMemoryWorker?: (() => void) | null;
+  onPostRunTaskError?: (taskName: string, error: unknown) => void;
   executeRunnerRequestFn?: typeof executeRunnerRequest;
   resolveProductRuntimeConfigFn?: typeof resolveProductRuntimeConfig;
 }): Promise<void> {
@@ -1015,12 +978,14 @@ export async function processClaimedInput(params: {
       });
       deferredTerminalEvent = null;
     }
-    (params.schedulePostRunTasksFn ?? schedulePostRunTasks)({
+    await (params.runPostRunTasksFn ?? runPostRunTasks)({
       store,
       record,
       turnResult,
       memoryService: params.memoryService,
       modelContext: memoryWritebackModelContext,
+      wakeDurableMemoryWorker: params.wakeDurableMemoryWorker ?? null,
+      onTaskError: params.onPostRunTaskError,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1062,12 +1027,14 @@ export async function processClaimedInput(params: {
       promptCacheProfile: null,
       tokenUsage: null,
     });
-    (params.schedulePostRunTasksFn ?? schedulePostRunTasks)({
+    await (params.runPostRunTasksFn ?? runPostRunTasks)({
       store,
       record,
       turnResult,
       memoryService: params.memoryService,
       modelContext: memoryWritebackModelContext,
+      wakeDurableMemoryWorker: params.wakeDurableMemoryWorker ?? null,
+      onTaskError: params.onPostRunTaskError,
     });
   }
 }

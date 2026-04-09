@@ -12,9 +12,13 @@ import {
   app,
   BrowserView,
   BrowserWindow,
+  Menu,
+  clipboard,
   dialog,
   DownloadItem,
   ipcMain,
+  type ContextMenuParams,
+  type MenuItemConstructorOptions,
   nativeImage,
   screen,
   session,
@@ -43,7 +47,8 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { ensureWorkspaceGitRepo } from "./workspace-git.js";
 
-const isDev = !!process.env.VITE_DEV_SERVER_URL;
+const APP_DISPLAY_NAME = "Holaboss";
+const AUTH_CALLBACK_PROTOCOL = "ai.holaboss.app";
 const verboseTelemetryEnabled =
   process.env.HOLABOSS_VERBOSE_TELEMETRY?.trim() === "1";
 const chromiumStderrLoggingEnabled =
@@ -84,7 +89,6 @@ const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
 const HOLABOSS_HOME_URL = "https://www.holaboss.ai";
 const HOLABOSS_DOCS_URL = `https://github.com/${GITHUB_RELEASES_OWNER}/${GITHUB_RELEASES_REPO}`;
 const HOLABOSS_HELP_URL = `${HOLABOSS_DOCS_URL}/issues`;
-const APP_DISPLAY_NAME = "Holaboss";
 const RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY = "holaboss_proxy";
 const RUNTIME_PROVIDER_KIND_OPENAI_COMPATIBLE = "openai_compatible";
 const RUNTIME_PROVIDER_KIND_ANTHROPIC_NATIVE = "anthropic_native";
@@ -109,6 +113,64 @@ const RUNTIME_LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string
     "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite",
   },
 };
+
+interface DevLaunchContext {
+  devServerUrl: string;
+  userDataPath: string;
+}
+
+function maybeAuthCallbackUrl(argument: string | undefined): string | null {
+  if (!argument) {
+    return null;
+  }
+  const normalized = argument.trim();
+  if (!normalized) {
+    return null;
+  }
+  return normalized.startsWith(`${AUTH_CALLBACK_PROTOCOL}://`) ||
+    normalized.startsWith(`${AUTH_CALLBACK_PROTOCOL}:/`)
+    ? normalized
+    : null;
+}
+
+function devLaunchContextPath(): string {
+  return path.join(app.getPath("appData"), APP_DISPLAY_NAME, "dev-launch.json");
+}
+
+function loadRecoveredDevLaunchContext(): DevLaunchContext | null {
+  const hasAuthCallbackArgument = process.argv.some((value) =>
+    maybeAuthCallbackUrl(value),
+  );
+  if (!hasAuthCallbackArgument) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(
+      readFileSync(devLaunchContextPath(), "utf8"),
+    ) as Partial<DevLaunchContext>;
+    const devServerUrl =
+      typeof parsed.devServerUrl === "string" ? parsed.devServerUrl.trim() : "";
+    const userDataPath =
+      typeof parsed.userDataPath === "string" ? parsed.userDataPath.trim() : "";
+    if (!devServerUrl || !userDataPath) {
+      return null;
+    }
+    return {
+      devServerUrl,
+      userDataPath,
+    };
+  } catch {
+    return null;
+  }
+}
+
+const recoveredDevLaunchContext = loadRecoveredDevLaunchContext();
+const RESOLVED_DEV_SERVER_URL =
+  process.env.VITE_DEV_SERVER_URL?.trim() ||
+  recoveredDevLaunchContext?.devServerUrl ||
+  "";
+const isDev = Boolean(RESOLVED_DEV_SERVER_URL);
 
 function configureChromiumLoggingPolicy() {
   if (verboseTelemetryEnabled || chromiumStderrLoggingEnabled) {
@@ -171,6 +233,10 @@ interface FileBookmarkPayload {
   createdAt: string;
 }
 
+interface FileSystemMutationPayload {
+  absolutePath: string;
+}
+
 interface BrowserBoundsPayload {
   x: number;
   y: number;
@@ -225,6 +291,14 @@ interface BrowserWorkspaceState {
   downloads: BrowserDownloadPayload[];
   history: BrowserHistoryEntryPayload[];
   downloadTrackingRegistered: boolean;
+  pendingDownloadOverrides: BrowserDownloadOverride[];
+}
+
+interface BrowserDownloadOverride {
+  url: string;
+  defaultPath: string;
+  dialogTitle: string;
+  buttonLabel: string;
 }
 
 interface BrowserBookmarkPayload {
@@ -314,6 +388,8 @@ interface RuntimeConfigPayload {
   sandboxId: string | null;
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
+  defaultBackgroundModel: string | null;
+  defaultImageModel: string | null;
   controlPlaneBaseUrl: string | null;
   catalogVersion: string | null;
   providerModelGroups: RuntimeProviderModelGroupPayload[];
@@ -322,6 +398,7 @@ interface RuntimeConfigPayload {
 interface RuntimeProviderModelPayload {
   token: string;
   modelId: string;
+  capabilities?: string[];
 }
 
 interface RuntimeProviderModelGroupPayload {
@@ -338,6 +415,8 @@ interface RuntimeConfigUpdatePayload {
   sandboxId?: string | null;
   modelProxyBaseUrl?: string | null;
   defaultModel?: string | null;
+  defaultBackgroundModel?: string | null;
+  defaultImageModel?: string | null;
   controlPlaneBaseUrl?: string | null;
 }
 
@@ -458,6 +537,8 @@ let appUpdateEventsConfigured = false;
 let appUpdatePreferences: AppUpdatePreferencesPayload = {};
 let runtimeModelCatalogState: RuntimeModelCatalogPayload = {
   catalogVersion: null,
+  defaultBackgroundModel: null,
+  defaultImageModel: null,
   providerModelGroups: [],
   fetchedAt: null,
 };
@@ -602,7 +683,7 @@ function loadPackagedDesktopConfig(): PackagedDesktopConfig {
 
 const packagedDesktopConfig = loadPackagedDesktopConfig();
 const INTERNAL_DEV_BACKEND_OVERRIDES_ENABLED =
-  Boolean(process.env.VITE_DEV_SERVER_URL) ||
+  Boolean(RESOLVED_DEV_SERVER_URL) ||
   process.env.HOLABOSS_INTERNAL_DEV?.trim() === "1";
 function internalOverride(envName: string): string {
   if (!INTERNAL_DEV_BACKEND_OVERRIDES_ENABLED) {
@@ -652,7 +733,6 @@ const DESKTOP_RUNTIME_BINDING_EXCHANGE_PATH =
   "/api/v1/desktop-runtime/bindings/exchange";
 const DESKTOP_RUNTIME_MODEL_CATALOG_PATH =
   "/api/v1/desktop-runtime/model-catalog";
-const AUTH_CALLBACK_PROTOCOL = "ai.holaboss.app";
 const LOCAL_RUNTIME_SCHEMA_VERSION = 1;
 const RUNTIME_BINDING_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 const RUNTIME_BINDING_REFRESH_FAILURE_BACKOFF_MS = 60 * 1000;
@@ -702,7 +782,10 @@ function handleTrustedIpc<Args extends unknown[], Result>(
 }
 
 function configureStableUserDataPath() {
-  const explicit = process.env.HOLABOSS_DESKTOP_USER_DATA_PATH?.trim();
+  const explicit =
+    process.env.HOLABOSS_DESKTOP_USER_DATA_PATH?.trim() ||
+    recoveredDevLaunchContext?.userDataPath?.trim() ||
+    "";
   const nextUserDataPath = explicit
     ? path.resolve(explicit)
     : path.join(app.getPath("appData"), DESKTOP_USER_DATA_DIR);
@@ -710,6 +793,20 @@ function configureStableUserDataPath() {
   if (app.getPath("userData") !== nextUserDataPath) {
     app.setPath("userData", nextUserDataPath);
   }
+}
+
+function persistDevLaunchContext() {
+  if (!RESOLVED_DEV_SERVER_URL) {
+    return;
+  }
+
+  const nextContext: DevLaunchContext = {
+    devServerUrl: RESOLVED_DEV_SERVER_URL,
+    userDataPath: app.getPath("userData"),
+  };
+  const targetPath = devLaunchContextPath();
+  mkdirSync(path.dirname(targetPath), { recursive: true });
+  writeFileSync(targetPath, JSON.stringify(nextContext, null, 2));
 }
 
 function appUpdatePreferencesPath() {
@@ -737,6 +834,8 @@ function loadRuntimeModelCatalogCache(): RuntimeModelCatalogPayload {
     if (!existsSync(cachePath)) {
       return {
         catalogVersion: null,
+        defaultBackgroundModel: null,
+        defaultImageModel: null,
         providerModelGroups: [],
         fetchedAt: null,
       };
@@ -748,6 +847,20 @@ function loadRuntimeModelCatalogCache(): RuntimeModelCatalogPayload {
         runtimeConfigField(payload.catalogVersion as string | undefined) ||
         runtimeConfigField(payload.catalog_version as string | undefined) ||
         null,
+      defaultBackgroundModel:
+        normalizeRuntimeHolabossCatalogDefaultModelId(
+          runtimeFirstNonEmptyString(
+            payload.defaultBackgroundModel as string | undefined,
+            payload.default_background_model as string | undefined,
+          ),
+        ) || null,
+      defaultImageModel:
+        normalizeRuntimeHolabossCatalogDefaultModelId(
+          runtimeFirstNonEmptyString(
+            payload.defaultImageModel as string | undefined,
+            payload.default_image_model as string | undefined,
+          ),
+        ) || null,
       providerModelGroups: normalizeRuntimeProviderModelGroups(
         Array.isArray(payload.providerModelGroups)
           ? payload.providerModelGroups
@@ -761,6 +874,8 @@ function loadRuntimeModelCatalogCache(): RuntimeModelCatalogPayload {
   } catch {
     return {
       catalogVersion: null,
+      defaultBackgroundModel: null,
+      defaultImageModel: null,
       providerModelGroups: [],
       fetchedAt: null,
     };
@@ -1126,6 +1241,7 @@ function emitOpenSettingsPane(section: UiSettingsPaneSection = "settings") {
 }
 
 configureStableUserDataPath();
+persistDevLaunchContext();
 appUpdatePreferences = loadAppUpdatePreferences();
 runtimeModelCatalogState = loadRuntimeModelCatalogCache();
 appUpdateStatus = {
@@ -1158,6 +1274,8 @@ interface RuntimeBindingExchangePayload {
   auth_token?: string;
   model_proxy_base_url: string;
   default_model: string;
+  default_background_model?: string;
+  default_image_model?: string;
   instance_id: string;
   provider: string;
   catalog_version?: string;
@@ -1166,11 +1284,15 @@ interface RuntimeBindingExchangePayload {
 
 interface RuntimeModelCatalogResponsePayload {
   catalog_version?: string;
+  default_background_model?: string;
+  default_image_model?: string;
   provider_model_groups?: RuntimeProviderModelGroupPayload[];
 }
 
 interface RuntimeModelCatalogPayload {
   catalogVersion: string | null;
+  defaultBackgroundModel: string | null;
+  defaultImageModel: string | null;
   providerModelGroups: RuntimeProviderModelGroupPayload[];
   fetchedAt: string | null;
 }
@@ -1745,6 +1867,55 @@ interface ProactiveTaskProposalPreferencePayload {
   sandbox_id: string;
 }
 
+interface ProactiveHeartbeatWorkspacePayload {
+  workspace_id: string;
+  workspace_name: string | null;
+  enabled: boolean;
+  last_seen_at: string | null;
+}
+
+interface ProactiveHeartbeatConfigPayload {
+  holaboss_user_id: string;
+  sandbox_id: string;
+  has_schedule: boolean;
+  cron: string;
+  enabled: boolean;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  workspaces: ProactiveHeartbeatWorkspacePayload[];
+}
+
+interface ProactiveHeartbeatConfigUpdatePayload {
+  cron?: string;
+  enabled?: boolean;
+  holaboss_user_id?: string;
+  sandbox_id?: string;
+}
+
+interface ProactiveHeartbeatWorkspaceUpdatePayload {
+  workspace_id: string;
+  workspace_name?: string | null;
+  enabled: boolean;
+  holaboss_user_id?: string;
+  sandbox_id?: string;
+}
+
+interface ProactiveHeartbeatCronjobRecordResponsePayload {
+  sandbox_id: string;
+  holaboss_user_id: string;
+  cron: string;
+  enabled: boolean;
+  last_run_at: string | null;
+  next_run_at: string | null;
+}
+
+interface ProactiveHeartbeatConfigResponsePayload {
+  holaboss_user_id: string;
+  sandbox_id: string;
+  cronjob: ProactiveHeartbeatCronjobRecordResponsePayload | null;
+  workspaces: ProactiveHeartbeatWorkspacePayload[];
+}
+
 interface TaskProposalStateUpdatePayload {
   proposal: TaskProposalRecordPayload;
 }
@@ -2265,6 +2436,7 @@ let lastRuntimeBindingRefreshUserId = "";
 let lastRuntimeBindingRefreshFailureAtMs = 0;
 let lastRuntimeBindingRefreshFailureUserId = "";
 let runtimeBindingRefreshPromise: Promise<void> | null = null;
+let runtimeConfigMutationPromise: Promise<void> | null = null;
 let runtimeLifecycleChain: Promise<void> = Promise.resolve();
 let startupAuthSyncPromise: Promise<void> | null = null;
 
@@ -2965,49 +3137,62 @@ async function readRuntimeConfigDocument(): Promise<Record<string, unknown>> {
   }
 }
 
+async function writeRuntimeConfigTextAtomically(nextText: string): Promise<void> {
+  const configPath = runtimeConfigPath();
+  await fs.mkdir(path.dirname(configPath), { recursive: true });
+  const tempPath = `${configPath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tempPath, nextText, "utf-8");
+  try {
+    await fs.rename(tempPath, configPath);
+  } catch {
+    await fs.rm(configPath, { force: true }).catch(() => undefined);
+    await fs.rename(tempPath, configPath);
+  } finally {
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
+  }
+}
+
 async function updateDesktopBrowserCapabilityConfig(update: {
   enabled: boolean;
   url?: string;
   authToken?: string;
 }): Promise<void> {
-  const currentDocument = await readRuntimeConfigDocument();
-  const capabilities =
-    typeof currentDocument.capabilities === "object" &&
-    currentDocument.capabilities
-      ? { ...(currentDocument.capabilities as Record<string, unknown>) }
-      : {};
-  const desktopBrowser =
-    typeof capabilities.desktop_browser === "object" &&
-    capabilities.desktop_browser
-      ? { ...(capabilities.desktop_browser as Record<string, unknown>) }
-      : {};
+  await withRuntimeConfigMutationLock(async () => {
+    const currentDocument = await readRuntimeConfigDocument();
+    const capabilities =
+      typeof currentDocument.capabilities === "object" &&
+      currentDocument.capabilities
+        ? { ...(currentDocument.capabilities as Record<string, unknown>) }
+        : {};
+    const desktopBrowser =
+      typeof capabilities.desktop_browser === "object" &&
+      capabilities.desktop_browser
+        ? { ...(capabilities.desktop_browser as Record<string, unknown>) }
+        : {};
 
-  desktopBrowser.enabled = update.enabled;
-  if (update.url && update.url.trim()) {
-    desktopBrowser.url = update.url.trim();
-  } else {
-    delete desktopBrowser.url;
-  }
-  if (update.authToken && update.authToken.trim()) {
-    desktopBrowser.auth_token = update.authToken.trim();
-  } else {
-    delete desktopBrowser.auth_token;
-  }
-  delete desktopBrowser.mcp_url;
+    desktopBrowser.enabled = update.enabled;
+    if (update.url && update.url.trim()) {
+      desktopBrowser.url = update.url.trim();
+    } else {
+      delete desktopBrowser.url;
+    }
+    if (update.authToken && update.authToken.trim()) {
+      desktopBrowser.auth_token = update.authToken.trim();
+    } else {
+      delete desktopBrowser.auth_token;
+    }
+    delete desktopBrowser.mcp_url;
 
-  capabilities.desktop_browser = desktopBrowser;
-  const nextDocument = {
-    ...currentDocument,
-    capabilities,
-  };
+    capabilities.desktop_browser = desktopBrowser;
+    const nextDocument = {
+      ...currentDocument,
+      capabilities,
+    };
 
-  const configPath = runtimeConfigPath();
-  await fs.mkdir(path.dirname(configPath), { recursive: true });
-  await fs.writeFile(
-    configPath,
-    `${JSON.stringify(nextDocument, null, 2)}\n`,
-    "utf-8",
-  );
+    await writeRuntimeConfigTextAtomically(
+      `${JSON.stringify(nextDocument, null, 2)}\n`,
+    );
+  });
 }
 
 function desktopBrowserServiceTokenFromRequest(
@@ -3459,101 +3644,169 @@ function canUsePersistedRuntimeBindingWithoutAuth(
 }
 
 async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
-  const current = await readRuntimeConfigFile();
-  const currentDocument = await readRuntimeConfigDocument();
-  const runtimePayload = runtimeConfigObject(currentDocument.runtime);
-  const providersPayload = runtimeConfigObject(currentDocument.providers);
-  const integrationsPayload = runtimeConfigObject(currentDocument.integrations);
-  const holabossIntegration = runtimeConfigObject(integrationsPayload.holaboss);
-  const holabossProvider = runtimeConfigObject(
-    providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID],
-  );
-  const next = { ...current };
-  const entries: Array<[keyof RuntimeConfigUpdatePayload, string]> = [
-    ["authToken", "auth_token"],
-    ["modelProxyApiKey", "model_proxy_api_key"],
-    ["userId", "user_id"],
-    ["sandboxId", "sandbox_id"],
-    ["modelProxyBaseUrl", "model_proxy_base_url"],
-    ["defaultModel", "default_model"],
-    ["controlPlaneBaseUrl", "control_plane_base_url"],
-  ];
+  return withRuntimeConfigMutationLock(async () => {
+    const current = await readRuntimeConfigFile();
+    const currentDocument = await readRuntimeConfigDocument();
+    const runtimePayload = runtimeConfigObject(currentDocument.runtime);
+    const providersPayload = runtimeConfigObject(currentDocument.providers);
+    const integrationsPayload = runtimeConfigObject(currentDocument.integrations);
+    const holabossIntegration = runtimeConfigObject(integrationsPayload.holaboss);
+    const holabossProvider = runtimeConfigObject(
+      providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID],
+    );
+    const next = { ...current };
+    const entries: Array<[keyof RuntimeConfigUpdatePayload, string]> = [
+      ["authToken", "auth_token"],
+      ["modelProxyApiKey", "model_proxy_api_key"],
+      ["userId", "user_id"],
+      ["sandboxId", "sandbox_id"],
+      ["modelProxyBaseUrl", "model_proxy_base_url"],
+      ["defaultModel", "default_model"],
+      ["controlPlaneBaseUrl", "control_plane_base_url"],
+    ];
 
-  for (const [inputKey, fileKey] of entries) {
-    const value = update[inputKey];
-    if (value === undefined) {
-      continue;
+    for (const [inputKey, fileKey] of entries) {
+      const value = update[inputKey];
+      if (value === undefined) {
+        continue;
+      }
+      const normalized = typeof value === "string" ? value.trim() : "";
+      if (normalized) {
+        next[fileKey] = normalized;
+      } else {
+        delete next[fileKey];
+      }
     }
-    const normalized = typeof value === "string" ? value.trim() : "";
-    if (normalized) {
-      next[fileKey] = normalized;
+
+    const modelProxyApiKey = runtimeModelProxyApiKeyFromConfig(next);
+    const managedDefaultBackgroundModel = normalizeRuntimeHolabossCatalogDefaultModelId(
+      update.defaultBackgroundModel,
+    );
+    const managedDefaultImageModel = normalizeRuntimeHolabossCatalogDefaultModelId(
+      update.defaultImageModel,
+    );
+    if (modelProxyApiKey) {
+      next.auth_token = modelProxyApiKey;
+      next.model_proxy_api_key = modelProxyApiKey;
     } else {
-      delete next[fileKey];
+      delete next.auth_token;
+      delete next.model_proxy_api_key;
     }
-  }
 
-  const modelProxyApiKey = runtimeModelProxyApiKeyFromConfig(next);
-  if (modelProxyApiKey) {
-    next.auth_token = modelProxyApiKey;
-    next.model_proxy_api_key = modelProxyApiKey;
-  } else {
-    delete next.auth_token;
-    delete next.model_proxy_api_key;
-  }
+    const assignOrDelete = (
+      target: Record<string, unknown>,
+      key: string,
+      value: string | undefined,
+    ) => {
+      const normalized = runtimeConfigField(value);
+      if (normalized) {
+        target[key] = normalized;
+      } else {
+        delete target[key];
+      }
+    };
 
-  const assignOrDelete = (
-    target: Record<string, unknown>,
-    key: string,
-    value: string | undefined,
-  ) => {
-    const normalized = runtimeConfigField(value);
-    if (normalized) {
-      target[key] = normalized;
+    assignOrDelete(holabossIntegration, "auth_token", next.auth_token);
+    assignOrDelete(holabossIntegration, "user_id", next.user_id);
+    assignOrDelete(holabossIntegration, "sandbox_id", next.sandbox_id);
+    assignOrDelete(holabossProvider, "api_key", next.auth_token);
+    assignOrDelete(holabossProvider, "base_url", next.model_proxy_base_url);
+    assignOrDelete(runtimePayload, "sandbox_id", next.sandbox_id);
+    assignOrDelete(runtimePayload, "default_model", next.default_model);
+    const currentBackgroundTasks = runtimeConfigObject(
+      runtimePayload.background_tasks ?? runtimePayload.backgroundTasks,
+    );
+    const currentBackgroundProviderId = canonicalRuntimeProviderId(
+      runtimeFirstNonEmptyString(
+        currentBackgroundTasks.provider as string | undefined,
+        currentBackgroundTasks.provider_id as string | undefined,
+        currentBackgroundTasks.providerId as string | undefined,
+      ),
+    );
+    const currentBackgroundModel = runtimeFirstNonEmptyString(
+      currentBackgroundTasks.model as string | undefined,
+      currentBackgroundTasks.model_id as string | undefined,
+      currentBackgroundTasks.modelId as string | undefined,
+    );
+    const currentImageGeneration = runtimeConfigObject(
+      runtimePayload.image_generation ?? runtimePayload.imageGeneration,
+    );
+    const currentImageGenerationProviderId = canonicalRuntimeProviderId(
+      runtimeFirstNonEmptyString(
+        currentImageGeneration.provider as string | undefined,
+        currentImageGeneration.provider_id as string | undefined,
+        currentImageGeneration.providerId as string | undefined,
+      ),
+    );
+    const currentImageGenerationModel = runtimeFirstNonEmptyString(
+      currentImageGeneration.model as string | undefined,
+      currentImageGeneration.model_id as string | undefined,
+      currentImageGeneration.modelId as string | undefined,
+    );
+    delete runtimePayload.backgroundTasks;
+    delete runtimePayload.imageGeneration;
+    if (
+      managedDefaultBackgroundModel &&
+      runtimeModelProxyApiKeyFromConfig(next) &&
+      runtimeConfigField(next.model_proxy_base_url) &&
+      (
+        Object.keys(currentBackgroundTasks).length === 0 ||
+        (isHolabossProviderAlias(currentBackgroundProviderId) && !currentBackgroundModel)
+      )
+    ) {
+      runtimePayload.background_tasks = {
+        provider: RUNTIME_HOLABOSS_PROVIDER_ID,
+        model: managedDefaultBackgroundModel,
+      };
+    } else if (Object.keys(currentBackgroundTasks).length > 0) {
+      runtimePayload.background_tasks = currentBackgroundTasks;
+    }
+    if (
+      managedDefaultImageModel &&
+      runtimeModelProxyApiKeyFromConfig(next) &&
+      runtimeConfigField(next.model_proxy_base_url) &&
+      (
+        Object.keys(currentImageGeneration).length === 0 ||
+        (isHolabossProviderAlias(currentImageGenerationProviderId) && !currentImageGenerationModel)
+      )
+    ) {
+      runtimePayload.image_generation = {
+        provider: RUNTIME_HOLABOSS_PROVIDER_ID,
+        model: managedDefaultImageModel,
+      };
+    } else if (Object.keys(currentImageGeneration).length > 0) {
+      runtimePayload.image_generation = currentImageGeneration;
+    }
+
+    if (
+      Object.keys(holabossProvider).length > 0 &&
+      !runtimeConfigField(holabossProvider.kind as string | undefined)
+    ) {
+      holabossProvider.kind = RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY;
+    }
+    if (Object.keys(holabossIntegration).length > 0) {
+      integrationsPayload.holaboss = holabossIntegration;
     } else {
-      delete target[key];
+      delete integrationsPayload.holaboss;
     }
-  };
+    if (Object.keys(holabossProvider).length > 0) {
+      providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID] = holabossProvider;
+    } else {
+      delete providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID];
+    }
 
-  assignOrDelete(holabossIntegration, "auth_token", next.auth_token);
-  assignOrDelete(holabossIntegration, "user_id", next.user_id);
-  assignOrDelete(holabossIntegration, "sandbox_id", next.sandbox_id);
-  assignOrDelete(holabossProvider, "api_key", next.auth_token);
-  assignOrDelete(holabossProvider, "base_url", next.model_proxy_base_url);
-  assignOrDelete(runtimePayload, "sandbox_id", next.sandbox_id);
-  assignOrDelete(runtimePayload, "default_model", next.default_model);
-
-  if (
-    Object.keys(holabossProvider).length > 0 &&
-    !runtimeConfigField(holabossProvider.kind as string | undefined)
-  ) {
-    holabossProvider.kind = RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY;
-  }
-  if (Object.keys(holabossIntegration).length > 0) {
-    integrationsPayload.holaboss = holabossIntegration;
-  } else {
-    delete integrationsPayload.holaboss;
-  }
-  if (Object.keys(holabossProvider).length > 0) {
-    providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID] = holabossProvider;
-  } else {
-    delete providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID];
-  }
-
-  const configPath = runtimeConfigPath();
-  await fs.mkdir(path.dirname(configPath), { recursive: true });
-  const nextDocument = {
-    ...currentDocument,
-    runtime: runtimePayload,
-    providers: providersPayload,
-    integrations: integrationsPayload,
-    holaboss: next,
-  };
-  await fs.writeFile(
-    configPath,
-    `${JSON.stringify(nextDocument, null, 2)}\n`,
-    "utf-8",
-  );
-  return next;
+    const nextDocument = {
+      ...currentDocument,
+      runtime: runtimePayload,
+      providers: providersPayload,
+      integrations: integrationsPayload,
+      holaboss: next,
+    };
+    await writeRuntimeConfigTextAtomically(
+      `${JSON.stringify(nextDocument, null, 2)}\n`,
+    );
+    return next;
+  });
 }
 
 function runtimeConfigField(value: string | undefined): string {
@@ -3782,6 +4035,65 @@ function isUnsupportedHolabossRuntimeModel(
   );
 }
 
+const RUNTIME_MODEL_CAPABILITY_ALIASES: Record<string, string> = {
+  chat: "chat",
+  text: "chat",
+  completion: "chat",
+  completions: "chat",
+  responses: "chat",
+  image: "image_generation",
+  images: "image_generation",
+  image_generation: "image_generation",
+  image_gen: "image_generation",
+};
+
+function normalizeRuntimeModelCapability(value: string): string {
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (!normalized) {
+    return "";
+  }
+  return RUNTIME_MODEL_CAPABILITY_ALIASES[normalized] ?? normalized;
+}
+
+function normalizeRuntimeModelCapabilities(rawValues: unknown[]): string[] {
+  const seen = new Set<string>();
+  const capabilities: string[] = [];
+  for (const value of rawValues) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const normalized = normalizeRuntimeModelCapability(value);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    capabilities.push(normalized);
+  }
+  return capabilities;
+}
+
+function runtimeModelCapabilityList(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function upsertRuntimeProviderModel(
+  models: Map<string, RuntimeProviderModelPayload>,
+  payload: RuntimeProviderModelPayload,
+): void {
+  const existing = models.get(payload.token);
+  const mergedCapabilities = normalizeRuntimeModelCapabilities([
+    ...(Array.isArray(existing?.capabilities) ? existing.capabilities : []),
+    ...(Array.isArray(payload.capabilities) ? payload.capabilities : []),
+  ]);
+  models.set(payload.token, {
+    token: payload.token,
+    modelId: payload.modelId,
+    ...(mergedCapabilities.length > 0
+      ? { capabilities: mergedCapabilities }
+      : {}),
+  });
+}
+
 function normalizeRuntimeProviderModelGroups(
   rawGroups: unknown[],
 ): RuntimeProviderModelGroupPayload[] {
@@ -3863,9 +4175,16 @@ function normalizeRuntimeProviderModelGroups(
         ),
         modelId,
       );
-      ensureProviderGroup(providerId).set(token, {
+      const capabilities = normalizeRuntimeModelCapabilities([
+        ...runtimeModelCapabilityList(modelPayload.capabilities),
+        ...runtimeModelCapabilityList(modelPayload.model_capabilities),
+        ...runtimeModelCapabilityList(modelPayload.modalities),
+        ...runtimeModelCapabilityList(modelPayload.model_modalities),
+      ]);
+      upsertRuntimeProviderModel(ensureProviderGroup(providerId), {
         token,
         modelId,
+        ...(capabilities.length > 0 ? { capabilities } : {}),
       });
     }
   }
@@ -3884,6 +4203,27 @@ function normalizeRuntimeProviderModelGroups(
     });
   }
   return groups;
+}
+
+function normalizeRuntimeHolabossCatalogDefaultModelId(
+  value: string | null | undefined,
+): string {
+  const normalized = runtimeFirstNonEmptyString(value);
+  if (!normalized) {
+    return "";
+  }
+  const modelId = normalizeRuntimeProviderModelId(
+    RUNTIME_HOLABOSS_PROVIDER_ID,
+    runtimeModelIdFromToken(normalized),
+  );
+  if (
+    !modelId ||
+    isUnsupportedHolabossRuntimeModel(RUNTIME_HOLABOSS_PROVIDER_ID, modelId) ||
+    isDeprecatedRuntimeModelId(modelId)
+  ) {
+    return "";
+  }
+  return modelId;
 }
 
 function runtimeProviderModelGroups(
@@ -3910,7 +4250,12 @@ function runtimeProviderModelGroups(
     }
     return groupedModels.get(providerId)!;
   };
-  const addModel = (providerId: string, token: string, modelId: string) => {
+  const addModel = (
+    providerId: string,
+    token: string,
+    modelId: string,
+    capabilities?: string[],
+  ) => {
     const normalizedProviderId = canonicalRuntimeProviderId(providerId);
     const normalizedModelId = normalizeRuntimeProviderModelId(
       normalizedProviderId,
@@ -3940,12 +4285,13 @@ function runtimeProviderModelGroups(
       return;
     }
     const group = ensureProviderGroup(normalizedProviderId);
-    if (!group.has(normalizedToken)) {
-      group.set(normalizedToken, {
-        token: normalizedToken,
-        modelId: normalizedModelId,
-      });
-    }
+    upsertRuntimeProviderModel(group, {
+      token: normalizedToken,
+      modelId: normalizedModelId,
+      ...(Array.isArray(capabilities) && capabilities.length > 0
+        ? { capabilities }
+        : {}),
+    });
   };
   const mergeManagedCatalog = (
     groups: RuntimeProviderModelGroupPayload[],
@@ -3963,7 +4309,12 @@ function runtimeProviderModelGroups(
         });
       }
       for (const model of group.models) {
-        addModel(providerId, model.token, model.modelId);
+        addModel(
+          providerId,
+          model.token,
+          model.modelId,
+          Array.isArray(model.capabilities) ? model.capabilities : [],
+        );
       }
     }
   };
@@ -4069,6 +4420,17 @@ function runtimeModelCatalogPayloadFromResponse(
     catalogVersion:
       runtimeConfigField(payload?.catalog_version as string | undefined) ||
       null,
+    defaultBackgroundModel:
+      normalizeRuntimeHolabossCatalogDefaultModelId(
+        runtimeConfigField(
+          payload?.default_background_model as string | undefined,
+        ) || "",
+      ) || null,
+    defaultImageModel:
+      normalizeRuntimeHolabossCatalogDefaultModelId(
+        runtimeConfigField(payload?.default_image_model as string | undefined) ||
+          "",
+      ) || null,
     providerModelGroups: normalizeRuntimeProviderModelGroups(
       Array.isArray(payload?.provider_model_groups)
         ? payload.provider_model_groups
@@ -4082,7 +4444,12 @@ async function syncRuntimeModelCatalogFromBinding(
   binding: RuntimeBindingExchangePayload,
 ): Promise<void> {
   const payload = runtimeModelCatalogPayloadFromResponse(binding);
-  if (payload.catalogVersion || payload.providerModelGroups.length > 0) {
+  if (
+    payload.catalogVersion ||
+    payload.defaultBackgroundModel ||
+    payload.defaultImageModel ||
+    payload.providerModelGroups.length > 0
+  ) {
     await persistRuntimeModelCatalog(payload);
     return;
   }
@@ -4097,6 +4464,8 @@ async function persistRuntimeModelCatalog(
   lastRuntimeModelCatalogRefreshFailureAtMs = 0;
   await writeJsonFile(runtimeModelCatalogCachePath(), {
     catalogVersion: payload.catalogVersion,
+    defaultBackgroundModel: payload.defaultBackgroundModel,
+    defaultImageModel: payload.defaultImageModel,
     providerModelGroups: payload.providerModelGroups,
     fetchedAt: payload.fetchedAt,
   });
@@ -4105,6 +4474,8 @@ async function persistRuntimeModelCatalog(
 async function clearRuntimeModelCatalog(): Promise<void> {
   runtimeModelCatalogState = {
     catalogVersion: null,
+    defaultBackgroundModel: null,
+    defaultImageModel: null,
     providerModelGroups: [],
     fetchedAt: null,
   };
@@ -4285,6 +4656,26 @@ async function withRuntimeBindingRefreshLock<T>(
   }
 }
 
+async function withRuntimeConfigMutationLock<T>(
+  work: () => Promise<T>,
+): Promise<T> {
+  while (runtimeConfigMutationPromise) {
+    await runtimeConfigMutationPromise;
+  }
+
+  let releaseLock = () => {};
+  runtimeConfigMutationPromise = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+
+  try {
+    return await work();
+  } finally {
+    releaseLock();
+    runtimeConfigMutationPromise = null;
+  }
+}
+
 async function getRuntimeConfig(): Promise<RuntimeConfigPayload> {
   const configPath = runtimeConfigPath();
   const loaded = await readRuntimeConfigFile();
@@ -4301,6 +4692,8 @@ async function getRuntimeConfig(): Promise<RuntimeConfigPayload> {
     sandboxId: loaded.sandbox_id ?? null,
     modelProxyBaseUrl: loaded.model_proxy_base_url ?? null,
     defaultModel: loaded.default_model ?? null,
+    defaultBackgroundModel: managedCatalog.defaultBackgroundModel,
+    defaultImageModel: managedCatalog.defaultImageModel,
     controlPlaneBaseUrl: loaded.control_plane_base_url ?? null,
     catalogVersion: managedCatalog.catalogVersion,
     providerModelGroups: runtimeProviderModelGroups(
@@ -4349,17 +4742,22 @@ async function setRuntimeConfigDocument(
     throw new Error("Runtime config must be a JSON object.");
   }
 
-  const configPath = runtimeConfigPath();
   const nextText = `${JSON.stringify(parsed, null, 2)}\n`;
-  const currentDocument = await readRuntimeConfigDocument();
-  const currentText =
-    Object.keys(currentDocument).length > 0
-      ? `${JSON.stringify(currentDocument, null, 2)}\n`
-      : "";
+  let shouldRestartRuntime = false;
+  await withRuntimeConfigMutationLock(async () => {
+    const currentDocument = await readRuntimeConfigDocument();
+    const currentText =
+      Object.keys(currentDocument).length > 0
+        ? `${JSON.stringify(currentDocument, null, 2)}\n`
+        : "";
 
-  if (currentText !== nextText) {
-    await fs.mkdir(path.dirname(configPath), { recursive: true });
-    await fs.writeFile(configPath, nextText, "utf-8");
+    if (currentText !== nextText) {
+      await writeRuntimeConfigTextAtomically(nextText);
+      shouldRestartRuntime = true;
+    }
+  });
+
+  if (shouldRestartRuntime) {
     await stopEmbeddedRuntime();
     void startEmbeddedRuntime();
   }
@@ -4985,6 +5383,63 @@ function runtimeConfigIsControlPlaneManaged(
   return modelProxyBaseUrl.includes("/api/v1/model-proxy");
 }
 
+function runtimeBindingNeedsManagedHolabossDefaultsRefresh(
+  config: Record<string, string>,
+  document: Record<string, unknown>,
+): boolean {
+  if (!runtimeConfigIsControlPlaneManaged(config)) {
+    return false;
+  }
+  if (
+    runtimeModelCatalogState.providerModelGroups.length > 0 &&
+    (
+      !runtimeModelCatalogState.defaultBackgroundModel ||
+      !runtimeModelCatalogState.defaultImageModel
+    )
+  ) {
+    return true;
+  }
+
+  const runtimePayload = runtimeConfigObject(document.runtime);
+  const currentBackgroundTasks = runtimeConfigObject(
+    runtimePayload.background_tasks ?? runtimePayload.backgroundTasks,
+  );
+  const currentImageGeneration = runtimeConfigObject(
+    runtimePayload.image_generation ?? runtimePayload.imageGeneration,
+  );
+  const currentBackgroundProviderId = canonicalRuntimeProviderId(
+    runtimeFirstNonEmptyString(
+      currentBackgroundTasks.provider as string | undefined,
+      currentBackgroundTasks.provider_id as string | undefined,
+      currentBackgroundTasks.providerId as string | undefined,
+    ),
+  );
+  const currentBackgroundModel = runtimeFirstNonEmptyString(
+    currentBackgroundTasks.model as string | undefined,
+    currentBackgroundTasks.model_id as string | undefined,
+    currentBackgroundTasks.modelId as string | undefined,
+  );
+  const currentImageGenerationProviderId = canonicalRuntimeProviderId(
+    runtimeFirstNonEmptyString(
+      currentImageGeneration.provider as string | undefined,
+      currentImageGeneration.provider_id as string | undefined,
+      currentImageGeneration.providerId as string | undefined,
+    ),
+  );
+  const currentImageGenerationModel = runtimeFirstNonEmptyString(
+    currentImageGeneration.model as string | undefined,
+    currentImageGeneration.model_id as string | undefined,
+    currentImageGeneration.modelId as string | undefined,
+  );
+
+  return (
+    (isHolabossProviderAlias(currentBackgroundProviderId) &&
+      !currentBackgroundModel) ||
+    (isHolabossProviderAlias(currentImageGenerationProviderId) &&
+      !currentImageGenerationModel)
+  );
+}
+
 function configuredProviderIdForRuntimeModelToken(
   modelToken: string | null | undefined,
 ): string {
@@ -5111,10 +5566,17 @@ async function provisionRuntimeBindingForAuthenticatedUser(
     const forceNewSandbox = Boolean(options?.forceNewSandbox);
     const forceRefresh = Boolean(options?.forceRefresh);
     const currentConfig = await readRuntimeConfigFile();
+    const currentDocument = await readRuntimeConfigDocument();
+    const managedDefaultsNeedRefresh =
+      runtimeBindingNeedsManagedHolabossDefaultsRefresh(
+        currentConfig,
+        currentDocument,
+      );
     if (
       !forceNewSandbox &&
       !forceRefresh &&
-      !runtimeConfigNeedsBindingRefresh(currentConfig, userId)
+      !runtimeConfigNeedsBindingRefresh(currentConfig, userId) &&
+      !managedDefaultsNeedRefresh
     ) {
       await refreshRuntimeModelCatalogIfNeeded().catch(() => undefined);
       await syncRuntimeUserProfileFromAuth(user);
@@ -5153,6 +5615,8 @@ async function provisionRuntimeBindingForAuthenticatedUser(
           "127.0.0.1",
         ),
         defaultModel: binding.default_model,
+        defaultBackgroundModel: binding.default_background_model ?? null,
+        defaultImageModel: binding.default_image_model ?? null,
         controlPlaneBaseUrl: DESKTOP_CONTROL_PLANE_BASE_URL,
       });
       await syncRuntimeModelCatalogFromBinding(binding);
@@ -5283,20 +5747,6 @@ async function ensureRuntimeBindingReadyForWorkspaceFlow(
     await clearRuntimeBindingSecrets(`${reason}:binding_incomplete`);
     throw new Error("Runtime binding is incomplete. Sign in again.");
   }
-}
-
-function maybeAuthCallbackUrl(argument: string | undefined): string | null {
-  if (!argument) {
-    return null;
-  }
-  const normalized = argument.trim();
-  if (!normalized) {
-    return null;
-  }
-  return normalized.startsWith(`${AUTH_CALLBACK_PROTOCOL}://`) ||
-    normalized.startsWith(`${AUTH_CALLBACK_PROTOCOL}:/`)
-    ? normalized
-    : null;
 }
 
 function nearestPackageJsonDirectory(startDirectory: string): string | null {
@@ -6126,9 +6576,21 @@ async function getProactiveStatus(
     lifecycleSummary = "Error.";
     lifecycleDetail = heartbeat.detail;
   } else if (heartbeat.state === "skipped") {
-    lifecycleState = "unavailable";
-    lifecycleSummary = "Unavailable.";
-    lifecycleDetail = heartbeat.detail;
+    if (
+      bridge.state === "healthy" &&
+      (heartbeat.detail || "").includes("skipped=no_active_runtime_binding")
+    ) {
+      lifecycleState = proposalCount > 0 ? "analyzing" : "idle";
+      lifecycleSummary = proposalCount > 0 ? "Analyzing." : "Idle.";
+      lifecycleDetail =
+        proposalCount > 0
+          ? "Looking for useful suggestions."
+          : bridge.detail;
+    } else {
+      lifecycleState = "unavailable";
+      lifecycleSummary = "Unavailable.";
+      lifecycleDetail = heartbeat.detail;
+    }
   } else if (
     bridge.state === "error" ||
     bridge.state === "inactive" ||
@@ -6691,6 +7153,8 @@ async function proactivePreferenceScopeFromRuntimeConfig(): Promise<{
   return { holabossUserId, sandboxId };
 }
 
+const DEFAULT_PROACTIVE_HEARTBEAT_CRON = "0 9 * * *";
+
 function assertProactivePreferenceScopedToInstance(
   response: ProactiveTaskProposalPreferencePayload,
   expected: { holabossUserId: string; sandboxId: string },
@@ -6786,6 +7250,187 @@ async function getProactiveTaskProposalPreference(): Promise<ProactiveTaskPropos
       holaboss_user_id: holabossUserId,
       sandbox_id: sandboxId,
     };
+  }
+}
+
+function assertProactiveHeartbeatScopedToInstance(
+  response: ProactiveHeartbeatConfigResponsePayload,
+  expected: { holabossUserId: string; sandboxId: string },
+) {
+  const responseUserId = (response.holaboss_user_id || "").trim();
+  const responseSandboxId = (response.sandbox_id || "").trim();
+  if (!responseUserId || !responseSandboxId) {
+    throw new Error(
+      "Proactive heartbeat response is missing user/instance scope.",
+    );
+  }
+  if (
+    responseUserId !== expected.holabossUserId ||
+    responseSandboxId !== expected.sandboxId
+  ) {
+    throw new Error(
+      "Proactive heartbeat scope mismatch for current desktop instance.",
+    );
+  }
+}
+
+function normalizeProactiveHeartbeatConfig(
+  response: ProactiveHeartbeatConfigResponsePayload,
+): ProactiveHeartbeatConfigPayload {
+  return {
+    holaboss_user_id: (response.holaboss_user_id || "").trim(),
+    sandbox_id: (response.sandbox_id || "").trim(),
+    has_schedule: Boolean(response.cronjob),
+    cron:
+      (response.cronjob?.cron || "").trim() || DEFAULT_PROACTIVE_HEARTBEAT_CRON,
+    enabled: response.cronjob?.enabled !== false,
+    last_run_at: response.cronjob?.last_run_at || null,
+    next_run_at: response.cronjob?.next_run_at || null,
+    workspaces: (response.workspaces || []).map((workspace) => ({
+      workspace_id: (workspace.workspace_id || "").trim(),
+      workspace_name: (workspace.workspace_name || "").trim() || null,
+      enabled: workspace.enabled !== false,
+      last_seen_at: workspace.last_seen_at || null,
+    })),
+  };
+}
+
+async function listLocalProactiveHeartbeatWorkspaces(): Promise<
+  Array<{ workspace_id: string; workspace_name: string | null }>
+> {
+  const response = await listWorkspacesViaRuntime();
+  return response.items
+    .map((workspace) => ({
+      workspace_id: workspace.id.trim(),
+      workspace_name: (workspace.name || "").trim() || null,
+    }))
+    .filter((workspace) => Boolean(workspace.workspace_id));
+}
+
+async function syncCurrentProactiveHeartbeatWorkspaces(
+  scope: { holabossUserId: string; sandboxId: string },
+): Promise<ProactiveHeartbeatConfigPayload> {
+  try {
+    const workspaces = await listLocalProactiveHeartbeatWorkspaces();
+    const response =
+      await requestControlPlaneJson<ProactiveHeartbeatConfigResponsePayload>({
+        service: "proactive",
+        method: "POST",
+        path: "/api/v1/proactive/heartbeat-cronjobs/current/workspaces/sync",
+        payload: {
+          holaboss_user_id: scope.holabossUserId,
+          sandbox_id: scope.sandboxId,
+          workspaces,
+        },
+      });
+    assertProactiveHeartbeatScopedToInstance(response, scope);
+    return normalizeProactiveHeartbeatConfig(response);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("Service not found") || message.includes("fetch failed")) {
+      throw new Error(
+        "Proactive service is not reachable. Check your network or backend configuration.",
+      );
+    }
+    throw error;
+  }
+}
+
+async function getProactiveHeartbeatConfig(): Promise<ProactiveHeartbeatConfigPayload> {
+  try {
+    const scope = await proactivePreferenceScopeFromRuntimeConfig();
+    return await syncCurrentProactiveHeartbeatWorkspaces(scope);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("Proactive auth is missing")) {
+      throw error;
+    }
+    const runtimeConfig = await readRuntimeConfigFile();
+    const holabossUserId =
+      typeof (runtimeConfig as { user_id?: unknown }).user_id === "string"
+        ? ((runtimeConfig as { user_id: string }).user_id || "").trim()
+        : "";
+    const sandboxId =
+      typeof (runtimeConfig as { sandbox_id?: unknown }).sandbox_id === "string"
+        ? ((runtimeConfig as { sandbox_id: string }).sandbox_id || "").trim()
+        : "";
+    return {
+      holaboss_user_id: holabossUserId,
+      sandbox_id: sandboxId,
+      has_schedule: false,
+      cron: DEFAULT_PROACTIVE_HEARTBEAT_CRON,
+      enabled: false,
+      last_run_at: null,
+      next_run_at: null,
+      workspaces: [],
+    };
+  }
+}
+
+async function setProactiveHeartbeatConfig(
+  payload: ProactiveHeartbeatConfigUpdatePayload,
+): Promise<ProactiveHeartbeatConfigPayload> {
+  const scope = await proactivePreferenceScopeFromRuntimeConfig();
+  await syncCurrentProactiveHeartbeatWorkspaces(scope);
+  try {
+    const response =
+      await requestControlPlaneJson<ProactiveHeartbeatConfigResponsePayload>({
+        service: "proactive",
+        method: "POST",
+        path: "/api/v1/proactive/heartbeat-cronjobs/current",
+        payload: {
+          holaboss_user_id:
+            payload.holaboss_user_id?.trim() || scope.holabossUserId,
+          sandbox_id: payload.sandbox_id?.trim() || scope.sandboxId,
+          cron: payload.cron?.trim() || undefined,
+          enabled: payload.enabled,
+        },
+      });
+    assertProactiveHeartbeatScopedToInstance(response, scope);
+    return normalizeProactiveHeartbeatConfig(response);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("Service not found") || message.includes("fetch failed")) {
+      throw new Error(
+        "Proactive service is not reachable. Check your network or backend configuration.",
+      );
+    }
+    throw error;
+  }
+}
+
+async function setProactiveHeartbeatWorkspaceEnabled(
+  payload: ProactiveHeartbeatWorkspaceUpdatePayload,
+): Promise<ProactiveHeartbeatConfigPayload> {
+  const scope = await proactivePreferenceScopeFromRuntimeConfig();
+  const workspaceId = payload.workspace_id.trim();
+  if (!workspaceId) {
+    throw new Error("workspace_id is required");
+  }
+  try {
+    const response =
+      await requestControlPlaneJson<ProactiveHeartbeatConfigResponsePayload>({
+        service: "proactive",
+        method: "POST",
+        path: `/api/v1/proactive/heartbeat-cronjobs/current/workspaces/${encodeURIComponent(workspaceId)}`,
+        payload: {
+          holaboss_user_id:
+            payload.holaboss_user_id?.trim() || scope.holabossUserId,
+          sandbox_id: payload.sandbox_id?.trim() || scope.sandboxId,
+          workspace_name: payload.workspace_name?.trim() || undefined,
+          enabled: payload.enabled !== false,
+        },
+      });
+    assertProactiveHeartbeatScopedToInstance(response, scope);
+    return normalizeProactiveHeartbeatConfig(response);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("Service not found") || message.includes("fetch failed")) {
+      throw new Error(
+        "Proactive service is not reachable. Check your network or backend configuration.",
+      );
+    }
+    throw error;
   }
 }
 
@@ -7661,6 +8306,33 @@ function requestedWorkspaceTemplateMode(
 
 function workspaceDirectoryPath(workspaceId: string) {
   return path.join(runtimeWorkspaceRoot(), workspaceId);
+}
+
+function resolveWorkspaceDownloadTargetPath(
+  workspaceId: string,
+  filename: string,
+): string {
+  const downloadsDir = path.join(
+    workspaceDirectoryPath(workspaceId),
+    "Downloads",
+  );
+  mkdirSync(downloadsDir, { recursive: true });
+
+  const sanitizedFilename = sanitizeAttachmentName(filename || "download");
+  const parsed = path.parse(sanitizedFilename);
+  const basename = parsed.name || "download";
+  const extension = parsed.ext || "";
+
+  let candidate = `${basename}${extension}`;
+  let candidatePath = path.join(downloadsDir, candidate);
+  let index = 2;
+  while (existsSync(candidatePath)) {
+    candidate = `${basename}-${index}${extension}`;
+    candidatePath = path.join(downloadsDir, candidate);
+    index += 1;
+  }
+
+  return candidatePath;
 }
 
 function sanitizeAttachmentName(name: string): string {
@@ -8970,44 +9642,6 @@ async function createWorkspace(
 async function deleteWorkspace(
   workspaceId: string,
 ): Promise<WorkspaceResponsePayload> {
-  const holabossUserId = await controlPlaneWorkspaceUserId();
-  if (holabossUserId) {
-    // Delete via control plane — soft-deletes in the backend DB.
-    // Returns 204 on success; we synthesize the expected payload shape.
-    await requestControlPlaneJson<null>({
-      service: "projects",
-      method: "DELETE",
-      path: `/api/v1/projects/workspaces/${encodeURIComponent(workspaceId)}`,
-    }).catch((err: unknown) => {
-      console.warn("[deleteWorkspace] control-plane delete failed (may already be gone):", err);
-    });
-    // Also try cleaning up local runtime state (best-effort).
-    await requestRuntimeJson<WorkspaceResponsePayload>({
-      method: "DELETE",
-      path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`,
-    }).catch((err: unknown) => {
-      console.warn("[deleteWorkspace] local runtime delete failed (may not exist locally):", err);
-    });
-    return {
-      workspace: {
-        id: workspaceId,
-        name: workspaceId,
-        status: "deleted",
-        harness: null,
-        main_session_id: null,
-        error_message: null,
-        onboarding_status: "not_required",
-        onboarding_session_id: null,
-        onboarding_completed_at: null,
-        onboarding_completion_summary: null,
-        onboarding_requested_at: null,
-        onboarding_requested_by: null,
-        created_at: null,
-        updated_at: null,
-        deleted_at_utc: new Date().toISOString(),
-      } as WorkspaceRecordPayload,
-    };
-  }
   return requestRuntimeJson<WorkspaceResponsePayload>({
     method: "DELETE",
     path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`,
@@ -10002,6 +10636,7 @@ async function startEmbeddedRuntime() {
         PROACTIVE_ENABLE_REMOTE_BRIDGE: "1",
         PROACTIVE_BRIDGE_BASE_URL: proactiveBaseUrl(),
         PYTHONDONTWRITEBYTECODE: "1",
+        HOLABOSS_AUTH_BASE_URL: AUTH_BASE_URL,
         HOLABOSS_AUTH_COOKIE: authCookieHeader() ?? "",
       },
       stdio: "pipe",
@@ -10369,6 +11004,7 @@ function createBrowserWorkspaceState(
     downloads: [],
     history: [],
     downloadTrackingRegistered: false,
+    pendingDownloadOverrides: [],
   };
 }
 
@@ -10557,8 +11193,12 @@ function getFilePreviewKind(targetPath: string) {
 
 async function readFilePreview(
   targetPath: string,
+  workspaceId?: string | null,
 ): Promise<FilePreviewPayload> {
-  const absolutePath = path.resolve(targetPath);
+  const { absolutePath } = await resolveWorkspaceScopedExplorerPath(
+    targetPath,
+    workspaceId,
+  );
   const stat = await fs.stat(absolutePath);
 
   if (stat.isDirectory()) {
@@ -10666,20 +11306,232 @@ async function readFilePreview(
 async function writeTextFile(
   targetPath: string,
   content: string,
+  workspaceId?: string | null,
 ): Promise<FilePreviewPayload> {
-  const absolutePath = path.resolve(targetPath);
+  const { absolutePath } = await resolveWorkspaceScopedExplorerPath(
+    targetPath,
+    workspaceId,
+  );
   await fs.writeFile(absolutePath, content, "utf-8");
-  return readFilePreview(absolutePath);
+  return readFilePreview(absolutePath, workspaceId);
+}
+
+function isPathWithinRoot(rootPath: string, targetPath: string): boolean {
+  const relativePath = path.relative(rootPath, targetPath);
+  return (
+    relativePath === "" ||
+    (!relativePath.startsWith("..") && !path.isAbsolute(relativePath))
+  );
+}
+
+function shouldAutoRenameBookmarkLabel(
+  bookmark: FileBookmarkPayload,
+  previousTargetPath: string,
+): boolean {
+  return (
+    bookmark.label === path.basename(previousTargetPath) ||
+    bookmark.label === previousTargetPath
+  );
+}
+
+function isSameOrDescendantPath(rootPath: string, targetPath: string): boolean {
+  const relativePath = path.relative(rootPath, targetPath);
+  return (
+    relativePath === "" ||
+    (!relativePath.startsWith("..") && !path.isAbsolute(relativePath))
+  );
+}
+
+async function persistUpdatedFileBookmarks(
+  nextBookmarks: FileBookmarkPayload[],
+): Promise<void> {
+  if (nextBookmarks === fileBookmarks) {
+    return;
+  }
+  fileBookmarks = nextBookmarks;
+  emitFileBookmarksState();
+  await persistFileBookmarks();
+}
+
+async function resolveWorkspaceScopedExplorerPath(
+  targetPath?: string | null,
+  workspaceId?: string | null,
+): Promise<{ absolutePath: string; workspaceRoot: string | null }> {
+  const normalizedWorkspaceId =
+    typeof workspaceId === "string" ? workspaceId.trim() : "";
+  const trimmedTargetPath =
+    typeof targetPath === "string" ? targetPath.trim() : "";
+
+  if (!normalizedWorkspaceId) {
+    const fallbackPath = trimmedTargetPath || runtimeSandboxRoot();
+    return {
+      absolutePath: path.resolve(fallbackPath),
+      workspaceRoot: null,
+    };
+  }
+
+  const workspaceRoot = path.resolve(
+    await workspaceDirectoryPath(normalizedWorkspaceId),
+  );
+  const resolvedTargetPath = trimmedTargetPath
+    ? path.resolve(
+        path.isAbsolute(trimmedTargetPath)
+          ? trimmedTargetPath
+          : path.join(workspaceRoot, trimmedTargetPath),
+      )
+    : workspaceRoot;
+
+  if (!isPathWithinRoot(workspaceRoot, resolvedTargetPath)) {
+    throw new Error(`Target path escapes workspace root: ${trimmedTargetPath}`);
+  }
+
+  return {
+    absolutePath: resolvedTargetPath,
+    workspaceRoot,
+  };
+}
+
+async function renameExplorerPath(
+  targetPath: string,
+  nextName: string,
+  workspaceId?: string | null,
+): Promise<FileSystemMutationPayload> {
+  const trimmedName = nextName.trim();
+  if (!trimmedName) {
+    throw new Error("Name cannot be empty.");
+  }
+  if (
+    trimmedName === "." ||
+    trimmedName === ".." ||
+    trimmedName.includes("/") ||
+    trimmedName.includes("\\")
+  ) {
+    throw new Error("Name must not contain path separators.");
+  }
+
+  const { absolutePath, workspaceRoot } = await resolveWorkspaceScopedExplorerPath(
+    targetPath,
+    workspaceId,
+  );
+
+  if (
+    workspaceRoot &&
+    path.normalize(absolutePath) === path.normalize(workspaceRoot)
+  ) {
+    throw new Error("Workspace root cannot be renamed.");
+  }
+
+  const nextAbsolutePath = path.join(path.dirname(absolutePath), trimmedName);
+  if (path.normalize(nextAbsolutePath) === path.normalize(absolutePath)) {
+    return { absolutePath };
+  }
+
+  if (
+    workspaceRoot &&
+    !isPathWithinRoot(workspaceRoot, nextAbsolutePath)
+  ) {
+    throw new Error("Renamed path escapes workspace root.");
+  }
+
+  let targetExists = false;
+  try {
+    await fs.access(nextAbsolutePath);
+    targetExists = true;
+  } catch (cause) {
+    const code = cause && typeof cause === "object" && "code" in cause
+      ? String((cause as { code?: unknown }).code ?? "")
+      : "";
+    if (code !== "ENOENT") {
+      throw cause;
+    }
+  }
+
+  if (targetExists) {
+    throw new Error(`A file or folder named "${trimmedName}" already exists.`);
+  }
+
+  await fs.rename(absolutePath, nextAbsolutePath);
+
+  let didRewriteBookmarks = false;
+  const nextBookmarks = fileBookmarks.map((bookmark) => {
+    if (!isSameOrDescendantPath(absolutePath, bookmark.targetPath)) {
+      return bookmark;
+    }
+
+    const relativePath = path.relative(absolutePath, bookmark.targetPath);
+    const rewrittenTargetPath = relativePath
+      ? path.join(nextAbsolutePath, relativePath)
+      : nextAbsolutePath;
+    const rewrittenLabel =
+      relativePath === "" && shouldAutoRenameBookmarkLabel(bookmark, absolutePath)
+        ? path.basename(nextAbsolutePath)
+        : bookmark.label === bookmark.targetPath
+          ? rewrittenTargetPath
+          : bookmark.label;
+
+    if (
+      rewrittenTargetPath === bookmark.targetPath &&
+      rewrittenLabel === bookmark.label
+    ) {
+      return bookmark;
+    }
+
+    didRewriteBookmarks = true;
+    return {
+      ...bookmark,
+      targetPath: rewrittenTargetPath,
+      label: rewrittenLabel,
+    };
+  });
+
+  if (didRewriteBookmarks) {
+    await persistUpdatedFileBookmarks(nextBookmarks);
+  }
+
+  return {
+    absolutePath: nextAbsolutePath,
+  };
+}
+
+async function deleteExplorerPath(
+  targetPath: string,
+  workspaceId?: string | null,
+): Promise<{ deleted: boolean }> {
+  const { absolutePath, workspaceRoot } = await resolveWorkspaceScopedExplorerPath(
+    targetPath,
+    workspaceId,
+  );
+
+  if (
+    workspaceRoot &&
+    path.normalize(absolutePath) === path.normalize(workspaceRoot)
+  ) {
+    throw new Error("Workspace root cannot be deleted.");
+  }
+
+  const stat = await fs.stat(absolutePath);
+  if (stat.isDirectory()) {
+    await fs.rm(absolutePath, { recursive: true, force: false });
+  } else {
+    await fs.unlink(absolutePath);
+  }
+
+  const nextBookmarks = fileBookmarks.filter(
+    (bookmark) => !isSameOrDescendantPath(absolutePath, bookmark.targetPath),
+  );
+  if (nextBookmarks.length !== fileBookmarks.length) {
+    await persistUpdatedFileBookmarks(nextBookmarks);
+  }
+
+  return { deleted: true };
 }
 
 async function listDirectory(
   targetPath?: string | null,
+  workspaceId?: string | null,
 ): Promise<DirectoryPayload> {
-  const initialPath =
-    targetPath && targetPath.trim().length > 0
-      ? targetPath
-      : runtimeSandboxRoot();
-  const resolvedPath = path.resolve(initialPath);
+  const { absolutePath: resolvedPath, workspaceRoot } =
+    await resolveWorkspaceScopedExplorerPath(targetPath, workspaceId);
   await fs.mkdir(resolvedPath, { recursive: true });
   const stat = await fs.stat(resolvedPath);
 
@@ -10716,9 +11568,10 @@ async function listDirectory(
     return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
   });
 
-  const parsedRoot = path.parse(resolvedPath).root;
   const normalizedCurrent = path.normalize(resolvedPath);
-  const normalizedRoot = path.normalize(parsedRoot);
+  const normalizedRoot = path.normalize(
+    workspaceRoot ? workspaceRoot : path.parse(resolvedPath).root,
+  );
   const parentPath =
     normalizedCurrent === normalizedRoot
       ? null
@@ -11630,6 +12483,195 @@ function handleBrowserWindowOpenAsTab(
   void persistBrowserWorkspace(workspaceId);
 }
 
+function browserContextSuggestedFilename(context: ContextMenuParams): string {
+  const suggested = context.suggestedFilename.trim();
+  if (suggested) {
+    return sanitizeAttachmentName(suggested);
+  }
+
+  const candidateUrl = context.srcURL.trim() || context.linkURL.trim();
+  if (!candidateUrl) {
+    return context.mediaType === "image" ? "image" : "download";
+  }
+
+  try {
+    const parsed = new URL(candidateUrl);
+    const basename = path.basename(parsed.pathname).trim();
+    if (basename) {
+      return sanitizeAttachmentName(basename);
+    }
+  } catch {
+    // fall through to fallback names below
+  }
+
+  return context.mediaType === "image" ? "image" : "download";
+}
+
+function queueBrowserDownloadPrompt(
+  workspaceId: string,
+  targetUrl: string,
+  options: {
+    defaultFilename: string;
+    dialogTitle: string;
+    buttonLabel: string;
+  },
+) {
+  const workspace = browserWorkspaceFromMap(workspaceId);
+  if (!workspace) {
+    return;
+  }
+  workspace.pendingDownloadOverrides.push({
+    url: targetUrl.trim(),
+    defaultPath: path.join(
+      workspaceDirectoryPath(workspaceId),
+      "Downloads",
+      sanitizeAttachmentName(options.defaultFilename),
+    ),
+    dialogTitle: options.dialogTitle,
+    buttonLabel: options.buttonLabel,
+  });
+}
+
+function consumeBrowserDownloadOverride(
+  workspace: BrowserWorkspaceState,
+  targetUrl: string,
+): BrowserDownloadOverride | null {
+  const normalizedTargetUrl = targetUrl.trim();
+  const overrideIndex = workspace.pendingDownloadOverrides.findIndex(
+    (override) => override.url === normalizedTargetUrl,
+  );
+  if (overrideIndex < 0) {
+    return null;
+  }
+  const [override] = workspace.pendingDownloadOverrides.splice(overrideIndex, 1);
+  return override ?? null;
+}
+
+function showBrowserViewContextMenu(params: {
+  workspaceId: string;
+  view: BrowserView;
+  context: ContextMenuParams;
+}) {
+  const { workspaceId, view, context } = params;
+  const template: MenuItemConstructorOptions[] = [];
+  const selectionText = context.selectionText.trim();
+  const linkUrl = context.linkURL.trim();
+  const canGoBack = view.webContents.navigationHistory.canGoBack();
+  const canGoForward = view.webContents.navigationHistory.canGoForward();
+  const popupX = browserBounds.x + context.x;
+  const popupY = browserBounds.y + context.y;
+  const imageUrl = context.srcURL.trim();
+
+  if (linkUrl) {
+    template.push(
+      {
+        label: "Open Link in New Tab",
+        click: () => handleBrowserWindowOpenAsTab(workspaceId, linkUrl, "foreground-tab"),
+      },
+      {
+        label: "Open Link Externally",
+        click: () => {
+          void shell.openExternal(linkUrl);
+        },
+      },
+      {
+        label: "Copy Link Address",
+        click: () => {
+          clipboard.writeText(linkUrl);
+        },
+      },
+      { type: "separator" },
+    );
+  }
+
+  if (context.mediaType === "image" && imageUrl) {
+    template.push(
+      {
+        label: "Open Image in New Tab",
+        click: () =>
+          handleBrowserWindowOpenAsTab(workspaceId, imageUrl, "foreground-tab"),
+      },
+      {
+        label: "Copy Image Address",
+        click: () => {
+          clipboard.writeText(imageUrl);
+        },
+      },
+      {
+        label: "Save Image As...",
+        click: () => {
+          queueBrowserDownloadPrompt(workspaceId, imageUrl, {
+            defaultFilename: browserContextSuggestedFilename(context),
+            dialogTitle: "Save Image As",
+            buttonLabel: "Save Image",
+          });
+          void view.webContents.downloadURL(imageUrl);
+        },
+      },
+      { type: "separator" },
+    );
+  }
+
+  if (context.isEditable) {
+    template.push(
+      { label: "Undo", role: "undo", enabled: context.editFlags.canUndo },
+      { label: "Redo", role: "redo", enabled: context.editFlags.canRedo },
+      { type: "separator" },
+      { label: "Cut", role: "cut", enabled: context.editFlags.canCut },
+      { label: "Copy", role: "copy", enabled: context.editFlags.canCopy },
+      { label: "Paste", role: "paste", enabled: context.editFlags.canPaste },
+      {
+        label: "Select All",
+        role: "selectAll",
+        enabled: context.editFlags.canSelectAll,
+      },
+    );
+  } else if (selectionText) {
+    template.push(
+      { label: "Copy", role: "copy", enabled: context.editFlags.canCopy },
+      {
+        label: "Select All",
+        role: "selectAll",
+        enabled: context.editFlags.canSelectAll,
+      },
+    );
+  } else {
+    template.push(
+      {
+        label: "Back",
+        enabled: canGoBack,
+        click: () => view.webContents.navigationHistory.goBack(),
+      },
+      {
+        label: "Forward",
+        enabled: canGoForward,
+        click: () => view.webContents.navigationHistory.goForward(),
+      },
+      {
+        label: "Reload",
+        click: () => view.webContents.reload(),
+      },
+      {
+        label: "Select All",
+        role: "selectAll",
+        enabled: context.editFlags.canSelectAll,
+      },
+    );
+  }
+
+  if (template.length === 0) {
+    return;
+  }
+
+  Menu.buildFromTemplate(template).popup({
+    window: mainWindow ?? undefined,
+    frame: context.frame ?? undefined,
+    x: popupX,
+    y: popupY,
+    sourceType: context.menuSourceType,
+  });
+}
+
 function createBrowserTab(
   workspaceId: string,
   options: {
@@ -11764,6 +12806,14 @@ function createBrowserTab(
     syncBrowserState(workspaceId, tabId);
   });
 
+  view.webContents.on("context-menu", (_event, params) => {
+    showBrowserViewContextMenu({
+      workspaceId,
+      view,
+      context: params,
+    });
+  });
+
   view.webContents.on(
     "did-fail-load",
     (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -11824,14 +12874,32 @@ function ensureBrowserWorkspaceDownloadTracking(
 
     const createdAt = new Date().toISOString();
     const downloadId = `download-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const savePath = path.join(app.getPath("downloads"), item.getFilename());
-    item.setSavePath(savePath);
+    const override = consumeBrowserDownloadOverride(
+      currentWorkspace,
+      item.getURL(),
+    );
+    const savePath = override
+      ? ""
+      : resolveWorkspaceDownloadTargetPath(
+          currentWorkspace.workspaceId,
+          item.getFilename(),
+        );
+    if (override) {
+      item.setSaveDialogOptions({
+        title: override.dialogTitle,
+        buttonLabel: override.buttonLabel,
+        defaultPath: override.defaultPath,
+        properties: ["showOverwriteConfirmation"],
+      });
+    } else {
+      item.setSavePath(savePath);
+    }
 
     const payload: BrowserDownloadPayload = {
       id: downloadId,
       url: item.getURL(),
       filename: item.getFilename(),
-      targetPath: savePath,
+      targetPath: item.getSavePath() || savePath,
       status: "progressing",
       receivedBytes: 0,
       totalBytes: item.getTotalBytes(),
@@ -11861,6 +12929,7 @@ function ensureBrowserWorkspaceDownloadTracking(
     item.on("updated", (_updatedEvent, state) => {
       updateDownload({
         status: state === "interrupted" ? "interrupted" : "progressing",
+        targetPath: item.getSavePath() || "",
         receivedBytes: item.getReceivedBytes(),
         totalBytes: item.getTotalBytes(),
       });
@@ -11875,6 +12944,7 @@ function ensureBrowserWorkspaceDownloadTracking(
             : "interrupted";
       updateDownload({
         status: nextStatus,
+        targetPath: item.getSavePath() || "",
         receivedBytes: item.getReceivedBytes(),
         totalBytes: item.getTotalBytes(),
         completedAt:
@@ -13171,7 +14241,7 @@ function createMainWindow() {
   });
 
   if (isDev) {
-    void win.loadURL(process.env.VITE_DEV_SERVER_URL as string);
+    void win.loadURL(RESOLVED_DEV_SERVER_URL);
   } else {
     void win.loadFile(path.join(__dirname, "../dist/index.html"));
   }
@@ -13296,18 +14366,40 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "fs:listDirectory",
     ["main"],
-    async (_event, targetPath?: string | null) => listDirectory(targetPath),
+    async (_event, targetPath?: string | null, workspaceId?: string | null) =>
+      listDirectory(targetPath, workspaceId),
   );
   handleTrustedIpc(
     "fs:readFilePreview",
     ["main"],
-    async (_event, targetPath: string) => readFilePreview(targetPath),
+    async (_event, targetPath: string, workspaceId?: string | null) =>
+      readFilePreview(targetPath, workspaceId),
   );
   handleTrustedIpc(
     "fs:writeTextFile",
     ["main"],
-    async (_event, targetPath: string, content: string) =>
-      writeTextFile(targetPath, content),
+    async (
+      _event,
+      targetPath: string,
+      content: string,
+      workspaceId?: string | null,
+    ) => writeTextFile(targetPath, content, workspaceId),
+  );
+  handleTrustedIpc(
+    "fs:renamePath",
+    ["main"],
+    async (
+      _event,
+      targetPath: string,
+      nextName: string,
+      workspaceId?: string | null,
+    ) => renameExplorerPath(targetPath, nextName, workspaceId),
+  );
+  handleTrustedIpc(
+    "fs:deletePath",
+    ["main"],
+    async (_event, targetPath: string, workspaceId?: string | null) =>
+      deleteExplorerPath(targetPath, workspaceId),
   );
   handleTrustedIpc("fs:getBookmarks", ["main"], () => fileBookmarks);
   handleTrustedIpc(
@@ -13592,6 +14684,8 @@ app.whenReady().then(async () => {
           "127.0.0.1",
         ),
         defaultModel: binding.default_model,
+        defaultBackgroundModel: binding.default_background_model ?? null,
+        defaultImageModel: binding.default_image_model ?? null,
         controlPlaneBaseUrl: DESKTOP_CONTROL_PLANE_BASE_URL,
       });
       await syncRuntimeModelCatalogFromBinding(binding);
@@ -13792,6 +14886,23 @@ app.whenReady().then(async () => {
     "workspace:getProactiveTaskProposalPreference",
     ["main"],
     async () => getProactiveTaskProposalPreference(),
+  );
+  handleTrustedIpc(
+    "workspace:getProactiveHeartbeatConfig",
+    ["main"],
+    async () => getProactiveHeartbeatConfig(),
+  );
+  handleTrustedIpc(
+    "workspace:setProactiveHeartbeatConfig",
+    ["main"],
+    async (_event, payload: ProactiveHeartbeatConfigUpdatePayload) =>
+      setProactiveHeartbeatConfig(payload),
+  );
+  handleTrustedIpc(
+    "workspace:setProactiveHeartbeatWorkspaceEnabled",
+    ["main"],
+    async (_event, payload: ProactiveHeartbeatWorkspaceUpdatePayload) =>
+      setProactiveHeartbeatWorkspaceEnabled(payload),
   );
   handleTrustedIpc(
     "workspace:listRuntimeStates",

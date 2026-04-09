@@ -160,6 +160,17 @@ test("app shell polls proactive status for the selected workspace", async () => 
   assert.match(source, /workspace\.getProactiveStatus\(\s*selectedWorkspace\.id,/);
   assert.match(source, /proactiveStatus=\{proactiveStatus\}/);
   assert.match(source, /isLoadingProactiveStatus=\{isLoadingProactiveStatus\}/);
+  assert.match(source, /runtimeConfig\?\.authTokenPresent/);
+  assert.match(source, /runtimeConfig\?\.modelProxyBaseUrl/);
+  assert.match(source, /runtimeStatus\?\.status/);
+});
+
+test("app shell reloads proactive preference after workspace hydration completes", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /if \(!hasHydratedWorkspaceList\) \{\s*return;\s*\}/);
+  assert.match(source, /workspace\.getProactiveTaskProposalPreference\(\)/);
+  assert.match(source, /\}, \[hasHydratedWorkspaceList, selectedWorkspaceId\]\);/);
 });
 
 test("app shell renames the running panel button to sub-sessions", async () => {
@@ -167,6 +178,16 @@ test("app shell renames the running panel button to sub-sessions", async () => {
 
   assert.match(source, /aria-label="Open sub-sessions panel"/);
   assert.doesNotMatch(source, /aria-label="Open running panel"/);
+  assert.match(source, /lg:grid-cols-\[60px_minmax\(0,1fr\)_336px\]/);
+});
+
+test("app shell keeps the operations drawer collapsed by default on a fresh install", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /function loadOperationsDrawerOpen\(\): boolean \{[\s\S]*if \(raw === "1" \|\| raw === "true"\) \{\s*return true;\s*\}[\s\S]*if \(raw === "0" \|\| raw === "false"\) \{\s*return false;\s*\}[\s\S]*return false;\s*\}/,
+  );
 });
 
 test("app shell can route new schedule creation into a prefilled workspace chat", async () => {

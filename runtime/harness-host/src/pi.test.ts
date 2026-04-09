@@ -14,6 +14,7 @@ import {
   buildPiPromptPayload,
   buildPiMcpServerBindings,
   buildPiMcpToolName,
+  createPiTodoToolDefinitions,
   createPiEventMapperState,
   createPiMcpCustomTools,
   mapPiSessionEvent,
@@ -558,6 +559,66 @@ test("mapPiSessionEvent maps text, thinking, tool, and completion events", () =>
   );
 });
 
+test("createPiTodoToolDefinitions persists session todo state", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-todo-"));
+  const stateDir = path.join(root, ".holaboss", "pi-agent");
+  const [todoRead, todoWrite] = createPiTodoToolDefinitions({
+    stateDir,
+    sessionId: "session-1",
+  });
+  const textBlock = (result: Awaited<ReturnType<typeof todoRead.execute>>) => result.content[0] as { text: string };
+
+  const emptyResult = await todoRead.execute("call-read-empty", {}, undefined, undefined, {} as never);
+  assert.equal(textBlock(emptyResult).text, "No todo items are currently recorded for this session.");
+  assert.deepEqual((emptyResult.details as { todos: unknown[] }).todos, []);
+
+  const writeResult = await todoWrite.execute(
+    "call-write",
+    {
+      todos: [
+        { content: "Inspect todowrite wiring", status: "in_progress" },
+        { title: "Add tests" },
+        { text: "Verify session persistence", done: true },
+      ],
+    },
+    undefined,
+    undefined,
+    {} as never
+  );
+  assert.match(textBlock(writeResult).text, /Saved 3 todo items\./);
+
+  const rereadResult = await todoRead.execute("call-read", {}, undefined, undefined, {} as never);
+  assert.deepEqual((rereadResult.details as { todos: unknown[] }).todos, [
+    { content: "Inspect todowrite wiring", status: "in_progress" },
+    { content: "Add tests", status: "pending" },
+    { content: "Verify session persistence", status: "completed" },
+  ]);
+
+  const persistedStatePath = path.join(stateDir, "todos", "session-1.json");
+  assert.deepEqual(JSON.parse(fs.readFileSync(persistedStatePath, "utf8")), {
+    version: 1,
+    session_id: "session-1",
+    updated_at: (rereadResult.details as { updated_at: string }).updated_at,
+    todos: [
+      { content: "Inspect todowrite wiring", status: "in_progress" },
+      { content: "Add tests", status: "pending" },
+      { content: "Verify session persistence", status: "completed" },
+    ],
+  });
+
+  const [otherSessionRead] = createPiTodoToolDefinitions({
+    stateDir,
+    sessionId: "session-2",
+  });
+  const otherSessionResult = await otherSessionRead.execute("call-read-other", {}, undefined, undefined, {} as never);
+  assert.deepEqual((otherSessionResult.details as { todos: unknown[] }).todos, []);
+
+  await todoWrite.execute("call-clear", { todos: [] }, undefined, undefined, {} as never);
+  const clearedResult = await todoRead.execute("call-read-cleared", {}, undefined, undefined, {} as never);
+  assert.equal(textBlock(clearedResult).text, "No todo items are currently recorded for this session.");
+  assert.deepEqual((clearedResult.details as { todos: unknown[] }).todos, []);
+});
+
 test("buildPiMcpServerBindings converts remote and local MCP payloads into mcporter definitions", () => {
   const request: HarnessHostPiRequest = {
     ...baseRequest(),
@@ -772,6 +833,48 @@ test("buildPiProviderConfig preserves direct OpenRouter endpoints and headers", 
   assert.equal(providerConfig.models[0]?.id, "openai/gpt-5.4");
   assert.equal(providerConfig.models[0]?.api, "openai-completions");
   assert.equal(providerConfig.models[0]?.compat, undefined);
+});
+
+test("buildPiProviderConfig uses pi-ai native Google provider for direct Gemini models", () => {
+  const request: HarnessHostPiRequest = {
+    ...baseRequest(),
+    provider_id: "gemini_direct",
+    model_id: "gemini-2.5-flash",
+    model_client: {
+      model_proxy_provider: "google_compatible",
+      api_key: "gemini-test-key",
+      base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+    },
+  };
+
+  const providerConfig = buildPiProviderConfig(request);
+
+  assert.equal(providerConfig.baseUrl, "https://generativelanguage.googleapis.com/v1beta");
+  assert.equal(providerConfig.api, "google-generative-ai");
+  assert.equal(providerConfig.authHeader, false);
+  assert.equal(providerConfig.models[0]?.api, "google-generative-ai");
+  assert.equal(providerConfig.models[0]?.compat, undefined);
+});
+
+test("buildPiProviderConfig disables store for Google-compatible proxy routes", () => {
+  const request: HarnessHostPiRequest = {
+    ...baseRequest(),
+    provider_id: "openai",
+    model_id: "gemini-2.5-flash",
+    model_client: {
+      model_proxy_provider: "google_compatible",
+      api_key: "hbmk-test-key",
+      base_url: "http://127.0.0.1:3060/api/v1/model-proxy/google/v1",
+    },
+  };
+
+  const providerConfig = buildPiProviderConfig(request);
+
+  assert.equal(providerConfig.baseUrl, "http://127.0.0.1:3060/api/v1/model-proxy/google/v1");
+  assert.equal(providerConfig.api, "openai-completions");
+  assert.deepEqual(providerConfig.models[0]?.compat, {
+    supportsStore: false,
+  });
 });
 
 test("createPiMcpCustomTools filters discovery to allowlisted tools and forwards calls via mcporter", async () => {

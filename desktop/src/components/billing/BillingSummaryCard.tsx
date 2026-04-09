@@ -64,7 +64,10 @@ export function BillingSummaryCard({
       : "—";
 
   return (
-    <section className="theme-subtle-surface rounded-[24px] border border-border/40 px-5 py-5">
+    <section
+      className="rounded-[24px] border border-border/40 px-5 py-5"
+      style={{ backgroundColor: "rgb(243, 243, 244)" }}
+    >
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="text-2xl font-semibold text-foreground">

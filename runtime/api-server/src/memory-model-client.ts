@@ -5,6 +5,7 @@ export interface MemoryModelClientConfig {
   apiKey: string;
   defaultHeaders?: Record<string, string> | null;
   modelId: string;
+  apiStyle?: "openai_compatible" | "anthropic_native" | "google_native" | "openrouter_image" | null;
 }
 
 export interface MemoryModelJsonQuery {
@@ -31,8 +32,24 @@ function firstNonEmptyString(...values: unknown[]): string {
 }
 
 function looksLikeOpenAiCompatBaseUrl(baseUrl: string): boolean {
-  const normalized = baseUrl.trim().toLowerCase();
-  return normalized.endsWith("/openai/v1");
+  const normalized = baseUrl.trim().toLowerCase().replace(/\/+$/, "");
+  return normalized.endsWith("/openai/v1") || normalized.endsWith("/google/v1");
+}
+
+function looksLikeAnthropicBaseUrl(baseUrl: string): boolean {
+  const normalized = baseUrl.trim().toLowerCase().replace(/\/+$/, "");
+  if (!normalized) {
+    return false;
+  }
+  if (normalized.endsWith("/anthropic/v1")) {
+    return true;
+  }
+  try {
+    const parsed = new URL(normalized);
+    return parsed.hostname.toLowerCase() === "api.anthropic.com";
+  } catch {
+    return false;
+  }
 }
 
 function hasExplicitAuthHeader(headers: Record<string, string>): boolean {
@@ -87,6 +104,17 @@ function completionContent(payload: unknown): string {
   return firstTextPart?.text ?? "";
 }
 
+function anthropicCompletionContent(payload: unknown): string {
+  if (!isRecord(payload)) {
+    return "";
+  }
+  const content = Array.isArray(payload.content) ? payload.content : [];
+  const textParts = content
+    .filter((part) => isRecord(part) && typeof part.text === "string")
+    .map((part) => String((part as { text: string }).text));
+  return textParts.join("\n").trim();
+}
+
 export function normalizeOpenAiModelId(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -97,6 +125,18 @@ export function normalizeOpenAiModelId(value: string): string {
     return trimmed;
   }
   return trimmed.slice(slashIndex + 1).trim() || trimmed;
+}
+
+function anthropicMessagesEndpoint(baseUrl: string): string {
+  const normalized = baseUrl.trim().replace(/\/+$/, "");
+  if (!normalized) {
+    return "";
+  }
+  const lower = normalized.toLowerCase();
+  if (lower.endsWith("/anthropic/v1") || lower.endsWith("/v1")) {
+    return `${normalized}/messages`;
+  }
+  return `${normalized}/v1/messages`;
 }
 
 export function modelCallFingerprint(params: {
@@ -121,28 +161,56 @@ export async function queryMemoryModelJson(
 ): Promise<Record<string, unknown> | null> {
   const baseUrl = config.baseUrl.trim().replace(/\/+$/, "");
   const modelId = normalizeOpenAiModelId(config.modelId);
-  if (!baseUrl || !modelId || !looksLikeOpenAiCompatBaseUrl(baseUrl)) {
+  const apiStyle =
+    config.apiStyle === "anthropic_native"
+      ? "anthropic_native"
+      : config.apiStyle === "openai_compatible"
+        ? "openai_compatible"
+        : looksLikeOpenAiCompatBaseUrl(baseUrl)
+          ? "openai_compatible"
+          : looksLikeAnthropicBaseUrl(baseUrl)
+            ? "anthropic_native"
+            : null;
+  if (!baseUrl || !modelId || !apiStyle) {
     return null;
   }
-
-  const endpoint = `${baseUrl}/chat/completions`;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(config.defaultHeaders ?? {}),
   };
-  if (!hasExplicitAuthHeader(headers) && config.apiKey.trim()) {
-    headers.Authorization = `Bearer ${config.apiKey.trim()}`;
-  }
 
   const controller = new AbortController();
   const timeoutMs = Math.max(1000, Math.min(query.timeoutMs ?? 7000, 20000));
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers,
-      signal: controller.signal,
-      body: JSON.stringify({
+    let endpoint = "";
+    let body: Record<string, unknown> = {};
+    if (apiStyle === "anthropic_native") {
+      endpoint = anthropicMessagesEndpoint(baseUrl);
+      if (!hasExplicitAuthHeader(headers) && config.apiKey.trim()) {
+        headers["x-api-key"] = config.apiKey.trim();
+      }
+      if (!Object.keys(headers).some((key) => key.trim().toLowerCase() === "anthropic-version")) {
+        headers["anthropic-version"] = "2023-06-01";
+      }
+      body = {
+        model: modelId,
+        temperature: 0,
+        max_tokens: 1024,
+        system: query.systemPrompt,
+        messages: [
+          {
+            role: "user",
+            content: query.userPrompt,
+          },
+        ],
+      };
+    } else {
+      endpoint = `${baseUrl}/chat/completions`;
+      if (!hasExplicitAuthHeader(headers) && config.apiKey.trim()) {
+        headers.Authorization = `Bearer ${config.apiKey.trim()}`;
+      }
+      body = {
         model: modelId,
         temperature: 0,
         response_format: { type: "json_object" },
@@ -156,13 +224,19 @@ export async function queryMemoryModelJson(
             content: query.userPrompt,
           },
         ],
-      }),
+      };
+    }
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      signal: controller.signal,
+      body: JSON.stringify(body),
     });
     if (!response.ok) {
       return null;
     }
     const payload = await response.json().catch(() => null);
-    const text = completionContent(payload);
+    const text = apiStyle === "anthropic_native" ? anthropicCompletionContent(payload) : completionContent(payload);
     return parseJsonObjectCandidate(text);
   } catch {
     return null;
@@ -187,4 +261,3 @@ export function normalizedStringArray(value: unknown): string[] {
   }
   return ordered;
 }
-

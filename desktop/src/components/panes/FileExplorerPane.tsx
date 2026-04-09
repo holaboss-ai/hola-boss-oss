@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowLeft,
-  ArrowUp,
+  ChevronRight,
   FileArchive,
   FileAudio2,
   FileBadge2,
@@ -141,6 +142,26 @@ const SPECIAL_POLICY_FILENAMES = new Set([
 type ExplorerIconDescriptor = {
   Icon: LucideIcon;
   className: string;
+};
+
+type FileExplorerBreadcrumb = {
+  label: string;
+  absolutePath: string;
+  isCurrent: boolean;
+};
+
+type FileExplorerContextMenuState = {
+  entry: LocalFileEntry;
+  x: number;
+  y: number;
+  paneBounds: {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+    width: number;
+    height: number;
+  };
 };
 
 function getComparableFileName(targetName: string) {
@@ -312,6 +333,55 @@ function resolveWorkspaceTargetPath(workspaceRoot: string, targetPath: string) {
   return `${normalizedRoot}${separator}${normalizedTarget}`;
 }
 
+function buildPathBreadcrumbs(
+  currentPath: string,
+  workspaceRootPath: string | null,
+): FileExplorerBreadcrumb[] {
+  const trimmedCurrentPath = currentPath.trim();
+  if (!trimmedCurrentPath) {
+    return [];
+  }
+
+  const normalizedWorkspaceRoot = workspaceRootPath
+    ? normalizeComparablePath(workspaceRootPath)
+    : "";
+  const breadcrumbs: FileExplorerBreadcrumb[] = [];
+  const seenPaths = new Set<string>();
+  let cursor: string | null = trimmedCurrentPath;
+
+  while (cursor) {
+    const normalizedCursor = normalizeComparablePath(cursor);
+    if (!normalizedCursor || seenPaths.has(normalizedCursor)) {
+      break;
+    }
+    seenPaths.add(normalizedCursor);
+    breadcrumbs.unshift({
+      label: getFolderName(cursor),
+      absolutePath: cursor,
+      isCurrent: false,
+    });
+    if (
+      normalizedWorkspaceRoot &&
+      normalizedCursor === normalizedWorkspaceRoot
+    ) {
+      break;
+    }
+    const parentPath = getParentFolderPath(cursor);
+    if (
+      !parentPath ||
+      normalizeComparablePath(parentPath) === normalizedCursor
+    ) {
+      break;
+    }
+    cursor = parentPath;
+  }
+
+  return breadcrumbs.map((breadcrumb, index) => ({
+    ...breadcrumb,
+    isCurrent: index === breadcrumbs.length - 1,
+  }));
+}
+
 function formatFileSize(size: number) {
   if (size <= 0) return "-";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -334,6 +404,17 @@ function formatModified(ts: string) {
     hour: "2-digit",
     minute: "2-digit"
   }).format(date);
+}
+
+function renameSelectionEnd(targetName: string, isDirectory: boolean) {
+  if (isDirectory) {
+    return targetName.length;
+  }
+  const lastDotIndex = targetName.lastIndexOf(".");
+  if (lastDotIndex <= 0) {
+    return targetName.length;
+  }
+  return lastDotIndex;
 }
 
 function createAttachmentDragPreview(entry: LocalFileEntry) {
@@ -388,11 +469,13 @@ export function FileExplorerPane({
   onFocusRequestConsumed,
 }: FileExplorerPaneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
+  const renameInFlightRef = useRef(false);
   const dragPreviewRef = useRef<HTMLDivElement | null>(null);
   const lastSyncedWorkspaceRootRef = useRef<{ workspaceId: string; rootPath: string } | null>(null);
   const lastProcessedFocusRequestKeyRef = useRef<number | null>(null);
   const [currentPath, setCurrentPath] = useState<string>("");
-  const [parentPath, setParentPath] = useState<string | null>(null);
   const [entries, setEntries] = useState<LocalFileEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState<string>("");
   const [workspaceRootPath, setWorkspaceRootPath] = useState<string | null>(null);
@@ -409,6 +492,10 @@ export function FileExplorerPane({
   const [saving, setSaving] = useState(false);
   const [fileBookmarks, setFileBookmarks] = useState<FileBookmarkPayload[]>([]);
   const [containerWidth, setContainerWidth] = useState(0);
+  const [contextMenu, setContextMenu] = useState<FileExplorerContextMenuState | null>(null);
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameSaving, setRenameSaving] = useState(false);
   const historyRef = useRef<string[]>([]);
   const historyIndexRef = useRef(-1);
   const { selectedWorkspaceId } = useWorkspaceSelection();
@@ -418,9 +505,11 @@ export function FileExplorerPane({
     setError("");
 
     try {
-      const payload = await window.electronAPI.fs.listDirectory(targetPath ?? null);
+      const payload = await window.electronAPI.fs.listDirectory(
+        targetPath ?? null,
+        selectedWorkspaceId ?? null,
+      );
       setCurrentPath(payload.currentPath);
-      setParentPath(payload.parentPath);
       setEntries(payload.entries);
 
       if (pushHistory) {
@@ -452,7 +541,7 @@ export function FileExplorerPane({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedWorkspaceId]);
 
   useEffect(() => {
     void loadDirectory(null, true);
@@ -514,11 +603,13 @@ export function FileExplorerPane({
 
       refreshInFlight = true;
       try {
-        const payload = await window.electronAPI.fs.listDirectory(currentPath);
+        const payload = await window.electronAPI.fs.listDirectory(
+          currentPath,
+          selectedWorkspaceId ?? null,
+        );
         if (cancelled || payload.currentPath !== currentPath) {
           return;
         }
-        setParentPath(payload.parentPath);
         setEntries(payload.entries);
         setSelectedPath((prev) =>
           !prev || !payload.entries.some((entry) => entry.absolutePath === prev) ? (payload.entries[0]?.absolutePath ?? "") : prev
@@ -538,12 +629,12 @@ export function FileExplorerPane({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [currentPath]);
+  }, [currentPath, selectedWorkspaceId]);
 
   useEffect(() => {
     let mounted = true;
 
-    void window.electronAPI.fs.getBookmarks().then((bookmarks) => {
+    void window.electronAPI.fs.getBookmarks(selectedWorkspaceId ?? null).then((bookmarks) => {
       if (mounted) {
         setFileBookmarks(bookmarks);
       }
@@ -557,7 +648,7 @@ export function FileExplorerPane({
       mounted = false;
       unsubscribe();
     };
-  }, []);
+  }, [selectedWorkspaceId]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -584,11 +675,54 @@ export function FileExplorerPane({
     };
   }, []);
 
+  useEffect(() => {
+    if (!contextMenu) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (
+        contextMenuRef.current &&
+        event.target instanceof Node &&
+        contextMenuRef.current.contains(event.target)
+      ) {
+        return;
+      }
+      setContextMenu(null);
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setContextMenu(null);
+      }
+    };
+
+    const closeMenu = () => {
+      setContextMenu(null);
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    window.addEventListener("resize", closeMenu);
+    window.addEventListener("blur", closeMenu);
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("resize", closeMenu);
+      window.removeEventListener("blur", closeMenu);
+    };
+  }, [contextMenu]);
+
   const canGoBack = historyIndex > 0;
   const canGoForward = historyIndex >= 0 && historyIndex < history.length - 1;
   const isAtWorkspaceRoot = workspaceRootPath
     ? normalizeComparablePath(currentPath) === normalizeComparablePath(workspaceRootPath)
     : false;
+  const breadcrumbs = useMemo(
+    () => buildPathBreadcrumbs(currentPath, workspaceRootPath),
+    [currentPath, workspaceRootPath],
+  );
 
   const filteredEntries = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -597,6 +731,9 @@ export function FileExplorerPane({
   }, [entries, query]);
 
   const selectedEntry = entries.find((entry) => entry.absolutePath === selectedPath);
+  const renamingEntry = renamingPath
+    ? entries.find((entry) => entry.absolutePath === renamingPath) ?? null
+    : null;
   const isDirty = preview?.isEditable ? previewDraft !== (preview.content ?? "") : false;
 
   const confirmDiscardIfDirty = useCallback(() => {
@@ -623,6 +760,17 @@ export function FileExplorerPane({
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [isDirty]);
 
+  useEffect(() => {
+    if (!renamingEntry || !renameInputRef.current) {
+      return;
+    }
+
+    const input = renameInputRef.current;
+    const selectionEnd = renameSelectionEnd(renamingEntry.name, renamingEntry.isDirectory);
+    input.focus();
+    input.setSelectionRange(0, selectionEnd);
+  }, [renamingEntry]);
+
   const openPath = async (targetPath: string) => {
     if (!confirmDiscardIfDirty()) {
       return;
@@ -640,6 +788,24 @@ export function FileExplorerPane({
       await openPath(targetEntry.absolutePath);
     }
   };
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(null);
+  }, []);
+
+  const stopRenamingEntry = useCallback(() => {
+    setRenamingPath(null);
+    setRenameDraft("");
+    setRenameSaving(false);
+  }, []);
+
+  const startRenamingEntry = useCallback((entry: LocalFileEntry) => {
+    closeContextMenu();
+    setError("");
+    setSelectedPath(entry.absolutePath);
+    setRenamingPath(entry.absolutePath);
+    setRenameDraft(entry.name);
+  }, [closeContextMenu]);
 
   const openHomeDirectory = async () => {
     if (!confirmDiscardIfDirty()) {
@@ -686,7 +852,10 @@ export function FileExplorerPane({
     setActiveTableSheetIndex(0);
 
     try {
-      const payload = await window.electronAPI.fs.readFilePreview(targetPath);
+      const payload = await window.electronAPI.fs.readFilePreview(
+        targetPath,
+        selectedWorkspaceId ?? null,
+      );
       setPreview(payload);
       setPreviewDraft(payload.content ?? "");
     } catch (cause) {
@@ -719,7 +888,11 @@ export function FileExplorerPane({
     setPreviewError("");
 
     try {
-      const nextPreview = await window.electronAPI.fs.writeTextFile(preview.absolutePath, previewDraft);
+      const nextPreview = await window.electronAPI.fs.writeTextFile(
+        preview.absolutePath,
+        previewDraft,
+        selectedWorkspaceId ?? null,
+      );
       setPreview(nextPreview);
       setPreviewDraft(nextPreview.content ?? "");
       await loadDirectory(currentPath, false);
@@ -784,7 +957,11 @@ export function FileExplorerPane({
       return;
     }
 
-    await window.electronAPI.fs.addBookmark(bookmarkTargetPath, bookmarkTargetLabel);
+    await window.electronAPI.fs.addBookmark(
+      bookmarkTargetPath,
+      bookmarkTargetLabel,
+      selectedWorkspaceId ?? null,
+    );
   };
 
   const openBookmarkedTarget = async (bookmark: FileBookmarkPayload) => {
@@ -848,44 +1025,152 @@ export function FileExplorerPane({
     workspaceRootPath,
   ]);
 
+  const openEntryFromContextMenu = useCallback(async (entry: LocalFileEntry) => {
+    closeContextMenu();
+    if (entry.isDirectory) {
+      await openPath(entry.absolutePath);
+      return;
+    }
+    await openFilePreview(entry.absolutePath);
+  }, [closeContextMenu, openFilePreview]);
+
+  const submitRenameEntry = useCallback(async () => {
+    if (!renamingEntry || renameInFlightRef.current) {
+      return;
+    }
+
+    const nextName = renameDraft.trim();
+    if (!nextName || nextName === renamingEntry.name) {
+      stopRenamingEntry();
+      return;
+    }
+
+    setError("");
+    renameInFlightRef.current = true;
+    setRenameSaving(true);
+    try {
+      const payload = await window.electronAPI.fs.renamePath(
+        renamingEntry.absolutePath,
+        nextName,
+        selectedWorkspaceId ?? null,
+      );
+      await loadDirectory(currentPath, false);
+      setSelectedPath(payload.absolutePath);
+      stopRenamingEntry();
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Failed to rename item.";
+      setError(message);
+      window.setTimeout(() => {
+        renameInputRef.current?.focus();
+        renameInputRef.current?.select();
+      }, 0);
+    } finally {
+      renameInFlightRef.current = false;
+      setRenameSaving(false);
+    }
+  }, [
+    currentPath,
+    loadDirectory,
+    renameDraft,
+    renamingEntry,
+    selectedWorkspaceId,
+    stopRenamingEntry,
+  ]);
+
+  const renameEntryFromContextMenu = useCallback((entry: LocalFileEntry) => {
+    startRenamingEntry(entry);
+  }, [startRenamingEntry]);
+
+  const cancelRenameEntry = useCallback(() => {
+    if (renameInFlightRef.current) {
+      return;
+    }
+    stopRenamingEntry();
+  }, [stopRenamingEntry]);
+
+  const deleteEntryFromContextMenu = useCallback(async (entry: LocalFileEntry) => {
+    closeContextMenu();
+    const confirmed = window.confirm(
+      entry.isDirectory
+        ? `Delete folder "${entry.name}" and all of its contents? This cannot be undone.`
+        : `Delete file "${entry.name}"? This cannot be undone.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setError("");
+    try {
+      await window.electronAPI.fs.deletePath(
+        entry.absolutePath,
+        selectedWorkspaceId ?? null,
+      );
+      await loadDirectory(currentPath, false);
+      setSelectedPath("");
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Failed to delete file.";
+      setError(message);
+    }
+  }, [closeContextMenu, currentPath, loadDirectory, selectedWorkspaceId]);
+
+  const contextMenuPosition = useMemo(() => {
+    if (!contextMenu) {
+      return null;
+    }
+    const menuWidth = Math.min(196, Math.max(160, contextMenu.paneBounds.width - 16));
+    const menuHeight = 124;
+    return {
+      left: Math.max(
+        contextMenu.paneBounds.left + 8,
+        Math.min(contextMenu.x, contextMenu.paneBounds.right - menuWidth - 8),
+      ),
+      top: Math.max(
+        contextMenu.paneBounds.top + 8,
+        Math.min(contextMenu.y, contextMenu.paneBounds.bottom - menuHeight - 8),
+      ),
+      width: menuWidth,
+    };
+  }, [contextMenu]);
+
   return (
-    <PaneCard
-      title={preview || previewLoading || previewError ? "File" : ""}
-      actions={
-        preview || previewLoading || previewError ? (
-          <>
-            <button
-              type="button"
-              onClick={closePreview}
-              className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-            >
-              <ArrowLeft size={12} />
-              Files
-            </button>
-            <IconButton
-              icon={<Star size={12} className={activeBookmark ? "fill-current" : ""} />}
-              label={activeBookmark ? "Remove bookmark" : "Add bookmark"}
-              active={Boolean(activeBookmark)}
-              onClick={() => void toggleBookmark()}
-              disabled={!bookmarkTargetPath}
-            />
-            {preview?.isEditable ? (
+    <>
+      <PaneCard
+        title={preview || previewLoading || previewError ? "File" : ""}
+        actions={
+          preview || previewLoading || previewError ? (
+            <>
               <button
                 type="button"
-                onClick={() => void savePreview()}
-                disabled={!isDirty || saving}
-                className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                onClick={closePreview}
+                className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
               >
-                <Save size={12} />
-                {saving ? "Saving" : "Save"}
+                <ArrowLeft size={12} />
+                Files
               </button>
-            ) : null}
-          </>
-        ) : undefined
-      }
-    >
-      {preview || previewLoading || previewError ? (
-        <div className="flex h-full min-h-0 flex-col">
+              <IconButton
+                icon={<Star size={12} className={activeBookmark ? "fill-current" : ""} />}
+                label={activeBookmark ? "Remove bookmark" : "Add bookmark"}
+                active={Boolean(activeBookmark)}
+                onClick={() => void toggleBookmark()}
+                disabled={!bookmarkTargetPath}
+              />
+              {preview?.isEditable ? (
+                <button
+                  type="button"
+                  onClick={() => void savePreview()}
+                  disabled={!isDirty || saving}
+                  className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Save size={12} />
+                  {saving ? "Saving" : "Save"}
+                </button>
+              ) : null}
+            </>
+          ) : undefined
+        }
+      >
+        {preview || previewLoading || previewError ? (
+          <div className="flex h-full min-h-0 flex-col">
           <div className="shrink-0 border-b border-border px-4 py-2.5">
             <div className="truncate text-sm font-semibold text-foreground">
               {preview?.name || selectedEntry?.name || "Preview"}
@@ -1017,7 +1302,7 @@ export function FileExplorerPane({
           </div>
         </div>
       ) : (
-        <div ref={containerRef} className="flex h-full min-h-0">
+          <div ref={containerRef} className="flex h-full min-h-0">
           {fileBookmarks.length > 0 ? (
             <aside className="flex w-11 flex-col items-center gap-1.5 border-r border-border py-2.5">
               <div className="chat-scrollbar-hidden flex min-h-0 flex-1 flex-col items-center gap-1 overflow-x-hidden overflow-y-auto px-1">
@@ -1052,12 +1337,6 @@ export function FileExplorerPane({
               <div className="mb-2 flex min-w-0 items-center gap-0.5">
                 <IconButton icon={<Undo2 size={13} />} label="Back" onClick={() => void onBack()} disabled={!canGoBack} />
                 <IconButton icon={<Forward size={13} />} label="Forward" onClick={() => void onForward()} disabled={!canGoForward} />
-                <IconButton
-                  icon={<ArrowUp size={13} />}
-                  label="Up"
-                  onClick={() => parentPath && !isAtWorkspaceRoot && void openPath(parentPath)}
-                  disabled={!parentPath || isAtWorkspaceRoot}
-                />
                 {!isVeryCompact ? (
                   <IconButton
                     icon={<Home size={13} />}
@@ -1086,8 +1365,36 @@ export function FileExplorerPane({
                   placeholder="Search files"
                 />
               </div>
-              <div className="mt-1.5 truncate text-[10px] uppercase tracking-widest text-muted-foreground/60">
-                {isCompact ? getFolderName(currentPath) : currentPath}
+              <div className="chat-scrollbar-hidden mt-1.5 flex items-center gap-1 overflow-x-auto text-[10px] uppercase tracking-widest text-muted-foreground/60">
+                {breadcrumbs.length > 0 ? (
+                  breadcrumbs.map((breadcrumb) => (
+                    <div
+                      key={breadcrumb.absolutePath}
+                      className="flex shrink-0 items-center gap-1"
+                    >
+                      {breadcrumb !== breadcrumbs[0] ? (
+                        <ChevronRight size={10} className="text-muted-foreground/45" />
+                      ) : null}
+                      {breadcrumb.isCurrent ? (
+                        <span className="truncate text-foreground/78">
+                          {breadcrumb.label}
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void openPath(breadcrumb.absolutePath);
+                          }}
+                          className="truncate transition-colors hover:text-foreground"
+                        >
+                          {breadcrumb.label}
+                        </button>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <span>{isCompact ? getFolderName(currentPath) : currentPath}</span>
+                )}
               </div>
             </div>
 
@@ -1115,91 +1422,202 @@ export function FileExplorerPane({
                       entry.isDirectory
                     );
                     const selected = selectedPath === entry.absolutePath;
-                    return (
-                      <button
-                        type="button"
-                        key={entry.absolutePath}
-                        draggable={!entry.isDirectory}
-                        onClick={() => {
-                          setSelectedPath(entry.absolutePath);
+                    const isRenaming = renamingPath === entry.absolutePath;
+                    const rowClassName = `group mb-0.5 w-full rounded-md px-2 py-1.5 text-left transition-colors ${
+                      selected
+                        ? "bg-primary/10 text-primary"
+                        : "text-foreground/80 hover:bg-accent hover:text-accent-foreground"
+                    } ${
+                      isRenaming
+                        ? "cursor-default"
+                        : entry.isDirectory
+                          ? "cursor-pointer"
+                          : "cursor-grab active:cursor-grabbing"
+                    }`;
+                    const nameField = isRenaming ? (
+                      <input
+                        ref={renameInputRef}
+                        value={renameDraft}
+                        onChange={(event) => setRenameDraft(event.target.value)}
+                        onBlur={() => {
+                          void submitRenameEntry();
                         }}
-                        onDoubleClick={() => {
-                          if (entry.isDirectory) {
-                            void openPath(entry.absolutePath);
-                            return;
-                          }
-                          void openFilePreview(entry.absolutePath);
-                        }}
-                        onDragStart={(event) => {
-                          if (entry.isDirectory) {
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
                             event.preventDefault();
+                            void submitRenameEntry();
                             return;
                           }
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            cancelRenameEntry();
+                          }
+                        }}
+                        disabled={renameSaving}
+                        className="embedded-input h-6 min-w-0 flex-1 rounded-sm border border-border/70 bg-background px-1.5 text-xs font-medium text-foreground outline-none focus:border-ring disabled:opacity-60"
+                      />
+                    ) : (
+                      <span className="truncate text-xs font-medium">{entry.name}</span>
+                    );
+                    const rowContent = isCompact ? (
+                      <span className="flex min-w-0 flex-col gap-0.5">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <Icon size={14} className={`shrink-0 ${className}`} />
+                          {nameField}
+                        </span>
+                        <span className="flex min-w-0 items-center gap-2 pl-6 text-[11px] text-muted-foreground">
+                          <span className="truncate">{formatModified(entry.modifiedAt)}</span>
+                          {!entry.isDirectory ? <span className="shrink-0">{formatFileSize(entry.size)}</span> : null}
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="grid min-w-0 grid-cols-[minmax(0,1fr)_110px] items-center lg:grid-cols-[minmax(0,1fr)_140px_90px]">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <Icon size={14} className={className} />
+                          {nameField}
+                        </span>
+                        <span className="truncate text-[11px] text-muted-foreground">
+                          {formatModified(entry.modifiedAt)}
+                        </span>
+                        <span className="hidden text-[11px] text-muted-foreground lg:block">
+                          {entry.isDirectory ? "-" : formatFileSize(entry.size)}
+                        </span>
+                      </span>
+                    );
+                    return (
+                    <div
+                      key={entry.absolutePath}
+                      className={rowClassName}
+                      title={
+                        entry.isDirectory
+                          ? `${entry.name} — double-click to open folder`
+                          : `${entry.name} — drag into chat to attach`
+                      }
+                    >
+                      {isRenaming ? (
+                        <div className="w-full">
+                          {rowContent}
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          draggable={!entry.isDirectory}
+                          onClick={() => {
+                            setSelectedPath(entry.absolutePath);
+                            closeContextMenu();
+                          }}
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            const paneRect = containerRef.current?.getBoundingClientRect();
+                            if (!paneRect) {
+                              return;
+                            }
+                            setSelectedPath(entry.absolutePath);
+                            setContextMenu({
+                              entry,
+                              x: event.clientX,
+                              y: event.clientY,
+                              paneBounds: {
+                                left: paneRect.left,
+                                top: paneRect.top,
+                                right: paneRect.right,
+                                bottom: paneRect.bottom,
+                                width: paneRect.width,
+                                height: paneRect.height,
+                              },
+                            });
+                          }}
+                          onDoubleClick={() => {
+                            if (entry.isDirectory) {
+                              void openPath(entry.absolutePath);
+                              return;
+                            }
+                            void openFilePreview(entry.absolutePath);
+                          }}
+                          onDragStart={(event) => {
+                            if (entry.isDirectory) {
+                              event.preventDefault();
+                              return;
+                            }
 
-                          event.dataTransfer.effectAllowed = "copy";
-                          event.dataTransfer.setData(
-                            EXPLORER_ATTACHMENT_DRAG_TYPE,
-                            serializeExplorerAttachmentDragPayload({
-                              absolutePath: entry.absolutePath,
-                              name: entry.name,
-                              size: entry.size,
-                            })
-                          );
-                          event.dataTransfer.setData("text/plain", entry.name);
-                          const preview = createAttachmentDragPreview(entry);
-                          dragPreviewRef.current?.remove();
-                          dragPreviewRef.current = preview;
-                          event.dataTransfer.setDragImage(preview, 18, 18);
-                        }}
-                        onDragEnd={() => {
-                          dragPreviewRef.current?.remove();
-                          dragPreviewRef.current = null;
-                        }}
-                        className={`group mb-0.5 w-full rounded-md px-2 py-1.5 text-left transition-colors ${
-                          selected
-                            ? "bg-primary/10 text-primary"
-                            : "text-foreground/80 hover:bg-accent hover:text-accent-foreground"
-                        } ${entry.isDirectory ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"}`}
-                        title={
-                          entry.isDirectory
-                            ? `${entry.name} — double-click to open folder`
-                            : `${entry.name} — drag into chat to attach`
-                        }
-                      >
-                        {isCompact ? (
-                          <span className="flex min-w-0 flex-col gap-0.5">
-                            <span className="flex min-w-0 items-center gap-2">
-                              <Icon size={14} className={`shrink-0 ${className}`} />
-                              <span className="truncate text-xs font-medium">{entry.name}</span>
-                            </span>
-                            <span className="flex min-w-0 items-center gap-2 pl-6 text-[11px] text-muted-foreground">
-                              <span className="truncate">{formatModified(entry.modifiedAt)}</span>
-                              {!entry.isDirectory ? <span className="shrink-0">{formatFileSize(entry.size)}</span> : null}
-                            </span>
-                          </span>
-                        ) : (
-                          <span className="grid min-w-0 grid-cols-[minmax(0,1fr)_110px] items-center lg:grid-cols-[minmax(0,1fr)_140px_90px]">
-                            <span className="flex min-w-0 items-center gap-2">
-                              <Icon size={14} className={className} />
-                              <span className="truncate text-xs font-medium">{entry.name}</span>
-                            </span>
-                            <span className="truncate text-[11px] text-muted-foreground">
-                              {formatModified(entry.modifiedAt)}
-                            </span>
-                            <span className="hidden text-[11px] text-muted-foreground lg:block">
-                              {entry.isDirectory ? "-" : formatFileSize(entry.size)}
-                            </span>
-                          </span>
-                        )}
-                      </button>
+                            event.dataTransfer.effectAllowed = "copy";
+                            event.dataTransfer.setData(
+                              EXPLORER_ATTACHMENT_DRAG_TYPE,
+                              serializeExplorerAttachmentDragPayload({
+                                absolutePath: entry.absolutePath,
+                                name: entry.name,
+                                size: entry.size,
+                              })
+                            );
+                            event.dataTransfer.setData("text/plain", entry.name);
+                            const preview = createAttachmentDragPreview(entry);
+                            dragPreviewRef.current?.remove();
+                            dragPreviewRef.current = preview;
+                            event.dataTransfer.setDragImage(preview, 18, 18);
+                          }}
+                          onDragEnd={() => {
+                            dragPreviewRef.current?.remove();
+                            dragPreviewRef.current = null;
+                          }}
+                          className="w-full text-left"
+                          title={
+                            entry.isDirectory
+                              ? `${entry.name} — double-click to open folder`
+                              : `${entry.name} — drag into chat to attach`
+                          }
+                        >
+                          {rowContent}
+                        </button>
+                      )}
+                    </div>
                     );
                   })
                 : null}
             </div>
 
           </div>
-        </div>
-      )}
-    </PaneCard>
+          </div>
+        )}
+      </PaneCard>
+      {contextMenu && contextMenuPosition
+        ? createPortal(
+            <div
+              ref={contextMenuRef}
+              style={contextMenuPosition}
+              className="fixed z-[80] rounded-xl border border-border/70 bg-popover/92 p-1.5 text-popover-foreground shadow-xl ring-1 ring-foreground/10 backdrop-blur-xl"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  void openEntryFromContextMenu(contextMenu.entry);
+                }}
+                className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+              >
+                {contextMenu.entry.isDirectory ? "Open folder" : "Open file"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void renameEntryFromContextMenu(contextMenu.entry);
+                }}
+                className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+              >
+                Rename…
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void deleteEntryFromContextMenu(contextMenu.entry);
+                }}
+                className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm text-destructive transition-colors hover:bg-destructive/10 hover:text-destructive"
+              >
+                Delete…
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
   );
 }

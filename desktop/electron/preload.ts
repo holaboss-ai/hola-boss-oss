@@ -49,6 +49,10 @@ interface FileBookmarkPayload {
   createdAt: string;
 }
 
+interface FileSystemMutationPayload {
+  absolutePath: string;
+}
+
 interface BrowserBoundsPayload {
   x: number;
   y: number;
@@ -149,6 +153,8 @@ interface RuntimeConfigPayload {
   sandboxId: string | null;
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
+  defaultBackgroundModel: string | null;
+  defaultImageModel: string | null;
   controlPlaneBaseUrl: string | null;
   catalogVersion: string | null;
   providerModelGroups: RuntimeProviderModelGroupPayload[];
@@ -157,6 +163,7 @@ interface RuntimeConfigPayload {
 interface RuntimeProviderModelPayload {
   token: string;
   modelId: string;
+  capabilities?: string[];
 }
 
 interface RuntimeProviderModelGroupPayload {
@@ -173,6 +180,8 @@ interface RuntimeConfigUpdatePayload {
   sandboxId?: string | null;
   modelProxyBaseUrl?: string | null;
   defaultModel?: string | null;
+  defaultBackgroundModel?: string | null;
+  defaultImageModel?: string | null;
   controlPlaneBaseUrl?: string | null;
 }
 
@@ -327,6 +336,39 @@ interface ProactiveTaskProposalPreferencePayload {
   enabled: boolean;
   holaboss_user_id: string;
   sandbox_id: string;
+}
+
+interface ProactiveHeartbeatWorkspacePayload {
+  workspace_id: string;
+  workspace_name: string | null;
+  enabled: boolean;
+  last_seen_at: string | null;
+}
+
+interface ProactiveHeartbeatConfigPayload {
+  holaboss_user_id: string;
+  sandbox_id: string;
+  has_schedule: boolean;
+  cron: string;
+  enabled: boolean;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  workspaces: ProactiveHeartbeatWorkspacePayload[];
+}
+
+interface ProactiveHeartbeatConfigUpdatePayload {
+  cron?: string;
+  enabled?: boolean;
+  holaboss_user_id?: string;
+  sandbox_id?: string;
+}
+
+interface ProactiveHeartbeatWorkspaceUpdatePayload {
+  workspace_id: string;
+  workspace_name?: string | null;
+  enabled: boolean;
+  holaboss_user_id?: string;
+  sandbox_id?: string;
 }
 
 interface TaskProposalStateUpdatePayload {
@@ -831,6 +873,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("fs:readFilePreview", targetPath, workspaceId) as Promise<FilePreviewPayload>,
     writeTextFile: (targetPath: string, content: string, workspaceId?: string | null) =>
       ipcRenderer.invoke("fs:writeTextFile", targetPath, content, workspaceId) as Promise<FilePreviewPayload>,
+    renamePath: (targetPath: string, nextName: string, workspaceId?: string | null) =>
+      ipcRenderer.invoke("fs:renamePath", targetPath, nextName, workspaceId) as Promise<FileSystemMutationPayload>,
+    deletePath: (targetPath: string, workspaceId?: string | null) =>
+      ipcRenderer.invoke("fs:deletePath", targetPath, workspaceId) as Promise<{ deleted: boolean }>,
     getBookmarks: (workspaceId?: string | null) =>
       ipcRenderer.invoke("fs:getBookmarks", workspaceId) as Promise<FileBookmarkPayload[]>,
     addBookmark: (targetPath: string, label?: string, workspaceId?: string | null) =>
@@ -995,6 +1041,24 @@ contextBridge.exposeInMainWorld("electronAPI", {
         "workspace:setProactiveTaskProposalPreference",
         payload,
       ) as Promise<ProactiveTaskProposalPreferencePayload>,
+    getProactiveHeartbeatConfig: () =>
+      ipcRenderer.invoke(
+        "workspace:getProactiveHeartbeatConfig",
+      ) as Promise<ProactiveHeartbeatConfigPayload>,
+    setProactiveHeartbeatConfig: (
+      payload: ProactiveHeartbeatConfigUpdatePayload,
+    ) =>
+      ipcRenderer.invoke(
+        "workspace:setProactiveHeartbeatConfig",
+        payload,
+      ) as Promise<ProactiveHeartbeatConfigPayload>,
+    setProactiveHeartbeatWorkspaceEnabled: (
+      payload: ProactiveHeartbeatWorkspaceUpdatePayload,
+    ) =>
+      ipcRenderer.invoke(
+        "workspace:setProactiveHeartbeatWorkspaceEnabled",
+        payload,
+      ) as Promise<ProactiveHeartbeatConfigPayload>,
     updateTaskProposalState: (proposalId: string, state: string) =>
       ipcRenderer.invoke("workspace:updateTaskProposalState", proposalId, state) as Promise<TaskProposalStateUpdatePayload>,
     requestRemoteTaskProposalGeneration: (

@@ -91,6 +91,25 @@ export interface SessionInputRecord {
   updatedAt: string;
 }
 
+export interface PostRunJobRecord {
+  jobId: string;
+  jobType: string;
+  inputId: string;
+  sessionId: string;
+  workspaceId: string;
+  payload: Record<string, unknown>;
+  status: string;
+  priority: number;
+  availableAt: string;
+  attempt: number;
+  idempotencyKey: string | null;
+  claimedBy: string | null;
+  claimedUntil: string | null;
+  lastError: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SessionRuntimeStateRecord {
   workspaceId: string;
   sessionId: string;
@@ -422,6 +441,22 @@ type InputUpdateFields = Partial<{
   idempotencyKey: string | null;
   claimedBy: string | null;
   claimedUntil: string | null;
+}>;
+
+type PostRunJobUpdateFields = Partial<{
+  jobType: string;
+  inputId: string;
+  sessionId: string;
+  workspaceId: string;
+  payload: Record<string, unknown>;
+  status: string;
+  priority: number;
+  availableAt: string;
+  attempt: number;
+  idempotencyKey: string | null;
+  claimedBy: string | null;
+  claimedUntil: string | null;
+  lastError: Record<string, unknown> | null;
 }>;
 
 type TaskProposalUpdateFields = Partial<{
@@ -1407,6 +1442,184 @@ export class RuntimeStateStore {
       .filter((row): row is SessionInputRecord => row !== null);
   }
 
+  enqueuePostRunJob(params: {
+    jobType: string;
+    workspaceId: string;
+    sessionId: string;
+    inputId: string;
+    payload?: Record<string, unknown>;
+    priority?: number;
+    idempotencyKey?: string | null;
+  }): PostRunJobRecord {
+    if (params.idempotencyKey) {
+      const existing = this.getPostRunJobByIdempotencyKey(params.idempotencyKey);
+      if (existing) {
+        return existing;
+      }
+    }
+    const jobId = randomUUID();
+    const now = utcNowIso();
+    this.db()
+      .prepare(`
+        INSERT INTO post_run_jobs (
+            job_id, job_type, input_id, session_id, workspace_id, payload, status, priority, available_at,
+            attempt, idempotency_key, claimed_by, claimed_until, last_error, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL, NULL, NULL, ?, ?)
+      `)
+      .run(
+        jobId,
+        params.jobType,
+        params.inputId,
+        params.sessionId,
+        params.workspaceId,
+        JSON.stringify(params.payload ?? {}),
+        "QUEUED",
+        params.priority ?? 0,
+        now,
+        params.idempotencyKey ?? null,
+        now,
+        now
+      );
+    const record = this.getPostRunJob(jobId);
+    if (!record) {
+      throw new Error("failed to load queued post-run job");
+    }
+    return record;
+  }
+
+  getPostRunJob(jobId: string): PostRunJobRecord | null {
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>("SELECT * FROM post_run_jobs WHERE job_id = ? LIMIT 1")
+      .get(jobId);
+    return this.rowToPostRunJob(row);
+  }
+
+  getPostRunJobByIdempotencyKey(idempotencyKey: string): PostRunJobRecord | null {
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>("SELECT * FROM post_run_jobs WHERE idempotency_key = ? LIMIT 1")
+      .get(idempotencyKey);
+    return this.rowToPostRunJob(row);
+  }
+
+  updatePostRunJob(jobId: string, fields: PostRunJobUpdateFields): PostRunJobRecord | null {
+    const entries = Object.entries(fields);
+    if (entries.length === 0) {
+      return this.getPostRunJob(jobId);
+    }
+
+    const columnMap: Record<keyof PostRunJobUpdateFields, string> = {
+      jobType: "job_type",
+      inputId: "input_id",
+      sessionId: "session_id",
+      workspaceId: "workspace_id",
+      payload: "payload",
+      status: "status",
+      priority: "priority",
+      availableAt: "available_at",
+      attempt: "attempt",
+      idempotencyKey: "idempotency_key",
+      claimedBy: "claimed_by",
+      claimedUntil: "claimed_until",
+      lastError: "last_error",
+    };
+
+    const assignments: string[] = [];
+    const values: Array<string | number | null> = [];
+    for (const [key, rawValue] of entries) {
+      const column = columnMap[key as keyof PostRunJobUpdateFields];
+      if (!column) {
+        throw new Error(`unsupported post-run job update field: ${key}`);
+      }
+      assignments.push(`${column} = ?`);
+      values.push(
+        key === "payload" || key === "lastError"
+          ? rawValue == null
+            ? null
+            : JSON.stringify(rawValue)
+          : (rawValue as string | number | null)
+      );
+    }
+    assignments.push("updated_at = ?");
+    values.push(utcNowIso());
+    values.push(jobId);
+
+    this.db()
+      .prepare(`UPDATE post_run_jobs SET ${assignments.join(", ")} WHERE job_id = ?`)
+      .run(...values);
+    return this.getPostRunJob(jobId);
+  }
+
+  claimPostRunJobs(params: { limit: number; claimedBy: string; leaseSeconds: number; distinctSessions?: boolean }): PostRunJobRecord[] {
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const claimedUntilIso =
+      params.leaseSeconds > 0 ? new Date(now.getTime() + params.leaseSeconds * 1000).toISOString() : nowIso;
+
+    const rows = this.db()
+      .prepare<[string, string], { job_id: string; session_id: string }>(`
+        SELECT job_id, session_id
+        FROM post_run_jobs
+        WHERE status = 'QUEUED'
+          AND datetime(available_at) <= datetime(?)
+          AND (claimed_until IS NULL OR datetime(claimed_until) <= datetime(?))
+        ORDER BY priority DESC, datetime(created_at) ASC
+      `)
+      .all(nowIso, nowIso);
+
+    const selectedJobIds: string[] = [];
+    const seenSessionIds = new Set<string>();
+    for (const row of rows) {
+      if (params.distinctSessions && seenSessionIds.has(row.session_id)) {
+        continue;
+      }
+      selectedJobIds.push(row.job_id);
+      if (params.distinctSessions) {
+        seenSessionIds.add(row.session_id);
+      }
+      if (selectedJobIds.length >= Math.max(1, params.limit)) {
+        break;
+      }
+    }
+
+    const update = this.db().prepare(`
+      UPDATE post_run_jobs
+      SET status = 'CLAIMED',
+          claimed_by = ?,
+          claimed_until = ?,
+          updated_at = ?
+      WHERE job_id = ?
+    `);
+
+    const records: PostRunJobRecord[] = [];
+    const transaction = this.db().transaction((jobIds: string[]) => {
+      for (const jobId of jobIds) {
+        update.run(params.claimedBy, claimedUntilIso, nowIso, jobId);
+        const record = this.getPostRunJob(jobId);
+        if (record) {
+          records.push(record);
+        }
+      }
+    });
+    transaction(selectedJobIds);
+    return records;
+  }
+
+  listExpiredClaimedPostRunJobs(nowIso = utcNowIso()): PostRunJobRecord[] {
+    const rows = this.db()
+      .prepare<[string], Record<string, unknown>>(`
+        SELECT *
+        FROM post_run_jobs
+        WHERE status = 'CLAIMED'
+          AND claimed_until IS NOT NULL
+          AND datetime(claimed_until) <= datetime(?)
+        ORDER BY datetime(claimed_until) ASC, datetime(updated_at) ASC
+      `)
+      .all(nowIso);
+    return rows
+      .map((row) => this.rowToPostRunJob(row))
+      .filter((row): row is PostRunJobRecord => row !== null);
+  }
+
   ensureRuntimeState(params: {
     workspaceId: string;
     sessionId: string;
@@ -1551,15 +1764,33 @@ export class RuntimeStateStore {
       );
   }
 
-  listSessionMessages(params: { workspaceId: string; sessionId: string }): SessionMessageRecord[] {
+  listSessionMessages(params: {
+    workspaceId: string;
+    sessionId: string;
+    role?: string;
+    limit?: number;
+    offset?: number;
+    order?: "asc" | "desc";
+  }): SessionMessageRecord[] {
+    let query = `
+      SELECT id, role, text, created_at
+      FROM session_messages
+      WHERE workspace_id = ? AND session_id = ?
+    `;
+    const values: Array<string | number> = [params.workspaceId, params.sessionId];
+    if (params.role) {
+      query += " AND role = ?";
+      values.push(params.role);
+    }
+    const direction = params.order === "desc" ? "DESC" : "ASC";
+    query += ` ORDER BY datetime(created_at) ${direction}, id ${direction}`;
+    if (params.limit !== undefined || params.offset !== undefined) {
+      query += " LIMIT ? OFFSET ?";
+      values.push(params.limit ?? -1, params.offset ?? 0);
+    }
     const rows = this.db()
-      .prepare<[string, string], { id: string; role: string; text: string; created_at: string }>(`
-        SELECT id, role, text, created_at
-        FROM session_messages
-        WHERE workspace_id = ? AND session_id = ?
-        ORDER BY datetime(created_at) ASC, id ASC
-      `)
-      .all(params.workspaceId, params.sessionId);
+      .prepare<typeof values, { id: string; role: string; text: string; created_at: string }>(query)
+      .all(...values);
     return rows.map((row) => ({
       id: row.id,
       role: row.role,
@@ -2000,6 +2231,7 @@ export class RuntimeStateStore {
   listMemoryEntries(params: {
     workspaceId?: string | null;
     scope?: string | null;
+    memoryType?: string | null;
     status?: string | null;
     limit?: number;
     offset?: number;
@@ -2026,6 +2258,14 @@ export class RuntimeStateStore {
         values.push(params.scope);
       }
     }
+    if (params.memoryType !== undefined) {
+      if (params.memoryType === null) {
+        query += " AND memory_type IS NULL";
+      } else {
+        query += " AND memory_type = ?";
+        values.push(params.memoryType);
+      }
+    }
     if (params.status !== undefined) {
       if (params.status === null) {
         query += " AND status IS NULL";
@@ -2041,6 +2281,38 @@ export class RuntimeStateStore {
     values.push(params.limit ?? 200, params.offset ?? 0);
     const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
     return rows.map((row) => this.rowToMemoryEntry(row));
+  }
+
+  listWorkspaceMemoryEntryCounts(params: {
+    status?: string | null;
+  } = {}): Array<{ workspaceId: string; count: number }> {
+    let query = `
+      SELECT workspace_id, COUNT(*) AS total
+      FROM memory_entries
+      WHERE scope = 'workspace'
+        AND workspace_id IS NOT NULL
+    `;
+    const values: string[] = [];
+    if (params.status !== undefined) {
+      if (params.status === null) {
+        query += " AND status IS NULL";
+      } else {
+        query += " AND status = ?";
+        values.push(params.status);
+      }
+    }
+    query += `
+      GROUP BY workspace_id
+      ORDER BY workspace_id ASC
+    `;
+    const rows = this.db().prepare(query).all(...values) as Array<{
+      workspace_id: string;
+      total: number;
+    }>;
+    return rows.map((row) => ({
+      workspaceId: row.workspace_id,
+      count: Number(row.total),
+    }));
   }
 
   upsertTurnRequestSnapshot(params: {
@@ -3275,6 +3547,31 @@ export class RuntimeStateStore {
       CREATE INDEX IF NOT EXISTS idx_agent_session_inputs_session_status
           ON agent_session_inputs (session_id, status, available_at);
 
+      CREATE TABLE IF NOT EXISTS post_run_jobs (
+          job_id TEXT PRIMARY KEY,
+          job_type TEXT NOT NULL,
+          input_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          status TEXT NOT NULL,
+          priority INTEGER NOT NULL DEFAULT 0,
+          available_at TEXT NOT NULL,
+          attempt INTEGER NOT NULL DEFAULT 0,
+          idempotency_key TEXT,
+          claimed_by TEXT,
+          claimed_until TEXT,
+          last_error TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_post_run_jobs_workspace_created
+          ON post_run_jobs (workspace_id, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_post_run_jobs_session_status
+          ON post_run_jobs (session_id, status, available_at);
+
       CREATE TABLE IF NOT EXISTS session_runtime_state (
           workspace_id TEXT NOT NULL,
           session_id TEXT NOT NULL,
@@ -4305,6 +4602,30 @@ export class RuntimeStateStore {
       idempotencyKey: row.idempotency_key == null ? null : String(row.idempotency_key),
       claimedBy: row.claimed_by == null ? null : String(row.claimed_by),
       claimedUntil: row.claimed_until == null ? null : String(row.claimed_until),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at)
+    };
+  }
+
+  private rowToPostRunJob(row: Record<string, unknown> | undefined): PostRunJobRecord | null {
+    if (!row) {
+      return null;
+    }
+    return {
+      jobId: String(row.job_id),
+      jobType: String(row.job_type),
+      inputId: String(row.input_id),
+      sessionId: String(row.session_id),
+      workspaceId: String(row.workspace_id),
+      payload: this.parseJsonDict(row.payload),
+      status: String(row.status),
+      priority: Number(row.priority),
+      availableAt: String(row.available_at),
+      attempt: Number(row.attempt),
+      idempotencyKey: row.idempotency_key == null ? null : String(row.idempotency_key),
+      claimedBy: row.claimed_by == null ? null : String(row.claimed_by),
+      claimedUntil: row.claimed_until == null ? null : String(row.claimed_until),
+      lastError: row.last_error == null ? null : this.parseJsonObjectOrMessage(row.last_error),
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at)
     };

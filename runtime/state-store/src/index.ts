@@ -31,6 +31,7 @@ export {
   type RuntimeNotificationPriority,
   type RuntimeNotificationRecord,
   type RuntimeNotificationState,
+  type PostRunJobRecord,
   type RuntimeUserProfileRecord,
   type SessionBindingRecord,
   type SessionInputRecord,

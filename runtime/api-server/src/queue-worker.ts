@@ -25,6 +25,7 @@ export interface RuntimeQueueWorkerOptions {
     error: (message: string, ...args: unknown[]) => void;
   };
   memoryService?: MemoryServiceLike | null;
+  wakeDurableMemoryWorker?: (() => void) | null;
   executeClaimedInput?: (record: SessionInputRecord) => Promise<void>;
   claimedBy?: string;
   leaseSeconds?: number;
@@ -65,6 +66,7 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
           record,
           claimedBy: this.#claimedBy,
           memoryService: options.memoryService ?? null,
+          wakeDurableMemoryWorker: options.wakeDurableMemoryWorker ?? null,
         }));
     this.#leaseSeconds = options.leaseSeconds ?? DEFAULT_LEASE_SECONDS;
     this.#pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;

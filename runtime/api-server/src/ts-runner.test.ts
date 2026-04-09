@@ -27,6 +27,10 @@ const ORIGINAL_EMBEDDED_SKILLS_DIR = process.env.HOLABOSS_EMBEDDED_SKILLS_DIR;
 const ORIGINAL_SANDBOX_RUNTIME_API_URL = process.env.SANDBOX_RUNTIME_API_URL;
 const ORIGINAL_SANDBOX_RUNTIME_API_HOST = process.env.SANDBOX_RUNTIME_API_HOST;
 const ORIGINAL_SANDBOX_RUNTIME_API_PORT = process.env.SANDBOX_RUNTIME_API_PORT;
+const ORIGINAL_MODEL_PROXY_BASE_URL = process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
+const ORIGINAL_RUNTIME_CONFIG_PATH = process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+const ORIGINAL_SANDBOX_AUTH_TOKEN = process.env.HOLABOSS_SANDBOX_AUTH_TOKEN;
+const ORIGINAL_FETCH = globalThis.fetch;
 
 afterEach(() => {
   if (ORIGINAL_SANDBOX_ROOT === undefined) {
@@ -58,6 +62,26 @@ afterEach(() => {
   } else {
     process.env.SANDBOX_RUNTIME_API_PORT = ORIGINAL_SANDBOX_RUNTIME_API_PORT;
   }
+
+  if (ORIGINAL_MODEL_PROXY_BASE_URL === undefined) {
+    delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
+  } else {
+    process.env.HOLABOSS_MODEL_PROXY_BASE_URL = ORIGINAL_MODEL_PROXY_BASE_URL;
+  }
+
+  if (ORIGINAL_RUNTIME_CONFIG_PATH === undefined) {
+    delete process.env.HOLABOSS_RUNTIME_CONFIG_PATH;
+  } else {
+    process.env.HOLABOSS_RUNTIME_CONFIG_PATH = ORIGINAL_RUNTIME_CONFIG_PATH;
+  }
+
+  if (ORIGINAL_SANDBOX_AUTH_TOKEN === undefined) {
+    delete process.env.HOLABOSS_SANDBOX_AUTH_TOKEN;
+  } else {
+    process.env.HOLABOSS_SANDBOX_AUTH_TOKEN = ORIGINAL_SANDBOX_AUTH_TOKEN;
+  }
+
+  globalThis.fetch = ORIGINAL_FETCH;
 });
 
 function encodeRequest(payload: unknown): string {
@@ -68,6 +92,43 @@ function setTempSandboxRoot(prefix: string): string {
   const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   return sandboxRoot;
+}
+
+function writeMemoryFile(workspaceRoot: string, relPath: string, content: string): void {
+  const absPath = path.join(workspaceRoot, "memory", ...relPath.split("/"));
+  fs.mkdirSync(path.dirname(absPath), { recursive: true });
+  fs.writeFileSync(absPath, content, "utf8");
+}
+
+function installMockRecallModelResponses(
+  responses: Array<Record<string, unknown>>,
+  requests?: Array<Record<string, unknown>>
+): void {
+  process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "http://127.0.0.1:4999";
+  process.env.HOLABOSS_SANDBOX_AUTH_TOKEN = "test-token";
+  let callIndex = 0;
+  globalThis.fetch = (async (_input, init) => {
+    if (requests && typeof init?.body === "string") {
+      requests.push(JSON.parse(init.body) as Record<string, unknown>);
+    }
+    const payload = responses[Math.min(callIndex, responses.length - 1)] ?? {};
+    callIndex += 1;
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify(payload),
+            },
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }
+    );
+  }) as typeof fetch;
 }
 
 function baseRequest(): TsRunnerRequest {
@@ -1228,6 +1289,24 @@ test("runTsRunnerCli derives recalled durable memory from indexed memory entries
   const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-recalled-memory-"));
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   const workspaceRoot = path.join(sandboxRoot, "workspace");
+  const configPath = path.join(sandboxRoot, "state", "runtime-config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify(
+      {
+        runtime: {
+          background_tasks: {
+            provider: "holaboss_model_proxy",
+            model: "gpt-5.4-mini",
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
   const store = new RuntimeStateStore({
     workspaceRoot,
     sandboxRoot,
@@ -1276,6 +1355,81 @@ test("runTsRunnerCli derives recalled durable memory from indexed memory entries
     fingerprint: "d".repeat(64),
   });
   store.close();
+  writeMemoryFile(
+    workspaceRoot,
+    "MEMORY.md",
+    [
+      "# Memory Index",
+      "",
+      "- [Workspace workspace-1](workspace/workspace-1/MEMORY.md) - 1 durable workspace memories.",
+      "- [Preferences](preference/MEMORY.md) - 1 durable preference memories.",
+      "- [Identity](identity/MEMORY.md) - 0 durable identity memories.",
+      "",
+    ].join("\n")
+  );
+  writeMemoryFile(
+    workspaceRoot,
+    "workspace/workspace-1/MEMORY.md",
+    [
+      "# Workspace Durable Memory Index",
+      "",
+      "- [Deploy permission blocker](knowledge/blockers/deploy.md) [blocker] [verify: check_before_use] - Deploy calls may be denied by workspace policy.",
+      "",
+    ].join("\n")
+  );
+  writeMemoryFile(
+    workspaceRoot,
+    "preference/MEMORY.md",
+    [
+      "# Preference Memory Index",
+      "",
+      "- [User response style](response-style.md) [preference] [verify: none] - User prefers concise responses.",
+      "",
+    ].join("\n")
+  );
+  writeMemoryFile(workspaceRoot, "identity/MEMORY.md", "# Identity Memory Index\n\nNo durable identity memories indexed yet.\n");
+  writeMemoryFile(
+    workspaceRoot,
+    "workspace/workspace-1/knowledge/blockers/deploy.md",
+    "# Deploy permission blocker\n\nDeploy calls may be denied by workspace policy.\n"
+  );
+  writeMemoryFile(
+    workspaceRoot,
+    "preference/response-style.md",
+    "# User response style\n\nUser prefers concise responses.\n"
+  );
+  installMockRecallModelResponses([
+    {
+      should_recall: true,
+      rewritten_query: "deploy blockers and response preferences",
+      scopes: ["workspace", "preference"],
+      memory_types: ["blocker", "preference"],
+      reason: "Need durable recall for deployment blockers and user delivery preferences.",
+    },
+    {
+      primary_paths: [
+        "preference/response-style.md",
+        "workspace/workspace-1/knowledge/blockers/deploy.md",
+      ],
+      reserve_paths: [],
+      reason_by_path: {
+        "preference/response-style.md": "Relevant user preference for how to answer.",
+        "workspace/workspace-1/knowledge/blockers/deploy.md": "Direct blocker for deploy request.",
+      },
+    },
+    {
+      status: "sufficient",
+      final_paths: [
+        "preference/response-style.md",
+        "workspace/workspace-1/knowledge/blockers/deploy.md",
+      ],
+      expansion_paths: [],
+      reason_by_path: {
+        "preference/response-style.md": "Use the user's response style when answering.",
+        "workspace/workspace-1/knowledge/blockers/deploy.md": "Contains the blocker the agent must account for.",
+      },
+    },
+  ]);
 
   let capturedProjectRequest: Record<string, unknown> | null = null;
   const exitCode = await runTsRunnerCli(
@@ -1359,6 +1513,113 @@ test("runTsRunnerCli derives recalled durable memory from indexed memory entries
   assert.match(String(recalledMemoryContext.entries[1]?.updated_at ?? ""), /\d{4}-\d{2}-\d{2}T/);
   assert.equal(recalledMemoryContext.selection_trace.length, 2);
   assert.equal(recalledMemoryContext.selection_trace[0]?.memory_id, "user-preference:response-style");
+});
+
+test("runTsRunnerCli uses the provider background tasks model for recall selection calls", async () => {
+  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-recall-background-model-"));
+  process.env.HB_SANDBOX_ROOT = sandboxRoot;
+  const workspaceRoot = path.join(sandboxRoot, "workspace");
+  const configPath = path.join(sandboxRoot, "state", "runtime-config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify(
+      {
+        runtime: {
+          background_tasks: {
+            provider: "openai_direct",
+            model: "gpt-5.3-codex",
+          },
+        },
+        providers: {
+          openai_direct: {
+            kind: "openai_compatible",
+            base_url: "https://api.openai.com/v1",
+            api_key: "sk-openai",
+          },
+        },
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+  const store = new RuntimeStateStore({
+    workspaceRoot,
+    sandboxRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+    mainSessionId: "session-1",
+  });
+  store.upsertMemoryEntry({
+    memoryId: "workspace-procedure:workspace-1:deploy",
+    workspaceId: "workspace-1",
+    sessionId: "session-1",
+    scope: "workspace",
+    memoryType: "procedure",
+    subjectKey: "deploy",
+    path: "workspace/workspace-1/knowledge/procedures/deploy.md",
+    title: "Deploy procedure",
+    summary: "Steps for deployment.",
+    tags: ["deploy"],
+    verificationPolicy: "check_before_use",
+    stalenessPolicy: "workspace_sensitive",
+    staleAfterSeconds: 3600,
+    sourceTurnInputId: "input-0",
+    sourceMessageId: null,
+    fingerprint: "e".repeat(64),
+  });
+  store.close();
+  writeMemoryFile(
+    workspaceRoot,
+    "workspace/workspace-1/MEMORY.md",
+    "# Workspace Durable Memory Index\n\n- [Deploy procedure](knowledge/procedures/deploy.md) [procedure] [verify: check_before_use] - Steps for deployment.\n"
+  );
+  writeMemoryFile(
+    workspaceRoot,
+    "workspace/workspace-1/knowledge/procedures/deploy.md",
+    "# Deploy procedure\n\nSteps for deployment.\n"
+  );
+  const recallRequests: Array<Record<string, unknown>> = [];
+  installMockRecallModelResponses(
+    [
+      {
+        should_recall: true,
+        rewritten_query: "deployment steps",
+        scopes: ["workspace"],
+        memory_types: ["procedure"],
+      },
+      {
+        primary_paths: ["workspace/workspace-1/knowledge/procedures/deploy.md"],
+        reserve_paths: [],
+      },
+      {
+        status: "sufficient",
+        final_paths: ["workspace/workspace-1/knowledge/procedures/deploy.md"],
+      },
+    ],
+    recallRequests
+  );
+
+  const exitCode = await runTsRunnerCli(
+    ["--request-base64", encodeRequest({ ...baseRequest(), model: "openai_direct/gpt-5.4", instruction: "how do I deploy?" })],
+    {
+      deps: testDeps(),
+      io: {
+        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
+        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
+      }
+    }
+  );
+
+  assert.equal(exitCode, 0);
+  assert.equal(recallRequests.length, 3);
+  assert.equal(recallRequests[0]?.model, "gpt-5.3-codex");
 });
 
 test("runTsRunnerCli loads pending user memory proposals into prompt context for the same input", async () => {
@@ -1456,6 +1717,24 @@ test("runTsRunnerCli recalls workspace memory from scoped entries even with many
   const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-recalled-memory-scope-"));
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
   const workspaceRoot = path.join(sandboxRoot, "workspace");
+  const configPath = path.join(sandboxRoot, "state", "runtime-config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify(
+      {
+        runtime: {
+          background_tasks: {
+            provider: "holaboss_model_proxy",
+            model: "gpt-5.4-mini",
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
   const store = new RuntimeStateStore({
     workspaceRoot,
     sandboxRoot,
@@ -1519,6 +1798,59 @@ test("runTsRunnerCli recalls workspace memory from scoped entries even with many
     });
   }
   store.close();
+  writeMemoryFile(
+    workspaceRoot,
+    "MEMORY.md",
+    [
+      "# Memory Index",
+      "",
+      "- [Workspace workspace-1](workspace/workspace-1/MEMORY.md) - 1 durable workspace memories.",
+      "- [Preferences](preference/MEMORY.md) - 0 durable preference memories.",
+      "- [Identity](identity/MEMORY.md) - 0 durable identity memories.",
+      "",
+    ].join("\n")
+  );
+  writeMemoryFile(
+    workspaceRoot,
+    "workspace/workspace-1/MEMORY.md",
+    [
+      "# Workspace Durable Memory Index",
+      "",
+      "- [Deploy permission blocker](knowledge/blockers/deploy.md) [blocker] [verify: check_before_use] - Deploy calls may be denied by workspace policy.",
+      "",
+    ].join("\n")
+  );
+  writeMemoryFile(workspaceRoot, "preference/MEMORY.md", "# Preference Memory Index\n\nNo durable preference memories indexed yet.\n");
+  writeMemoryFile(workspaceRoot, "identity/MEMORY.md", "# Identity Memory Index\n\nNo durable identity memories indexed yet.\n");
+  writeMemoryFile(
+    workspaceRoot,
+    "workspace/workspace-1/knowledge/blockers/deploy.md",
+    "# Deploy permission blocker\n\nDeploy calls may be denied by workspace policy.\n"
+  );
+  installMockRecallModelResponses([
+    {
+      should_recall: true,
+      rewritten_query: "deploy permission blocker for workspace 1",
+      scopes: ["workspace"],
+      memory_types: ["blocker"],
+      reason: "Need the workspace-specific blocker before answering.",
+    },
+    {
+      primary_paths: ["workspace/workspace-1/knowledge/blockers/deploy.md"],
+      reserve_paths: [],
+      reason_by_path: {
+        "workspace/workspace-1/knowledge/blockers/deploy.md": "Matches the requested deploy issue.",
+      },
+    },
+    {
+      status: "sufficient",
+      final_paths: ["workspace/workspace-1/knowledge/blockers/deploy.md"],
+      expansion_paths: [],
+      reason_by_path: {
+        "workspace/workspace-1/knowledge/blockers/deploy.md": "Contains the workspace-specific blocker.",
+      },
+    },
+  ]);
 
   let capturedProjectRequest: Record<string, unknown> | null = null;
   const exitCode = await runTsRunnerCli(

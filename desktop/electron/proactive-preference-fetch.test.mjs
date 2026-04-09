@@ -32,6 +32,10 @@ test("proactive status lifecycle is driven by agent progress rather than proposa
   assert.match(source, /lifecycleState = "sent";/);
   assert.match(source, /lifecycleState = "claimed";/);
   assert.match(source, /lifecycleState = "analyzing";/);
+  assert.match(
+    source,
+    /bridge\.state === "healthy"[\s\S]*includes\("skipped=no_active_runtime_binding"\)[\s\S]*lifecycleState = proposalCount > 0 \? "analyzing" : "idle";/,
+  );
   assert.doesNotMatch(source, /if \(proposalCount > 0\) \{[\s\S]*?ready/);
   assert.doesNotMatch(source, /delivery_state:/);
 });

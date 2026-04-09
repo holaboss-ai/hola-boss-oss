@@ -28,9 +28,14 @@ interface OperationsDrawerProps {
   proposals: TaskProposalRecordPayload[];
   proactiveStatus: ProactiveAgentStatusPayload | null;
   isLoadingProactiveStatus: boolean;
-  proactiveTaskProposalsEnabled: boolean;
-  isUpdatingProactiveTaskProposalsEnabled: boolean;
+  proactiveWorkspaceEnabled: boolean;
+  isLoadingProactiveWorkspaceEnabled: boolean;
+  isUpdatingProactiveWorkspaceEnabled: boolean;
+  proactiveHeartbeatCron: string;
+  isLoadingProactiveHeartbeatConfig: boolean;
+  isUpdatingProactiveHeartbeatConfig: boolean;
   proactiveTaskProposalsError: string;
+  proactiveHeartbeatError: string;
   isLoadingProposals: boolean;
   isTriggeringProposal: boolean;
   proposalStatusMessage: string;
@@ -39,7 +44,8 @@ interface OperationsDrawerProps {
     action: "accept" | "dismiss";
   } | null;
   onTriggerProposal: () => void;
-  onProactiveTaskProposalsEnabledChange: (enabled: boolean) => void;
+  onProactiveWorkspaceEnabledChange: (enabled: boolean) => void;
+  onProactiveHeartbeatCronChange: (cron: string) => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
   onOpenRunningSession: (sessionId: string) => void;
@@ -65,15 +71,21 @@ export function OperationsDrawer({
   proposals,
   proactiveStatus,
   isLoadingProactiveStatus,
-  proactiveTaskProposalsEnabled,
-  isUpdatingProactiveTaskProposalsEnabled,
+  proactiveWorkspaceEnabled,
+  isLoadingProactiveWorkspaceEnabled,
+  isUpdatingProactiveWorkspaceEnabled,
+  proactiveHeartbeatCron,
+  isLoadingProactiveHeartbeatConfig,
+  isUpdatingProactiveHeartbeatConfig,
   proactiveTaskProposalsError,
+  proactiveHeartbeatError,
   isLoadingProposals,
   isTriggeringProposal,
   proposalStatusMessage,
   proposalAction,
   onTriggerProposal,
-  onProactiveTaskProposalsEnabledChange,
+  onProactiveWorkspaceEnabledChange,
+  onProactiveHeartbeatCronChange,
   onAcceptProposal,
   onDismissProposal,
   onOpenRunningSession,
@@ -183,7 +195,7 @@ export function OperationsDrawer({
   }, [activeTab, mainSessionId, selectedWorkspaceId]);
 
   return (
-    <aside className="theme-shell neon-border relative flex h-full min-h-0 min-w-[360px] max-w-[420px] flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
+    <aside className="theme-shell neon-border relative flex h-full min-h-0 min-w-[296px] max-w-[336px] flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
       <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border/40 px-3 py-2">
         <div className="flex items-center gap-1.5">
           <DrawerTabButton
@@ -211,20 +223,34 @@ export function OperationsDrawer({
             proactiveStatus={proactiveStatus}
             isLoadingProactiveStatus={isLoadingProactiveStatus}
             proactiveTaskProposalsError={proactiveTaskProposalsError}
+            proactiveHeartbeatError={proactiveHeartbeatError}
             isLoadingProposals={isLoadingProposals}
             proposalStatusMessage={proposalStatusMessage}
             proposalAction={proposalAction}
             hasWorkspace={hasWorkspace}
             selectedWorkspaceId={selectedWorkspaceId}
             selectedWorkspaceName={selectedWorkspaceName}
-            proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
-            isUpdatingProactiveTaskProposalsEnabled={
-              isUpdatingProactiveTaskProposalsEnabled
+            proactiveWorkspaceEnabled={proactiveWorkspaceEnabled}
+            isLoadingProactiveWorkspaceEnabled={
+              isLoadingProactiveWorkspaceEnabled
+            }
+            isUpdatingProactiveWorkspaceEnabled={
+              isUpdatingProactiveWorkspaceEnabled
+            }
+            proactiveHeartbeatCron={proactiveHeartbeatCron}
+            isLoadingProactiveHeartbeatConfig={
+              isLoadingProactiveHeartbeatConfig
+            }
+            isUpdatingProactiveHeartbeatConfig={
+              isUpdatingProactiveHeartbeatConfig
             }
             isTriggeringProposal={isTriggeringProposal}
             onTriggerProposal={onTriggerProposal}
-            onProactiveTaskProposalsEnabledChange={
-              onProactiveTaskProposalsEnabledChange
+            onProactiveWorkspaceEnabledChange={
+              onProactiveWorkspaceEnabledChange
+            }
+            onProactiveHeartbeatCronChange={
+              onProactiveHeartbeatCronChange
             }
             onAcceptProposal={onAcceptProposal}
             onDismissProposal={onDismissProposal}
@@ -369,17 +395,23 @@ function InboxPanel({
   proactiveStatus,
   isLoadingProactiveStatus,
   proactiveTaskProposalsError,
+  proactiveHeartbeatError,
   isLoadingProposals,
   proposalStatusMessage,
   proposalAction,
   hasWorkspace,
   selectedWorkspaceId,
   selectedWorkspaceName,
-  proactiveTaskProposalsEnabled,
-  isUpdatingProactiveTaskProposalsEnabled,
+  proactiveWorkspaceEnabled,
+  isLoadingProactiveWorkspaceEnabled,
+  isUpdatingProactiveWorkspaceEnabled,
+  proactiveHeartbeatCron,
+  isLoadingProactiveHeartbeatConfig,
+  isUpdatingProactiveHeartbeatConfig,
   isTriggeringProposal,
   onTriggerProposal,
-  onProactiveTaskProposalsEnabledChange,
+  onProactiveWorkspaceEnabledChange,
+  onProactiveHeartbeatCronChange,
   onAcceptProposal,
   onDismissProposal,
 }: {
@@ -390,6 +422,7 @@ function InboxPanel({
   proactiveStatus: ProactiveAgentStatusPayload | null;
   isLoadingProactiveStatus: boolean;
   proactiveTaskProposalsError: string;
+  proactiveHeartbeatError: string;
   isLoadingProposals: boolean;
   proposalStatusMessage: string;
   proposalAction: {
@@ -399,11 +432,16 @@ function InboxPanel({
   hasWorkspace: boolean;
   selectedWorkspaceId: string | null;
   selectedWorkspaceName: string | null;
-  proactiveTaskProposalsEnabled: boolean;
-  isUpdatingProactiveTaskProposalsEnabled: boolean;
+  proactiveWorkspaceEnabled: boolean;
+  isLoadingProactiveWorkspaceEnabled: boolean;
+  isUpdatingProactiveWorkspaceEnabled: boolean;
+  proactiveHeartbeatCron: string;
+  isLoadingProactiveHeartbeatConfig: boolean;
+  isUpdatingProactiveHeartbeatConfig: boolean;
   isTriggeringProposal: boolean;
   onTriggerProposal: () => void;
-  onProactiveTaskProposalsEnabledChange: (enabled: boolean) => void;
+  onProactiveWorkspaceEnabledChange: (enabled: boolean) => void;
+  onProactiveHeartbeatCronChange: (cron: string) => void;
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
 }) {
@@ -412,6 +450,11 @@ function InboxPanel({
       {proactiveTaskProposalsError ? (
         <div className="shrink-0 border-b border-destructive/20 px-3 py-2 text-xs text-destructive">
           {proactiveTaskProposalsError}
+        </div>
+      ) : null}
+      {proactiveHeartbeatError ? (
+        <div className="shrink-0 border-b border-destructive/20 px-3 py-2 text-xs text-destructive">
+          {proactiveHeartbeatError}
         </div>
       ) : null}
 
@@ -429,14 +472,27 @@ function InboxPanel({
               workspaceId={selectedWorkspaceId}
               proactiveStatus={proactiveStatus}
               isLoading={isLoadingProactiveStatus}
-              proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
-              isUpdatingProactiveTaskProposalsEnabled={
-                isUpdatingProactiveTaskProposalsEnabled
+              proactiveWorkspaceEnabled={proactiveWorkspaceEnabled}
+              isLoadingProactiveWorkspaceEnabled={
+                isLoadingProactiveWorkspaceEnabled
+              }
+              isUpdatingProactiveWorkspaceEnabled={
+                isUpdatingProactiveWorkspaceEnabled
+              }
+              proactiveHeartbeatCron={proactiveHeartbeatCron}
+              isLoadingProactiveHeartbeatConfig={
+                isLoadingProactiveHeartbeatConfig
+              }
+              isUpdatingProactiveHeartbeatConfig={
+                isUpdatingProactiveHeartbeatConfig
               }
               isTriggeringProposal={isTriggeringProposal}
               onTriggerProposal={onTriggerProposal}
-              onProactiveTaskProposalsEnabledChange={
-                onProactiveTaskProposalsEnabledChange
+              onProactiveWorkspaceEnabledChange={
+                onProactiveWorkspaceEnabledChange
+              }
+              onProactiveHeartbeatCronChange={
+                onProactiveHeartbeatCronChange
               }
               compact
             />

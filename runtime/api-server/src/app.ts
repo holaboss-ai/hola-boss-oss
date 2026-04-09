@@ -36,6 +36,10 @@ import {
   RuntimeQueueWorker
 } from "./queue-worker.js";
 import {
+  type DurableMemoryWorkerLike,
+  RuntimePostRunDurableMemoryWorker,
+} from "./post-run-durable-memory-worker.js";
+import {
   type CronWorkerLike,
   executeLocalCronjobDelivery,
   RuntimeCronWorker,
@@ -130,6 +134,7 @@ export interface BuildRuntimeApiServerOptions {
   dbPath?: string;
   workspaceRoot?: string;
   queueWorker?: QueueWorkerLike | null;
+  durableMemoryWorker?: DurableMemoryWorkerLike | null;
   cronWorker?: CronWorkerLike | null;
   bridgeWorker?: BridgeWorkerLike | null;
   appLifecycleExecutor?: AppLifecycleExecutorLike;
@@ -145,12 +150,30 @@ function resolveQueueWorker(
   options: BuildRuntimeApiServerOptions,
   app: FastifyInstance,
   store: RuntimeStateStore,
-  memoryService: MemoryServiceLike
+  memoryService: MemoryServiceLike,
+  durableMemoryWorker: DurableMemoryWorkerLike | null
 ): QueueWorkerLike | null {
   if (options.queueWorker !== undefined) {
     return options.queueWorker;
   }
-  return new RuntimeQueueWorker({ store, logger: app.log, memoryService });
+  return new RuntimeQueueWorker({
+    store,
+    logger: app.log,
+    memoryService,
+    wakeDurableMemoryWorker: durableMemoryWorker?.wake.bind(durableMemoryWorker) ?? null,
+  });
+}
+
+function resolveDurableMemoryWorker(
+  options: BuildRuntimeApiServerOptions,
+  app: FastifyInstance,
+  store: RuntimeStateStore,
+  memoryService: MemoryServiceLike
+): DurableMemoryWorkerLike | null {
+  if (options.durableMemoryWorker !== undefined) {
+    return options.durableMemoryWorker;
+  }
+  return new RuntimePostRunDurableMemoryWorker({ store, logger: app.log, memoryService });
 }
 
 function resolveCronWorker(
@@ -1505,9 +1528,10 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     : null;
   const brokerService = new IntegrationBrokerService(store, composioService);
   const oauthService = new OAuthService(store);
-  const runtimeAgentToolsService = new RuntimeAgentToolsService(store);
+  const runtimeAgentToolsService = new RuntimeAgentToolsService(store, { workspaceRoot: store.workspaceRoot });
   const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
-  const queueWorker = resolveQueueWorker(options, app, store, memoryService);
+  const durableMemoryWorker = resolveDurableMemoryWorker(options, app, store, memoryService);
+  const queueWorker = resolveQueueWorker(options, app, store, memoryService, durableMemoryWorker);
   const cronWorker = resolveCronWorker(options, app, store, queueWorker);
   const bridgeWorker = resolveBridgeWorker(options, app, store, memoryService);
 
@@ -1884,12 +1908,14 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     await bridgeWorker?.close();
     await cronWorker?.close();
     await queueWorker?.close();
+    await durableMemoryWorker?.close();
     if (ownsStore) {
       store.close();
     }
   });
 
   app.addHook("onReady", async () => {
+    await durableMemoryWorker?.start();
     await queueWorker?.start();
     await cronWorker?.start();
     await bridgeWorker?.start();
@@ -2336,7 +2362,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 502, error instanceof Error ? error.message : "composio finalize failed");
     }
   });
-  // ---- Runtime Agent Tools (onboarding, cronjobs) ----
+  // ---- Runtime Agent Tools (onboarding, cronjobs, media) ----
 
   app.get("/api/v1/capabilities/runtime-tools", async (request) => {
     const workspaceId = capabilityWorkspaceId({
@@ -2501,6 +2527,36 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 400, error instanceof Error ? error.message : "runtime cronjob delete failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/images/generate", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await runtimeAgentToolsService.generateImage({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        sessionId: capabilitySessionId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        selectedModel: capabilitySelectedModel({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        prompt: requiredString(request.body.prompt, "prompt"),
+        filename: nullableString(request.body.filename) ?? undefined,
+        size: nullableString(request.body.size) ?? undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime image generation failed");
     }
   });
 

@@ -13,6 +13,10 @@ test("file explorer syncs the workspace root only when the selected workspace ch
   assert.match(source, /const lastSyncedWorkspaceRootRef = useRef<\{ workspaceId: string; rootPath: string \} \| null>\(null\);/);
   assert.match(
     source,
+    /window\.electronAPI\.fs\.listDirectory\(\s*targetPath \?\? null,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
+  assert.match(
+    source,
     /lastSyncedWorkspaceRootRef\.current = \{\s*workspaceId: selectedWorkspaceId,\s*rootPath: workspaceRoot\s*\};/
   );
   assert.match(source, /\}, \[loadDirectory, selectedWorkspaceId\]\);/);
@@ -23,16 +27,19 @@ test("file explorer syncs the workspace root only when the selected workspace ch
 test("file explorer polls the current directory to surface live file changes", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /const payload = await window\.electronAPI\.fs\.listDirectory\(currentPath\);/);
+  assert.match(
+    source,
+    /const payload = await window\.electronAPI\.fs\.listDirectory\(\s*currentPath,\s*selectedWorkspaceId \?\? null,\s*\);/,
+  );
   assert.match(source, /const timer = window\.setInterval\(\(\) => \{\s*void refreshCurrentDirectory\(\);\s*\}, 1200\);/);
   assert.match(source, /window\.clearInterval\(timer\);/);
-  assert.match(source, /\}, \[currentPath\]\);/);
+  assert.match(source, /\}, \[currentPath, selectedWorkspaceId\]\);/);
 });
 
 test("file explorer opens folders on double click instead of single click", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /onClick=\{\(\) => \{\s*setSelectedPath\(entry\.absolutePath\);\s*\}\}/);
+  assert.match(source, /onClick=\{\(\) => \{\s*setSelectedPath\(entry\.absolutePath\);\s*closeContextMenu\(\);\s*\}\}/);
   assert.match(
     source,
     /onDoubleClick=\{\(\) => \{\s*if \(entry\.isDirectory\) \{\s*void openPath\(entry\.absolutePath\);\s*return;\s*\}\s*void openFilePreview\(entry\.absolutePath\);\s*\}\}/
@@ -50,7 +57,7 @@ test("file explorer home opens the selected workspace root when available", asyn
   assert.match(source, /onClick=\{\(\) => \{\s*void openHomeDirectory\(\);\s*\}\}/);
 });
 
-test("file explorer disables up navigation when already at workspace root", async () => {
+test("file explorer uses breadcrumbs and home instead of a separate up button", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /const \[workspaceRootPath, setWorkspaceRootPath\] = useState<string \| null>\(null\);/);
@@ -58,11 +65,27 @@ test("file explorer disables up navigation when already at workspace root", asyn
     source,
     /const isAtWorkspaceRoot = workspaceRootPath[\s\S]*normalizeComparablePath\(currentPath\) === normalizeComparablePath\(workspaceRootPath\)/
   );
+  assert.doesNotMatch(source, /label="Up"/);
+  assert.doesNotMatch(source, /ArrowUp/);
+  assert.match(source, /label="Home"[\s\S]*disabled=\{isAtWorkspaceRoot\}/);
+});
+
+test("file explorer renders clickable breadcrumbs scoped to the current path", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /type FileExplorerBreadcrumb = \{/);
+  assert.match(source, /function buildPathBreadcrumbs\(/);
   assert.match(
     source,
-    /label="Up"[\s\S]*onClick=\{\(\) => parentPath && !isAtWorkspaceRoot && void openPath\(parentPath\)\}[\s\S]*disabled=\{!parentPath \|\| isAtWorkspaceRoot\}/
+    /const breadcrumbs = useMemo\(\s*\(\) => buildPathBreadcrumbs\(currentPath, workspaceRootPath\),\s*\[currentPath, workspaceRootPath\],\s*\);/,
   );
-  assert.match(source, /label="Home"[\s\S]*disabled=\{isAtWorkspaceRoot\}/);
+  assert.match(source, /chat-scrollbar-hidden mt-1\.5 flex items-center gap-1 overflow-x-auto/);
+  assert.match(source, /breadcrumbs\.map\(\(breadcrumb\) => \(/);
+  assert.match(source, /<ChevronRight size=\{10\}/);
+  assert.match(
+    source,
+    /onClick=\{\(\) => \{\s*void openPath\(breadcrumb\.absolutePath\);\s*\}\}/,
+  );
 });
 
 test("file explorer accepts one-shot focus requests for artifact files", async () => {
@@ -89,6 +112,14 @@ test("file explorer opens text files directly in the editor without a preview to
   assert.match(source, /readOnly=\{!preview\.isEditable\}/);
   assert.match(source, /embedded-input focus:border-border\/70/);
   assert.doesNotMatch(source, /focus:bg-background\/35/);
+  assert.match(
+    source,
+    /window\.electronAPI\.fs\.readFilePreview\(\s*targetPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
+  assert.match(
+    source,
+    /window\.electronAPI\.fs\.writeTextFile\(\s*preview\.absolutePath,\s*previewDraft,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
   assert.match(source, /Save/);
 });
 
@@ -114,4 +145,39 @@ test("file explorer assigns richer icons for common file types", async () => {
   assert.match(source, /if \(extension === ".pdf"\) \{\s*return \{\s*Icon: FileBadge2,/);
   assert.match(source, /if \(JSON_EXTENSIONS\.has\(extension\)\) \{\s*return \{\s*Icon: FileJson,/);
   assert.match(source, /const \{ Icon, className \} = getExplorerIconDescriptor\(\s*entry\.name,\s*entry\.isDirectory\s*\);/);
+});
+
+test("file explorer exposes right-click rename and delete actions for entries", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /type FileExplorerContextMenuState = \{/);
+  assert.match(source, /const \[contextMenu, setContextMenu\] = useState<FileExplorerContextMenuState \| null>\(null\);/);
+  assert.match(source, /const \[renamingPath, setRenamingPath\] = useState<string \| null>\(null\);/);
+  assert.match(source, /const \[renameDraft, setRenameDraft\] = useState\(""\);/);
+  assert.match(source, /const paneRect = containerRef\.current\?\.getBoundingClientRect\(\);/);
+  assert.match(
+    source,
+    /onContextMenu=\{\(event\) => \{\s*event\.preventDefault\(\);\s*const paneRect = containerRef\.current\?\.getBoundingClientRect\(\);\s*if \(!paneRect\) \{\s*return;\s*\}\s*setSelectedPath\(entry\.absolutePath\);\s*setContextMenu\(\{\s*entry,\s*x: event\.clientX,\s*y: event\.clientY,[\s\S]*paneBounds:/,
+  );
+  assert.match(source, /const menuWidth = Math\.min\(196, Math\.max\(160, contextMenu\.paneBounds\.width - 16\)\);/);
+  assert.match(source, /contextMenu\.paneBounds\.right - menuWidth - 8/);
+  assert.match(source, /contextMenu\.paneBounds\.bottom - menuHeight - 8/);
+  assert.match(source, /setRenamingPath\(entry\.absolutePath\);/);
+  assert.match(source, /setRenameDraft\(entry\.name\);/);
+  assert.match(source, /ref=\{renameInputRef\}/);
+  assert.match(source, /onBlur=\{\(\) => \{\s*void submitRenameEntry\(\);\s*\}\}/);
+  assert.match(source, /if \(event\.key === "Enter"\) \{\s*event\.preventDefault\(\);\s*void submitRenameEntry\(\);/);
+  assert.match(source, /if \(event\.key === "Escape"\) \{\s*event\.preventDefault\(\);\s*cancelRenameEntry\(\);/);
+  assert.doesNotMatch(source, /window\.prompt/);
+  assert.match(source, /Delete folder "\$\{entry\.name\}" and all of its contents\? This cannot be undone\./);
+  assert.match(
+    source,
+    /window\.electronAPI\.fs\.renamePath\(\s*renamingEntry\.absolutePath,\s*nextName,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
+  assert.match(
+    source,
+    /window\.electronAPI\.fs\.deletePath\(\s*entry\.absolutePath,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
+  assert.match(source, /Rename…/);
+  assert.match(source, /Delete…/);
 });

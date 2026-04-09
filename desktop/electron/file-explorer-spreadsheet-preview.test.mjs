@@ -32,12 +32,47 @@ test("desktop file preview supports tabular spreadsheet kinds", async () => {
   );
 });
 
-test("file explorer opens folders directly on click and renders table previews", async () => {
+test("desktop file explorer enforces the selected workspace root as a filesystem boundary", async () => {
+  const source = await readFile(mainSourcePath, "utf8");
+
+  assert.match(source, /async function resolveWorkspaceScopedExplorerPath\(/);
+  assert.match(source, /async function renameExplorerPath\(/);
+  assert.match(source, /async function deleteExplorerPath\(/);
+  assert.match(source, /await workspaceDirectoryPath\(normalizedWorkspaceId\)/);
+  assert.match(source, /const relativePath = path\.relative\(rootPath, targetPath\);/);
+  assert.match(source, /throw new Error\(`Target path escapes workspace root: \$\{trimmedTargetPath\}`\);/);
+  assert.match(source, /throw new Error\("Workspace root cannot be renamed\."\);/);
+  assert.match(source, /throw new Error\("Workspace root cannot be deleted\."\);/);
+  assert.match(source, /let targetExists = false;/);
+  assert.match(source, /if \(targetExists\) \{\s*throw new Error\(`A file or folder named "\$\{trimmedName\}" already exists\.`\);\s*\}/);
+  assert.match(
+    source,
+    /"fs:listDirectory"[\s\S]*async \(_event, targetPath\?: string \| null, workspaceId\?: string \| null\) =>\s*listDirectory\(targetPath, workspaceId\)/,
+  );
+  assert.match(
+    source,
+    /"fs:readFilePreview"[\s\S]*async \(_event, targetPath: string, workspaceId\?: string \| null\) =>\s*readFilePreview\(targetPath, workspaceId\)/,
+  );
+  assert.match(
+    source,
+    /"fs:writeTextFile"[\s\S]*workspaceId\?: string \| null,[\s\S]*writeTextFile\(targetPath, content, workspaceId\)/,
+  );
+  assert.match(
+    source,
+    /"fs:renamePath"[\s\S]*targetPath: string,[\s\S]*nextName: string,[\s\S]*renameExplorerPath\(targetPath, nextName, workspaceId\)/,
+  );
+  assert.match(
+    source,
+    /"fs:deletePath"[\s\S]*async \(_event, targetPath: string, workspaceId\?: string \| null\) =>\s*deleteExplorerPath\(targetPath, workspaceId\)/,
+  );
+});
+
+test("file explorer opens folders on double click and renders table previews", async () => {
   const source = await readFile(fileExplorerPaneSourcePath, "utf8");
 
   assert.match(
     source,
-    /onClick=\{\(\) => \{\s*if \(entry\.isDirectory\) \{\s*void openPath\(entry\.absolutePath\);/,
+    /onDoubleClick=\{\(\) => \{\s*if \(entry\.isDirectory\) \{\s*void openPath\(entry\.absolutePath\);/,
   );
   assert.match(
     source,
