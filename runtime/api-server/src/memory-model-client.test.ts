@@ -57,6 +57,51 @@ test("queryMemoryModelJson uses OpenAI-compatible chat completions", async () =>
   assert.deepEqual(recordedCall.body?.response_format, { type: "json_object" });
 });
 
+test("queryMemoryModelJson treats dedicated Google proxy routes as OpenAI-compatible chat completions", async () => {
+  let call: RecordedCall | null = null;
+  globalThis.fetch = (async (input, init) => {
+    call = {
+      url: String(input),
+      headers: init?.headers,
+      body: typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null,
+    };
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({ provider: "google" }),
+            },
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }) as typeof fetch;
+
+  const payload = await queryMemoryModelJson(
+    {
+      baseUrl: "https://runtime.example/api/v1/model-proxy/google/v1",
+      apiKey: "token-google",
+      modelId: "gemini-2.5-flash",
+    },
+    {
+      systemPrompt: "Return JSON.",
+      userPrompt: "Hello",
+    },
+  );
+
+  assert.deepEqual(payload, { provider: "google" });
+  assert.ok(call);
+  const recordedCall = call as RecordedCall;
+  assert.equal(recordedCall.url, "https://runtime.example/api/v1/model-proxy/google/v1/chat/completions");
+  assert.equal((recordedCall.headers as Record<string, string>).Authorization, "Bearer token-google");
+  assert.equal(recordedCall.body?.model, "gemini-2.5-flash");
+});
+
 test("queryMemoryModelJson uses Anthropic native messages with strict JSON prompting", async () => {
   let call: RecordedCall | null = null;
   globalThis.fetch = (async (input, init) => {

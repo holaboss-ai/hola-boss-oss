@@ -150,6 +150,8 @@ declare global {
     sandboxId: string | null;
     modelProxyBaseUrl: string | null;
     defaultModel: string | null;
+    defaultBackgroundModel: string | null;
+    defaultImageModel: string | null;
     controlPlaneBaseUrl: string | null;
     catalogVersion: string | null;
     providerModelGroups: RuntimeProviderModelGroupPayload[];
@@ -158,6 +160,7 @@ declare global {
   interface RuntimeProviderModelPayload {
     token: string;
     modelId: string;
+    capabilities?: string[];
   }
 
   interface RuntimeProviderModelGroupPayload {
@@ -174,6 +177,8 @@ declare global {
     sandboxId?: string | null;
     modelProxyBaseUrl?: string | null;
     defaultModel?: string | null;
+    defaultBackgroundModel?: string | null;
+    defaultImageModel?: string | null;
     controlPlaneBaseUrl?: string | null;
   }
 

@@ -14,7 +14,9 @@ const RUNTIME_TOOLS_CAPABILITY_STATUS_PATH = "/api/v1/capabilities/runtime-tools
 const RUNTIME_TOOLS_ONBOARDING_STATUS_PATH = "/api/v1/capabilities/runtime-tools/onboarding/status";
 const RUNTIME_TOOLS_ONBOARDING_COMPLETE_PATH = "/api/v1/capabilities/runtime-tools/onboarding/complete";
 const RUNTIME_TOOLS_CRONJOBS_PATH = "/api/v1/capabilities/runtime-tools/cronjobs";
+const RUNTIME_TOOLS_IMAGE_GENERATE_PATH = "/api/v1/capabilities/runtime-tools/images/generate";
 const DEFAULT_RUNTIME_TOOL_TIMEOUT_MS = 30000;
+const IMAGE_GENERATE_RUNTIME_TOOL_TIMEOUT_MS = 180000;
 
 export interface PiRuntimeToolOptions {
   runtimeApiBaseUrl: string;
@@ -56,6 +58,13 @@ function runtimeToolHeaders(params: {
 
 function toolRequestSignal(signal: AbortSignal | undefined, timeoutMs = DEFAULT_RUNTIME_TOOL_TIMEOUT_MS): AbortSignal {
   return signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
+}
+
+function runtimeToolTimeoutMs(toolId: RuntimeAgentToolId): number {
+  if (toolId === "image_generate") {
+    return IMAGE_GENERATE_RUNTIME_TOOL_TIMEOUT_MS;
+  }
+  return DEFAULT_RUNTIME_TOOL_TIMEOUT_MS;
 }
 
 function parseJsonText(text: string): unknown {
@@ -231,6 +240,19 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId) {
         },
         { additionalProperties: false }
       );
+    case "image_generate":
+      return Type.Object(
+        {
+          prompt: Type.String({ description: "Prompt describing the image to generate." }),
+          filename: Type.Optional(
+            Type.String({ description: "Optional output filename for the generated image." }),
+          ),
+          size: Type.Optional(
+            Type.String({ description: "Optional provider-specific size hint such as `1024x1024`." }),
+          ),
+        },
+        { additionalProperties: false },
+      );
   }
 }
 
@@ -319,6 +341,15 @@ function updateCronjobBody(toolParams: unknown): Record<string, unknown> {
   };
 }
 
+function createImageGenerationBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    prompt: String(params.prompt ?? ""),
+    ...(optionalString(params.filename) ? { filename: optionalString(params.filename) } : {}),
+    ...(optionalString(params.size) ? { size: optionalString(params.size) } : {}),
+  };
+}
+
 async function executeRuntimeTool(params: {
   toolId: RuntimeAgentToolId;
   toolParams: unknown;
@@ -329,7 +360,7 @@ async function executeRuntimeTool(params: {
   fetchImpl?: typeof fetch;
   signal: AbortSignal | undefined;
 }) {
-  const signal = toolRequestSignal(params.signal);
+  const signal = toolRequestSignal(params.signal, runtimeToolTimeoutMs(params.toolId));
   const fetchImpl = params.fetchImpl;
   let method: "GET" | "POST" | "PATCH" | "DELETE" = "GET";
   let requestPath = RUNTIME_TOOLS_CAPABILITY_STATUS_PATH;
@@ -368,6 +399,11 @@ async function executeRuntimeTool(params: {
     case "holaboss_cronjobs_delete":
       method = "DELETE";
       requestPath = cronjobPath(isRecord(params.toolParams) ? params.toolParams.job_id : undefined);
+      break;
+    case "image_generate":
+      method = "POST";
+      requestPath = RUNTIME_TOOLS_IMAGE_GENERATE_PATH;
+      body = createImageGenerationBody(params.toolParams);
       break;
   }
 

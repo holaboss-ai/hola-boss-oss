@@ -1482,7 +1482,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     : null;
   const brokerService = new IntegrationBrokerService(store, composioService);
   const oauthService = new OAuthService(store);
-  const runtimeAgentToolsService = new RuntimeAgentToolsService(store);
+  const runtimeAgentToolsService = new RuntimeAgentToolsService(store, { workspaceRoot: store.workspaceRoot });
   const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
   const durableMemoryWorker = resolveDurableMemoryWorker(options, app, store, memoryService);
   const queueWorker = resolveQueueWorker(options, app, store, memoryService, durableMemoryWorker);
@@ -2284,7 +2284,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 502, error instanceof Error ? error.message : "composio finalize failed");
     }
   });
-  // ---- Runtime Agent Tools (onboarding, cronjobs) ----
+  // ---- Runtime Agent Tools (onboarding, cronjobs, media) ----
 
   app.get("/api/v1/capabilities/runtime-tools", async (request) => {
     const workspaceId = capabilityWorkspaceId({
@@ -2449,6 +2449,36 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 400, error instanceof Error ? error.message : "runtime cronjob delete failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/images/generate", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await runtimeAgentToolsService.generateImage({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        sessionId: capabilitySessionId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        selectedModel: capabilitySelectedModel({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        prompt: requiredString(request.body.prompt, "prompt"),
+        filename: nullableString(request.body.filename) ?? undefined,
+        size: nullableString(request.body.size) ?? undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime image generation failed");
     }
   });
 

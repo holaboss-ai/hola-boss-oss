@@ -153,6 +153,8 @@ interface RuntimeConfigPayload {
   sandboxId: string | null;
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
+  defaultBackgroundModel: string | null;
+  defaultImageModel: string | null;
   controlPlaneBaseUrl: string | null;
   catalogVersion: string | null;
   providerModelGroups: RuntimeProviderModelGroupPayload[];
@@ -161,6 +163,7 @@ interface RuntimeConfigPayload {
 interface RuntimeProviderModelPayload {
   token: string;
   modelId: string;
+  capabilities?: string[];
 }
 
 interface RuntimeProviderModelGroupPayload {
@@ -177,6 +180,8 @@ interface RuntimeConfigUpdatePayload {
   sandboxId?: string | null;
   modelProxyBaseUrl?: string | null;
   defaultModel?: string | null;
+  defaultBackgroundModel?: string | null;
+  defaultImageModel?: string | null;
   controlPlaneBaseUrl?: string | null;
 }
 

@@ -15,7 +15,7 @@ test("desktop runtime binding keeps the existing binding on transient refresh fa
     )?.[0] ?? "";
   const ensureBindingFunction =
     source.match(
-      /async function ensureRuntimeBindingReadyForWorkspaceFlow\([\s\S]*?\n}\n\nfunction maybeAuthCallbackUrl/,
+      /async function ensureRuntimeBindingReadyForWorkspaceFlow\([\s\S]*?\n}\n\nfunction nearestPackageJsonDirectory/,
     )?.[0] ?? "";
 
   assert.match(
@@ -24,11 +24,11 @@ test("desktop runtime binding keeps the existing binding on transient refresh fa
   );
   assert.match(
     refreshSection,
-    /function hasRecentTransientRuntimeBindingRefreshFailure\(userId: string\): boolean \{/,
+    /function hasRecentTransientRuntimeBindingRefreshFailure\(\s*userId: string,\s*\): boolean \{/,
   );
   assert.match(
     refreshSection,
-    /function markTransientRuntimeBindingRefreshFailure\(userId: string\): void \{/,
+    /function markTransientRuntimeBindingRefreshFailure\(\s*userId: string\s*\): void \{/,
   );
 
   assert.match(

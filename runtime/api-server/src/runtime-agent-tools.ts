@@ -2,6 +2,7 @@ import { utcNowIso, type CronjobRecord, type RuntimeStateStore, type WorkspaceRe
 
 import { RUNTIME_AGENT_TOOL_DEFINITIONS as RUNTIME_AGENT_TOOL_BASE_DEFINITIONS } from "../../harnesses/src/runtime-agent-tools.js";
 import { cronjobNextRunAt } from "./cron-worker.js";
+import { generateWorkspaceImage } from "./image-generation.js";
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 type JsonObject = { [key: string]: JsonValue };
@@ -56,6 +57,15 @@ export interface RuntimeAgentToolsUpdateCronjobParams {
   metadata?: Record<string, unknown> | null;
 }
 
+export interface RuntimeAgentToolsGenerateImageParams {
+  workspaceId: string;
+  sessionId?: string | null;
+  selectedModel?: string | null;
+  prompt: string;
+  filename?: string | null;
+  size?: string | null;
+}
+
 export const ALLOWED_DELIVERY_MODES = new Set(["none", "announce"]);
 export const ALLOWED_DELIVERY_CHANNELS = new Set(["system_notification", "session_run"]);
 
@@ -101,6 +111,12 @@ export const RUNTIME_AGENT_TOOL_DEFINITIONS: RuntimeAgentToolDefinition[] = [
     method: "DELETE",
     path: "/api/v1/capabilities/runtime-tools/cronjobs/:jobId",
     description: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[6].description
+  },
+  {
+    id: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[7].id,
+    method: "POST",
+    path: "/api/v1/capabilities/runtime-tools/images/generate",
+    description: RUNTIME_AGENT_TOOL_BASE_DEFINITIONS[7].description
   }
 ];
 
@@ -231,7 +247,10 @@ export function runtimeAgentToolCapabilityPayload(context?: {
 }
 
 export class RuntimeAgentToolsService {
-  constructor(private readonly store: RuntimeStateStore) {}
+  constructor(
+    private readonly store: RuntimeStateStore,
+    private readonly options: { workspaceRoot: string },
+  ) {}
 
   capabilityStatus(context?: { workspaceId?: string | null }): RuntimeAgentToolCapabilityPayload {
     return runtimeAgentToolCapabilityPayload(context);
@@ -370,6 +389,47 @@ export class RuntimeAgentToolsService {
     }
     this.assertCronjobBelongsToWorkspace(existing, params.workspaceId);
     return { success: this.store.deleteCronjob(params.jobId) };
+  }
+
+  async generateImage(params: RuntimeAgentToolsGenerateImageParams): Promise<JsonObject> {
+    this.requireWorkspace(params.workspaceId);
+    const sessionId = normalizedString(params.sessionId) || "session-main";
+    const prompt = normalizedString(params.prompt);
+    if (!prompt) {
+      throw new RuntimeAgentToolsServiceError(400, "image_prompt_required", "prompt is required");
+    }
+    try {
+      const generated = await generateWorkspaceImage({
+        workspaceRoot: this.options.workspaceRoot,
+        workspaceId: params.workspaceId,
+        sessionId,
+        inputId: "runtime-tool",
+        selectedModel: params.selectedModel,
+        prompt,
+        filename: params.filename,
+        size: params.size,
+      });
+      return {
+        file_path: generated.filePath,
+        mime_type: generated.mimeType,
+        size_bytes: generated.sizeBytes,
+        provider_id: generated.providerId,
+        model_id: generated.modelId,
+        revised_prompt: generated.revisedPrompt,
+      };
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        /not configured|configure an image generation provider/i.test(error.message)
+      ) {
+        throw new RuntimeAgentToolsServiceError(409, "image_generation_not_configured", error.message);
+      }
+      throw new RuntimeAgentToolsServiceError(
+        502,
+        "image_generation_failed",
+        error instanceof Error ? error.message : "image generation failed",
+      );
+    }
   }
 
   private requireWorkspace(workspaceId: string): WorkspaceRecord {
