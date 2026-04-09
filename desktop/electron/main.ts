@@ -8359,6 +8359,69 @@ async function syncAppCatalog(params: {
   });
 }
 
+async function installAppFromCatalog(params: {
+  workspaceId: string;
+  appId: string;
+  source: "marketplace" | "local";
+}): Promise<InstallAppFromCatalogResponse> {
+  const listing = await listAppCatalog({ source: params.source });
+  const entry = listing.entries.find((e) => e.app_id === params.appId);
+  if (!entry) {
+    throw new Error(`App '${params.appId}' not found in ${params.source} catalog`);
+  }
+
+  let archivePath: string;
+  let cleanupTempFile = false;
+  if (params.source === "marketplace") {
+    if (!entry.archive_url) {
+      throw new Error(`Catalog entry for '${params.appId}' is missing archive_url`);
+    }
+    mainWindow?.webContents.send("app-install-progress", {
+      appId: params.appId,
+      phase: "downloading",
+      bytes: 0,
+      total: 0,
+    });
+    archivePath = await downloadAppArchive(entry.archive_url, params.appId);
+    cleanupTempFile = true;
+  } else {
+    if (!entry.archive_path) {
+      throw new Error(`Catalog entry for '${params.appId}' is missing archive_path`);
+    }
+    archivePath = entry.archive_path;
+  }
+
+  mainWindow?.webContents.send("app-install-progress", {
+    appId: params.appId,
+    phase: "installing",
+    bytes: 0,
+    total: 0,
+  });
+
+  try {
+    const resp = await requestRuntimeJson<InstallAppFromCatalogResponse>({
+      method: "POST",
+      path: "/api/v1/apps/install-archive",
+      payload: {
+        workspace_id: params.workspaceId,
+        app_id: params.appId,
+        archive_path: archivePath,
+      },
+      timeoutMs: 300_000,
+    });
+    return resp;
+  } finally {
+    if (cleanupTempFile) {
+      try {
+        const { rmSync } = await import("node:fs");
+        rmSync(archivePath, { force: true });
+      } catch {
+        /* best effort */
+      }
+    }
+  }
+}
+
 async function listInstalledApps(
   workspaceId: string,
 ): Promise<InstalledWorkspaceAppListResponsePayload> {
