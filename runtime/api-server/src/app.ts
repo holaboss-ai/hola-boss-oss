@@ -3557,6 +3557,43 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return sendError(reply, 400, "app.runtime.yaml not found in archive root");
       }
 
+      // Patch app.runtime.yaml on disk before parsing:
+      // 1. Rewrite app_id to match the caller's appId (archives use "{name}-module"
+      //    but the catalog uses short names like "twitter", "gmail", etc.)
+      // 2. For pre-built archives (.output/server/index.mjs exists), replace the
+      //    setup command with "true" so ensureAppRunning skips the source build.
+      {
+        let yamlContent = fs.readFileSync(appYamlPath, "utf8");
+        let changed = false;
+
+        // Patch app_id to match the caller's expected id
+        const appIdPatched = yamlContent.replace(
+          /^(app_id:\s*).*$/m,
+          `$1"${appId}"`,
+        );
+        if (appIdPatched !== yamlContent) {
+          yamlContent = appIdPatched;
+          changed = true;
+        }
+
+        // Patch setup to "true" for pre-built archives
+        const isPrebuilt = fs.existsSync(path.join(appDir, ".output", "server", "index.mjs"));
+        if (isPrebuilt) {
+          const setupPatched = yamlContent.replace(
+            /^(\s*setup:\s*).*$/m,
+            '$1"true"',
+          );
+          if (setupPatched !== yamlContent) {
+            yamlContent = setupPatched;
+            changed = true;
+          }
+        }
+
+        if (changed) {
+          fs.writeFileSync(appYamlPath, yamlContent, "utf8");
+        }
+      }
+
       let parsed: ParsedInstalledApp;
       try {
         parsed = parseInstalledAppRuntime(
@@ -3571,29 +3608,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
           400,
           error instanceof Error ? error.message : "invalid app.runtime.yaml",
         );
-      }
-
-      // Detect pre-built archives: if .output/server/index.mjs exists, the app
-      // is already compiled and the setup command (which typically runs pnpm install
-      // + build) must be skipped. Patch app.runtime.yaml ON DISK so that
-      // ensureAppRunning (which reads the file directly, not workspace.yaml)
-      // sees setup: "true" instead of the source-build pipeline.
-      const isPrebuilt = fs.existsSync(path.join(appDir, ".output", "server", "index.mjs"));
-      if (isPrebuilt && parsed.lifecycle.setup && parsed.lifecycle.setup !== "true") {
-        try {
-          const yamlContent = fs.readFileSync(appYamlPath, "utf8");
-          // Replace the setup line in-place. Matches both quoted and unquoted YAML values.
-          const patched = yamlContent.replace(
-            /^(\s*setup:\s*).*$/m,
-            '$1"true"',
-          );
-          if (patched !== yamlContent) {
-            fs.writeFileSync(appYamlPath, patched, "utf8");
-            parsed = parseInstalledAppRuntime(patched, appId, `apps/${appId}/app.runtime.yaml`);
-          }
-        } catch {
-          // Best effort — if patching fails, continue with original lifecycle
-        }
       }
 
       const lifecycle: Record<string, string> = {};
