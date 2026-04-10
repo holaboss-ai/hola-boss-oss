@@ -37,7 +37,7 @@ export function BillingSettingsPanel() {
     <div className="grid max-w-[760px] gap-4">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <div className="text-base font-semibold text-foreground">Billing</div>
+          <div className="text-sm font-semibold text-foreground">Billing</div>
           <div className="text-sm text-muted-foreground">
             Hosted credits and managed usage for this desktop account.
           </div>
@@ -88,7 +88,7 @@ export function BillingSettingsPanel() {
       />
       <Card className="rounded-xl border-border/40 bg-card/40">
         <CardContent className="grid gap-3">
-          <div className="text-base font-semibold text-foreground">Usage record</div>
+          <div className="text-sm font-semibold text-foreground">Usage record</div>
 
           <div className="grid grid-cols-[minmax(0,1fr)_140px_120px] gap-3 border-b border-border/40 pb-3 text-sm text-muted-foreground">
             <div>Details</div>

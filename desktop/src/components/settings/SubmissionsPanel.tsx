@@ -175,8 +175,7 @@ export function SubmissionsPanel() {
               Your template submissions are only available after you sign in.
             </p>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              Connect this desktop app to your Holaboss account to review and
-              manage marketplace submissions.
+              Sign in to review and manage your marketplace submissions.
             </p>
           </div>
           <Button

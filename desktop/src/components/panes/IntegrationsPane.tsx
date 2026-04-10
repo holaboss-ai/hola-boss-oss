@@ -477,7 +477,7 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
     <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
       <div className="relative min-h-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-5xl px-5 py-4">
-          <h1 className="text-base font-semibold tracking-tight text-foreground">
+          <h1 className="text-sm font-semibold tracking-tight text-foreground">
             Integrations
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">

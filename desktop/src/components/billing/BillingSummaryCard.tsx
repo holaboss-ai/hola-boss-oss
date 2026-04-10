@@ -113,7 +113,7 @@ export function BillingSummaryCard({
         <div className="grid gap-4">
           <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3">
             <div>
-              <div className="text-lg font-semibold tracking-[-0.03em] text-foreground tabular-nums">
+              <div className="text-base font-semibold tracking-[-0.03em] text-foreground tabular-nums">
                 {creditsValue}
               </div>
               <div className="mt-1 flex items-center gap-1 text-sm text-muted-foreground">
@@ -145,7 +145,7 @@ export function BillingSummaryCard({
               </div>
             </div>
             <div className="text-right">
-              <div className="text-lg font-semibold tracking-[-0.03em] text-foreground tabular-nums">
+              <div className="text-base font-semibold tracking-[-0.03em] text-foreground tabular-nums">
                 {overview?.monthlyCreditsIncluded?.toLocaleString() ?? "—"}
               </div>
               <div className="mt-1 text-sm text-muted-foreground">Monthly credits</div>

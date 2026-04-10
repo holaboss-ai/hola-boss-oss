@@ -762,8 +762,7 @@ function SignedOutInboxNotice({
             Sign in to review task proposals
           </div>
           <div className="text-sm leading-6 text-muted-foreground">
-            Sign in to connect this desktop to your Holaboss account and review
-            Inbox proposals.
+            Sign in to review and manage Inbox proposals.
           </div>
         </div>
         <div>
