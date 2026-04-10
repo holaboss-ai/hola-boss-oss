@@ -6156,13 +6156,22 @@ async function controlPlaneHeaders(
   _service: "projects" | "marketplace" | "proactive",
   extraHeaders?: Record<string, string>,
 ): Promise<Record<string, string>> {
-  // All services route through the Hono gateway which adds the API key.
-  // No Cookie header — it triggers CORS preflight in Electron's fetch.
-  // User identity is passed via holaboss_user_id in request params/body.
-  return {
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...extraHeaders,
   };
+  // Send Better Auth session cookie so the Hono gateway can resolve
+  // the user identity. Main-process fetch is not subject to browser
+  // CORS — the earlier "no Cookie" comment was about renderer-process
+  // constraints that don't apply here.
+  // TODO(phase-2): Once the Python backend reads X-Holaboss-User-Id
+  // from the gateway-injected header, remove holaboss_user_id from
+  // request bodies in requestControlPlaneJson callers.
+  const cookie = authCookieHeader();
+  if (cookie) {
+    headers["Cookie"] = cookie;
+  }
+  return headers;
 }
 
 function proactiveBaseUrl() {
