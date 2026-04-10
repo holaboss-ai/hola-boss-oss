@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { KitEmoji } from "./KitEmoji";
 
 interface KitCardProps {
@@ -12,15 +13,15 @@ export function KitCard({ template, onClick, selected = false }: KitCardProps) {
   const displayName = template.display_name ?? template.name.replaceAll("_", " ");
 
   return (
-    <button
-      type="button"
+    <Button
+      variant="ghost"
       disabled={isComingSoon}
       onClick={() => onClick(template)}
-      className={`group relative overflow-hidden rounded-xl border px-4 py-4 text-left transition-colors ${
+      className={`group relative h-auto overflow-hidden rounded-xl border px-4 py-4 text-left ${
         isComingSoon
           ? "cursor-default border-border bg-card/50 opacity-50"
           : selected
-            ? "border-primary/35 bg-primary/10"
+            ? "border-primary/35 bg-primary/10 hover:bg-primary/10"
             : "border-border bg-muted/50 hover:bg-accent"
       }`}
     >
@@ -60,6 +61,6 @@ export function KitCard({ template, onClick, selected = false }: KitCardProps) {
           </div>
         </div>
       </div>
-    </button>
+    </Button>
   );
 }

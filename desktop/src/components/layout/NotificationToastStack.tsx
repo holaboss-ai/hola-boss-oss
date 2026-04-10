@@ -163,13 +163,13 @@ export function NotificationToastStack({
                       {isSessionTarget ? (
                         <div className="min-w-0 text-left">{content}</div>
                       ) : (
-                        <button
-                          type="button"
+                        <Button
+                          variant="ghost"
                           onClick={() => onActivateNotification(notification.id)}
-                          className="min-w-0 text-left"
+                          className="h-auto min-w-0 justify-start p-0 text-left hover:bg-transparent"
                         >
                           {content}
-                        </button>
+                        </Button>
                       )}
                       {isSessionTarget ? (
                         <div className="mt-2.5">

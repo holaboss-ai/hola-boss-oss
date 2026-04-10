@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { firstWorkspacePaneSectionClassName } from "@/components/layout/firstWorkspacePaneLayout";
 import { MarketplaceGallery } from "@/components/marketplace/MarketplaceGallery";
 import { KitDetail } from "@/components/marketplace/KitDetail";
@@ -283,11 +284,11 @@ export function FirstWorkspacePane({
 
   return (
     <div className="pointer-events-none absolute inset-0 z-40 grid place-items-center px-4 py-6">
-      <button
-        type="button"
+      <Button
+        variant="ghost"
         aria-label="Close create workspace"
         onClick={onClose}
-        className="pointer-events-auto absolute inset-0 bg-[rgba(7,10,14,0.46)] backdrop-blur-sm"
+        className="pointer-events-auto absolute inset-0 h-auto w-auto rounded-none bg-[rgba(7,10,14,0.46)] backdrop-blur-sm hover:bg-[rgba(7,10,14,0.46)]"
       />
 
       <div
@@ -296,14 +297,15 @@ export function FirstWorkspacePane({
         aria-label="Create workspace"
         className="pointer-events-auto relative z-10 h-[min(860px,calc(100vh-44px))] w-[min(1120px,calc(100vw-32px))]"
       >
-        <button
-          type="button"
+        <Button
+          variant="outline"
+          size="icon-lg"
           aria-label="Close create workspace"
           onClick={onClose}
-          className="absolute right-6 top-6 z-30 grid h-10 w-10 place-items-center rounded-full border border-black/15 bg-white/95 text-foreground shadow-md backdrop-blur transition hover:bg-white"
+          className="absolute right-6 top-6 z-30 rounded-full border-black/15 bg-white/95 text-foreground shadow-md backdrop-blur hover:bg-white"
         >
           <X size={16} />
-        </button>
+        </Button>
         {content}
       </div>
     </div>

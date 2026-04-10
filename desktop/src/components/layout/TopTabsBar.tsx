@@ -447,8 +447,9 @@ export function TopTabsBar({
           </DropdownMenu>
           {isWindowsIntegratedTitleBar ? (
             <div className="window-no-drag ml-1 mr-[-6px] flex items-center gap-0.5 sm:mr-[-8px]">
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="icon"
                 aria-label="Minimize window"
                 className={windowControlButtonClassName}
                 onClick={() => {
@@ -456,9 +457,10 @@ export function TopTabsBar({
                 }}
               >
                 <Minus size={13} strokeWidth={2.1} />
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
                 aria-label={
                   windowState.isMaximized || windowState.isFullScreen
                     ? "Restore window"
@@ -474,9 +476,10 @@ export function TopTabsBar({
                 ) : (
                   <Square size={12} strokeWidth={1.9} />
                 )}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
                 aria-label="Close window"
                 className={`${windowControlButtonClassName} hover:bg-[rgba(247,90,84,0.12)] hover:text-[rgb(247,90,84)]`}
                 onClick={() => {
@@ -484,7 +487,7 @@ export function TopTabsBar({
                 }}
               >
                 <X size={13} strokeWidth={2.1} />
-              </button>
+              </Button>
             </div>
           ) : null}
         </div>
@@ -540,17 +543,17 @@ export function TopTabsBar({
                               : "border-transparent hover:bg-accent"
                           } ${isDeleting ? "opacity-50" : ""}`}
                         >
-                          <button
-                            type="button"
+                          <Button
+                            variant="ghost"
                             disabled={isDeleting}
                             onClick={() => {
                               setSelectedWorkspaceId(workspace.id);
                               closeWorkspaceSwitcher();
                             }}
-                            className="min-w-0 flex-1 px-1 text-left text-sm font-medium disabled:cursor-not-allowed"
+                            className="min-w-0 flex-1 justify-start px-1 text-left text-sm font-medium"
                           >
                             <span className="truncate">{workspace.name}</span>
-                          </button>
+                          </Button>
                           <Button
                             variant="ghost"
                             size="icon-xs"

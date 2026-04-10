@@ -852,18 +852,18 @@ function RunningPanel({
                 session.status,
               );
               return (
-                <button
+                <Button
                   key={session.sessionId}
-                  type="button"
+                  variant="ghost"
                   onClick={() => onOpenSession(session.sessionId)}
                   aria-label={`Open session ${session.title}`}
-                  className={`w-full cursor-pointer px-3 py-3 text-left transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/50 ${
+                  className={`h-auto w-full cursor-pointer justify-start px-3 py-3 text-left first:rounded-t-lg last:rounded-b-lg ${
                     activeSessionId === session.sessionId
                       ? "border-l-2 border-l-primary bg-muted/30"
                       : ""
                   }`}
                 >
-                  <div className="flex items-center gap-3">
+                  <div className="flex w-full items-center gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium text-foreground">
                         {session.title}
@@ -886,7 +886,7 @@ function RunningPanel({
                       {statusIndicator.icon}
                     </div>
                   </div>
-                </button>
+                </Button>
               );
             })}
           </div>

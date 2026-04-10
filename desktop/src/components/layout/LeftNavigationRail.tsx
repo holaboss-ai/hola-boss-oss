@@ -1,5 +1,6 @@
 import { MessageSquareText, Sparkles, Workflow } from "lucide-react";
 import type { WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
+import { Button } from "@/components/ui/button";
 import { providerIcon } from "@/components/onboarding/constants";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
@@ -59,19 +60,20 @@ export function LeftNavigationRail({
                 <Tooltip>
                   <TooltipTrigger
                     render={
-                      <button
-                        type="button"
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         aria-label={item.label}
                         title={item.label}
                         onClick={() => onSelectItem(item.id)}
-                        className={`flex size-10 items-center justify-center rounded-lg transition-colors ${
+                        className={`size-10 ${
                           isActive
-                            ? "bg-primary/12 text-primary"
+                            ? "bg-primary/12 text-primary hover:bg-primary/12 hover:text-primary"
                             : "text-muted-foreground hover:bg-accent/36 hover:text-accent-foreground"
                         }`}
                       >
                         {item.icon}
-                      </button>
+                      </Button>
                     }
                   />
                   <TooltipContent side="right" align="center">
@@ -97,14 +99,15 @@ export function LeftNavigationRail({
                     <Tooltip>
                       <TooltipTrigger
                         render={
-                          <button
-                            type="button"
+                          <Button
+                            variant="ghost"
+                            size="icon"
                             aria-label={app.label}
                             title={app.label}
                             onClick={() => onSelectApp?.(app.id)}
-                            className={`relative flex size-10 items-center justify-center rounded-md transition-colors ${
+                            className={`relative size-10 rounded-md ${
                               isActive
-                                ? "bg-primary/12 text-accent-foreground"
+                                ? "bg-primary/12 text-accent-foreground hover:bg-primary/12"
                                 : "bg-muted/80 text-muted-foreground hover:bg-accent/36"
                             }`}
                           >
@@ -118,7 +121,7 @@ export function LeftNavigationRail({
                             ) : !isReady ? (
                               <span className="absolute -right-0.5 -top-0.5 size-2.5 animate-pulse rounded-full border-2 border-card bg-sky-400" />
                             ) : null}
-                          </button>
+                          </Button>
                         }
                       />
                       <TooltipContent side="right" align="center">

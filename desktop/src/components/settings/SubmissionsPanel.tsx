@@ -10,6 +10,7 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
 
@@ -229,9 +230,9 @@ export function SubmissionsPanel() {
                     {submission.template_name}
                   </span>
                   {category ? (
-                    <span className="shrink-0 rounded-full border border-border/35 px-2 py-0.5 text-xs text-muted-foreground">
+                    <Badge variant="outline" className="border-border/35 text-muted-foreground">
                       {category}
-                    </span>
+                    </Badge>
                   ) : null}
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -240,25 +241,27 @@ export function SubmissionsPanel() {
               </div>
 
               <div className="flex shrink-0 items-center gap-2">
-                <span
-                  className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${config.badgeClass}`}
+                <Badge
+                  variant="outline"
+                  className={config.badgeClass}
                 >
                   <StatusIcon className="size-3" />
                   {config.label}
-                </span>
+                </Badge>
                 {submission.status !== "published" ? (
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
                     disabled={deletingId === submission.id}
                     onClick={() => void handleDelete(submission)}
-                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                    className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                   >
                     {deletingId === submission.id ? (
                       <Loader2 className="size-3.5 animate-spin" />
                     ) : (
                       <Trash2 className="size-3.5" />
                     )}
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             </div>

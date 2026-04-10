@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FileText, FileWarning, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
@@ -211,18 +212,19 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
                   {preview.tableSheets.map((sheet, index) => {
                     const isActive = index === activeTableSheetIndex;
                     return (
-                      <button
+                      <Button
                         key={`${sheet.name}-${sheet.index}`}
-                        type="button"
+                        variant="outline"
+                        size="xs"
                         onClick={() => setActiveTableSheetIndex(index)}
-                        className={`rounded-md border px-2 py-1 text-[11px] transition-colors ${
+                        className={`text-[11px] ${
                           isActive
-                            ? "border-primary/35 bg-primary/12 text-primary"
+                            ? "border-primary/35 bg-primary/12 text-primary hover:bg-primary/12 hover:text-primary"
                             : "border-border/40 text-muted-foreground hover:bg-black/10 hover:text-foreground"
                         }`}
                       >
                         {sheet.name}
-                      </button>
+                      </Button>
                     );
                   })}
                 </div>

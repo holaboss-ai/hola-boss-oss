@@ -3,6 +3,13 @@ import { Check, Loader2, LogIn, Plus, Search, ShieldAlert, Unplug } from "lucide
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
 
 interface ComposioToolkit {
@@ -365,18 +372,22 @@ export function IntegrationsPane({ embedded }: { embedded?: boolean } = {}) {
             className="h-9 pl-8"
           />
         </div>
-        <select
+        <Select
           value={categoryFilter}
-          onChange={(event) => setCategoryFilter(event.target.value)}
-          className="h-9 rounded-lg border border-input bg-transparent px-3 text-sm text-foreground outline-none"
+          onValueChange={(value) => setCategoryFilter(value ?? "all")}
         >
-          <option value="all">All</option>
-          {categories.map((category) => (
-            <option key={category} value={category}>
-              {category.charAt(0).toUpperCase() + category.slice(1)}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger className="h-9 w-auto min-w-[100px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All</SelectItem>
+            {categories.map((category) => (
+              <SelectItem key={category} value={category}>
+                {category.charAt(0).toUpperCase() + category.slice(1)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Connected */}

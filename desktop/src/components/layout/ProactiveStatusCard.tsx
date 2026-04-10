@@ -265,11 +265,11 @@ function ProactiveScheduleEditor({
 
   return (
     <div className="border-t border-border/40 px-3 py-3">
-      <button
-        type="button"
+      <Button
+        variant="ghost"
         aria-expanded={drawerOpen}
         onClick={() => setDrawerOpen((current) => !current)}
-        className="flex w-full items-center justify-between gap-3 rounded-[16px] px-1 py-1 text-left transition-colors hover:bg-muted/35"
+        className="flex h-auto w-full items-center justify-between gap-3 rounded-[16px] px-1 py-1 text-left"
       >
         <div className="min-w-0">
           <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
@@ -285,7 +285,7 @@ function ProactiveScheduleEditor({
             drawerOpen ? "rotate-180" : ""
           }`}
         />
-      </button>
+      </Button>
       {drawerOpen ? (
         <div className="mt-3 rounded-[18px] border border-border/35 bg-background/55 px-3 py-3">
           <div className="text-[11px] leading-5 text-muted-foreground/82">

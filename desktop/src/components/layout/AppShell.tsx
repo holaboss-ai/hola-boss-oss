@@ -36,6 +36,7 @@ import {
     useWorkspaceSelection,
     WorkspaceSelectionProvider,
 } from "@/lib/workspaceSelection";
+import { Button } from "@/components/ui/button";
 import {
     CircleCheck,
     Clock3,
@@ -2893,47 +2894,51 @@ function AppShellContent() {
               <div className="pointer-events-none absolute right-0 top-0 z-20 hidden lg:block">
                 <div className="pointer-events-auto inline-flex items-center gap-1 rounded-bl-[16px] rounded-tr-[var(--radius-xl)] border border-border/50 border-r-0 border-t-0 bg-card/94 px-2 py-2 text-muted-foreground shadow-lg backdrop-blur">
                   {showOperationsDrawer ? (
-                    <button
-                      type="button"
+                    <Button
+                      variant="outline"
+                      size="icon"
                       onClick={() => toggleOperationsDrawer()}
                       aria-label="Hide right panel"
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-primary/45 bg-primary/10 text-primary transition-all duration-200 hover:border-primary/60 hover:bg-primary/14 active:scale-95"
+                      className="rounded-[12px] border-primary/45 bg-primary/10 text-primary hover:border-primary/60 hover:bg-primary/14 active:scale-95"
                     >
                       <PanelRightClose size={14} />
-                    </button>
+                    </Button>
                   ) : (
                     <>
-                      <button
-                        type="button"
+                      <Button
+                        variant="outline"
+                        size="icon"
                         onClick={() => openOperationsDrawerTab("inbox")}
                         aria-label={
                           unreadTaskProposalCount > 0
                             ? `Open inbox panel with ${unreadTaskProposalCount} unread proposal${unreadTaskProposalCount === 1 ? "" : "s"}`
                             : "Open inbox panel"
                         }
-                        className="relative inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-border/45 text-muted-foreground transition-all duration-200 hover:border-primary/45 hover:text-primary active:scale-95"
+                        className="relative rounded-[12px] border-border/45 text-muted-foreground hover:border-primary/45 hover:text-primary active:scale-95"
                       >
                         <InboxIcon size={13} />
                         {unreadTaskProposalCount > 0 ? (
                           <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full border-2 border-card bg-destructive" />
                         ) : null}
-                      </button>
-                      <button
-                        type="button"
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="icon"
                         onClick={() => openOperationsDrawerTab("running")}
                         aria-label="Open sessions panel"
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-border/45 text-muted-foreground transition-all duration-200 hover:border-primary/45 hover:text-primary active:scale-95"
+                        className="rounded-[12px] border-border/45 text-muted-foreground hover:border-primary/45 hover:text-primary active:scale-95"
                       >
                         <Clock3 size={13} />
-                      </button>
-                      <button
-                        type="button"
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="icon"
                         onClick={() => toggleOperationsDrawer()}
                         aria-label="Show right panel"
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-border/45 text-muted-foreground transition-all duration-200 hover:border-primary/45 hover:text-primary active:scale-95"
+                        className="rounded-[12px] border-border/45 text-muted-foreground hover:border-primary/45 hover:text-primary active:scale-95"
                       >
                         <PanelRightOpen size={14} />
-                      </button>
+                      </Button>
                     </>
                   )}
                 </div>
