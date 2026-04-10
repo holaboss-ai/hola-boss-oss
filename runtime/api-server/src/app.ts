@@ -1142,6 +1142,63 @@ export function isAllowedArchivePath(p: string): boolean {
   return false;
 }
 
+export function isAllowedArchiveUrl(url: string): boolean {
+  if (!url) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    return false;
+  }
+
+  const defaultPrefixes = [
+    "https://github.com/holaboss-ai/holaboss-modules/releases/download/",
+  ];
+  const envOverride = process.env.HOLABOSS_APP_ARCHIVE_URL_ALLOWLIST;
+  const extraPrefixes = envOverride
+    ? envOverride.split(",").map((p) => p.trim()).filter((p) => p.length > 0)
+    : [];
+  const allPrefixes = [...defaultPrefixes, ...extraPrefixes];
+
+  // http:// only allowed if explicitly in the override list
+  if (parsed.protocol === "http:") {
+    return extraPrefixes.some((prefix) => url.startsWith(prefix));
+  }
+
+  return allPrefixes.some((prefix) => url.startsWith(prefix));
+}
+
+async function downloadArchiveToTemp(url: string, appId: string): Promise<string> {
+  const dir = path.join(os.tmpdir(), "holaboss-app-archives");
+  fs.mkdirSync(dir, { recursive: true });
+  const filePath = path.join(dir, `${appId}-${Date.now()}.tar.gz`);
+
+  const res = await fetch(url);
+  if (!res.ok || !res.body) {
+    throw new Error(`Download failed: ${res.status} ${res.statusText}`);
+  }
+
+  const fileStream = fs.createWriteStream(filePath);
+  const reader = res.body.getReader();
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) fileStream.write(value);
+    }
+  } finally {
+    fileStream.end();
+    await new Promise<void>((resolve, reject) => {
+      fileStream.on("finish", () => resolve());
+      fileStream.on("error", reject);
+    });
+  }
+  return filePath;
+}
+
 function collectSystemStatus(workspaceRoot: string, store: RuntimeStateStore): Record<string, unknown> {
   return {
     cpu: getCpuInfo(),
@@ -3433,100 +3490,144 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, error instanceof Error ? error.message : "invalid app_id");
     }
 
-    const archivePath = requiredString(request.body.archive_path, "archive_path");
-    if (!isAllowedArchivePath(archivePath)) {
-      return sendError(reply, 400, "archive_path outside allowed roots");
+    const rawArchivePath =
+      typeof request.body.archive_path === "string" ? request.body.archive_path : "";
+    const rawArchiveUrl =
+      typeof request.body.archive_url === "string" ? request.body.archive_url : "";
+
+    if (rawArchivePath && rawArchiveUrl) {
+      return sendError(reply, 400, "provide either archive_path or archive_url, not both");
     }
-    if (!fs.existsSync(archivePath) || !fs.statSync(archivePath).isFile()) {
-      return sendError(reply, 400, "archive_path does not exist");
+    if (!rawArchivePath && !rawArchiveUrl) {
+      return sendError(reply, 400, "archive_path or archive_url is required");
+    }
+
+    let archivePath: string;
+    let cleanupTempFile = false;
+
+    if (rawArchiveUrl) {
+      if (!isAllowedArchiveUrl(rawArchiveUrl)) {
+        return sendError(reply, 400, "archive_url outside allowlist");
+      }
+      try {
+        archivePath = await downloadArchiveToTemp(rawArchiveUrl, appId);
+        cleanupTempFile = true;
+      } catch (error) {
+        return sendError(
+          reply,
+          400,
+          `archive download failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    } else {
+      archivePath = rawArchivePath;
+      if (!isAllowedArchivePath(archivePath)) {
+        return sendError(reply, 400, "archive_path outside allowed roots");
+      }
+      if (!fs.existsSync(archivePath) || !fs.statSync(archivePath).isFile()) {
+        return sendError(reply, 400, "archive_path does not exist");
+      }
     }
 
     const workspaceDir = store.workspaceDir(workspaceId);
     const appDir = path.join(workspaceDir, "apps", appId);
     if (fs.existsSync(appDir) && fs.readdirSync(appDir).length > 0) {
+      if (cleanupTempFile) {
+        try { fs.rmSync(archivePath, { force: true }); } catch { /* best effort */ }
+      }
       return sendError(reply, 409, "app already installed — uninstall first");
     }
     fs.mkdirSync(appDir, { recursive: true });
 
     try {
-      await tar.x({ file: archivePath, cwd: appDir, strict: true });
-    } catch (error) {
-      fs.rmSync(appDir, { recursive: true, force: true });
-      return sendError(
-        reply,
-        400,
-        `archive extraction failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-
-    const appYamlPath = path.join(appDir, "app.runtime.yaml");
-    if (!fs.existsSync(appYamlPath)) {
-      fs.rmSync(appDir, { recursive: true, force: true });
-      return sendError(reply, 400, "app.runtime.yaml not found in archive root");
-    }
-
-    let parsed: ParsedInstalledApp;
-    try {
-      parsed = parseInstalledAppRuntime(
-        fs.readFileSync(appYamlPath, "utf8"),
-        appId,
-        `apps/${appId}/app.runtime.yaml`,
-      );
-    } catch (error) {
-      fs.rmSync(appDir, { recursive: true, force: true });
-      return sendError(
-        reply,
-        400,
-        error instanceof Error ? error.message : "invalid app.runtime.yaml",
-      );
-    }
-
-    const lifecycle: Record<string, string> = {};
-    if (parsed.lifecycle.setup) lifecycle.setup = parsed.lifecycle.setup;
-    if (parsed.lifecycle.start) lifecycle.start = parsed.lifecycle.start;
-    if (parsed.lifecycle.stop) lifecycle.stop = parsed.lifecycle.stop;
-    appendWorkspaceApplication(workspaceDir, {
-      appId,
-      configPath: parsed.configPath,
-      lifecycle: Object.keys(lifecycle).length > 0 ? lifecycle : null,
-    });
-
-    let runResult: { ready: boolean; error: string | null; detail: string };
-    try {
-      await ensureAppRunning(workspaceId, appId);
-      runResult = { ready: true, error: null, detail: "App installed and running" };
-    } catch (error) {
-      const message = (error instanceof Error ? error.message : String(error)).slice(0, 2000);
-      runResult = { ready: false, error: message, detail: message };
-    }
-
-    // Write the MCP registry entry now that ensureAppRunning has allocated ports.
-    // Best-effort: if port lookup fails (e.g. embedded runtime flag not set), fall back to null.
-    if (parsed.mcpTools.length > 0) {
       try {
-        const resolvedApp = resolveWorkspaceApp(workspaceDir, appId, { store, workspaceId });
-        writeWorkspaceMcpRegistryEntry(workspaceDir, appId, {
-          mcpEnabled: true,
-          mcpTools: parsed.mcpTools,
-          mcpPath: "/mcp/sse",
-          mcpTimeoutMs: 30000,
-          mcpPort: resolvedApp.ports.mcp,
-        });
+        await tar.x({ file: archivePath, cwd: appDir, strict: true });
       } catch (error) {
-        app.log.warn(
-          { workspaceId, appId, err: error },
-          "failed to write mcp_registry entry after install-archive"
+        fs.rmSync(appDir, { recursive: true, force: true });
+        return sendError(
+          reply,
+          400,
+          `archive extraction failed: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
-    }
 
-    return {
-      app_id: appId,
-      status: "enabled",
-      detail: runResult.detail,
-      ready: runResult.ready,
-      error: runResult.error,
-    };
+      const appYamlPath = path.join(appDir, "app.runtime.yaml");
+      if (!fs.existsSync(appYamlPath)) {
+        fs.rmSync(appDir, { recursive: true, force: true });
+        return sendError(reply, 400, "app.runtime.yaml not found in archive root");
+      }
+
+      let parsed: ParsedInstalledApp;
+      try {
+        parsed = parseInstalledAppRuntime(
+          fs.readFileSync(appYamlPath, "utf8"),
+          appId,
+          `apps/${appId}/app.runtime.yaml`,
+        );
+      } catch (error) {
+        fs.rmSync(appDir, { recursive: true, force: true });
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "invalid app.runtime.yaml",
+        );
+      }
+
+      const lifecycle: Record<string, string> = {};
+      if (parsed.lifecycle.setup) lifecycle.setup = parsed.lifecycle.setup;
+      if (parsed.lifecycle.start) lifecycle.start = parsed.lifecycle.start;
+      if (parsed.lifecycle.stop) lifecycle.stop = parsed.lifecycle.stop;
+      appendWorkspaceApplication(workspaceDir, {
+        appId,
+        configPath: parsed.configPath,
+        lifecycle: Object.keys(lifecycle).length > 0 ? lifecycle : null,
+      });
+
+      let runResult: { ready: boolean; error: string | null; detail: string };
+      try {
+        await ensureAppRunning(workspaceId, appId);
+        runResult = { ready: true, error: null, detail: "App installed and running" };
+      } catch (error) {
+        const message = (error instanceof Error ? error.message : String(error)).slice(0, 2000);
+        runResult = { ready: false, error: message, detail: message };
+      }
+
+      // Write the MCP registry entry now that ensureAppRunning has allocated ports.
+      // Best-effort: if port lookup fails (e.g. embedded runtime flag not set), fall back to null.
+      if (parsed.mcpTools.length > 0) {
+        try {
+          const resolvedApp = resolveWorkspaceApp(workspaceDir, appId, { store, workspaceId });
+          writeWorkspaceMcpRegistryEntry(workspaceDir, appId, {
+            mcpEnabled: true,
+            mcpTools: parsed.mcpTools,
+            mcpPath: "/mcp/sse",
+            mcpTimeoutMs: 30000,
+            mcpPort: resolvedApp.ports.mcp,
+          });
+        } catch (error) {
+          app.log.warn(
+            { workspaceId, appId, err: error },
+            "failed to write mcp_registry entry after install-archive"
+          );
+        }
+      }
+
+      return {
+        app_id: appId,
+        status: "enabled",
+        detail: runResult.detail,
+        ready: runResult.ready,
+        error: runResult.error,
+      };
+    } finally {
+      if (cleanupTempFile) {
+        try {
+          fs.rmSync(archivePath, { force: true });
+        } catch {
+          /* best effort cleanup */
+        }
+      }
+    }
   });
 
   app.post("/api/v1/apps/install", async (request, reply) => {

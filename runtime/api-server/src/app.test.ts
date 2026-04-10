@@ -4319,3 +4319,195 @@ mcp:
   }
 });
 
+// ── archive_url tests ──────────────────────────────────────────────────────────
+
+test("isAllowedArchiveUrl accepts github releases and rejects others", async () => {
+  const { isAllowedArchiveUrl } = await import("./app.js");
+  assert.equal(
+    isAllowedArchiveUrl(
+      "https://github.com/holaboss-ai/holaboss-modules/releases/download/v0.1.0/twitter-module-darwin-arm64.tar.gz",
+    ),
+    true,
+  );
+  assert.equal(isAllowedArchiveUrl("https://evil.test/twitter.tar.gz"), false);
+  assert.equal(
+    isAllowedArchiveUrl("http://github.com/holaboss-ai/holaboss-modules/releases/download/x.tar.gz"),
+    false,
+  );
+  assert.equal(isAllowedArchiveUrl(""), false);
+  assert.equal(isAllowedArchiveUrl("not-a-url"), false);
+});
+
+test("POST /apps/install-archive rejects url outside allowlist", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-url-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/apps/install-archive",
+      payload: {
+        workspace_id: workspace.id,
+        app_id: "evil",
+        archive_url: "https://evil.test/twitter.tar.gz",
+      },
+    });
+    assert.equal(res.statusCode, 400);
+    const body = res.json();
+    assert.match(
+      String(body.error ?? body.detail ?? body.message ?? ""),
+      /allowlist|archive_url/,
+    );
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
+test("POST /apps/install-archive rejects both archive_path and archive_url", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-both-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/apps/install-archive",
+      payload: {
+        workspace_id: workspace.id,
+        app_id: "twitter",
+        archive_path: "/tmp/x.tar.gz",
+        archive_url:
+          "https://github.com/holaboss-ai/holaboss-modules/releases/download/v0.1.0/twitter-module-darwin-arm64.tar.gz",
+      },
+    });
+    assert.equal(res.statusCode, 400);
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
+test("POST /apps/install-archive rejects request with neither path nor url", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-neither-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/apps/install-archive",
+      payload: {
+        workspace_id: workspace.id,
+        app_id: "twitter",
+      },
+    });
+    assert.equal(res.statusCode, 400);
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
+test("POST /apps/install-archive with archive_url downloads and installs", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-url-dl-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const fixtureBuf = fs.readFileSync(MINIMAL_APP_FIXTURE);
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/gzip" });
+    res.end(fixtureBuf);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const addr = server.address();
+  if (!addr || typeof addr === "string") throw new Error("no server address");
+  const url = `http://127.0.0.1:${addr.port}/minimal.tar.gz`;
+
+  const savedEnv = process.env.HOLABOSS_APP_ARCHIVE_URL_ALLOWLIST;
+  process.env.HOLABOSS_APP_ARCHIVE_URL_ALLOWLIST = `http://127.0.0.1:${addr.port}/`;
+
+  try {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/apps/install-archive",
+      payload: {
+        workspace_id: workspace.id,
+        app_id: "minimal",
+        archive_url: url,
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.app_id, "minimal");
+
+    const installed = path.join(
+      store.workspaceDir(workspace.id),
+      "apps",
+      "minimal",
+      "app.runtime.yaml",
+    );
+    assert.equal(fs.existsSync(installed), true);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve())),
+    );
+    if (savedEnv === undefined) {
+      delete process.env.HOLABOSS_APP_ARCHIVE_URL_ALLOWLIST;
+    } else {
+      process.env.HOLABOSS_APP_ARCHIVE_URL_ALLOWLIST = savedEnv;
+    }
+    await app.close();
+    store.close();
+  }
+});
+
