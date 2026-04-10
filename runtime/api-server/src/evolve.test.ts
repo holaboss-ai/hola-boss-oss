@@ -15,6 +15,7 @@ import {
   enqueueEvolveJob,
   processEvolveJob,
 } from "./evolve.js";
+import { persistSkillCreateCandidate, reviewTurnForSkillCreateCandidate } from "./evolve-skill-review.js";
 import { RuntimeEvolveWorker } from "./evolve-worker.js";
 import { writeTurnContinuity } from "./turn-memory-writeback.js";
 
@@ -54,6 +55,31 @@ function seedWorkspace(store: RuntimeStateStore): void {
     harness: "pi",
     status: "active",
   });
+}
+
+async function withMockedFetch<T>(fn: () => Promise<T>, responsePayload: Record<string, unknown>): Promise<T> {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify(responsePayload),
+            },
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }
+    )) as typeof fetch;
+  try {
+    return await fn();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 }
 
 test("queued evolve memory writeback persists durable memories and refreshes indexes", async () => {
@@ -143,6 +169,287 @@ test("createEvolveTaskProposal tags task proposals with the evolve source", () =
 
   assert.equal(proposal.proposalSource, "evolve");
   assert.equal(store.getTaskProposal("proposal-evolve-1")?.proposalSource, "evolve");
+  store.close();
+});
+
+test("skill review only proposes candidates on the configured completed-turn cadence", async () => {
+  const { store } = makeRuntimeState("hb-evolve-skill-cadence-");
+  seedWorkspace(store);
+  for (let index = 1; index <= 4; index += 1) {
+    store.upsertTurnResult({
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      inputId: `input-${index}`,
+      startedAt: `2026-04-0${Math.min(index, 9)}T12:00:00.000Z`,
+      completedAt: `2026-04-0${Math.min(index, 9)}T12:00:05.000Z`,
+      status: "completed",
+      stopReason: "ok",
+      assistantText: `Turn ${index} complete.`,
+    });
+  }
+  const turnResult = store.upsertTurnResult({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-5",
+    startedAt: "2026-04-10T12:00:00.000Z",
+    completedAt: "2026-04-10T12:00:05.000Z",
+    status: "completed",
+    stopReason: "ok",
+    assistantText: "Validated the release process and captured the reusable workflow.",
+    toolUsageSummary: { tool_names: ["read", "bash"], total_calls: 4 },
+  });
+  store.insertSessionMessage({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    role: "user",
+    text: "Document the reusable release verification workflow.",
+    messageId: "user-5",
+    createdAt: "2026-04-10T12:00:00.000Z",
+  });
+
+  const notDue = await reviewTurnForSkillCreateCandidate({
+    store,
+    turnResult: store.upsertTurnResult({
+      workspaceId: "workspace-1",
+      sessionId: "session-other",
+      inputId: "single-turn",
+      startedAt: "2026-04-10T13:00:00.000Z",
+      completedAt: "2026-04-10T13:00:05.000Z",
+      status: "completed",
+      stopReason: "ok",
+      assistantText: "One turn only.",
+    }),
+    modelClient: { baseUrl: "https://example.test/openai/v1", apiKey: "token", modelId: "gpt-test" },
+    instruction: "Should not run yet.",
+  });
+  assert.equal(notDue.reason, "not_due");
+
+  const result = await withMockedFetch(
+    () =>
+      reviewTurnForSkillCreateCandidate({
+        store,
+        turnResult,
+        modelClient: { baseUrl: "https://example.test/openai/v1", apiKey: "token", modelId: "gpt-test" },
+        instruction: "Create a reusable skill if this workflow is broadly applicable.",
+      }),
+    {
+      candidate: {
+        title: "Release verification skill",
+        summary: "Reusable release verification workflow.",
+        slug: "release-verification",
+        when_to_use: "Use when validating release readiness before shipping.",
+        workflow: [
+          "Run the release verification checks in order.",
+          "Confirm build output and test status before shipping.",
+        ],
+        verification: ["Run npm run test.", "Confirm the release build succeeds."],
+        confidence: 0.93,
+        evaluation_notes: "Repeated validation flow worth promoting.",
+      },
+    }
+  );
+
+  assert.equal(result.reason, "candidate_ready");
+  assert.equal(result.draft?.slug, "release-verification");
+  assert.match(result.draft?.skillMarkdown ?? "", /name: release-verification/);
+  store.close();
+});
+
+test("persistSkillCreateCandidate writes the draft artifact and dedupes active candidates", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-evolve-skill-persist-");
+  seedWorkspace(store);
+  const turnResult = store.upsertTurnResult({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-10",
+    startedAt: "2026-04-10T12:00:00.000Z",
+    completedAt: "2026-04-10T12:00:05.000Z",
+    status: "completed",
+    stopReason: "ok",
+    assistantText: "Reusable workflow captured.",
+  });
+
+  const candidate = await persistSkillCreateCandidate({
+    store,
+    memoryService,
+    turnResult,
+    draft: {
+      kind: "skill_create",
+      title: "Release verification skill",
+      summary: "Reusable release verification workflow.",
+      slug: "release-verification",
+      skillMarkdown: [
+        "---",
+        "name: release-verification",
+        "description: Reusable release verification workflow.",
+        "---",
+        "# Release verification skill",
+      ].join("\n"),
+      confidence: 0.91,
+      evaluationNotes: "Looks reusable.",
+      sourceTurnInputIds: ["input-10"],
+    },
+  });
+
+  const persistedAgain = await persistSkillCreateCandidate({
+    store,
+    memoryService,
+    turnResult,
+    draft: {
+      kind: "skill_create",
+      title: "Release verification skill",
+      summary: "Reusable release verification workflow.",
+      slug: "release-verification",
+      skillMarkdown: [
+        "---",
+        "name: release-verification",
+        "description: Reusable release verification workflow.",
+        "---",
+        "# Release verification skill",
+      ].join("\n"),
+      confidence: 0.91,
+      evaluationNotes: "Looks reusable.",
+      sourceTurnInputIds: ["input-10"],
+    },
+  });
+
+  const captured = await memoryService.capture({ workspace_id: "workspace-1" });
+  const files = captured.files as Record<string, string>;
+  assert.equal(candidate.kind, "skill_create");
+  assert.equal(candidate.status, "draft");
+  assert.equal(persistedAgain.candidateId, candidate.candidateId);
+  assert.ok(files[candidate.skillPath]);
+  assert.match(files[candidate.skillPath], /name: release-verification/);
+  store.close();
+});
+
+test("processClaimedInput promotes accepted evolve skill candidates into live workspace skills", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-evolve-skill-promotion-");
+  seedWorkspace(store);
+  const workspaceDir = store.workspaceDir("workspace-1");
+  fs.writeFileSync(
+    path.join(workspaceDir, "workspace.yaml"),
+    ["skills:", "  enabled:", "    - skill-creator", ""].join("\n"),
+    "utf8"
+  );
+  store.ensureSession({
+    workspaceId: "workspace-1",
+    sessionId: "session-review",
+    kind: "task_proposal",
+    title: "Review evolve skill",
+  });
+  const draftMarkdown = [
+    "---",
+    "name: release-verification",
+    "description: Reusable release verification workflow.",
+    "---",
+    "# Release verification skill",
+    "",
+    "## When To Use",
+    "Use when validating release readiness before shipping.",
+    "",
+    "## Workflow",
+    "1. Run the release verification checks in order.",
+  ].join("\n");
+  await memoryService.upsert({
+    workspace_id: "workspace-1",
+    path: "workspace/workspace-1/evolve/skills/evolve-skill-input-10/SKILL.md",
+    content: draftMarkdown,
+  });
+  store.createEvolveSkillCandidate({
+    candidateId: "evolve-skill-input-10",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-10",
+    kind: "skill_create",
+    status: "accepted",
+    taskProposalId: "evolve-proposal-1",
+    title: "Release verification skill",
+    summary: "Reusable release verification workflow.",
+    slug: "release-verification",
+    skillPath: "workspace/workspace-1/evolve/skills/evolve-skill-input-10/SKILL.md",
+    contentFingerprint: "fp-skill",
+    sourceTurnInputIds: ["input-10"],
+    acceptedAt: "2026-04-10T00:00:00.000Z",
+  });
+
+  const queued = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-review",
+    payload: {
+      text: "Review and promote the evolve candidate.",
+      context: {
+        source: "task_proposal",
+        proposal_source: "evolve",
+        evolve_candidate: {
+          candidate_id: "evolve-skill-input-10",
+          kind: "skill_create",
+          title: "Release verification skill",
+          summary: "Reusable release verification workflow.",
+          slug: "release-verification",
+          skill_path: "workspace/workspace-1/evolve/skills/evolve-skill-input-10/SKILL.md",
+          target_skill_path: "skills/release-verification/SKILL.md",
+          skill_markdown: draftMarkdown,
+          task_proposal_id: "evolve-proposal-1",
+        },
+      },
+    },
+  });
+  store.insertSessionMessage({
+    workspaceId: "workspace-1",
+    sessionId: "session-review",
+    role: "user",
+    text: "Review and promote the evolve candidate.",
+    messageId: `user-${queued.inputId}`,
+  });
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    memoryService,
+    runEvolveTasksFn: async () => {},
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {},
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "output_delta",
+        payload: { delta: "Reviewed the skill draft and it is ready for promotion." },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 3,
+        event_type: "run_completed",
+        payload: { status: "ok" },
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true,
+      };
+    },
+  });
+
+  const liveSkillPath = path.join(workspaceDir, "skills", "release-verification", "SKILL.md");
+  assert.equal(fs.readFileSync(liveSkillPath, "utf8"), draftMarkdown);
+  assert.equal(store.getEvolveSkillCandidate("evolve-skill-input-10")?.status, "promoted");
+  assert.ok(store.getEvolveSkillCandidate("evolve-skill-input-10")?.promotedAt);
+  assert.match(fs.readFileSync(path.join(workspaceDir, "workspace.yaml"), "utf8"), /release-verification/);
   store.close();
 });
 

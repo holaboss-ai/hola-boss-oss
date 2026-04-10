@@ -15,7 +15,7 @@ import yazl from "yazl";
 import { buildRuntimeApiServer, type BuildRuntimeApiServerOptions } from "./app.js";
 import { appLocalNpmCacheDir, buildAppSetupEnv } from "./app-setup-env.js";
 import type { AppLifecycleExecutorLike } from "./app-lifecycle-worker.js";
-import type { MemoryServiceLike } from "./memory.js";
+import { FilesystemMemoryService, type MemoryServiceLike } from "./memory.js";
 import type { RuntimeConfigServiceLike } from "./runtime-config.js";
 import type { RunnerExecutorLike } from "./runner-worker.js";
 
@@ -49,13 +49,13 @@ function makeTempDir(prefix: string): string {
 
 function buildTestRuntimeApiServer(options: BuildRuntimeApiServerOptions) {
   return buildRuntimeApiServer({
-    ...options,
     queueWorker: null,
     durableMemoryWorker: null,
     cronWorker: null,
     bridgeWorker: null,
     enableAppHealthMonitor: false,
-    startAppsOnReady: false
+    startAppsOnReady: false,
+    ...options,
   });
 }
 
@@ -3975,7 +3975,9 @@ test("accept task proposal creates a child session with queued work", async () =
   assert.deepEqual(childInput.payload.context, {
     source: "task_proposal",
     proposal_id: "proposal-1",
-    parent_session_id: "session-main"
+    proposal_source: "proactive",
+    parent_session_id: "session-main",
+    evolve_candidate: null,
   });
 
   const childHistory = store.listSessionMessages({
@@ -3992,6 +3994,167 @@ test("accept task proposal creates a child session with queued work", async () =
     payload: {}
   });
   assert.equal(secondAccept.statusCode, 409);
+
+  await app.close();
+  store.close();
+});
+
+test("accepting and dismissing evolve task proposals updates linked skill candidates", async () => {
+  const root = makeTempDir("hb-runtime-api-evolve-task-proposal-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const memoryService = new FilesystemMemoryService({ workspaceRoot: store.workspaceRoot });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    kind: "main",
+    title: "Main"
+  });
+  store.upsertBinding({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    harness: "pi",
+    harnessSessionId: "session-main"
+  });
+  store.createEvolveSkillCandidate({
+    candidateId: "evolve-skill-input-10",
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: "input-10",
+    kind: "skill_create",
+    status: "proposed",
+    taskProposalId: "evolve-proposal-1",
+    title: "Release verification skill",
+    summary: "Reusable release verification workflow.",
+    slug: "release-verification",
+    skillPath: `workspace/${workspace.id}/evolve/skills/evolve-skill-input-10/SKILL.md`,
+    contentFingerprint: "fp-1",
+    sourceTurnInputIds: ["input-10"],
+    proposedAt: "2026-04-10T00:00:00.000Z",
+  });
+  await memoryService.upsert({
+    workspace_id: workspace.id,
+    path: `workspace/${workspace.id}/evolve/skills/evolve-skill-input-10/SKILL.md`,
+    content: [
+      "---",
+      "name: release-verification",
+      "description: Reusable release verification workflow.",
+      "---",
+      "# Release verification skill",
+      "",
+      "## Workflow",
+      "1. Run verification checks.",
+    ].join("\n"),
+  });
+  store.createTaskProposal({
+    proposalId: "evolve-proposal-1",
+    workspaceId: workspace.id,
+    taskName: "Review new reusable skill: Release verification skill",
+    taskPrompt: "Review and promote the candidate skill.",
+    taskGenerationRationale: "Evolve detected a reusable workflow.",
+    proposalSource: "evolve",
+    sourceEventIds: ["input-10"],
+    createdAt: "2026-04-10T00:00:00.000Z"
+  });
+  store.createTaskProposal({
+    proposalId: "evolve-proposal-2",
+    workspaceId: workspace.id,
+    taskName: "Dismiss me",
+    taskPrompt: "Dismiss evolve candidate.",
+    taskGenerationRationale: "Evolve needs a user decision.",
+    proposalSource: "evolve",
+    sourceEventIds: ["input-11"],
+    createdAt: "2026-04-10T00:01:00.000Z"
+  });
+  store.createEvolveSkillCandidate({
+    candidateId: "evolve-skill-input-11",
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: "input-11",
+    kind: "skill_create",
+    status: "proposed",
+    taskProposalId: "evolve-proposal-2",
+    title: "Deploy status check skill",
+    summary: "Reusable deploy status verification workflow.",
+    slug: "deploy-status-check",
+    skillPath: `workspace/${workspace.id}/evolve/skills/evolve-skill-input-11/SKILL.md`,
+    contentFingerprint: "fp-2",
+    sourceTurnInputIds: ["input-11"],
+    proposedAt: "2026-04-10T00:01:00.000Z",
+  });
+
+  let wakeCount = 0;
+  const app = buildTestRuntimeApiServer({
+    store,
+    memoryService,
+    queueWorker: {
+      async start() {},
+      wake() {
+        wakeCount += 1;
+      },
+      async close() {},
+    }
+  });
+
+  const accepted = await app.inject({
+    method: "POST",
+    url: "/api/v1/task-proposals/evolve-proposal-1/accept",
+    payload: {
+      parent_session_id: "session-main",
+      created_by: "workspace_user"
+    }
+  });
+  assert.equal(accepted.statusCode, 200);
+  const acceptedBody = accepted.json();
+  assert.equal(acceptedBody.proposal.proposal_source, "evolve");
+  const acceptedInput = store.getInput(acceptedBody.input.input_id);
+  assert.ok(acceptedInput);
+  assert.deepEqual(acceptedInput.payload.context, {
+    source: "task_proposal",
+    proposal_id: "evolve-proposal-1",
+    proposal_source: "evolve",
+    parent_session_id: "session-main",
+    evolve_candidate: {
+      candidate_id: "evolve-skill-input-10",
+      kind: "skill_create",
+      title: "Release verification skill",
+      summary: "Reusable release verification workflow.",
+      slug: "release-verification",
+      skill_path: `workspace/${workspace.id}/evolve/skills/evolve-skill-input-10/SKILL.md`,
+      target_skill_path: "skills/release-verification/SKILL.md",
+      skill_markdown: [
+        "---",
+        "name: release-verification",
+        "description: Reusable release verification workflow.",
+        "---",
+        "# Release verification skill",
+        "",
+        "## Workflow",
+        "1. Run verification checks.",
+      ].join("\n"),
+      task_proposal_id: "evolve-proposal-1",
+    },
+  });
+  assert.equal(store.getEvolveSkillCandidate("evolve-skill-input-10")?.status, "accepted");
+  assert.equal(wakeCount, 1);
+
+  const dismissed = await app.inject({
+    method: "PATCH",
+    url: "/api/v1/task-proposals/evolve-proposal-2",
+    payload: { state: "dismissed" }
+  });
+  assert.equal(dismissed.statusCode, 200);
+  assert.equal(dismissed.json().proposal.proposal_source, "evolve");
+  assert.equal(store.getEvolveSkillCandidate("evolve-skill-input-11")?.status, "dismissed");
+  assert.ok(store.getEvolveSkillCandidate("evolve-skill-input-11")?.dismissedAt);
 
   await app.close();
   store.close();

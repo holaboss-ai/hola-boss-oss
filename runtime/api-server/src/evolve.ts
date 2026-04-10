@@ -3,6 +3,11 @@ import { randomUUID } from "node:crypto";
 import type { PostRunJobRecord, RuntimeStateStore, TaskProposalRecord } from "@holaboss/runtime-state-store";
 
 import { createBackgroundTaskMemoryModelClient } from "./background-task-model.js";
+import {
+  persistSkillCreateCandidate,
+  reviewTurnForSkillCreateCandidate,
+  skillCandidateProposalId,
+} from "./evolve-skill-review.js";
 import type { MemoryServiceLike } from "./memory.js";
 import { writeTurnDurableMemory, type TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
 
@@ -25,6 +30,10 @@ export function createEvolveTaskProposal(params: {
   createdAt?: string;
   state?: string;
 }): TaskProposalRecord {
+  const existing = params.proposalId ? params.store.getTaskProposal(params.proposalId) : null;
+  if (existing) {
+    return existing;
+  }
   return params.store.createTaskProposal({
     proposalId: params.proposalId ?? randomUUID(),
     workspaceId: params.workspaceId,
@@ -130,5 +139,43 @@ export async function processEvolveJob(params: {
     memoryService: params.memoryService,
     turnResult,
     modelContext,
+  });
+
+  const skillReview = await reviewTurnForSkillCreateCandidate({
+    store: params.store,
+    turnResult,
+    modelClient: modelContext?.modelClient ?? null,
+    instruction: modelContext?.instruction ?? trimmedInstruction(payload.instruction) ?? "",
+  });
+  if (!skillReview.draft) {
+    return;
+  }
+  const candidate = await persistSkillCreateCandidate({
+    store: params.store,
+    memoryService: params.memoryService,
+    turnResult,
+    draft: skillReview.draft,
+  });
+  if (candidate.taskProposalId || candidate.status === "proposed" || candidate.status === "accepted" || candidate.status === "promoted") {
+    return;
+  }
+  const proposal = createEvolveTaskProposal({
+    store: params.store,
+    workspaceId: candidate.workspaceId,
+    proposalId: skillCandidateProposalId(candidate.candidateId),
+    taskName: `Review new reusable skill: ${candidate.title}`,
+    taskPrompt: `Review and promote the candidate skill "${candidate.title}" for this workspace. Inspect the draft artifact at ${candidate.skillPath}, refine it if needed, and promote it only if it is broadly reusable.`,
+    taskGenerationRationale:
+      candidate.evaluationNotes ??
+      "Evolve identified a reusable workflow that is not captured in the current promoted skill set.",
+    sourceEventIds: candidate.sourceTurnInputIds,
+  });
+  params.store.updateEvolveSkillCandidate({
+    candidateId: candidate.candidateId,
+    fields: {
+      taskProposalId: proposal.proposalId,
+      status: "proposed",
+      proposedAt: new Date().toISOString(),
+    },
   });
 }

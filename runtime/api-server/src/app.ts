@@ -122,6 +122,7 @@ import {
   persistDurableMemoryCandidate,
   refreshMemoryIndexes,
 } from "./turn-memory-writeback.js";
+import { promotedWorkspaceSkillPath } from "./evolve-skill-review.js";
 import { captureWorkspaceContext } from "./proactive-context.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 50;
@@ -4716,6 +4717,21 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 409, "session_id is already in use");
     }
 
+    const evolveCandidate =
+      proposal.proposalSource === "evolve" ? store.getEvolveSkillCandidateByTaskProposalId(proposal.proposalId) : null;
+    let evolveCandidateMarkdown: string | null = null;
+    if (evolveCandidate) {
+      try {
+        const draft = await memoryService.get({
+          workspace_id: proposal.workspaceId,
+          path: evolveCandidate.skillPath,
+        });
+        evolveCandidateMarkdown = typeof draft.text === "string" ? draft.text : null;
+      } catch {
+        evolveCandidateMarkdown = null;
+      }
+    }
+
     const session = store.ensureSession({
       workspaceId: proposal.workspaceId,
       sessionId,
@@ -4751,7 +4767,21 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         context: {
           source: "task_proposal",
           proposal_id: proposal.proposalId,
-          parent_session_id: parentSessionId
+          proposal_source: proposal.proposalSource,
+          parent_session_id: parentSessionId,
+          evolve_candidate: evolveCandidate
+            ? {
+                candidate_id: evolveCandidate.candidateId,
+                kind: evolveCandidate.kind,
+                title: evolveCandidate.title,
+                summary: evolveCandidate.summary,
+                slug: evolveCandidate.slug,
+                skill_path: evolveCandidate.skillPath,
+                target_skill_path: promotedWorkspaceSkillPath(evolveCandidate.slug),
+                skill_markdown: typeof evolveCandidateMarkdown === "string" ? evolveCandidateMarkdown : null,
+                task_proposal_id: evolveCandidate.taskProposalId,
+              }
+            : null,
         }
       }
     });
@@ -4784,6 +4814,15 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         acceptedAt: utcNowIso()
       }
     });
+    if (evolveCandidate) {
+      store.updateEvolveSkillCandidate({
+        candidateId: evolveCandidate.candidateId,
+        fields: {
+          status: "accepted",
+          acceptedAt: updatedProposal?.acceptedAt ?? utcNowIso(),
+        }
+      });
+    }
     queueWorker?.wake();
 
     return reply.send({
@@ -4817,6 +4856,18 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     });
     if (!proposal) {
       return sendError(reply, 404, "Task proposal not found");
+    }
+    if (proposal.proposalSource === "evolve" && proposal.state === "dismissed") {
+      const candidate = store.getEvolveSkillCandidateByTaskProposalId(proposal.proposalId);
+      if (candidate) {
+        store.updateEvolveSkillCandidate({
+          candidateId: candidate.candidateId,
+          fields: {
+            status: "dismissed",
+            dismissedAt: utcNowIso(),
+          }
+        });
+      }
     }
     return { proposal: taskProposalPayload(proposal) };
   });

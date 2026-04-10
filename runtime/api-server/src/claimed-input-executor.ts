@@ -15,6 +15,7 @@ import type { MemoryServiceLike } from "./memory.js";
 import { createBackgroundTaskMemoryModelClient } from "./background-task-model.js";
 import type { TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
 import { runEvolveTasks } from "./evolve-tasks.js";
+import { promoteAcceptedSkillCreateCandidate } from "./evolve-skill-review.js";
 import { collectWorkspaceFileManifest, detectWorkspaceFileOutputs, type WorkspaceFileManifest } from "./turn-output-capture.js";
 import { compactTurnSummary } from "./turn-result-summary.js";
 
@@ -420,6 +421,30 @@ function maybeCreateCronjobCompletionNotification(params: {
       delivery: job.delivery,
       cronjob_metadata: metadata,
     },
+  });
+}
+
+async function maybePromoteAcceptedEvolveSkillCandidate(params: {
+  store: RuntimeStateStore;
+  record: SessionInputRecord;
+  turnResult: TurnResultRecord;
+  memoryService?: MemoryServiceLike | null;
+}): Promise<void> {
+  if (!params.memoryService || params.turnResult.status !== "completed") {
+    return;
+  }
+  const context = isRecord(params.record.payload.context) ? params.record.payload.context : null;
+  const source = optionalString(context?.source)?.toLowerCase();
+  const proposalSource = optionalString(context?.proposal_source)?.toLowerCase();
+  const evolveCandidate = isRecord(context?.evolve_candidate) ? context?.evolve_candidate : null;
+  const candidateId = optionalString(evolveCandidate?.candidate_id);
+  if (source !== "task_proposal" || proposalSource !== "evolve" || !candidateId) {
+    return;
+  }
+  await promoteAcceptedSkillCreateCandidate({
+    store: params.store,
+    memoryService: params.memoryService,
+    candidateId,
   });
 }
 
@@ -1128,6 +1153,16 @@ export async function processClaimedInput(params: {
       promptCacheProfile,
       tokenUsage,
     });
+    try {
+      await maybePromoteAcceptedEvolveSkillCandidate({
+        store,
+        record,
+        turnResult,
+        memoryService: params.memoryService,
+      });
+    } catch {
+      // Skill promotion is best-effort and should not fail the completed turn.
+    }
     if (deferredTerminalEvent) {
       lastSequence = appendNextOutputEvent({
         store,

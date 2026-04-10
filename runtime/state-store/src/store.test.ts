@@ -1094,7 +1094,10 @@ test("turn results support upsert, lookup, count, and listing", () => {
   ]);
   assert.deepEqual(store.getTurnResult({ inputId: "input-1" }), updated);
   assert.equal(store.countTurnResults({ workspaceId: "workspace-1", sessionId: "session-main" }), 1);
+  assert.equal(store.countTurnResults({ workspaceId: "workspace-1", sessionId: "session-main", status: "completed" }), 0);
+  assert.equal(store.countTurnResults({ workspaceId: "workspace-1", sessionId: "session-main", status: "waiting_user" }), 1);
   assert.deepEqual(store.listTurnResults({ workspaceId: "workspace-1", sessionId: "session-main" }), [updated]);
+  assert.deepEqual(store.listTurnResults({ workspaceId: "workspace-1", sessionId: "session-main", status: "waiting_user" }), [updated]);
   store.close();
 });
 
@@ -1550,6 +1553,59 @@ test("task proposal round trip preserves explicit evolve source", () => {
 
   assert.equal(proposal.proposalSource, "evolve");
   assert.equal(store.getTaskProposal("proposal-evolve-1")?.proposalSource, "evolve");
+  store.close();
+});
+
+test("evolve skill candidates round trip supports create, list, lookup, and update", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.ensureSession({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    kind: "main",
+    title: "Main"
+  });
+
+  const created = store.createEvolveSkillCandidate({
+    candidateId: "candidate-1",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    kind: "skill_create",
+    status: "draft",
+    title: "Release verification skill",
+    summary: "Reusable release verification workflow.",
+    slug: "release-verification",
+    skillPath: "workspace/workspace-1/evolve/skills/candidate-1/SKILL.md",
+    contentFingerprint: "fp-1",
+    confidence: 0.91,
+    evaluationNotes: "Looks reusable.",
+    sourceTurnInputIds: ["input-1"],
+  });
+
+  const fetched = store.getEvolveSkillCandidate("candidate-1");
+  const listed = store.listEvolveSkillCandidates({ workspaceId: "workspace-1" });
+  const updated = store.updateEvolveSkillCandidate({
+    candidateId: "candidate-1",
+    fields: {
+      taskProposalId: "proposal-1",
+      status: "proposed",
+      proposedAt: "2026-04-10T00:00:00.000Z",
+    }
+  });
+
+  assert.equal(created.kind, "skill_create");
+  assert.equal(created.status, "draft");
+  assert.equal(created.slug, "release-verification");
+  assert.equal(fetched?.candidateId, "candidate-1");
+  assert.equal(fetched?.evaluationNotes, "Looks reusable.");
+  assert.equal(listed.length, 1);
+  assert.equal(updated?.taskProposalId, "proposal-1");
+  assert.equal(updated?.status, "proposed");
+  assert.equal(store.getEvolveSkillCandidateByTaskProposalId("proposal-1")?.candidateId, "candidate-1");
   store.close();
 });
 
