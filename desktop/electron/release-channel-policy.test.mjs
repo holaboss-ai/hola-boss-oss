@@ -42,7 +42,7 @@ test("desktop updater uses electron-updater and exposes install-now state", asyn
   assert.match(source, /autoUpdater\.on\("update-downloaded"/);
   assert.match(source, /await autoUpdater\.checkForUpdates\(\);/);
   assert.match(source, /handleTrustedIpc\("appUpdate:installNow", \["main"\], async \(\) => \{/);
-  assert.match(source, /autoUpdater\.quitAndInstall\(false, true\);/);
+  assert.match(source, /autoUpdater\.quitAndInstall\(true, true\);/);
 });
 
 test("runtime staging searches the runtime release channel before any legacy fallback", async () => {
@@ -95,6 +95,12 @@ test("desktop release workflow uploads the Windows auto-update artifacts", async
     "utf8",
   );
 
+  assert.match(source, /WINDOWS_CERTIFICATE: \$\{\{ secrets\.WINDOWS_CERTIFICATE \}\}/);
+  assert.match(source, /WINDOWS_CERTIFICATE_PASSWORD: \$\{\{ secrets\.WINDOWS_CERTIFICATE_PASSWORD \}\}/);
+  assert.match(
+    source,
+    /throw "Windows desktop release requires WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD so the public installer is code-signed\."/,
+  );
   assert.match(source, /generated_installer_path=/);
   assert.match(source, /latest\.yml was not generated/);
   assert.match(source, /desktop\/out\/release\/\*\.yml/);

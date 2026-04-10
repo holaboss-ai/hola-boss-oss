@@ -581,3 +581,27 @@ test("chat pane stops auto-follow as soon as the user scrolls upward during stre
     /shouldAutoScrollRef\.current = scrolledUp \? false : nearBottom;/,
   );
 });
+
+test("chat pane custom scrollbar thumb can be dragged", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const chatScrollbarDragStateRef = useRef<ChatScrollbarDragState \| null>\(/,
+  );
+  assert.match(
+    source,
+    /function updateChatScrollFromScrollbarPointer\([\s\S]*container\.scrollTop = nextScrollTop;[\s\S]*syncChatScrollMetrics\(container\);/,
+  );
+  assert.match(
+    source,
+    /event\.currentTarget\.setPointerCapture\(event\.pointerId\);/,
+  );
+  assert.match(source, /data-chat-scrollbar-thumb="true"/);
+  assert.match(source, /onPointerDown=\{handleChatScrollbarPointerDown\}/);
+  assert.match(source, /onPointerMove=\{handleChatScrollbarPointerMove\}/);
+  assert.match(
+    source,
+    /onLostPointerCapture=\{\(\) => \{\s*clearChatScrollbarDragState\(\);\s*\}\}/,
+  );
+});

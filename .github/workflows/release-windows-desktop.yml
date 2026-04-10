@@ -156,11 +156,11 @@ jobs:
           WIN_CSC_LINK: ${{ env.WINDOWS_CERTIFICATE }}
           WIN_CSC_KEY_PASSWORD: ${{ env.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
-          if ($env:WINDOWS_CERTIFICATE) {
-            Write-Host "Building signed Windows installer."
-          } else {
-            Write-Host "Building unsigned Windows installer because WINDOWS_CERTIFICATE is not configured."
+          if (-not $env:WINDOWS_CERTIFICATE -or -not $env:WINDOWS_CERTIFICATE_PASSWORD) {
+            throw "Windows desktop release requires WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD so the public installer is code-signed."
           }
+
+          Write-Host "Building signed Windows installer."
 
           npm run dist:win:local
 

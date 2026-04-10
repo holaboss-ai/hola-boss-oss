@@ -1247,7 +1247,8 @@ function installAppUpdateNow() {
   if (!appUpdateStatus.downloaded) {
     throw new Error("No downloaded update is ready to install.");
   }
-  autoUpdater.quitAndInstall(false, true);
+  // Treat the toast action as an immediate in-place restart, not a manual installer flow.
+  autoUpdater.quitAndInstall(true, true);
 }
 
 async function openExternalUrl(rawUrl: string): Promise<void> {
@@ -5795,7 +5796,31 @@ async function ensureRuntimeBindingReadyForWorkspaceFlow(
     return;
   }
 
-  const user = await getAuthenticatedUser();
+  let user: AuthUserPayload | null;
+  try {
+    user = await getAuthenticatedUser();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const canUseExistingBindingOnSessionLookupFailure =
+      runtimeConfigHasBindingMaterial(currentConfig) &&
+      !Boolean(options?.forceRefresh) &&
+      !(allowProvisionWhenUnmanaged && !controlPlaneManaged);
+    if (
+      canUseExistingBindingOnSessionLookupFailure &&
+      isTransientRuntimeError(error)
+    ) {
+      appendRuntimeEventLog({
+        category: "auth",
+        event: "runtime_binding.session_lookup",
+        outcome: "skipped",
+        detail:
+          `${reason}:using_existing_binding_after_transient_session_lookup_failure:` +
+          detail,
+      });
+      return;
+    }
+    throw error;
+  }
   if (!user) {
     if (canUsePersistedRuntimeBindingWithoutAuth(currentConfig)) {
       return;
@@ -9902,6 +9927,8 @@ async function queueSessionInput(
   if (sessionQueueRequiresRuntimeBinding(currentConfig, payload.model)) {
     await ensureRuntimeBindingReadyForWorkspaceFlow("session_queue");
   }
+  const idempotencyKey =
+    payload.idempotency_key?.trim() || `desktop-session-input:${randomUUID()}`;
   return requestRuntimeJson<EnqueueSessionInputResponsePayload>({
     method: "POST",
     path: "/api/v1/agent-sessions/queue",
@@ -9911,10 +9938,11 @@ async function queueSessionInput(
       image_urls: payload.image_urls,
       attachments: payload.attachments ?? null,
       session_id: payload.session_id,
-      idempotency_key: payload.idempotency_key,
+      idempotency_key: idempotencyKey,
       priority: payload.priority ?? 0,
       model: payload.model,
     },
+    retryTransientErrors: true,
   });
 }
 

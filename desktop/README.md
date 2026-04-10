@@ -203,7 +203,7 @@ Notes:
 
 Signed macOS distribution is handled by the manual `.github/workflows/release-macos-desktop.yml` workflow. Normal pushes continue to run CI and publish runtime bundles separately; the signed DMG is only built when you explicitly trigger the desktop release workflow.
 
-Windows distribution is handled by the manual `.github/workflows/release-windows-desktop.yml` workflow. It builds the Windows installer on `windows-latest`, uploads the produced NSIS installer to the chosen GitHub release, and will sign the installer when `WINDOWS_CERTIFICATE` and `WINDOWS_CERTIFICATE_PASSWORD` secrets are configured. Without those secrets, the workflow still produces an unsigned installer.
+Windows distribution is handled by the manual `.github/workflows/release-windows-desktop.yml` workflow. It builds the Windows installer on `windows-latest`, uploads the produced NSIS installer to the chosen GitHub release, and requires `WINDOWS_CERTIFICATE` and `WINDOWS_CERTIFICATE_PASSWORD` so the public installer is code-signed. The workflow now fails fast instead of publishing an unsigned installer.
 
 Release channel policy:
 - runtime-only bundle releases publish under `holaboss-runtime-*` and are treated as prereleases
@@ -217,6 +217,8 @@ The desktop release workflow requires these repository secrets and fails fast wh
 - `APPLE_ID`: Apple Developer account email
 - `APPLE_APP_SPECIFIC_PASSWORD`: app-specific password from Apple ID settings
 - `APPLE_TEAM_ID`: Apple Developer Team ID
+- `WINDOWS_CERTIFICATE`: base64-encoded or file-backed Windows code-signing certificate
+- `WINDOWS_CERTIFICATE_PASSWORD`: password for the Windows certificate
 
 When triggering the workflow, provide:
 

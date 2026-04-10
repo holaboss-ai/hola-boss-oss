@@ -4,6 +4,7 @@ import {
   type DragEvent,
   FormEvent,
   KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type RefObject,
   useEffect,
   useLayoutEffect,
@@ -107,6 +108,11 @@ interface ChatTodoPlan {
   sessionId: string;
   updatedAt: string | null;
   phases: ChatTodoPhase[];
+}
+
+interface ChatScrollbarDragState {
+  pointerId: number;
+  thumbPointerOffset: number;
 }
 
 interface PendingLocalAttachmentFile {
@@ -1672,12 +1678,18 @@ export function ChatPane({
   >({});
   const messagesRef = useRef<HTMLDivElement>(null);
   const messagesContentRef = useRef<HTMLDivElement>(null);
+  const chatScrollbarThumbRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerBlockRef = useRef<HTMLDivElement>(null);
   const composerIsComposingRef = useRef(false);
   const shouldAutoScrollRef = useRef(true);
   const lastChatScrollTopRef = useRef(0);
+  const chatScrollbarDragStateRef = useRef<ChatScrollbarDragState | null>(
+    null,
+  );
+  const chatScrollbarBodyUserSelectRef = useRef<string | null>(null);
+  const chatScrollbarBodyCursorRef = useRef<string | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
   const activeStreamIdRef = useRef<string | null>(null);
   const activeAssistantMessageIdRef = useRef<string | null>(null);
@@ -2238,6 +2250,120 @@ export function ChatPane({
     });
   }
 
+  function clearChatScrollbarDragState() {
+    chatScrollbarDragStateRef.current = null;
+    if (typeof document === "undefined") {
+      return;
+    }
+    if (chatScrollbarBodyUserSelectRef.current !== null) {
+      document.body.style.userSelect = chatScrollbarBodyUserSelectRef.current;
+      chatScrollbarBodyUserSelectRef.current = null;
+    }
+    if (chatScrollbarBodyCursorRef.current !== null) {
+      document.body.style.cursor = chatScrollbarBodyCursorRef.current;
+      chatScrollbarBodyCursorRef.current = null;
+    }
+  }
+
+  function updateChatScrollFromScrollbarPointer(
+    railElement: HTMLDivElement,
+    clientY: number,
+    thumbPointerOffset: number,
+  ) {
+    const container = messagesRef.current;
+    if (!container || !showCustomChatScrollbar || chatScrollRange <= 0) {
+      return;
+    }
+
+    const railRect = railElement.getBoundingClientRect();
+    const unclampedThumbOffset =
+      clientY - railRect.top - thumbPointerOffset;
+    const nextThumbOffset = Math.min(
+      Math.max(0, unclampedThumbOffset),
+      chatScrollbarThumbTravel,
+    );
+    const nextScrollTop =
+      chatScrollbarThumbTravel > 0
+        ? (nextThumbOffset / chatScrollbarThumbTravel) * chatScrollRange
+        : 0;
+
+    shouldAutoScrollRef.current = false;
+    container.scrollTop = nextScrollTop;
+    syncChatScrollMetrics(container);
+  }
+
+  function handleChatScrollbarPointerDown(
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) {
+    if (event.button !== 0 || !showCustomChatScrollbar) {
+      return;
+    }
+
+    let thumbPointerOffset = chatScrollbarThumbHeight / 2;
+    if (
+      event.target instanceof Node &&
+      chatScrollbarThumbRef.current?.contains(event.target)
+    ) {
+      const thumbRect = chatScrollbarThumbRef.current.getBoundingClientRect();
+      thumbPointerOffset = Math.min(
+        Math.max(0, event.clientY - thumbRect.top),
+        chatScrollbarThumbHeight,
+      );
+    }
+
+    chatScrollbarDragStateRef.current = {
+      pointerId: event.pointerId,
+      thumbPointerOffset,
+    };
+
+    if (typeof document !== "undefined") {
+      if (chatScrollbarBodyUserSelectRef.current === null) {
+        chatScrollbarBodyUserSelectRef.current = document.body.style.userSelect;
+      }
+      if (chatScrollbarBodyCursorRef.current === null) {
+        chatScrollbarBodyCursorRef.current = document.body.style.cursor;
+      }
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "grabbing";
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    updateChatScrollFromScrollbarPointer(
+      event.currentTarget,
+      event.clientY,
+      thumbPointerOffset,
+    );
+    event.preventDefault();
+  }
+
+  function handleChatScrollbarPointerMove(
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) {
+    const dragState = chatScrollbarDragStateRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+    updateChatScrollFromScrollbarPointer(
+      event.currentTarget,
+      event.clientY,
+      dragState.thumbPointerOffset,
+    );
+    event.preventDefault();
+  }
+
+  function handleChatScrollbarPointerUp(
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) {
+    const dragState = chatScrollbarDragStateRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    clearChatScrollbarDragState();
+  }
+
   function upsertLiveTraceStep(step: ChatTraceStep) {
     const next = upsertTraceStep(liveTraceStepsRef.current, step);
     setLiveTraceStepsState(next);
@@ -2306,6 +2432,8 @@ export function ChatPane({
   useEffect(() => {
     selectedWorkspaceRef.current = selectedWorkspace;
   }, [selectedWorkspace]);
+
+  useEffect(() => clearChatScrollbarDragState, []);
 
   useEffect(() => {
     if (!isResponding) {
@@ -3773,6 +3901,13 @@ export function ChatPane({
     : 0;
 
   useEffect(() => {
+    if (showCustomChatScrollbar) {
+      return;
+    }
+    clearChatScrollbarDragState();
+  }, [showCustomChatScrollbar]);
+
+  useEffect(() => {
     if (!hasMessages) {
       setChatScrollMetrics({
         scrollTop: 0,
@@ -4169,14 +4304,44 @@ export function ChatPane({
           {showCustomChatScrollbar ? (
             <div className="pointer-events-none absolute inset-y-0 right-1 z-20 w-4">
               <div
-                className="absolute left-1/2 w-[3px] -translate-x-1/2 rounded-full"
+                className="pointer-events-auto absolute inset-x-0 touch-none"
                 style={{
-                  top: `${chatScrollbarRailInset + chatScrollbarThumbOffset}px`,
-                  height: `${chatScrollbarThumbHeight}px`,
-                  background:
-                    "color-mix(in oklch, var(--primary) 28%, transparent)",
+                  top: `${chatScrollbarRailInset}px`,
+                  height: `${chatScrollbarRailHeight}px`,
                 }}
-              />
+                onPointerDown={handleChatScrollbarPointerDown}
+                onPointerMove={handleChatScrollbarPointerMove}
+                onPointerUp={handleChatScrollbarPointerUp}
+                onPointerCancel={handleChatScrollbarPointerUp}
+                onLostPointerCapture={() => {
+                  clearChatScrollbarDragState();
+                }}
+              >
+                <div
+                  className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 rounded-full"
+                  style={{
+                    background:
+                      "color-mix(in oklch, var(--foreground) 10%, transparent)",
+                  }}
+                />
+                <div
+                  ref={chatScrollbarThumbRef}
+                  data-chat-scrollbar-thumb="true"
+                  className="absolute left-1/2 w-4 -translate-x-1/2 rounded-full cursor-grab active:cursor-grabbing"
+                  style={{
+                    top: `${chatScrollbarThumbOffset}px`,
+                    height: `${chatScrollbarThumbHeight}px`,
+                  }}
+                >
+                  <div
+                    className="absolute left-1/2 top-0 h-full w-[3px] -translate-x-1/2 rounded-full"
+                    style={{
+                      background:
+                        "color-mix(in oklch, var(--primary) 28%, transparent)",
+                    }}
+                  />
+                </div>
+              </div>
             </div>
           ) : null}
 
