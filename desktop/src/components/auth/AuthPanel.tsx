@@ -5,6 +5,8 @@ import {
   RefreshCw,
   ShieldCheck,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import anthropicLogoMarkup from "@/assets/providers/anthropic.svg?raw";
 import geminiLogoMarkup from "@/assets/providers/gemini.svg?raw";
 import minimaxLogoMarkup from "@/assets/providers/minimax.svg?raw";
@@ -1789,8 +1791,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       <div className="grid gap-2">
         <label className="grid gap-1">
           <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Base URL</span>
-          <input
-            className="auth-settings-control theme-control-surface h-9 rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground outline-none transition"
+          <Input
+            className="auth-settings-control theme-control-surface h-9 rounded-[10px] border-border/45 text-foreground"
             value={draft.baseUrl}
             onChange={(event) => updateProviderDraft(providerId, { baseUrl: event.target.value })}
             placeholder={template.defaultBaseUrl}
@@ -1799,8 +1801,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         </label>
         <label className="grid gap-1">
           <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">API Key</span>
-          <input
-            className="auth-settings-control theme-control-surface h-9 rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground outline-none transition"
+          <Input
+            className="auth-settings-control theme-control-surface h-9 rounded-[10px] border-border/45 text-foreground"
             type="password"
             value={draft.apiKey}
             onChange={(event) => updateProviderDraft(providerId, { apiKey: event.target.value })}
@@ -1819,22 +1821,24 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           />
         </label>
         <div className="flex flex-wrap gap-2 pt-1">
-          <button
-            type="button"
+          <Button
+            variant="outline"
+            size="lg"
             onClick={() => void handleSaveRuntimeSettings(providerId)}
             disabled={isSavingRuntimeConfigDocument}
-            className="theme-control-surface rounded-[10px] border border-primary/30 bg-primary/8 px-3 py-2 text-sm text-foreground transition hover:border-primary/45 disabled:cursor-not-allowed disabled:opacity-50"
+            className="theme-control-surface rounded-[10px] border-primary/30 bg-primary/8 px-3 text-foreground hover:border-primary/45 hover:bg-primary/12"
           >
             {isSavingRuntimeConfigDocument ? "Saving..." : "Save"}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="outline"
+            size="lg"
             onClick={() => handleCancelProviderEditing(providerId)}
             disabled={isSavingRuntimeConfigDocument}
-            className="theme-control-surface rounded-[10px] border border-border/45 px-3 py-2 text-sm text-foreground transition hover:border-border/70 disabled:cursor-not-allowed disabled:opacity-50"
+            className="theme-control-surface rounded-[10px] border-border/45 px-3 text-foreground hover:border-border/70"
           >
             Cancel
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -1895,68 +1899,74 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   Enabled
                 </div>
               ) : (
-                <button
-                  type="button"
+                <Button
+                  variant="outline"
+                  size="lg"
                   onClick={() => void handleStartSignIn()}
                   disabled={isStartingSignIn}
-                  className={`${actionButtonClassName} border border-neon-green/40 bg-neon-green/10 text-neon-green hover:bg-neon-green/16`}
+                  className={`${actionButtonClassName} border-neon-green/40 bg-neon-green/10 text-neon-green hover:bg-neon-green/16`}
                 >
                   {isStartingSignIn ? "Opening..." : "Sign in"}
-                </button>
+                </Button>
               )
             ) : isConnected ? (
               <>
-                <button
-                  type="button"
+                <Button
+                  variant="outline"
+                  size="lg"
                   onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
                   disabled={isSavingRuntimeConfigDocument}
-                  className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-primary/35`}
+                  className={`${actionButtonClassName} border-border/45 text-foreground hover:border-primary/35`}
                 >
                   {isExpanded ? "Hide" : "Edit"}
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="outline"
+                  size="lg"
                   onClick={() => void handleDisconnectRuntimeProvider(providerId)}
                   disabled={isSavingRuntimeConfigDocument}
-                  className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-destructive/40 hover:text-destructive`}
+                  className={`${actionButtonClassName} border-border/45 text-foreground hover:border-destructive/40 hover:text-destructive`}
                 >
                   {isDisconnecting ? "Disconnecting..." : "Disconnect"}
-                </button>
+                </Button>
               </>
             ) : hasPendingConnection ? (
               <>
-                <button
-                  type="button"
+                <Button
+                  variant="outline"
+                  size="lg"
                   onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
                   disabled={isSavingRuntimeConfigDocument}
-                  className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-primary/35`}
+                  className={`${actionButtonClassName} border-border/45 text-foreground hover:border-primary/35`}
                 >
                   {isExpanded ? "Hide" : "Edit"}
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="outline"
+                  size="lg"
                   onClick={() => {
                     updateProviderDraft(providerId, { enabled: false });
                     setExpandedProviderId((current) => (current === providerId ? null : current));
                   }}
                   disabled={isSavingRuntimeConfigDocument}
-                  className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-destructive/40 hover:text-destructive`}
+                  className={`${actionButtonClassName} border-border/45 text-foreground hover:border-destructive/40 hover:text-destructive`}
                 >
                   Cancel
-                </button>
+                </Button>
               </>
             ) : (
-              <button
-                type="button"
+              <Button
+                variant="outline"
+                size="lg"
                 onClick={() => {
                   updateProviderDraft(providerId, { enabled: true });
                   setExpandedProviderId(providerId);
                 }}
                 disabled={isSavingRuntimeConfigDocument}
-                className={`${actionButtonClassName} border border-border/55 text-foreground hover:border-neon-green/35 hover:text-neon-green`}
+                className={`${actionButtonClassName} border-border/55 text-foreground hover:border-neon-green/35 hover:text-neon-green`}
               >
                 Connect
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -2039,8 +2049,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 </Select>
               ) : (
                 <>
-                  <input
-                    className="auth-settings-control theme-control-surface h-9 rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground outline-none transition"
+                  <Input
+                    className="auth-settings-control theme-control-surface h-9 rounded-[10px] border-border/45 text-foreground"
                     value={backgroundTasksDraft.model}
                     onChange={(event) => updateBackgroundTasksDraft({ model: event.target.value })}
                     placeholder={backgroundTaskModelPlaceholder(
@@ -2142,8 +2152,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 </Select>
               ) : (
                 <>
-                  <input
-                    className="auth-settings-control theme-control-surface h-9 rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground outline-none transition"
+                  <Input
+                    className="auth-settings-control theme-control-surface h-9 rounded-[10px] border-border/45 text-foreground"
                     value={imageGenerationDraft.model}
                     onChange={(event) => updateImageGenerationDraft({ model: event.target.value })}
                     placeholder={imageGenerationModelPlaceholder(
@@ -2257,38 +2267,39 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             <div className="flex shrink-0 items-center gap-2 self-start md:self-auto">
               {isSignedIn ? (
                 <>
-                  <button
-                    type="button"
+                  <Button
+                    variant="outline"
+                    size="icon-lg"
                     aria-label="Refresh session"
                     onClick={() => void handleRefreshSession()}
                     disabled={sessionState.isPending}
-                    className="grid h-11 w-11 place-items-center rounded-[16px] border border-border/45 bg-background text-muted-foreground transition hover:border-primary/35 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                    className="h-11 w-11 rounded-[16px] border-border/45 bg-background text-muted-foreground hover:border-primary/35 hover:text-foreground"
                   >
                     {sessionState.isPending ? (
                       <Loader2 size={16} className="animate-spin" />
                     ) : (
                       <RefreshCw size={16} />
                     )}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="icon-lg"
                     aria-label="Sign out"
                     onClick={() => void handleSignOut()}
                     disabled={!isSignedIn}
-                    className="grid h-11 w-11 place-items-center rounded-[16px] border border-destructive/20 bg-destructive/5 text-destructive transition hover:border-destructive/35 hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="h-11 w-11 rounded-[16px] border border-destructive/20 bg-destructive/5 text-destructive hover:border-destructive/35 hover:bg-destructive/10"
                   >
                     <LogOut size={16} />
-                  </button>
+                  </Button>
                 </>
               ) : (
-                <button
-                  className="inline-flex h-10 items-center justify-center rounded-full border border-primary/35 bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                  type="button"
+                <Button
+                  className="h-10 rounded-full border border-primary/35 bg-primary px-4 text-primary-foreground hover:opacity-90"
                   onClick={() => void handleStartSignIn()}
                   disabled={isStartingSignIn}
                 >
                   {isStartingSignIn ? "Opening sign-in..." : "Sign in"}
-                </button>
+                </Button>
               )}
             </div>
           </div>
@@ -2384,33 +2395,33 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
             <div className="mt-4 flex flex-wrap gap-2">
               {!isSignedIn && (
-                <button
-                  className="inline-flex h-10 items-center justify-center rounded-[16px] border border-primary/40 bg-primary/10 px-4 text-sm text-primary transition hover:bg-primary/16 disabled:cursor-not-allowed disabled:opacity-50"
-                  type="button"
+                <Button
+                  variant="outline"
+                  className="h-10 rounded-[16px] border-primary/40 bg-primary/10 px-4 text-primary hover:bg-primary/16"
                   onClick={() => void handleStartSignIn()}
                   disabled={isStartingSignIn}
                 >
                   {isStartingSignIn ? "Opening sign-in..." : "Sign in with browser"}
-                </button>
+                </Button>
               )}
 
-              <button
-                className="theme-control-surface inline-flex h-10 items-center justify-center rounded-[16px] border border-border/45 px-4 text-sm text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
-                type="button"
+              <Button
+                variant="outline"
+                className="theme-control-surface h-10 rounded-[16px] border-border/45 px-4 text-foreground hover:border-primary/35"
                 onClick={() => void handleRefreshSession()}
                 disabled={sessionState.isPending}
               >
                 Refresh session
-              </button>
+              </Button>
 
-              <button
-                className="inline-flex h-10 items-center justify-center rounded-[16px] border border-destructive/30 bg-destructive/10 px-4 text-sm text-destructive transition hover:border-destructive/45 hover:bg-destructive/15 disabled:cursor-not-allowed disabled:opacity-50"
-                type="button"
+              <Button
+                variant="destructive"
+                className="h-10 rounded-[16px] border border-destructive/30 bg-destructive/10 px-4 text-destructive hover:border-destructive/45 hover:bg-destructive/15"
                 onClick={() => void handleSignOut()}
                 disabled={!isSignedIn}
               >
                 Sign out
-              </button>
+              </Button>
             </div>
 
             {(authMessage || authError) && (
