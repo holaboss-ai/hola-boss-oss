@@ -4,6 +4,8 @@ import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import { getWorkspaceAppDefinition, type WorkspaceAppDefinition, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
 import { resolveAppSurfacePath } from "./appSurfaceRoute";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 
 interface AppSurfacePaneProps {
   appId: string;
@@ -140,7 +142,7 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
   if (!ready && !error) {
     return (
       <div className="flex h-full min-h-0 gap-2">
-        <section className="flex w-[260px] shrink-0 items-center justify-center rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+        <Card className="flex w-[260px] shrink-0 items-center justify-center shadow-md backdrop-blur-sm bg-card/80">
           <div className="max-w-[200px] text-center">
             <LoaderCircle size={20} className="mx-auto animate-spin text-muted-foreground" />
             <div className="mt-3 text-sm font-medium text-foreground">{label}</div>
@@ -148,13 +150,13 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
               Initializing... This may take a few minutes on first setup.
             </div>
           </div>
-        </section>
-        <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+        </Card>
+        <Card className="flex min-w-0 flex-1 items-center justify-center shadow-md backdrop-blur-sm bg-card/80">
           <div className="text-center">
             <LoaderCircle size={16} className="mx-auto animate-spin text-muted-foreground" />
             <div className="mt-2 text-xs text-muted-foreground">Waiting for app...</div>
           </div>
-        </section>
+        </Card>
       </div>
     );
   }
@@ -163,7 +165,7 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
   if (!ready && error) {
     return (
       <div className="flex h-full min-h-0 gap-2">
-        <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 p-4 shadow-md backdrop-blur-sm">
+        <Card className="w-[260px] shrink-0 p-4 shadow-md backdrop-blur-sm bg-card/80">
           <div className="flex items-center gap-2 text-destructive">
             <Activity size={14} />
             <span className="text-[10px] uppercase tracking-widest">App error</span>
@@ -173,28 +175,28 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
             <div className="text-xs leading-5 text-foreground">{error}</div>
           </div>
           <div className="mt-3">
-            <button
-              type="button"
+            <Button
+              variant="outline"
               onClick={() => void handleRemove()}
               disabled={isRemoving}
-              className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+              className="gap-2 text-xs text-muted-foreground"
             >
               {isRemoving ? <LoaderCircle size={13} className="animate-spin" /> : <Trash2 size={13} />}
               Remove
-            </button>
+            </Button>
           </div>
           {actionError ? (
             <div className="mt-2 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
               {actionError}
             </div>
           ) : null}
-        </section>
-        <section className="flex min-w-0 flex-1 items-center justify-center rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+        </Card>
+        <Card className="flex min-w-0 flex-1 items-center justify-center shadow-md backdrop-blur-sm bg-card/80">
           <div className="text-center">
             <Activity size={18} className="mx-auto text-destructive" />
             <div className="mt-2 text-xs text-muted-foreground">App failed to start</div>
           </div>
-        </section>
+        </Card>
       </div>
     );
   }
@@ -203,7 +205,7 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
   return (
     <div className="flex h-full min-h-0 gap-2">
       {/* Left: App info card */}
-      <section className="flex w-[260px] shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+      <Card className="w-[260px] shrink-0 shadow-md backdrop-blur-sm bg-card/80">
         <div className="chat-scrollbar-hidden flex-1 overflow-y-auto p-4">
           <div className="flex items-center gap-2.5">
             <span className={`size-2.5 shrink-0 rounded-full ${accentClassName}`} />
@@ -262,41 +264,41 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
         {/* Actions pinned to bottom */}
         <div className="border-t border-border p-3">
           <div className="flex flex-col gap-1.5">
-            <button
-              type="button"
+            <Button
+              variant="outline"
               onClick={() => setReloadKey((k) => k + 1)}
-              className="flex h-8 items-center justify-center gap-2 rounded-md border border-border text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              className="w-full gap-2 text-xs text-muted-foreground"
             >
               <RefreshCw size={12} />
               Reload
-            </button>
+            </Button>
             {confirmRemove ? (
               <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
+                <Button
+                  variant="destructive"
                   onClick={() => void handleRemove()}
                   disabled={isRemoving}
-                  className="flex h-8 flex-1 items-center justify-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 text-xs text-destructive transition-colors hover:bg-destructive/15 disabled:opacity-50"
+                  className="flex-1 gap-2 text-xs"
                 >
                   {isRemoving ? "Removing..." : "Confirm"}
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="outline"
                   onClick={() => setConfirmRemove(false)}
-                  className="flex h-8 flex-1 items-center justify-center rounded-md border border-border text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                  className="flex-1 text-xs text-muted-foreground"
                 >
                   Cancel
-                </button>
+                </Button>
               </div>
             ) : (
-              <button
-                type="button"
+              <Button
+                variant="outline"
                 onClick={() => setConfirmRemove(true)}
-                className="flex h-8 items-center justify-center gap-2 rounded-md border border-border text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                className="w-full gap-2 text-xs text-muted-foreground"
               >
                 <Trash2 size={12} />
                 Remove app
-              </button>
+              </Button>
             )}
           </div>
 
@@ -306,7 +308,7 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
             </div>
           ) : null}
         </div>
-      </section>
+      </Card>
 
       {/* Right: App iframe */}
       <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-md shadow-black/5">
@@ -336,14 +338,14 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
               <div className="max-w-sm rounded-lg border border-destructive/25 bg-destructive/5 p-4 text-center">
                 <div className="text-sm font-medium text-foreground">App preview unavailable</div>
                 <div className="mt-2 text-xs leading-5 text-muted-foreground">{frameError}</div>
-                <button
-                  type="button"
+                <Button
+                  variant="outline"
                   onClick={() => setReloadKey((k) => k + 1)}
-                  className="mt-3 inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-xs text-foreground transition-colors hover:bg-accent"
+                  className="mt-3 gap-2 text-xs text-foreground"
                 >
                   <RefreshCw size={12} />
                   Retry
-                </button>
+                </Button>
               </div>
             </div>
           ) : null}
