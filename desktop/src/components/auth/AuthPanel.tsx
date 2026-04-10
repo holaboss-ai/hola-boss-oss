@@ -1168,11 +1168,11 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
   const badgeClassName =
     statusTone === "error"
-      ? "border-rose-400/35 bg-rose-500/10 text-rose-400"
+      ? "border-destructive/35 bg-destructive/10 text-destructive"
       : statusTone === "ready"
-        ? "border-emerald-400/35 bg-emerald-400/10 text-emerald-400"
+        ? "border-success/35 bg-success/10 text-success"
         : statusTone === "syncing"
-          ? "border-amber-300/35 bg-amber-400/10 text-amber-300"
+          ? "border-warning/35 bg-warning/10 text-warning"
           : "border-border/45 bg-muted/40 text-muted-foreground";
 
   useEffect(() => {
@@ -1905,7 +1905,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   size="lg"
                   onClick={() => void handleStartSignIn()}
                   disabled={isStartingSignIn}
-                  className={`${actionButtonClassName} border-emerald-400/40 bg-emerald-400/10 text-emerald-400 hover:bg-emerald-400/16`}
+                  className={`${actionButtonClassName} border-success/40 bg-success/10 text-success hover:bg-success/16`}
                 >
                   {isStartingSignIn ? "Opening..." : "Sign in"}
                 </Button>
@@ -1964,7 +1964,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   setExpandedProviderId(providerId);
                 }}
                 disabled={isSavingRuntimeConfigDocument}
-                className={`${actionButtonClassName} border-border/55 text-foreground hover:border-emerald-400/35 hover:text-emerald-400`}
+                className={`${actionButtonClassName} border-border/55 text-foreground hover:border-success/35 hover:text-success`}
               >
                 Connect
               </Button>
@@ -2260,13 +2260,13 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                     variant="outline"
                     className={
                       runtimeBindingReady
-                        ? "border-emerald-400/35 bg-emerald-400/10 text-emerald-400"
+                        ? "border-success/35 bg-success/10 text-success"
                         : isSignedIn
-                          ? "border-amber-300/35 bg-amber-400/10 text-amber-300"
+                          ? "border-warning/35 bg-warning/10 text-warning"
                           : ""
                     }
                   >
-                    <span className={`inline-block h-1.5 w-1.5 rounded-full ${runtimeBindingReady ? "bg-emerald-400" : isSignedIn ? "bg-amber-400" : "bg-muted-foreground/50"}`} />
+                    <span className={`inline-block h-1.5 w-1.5 rounded-full ${runtimeBindingReady ? "bg-success" : isSignedIn ? "bg-warning" : "bg-muted-foreground/50"}`} />
                     {runtimeBindingReady
                       ? "Runtime ready"
                       : isSignedIn
@@ -2321,8 +2321,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             <div
               className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
                 authError
-                  ? "border-rose-400/25 bg-rose-500/8 text-rose-400"
-                  : "border-emerald-400/25 bg-emerald-400/8 text-emerald-400"
+                  ? "border-destructive/25 bg-destructive/8 text-destructive"
+                  : "border-success/25 bg-success/8 text-success"
               }`}
             >
               {authError || authMessage}
@@ -2349,8 +2349,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           <div
             className={`mt-3 rounded-lg border px-4 py-3 text-sm ${
               authError
-                ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
-                : "border-emerald-400/35 bg-emerald-400/8 text-emerald-400"
+                ? "border-destructive/35 bg-destructive/8 text-destructive"
+                : "border-success/35 bg-success/8 text-success"
             }`}
           >
             {authError || authMessage}
@@ -2441,8 +2441,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               <div
                 className={`mt-3 rounded-lg border px-4 py-3 text-sm ${
                   authError
-                    ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
-                    : "border-emerald-400/35 bg-emerald-400/8 text-emerald-400"
+                    ? "border-destructive/35 bg-destructive/8 text-destructive"
+                    : "border-success/35 bg-success/8 text-success"
                 }`}
               >
                 {authError || authMessage}
@@ -2459,8 +2459,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             <div
               className={`mt-3 rounded-lg border px-4 py-3 text-sm ${
                 authError
-                  ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
-                  : "border-emerald-400/35 bg-emerald-400/8 text-emerald-400"
+                  ? "border-destructive/35 bg-destructive/8 text-destructive"
+                  : "border-success/35 bg-success/8 text-success"
               }`}
             >
               {authError || authMessage}
