@@ -1155,7 +1155,7 @@ export function isAllowedArchiveUrl(url: string): boolean {
   }
 
   const defaultPrefixes = [
-    "https://github.com/holaboss-ai/holaboss-modules/releases/download/",
+    "https://github.com/holaboss-ai/holaboss-apps/releases/download/",
   ];
   const envOverride = process.env.HOLABOSS_APP_ARCHIVE_URL_ALLOWLIST;
   const extraPrefixes = envOverride
