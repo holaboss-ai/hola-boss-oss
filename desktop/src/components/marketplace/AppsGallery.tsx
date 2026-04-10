@@ -1,42 +1,16 @@
 import { useEffect, useMemo } from "react";
-import { LoaderCircle, RefreshCw } from "lucide-react";
+import { ExternalLink, LoaderCircle, RotateCw } from "lucide-react";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { AppCatalogCard } from "./AppCatalogCard";
 
-function SourceToggle({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: "marketplace" | "local";
-  onChange: (next: "marketplace" | "local") => void;
-  disabled: boolean;
-}) {
-  return (
-    <div className="flex items-center gap-0.5 rounded-full border border-border bg-muted/30 p-0.5">
-      {(["marketplace", "local"] as const).map((option) => {
-        const active = value === option;
-        return (
-          <button
-            key={option}
-            type="button"
-            disabled={disabled}
-            onClick={() => onChange(option)}
-            className={[
-              "rounded-full px-3 py-1 text-[11px] font-medium transition-colors",
-              active
-                ? "bg-card text-foreground"
-                : "text-muted-foreground hover:text-foreground",
-              disabled ? "cursor-not-allowed opacity-60" : "",
-            ].join(" ")}
-          >
-            {option === "marketplace" ? "Marketplace" : "Local"}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
+const PROVIDER_DISPLAY: Record<string, string> = {
+  twitter: "Twitter / X",
+  linkedin: "LinkedIn",
+  reddit: "Reddit",
+  gmail: "Google (Gmail)",
+  googlesheets: "Google (Sheets)",
+  github: "GitHub",
+};
 
 export function AppsGallery() {
   const {
@@ -44,12 +18,15 @@ export function AppsGallery() {
     isLoadingAppCatalog,
     appCatalogError,
     appCatalogSource,
-    setAppCatalogSource,
     refreshAppCatalog,
     installingAppId,
     installAppFromCatalog,
     installedApps,
     selectedWorkspace,
+    pendingAppInstall,
+    clearPendingAppInstall,
+    connectAndInstallApp,
+    isConnectingAppIntegration,
   } = useWorkspaceDesktop();
 
   useEffect(() => {
@@ -66,48 +43,88 @@ export function AppsGallery() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="mb-4 flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-semibold tracking-tight text-foreground">Apps</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Install pre-built modules into your workspace.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void refreshAppCatalog()}
-            disabled={isLoadingAppCatalog || anyInstalling}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-3 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-50"
-          >
-            <RefreshCw size={13} />
-            Refresh
-          </button>
-        </div>
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          Install apps into your workspace.
+        </p>
+        <button
+          type="button"
+          onClick={() => void refreshAppCatalog()}
+          disabled={isLoadingAppCatalog || anyInstalling}
+          className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+        >
+          <RotateCw size={12} />
+          Refresh
+        </button>
       </div>
 
       {workspaceGated ? (
-        <div className="mb-3 rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+        <p className="mt-3 text-xs text-muted-foreground">
           Select a workspace to install apps.
-        </div>
+        </p>
       ) : null}
 
       {appCatalogError ? (
-        <div className="mb-3 rounded-lg border border-[rgba(255,153,102,0.24)] bg-[rgba(255,153,102,0.06)] p-3 text-xs text-[rgba(255,153,102,0.92)]">
+        <div className="mt-3 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
           {appCatalogError}
+        </div>
+      ) : null}
+
+      {/* Integration connection prompt */}
+      {pendingAppInstall ? (
+        <div className="mt-3 rounded-lg border border-border bg-card p-4">
+          <p className="text-sm font-medium text-foreground">
+            Connect {PROVIDER_DISPLAY[pendingAppInstall.provider] ?? pendingAppInstall.provider}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {pendingAppInstall.appId} requires a connected{" "}
+            {PROVIDER_DISPLAY[pendingAppInstall.provider] ?? pendingAppInstall.provider}{" "}
+            account to work. Connect it first, then the app will be installed automatically.
+          </p>
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              type="button"
+              disabled={isConnectingAppIntegration}
+              onClick={() => void connectAndInstallApp()}
+              className="inline-flex h-8 items-center gap-2 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+            >
+              {isConnectingAppIntegration ? (
+                <>
+                  <LoaderCircle size={13} className="animate-spin" />
+                  Waiting for authorization…
+                </>
+              ) : (
+                <>
+                  <ExternalLink size={13} />
+                  Connect account
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              disabled={isConnectingAppIntegration}
+              onClick={clearPendingAppInstall}
+              className="inline-flex h-8 items-center rounded-md px-3 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       ) : null}
 
       {isLoadingAppCatalog && appCatalog.length === 0 ? (
         <div className="flex flex-1 items-center justify-center">
-          <LoaderCircle size={18} className="animate-spin text-muted-foreground" />
+          <LoaderCircle
+            size={16}
+            className="animate-spin text-muted-foreground"
+          />
         </div>
       ) : appCatalog.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">
-          No {appCatalogSource === "marketplace" ? "published" : "local"} apps available.
+        <div className="mt-8 text-center text-xs text-muted-foreground">
+          No apps available.
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
           {appCatalog.map((entry) => {
             const isInstalled = installedIds.has(entry.app_id);
             const isInstalling = installingAppId === entry.app_id;
@@ -121,7 +138,11 @@ export function AppsGallery() {
                 key={`${entry.source}:${entry.app_id}`}
                 entry={entry}
                 state={state}
-                disabled={workspaceGated || (anyInstalling && !isInstalling)}
+                disabled={
+                  workspaceGated ||
+                  (anyInstalling && !isInstalling) ||
+                  Boolean(pendingAppInstall)
+                }
                 onInstall={() => void installAppFromCatalog(entry.app_id)}
               />
             );
