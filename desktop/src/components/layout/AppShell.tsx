@@ -1,11 +1,11 @@
 import {
-  LeftNavigationRail,
-  type LeftRailItem,
+    LeftNavigationRail,
+    type LeftRailItem,
 } from "@/components/layout/LeftNavigationRail";
 import { NotificationToastStack } from "@/components/layout/NotificationToastStack";
 import {
-  OperationsDrawer,
-  type OperationsDrawerTab,
+    OperationsDrawer,
+    type OperationsDrawerTab,
 } from "@/components/layout/OperationsDrawer";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
@@ -17,8 +17,8 @@ import { AutomationsPane } from "@/components/panes/AutomationsPane";
 import { BrowserPane } from "@/components/panes/BrowserPane";
 import { ChatPane } from "@/components/panes/ChatPane";
 import {
-  FileExplorerPane,
-  type FileExplorerFocusRequest,
+    FileExplorerPane,
+    type FileExplorerFocusRequest,
 } from "@/components/panes/FileExplorerPane";
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { MarketplacePane } from "@/components/panes/MarketplacePane";
@@ -29,35 +29,39 @@ import { UpdateReminder } from "@/components/ui/UpdateReminder";
 import { DesktopBillingProvider } from "@/lib/billing/useDesktopBilling";
 import { getWorkspaceAppDefinition } from "@/lib/workspaceApps";
 import {
-  useWorkspaceDesktop,
-  WorkspaceDesktopProvider,
+    useWorkspaceDesktop,
+    WorkspaceDesktopProvider,
 } from "@/lib/workspaceDesktop";
 import {
-  useWorkspaceSelection,
-  WorkspaceSelectionProvider,
+    useWorkspaceSelection,
+    WorkspaceSelectionProvider,
 } from "@/lib/workspaceSelection";
 import {
-  CircleCheck,
-  Clock3,
-  Inbox as InboxIcon,
-  Loader2,
-  PanelRightClose,
-  PanelRightOpen,
-  TriangleAlert,
-  XCircle,
+    CircleCheck,
+    Clock3,
+    Inbox as InboxIcon,
+    Loader2,
+    PanelRightClose,
+    PanelRightOpen,
+    TriangleAlert,
+    XCircle,
 } from "lucide-react";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+    type PointerEvent as ReactPointerEvent,
 } from "react";
 
 const THEME_STORAGE_KEY = "holaboss-theme-v1";
+const DEV_APP_UPDATE_PREVIEW_STORAGE_KEY = "holaboss-dev-app-update-preview-v1";
+const DEV_NOTIFICATION_TOAST_PREVIEW_ID_PREFIX =
+  "dev-notification-toast-preview:";
 const OPERATIONS_DRAWER_OPEN_STORAGE_KEY = "holaboss-operations-drawer-open-v1";
 const OPERATIONS_DRAWER_TAB_STORAGE_KEY = "holaboss-operations-drawer-tab-v1";
+const TASK_PROPOSAL_SEEN_STORAGE_KEY = "holaboss-task-proposal-seen-v1";
 const FILES_PANE_WIDTH_STORAGE_KEY = "holaboss-files-pane-width-v1";
 const BROWSER_PANE_WIDTH_STORAGE_KEY = "holaboss-browser-pane-width-v1";
 const SPACE_VISIBILITY_STORAGE_KEY = "holaboss-space-visibility-v1";
@@ -77,21 +81,24 @@ const THEMES = [
   "bubblegum-dark",
   "bubblegum-light",
 ] as const;
-const MIN_UTILITY_PANE_WIDTH = 200;
+const MIN_FILES_PANE_WIDTH = 220;
+const MIN_BROWSER_PANE_WIDTH = 120;
 const MAX_UTILITY_PANE_WIDTH = 720;
 const LEGACY_DEFAULT_FILES_PANE_WIDTH = 420;
-const DEFAULT_FILES_PANE_WIDTH = MIN_UTILITY_PANE_WIDTH;
+const DEFAULT_FILES_PANE_WIDTH = MIN_FILES_PANE_WIDTH;
 const DEFAULT_BROWSER_PANE_WIDTH = 460;
-const MIN_AGENT_CONTENT_WIDTH = 120;
+const MIN_AGENT_CONTENT_WIDTH = 380;
 const UTILITY_PANE_RESIZER_WIDTH = 16;
-const APP_UPDATE_NOTIFICATION_SOURCE = "app_update";
 const APP_UPDATE_CHANGELOG_BASE_URL =
   "https://github.com/holaboss-ai/holaboss-ai/releases/tag";
 const DEFAULT_NOTIFICATION_TOAST_DURATION_MS = 7_000;
 const CRITICAL_NOTIFICATION_TOAST_DURATION_MS = 12_000;
+const DEFAULT_PROACTIVE_HEARTBEAT_CRON = "0 9 * * *";
+const MAX_SEEN_TASK_PROPOSAL_IDS_PER_WORKSPACE = 200;
 
 type SpaceComponentId = "agent" | "files" | "browser";
 type UtilityPaneId = "files" | "browser";
+type DevAppUpdatePreviewMode = "off" | "downloading" | "ready";
 
 type SpaceVisibilityState = Record<SpaceComponentId, boolean>;
 
@@ -118,6 +125,20 @@ const DEFAULT_SPACE_VISIBILITY: SpaceVisibilityState = {
   files: true,
   browser: true,
 };
+
+declare global {
+  interface Window {
+    __holabossDevUpdatePreview?: {
+      downloading: () => void;
+      ready: () => void;
+      clear: () => void;
+    };
+    __holabossDevNotificationToastPreview?: {
+      stack: () => void;
+      clear: () => void;
+    };
+  }
+}
 
 export type AppTheme = (typeof THEMES)[number];
 
@@ -153,6 +174,8 @@ type AgentView =
 type ChatSessionOpenRequest = {
   sessionId: string;
   requestKey: number;
+  mode?: "session" | "draft";
+  parentSessionId?: string | null;
 };
 
 type ChatComposerPrefillRequest = {
@@ -174,39 +197,10 @@ type WorkspaceOutputNavigationTarget =
       htmlContent?: string | null;
     };
 
-function notificationPriorityRank(
-  priority: RuntimeNotificationPriority,
-): number {
-  if (priority === "critical") {
-    return 3;
-  }
-  if (priority === "high") {
-    return 2;
-  }
-  if (priority === "low") {
-    return 0;
-  }
-  return 1;
-}
-
-function notificationSortComparator(
-  left: RuntimeNotificationRecordPayload,
-  right: RuntimeNotificationRecordPayload,
-): number {
-  const priorityDelta =
-    notificationPriorityRank(right.priority) -
-    notificationPriorityRank(left.priority);
-  if (priorityDelta !== 0) {
-    return priorityDelta;
-  }
-
-  const createdAtDelta =
-    Date.parse(right.created_at) - Date.parse(left.created_at);
-  if (Number.isFinite(createdAtDelta) && createdAtDelta !== 0) {
-    return createdAtDelta;
-  }
-
-  return right.id.localeCompare(left.id);
+function utilityPaneMinWidth(paneId: UtilityPaneId): number {
+  return paneId === "files"
+    ? MIN_FILES_PANE_WIDTH
+    : MIN_BROWSER_PANE_WIDTH;
 }
 
 function notificationToastDurationMs(
@@ -217,15 +211,90 @@ function notificationToastDurationMs(
     : DEFAULT_NOTIFICATION_TOAST_DURATION_MS;
 }
 
-function appUpdateNotificationId(status: AppUpdateStatusPayload): string {
-  return `app-update:${status.latestVersion || status.publishedAt || "latest"}`;
+function isDevNotificationToastPreviewId(notificationId: string): boolean {
+  return notificationId.startsWith(DEV_NOTIFICATION_TOAST_PREVIEW_ID_PREFIX);
 }
 
-function appUpdateReleaseLabel(status: AppUpdateStatusPayload): string {
-  return status.latestVersion || "latest";
+function buildDevNotificationToastPreviewNotifications(
+  workspaceId: string | null,
+): RuntimeNotificationRecordPayload[] {
+  const normalizedWorkspaceId = workspaceId?.trim() || "dev-preview-workspace";
+  const now = Date.now();
+  return [
+    {
+      id: `${DEV_NOTIFICATION_TOAST_PREVIEW_ID_PREFIX}1`,
+      workspace_id: normalizedWorkspaceId,
+      cronjob_id: null,
+      source_type: "dev_preview",
+      source_label: "Preview",
+      title: "Task proposal ready",
+      message: "This is a collapsed preview stack. Hover it to fan the toasts out.",
+      level: "info",
+      priority: "normal",
+      state: "unread",
+      metadata: {},
+      read_at: null,
+      dismissed_at: null,
+      created_at: new Date(now - 45_000).toISOString(),
+      updated_at: new Date(now - 45_000).toISOString(),
+    },
+    {
+      id: `${DEV_NOTIFICATION_TOAST_PREVIEW_ID_PREFIX}2`,
+      workspace_id: normalizedWorkspaceId,
+      cronjob_id: null,
+      source_type: "dev_preview",
+      source_label: "Preview",
+      title: "Build completed",
+      message: "A success toast helps show the stacked depth and color treatment.",
+      level: "success",
+      priority: "low",
+      state: "unread",
+      metadata: {},
+      read_at: null,
+      dismissed_at: null,
+      created_at: new Date(now - 90_000).toISOString(),
+      updated_at: new Date(now - 90_000).toISOString(),
+    },
+    {
+      id: `${DEV_NOTIFICATION_TOAST_PREVIEW_ID_PREFIX}3`,
+      workspace_id: normalizedWorkspaceId,
+      cronjob_id: null,
+      source_type: "dev_preview",
+      source_label: "Preview",
+      title: "Workflow waiting on input",
+      message: "Use this preview hook whenever you want to inspect the stacked toast layout.",
+      level: "warning",
+      priority: "high",
+      state: "unread",
+      metadata: {},
+      read_at: null,
+      dismissed_at: null,
+      created_at: new Date(now - 135_000).toISOString(),
+      updated_at: new Date(now - 135_000).toISOString(),
+    },
+    {
+      id: `${DEV_NOTIFICATION_TOAST_PREVIEW_ID_PREFIX}4`,
+      workspace_id: normalizedWorkspaceId,
+      cronjob_id: null,
+      source_type: "dev_preview",
+      source_label: "Preview",
+      title: "Run failed",
+      message: "The fourth toast makes the overlap obvious without needing real notification traffic.",
+      level: "error",
+      priority: "critical",
+      state: "unread",
+      metadata: {},
+      read_at: null,
+      dismissed_at: null,
+      created_at: new Date(now - 180_000).toISOString(),
+      updated_at: new Date(now - 180_000).toISOString(),
+    },
+  ];
 }
 
-function appUpdateChangelogUrl(status: AppUpdateStatusPayload): string | null {
+function appUpdateChangelogUrl(
+  status: AppUpdateStatusPayload,
+): string | null {
   const version = status.latestVersion?.trim();
   if (!version) {
     return null;
@@ -247,6 +316,12 @@ function notificationActionUrl(
   return notificationMetadataString(notification, "action_url");
 }
 
+function notificationTargetSessionId(
+  notification: RuntimeNotificationRecordPayload,
+): string | null {
+  return notificationMetadataString(notification, "session_id");
+}
+
 function notificationActivationState(
   notification: RuntimeNotificationRecordPayload,
 ): RuntimeNotificationState {
@@ -263,75 +338,24 @@ function notificationActivationState(
   return "read";
 }
 
-function notificationReleaseTag(
-  notification: RuntimeNotificationRecordPayload,
-): string | null {
-  return notificationMetadataString(notification, "update_release_tag");
-}
-
-function isAppUpdateNotification(
-  notification: RuntimeNotificationRecordPayload,
-): boolean {
-  return (
-    notification.source_type === APP_UPDATE_NOTIFICATION_SOURCE ||
-    notificationMetadataString(notification, "notification_kind") ===
-      APP_UPDATE_NOTIFICATION_SOURCE
-  );
-}
-
-function buildAppUpdateNotification(
-  status: AppUpdateStatusPayload,
-  state: RuntimeNotificationState,
-): RuntimeNotificationRecordPayload {
-  const releaseLabel = appUpdateReleaseLabel(status);
-  const createdAt =
-    status.publishedAt || status.lastCheckedAt || "1970-01-01T00:00:00.000Z";
-  const actionUrl = appUpdateChangelogUrl(status);
-  const title = status.downloaded
-    ? `Holaboss ${releaseLabel} ready to install`
-    : `Holaboss ${releaseLabel} is downloading`;
-  const message = status.downloaded
-    ? "Restart to install it now, or close later and let it apply on quit."
-    : "Background download in progress. Open the changelog for details.";
-
-  return {
-    id: appUpdateNotificationId(status),
-    workspace_id: "",
-    cronjob_id: null,
-    source_type: APP_UPDATE_NOTIFICATION_SOURCE,
-    source_label: "Desktop updates",
-    title,
-    message,
-    level: "info",
-    priority: "critical",
-    state,
-    metadata: {
-      notification_kind: APP_UPDATE_NOTIFICATION_SOURCE,
-      action_url: actionUrl,
-      activation_state: "read",
-      update_release_tag: status.latestVersion ?? null,
-    },
-    read_at: state === "unread" ? null : createdAt,
-    dismissed_at: null,
-    created_at: createdAt,
-    updated_at: status.lastCheckedAt || createdAt,
-  };
-}
-
-function dismissedNotificationRecord(
-  notification: RuntimeNotificationRecordPayload,
-): RuntimeNotificationRecordPayload {
-  const timestamp = new Date().toISOString();
-  return {
-    ...notification,
-    state: "dismissed",
-    read_at: notification.read_at || timestamp,
-    dismissed_at: notification.dismissed_at || timestamp,
-    updated_at: timestamp,
-  };
-}
-
 function loadSpaceVisibility(): SpaceVisibilityState {
+  try {
+    const raw = localStorage.getItem(SPACE_VISIBILITY_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<
+        Record<SpaceComponentId, unknown>
+      >;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return {
+          agent: true,
+          files: true,
+          browser: true,
+        };
+      }
+    }
+  } catch {
+    // ignore invalid persisted layout state
+  }
   return DEFAULT_SPACE_VISIBILITY;
 }
 
@@ -344,7 +368,7 @@ function loadFilesPaneWidth(): number {
         return DEFAULT_FILES_PANE_WIDTH;
       }
       return Math.max(
-        MIN_UTILITY_PANE_WIDTH,
+        MIN_FILES_PANE_WIDTH,
         Math.min(parsed, MAX_UTILITY_PANE_WIDTH),
       );
     }
@@ -361,7 +385,7 @@ function loadBrowserPaneWidth(): number {
     const parsed = Number(raw);
     if (Number.isFinite(parsed)) {
       return Math.max(
-        MIN_UTILITY_PANE_WIDTH,
+        MIN_BROWSER_PANE_WIDTH,
         Math.min(parsed, MAX_UTILITY_PANE_WIDTH),
       );
     }
@@ -375,14 +399,17 @@ function loadBrowserPaneWidth(): number {
 function loadOperationsDrawerOpen(): boolean {
   try {
     const raw = localStorage.getItem(OPERATIONS_DRAWER_OPEN_STORAGE_KEY);
-    if (raw === "0") {
+    if (raw === "1" || raw === "true") {
+      return true;
+    }
+    if (raw === "0" || raw === "false") {
       return false;
     }
   } catch {
     // ignore
   }
 
-  return true;
+  return false;
 }
 
 function loadOperationsDrawerTab(): OperationsDrawerTab {
@@ -398,6 +425,44 @@ function loadOperationsDrawerTab(): OperationsDrawerTab {
   return "inbox";
 }
 
+function loadSeenTaskProposalIdsByWorkspace(): Record<string, string[]> {
+  try {
+    const raw = localStorage.getItem(TASK_PROPOSAL_SEEN_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+
+    const next: Record<string, string[]> = {};
+    for (const [workspaceId, proposalIds] of Object.entries(parsed)) {
+      const normalizedWorkspaceId = workspaceId.trim();
+      if (!normalizedWorkspaceId || !Array.isArray(proposalIds)) {
+        continue;
+      }
+      const cleaned = Array.from(
+        new Set(
+          proposalIds
+            .filter((value): value is string => typeof value === "string")
+            .map((value) => value.trim())
+            .filter(Boolean),
+        ),
+      ).slice(-MAX_SEEN_TASK_PROPOSAL_IDS_PER_WORKSPACE);
+      if (cleaned.length > 0) {
+        next[normalizedWorkspaceId] = cleaned;
+      }
+    }
+    return next;
+  } catch {
+    // ignore invalid persisted proposal state
+  }
+
+  return {};
+}
+
 function loadTheme(): AppTheme {
   try {
     const stored = localStorage.getItem(THEME_STORAGE_KEY);
@@ -409,6 +474,56 @@ function loadTheme(): AppTheme {
   }
 
   return "amber-minimal-light";
+}
+
+function normalizeDevAppUpdatePreviewMode(
+  value: string | null | undefined,
+): DevAppUpdatePreviewMode {
+  if (value === "downloading" || value === "ready") {
+    return value;
+  }
+  return "off";
+}
+
+function loadDevAppUpdatePreviewMode(): DevAppUpdatePreviewMode {
+  if (!import.meta.env.DEV) {
+    return "off";
+  }
+
+  try {
+    return normalizeDevAppUpdatePreviewMode(
+      localStorage.getItem(DEV_APP_UPDATE_PREVIEW_STORAGE_KEY),
+    );
+  } catch {
+    return "off";
+  }
+}
+
+function buildDevAppUpdatePreviewStatus(
+  mode: DevAppUpdatePreviewMode,
+  currentVersion: string,
+): AppUpdateStatusPayload | null {
+  if (mode === "off") {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+  const latestVersion = "2026.4.99";
+
+  return {
+    supported: true,
+    checking: false,
+    available: mode === "downloading",
+    downloaded: mode === "ready",
+    downloadProgressPercent: mode === "downloading" ? 64 : 100,
+    currentVersion: currentVersion.trim() || "0.1.0",
+    latestVersion,
+    releaseName: `Holaboss ${latestVersion}`,
+    publishedAt: now,
+    dismissedVersion: null,
+    lastCheckedAt: now,
+    error: "",
+  };
 }
 
 function spaceComponentLabel(componentId: SpaceComponentId) {
@@ -625,7 +740,7 @@ function FocusPlaceholder({
   description: string;
 }) {
   return (
-    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-xl shadow-lg">
+    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(87,255,173,0.08),transparent_45%)]" />
       <div className="relative max-w-[520px] px-8 text-center">
         <div className="text-[10px] uppercase tracking-[0.18em] text-primary/78">
@@ -644,7 +759,7 @@ function FocusPlaceholder({
 
 function WorkspaceStartupErrorPane({ message }: { message: string }) {
   return (
-    <section className="theme-shell relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-xl shadow-lg">
+    <section className="theme-shell relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(247,90,84,0.12),transparent_32%),radial-gradient(circle_at_bottom,rgba(247,170,126,0.08),transparent_36%)]" />
       <div className="relative w-full max-w-[720px] px-6 py-8">
         <div className="theme-subtle-surface rounded-[30px] border border-[rgba(247,90,84,0.24)] p-6 shadow-lg sm:p-8">
@@ -688,7 +803,7 @@ function WorkspaceOnboardingTakeover({
 }
 
 function AppShellContent() {
-  const { selectedWorkspaceId } = useWorkspaceSelection();
+  const { selectedWorkspaceId, setSelectedWorkspaceId } = useWorkspaceSelection();
   const {
     runtimeConfig,
     workspaces,
@@ -705,6 +820,8 @@ function AppShellContent() {
     useState<RuntimeStatusPayload | null>(null);
   const [appUpdateStatus, setAppUpdateStatus] =
     useState<AppUpdateStatusPayload | null>(null);
+  const [devAppUpdatePreviewMode, setDevAppUpdatePreviewMode] =
+    useState<DevAppUpdatePreviewMode>(loadDevAppUpdatePreviewMode);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
   const [settingsDialogSection, setSettingsDialogSection] =
     useState<UiSettingsPaneSection>("settings");
@@ -747,6 +864,8 @@ function AppShellContent() {
   const [taskProposals, setTaskProposals] = useState<
     TaskProposalRecordPayload[]
   >([]);
+  const [seenTaskProposalIdsByWorkspace, setSeenTaskProposalIdsByWorkspace] =
+    useState<Record<string, string[]>>(loadSeenTaskProposalIdsByWorkspace);
   const [isLoadingTaskProposals, setIsLoadingTaskProposals] = useState(false);
   const [isTriggeringTaskProposal, setIsTriggeringTaskProposal] =
     useState(false);
@@ -768,6 +887,13 @@ function AppShellContent() {
   ] = useState(false);
   const [proactiveTaskProposalsError, setProactiveTaskProposalsError] =
     useState("");
+  const [proactiveHeartbeatConfig, setProactiveHeartbeatConfig] =
+    useState<ProactiveHeartbeatConfigPayload | null>(null);
+  const [isLoadingProactiveHeartbeatConfig, setIsLoadingProactiveHeartbeatConfig] =
+    useState(false);
+  const [isUpdatingProactiveHeartbeatConfig, setIsUpdatingProactiveHeartbeatConfig] =
+    useState(false);
+  const [proactiveHeartbeatError, setProactiveHeartbeatError] = useState("");
   const [proactiveStatus, setProactiveStatus] =
     useState<ProactiveAgentStatusPayload | null>(null);
   const [isLoadingProactiveStatus, setIsLoadingProactiveStatus] =
@@ -782,10 +908,8 @@ function AppShellContent() {
   const [toastNotifications, setToastNotifications] = useState<
     RuntimeNotificationRecordPayload[]
   >([]);
-  const [syntheticNotificationStates, setSyntheticNotificationStates] =
-    useState<Record<string, RuntimeNotificationState>>({});
-  const [dismissedSyntheticNotifications, setDismissedSyntheticNotifications] =
-    useState<Record<string, RuntimeNotificationRecordPayload>>({});
+  const [devNotificationToastPreview, setDevNotificationToastPreview] =
+    useState<RuntimeNotificationRecordPayload[]>([]);
   const utilityPaneHostRef = useRef<HTMLDivElement | null>(null);
   const utilityPaneResizeStateRef = useRef<UtilityPaneResizeState | null>(null);
   const filesPaneWidthRef = useRef(filesPaneWidth);
@@ -799,52 +923,122 @@ function AppShellContent() {
   browserPaneWidthRef.current = browserPaneWidth;
   spaceVisibilityRef.current = spaceVisibility;
 
-  const appUpdateNotification = useMemo(() => {
-    if (
-      !appUpdateStatus ||
-      (!appUpdateStatus.available && !appUpdateStatus.downloaded)
-    ) {
-      return null;
-    }
-    const notificationId = appUpdateNotificationId(appUpdateStatus);
-    return buildAppUpdateNotification(
-      appUpdateStatus,
-      syntheticNotificationStates[notificationId] ?? "unread",
-    );
-  }, [appUpdateStatus, syntheticNotificationStates]);
-
-  const combinedNotifications = useMemo(() => {
-    const activeNotificationIds = new Set<string>();
-    if (appUpdateNotification) {
-      activeNotificationIds.add(appUpdateNotification.id);
-    }
-    for (const notification of notifications) {
-      activeNotificationIds.add(notification.id);
-    }
-    const syntheticHistory = Object.values(
-      dismissedSyntheticNotifications,
-    ).filter((notification) => !activeNotificationIds.has(notification.id));
-    const items = appUpdateNotification
-      ? [appUpdateNotification, ...notifications, ...syntheticHistory]
-      : [...notifications, ...syntheticHistory];
-    return [...items].sort(notificationSortComparator);
-  }, [appUpdateNotification, dismissedSyntheticNotifications, notifications]);
-
-  const notificationById = useMemo(
+  const proactiveHeartbeatWorkspaceSyncKey = useMemo(
     () =>
-      new Map(
-        combinedNotifications.map((notification) => [
-          notification.id,
-          notification,
-        ]),
-      ),
-    [combinedNotifications],
+      [...workspaces]
+        .map((workspace) => `${workspace.id}:${workspace.name || ""}`)
+        .sort()
+        .join("|"),
+    [workspaces],
   );
-
-  const notificationUnreadCount = useMemo(
+  const currentProactiveHeartbeatWorkspace = useMemo(
     () =>
-      combinedNotifications.filter((item) => item.state === "unread").length,
-    [combinedNotifications],
+      proactiveHeartbeatConfig?.workspaces.find(
+        (workspace) => workspace.workspace_id === selectedWorkspaceId,
+      ) ?? null,
+    [proactiveHeartbeatConfig, selectedWorkspaceId],
+  );
+  const proactiveWorkspaceEnabled = useMemo(
+    () =>
+      Boolean(
+        selectedWorkspaceId &&
+          proactiveTaskProposalsEnabled &&
+          (proactiveHeartbeatConfig?.enabled ?? false) &&
+          (currentProactiveHeartbeatWorkspace?.enabled ?? true),
+      ),
+    [
+      currentProactiveHeartbeatWorkspace,
+      proactiveHeartbeatConfig,
+      proactiveTaskProposalsEnabled,
+      selectedWorkspaceId,
+    ],
+  );
+  const isLoadingProactiveWorkspaceEnabled =
+    isLoadingProactiveTaskProposalsEnabled ||
+    isLoadingProactiveHeartbeatConfig;
+  const isUpdatingProactiveWorkspaceEnabled =
+    isUpdatingProactiveTaskProposalsEnabled ||
+    isUpdatingProactiveHeartbeatConfig;
+
+  const effectiveAppUpdateStatus = useMemo(
+    () =>
+      buildDevAppUpdatePreviewStatus(
+        devAppUpdatePreviewMode,
+        appUpdateStatus?.currentVersion || "",
+      ) ?? appUpdateStatus,
+    [appUpdateStatus, devAppUpdatePreviewMode],
+  );
+  const effectiveToastNotifications = useMemo(
+    () =>
+      devNotificationToastPreview.length > 0
+        ? devNotificationToastPreview
+        : toastNotifications,
+    [devNotificationToastPreview, toastNotifications],
+  );
+  const runtimeNotificationById = useMemo(
+    () => new Map(notifications.map((notification) => [notification.id, notification])),
+    [notifications],
+  );
+  const unreadTaskProposalCount = useMemo(() => {
+    if (!selectedWorkspaceId || taskProposals.length === 0) {
+      return 0;
+    }
+    const seenProposalIds = new Set(
+      seenTaskProposalIdsByWorkspace[selectedWorkspaceId] ?? [],
+    );
+    return taskProposals.reduce((count, proposal) => {
+      const proposalId = proposal.proposal_id.trim();
+      if (!proposalId || seenProposalIds.has(proposalId)) {
+        return count;
+      }
+      return count + 1;
+    }, 0);
+  }, [seenTaskProposalIdsByWorkspace, selectedWorkspaceId, taskProposals]);
+
+  const markTaskProposalsSeen = useCallback(
+    (
+      workspaceId: string | null | undefined,
+      proposals: TaskProposalRecordPayload[],
+    ) => {
+      const normalizedWorkspaceId = workspaceId?.trim() || "";
+      if (!normalizedWorkspaceId || proposals.length === 0) {
+        return;
+      }
+
+      const proposalIds = Array.from(
+        new Set(
+          proposals
+            .map((proposal) => proposal.proposal_id.trim())
+            .filter(Boolean),
+        ),
+      );
+      if (proposalIds.length === 0) {
+        return;
+      }
+
+      setSeenTaskProposalIdsByWorkspace((current) => {
+        const existing = current[normalizedWorkspaceId] ?? [];
+        const nextIds = [...existing];
+        let changed = false;
+        for (const proposalId of proposalIds) {
+          if (nextIds.includes(proposalId)) {
+            continue;
+          }
+          nextIds.push(proposalId);
+          changed = true;
+        }
+        if (!changed) {
+          return current;
+        }
+        return {
+          ...current,
+          [normalizedWorkspaceId]: nextIds.slice(
+            -MAX_SEEN_TASK_PROPOSAL_IDS_PER_WORKSPACE,
+          ),
+        };
+      });
+    },
+    [],
   );
 
   const clampUtilityPaneWidth = useCallback(
@@ -884,13 +1078,14 @@ function AppShellContent() {
       const minFlexibleWidth =
         flexPaneId === "agent"
           ? MIN_AGENT_CONTENT_WIDTH
-          : MIN_UTILITY_PANE_WIDTH;
+          : utilityPaneMinWidth(flexPaneId);
+      const minPaneWidth = utilityPaneMinWidth(paneId);
       const maxWidth =
         hostWidth > 0
           ? Math.min(
               MAX_UTILITY_PANE_WIDTH,
               Math.max(
-                MIN_UTILITY_PANE_WIDTH,
+                minPaneWidth,
                 hostWidth -
                   fixedOtherWidths -
                   minFlexibleWidth -
@@ -898,7 +1093,7 @@ function AppShellContent() {
               ),
             )
           : MAX_UTILITY_PANE_WIDTH;
-      return Math.max(MIN_UTILITY_PANE_WIDTH, Math.min(width, maxWidth));
+      return Math.max(minPaneWidth, Math.min(width, maxWidth));
     },
     [],
   );
@@ -915,11 +1110,11 @@ function AppShellContent() {
       if (hostWidth <= 0) {
         return {
           leftWidth: Math.max(
-            MIN_UTILITY_PANE_WIDTH,
+            utilityPaneMinWidth(leftPaneId),
             Math.min(leftWidth, MAX_UTILITY_PANE_WIDTH),
           ),
           rightWidth: Math.max(
-            MIN_UTILITY_PANE_WIDTH,
+            utilityPaneMinWidth(rightPaneId),
             Math.min(rightWidth, MAX_UTILITY_PANE_WIDTH),
           ),
         };
@@ -959,7 +1154,7 @@ function AppShellContent() {
       const maxCombinedWidth = Math.min(
         MAX_UTILITY_PANE_WIDTH * 2,
         Math.max(
-          MIN_UTILITY_PANE_WIDTH * 2,
+          utilityPaneMinWidth(leftPaneId) + utilityPaneMinWidth(rightPaneId),
           hostWidth -
             fixedOtherWidths -
             MIN_AGENT_CONTENT_WIDTH -
@@ -968,8 +1163,11 @@ function AppShellContent() {
       );
       const combinedWidth = Math.min(leftWidth + rightWidth, maxCombinedWidth);
       const nextLeftWidth = Math.max(
-        MIN_UTILITY_PANE_WIDTH,
-        Math.min(leftWidth, combinedWidth - MIN_UTILITY_PANE_WIDTH),
+        utilityPaneMinWidth(leftPaneId),
+        Math.min(
+          leftWidth,
+          combinedWidth - utilityPaneMinWidth(rightPaneId),
+        ),
       );
       return {
         leftWidth: nextLeftWidth,
@@ -978,6 +1176,28 @@ function AppShellContent() {
     },
     [],
   );
+
+  const syncUtilityPaneWidths = useCallback(() => {
+    const visiblePaneIds = FIXED_SPACE_ORDER.filter(
+      (pane) => spaceVisibilityRef.current[pane],
+    );
+    if (visiblePaneIds.length === 0) {
+      return;
+    }
+
+    const flexPaneId = visiblePaneIds.includes("agent")
+      ? "agent"
+      : (visiblePaneIds[visiblePaneIds.length - 1] ?? null);
+
+    if (spaceVisibilityRef.current.files && flexPaneId !== "files") {
+      setFilesPaneWidth((current) => clampUtilityPaneWidth("files", current));
+    }
+    if (spaceVisibilityRef.current.browser && flexPaneId !== "browser") {
+      setBrowserPaneWidth((current) =>
+        clampUtilityPaneWidth("browser", current),
+      );
+    }
+  }, [clampUtilityPaneWidth]);
 
   useEffect(() => {
     if (!window.electronAPI) {
@@ -1002,6 +1222,60 @@ function AppShellContent() {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) {
+      return;
+    }
+
+    const updateMode = (mode: DevAppUpdatePreviewMode) => {
+      setDevAppUpdatePreviewMode(mode);
+      try {
+        if (mode === "off") {
+          localStorage.removeItem(DEV_APP_UPDATE_PREVIEW_STORAGE_KEY);
+        } else {
+          localStorage.setItem(DEV_APP_UPDATE_PREVIEW_STORAGE_KEY, mode);
+        }
+      } catch {
+        // Ignore localStorage failures in dev preview mode.
+      }
+    };
+
+    window.__holabossDevUpdatePreview = {
+      downloading: () => updateMode("downloading"),
+      ready: () => updateMode("ready"),
+      clear: () => updateMode("off"),
+    };
+
+    return () => {
+      delete window.__holabossDevUpdatePreview;
+    };
+  }, []);
+
+  const showDevNotificationToastPreview = useCallback(() => {
+    setDevNotificationToastPreview(
+      buildDevNotificationToastPreviewNotifications(selectedWorkspaceId),
+    );
+  }, [selectedWorkspaceId]);
+
+  const clearDevNotificationToastPreview = useCallback(() => {
+    setDevNotificationToastPreview([]);
+  }, []);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) {
+      return;
+    }
+
+    window.__holabossDevNotificationToastPreview = {
+      stack: () => showDevNotificationToastPreview(),
+      clear: () => clearDevNotificationToastPreview(),
+    };
+
+    return () => {
+      delete window.__holabossDevNotificationToastPreview;
+    };
+  }, [clearDevNotificationToastPreview, showDevNotificationToastPreview]);
 
   useEffect(() => {
     if (!window.electronAPI) {
@@ -1040,6 +1314,8 @@ function AppShellContent() {
             browser: true,
           }));
         };
+        const targetBrowserSpace =
+          payload.space === "agent" ? "agent" : "user";
 
         const requestedUrl =
           typeof payload.url === "string" ? payload.url.trim() : "";
@@ -1048,17 +1324,24 @@ function AppShellContent() {
           void window.electronAPI.browser
             .setActiveWorkspace(
               payload.workspaceId ?? selectedWorkspaceId ?? null,
+              targetBrowserSpace,
             )
             .then(() => window.electronAPI.browser.navigate(requestedUrl))
             .catch(() => undefined);
           return;
         }
         openBrowserPane();
+        void window.electronAPI.browser
+          .setActiveWorkspace(
+            payload.workspaceId ?? selectedWorkspaceId ?? null,
+            targetBrowserSpace,
+          )
+          .catch(() => undefined);
       },
     );
 
     return unsubscribe;
-  }, [selectedWorkspaceId]);
+  }, [hasHydratedWorkspaceList, selectedWorkspaceId]);
 
   useEffect(() => {
     if (!window.electronAPI) {
@@ -1125,49 +1408,13 @@ function AppShellContent() {
     );
   }, []);
 
-  const markSyntheticNotificationsRead = useCallback(
-    (notificationIds: string[]) => {
-      if (notificationIds.length === 0) {
-        return;
-      }
-      setSyntheticNotificationStates((current) => {
-        let changed = false;
-        const next = { ...current };
-        for (const notificationId of notificationIds) {
-          if (next[notificationId] !== "read") {
-            next[notificationId] = "read";
-            changed = true;
-          }
-        }
-        return changed ? next : current;
-      });
-    },
-    [],
-  );
-
-  const rememberDismissedSyntheticNotification = useCallback(
-    (notification: RuntimeNotificationRecordPayload) => {
-      if (!isAppUpdateNotification(notification)) {
-        return;
-      }
-      setDismissedSyntheticNotifications((current) => ({
-        ...current,
-        [notification.id]: dismissedNotificationRecord(notification),
-      }));
-    },
-    [],
-  );
-
   const refreshNotifications = useCallback(async () => {
     if (!window.electronAPI) {
       return;
     }
 
     try {
-      const response = await window.electronAPI.workspace.listNotifications(
-        null,
-        true,
-      );
+      const response = await window.electronAPI.workspace.listNotifications(null);
       setNotifications(response.items);
 
       if (!notificationsHydratedRef.current) {
@@ -1206,59 +1453,35 @@ function AppShellContent() {
 
   useEffect(() => {
     const activeNotificationIds = new Set(
-      combinedNotifications.map((notification) => notification.id),
+      notifications.map((notification) => notification.id),
     );
     setToastNotifications((current) => {
       const next = current.filter((item) => activeNotificationIds.has(item.id));
       return next.length === current.length ? current : next;
     });
-    for (const [
-      notificationId,
-      timeoutId,
-    ] of notificationToastTimeoutsRef.current.entries()) {
+    for (const [notificationId, timeoutId] of notificationToastTimeoutsRef.current.entries()) {
       if (activeNotificationIds.has(notificationId)) {
         continue;
       }
       window.clearTimeout(timeoutId);
       notificationToastTimeoutsRef.current.delete(notificationId);
     }
-  }, [combinedNotifications]);
+  }, [notifications]);
 
   const handleActivateNotification = useCallback(
     async (notificationId: string) => {
       if (!window.electronAPI) {
         return;
       }
-      const notification = notificationById.get(notificationId);
+      const notification = runtimeNotificationById.get(notificationId);
       if (!notification) {
         return;
       }
 
       dismissNotificationToast(notification.id);
       const targetUrl = notificationActionUrl(notification);
+      const targetSessionId = notificationTargetSessionId(notification);
       const nextState = notificationActivationState(notification);
-
-      if (isAppUpdateNotification(notification)) {
-        if (nextState === "dismissed") {
-          try {
-            await window.electronAPI.appUpdate.dismiss(
-              notificationReleaseTag(notification),
-            );
-          } catch {
-            // Ignore transient update-dismiss failures in the shell.
-          }
-        } else {
-          markSyntheticNotificationsRead([notification.id]);
-        }
-        if (targetUrl) {
-          try {
-            await window.electronAPI.ui.openExternalUrl(targetUrl);
-          } catch {
-            // Ignore transient shell URL open failures.
-          }
-        }
-        return;
-      }
 
       try {
         await window.electronAPI.workspace.updateNotification(notification.id, {
@@ -1267,6 +1490,24 @@ function AppShellContent() {
         await refreshNotifications();
       } catch {
         // Ignore transient notification update failures in the shell.
+      }
+      if (targetSessionId) {
+        const targetWorkspaceId = notification.workspace_id.trim();
+        if (targetWorkspaceId) {
+          setSelectedWorkspaceId(targetWorkspaceId);
+        }
+        setActiveLeftRailItem("space");
+        setSpaceVisibility((previous) => ({
+          ...previous,
+          agent: true,
+        }));
+        setAgentView({ type: "chat" });
+        setChatSessionJumpRequest({
+          sessionId: targetSessionId,
+          requestKey: Date.now(),
+        });
+        setChatFocusRequestKey((current) => current + 1);
+        return;
       }
       if (targetUrl) {
         try {
@@ -1278,33 +1519,25 @@ function AppShellContent() {
     },
     [
       dismissNotificationToast,
-      markSyntheticNotificationsRead,
-      notificationById,
+      runtimeNotificationById,
       refreshNotifications,
+      setSelectedWorkspaceId,
     ],
   );
 
   const handleDismissNotification = useCallback(
     async (notificationId: string) => {
+      if (isDevNotificationToastPreviewId(notificationId)) {
+        setDevNotificationToastPreview((current) =>
+          current.filter((item) => item.id !== notificationId),
+        );
+        return;
+      }
       if (!window.electronAPI) {
         return;
       }
-      const notification = notificationById.get(notificationId);
+      const notification = runtimeNotificationById.get(notificationId);
       if (!notification) {
-        return;
-      }
-
-      if (isAppUpdateNotification(notification)) {
-        try {
-          dismissNotificationToast(notification.id);
-          markSyntheticNotificationsRead([notification.id]);
-          rememberDismissedSyntheticNotification(notification);
-          await window.electronAPI.appUpdate.dismiss(
-            notificationReleaseTag(notification),
-          );
-        } catch {
-          // Ignore transient notification update failures in the shell.
-        }
         return;
       }
 
@@ -1320,106 +1553,35 @@ function AppShellContent() {
     },
     [
       dismissNotificationToast,
-      markSyntheticNotificationsRead,
-      notificationById,
-      rememberDismissedSyntheticNotification,
+      runtimeNotificationById,
       refreshNotifications,
     ],
   );
 
-  const handleClearAllNotifications = useCallback(async () => {
-    const notificationsToDismiss = combinedNotifications.filter(
-      (notification) => notification.state !== "dismissed",
-    );
-    if (!window.electronAPI || notificationsToDismiss.length === 0) {
-      return;
-    }
-
-    for (const notification of notificationsToDismiss) {
-      dismissNotificationToast(notification.id);
-    }
-
-    try {
-      const runtimeNotificationIds = notificationsToDismiss
-        .filter((notification) => !isAppUpdateNotification(notification))
-        .map((notification) => notification.id);
-      const appUpdateNotifications = notificationsToDismiss.filter(
-        (notification) => isAppUpdateNotification(notification),
-      );
-      if (appUpdateNotifications.length > 0) {
-        markSyntheticNotificationsRead(
-          appUpdateNotifications.map((notification) => notification.id),
+  const handleActivateDisplayedNotification = useCallback(
+    async (notificationId: string) => {
+      if (isDevNotificationToastPreviewId(notificationId)) {
+        setDevNotificationToastPreview((current) =>
+          current.filter((item) => item.id !== notificationId),
         );
-        for (const notification of appUpdateNotifications) {
-          rememberDismissedSyntheticNotification(notification);
-        }
-      }
-      await Promise.allSettled([
-        ...runtimeNotificationIds.map((notificationId) =>
-          window.electronAPI.workspace.updateNotification(notificationId, {
-            state: "dismissed",
-          }),
-        ),
-        ...appUpdateNotifications.map((notification) =>
-          window.electronAPI.appUpdate.dismiss(
-            notificationReleaseTag(notification),
-          ),
-        ),
-      ]);
-      if (runtimeNotificationIds.length > 0) {
-        await refreshNotifications();
-      }
-    } catch {
-      // Ignore transient notification update failures in the shell.
-    }
-  }, [
-    combinedNotifications,
-    dismissNotificationToast,
-    markSyntheticNotificationsRead,
-    rememberDismissedSyntheticNotification,
-    refreshNotifications,
-  ]);
-
-  const handleNotificationCenterOpenChange = useCallback(
-    (open: boolean) => {
-      if (!open || !window.electronAPI) {
         return;
       }
-      const unreadNotifications = combinedNotifications
-        .filter((item) => item.state === "unread")
-        .map((item) => item);
-      if (unreadNotifications.length === 0) {
-        return;
-      }
-      const syntheticUnreadIds = unreadNotifications
-        .filter((notification) => isAppUpdateNotification(notification))
-        .map((notification) => notification.id);
-      if (syntheticUnreadIds.length > 0) {
-        markSyntheticNotificationsRead(syntheticUnreadIds);
-      }
-      const runtimeUnreadIds = unreadNotifications
-        .filter((notification) => !isAppUpdateNotification(notification))
-        .map((notification) => notification.id);
-      for (const notification of unreadNotifications) {
-        dismissNotificationToast(notification.id);
-      }
-      if (runtimeUnreadIds.length === 0) {
-        return;
-      }
-      void Promise.allSettled(
-        runtimeUnreadIds.map((notificationId) =>
-          window.electronAPI.workspace.updateNotification(notificationId, {
-            state: "read",
-          }),
-        ),
-      ).then(() => refreshNotifications());
+      await handleActivateNotification(notificationId);
     },
-    [
-      combinedNotifications,
-      dismissNotificationToast,
-      markSyntheticNotificationsRead,
-      refreshNotifications,
-    ],
+    [handleActivateNotification],
+  );
+
+  const handleCloseDisplayedNotification = useCallback(
+    async (notificationId: string) => {
+      if (isDevNotificationToastPreviewId(notificationId)) {
+        setDevNotificationToastPreview((current) =>
+          current.filter((item) => item.id !== notificationId),
+        );
+        return;
+      }
+      await handleDismissNotification(notificationId);
+    },
+    [handleDismissNotification],
   );
 
   useEffect(() => {
@@ -1467,7 +1629,7 @@ function AppShellContent() {
           ? workspaceIdOverride
           : selectedWorkspaceId || null;
       void window.electronAPI.browser
-        .setActiveWorkspace(targetWorkspaceId)
+        .setActiveWorkspace(targetWorkspaceId, "user")
         .then(() => window.electronAPI.browser.navigate(normalizedUrl))
         .catch(() => undefined);
     },
@@ -1477,7 +1639,7 @@ function AppShellContent() {
   const handleOpenCreateWorkspacePanel = useCallback(() => {
     setCreateWorkspacePanelAnchorWorkspaceId(selectedWorkspaceId || "");
     setCreateWorkspacePanelOpen(true);
-  }, [selectedWorkspaceId]);
+  }, [hasHydratedWorkspaceList, selectedWorkspaceId]);
 
   const handleCloseCreateWorkspacePanel = useCallback(() => {
     setCreateWorkspacePanelOpen(false);
@@ -1520,6 +1682,13 @@ function AppShellContent() {
   }, [activeOperationsTab]);
 
   useEffect(() => {
+    localStorage.setItem(
+      TASK_PROPOSAL_SEEN_STORAGE_KEY,
+      JSON.stringify(seenTaskProposalIdsByWorkspace),
+    );
+  }, [seenTaskProposalIdsByWorkspace]);
+
+  useEffect(() => {
     localStorage.setItem(FILES_PANE_WIDTH_STORAGE_KEY, String(filesPaneWidth));
   }, [filesPaneWidth]);
 
@@ -1553,6 +1722,9 @@ function AppShellContent() {
   }, [selectedWorkspaceId]);
 
   useEffect(() => {
+    if (!hasHydratedWorkspaceList) {
+      return;
+    }
     let cancelled = false;
     const loadPreference = async () => {
       setIsLoadingProactiveTaskProposalsEnabled(true);
@@ -1582,19 +1754,134 @@ function AppShellContent() {
     };
   }, [selectedWorkspaceId]);
 
-  async function handleProactiveTaskProposalsEnabledChange(enabled: boolean) {
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadHeartbeatConfig = async () => {
+      setIsLoadingProactiveHeartbeatConfig(true);
+      try {
+        const config =
+          await window.electronAPI.workspace.getProactiveHeartbeatConfig();
+        if (!cancelled) {
+          setProactiveHeartbeatConfig(config);
+          setProactiveHeartbeatError("");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setProactiveHeartbeatConfig(null);
+          setProactiveHeartbeatError(normalizeErrorMessage(error));
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingProactiveHeartbeatConfig(false);
+        }
+      }
+    };
+
+    void loadHeartbeatConfig();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    hasHydratedWorkspaceList,
+    proactiveHeartbeatWorkspaceSyncKey,
+    runtimeConfig?.sandboxId,
+    runtimeConfig?.userId,
+  ]);
+
+  async function handleProactiveWorkspaceEnabledChange(enabled: boolean) {
+    if (!selectedWorkspaceId) {
+      return;
+    }
+
     setProactiveTaskProposalsError("");
+    setProactiveHeartbeatError("");
     setIsUpdatingProactiveTaskProposalsEnabled(true);
+    setIsUpdatingProactiveHeartbeatConfig(true);
+    let errorTarget: "task-proposals" | "heartbeat" = "heartbeat";
+
     try {
-      const preference =
-        await window.electronAPI.workspace.setProactiveTaskProposalPreference({
-          enabled,
-        });
-      setProactiveTaskProposalsEnabled(preference.enabled !== false);
+      if (enabled) {
+        errorTarget = "task-proposals";
+        const preference =
+          await window.electronAPI.workspace.setProactiveTaskProposalPreference(
+            {
+              enabled: true,
+            },
+          );
+        const nextTaskProposalPreferenceEnabled = preference.enabled !== false;
+        setProactiveTaskProposalsEnabled(nextTaskProposalPreferenceEnabled);
+
+        errorTarget = "heartbeat";
+        let nextHeartbeatConfig =
+          await window.electronAPI.workspace.setProactiveHeartbeatConfig({
+            cron:
+              proactiveHeartbeatConfig?.cron?.trim() ||
+              DEFAULT_PROACTIVE_HEARTBEAT_CRON,
+            enabled: true,
+          });
+        setProactiveHeartbeatConfig(nextHeartbeatConfig);
+
+        nextHeartbeatConfig =
+          await window.electronAPI.workspace.setProactiveHeartbeatWorkspaceEnabled(
+            {
+              workspace_id: selectedWorkspaceId,
+              workspace_name: selectedWorkspace?.name || null,
+              enabled: true,
+            },
+          );
+        setProactiveHeartbeatConfig(nextHeartbeatConfig);
+
+        if (!nextTaskProposalPreferenceEnabled) {
+          setProactiveTaskProposalsError(
+            "Task proposals could not be enabled for this workspace.",
+          );
+        }
+        return;
+      }
+
+      const config =
+        await window.electronAPI.workspace.setProactiveHeartbeatWorkspaceEnabled(
+          {
+            workspace_id: selectedWorkspaceId,
+            workspace_name: selectedWorkspace?.name || null,
+            enabled: false,
+          },
+        );
+      setProactiveHeartbeatConfig(config);
     } catch (error) {
-      setProactiveTaskProposalsError(normalizeErrorMessage(error));
+      const message = normalizeErrorMessage(error);
+      if (errorTarget === "task-proposals") {
+        setProactiveTaskProposalsError(message);
+      } else {
+        setProactiveHeartbeatError(message);
+      }
     } finally {
       setIsUpdatingProactiveTaskProposalsEnabled(false);
+      setIsUpdatingProactiveHeartbeatConfig(false);
+    }
+  }
+
+  async function handleProactiveHeartbeatCronChange(cron: string) {
+    const normalizedCron = cron.trim();
+    if (!normalizedCron) {
+      return;
+    }
+
+    setProactiveHeartbeatError("");
+    setIsUpdatingProactiveHeartbeatConfig(true);
+    try {
+      const config = await window.electronAPI.workspace.setProactiveHeartbeatConfig(
+        {
+          cron: normalizedCron,
+          enabled: proactiveHeartbeatConfig?.enabled ?? false,
+        },
+      );
+      setProactiveHeartbeatConfig(config);
+    } catch (error) {
+      setProactiveHeartbeatError(normalizeErrorMessage(error));
+    } finally {
+      setIsUpdatingProactiveHeartbeatConfig(false);
     }
   }
 
@@ -1777,6 +2064,24 @@ function AppShellContent() {
   ]);
 
   useEffect(() => {
+    if (
+      !operationsDrawerOpen ||
+      activeOperationsTab !== "inbox" ||
+      !selectedWorkspaceId ||
+      taskProposals.length === 0
+    ) {
+      return;
+    }
+    markTaskProposalsSeen(selectedWorkspaceId, taskProposals);
+  }, [
+    activeOperationsTab,
+    markTaskProposalsSeen,
+    operationsDrawerOpen,
+    selectedWorkspaceId,
+    taskProposals,
+  ]);
+
+  useEffect(() => {
     if (!selectedWorkspaceId || !selectedWorkspace) {
       setProactiveStatus(null);
       setIsLoadingProactiveStatus(false);
@@ -1818,26 +2123,65 @@ function AppShellContent() {
     };
   }, [selectedWorkspace, selectedWorkspaceId]);
 
-  const handleDismissUpdate = () => {
+  useEffect(() => {
+    if (!selectedWorkspaceId || !selectedWorkspace) {
+      return;
+    }
+
+    let cancelled = false;
+    void window.electronAPI.workspace
+      .getProactiveStatus(selectedWorkspace.id)
+      .then((response) => {
+        if (!cancelled) {
+          setProactiveStatus(response);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    runtimeConfig?.authTokenPresent,
+    runtimeConfig?.modelProxyBaseUrl,
+    runtimeConfig?.userId,
+    runtimeStatus?.status,
+    selectedWorkspace,
+    selectedWorkspaceId,
+  ]);
+
+  const handleDismissUpdate = useCallback(() => {
+    if (import.meta.env.DEV && devAppUpdatePreviewMode !== "off") {
+      setDevAppUpdatePreviewMode("off");
+      try {
+        localStorage.removeItem(DEV_APP_UPDATE_PREVIEW_STORAGE_KEY);
+      } catch {
+        // Ignore localStorage failures in dev preview mode.
+      }
+      return;
+    }
     void window.electronAPI.appUpdate.dismiss(
-      appUpdateStatus?.latestVersion ?? null,
+      effectiveAppUpdateStatus?.latestVersion ?? null,
     );
-  };
+  }, [devAppUpdatePreviewMode, effectiveAppUpdateStatus]);
 
   const handleInstallUpdate = () => {
+    if (import.meta.env.DEV && devAppUpdatePreviewMode !== "off") {
+      return;
+    }
     void window.electronAPI.appUpdate.installNow();
   };
 
   const handleOpenUpdateChangelog = useCallback(() => {
-    if (!appUpdateStatus) {
+    if (!effectiveAppUpdateStatus) {
       return;
     }
-    const changelogUrl = appUpdateChangelogUrl(appUpdateStatus);
+    const changelogUrl = appUpdateChangelogUrl(effectiveAppUpdateStatus);
     if (!changelogUrl) {
       return;
     }
     void window.electronAPI.ui.openExternalUrl(changelogUrl);
-  }, [appUpdateStatus]);
+  }, [effectiveAppUpdateStatus]);
   const toggleOperationsDrawer = () => {
     setOperationsDrawerOpen((open) => !open);
   };
@@ -1845,6 +2189,9 @@ function AppShellContent() {
   const openOperationsDrawerTab = (tab: OperationsDrawerTab) => {
     setActiveOperationsTab(tab);
     setOperationsDrawerOpen(true);
+    if (tab === "inbox" && selectedWorkspaceId) {
+      markTaskProposalsSeen(selectedWorkspaceId, taskProposals);
+    }
   };
 
   const installedAppIds = useMemo(
@@ -1914,14 +2261,32 @@ function AppShellContent() {
     setChatFocusRequestKey((current) => current + 1);
   }, [activeChatSessionId]);
 
-  const handleChatComposerPrefillConsumed = useCallback(
-    (requestKey: number) => {
-      setChatComposerPrefillRequest((current) =>
-        current?.requestKey === requestKey ? null : current,
-      );
-    },
-    [],
-  );
+  const handleCreateSession = useCallback(() => {
+    if (!selectedWorkspaceId) {
+      return;
+    }
+
+    setActiveLeftRailItem("space");
+    setSpaceVisibility((previous) => ({
+      ...previous,
+      agent: true,
+    }));
+    setAgentView({ type: "chat" });
+    setChatSessionJumpRequest(null);
+    setChatSessionOpenRequest((previous) => ({
+      sessionId: "",
+      mode: "draft",
+      parentSessionId: null,
+      requestKey: (previous?.requestKey ?? 0) + 1,
+    }));
+    setChatFocusRequestKey((current) => current + 1);
+  }, [selectedWorkspaceId]);
+
+  const handleChatComposerPrefillConsumed = useCallback((requestKey: number) => {
+    setChatComposerPrefillRequest((current) =>
+      current?.requestKey === requestKey ? null : current,
+    );
+  }, []);
 
   const handleOpenWorkspaceOutput = useCallback(
     (output: WorkspaceOutputRecordPayload) => {
@@ -2005,6 +2370,7 @@ function AppShellContent() {
     setAgentView({ type: "chat" });
     setChatSessionOpenRequest((previous) => ({
       sessionId: normalizedSessionId,
+      mode: "session",
       requestKey: (previous?.requestKey ?? 0) + 1,
     }));
   };
@@ -2027,17 +2393,17 @@ function AppShellContent() {
   const showOperationsDrawer =
     spaceMode && spaceVisibility.agent && operationsDrawerOpen;
   const shouldShowAppUpdateReminder = Boolean(
-    appUpdateStatus &&
-    (appUpdateStatus.available || appUpdateStatus.downloaded),
+    effectiveAppUpdateStatus &&
+      effectiveAppUpdateStatus.downloaded,
   );
-  const appVersionLabel = appUpdateStatus?.currentVersion?.trim() || "";
+  const appVersionLabel =
+    effectiveAppUpdateStatus?.currentVersion?.trim() || "";
   const shouldSuspendBrowserNativeView =
     isUtilityPaneResizing ||
     workspaceSwitcherOpen ||
     settingsDialogOpen ||
     createWorkspacePanelOpen ||
-    publishOpen ||
-    shouldShowAppUpdateReminder;
+    publishOpen;
   const bootstrapErrorMessage =
     !hasHydratedWorkspaceList && runtimeStatus?.status === "error"
       ? runtimeStatus.lastError.trim() ||
@@ -2164,16 +2530,12 @@ function AppShellContent() {
     [
       agentContent,
       browserPaneWidth,
+      fileExplorerFocusRequest,
       filesPaneWidth,
       flexSpacePaneId,
-      publishOpen,
-      isUtilityPaneResizing,
-      createWorkspacePanelOpen,
-      settingsDialogOpen,
       shouldSuspendBrowserNativeView,
       showOperationsDrawer,
       visibleSpacePaneIds,
-      workspaceSwitcherOpen,
     ],
   );
 
@@ -2237,26 +2599,27 @@ function AppShellContent() {
       return;
     }
 
-    const syncWidth = () => {
-      if (spaceVisibility.files && flexSpacePaneId !== "files") {
-        setFilesPaneWidth((current) => clampUtilityPaneWidth("files", current));
-      }
-      if (spaceVisibility.browser && flexSpacePaneId !== "browser") {
-        setBrowserPaneWidth((current) =>
-          clampUtilityPaneWidth("browser", current),
-        );
-      }
-    };
+    syncUtilityPaneWidths();
+    window.addEventListener("resize", syncUtilityPaneWidths);
 
-    syncWidth();
-    window.addEventListener("resize", syncWidth);
+    const host = utilityPaneHostRef.current;
+    const observer =
+      host && typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            syncUtilityPaneWidths();
+          })
+        : null;
+    if (observer && host) {
+      observer.observe(host);
+    }
+
     return () => {
-      window.removeEventListener("resize", syncWidth);
+      observer?.disconnect();
+      window.removeEventListener("resize", syncUtilityPaneWidths);
     };
   }, [
-    clampUtilityPaneWidth,
-    flexSpacePaneId,
-    spaceVisibility,
+    showOperationsDrawer,
+    syncUtilityPaneWidths,
     visibleSpacePaneIds.length,
   ]);
 
@@ -2334,19 +2697,21 @@ function AppShellContent() {
         ) : null}
         <NotificationToastStack
           leadingToast={
-            shouldShowAppUpdateReminder && appUpdateStatus ? (
+            shouldShowAppUpdateReminder && effectiveAppUpdateStatus ? (
               <UpdateReminder
-                status={appUpdateStatus}
+                status={effectiveAppUpdateStatus}
                 onDismiss={handleDismissUpdate}
                 onInstallNow={handleInstallUpdate}
                 onOpenChangelog={handleOpenUpdateChangelog}
               />
             ) : null
           }
-          notifications={toastNotifications}
-          onCloseToast={dismissNotificationToast}
+          notifications={effectiveToastNotifications}
+          onCloseToast={(notificationId) => {
+            void handleCloseDisplayedNotification(notificationId);
+          }}
           onActivateNotification={(notificationId) => {
-            void handleActivateNotification(notificationId);
+            void handleActivateDisplayedNotification(notificationId);
           }}
         />
 
@@ -2393,7 +2758,7 @@ function AppShellContent() {
           <div
             className={`relative grid h-full min-h-0 gap-y-3 overflow-hidden transition-[grid-template-columns,column-gap] duration-300 ease-in-out ${
               showOperationsDrawer
-                ? "lg:grid-cols-[60px_minmax(0,1fr)_380px]"
+                ? "lg:grid-cols-[60px_minmax(0,1fr)_336px]"
                 : "lg:grid-cols-[60px_minmax(0,1fr)]"
             }`}
             style={{ columnGap: "0.5rem" }}
@@ -2407,13 +2772,13 @@ function AppShellContent() {
               appVersionLabel={appVersionLabel}
             />
 
-            <div className="flex h-full min-h-0 flex-col overflow-hidden">
+            <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
               <div className="min-h-0 flex-1 overflow-hidden">
                 {spaceMode ? (
-                  <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
+                  <div className="relative flex h-full min-h-0 min-w-0 overflow-hidden">
                     <div
                       ref={utilityPaneHostRef}
-                      className="min-h-0 flex-1 overflow-hidden"
+                      className="min-h-0 min-w-0 flex-1 overflow-hidden"
                     >
                       {spacePanes.length > 0 ? (
                         <div className="flex h-full min-h-0 min-w-0 items-stretch overflow-hidden">
@@ -2426,10 +2791,12 @@ function AppShellContent() {
                             return (
                               <div key={pane.id} className="contents">
                                 <div
-                                  className={`relative min-h-0 min-w-0 overflow-hidden ${pane.flex ? "flex-1" : "shrink-0"}`}
+                                  className={`relative min-h-0 min-w-0 overflow-hidden rounded-[var(--radius-xl)] ${pane.flex ? "flex-1" : "shrink-0"}`}
                                   style={
                                     pane.flex
-                                      ? undefined
+                                      ? {
+                                          minWidth: `${MIN_AGENT_CONTENT_WIDTH}px`,
+                                        }
                                       : { width: `${pane.width}px` }
                                   }
                                 >
@@ -2448,15 +2815,18 @@ function AppShellContent() {
                                         event,
                                       )
                                     }
-                                    className="w-1 shrink-0 cursor-col-resize touch-none bg-transparent"
-                                  />
+                                    className="group relative z-10 flex w-4 shrink-0 cursor-col-resize touch-none items-center justify-center"
+                                  >
+                                    <div className="pointer-events-none absolute inset-y-2 left-1/2 w-px -translate-x-1/2 rounded-full bg-border/55 transition-all duration-150 group-hover:w-[2px] group-hover:bg-[rgba(247,90,84,0.5)]" />
+                                    <div className="pointer-events-none absolute left-1/2 top-1/2 h-14 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[rgba(247,90,84,0.08)] opacity-0 transition duration-150 group-hover:opacity-100" />
+                                  </div>
                                 ) : null}
                               </div>
                             );
                           })}
                         </div>
                       ) : (
-                        <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-xl border border-border/45 shadow-lg">
+                        <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-[var(--radius-xl)] border border-border/45 shadow-lg">
                           <div className="max-w-[360px] px-6 text-center">
                             <div className="text-[22px] font-medium tracking-[-0.03em] text-foreground">
                               Turn on a space surface
@@ -2471,7 +2841,7 @@ function AppShellContent() {
                     </div>
                   </div>
                 ) : activeLeftRailItem === "app" ? (
-                  <div className="h-full min-h-0 overflow-hidden rounded-xl">
+                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
                     {agentView.type === "app" ? (
                       <AppSurfacePane
                         appId={agentView.appId}
@@ -2487,7 +2857,7 @@ function AppShellContent() {
                         view={agentView.view}
                       />
                     ) : (
-                      <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-xl border border-border/45 shadow-lg">
+                      <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-[var(--radius-xl)] border border-border/45 shadow-lg">
                         <div className="max-w-[360px] px-6 text-center">
                           <div className="text-[22px] font-medium tracking-[-0.03em] text-foreground">
                             Choose an app
@@ -2501,18 +2871,18 @@ function AppShellContent() {
                     )}
                   </div>
                 ) : activeLeftRailItem === "automations" ? (
-                  <div className="h-full min-h-0 overflow-hidden rounded-xl">
+                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
                     <AutomationsPane
                       onOpenRunSession={handleOpenAutomationRunSession}
                       onCreateSchedule={handleCreateScheduleInChat}
                     />
                   </div>
                 ) : activeLeftRailItem === "marketplace" ? (
-                  <div className="h-full min-h-0 overflow-hidden rounded-xl">
+                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
                     <MarketplacePane />
                   </div>
                 ) : (
-                  <div className="h-full min-h-0 overflow-hidden rounded-xl">
+                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
                     <SkillsPane />
                   </div>
                 )}
@@ -2536,15 +2906,22 @@ function AppShellContent() {
                       <button
                         type="button"
                         onClick={() => openOperationsDrawerTab("inbox")}
-                        aria-label="Open inbox panel"
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-border/45 text-muted-foreground transition-all duration-200 hover:border-primary/45 hover:text-primary active:scale-95"
+                        aria-label={
+                          unreadTaskProposalCount > 0
+                            ? `Open inbox panel with ${unreadTaskProposalCount} unread proposal${unreadTaskProposalCount === 1 ? "" : "s"}`
+                            : "Open inbox panel"
+                        }
+                        className="relative inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-border/45 text-muted-foreground transition-all duration-200 hover:border-primary/45 hover:text-primary active:scale-95"
                       >
                         <InboxIcon size={13} />
+                        {unreadTaskProposalCount > 0 ? (
+                          <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full border-2 border-card bg-destructive" />
+                        ) : null}
                       </button>
                       <button
                         type="button"
                         onClick={() => openOperationsDrawerTab("running")}
-                        aria-label="Open sub-sessions panel"
+                        aria-label="Open sessions panel"
                         className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-border/45 text-muted-foreground transition-all duration-200 hover:border-primary/45 hover:text-primary active:scale-95"
                       >
                         <Clock3 size={13} />
@@ -2567,23 +2944,40 @@ function AppShellContent() {
               <div className="min-h-0 min-w-0 overflow-hidden transition-all duration-300 ease-out">
                 <OperationsDrawer
                   activeTab={activeOperationsTab}
-                  onTabChange={setActiveOperationsTab}
+                  onTabChange={openOperationsDrawerTab}
                   proposals={taskProposals}
+                  unreadProposalCount={unreadTaskProposalCount}
                   proactiveStatus={proactiveStatus}
                   isLoadingProactiveStatus={isLoadingProactiveStatus}
-                  proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
-                  isUpdatingProactiveTaskProposalsEnabled={
-                    isLoadingProactiveTaskProposalsEnabled ||
-                    isUpdatingProactiveTaskProposalsEnabled
+                  proactiveWorkspaceEnabled={proactiveWorkspaceEnabled}
+                  isLoadingProactiveWorkspaceEnabled={
+                    isLoadingProactiveWorkspaceEnabled
+                  }
+                  isUpdatingProactiveWorkspaceEnabled={
+                    isUpdatingProactiveWorkspaceEnabled
+                  }
+                  proactiveHeartbeatCron={
+                    proactiveHeartbeatConfig?.cron ||
+                    DEFAULT_PROACTIVE_HEARTBEAT_CRON
+                  }
+                  isLoadingProactiveHeartbeatConfig={
+                    isLoadingProactiveHeartbeatConfig
+                  }
+                  isUpdatingProactiveHeartbeatConfig={
+                    isUpdatingProactiveHeartbeatConfig
                   }
                   proactiveTaskProposalsError={proactiveTaskProposalsError}
+                  proactiveHeartbeatError={proactiveHeartbeatError}
                   isLoadingProposals={isLoadingTaskProposals}
                   isTriggeringProposal={isTriggeringTaskProposal}
                   proposalStatusMessage={taskProposalStatusMessage}
                   proposalAction={proposalAction}
                   onTriggerProposal={() => void triggerRemoteTaskProposal()}
-                  onProactiveTaskProposalsEnabledChange={(enabled) =>
-                    void handleProactiveTaskProposalsEnabledChange(enabled)
+                  onProactiveWorkspaceEnabledChange={(enabled) =>
+                    void handleProactiveWorkspaceEnabledChange(enabled)
+                  }
+                  onProactiveHeartbeatCronChange={(cron) =>
+                    void handleProactiveHeartbeatCronChange(cron)
                   }
                   onAcceptProposal={(proposal) =>
                     void acceptTaskProposal(proposal)
@@ -2592,11 +2986,11 @@ function AppShellContent() {
                     void dismissTaskProposal(proposal)
                   }
                   onOpenRunningSession={handleOpenRunningSession}
+                  onCreateSession={() => void handleCreateSession()}
                   activeRunningSessionId={activeChatSessionId}
                   hasWorkspace={hasSelectedWorkspace}
                   selectedWorkspaceId={selectedWorkspaceId}
                   selectedWorkspaceName={selectedWorkspace?.name || null}
-                  mainSessionId={null}
                 />
               </div>
             ) : null}

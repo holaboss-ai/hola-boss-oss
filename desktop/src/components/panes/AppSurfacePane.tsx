@@ -89,8 +89,11 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
     setFrameLoading(true);
     setFrameError("");
 
-    void window.electronAPI.appSurface
-      .resolveUrl(selectedWorkspaceId, appId, routePath)
+    void window.electronAPI.appSurface.resolveUrl(
+      selectedWorkspaceId,
+      appId,
+      routePath,
+    )
       .then((url) => {
         if (!cancelled) setFrameUrl(url);
       })
