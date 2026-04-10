@@ -183,8 +183,7 @@ function scheduleDraftFromCron(cron: string): ProactiveScheduleDraft {
     ...fallback,
     anchorMinute:
       minuteValue !== null ? Math.min(Math.max(minuteValue, 0), 59) : 0,
-    anchorHour:
-      hourValue !== null ? Math.min(Math.max(hourValue, 0), 23) : 9,
+    anchorHour: hourValue !== null ? Math.min(Math.max(hourValue, 0), 23) : 9,
   };
 }
 
@@ -250,12 +249,12 @@ function ProactiveScheduleEditor({
   const generatedCron = buildCronFromScheduleDraft(scheduleDraft);
   const canSave = Boolean(
     hasWorkspace &&
-      onProactiveHeartbeatCronChange &&
-      !isLoadingProactiveHeartbeatConfig &&
-      !isUpdatingProactiveHeartbeatConfig &&
-      (scheduleDraft.interval !== currentSchedule.interval ||
-        scheduleDraft.unit !== currentSchedule.unit) &&
-      generatedCron.trim(),
+    onProactiveHeartbeatCronChange &&
+    !isLoadingProactiveHeartbeatConfig &&
+    !isUpdatingProactiveHeartbeatConfig &&
+    (scheduleDraft.interval !== currentSchedule.interval ||
+      scheduleDraft.unit !== currentSchedule.unit) &&
+    generatedCron.trim(),
   );
 
   const handleSave = () => {
@@ -293,7 +292,13 @@ function ProactiveScheduleEditor({
           <div className="text-[11px] leading-5 text-muted-foreground/82">
             Server schedule for this desktop instance.
           </div>
-          <div className={compact ? "mt-2 grid gap-2" : "mt-2 flex flex-wrap items-center gap-2"}>
+          <div
+            className={
+              compact
+                ? "mt-2 grid gap-2"
+                : "mt-2 flex flex-wrap items-center gap-2"
+            }
+          >
             <div className="flex min-w-0 items-center gap-2">
               <span className="shrink-0 text-[11px] font-medium text-muted-foreground/88">
                 Every
@@ -347,7 +352,10 @@ function ProactiveScheduleEditor({
                     setScheduleDraft((current) => ({
                       ...current,
                       unit: nextUnit,
-                      interval: clampScheduleInterval(current.interval, nextUnit),
+                      interval: clampScheduleInterval(
+                        current.interval,
+                        nextUnit,
+                      ),
                     }));
                   }}
                   disabled={
@@ -396,7 +404,8 @@ function ProactiveScheduleEditor({
           </div>
           {currentSchedule.customCronDetected ? (
             <div className="mt-2 text-[11px] leading-5 text-muted-foreground/72">
-              Saving here replaces the current custom cron with this simpler cadence.
+              Saving here replaces the current custom cron with this simpler
+              cadence.
             </div>
           ) : null}
         </div>
@@ -462,7 +471,9 @@ export function ProactiveLifecyclePanel({
   });
 
   if (compact) {
-    const scheduleLabel = scheduleSummaryLabel(scheduleDraftFromCron(proactiveHeartbeatCron));
+    const scheduleLabel = scheduleSummaryLabel(
+      scheduleDraftFromCron(proactiveHeartbeatCron),
+    );
 
     return (
       <section className="w-full space-y-2">
@@ -472,17 +483,26 @@ export function ProactiveLifecyclePanel({
             <Badge variant="outline" className={proactiveStateClasses(state)}>
               {proactiveStateLabel(state)}
             </Badge>
-            <span className="text-xs text-muted-foreground">{scheduleLabel}</span>
+            <span className="text-xs text-muted-foreground">
+              {scheduleLabel}
+            </span>
           </div>
           <div className="flex shrink-0 items-center gap-1">
             {onProactiveWorkspaceEnabledChange ? (
               isUpdatingProactiveWorkspaceEnabled ? (
-                <Loader2 size={12} className="animate-spin text-muted-foreground" />
+                <Loader2
+                  size={12}
+                  className="animate-spin text-muted-foreground"
+                />
               ) : (
                 <Switch
                   checked={proactiveWorkspaceEnabled}
-                  onCheckedChange={(checked) => onProactiveWorkspaceEnabledChange(checked)}
-                  disabled={isUpdatingProactiveWorkspaceEnabled || !hasWorkspace}
+                  onCheckedChange={(checked) =>
+                    onProactiveWorkspaceEnabledChange(checked)
+                  }
+                  disabled={
+                    isUpdatingProactiveWorkspaceEnabled || !hasWorkspace
+                  }
                 />
               )
             ) : null}
@@ -492,19 +512,19 @@ export function ProactiveLifecyclePanel({
                   render={
                     <Button
                       type="button"
-                      size="icon-xs"
-                      variant="ghost"
+                      size="icon-sm"
+                      variant="outline"
                       aria-label="Run analysis"
                       onClick={onTriggerProposal}
                       disabled={!hasWorkspace || isTriggeringProposal}
-                      className="text-muted-foreground hover:text-primary"
+                      className="border-primary/30 bg-primary/8 text-primary hover:bg-primary/14"
                     />
                   }
                 >
                   {isTriggeringProposal ? (
-                    <Loader2 size={12} className="animate-spin" />
+                    <Loader2 size={13} className="animate-spin" />
                   ) : (
-                    <Sparkles size={12} />
+                    <Sparkles size={13} />
                   )}
                 </TooltipTrigger>
                 <TooltipContent side="bottom">Run analysis</TooltipContent>
@@ -518,7 +538,9 @@ export function ProactiveLifecyclePanel({
           hasWorkspace={hasWorkspace}
           proactiveHeartbeatCron={proactiveHeartbeatCron}
           isLoadingProactiveHeartbeatConfig={isLoadingProactiveHeartbeatConfig}
-          isUpdatingProactiveHeartbeatConfig={isUpdatingProactiveHeartbeatConfig}
+          isUpdatingProactiveHeartbeatConfig={
+            isUpdatingProactiveHeartbeatConfig
+          }
           onProactiveHeartbeatCronChange={onProactiveHeartbeatCronChange}
           compact
         />
@@ -552,12 +574,19 @@ export function ProactiveLifecyclePanel({
             <div className="flex items-center gap-1.5">
               {onProactiveWorkspaceEnabledChange ? (
                 isUpdatingProactiveWorkspaceEnabled ? (
-                  <Loader2 size={12} className="animate-spin text-muted-foreground" />
+                  <Loader2
+                    size={12}
+                    className="animate-spin text-muted-foreground"
+                  />
                 ) : (
                   <Switch
                     checked={proactiveWorkspaceEnabled}
-                    onCheckedChange={(checked) => onProactiveWorkspaceEnabledChange(checked)}
-                    disabled={isUpdatingProactiveWorkspaceEnabled || !hasWorkspace}
+                    onCheckedChange={(checked) =>
+                      onProactiveWorkspaceEnabledChange(checked)
+                    }
+                    disabled={
+                      isUpdatingProactiveWorkspaceEnabled || !hasWorkspace
+                    }
                   />
                 )
               ) : null}
@@ -567,19 +596,19 @@ export function ProactiveLifecyclePanel({
                     render={
                       <Button
                         type="button"
-                        size="icon-xs"
+                        size="icon-sm"
                         variant="outline"
                         aria-label="Run proactive analysis"
                         onClick={onTriggerProposal}
                         disabled={!hasWorkspace || isTriggeringProposal}
-                        className="rounded-full border-border/45 bg-background/90 text-muted-foreground hover:border-primary/35 hover:bg-background hover:text-primary"
+                        className="border-primary/30 bg-primary/8 text-primary hover:bg-primary/14"
                       />
                     }
                   >
                     {isTriggeringProposal ? (
-                      <Loader2 size={12} className="animate-spin" />
+                      <Loader2 size={13} className="animate-spin" />
                     ) : (
-                      <Sparkles size={12} />
+                      <Sparkles size={13} />
                     )}
                   </TooltipTrigger>
                   <TooltipContent side="bottom">Run analysis</TooltipContent>
@@ -593,9 +622,7 @@ export function ProactiveLifecyclePanel({
         hasWorkspace={hasWorkspace}
         proactiveHeartbeatCron={proactiveHeartbeatCron}
         isLoadingProactiveHeartbeatConfig={isLoadingProactiveHeartbeatConfig}
-        isUpdatingProactiveHeartbeatConfig={
-          isUpdatingProactiveHeartbeatConfig
-        }
+        isUpdatingProactiveHeartbeatConfig={isUpdatingProactiveHeartbeatConfig}
         onProactiveHeartbeatCronChange={onProactiveHeartbeatCronChange}
       />
     </section>
