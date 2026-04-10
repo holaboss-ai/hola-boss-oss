@@ -378,28 +378,30 @@ export function AutomationsPane({
 
           <div className="theme-subtle-surface mt-5 inline-flex items-center rounded-xl border border-border/45 p-1">
             <div className="inline-flex items-center gap-1">
-              <button
-                type="button"
+              <Button
+                variant={activeTab === "scheduled" ? "secondary" : "ghost"}
+                size="sm"
                 onClick={() => setActiveTab("scheduled")}
-                className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-colors ${
+                className={
                   activeTab === "scheduled"
                     ? "bg-card text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
+                    : "text-muted-foreground"
+                }
               >
                 Scheduled
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant={activeTab === "completed" ? "secondary" : "ghost"}
+                size="sm"
                 onClick={() => setActiveTab("completed")}
-                className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-colors ${
+                className={
                   activeTab === "completed"
                     ? "bg-card text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
+                    : "text-muted-foreground"
+                }
               >
                 Completed
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -505,7 +507,13 @@ export function AutomationsPane({
                             <DropdownMenu>
                               <DropdownMenuTrigger
                                 aria-label={`Actions for ${jobTitle(job)}`}
-                                className="grid size-8 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                                render={
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="text-muted-foreground"
+                                  />
+                                }
                               >
                                 <MoreHorizontal size={16} />
                               </DropdownMenuTrigger>
