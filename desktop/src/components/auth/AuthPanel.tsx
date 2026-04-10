@@ -1845,7 +1845,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     );
   }
 
-  function renderProviderCard(providerId: KnownProviderId) {
+  function renderProviderRow(providerId: KnownProviderId, isLast: boolean) {
     const template = KNOWN_PROVIDER_TEMPLATES[providerId];
     const isHolabossProvider = providerId === "holaboss";
     const isConnected = providerConnected(providerId);
@@ -1856,56 +1856,42 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     const isExpanded = isExpandable && expandedProviderId === providerId;
     const statusText = isHolabossProvider
       ? runtimeBindingReady
-        ? "Managed and ready on this desktop."
+        ? "Managed"
         : isSignedIn
-          ? "Signed in. Refresh runtime binding to finish setup."
-          : "Sign in to enable the managed provider."
+          ? "Signed in — refresh to finish setup"
+          : "Sign in to enable"
       : isDisconnecting
-        ? "Disconnecting now."
+        ? "Disconnecting..."
         : hasPendingConnection
-          ? "Enter an API key and save to connect."
+          ? "Pending — enter key and save"
           : isConnected
-            ? "Connected. Expand to edit settings."
-            : "Not connected.";
-    const actionButtonClassName =
-      "inline-flex h-9 min-w-[128px] shrink-0 items-center justify-center rounded-[10px] px-3 text-sm transition disabled:cursor-not-allowed disabled:opacity-50";
-    const actionBadgeClassName =
-      "inline-flex h-9 min-w-[128px] shrink-0 items-center justify-center rounded-full border px-3 text-xs uppercase tracking-[0.14em]";
+            ? "Connected"
+            : template.description;
 
     return (
-      <div
-        key={providerId}
-        className={`theme-control-surface overflow-hidden rounded-lg border transition ${
-          isExpanded
-            ? "border-primary/35 bg-card/96 shadow-[0_0_0_1px_rgb(var(--color-primary)/0.08)]"
-            : "border-border/55 bg-card/92 hover:border-border/75"
-        }`}
-      >
-        <div className="flex flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex min-w-0 flex-1 items-start gap-3">
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-border/55 bg-background/80 text-foreground">
-              <ProviderBrandIcon providerId={providerId} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold text-foreground">{template.label}</div>
-              <div className="mt-1 text-sm leading-6 text-foreground/82">{template.description}</div>
-              <div className="mt-1 text-sm leading-6 text-muted-foreground/95">{statusText}</div>
-            </div>
+      <div key={providerId} className={isLast ? "" : "border-b border-border/30"}>
+        <div className="flex items-center gap-3 py-3">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-border/40 bg-muted/30">
+            <ProviderBrandIcon providerId={providerId} />
+          </span>
+
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-foreground">{template.label}</div>
+            <div className="text-xs text-muted-foreground">{statusText}</div>
           </div>
 
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 md:flex-col md:items-end md:justify-center">
+          <div className="flex shrink-0 items-center gap-1.5">
             {isHolabossProvider ? (
               isConnected ? (
-                <div className={`${actionBadgeClassName} border-primary/30 bg-primary/10 text-primary`}>
-                  Enabled
-                </div>
+                <Badge variant="outline" className="border-success/35 bg-success/10 text-success">
+                  Managed
+                </Badge>
               ) : (
                 <Button
                   variant="outline"
-                  size="lg"
+                  size="sm"
                   onClick={() => void handleStartSignIn()}
                   disabled={isStartingSignIn}
-                  className={`${actionButtonClassName} border-success/40 bg-success/10 text-success hover:bg-success/16`}
                 >
                   {isStartingSignIn ? "Opening..." : "Sign in"}
                 </Button>
@@ -1913,20 +1899,19 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             ) : isConnected ? (
               <>
                 <Button
-                  variant="outline"
-                  size="lg"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
                   disabled={isSavingRuntimeConfigDocument}
-                  className={`${actionButtonClassName} border-border/45 text-foreground hover:border-primary/35`}
                 >
                   {isExpanded ? "Hide" : "Edit"}
                 </Button>
                 <Button
-                  variant="outline"
-                  size="lg"
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground hover:text-destructive"
                   onClick={() => void handleDisconnectRuntimeProvider(providerId)}
                   disabled={isSavingRuntimeConfigDocument}
-                  className={`${actionButtonClassName} border-border/45 text-foreground hover:border-destructive/40 hover:text-destructive`}
                 >
                   {isDisconnecting ? "Disconnecting..." : "Disconnect"}
                 </Button>
@@ -1934,23 +1919,22 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             ) : hasPendingConnection ? (
               <>
                 <Button
-                  variant="outline"
-                  size="lg"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
                   disabled={isSavingRuntimeConfigDocument}
-                  className={`${actionButtonClassName} border-border/45 text-foreground hover:border-primary/35`}
                 >
                   {isExpanded ? "Hide" : "Edit"}
                 </Button>
                 <Button
-                  variant="outline"
-                  size="lg"
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground hover:text-destructive"
                   onClick={() => {
                     updateProviderDraft(providerId, { enabled: false });
                     setExpandedProviderId((current) => (current === providerId ? null : current));
                   }}
                   disabled={isSavingRuntimeConfigDocument}
-                  className={`${actionButtonClassName} border-border/45 text-foreground hover:border-destructive/40 hover:text-destructive`}
                 >
                   Cancel
                 </Button>
@@ -1958,13 +1942,12 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             ) : (
               <Button
                 variant="outline"
-                size="lg"
+                size="sm"
                 onClick={() => {
                   updateProviderDraft(providerId, { enabled: true });
                   setExpandedProviderId(providerId);
                 }}
                 disabled={isSavingRuntimeConfigDocument}
-                className={`${actionButtonClassName} border-border/55 text-foreground hover:border-success/35 hover:text-success`}
               >
                 Connect
               </Button>
@@ -1973,7 +1956,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         </div>
 
         {isExpanded && isExpandable && (
-          <div className="border-t border-border/35 px-4 pb-4 pt-3">
+          <div className="pb-3 pl-11">
             {renderProviderDrawerContent(providerId)}
           </div>
         )}
@@ -1981,19 +1964,33 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     );
   }
 
+  const allProviderIds = [...connectedProviderIds, ...availableProviderIds];
+
   const runtimeProviderSettings = (
-    <div className="mt-3 grid gap-4">
-      <div className="rounded-lg border border-border/40 bg-card/80 p-4">
-        <div className="grid gap-3">
-        <div className="text-sm font-medium text-foreground">Connected providers</div>
-        <div className="rounded-lg border border-border/35 bg-muted/25 p-3">
-          <div className="text-sm font-medium text-foreground">Background tasks</div>
-          <div className="mt-1 text-sm text-muted-foreground">
-            Used for memory recall and post-run tasks.
-          </div>
-          <div className="mt-3 grid gap-2">
-            <label className="grid gap-1">
-              <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Provider</span>
+    <div className="mt-3">
+      {/* Provider list — all providers, connected first */}
+      <div>
+        {allProviderIds.length === 0 ? (
+          <div className="py-3 text-xs text-muted-foreground">No providers available.</div>
+        ) : (
+          allProviderIds.map((providerId, index) =>
+            renderProviderRow(providerId, index === allProviderIds.length - 1),
+          )
+        )}
+      </div>
+
+      {/* Defaults section */}
+      <div className="mt-4 border-t border-border/30 pt-4">
+        <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+          Defaults
+        </div>
+
+        <div className="mt-3 grid gap-4">
+          {/* Background tasks */}
+          <div className="grid gap-1.5">
+            <div className="text-sm font-medium text-foreground">Background tasks</div>
+            <div className="text-xs text-muted-foreground">Memory recall and post-run tasks</div>
+            <div className="mt-1 grid grid-cols-2 gap-2">
               <Select
                 value={backgroundTasksDraft.providerId}
                 onValueChange={(value) =>
@@ -2004,7 +2001,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 disabled={backgroundProviderOptions.length === 0}
               >
                 <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
-                  <SelectValue />
+                  <SelectValue placeholder="Provider" />
                 </SelectTrigger>
                 <SelectContent>
                   {backgroundProviderOptions.map((providerId) => {
@@ -2020,10 +2017,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   })}
                 </SelectContent>
               </Select>
-            </label>
 
-            <label className="grid gap-1">
-              <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Model</span>
               {backgroundTaskUsesManagedModelPicker ? (
                 <Select
                   value={backgroundTasksDraft.model || undefined}
@@ -2075,28 +2069,24 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   ) : null}
                 </>
               )}
-            </label>
-
+            </div>
             {backgroundTasksDraft.providerId && !backgroundProviderConnected ? (
-              <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+              <div className="text-xs text-warning">
                 Selected provider is not connected. Background tasks stay disabled until you reconnect it or choose another provider.
               </div>
             ) : null}
             {backgroundTasksDraft.providerId && !backgroundTasksDraft.model.trim() ? (
-              <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+              <div className="text-xs text-warning">
                 Select a model to enable background tasks.
               </div>
             ) : null}
           </div>
-        </div>
-        <div className="rounded-lg border border-border/35 bg-muted/25 p-3">
-          <div className="text-sm font-medium text-foreground">Image generation</div>
-          <div className="mt-1 text-sm text-muted-foreground">
-            Used when the agent generates new images into the workspace.
-          </div>
-          <div className="mt-3 grid gap-2">
-            <label className="grid gap-1">
-              <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Provider</span>
+
+          {/* Image generation */}
+          <div className="grid gap-1.5">
+            <div className="text-sm font-medium text-foreground">Image generation</div>
+            <div className="text-xs text-muted-foreground">Used when the agent generates images</div>
+            <div className="mt-1 grid grid-cols-2 gap-2">
               <Select
                 value={imageGenerationDraft.providerId}
                 onValueChange={(value) =>
@@ -2107,7 +2097,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 disabled={imageGenerationProviderOptions.length === 0}
               >
                 <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
-                  <SelectValue />
+                  <SelectValue placeholder="Provider" />
                 </SelectTrigger>
                 <SelectContent>
                   {imageGenerationProviderOptions.map((providerId) => {
@@ -2123,10 +2113,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   })}
                 </SelectContent>
               </Select>
-            </label>
 
-            <label className="grid gap-1">
-              <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Model</span>
               {imageGenerationUsesManagedModelPicker ? (
                 <Select
                   value={imageGenerationDraft.model || undefined}
@@ -2178,43 +2165,20 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   ) : null}
                 </>
               )}
-            </label>
-
+            </div>
             {imageGenerationDraft.providerId && !imageGenerationProviderConnected ? (
-              <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+              <div className="text-xs text-warning">
                 Selected provider is not connected. Image generation stays disabled until you reconnect it or choose another provider.
               </div>
             ) : null}
             {imageGenerationDraft.providerId && !imageGenerationDraft.model.trim() ? (
-              <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+              <div className="text-xs text-warning">
                 Select a model to enable image generation.
               </div>
             ) : null}
           </div>
         </div>
-        {connectedProviderIds.length === 0 ? (
-          <div className="rounded-[12px] border border-border/35 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-            No connected providers.
-          </div>
-        ) : (
-          connectedProviderIds.map((providerId) => renderProviderCard(providerId))
-        )}
-        </div>
       </div>
-
-      <div className="rounded-lg border border-border/40 bg-card/80 p-4">
-        <div className="text-sm font-medium text-foreground">Available providers</div>
-        <div className="mt-3 grid gap-2">
-          {availableProviderIds.length === 0 ? (
-            <div className="rounded-[12px] border border-border/35 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-              All providers are connected.
-            </div>
-          ) : (
-            availableProviderIds.map((providerId) => renderProviderCard(providerId))
-          )}
-        </div>
-      </div>
-
     </div>
   );
 
