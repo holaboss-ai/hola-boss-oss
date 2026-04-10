@@ -35,9 +35,7 @@ export function CreatingView({
   }, [steps.length]);
 
   return (
-    <section
-      className={`${sectionClassName} grid place-items-center`}
-    >
+    <section className={`${sectionClassName} grid place-items-center`}>
       {/* Ambient glow — uses theme primary */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute left-1/2 top-1/3 size-[600px] -translate-x-1/2 -translate-y-1/2 animate-pulse rounded-full bg-primary/[0.04] blur-[120px]" />
@@ -53,7 +51,7 @@ export function CreatingView({
         className={`w-full ${panelVariant ? "h-full max-w-[1020px]" : "max-w-[540px]"}`}
       >
         <div
-          className={`theme-shell mx-auto flex w-full flex-col items-center rounded-[var(--radius-xl)] border border-border/45 shadow-lg ${
+          className={`theme-shell mx-auto flex w-full flex-col items-center rounded-xl border border-border/45 shadow-lg ${
             panelVariant
               ? "h-full max-w-[1020px] justify-center px-6 py-6 sm:px-8 sm:py-7 lg:px-10 lg:py-8"
               : "max-w-[540px] px-6 py-8 sm:px-8"
@@ -118,7 +116,10 @@ export function CreatingView({
                         }`}
                       >
                         {isDone ? (
-                          <Check size={10} className="text-primary-foreground" />
+                          <Check
+                            size={10}
+                            className="text-primary-foreground"
+                          />
                         ) : isActive ? (
                           <div className="size-1.5 rounded-full bg-primary animate-pulse" />
                         ) : null}

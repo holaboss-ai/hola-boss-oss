@@ -22,7 +22,6 @@ import {
   nativeImage,
   screen,
   session,
-  net,
   shell,
   type IpcMainInvokeEvent,
   type OpenDialogOptions,
@@ -30,7 +29,7 @@ import {
 } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import {
   createServer,
@@ -1689,6 +1688,11 @@ interface TemplateViewInfoPayload {
   description: string;
 }
 
+interface TemplateAppEntryPayload {
+  name: string;
+  required: boolean;
+}
+
 interface TemplateMetadataPayload {
   name: string;
   repo: string;
@@ -1700,7 +1704,8 @@ interface TemplateMetadataPayload {
   allowed_user_ids: string[];
   icon: string;
   emoji: string | null;
-  apps: string[];
+  apps: TemplateAppEntryPayload[];
+  min_optional_apps: number;
   tags: string[];
   category: string;
   long_description: string | null;
@@ -6228,7 +6233,7 @@ async function requestControlPlaneJson<T>({
   }
 
   const executeRequest = async () => {
-    return net.fetch(url.toString(), {
+    return fetch(url.toString(), {
       method,
       headers: await controlPlaneHeaders(service),
       body: payload === undefined ? undefined : JSON.stringify(payload),
@@ -6480,6 +6485,7 @@ async function parseLocalTemplateMetadata(
     icon: "folder",
     emoji: null,
     apps: [],
+    min_optional_apps: 0,
     tags,
     category: "local",
     long_description: description,
@@ -6518,6 +6524,74 @@ async function listMarketplaceTemplates(): Promise<TemplateListResponsePayload> 
     method: "GET",
     path: "/api/v1/marketplace/templates",
   });
+}
+
+interface AppTemplateListResponsePayload {
+  templates: AppTemplateMetadataPayload[];
+}
+
+async function listAppTemplatesViaControlPlane(): Promise<AppTemplateListResponsePayload> {
+  const baseUrl = marketplaceBaseUrl();
+  try {
+    const res = await fetch(`${baseUrl}/api/v1/marketplace/app-templates`, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (res.ok) {
+      return (await res.json()) as AppTemplateListResponsePayload;
+    }
+  } catch {
+    // Fall through to authenticated path.
+  }
+  await ensureRuntimeBindingReadyForWorkspaceFlow("marketplace_app_templates", {
+    allowProvisionWhenUnmanaged: true,
+    waitForStartupSync: true,
+  });
+  return requestControlPlaneJson<AppTemplateListResponsePayload>({
+    service: "marketplace",
+    method: "GET",
+    path: "/api/v1/marketplace/app-templates",
+  });
+}
+
+async function downloadAppArchive(url: string, appId: string): Promise<string> {
+  const dir = path.join(os.tmpdir(), "holaboss-app-archives");
+  mkdirSync(dir, { recursive: true });
+  const filePath = path.join(dir, `${appId}-${Date.now()}.tar.gz`);
+
+  const res = await fetch(url, { method: "GET" });
+  if (!res.ok || !res.body) {
+    throw new Error(`Download failed: ${res.status} ${res.statusText}`);
+  }
+  const totalHeader = res.headers.get("content-length");
+  const total = totalHeader ? Number.parseInt(totalHeader, 10) : 0;
+  let received = 0;
+
+  const fileStream = createWriteStream(filePath);
+  const reader = res.body.getReader();
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) {
+        fileStream.write(value);
+        received += value.byteLength;
+        mainWindow?.webContents.send("app-install-progress", {
+          appId,
+          phase: "downloading",
+          bytes: received,
+          total,
+        });
+      }
+    }
+  } finally {
+    fileStream.end();
+    await new Promise<void>((resolve, reject) => {
+      fileStream.on("finish", () => resolve());
+      fileStream.on("error", reject);
+    });
+  }
+  return filePath;
 }
 
 async function listTaskProposals(
@@ -7735,6 +7809,61 @@ function resolveLocalModulesRoot() {
     }
   }
   return null;
+}
+
+function resolveLocalArchiveTarget(): "darwin-arm64" | "linux-x64" | "win32-x64" {
+  const { platform, arch } = process;
+  if (platform === "darwin" && arch === "arm64") return "darwin-arm64";
+  if (platform === "linux" && arch === "x64") return "linux-x64";
+  if (platform === "win32" && arch === "x64") return "win32-x64";
+  throw new Error(`Unsupported app archive target: ${platform}/${arch}`);
+}
+
+function localAppsRootCandidates() {
+  return [
+    internalOverride("HOLABOSS_APPS_ROOT"),
+    path.resolve(process.cwd(), "..", "..", "hola-boss-apps"),
+    path.resolve(process.cwd(), "..", "hola-boss-apps"),
+    path.resolve(app.getAppPath(), "..", "..", "..", "..", "hola-boss-apps"),
+  ].filter(Boolean) as string[];
+}
+
+function resolveLocalAppsRoot(): string | null {
+  for (const candidate of localAppsRootCandidates()) {
+    const resolved = path.resolve(candidate);
+    if (existsSync(resolved)) {
+      return resolved;
+    }
+  }
+  return null;
+}
+
+interface LocalAppArchiveScanEntry {
+  appId: string;
+  filePath: string;
+  target: string;
+}
+
+async function scanLocalAppArchives(): Promise<LocalAppArchiveScanEntry[]> {
+  const root = resolveLocalAppsRoot();
+  if (!root) return [];
+  const distDir = path.join(root, "dist");
+  if (!existsSync(distDir)) return [];
+  let target: string;
+  try {
+    target = resolveLocalArchiveTarget();
+  } catch {
+    return [];
+  }
+  const files = await fs.readdir(distDir);
+  const pattern = new RegExp(`^(.+)-module-${target}\\.tar\\.gz$`);
+  const out: LocalAppArchiveScanEntry[] = [];
+  for (const name of files) {
+    const match = name.match(pattern);
+    if (!match) continue;
+    out.push({ appId: match[1], filePath: path.join(distDir, name), target });
+  }
+  return out;
 }
 
 async function collectLocalTrackedFiles(
@@ -8960,6 +9089,198 @@ async function listWorkspacesViaRuntime(): Promise<WorkspaceListResponsePayload>
       offset: 0,
     },
   });
+}
+
+const STATIC_APP_CATALOG: Record<string, {
+  name: string;
+  description: string | null;
+  icon: string | null;
+  category: string | null;
+  tags: string[];
+}> = {
+  twitter: {
+    name: "Twitter / X",
+    description: "Short-form post drafting and thread editing.",
+    icon: null,
+    category: "social",
+    tags: ["social media", "twitter"],
+  },
+  linkedin: {
+    name: "LinkedIn",
+    description: "Long-form post drafting and professional publishing.",
+    icon: null,
+    category: "social",
+    tags: ["social media", "linkedin"],
+  },
+  reddit: {
+    name: "Reddit",
+    description: "Subreddit posts, comments and community replies.",
+    icon: null,
+    category: "social",
+    tags: ["social media", "reddit"],
+  },
+  gmail: {
+    name: "Gmail",
+    description: "Email drafts, replies, and thread management.",
+    icon: null,
+    category: "communication",
+    tags: ["email", "gmail"],
+  },
+  sheets: {
+    name: "Google Sheets",
+    description: "Spreadsheet data as a lightweight database.",
+    icon: null,
+    category: "productivity",
+    tags: ["spreadsheet", "google sheets"],
+  },
+  github: {
+    name: "GitHub",
+    description: "Repository activity tracking and release notes.",
+    icon: null,
+    category: "developer",
+    tags: ["github", "developer"],
+  },
+};
+
+function staticCatalogMeta(appId: string) {
+  return (
+    STATIC_APP_CATALOG[appId] ?? {
+      name: appId,
+      description: null,
+      icon: null,
+      category: null,
+      tags: [] as string[],
+    }
+  );
+}
+
+async function listAppCatalog(params: {
+  source?: "marketplace" | "local";
+}): Promise<AppCatalogListResponse> {
+  const query: Record<string, string> = {};
+  if (params.source) query.source = params.source;
+  return requestRuntimeJson<AppCatalogListResponse>({
+    method: "GET",
+    path: "/api/v1/apps/catalog",
+    params: query,
+  });
+}
+
+async function syncAppCatalog(params: {
+  source: "marketplace" | "local";
+}): Promise<AppCatalogSyncResponse> {
+  const target = resolveLocalArchiveTarget();
+
+  if (params.source === "marketplace") {
+    const resp = await listAppTemplatesViaControlPlane();
+    const entries: Array<Record<string, unknown>> = [];
+    for (const tmpl of resp.templates) {
+      const archives = Array.isArray(tmpl.archives) ? tmpl.archives : [];
+      const matching = archives.find((a) => a?.target === target);
+      if (!matching) continue;
+      const meta = staticCatalogMeta(tmpl.name);
+      entries.push({
+        app_id: tmpl.name,
+        name: meta.name,
+        description: tmpl.description ?? meta.description,
+        icon: tmpl.icon ?? meta.icon,
+        category: tmpl.category ?? meta.category,
+        tags: Array.isArray(tmpl.tags) && tmpl.tags.length > 0 ? tmpl.tags : meta.tags,
+        version: tmpl.version ?? null,
+        archive_url: matching.url,
+        archive_path: null,
+      });
+    }
+    return requestRuntimeJson<AppCatalogSyncResponse>({
+      method: "POST",
+      path: "/api/v1/apps/catalog/sync",
+      payload: { source: "marketplace", target, entries },
+    });
+  }
+
+  const scanned = await scanLocalAppArchives();
+  const entries = scanned.map((row) => {
+    const meta = staticCatalogMeta(row.appId);
+    return {
+      app_id: row.appId,
+      name: meta.name,
+      description: meta.description,
+      icon: meta.icon,
+      category: meta.category,
+      tags: meta.tags,
+      version: null,
+      archive_url: null,
+      archive_path: row.filePath,
+    };
+  });
+  return requestRuntimeJson<AppCatalogSyncResponse>({
+    method: "POST",
+    path: "/api/v1/apps/catalog/sync",
+    payload: { source: "local", target, entries },
+  });
+}
+
+async function installAppFromCatalog(params: {
+  workspaceId: string;
+  appId: string;
+  source: "marketplace" | "local";
+}): Promise<InstallAppFromCatalogResponse> {
+  const listing = await listAppCatalog({ source: params.source });
+  const entry = listing.entries.find((e) => e.app_id === params.appId);
+  if (!entry) {
+    throw new Error(`App '${params.appId}' not found in ${params.source} catalog`);
+  }
+
+  let archivePath: string;
+  let cleanupTempFile = false;
+  if (params.source === "marketplace") {
+    if (!entry.archive_url) {
+      throw new Error(`Catalog entry for '${params.appId}' is missing archive_url`);
+    }
+    mainWindow?.webContents.send("app-install-progress", {
+      appId: params.appId,
+      phase: "downloading",
+      bytes: 0,
+      total: 0,
+    });
+    archivePath = await downloadAppArchive(entry.archive_url, params.appId);
+    cleanupTempFile = true;
+  } else {
+    if (!entry.archive_path) {
+      throw new Error(`Catalog entry for '${params.appId}' is missing archive_path`);
+    }
+    archivePath = entry.archive_path;
+  }
+
+  mainWindow?.webContents.send("app-install-progress", {
+    appId: params.appId,
+    phase: "installing",
+    bytes: 0,
+    total: 0,
+  });
+
+  try {
+    const resp = await requestRuntimeJson<InstallAppFromCatalogResponse>({
+      method: "POST",
+      path: "/api/v1/apps/install-archive",
+      payload: {
+        workspace_id: params.workspaceId,
+        app_id: params.appId,
+        archive_path: archivePath,
+      },
+      timeoutMs: 300_000,
+    });
+    return resp;
+  } finally {
+    if (cleanupTempFile) {
+      try {
+        const { rmSync } = await import("node:fs");
+        rmSync(archivePath, { force: true });
+      } catch {
+        /* best effort */
+      }
+    }
+  }
 }
 
 async function listInstalledApps(
@@ -15192,6 +15513,28 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, workspaceId: string, appId: string) =>
       removeInstalledApp(workspaceId, appId),
+  );
+  handleTrustedIpc(
+    "workspace:listAppCatalog",
+    ["main"],
+    async (_event, params: { source?: "marketplace" | "local" }) =>
+      listAppCatalog(params),
+  );
+  handleTrustedIpc(
+    "workspace:syncAppCatalog",
+    ["main"],
+    async (_event, params: { source: "marketplace" | "local" }) =>
+      syncAppCatalog(params),
+  );
+  handleTrustedIpc(
+    "workspace:installAppFromCatalog",
+    ["main"],
+    async (_event, params: InstallAppFromCatalogRequest) =>
+      installAppFromCatalog({
+        workspaceId: params.workspaceId,
+        appId: params.appId,
+        source: params.source,
+      }),
   );
   handleTrustedIpc(
     "appSurface:navigate",

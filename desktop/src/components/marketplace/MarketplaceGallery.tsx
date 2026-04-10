@@ -1,11 +1,8 @@
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { holabossLogoUrl } from "@/lib/assetPaths";
 import { KitCard } from "./KitCard";
 import { FALLBACK_TEMPLATES } from "./fallbackTemplates";
-import { marketplaceGalleryBranding } from "./marketplaceGalleryBranding";
 
 interface MarketplaceGalleryProps {
   mode: "browse" | "pick";
@@ -32,7 +29,6 @@ export function MarketplaceGallery({
   onUseLocalTemplate,
 }: MarketplaceGalleryProps) {
   const [query, setQuery] = useState("");
-  const branding = marketplaceGalleryBranding(mode);
 
   const effectiveTemplates =
     templates.length > 0 ? templates : FALLBACK_TEMPLATES;
@@ -60,88 +56,68 @@ export function MarketplaceGallery({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div>
-        {branding.showLogo ? (
-          <div className="mb-3 flex items-center gap-3">
-            <div className="flex h-8 items-center gap-2 justify-center">
-              <img src={holabossLogoUrl} alt="Holaboss" className="size-6" />
-              <h1 className="text-sm font-semibold tracking-tight">Holaboss</h1>
-            </div>
-            <div className="h-4 w-px bg-border" />
-            <p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
-              {branding.eyebrow}
-            </p>
-          </div>
-        ) : null}
-        <h2 className="mt-1 text-xl font-semibold tracking-tight text-foreground">
-          {branding.title}
-        </h2>
-        {branding.description ? (
-          <p className="mt-1 text-sm text-muted-foreground">
-            {branding.description}
-          </p>
-        ) : null}
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          {mode === "pick"
+            ? "Pick a template to get started."
+            : "Browse workspace templates."}
+        </p>
+        <div className="relative w-56 shrink-0">
+          <Search
+            size={13}
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+          />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search…"
+            className="h-7 w-full rounded-md border border-border bg-background pl-7 pr-3 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring"
+          />
+        </div>
       </div>
 
-      <div className="relative mt-4">
-        <Search
-          size={14}
-          className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-        />
-        <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search templates by name or tag"
-          className="h-9 pl-8"
-        />
-      </div>
-
-      <div className="mt-4 min-h-80 flex-1 overflow-auto">
+      <div className="mt-4 min-h-0 flex-1 overflow-auto">
         {showLoading ? (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {Array.from({ length: 4 }).map((_, i) => (
               <div
                 key={i}
-                className="animate-pulse rounded-xl border border-border bg-muted p-4"
+                className="animate-pulse rounded-lg border border-border p-4"
               >
                 <div className="flex items-start gap-3">
-                  <div className="size-8 rounded-lg bg-border/50" />
+                  <div className="size-7 rounded-md bg-muted" />
                   <div className="min-w-0 flex-1">
-                    <div className="h-4 w-24 rounded bg-border/50" />
-                    <div className="mt-2 h-3 w-full rounded bg-border/30" />
-                    <div className="mt-1 h-3 w-2/3 rounded bg-border/30" />
+                    <div className="h-3.5 w-20 rounded bg-muted" />
+                    <div className="mt-2 h-3 w-full rounded bg-muted" />
+                    <div className="mt-1 h-3 w-2/3 rounded bg-muted" />
                   </div>
                 </div>
               </div>
             ))}
           </div>
         ) : showError ? (
-          <div className="flex min-h-50 items-center justify-center">
-            <div className="w-full max-w-sm rounded-xl border border-destructive/25 bg-destructive/5 px-6 py-5 text-center">
-              <p className="text-sm font-medium text-foreground">
-                Could not load templates
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">{error}</p>
-              {onRetry ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onRetry}
-                  className="mt-3"
-                >
-                  Try again
-                </Button>
-              ) : null}
-            </div>
+          <div className="mt-8 text-center">
+            <p className="text-sm text-foreground">Could not load templates</p>
+            <p className="mt-1 text-xs text-muted-foreground">{error}</p>
+            {onRetry ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onRetry}
+                className="mt-3"
+              >
+                Try again
+              </Button>
+            ) : null}
           </div>
         ) : visibleTemplates.length === 0 ? (
-          <div className="rounded-xl border border-border bg-muted/50 px-4 py-5 text-xs text-muted-foreground">
+          <div className="mt-8 text-center text-xs text-muted-foreground">
             {query.trim()
               ? "No templates match your search."
               : "No templates available yet."}
           </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {visibleTemplates.map((t: TemplateMetadataPayload) => (
               <KitCard key={t.name} template={t} onClick={onSelectKit} />
             ))}
@@ -150,7 +126,7 @@ export function MarketplaceGallery({
       </div>
 
       {mode === "pick" && (onStartFromScratch || onUseLocalTemplate) ? (
-        <div className="mt-4 flex items-center justify-center gap-3 border-t border-border pt-4">
+        <div className="mt-4 flex items-center justify-center gap-3 border-t border-border pt-3">
           {onStartFromScratch ? (
             <Button
               variant="link"

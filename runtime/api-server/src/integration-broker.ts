@@ -51,6 +51,7 @@ export interface ComposioProxyRequest {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   endpoint: string;
   body?: unknown;
+  headers?: Record<string, string>;
 }
 
 export interface ComposioProxyResponse {

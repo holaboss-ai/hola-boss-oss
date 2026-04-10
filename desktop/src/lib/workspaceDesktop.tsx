@@ -53,6 +53,18 @@ interface WorkspaceDesktopContextValue {
   workspaceAppsReady: boolean;
   workspaceBlockingReason: string;
   refreshInstalledApps: () => Promise<void>;
+  appCatalog: AppCatalogEntryPayload[];
+  isLoadingAppCatalog: boolean;
+  appCatalogError: string;
+  appCatalogSource: "marketplace" | "local";
+  setAppCatalogSource: (source: "marketplace" | "local") => void;
+  refreshAppCatalog: () => Promise<void>;
+  installingAppId: string | null;
+  installAppFromCatalog: (appId: string) => Promise<void>;
+  pendingAppInstall: { appId: string; provider: string } | null;
+  clearPendingAppInstall: () => void;
+  connectAndInstallApp: () => Promise<void>;
+  isConnectingAppIntegration: boolean;
   templateSourceMode: TemplateSourceMode;
   setTemplateSourceMode: (value: TemplateSourceMode) => void;
   createHarnessOptions: WorkspaceHarnessOption[];
@@ -88,6 +100,8 @@ interface WorkspaceDesktopContextValue {
   createWorkspace: () => Promise<void>;
   deleteWorkspace: (workspaceId: string) => Promise<void>;
   removeInstalledApp: (appId: string) => Promise<void>;
+  selectedApps: Set<string>;
+  setSelectedApps: (value: Set<string> | ((prev: Set<string>) => Set<string>)) => void;
   pendingIntegrations: ResolveTemplateIntegrationsResult | null;
   isResolvingIntegrations: boolean;
   resolveIntegrationsBeforeCreate: () => Promise<ResolveTemplateIntegrationsResult | null>;
@@ -158,11 +172,17 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [workspaces, setWorkspaces] = useState<WorkspaceRecordPayload[]>([]);
   const [hasHydratedWorkspaceList, setHasHydratedWorkspaceList] = useState(false);
   const [installedApps, setInstalledApps] = useState<WorkspaceInstalledAppDefinition[]>([]);
+  const [appCatalog, setAppCatalog] = useState<AppCatalogEntryPayload[]>([]);
+  const [isLoadingAppCatalog, setIsLoadingAppCatalog] = useState(false);
+  const [appCatalogError, setAppCatalogError] = useState("");
+  const [appCatalogSource, setAppCatalogSourceState] = useState<"marketplace" | "local">("marketplace");
+  const [installingAppId, setInstallingAppId] = useState<string | null>(null);
   const [templateSourceMode, setTemplateSourceModeState] = useState<TemplateSourceMode>("local");
   const [selectedCreateHarness, setSelectedCreateHarnessState] = useState<WorkspaceHarnessId>(DEFAULT_WORKSPACE_HARNESS);
   const [selectedTemplateFolder, setSelectedTemplateFolder] = useState<TemplateFolderSelectionPayload | null>(null);
   const [marketplaceTemplates, setMarketplaceTemplates] = useState<TemplateMetadataPayload[]>([]);
   const [selectedMarketplaceTemplateName, setSelectedMarketplaceTemplateName] = useState("");
+  const [selectedApps, setSelectedApps] = useState<Set<string>>(new Set());
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const [isLoadingBootstrap, setIsLoadingBootstrap] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -180,6 +200,8 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
   const [recentAuthCompletedAt, setRecentAuthCompletedAt] = useState<number | null>(null);
   const [pendingIntegrations, setPendingIntegrations] = useState<ResolveTemplateIntegrationsResult | null>(null);
   const [isResolvingIntegrations, setIsResolvingIntegrations] = useState(false);
+  const [pendingAppInstall, setPendingAppInstall] = useState<{ appId: string; provider: string } | null>(null);
+  const [isConnectingAppIntegration, setIsConnectingAppIntegration] = useState(false);
 
   const signedInUserId = sessionUserId(session);
   const isSignedIn = Boolean(signedInUserId);
@@ -215,9 +237,22 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     setSelectedCreateHarnessState(normalizeWorkspaceHarness(value));
   }
 
+  function setAppCatalogSource(source: "marketplace" | "local") {
+    setAppCatalogSourceState(source);
+    setAppCatalogError("");
+    setAppCatalog([]);
+  }
+
   function selectMarketplaceTemplate(templateName: string) {
     setWorkspaceErrorMessage("");
     setSelectedMarketplaceTemplateName(templateName);
+    // Initialize selected apps: all apps selected by default
+    const tpl = marketplaceTemplates.find((t) => t.name === templateName);
+    if (tpl) {
+      setSelectedApps(new Set(tpl.apps.map((a) => a.name)));
+    } else {
+      setSelectedApps(new Set());
+    }
   }
 
   function applyWorkspaceLifecycle(lifecycle: WorkspaceLifecyclePayload) {
@@ -493,6 +528,147 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
     }
   }
 
+  async function refreshAppCatalog() {
+    setIsLoadingAppCatalog(true);
+    setAppCatalogError("");
+    try {
+      await window.electronAPI.workspace.syncAppCatalog({ source: appCatalogSource });
+      const response = await window.electronAPI.workspace.listAppCatalog({
+        source: appCatalogSource,
+      });
+      setAppCatalog(response.entries);
+    } catch (error) {
+      setAppCatalog([]);
+      setAppCatalogError(normalizeErrorMessage(error));
+    } finally {
+      setIsLoadingAppCatalog(false);
+    }
+  }
+
+  const APP_TO_PROVIDER: Record<string, string> = {
+    twitter: "twitter",
+    linkedin: "linkedin",
+    reddit: "reddit",
+    gmail: "gmail",
+    sheets: "googlesheets",
+    github: "github",
+  };
+
+  async function installAppFromCatalog(appId: string) {
+    if (!selectedWorkspaceId) {
+      setAppCatalogError("Select a workspace first.");
+      return;
+    }
+    if (installingAppId) {
+      return;
+    }
+    setAppCatalogError("");
+
+    // Check if this app requires an integration that isn't connected yet
+    const provider = APP_TO_PROVIDER[appId.toLowerCase()];
+    if (provider) {
+      try {
+        const { connections } = await window.electronAPI.workspace.listIntegrationConnections();
+        const hasActive = connections.some(
+          (c) => c.provider_id === provider && c.status === "active",
+        );
+        if (!hasActive) {
+          setPendingAppInstall({ appId, provider });
+          return;
+        }
+      } catch {
+        // If we can't check integrations, proceed with install anyway
+      }
+    }
+
+    await doInstallApp(appId);
+  }
+
+  async function doInstallApp(appId: string) {
+    if (!selectedWorkspaceId) return;
+    setInstallingAppId(appId);
+    setPendingAppInstall(null);
+    setAppCatalogError("");
+    try {
+      await window.electronAPI.workspace.installAppFromCatalog({
+        workspaceId: selectedWorkspaceId,
+        appId,
+        source: appCatalogSource,
+      });
+      // Bind the integration if we have one
+      const provider = APP_TO_PROVIDER[appId.toLowerCase()];
+      if (provider && selectedWorkspaceId) {
+        try {
+          const { connections } = await window.electronAPI.workspace.listIntegrationConnections();
+          const conn = connections.find(
+            (c) => c.provider_id === provider && c.status === "active",
+          );
+          if (conn) {
+            await window.electronAPI.workspace.upsertIntegrationBinding(
+              selectedWorkspaceId,
+              "app",
+              appId,
+              provider,
+              { connection_id: conn.connection_id },
+            );
+          }
+        } catch {
+          // Non-fatal — binding can be set up later
+        }
+      }
+      await refreshInstalledApps();
+    } catch (error) {
+      setAppCatalogError(normalizeErrorMessage(error));
+    } finally {
+      setInstallingAppId(null);
+    }
+  }
+
+  function clearPendingAppInstall() {
+    setPendingAppInstall(null);
+  }
+
+  async function connectAndInstallApp() {
+    if (!pendingAppInstall) return;
+    const { appId, provider } = pendingAppInstall;
+    setIsConnectingAppIntegration(true);
+    setAppCatalogError("");
+    try {
+      const runtimeConfig = await window.electronAPI.runtime.getConfig();
+      const userId = runtimeConfig.userId ?? (resolvedUserId || "local");
+
+      const link = await window.electronAPI.workspace.composioConnect({
+        provider,
+        owner_user_id: userId,
+      });
+      await window.electronAPI.ui.openExternalUrl(link.redirect_url);
+
+      // Poll for completion
+      for (let i = 0; i < 100; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const status = await window.electronAPI.workspace.composioAccountStatus(
+          link.connected_account_id,
+        );
+        if (status.status === "ACTIVE") {
+          await window.electronAPI.workspace.composioFinalize({
+            connected_account_id: link.connected_account_id,
+            provider,
+            owner_user_id: userId,
+            account_label: `${provider} (Managed)`,
+          });
+          // Connection done — now install the app
+          await doInstallApp(appId);
+          return;
+        }
+      }
+      setAppCatalogError("Connection timed out. Please try again.");
+    } catch (error) {
+      setAppCatalogError(normalizeErrorMessage(error));
+    } finally {
+      setIsConnectingAppIntegration(false);
+    }
+  }
+
   function retryMarketplaceTemplates() {
     setMarketplaceTemplatesRefreshKey((k) => k + 1);
   }
@@ -525,7 +701,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
           name: trimmedName,
           template_mode: "template",
           template_name: selectedMarketplaceTemplate.name,
-          template_apps: selectedMarketplaceTemplate.apps
+          template_apps: [...selectedApps]
         };
       } else if (selectedTemplateFolder?.rootPath) {
         payload = {
@@ -563,7 +739,16 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
         if (cancelled) {
           return;
         }
-        const visibleTemplates = response.templates.filter((template) => !template.is_hidden);
+        const visibleTemplates = response.templates
+          .filter((template) => !template.is_hidden)
+          .map((template) => ({
+            ...template,
+            // Normalize apps: backend may return string[] (legacy) or {name,required}[]
+            apps: template.apps.map((a: unknown) =>
+              typeof a === "string" ? { name: a, required: true } : a
+            ) as TemplateAppEntryPayload[],
+            min_optional_apps: template.min_optional_apps ?? 0,
+          }));
         setMarketplaceTemplates(visibleTemplates);
         setSelectedMarketplaceTemplateName((current) => {
           if (current && visibleTemplates.some((template) => template.name === current)) {
@@ -894,6 +1079,18 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       workspaceAppsReady,
       workspaceBlockingReason,
       refreshInstalledApps,
+      appCatalog,
+      isLoadingAppCatalog,
+      appCatalogError,
+      appCatalogSource,
+      setAppCatalogSource,
+      refreshAppCatalog,
+      installingAppId,
+      installAppFromCatalog,
+      pendingAppInstall,
+      clearPendingAppInstall,
+      connectAndInstallApp,
+      isConnectingAppIntegration,
       templateSourceMode,
       setTemplateSourceMode,
       createHarnessOptions: WORKSPACE_HARNESS_OPTIONS,
@@ -926,6 +1123,8 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       createWorkspace,
       deleteWorkspace,
       removeInstalledApp,
+      selectedApps,
+      setSelectedApps,
       pendingIntegrations,
       isResolvingIntegrations,
       resolveIntegrationsBeforeCreate,
@@ -944,6 +1143,16 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       workspaceAppsReady,
       workspaceBlockingReason,
       refreshInstalledApps,
+      appCatalog,
+      isLoadingAppCatalog,
+      appCatalogError,
+      appCatalogSource,
+      setAppCatalogSource,
+      refreshAppCatalog,
+      installingAppId,
+      installAppFromCatalog,
+      pendingAppInstall,
+      isConnectingAppIntegration,
       templateSourceMode,
       selectedCreateHarness,
       selectedTemplateFolder,
@@ -973,6 +1182,7 @@ export function WorkspaceDesktopProvider({ children }: { children: ReactNode }) 
       createWorkspace,
       deleteWorkspace,
       removeInstalledApp,
+      selectedApps,
       pendingIntegrations,
       isResolvingIntegrations,
       resolveIntegrationsBeforeCreate,

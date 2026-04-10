@@ -23,6 +23,7 @@ export type ParsedInstalledApp = {
     start: string;
     stop: string;
   };
+  mcpTools: string[];
 };
 
 export type ResolvedApplicationRuntime = {
@@ -32,6 +33,7 @@ export type ResolvedApplicationRuntime = {
     port: number;
     path: string;
   };
+  mcpTools: string[];
   healthCheck: {
     path: string;
     timeoutS: number;
@@ -185,11 +187,36 @@ export function parseInstalledAppRuntime(
   declaredAppId: string,
   configPath: string
 ): ParsedInstalledApp {
-  const resolved = parseResolvedAppRuntime(rawYaml, declaredAppId, configPath);
+  let loaded: unknown;
+  try {
+    loaded = yaml.load(rawYaml);
+  } catch (error) {
+    throw new Error(`invalid YAML: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!isRecord(loaded)) {
+    throw new Error("app.runtime.yaml must be a mapping");
+  }
+  const yamlAppId = String(loaded.app_id ?? "");
+  if (yamlAppId !== declaredAppId) {
+    throw new Error(`app_id in yaml ('${yamlAppId}') does not match declared app_id ('${declaredAppId}')`);
+  }
+  const lifecycle = isRecord(loaded.lifecycle) ? loaded.lifecycle : {};
+
+  const mcpRaw = loaded.mcp;
+  const rawTools = isRecord(mcpRaw) && Array.isArray(mcpRaw.tools) ? mcpRaw.tools : [];
+  const mcpTools = rawTools.filter(
+    (t): t is string => typeof t === "string" && t.trim().length > 0
+  );
+
   return {
-    appId: resolved.appId,
+    appId: declaredAppId,
     configPath,
-    lifecycle: { ...resolved.lifecycle }
+    lifecycle: {
+      setup: typeof lifecycle.setup === "string" ? lifecycle.setup : "",
+      start: typeof lifecycle.start === "string" ? lifecycle.start : "",
+      stop: typeof lifecycle.stop === "string" ? lifecycle.stop : ""
+    },
+    mcpTools
   };
 }
 
@@ -215,6 +242,10 @@ export function parseResolvedAppRuntime(
   if (mcp?.port === undefined || mcp.port === null || Number.isNaN(Number(mcp.port))) {
     throw new Error(`mcp.port is required (${configPath})`);
   }
+  const rawMcpTools = mcp && Array.isArray(mcp.tools) ? mcp.tools : [];
+  const mcpTools = rawMcpTools.filter(
+    (t): t is string => typeof t === "string" && t.trim().length > 0
+  );
   const healthchecks = isRecord(loaded.healthchecks) ? loaded.healthchecks : null;
   const preferredHealthcheck =
     (healthchecks && (isRecord(healthchecks.mcp) ? healthchecks.mcp : null)) ||
@@ -233,6 +264,7 @@ export function parseResolvedAppRuntime(
       port: Number(mcp.port),
       path: typeof mcp.path === "string" ? mcp.path : "/mcp"
     },
+    mcpTools,
     healthCheck: {
       path: preferredHealthcheck && typeof preferredHealthcheck.path === "string" ? preferredHealthcheck.path : "/health",
       timeoutS:
@@ -274,6 +306,86 @@ export function appendWorkspaceApplication(
     applications.push(nextEntry);
     return applications;
   });
+}
+
+export interface McpRegistryEntryParams {
+  mcpEnabled: boolean;
+  mcpTools: string[];
+  mcpPath: string | null;
+  mcpTimeoutMs: number;
+  mcpPort: number | null;
+}
+
+export function writeWorkspaceMcpRegistryEntry(
+  workspaceDir: string,
+  appId: string,
+  params: McpRegistryEntryParams,
+): void {
+  if (!params.mcpEnabled) {
+    return;
+  }
+  const yamlPath = path.join(workspaceDir, "workspace.yaml");
+  const raw = fs.existsSync(yamlPath) ? fs.readFileSync(yamlPath, "utf8") : "";
+  const data = (raw ? (yaml.load(raw) as Record<string, unknown>) : {}) || {};
+
+  const registry = (data.mcp_registry as Record<string, unknown> | undefined) ?? {};
+  const servers = (registry.servers as Record<string, unknown> | undefined) ?? {};
+  const allowlist = (registry.allowlist as Record<string, unknown> | undefined) ?? {};
+  const existingToolIds: string[] = Array.isArray(allowlist.tool_ids)
+    ? (allowlist.tool_ids as unknown[]).filter((t): t is string => typeof t === "string")
+    : [];
+
+  // Replace this app's server entry
+  const port = params.mcpPort ?? 13100;
+  const mcpPath = params.mcpPath || "/mcp/sse";
+  servers[appId] = {
+    type: "remote",
+    url: `http://localhost:${port}${mcpPath}`,
+    enabled: true,
+    timeout_ms: params.mcpTimeoutMs,
+  };
+
+  // Replace this app's tool ids: drop existing entries prefixed with `${appId}.`,
+  // append the new ones
+  const otherToolIds = existingToolIds.filter((id) => !id.startsWith(`${appId}.`));
+  const newToolIds = [
+    ...otherToolIds,
+    ...params.mcpTools.map((name) => `${appId}.${name}`),
+  ];
+
+  allowlist.tool_ids = newToolIds;
+  registry.servers = servers;
+  registry.allowlist = allowlist;
+  data.mcp_registry = registry;
+
+  fs.writeFileSync(yamlPath, yaml.dump(data), "utf8");
+}
+
+export function removeWorkspaceMcpRegistryEntry(
+  workspaceDir: string,
+  appId: string,
+): void {
+  const yamlPath = path.join(workspaceDir, "workspace.yaml");
+  if (!fs.existsSync(yamlPath)) {
+    return;
+  }
+  const raw = fs.readFileSync(yamlPath, "utf8");
+  const data = (yaml.load(raw) as Record<string, unknown> | undefined) ?? {};
+  const registry = data.mcp_registry as Record<string, unknown> | undefined;
+  if (!registry) {
+    return;
+  }
+  const servers = registry.servers as Record<string, unknown> | undefined;
+  if (servers && appId in servers) {
+    delete servers[appId];
+  }
+  const allowlist = registry.allowlist as Record<string, unknown> | undefined;
+  if (allowlist && Array.isArray(allowlist.tool_ids)) {
+    allowlist.tool_ids = (allowlist.tool_ids as unknown[]).filter(
+      (id) => typeof id === "string" && !(id as string).startsWith(`${appId}.`),
+    );
+  }
+  fs.writeFileSync(yamlPath, yaml.dump(data), "utf8");
 }
 
 export function resolveWorkspaceApp(

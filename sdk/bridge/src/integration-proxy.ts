@@ -29,6 +29,7 @@ export function createIntegrationClient(provider: string): IntegrationClient {
             method: request.method,
             endpoint: request.endpoint,
             ...(request.body !== undefined ? { body: request.body } : {}),
+            ...(request.headers ? { headers: request.headers } : {}),
           },
         }),
       })

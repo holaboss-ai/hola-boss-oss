@@ -2,6 +2,7 @@ export interface ProxyRequest {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
   endpoint: string
   body?: unknown
+  headers?: Record<string, string>
 }
 
 export interface ProxyResponse<T = unknown> {

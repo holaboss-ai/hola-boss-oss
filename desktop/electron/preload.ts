@@ -232,6 +232,11 @@ interface TemplateViewInfoPayload {
   description: string;
 }
 
+interface TemplateAppEntryPayload {
+  name: string;
+  required: boolean;
+}
+
 interface TemplateMetadataPayload {
   name: string;
   repo: string;
@@ -243,7 +248,8 @@ interface TemplateMetadataPayload {
   allowed_user_ids: string[];
   icon: string;
   emoji: string | null;
-  apps: string[];
+  apps: TemplateAppEntryPayload[];
+  min_optional_apps: number;
   tags: string[];
   category: string;
   long_description: string | null;
@@ -1040,6 +1046,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:listInstalledApps", workspaceId) as Promise<InstalledWorkspaceAppListResponsePayload>,
     removeInstalledApp: (workspaceId: string, appId: string) =>
       ipcRenderer.invoke("workspace:removeInstalledApp", workspaceId, appId) as Promise<void>,
+    listAppCatalog: (params: { source?: "marketplace" | "local" }) =>
+      ipcRenderer.invoke("workspace:listAppCatalog", params) as Promise<AppCatalogListResponse>,
+    syncAppCatalog: (params: { source: "marketplace" | "local" }) =>
+      ipcRenderer.invoke("workspace:syncAppCatalog", params) as Promise<AppCatalogSyncResponse>,
+    installAppFromCatalog: (params: InstallAppFromCatalogRequest) =>
+      ipcRenderer.invoke("workspace:installAppFromCatalog", params) as Promise<InstallAppFromCatalogResponse>,
     listOutputs: (payload: string | HolabossListOutputsPayload) =>
       ipcRenderer.invoke("workspace:listOutputs", payload) as Promise<WorkspaceOutputListResponsePayload>,
     listSkills: (workspaceId: string) =>

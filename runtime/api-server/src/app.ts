@@ -8,11 +8,13 @@ import os from "node:os";
 import path from "node:path";
 
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
+import * as tar from "tar";
 import yauzl from "yauzl";
 
 import {
   type AgentSessionRecord,
   type AppBuildRecord,
+  type AppCatalogEntryRecord,
   type CompactionBoundaryRecord,
   type CronjobRecord,
   type MemoryUpdateProposalRecord,
@@ -93,8 +95,10 @@ import {
   portsForAppIndex,
   releaseWorkspaceAppPorts,
   removeWorkspaceApplication,
+  removeWorkspaceMcpRegistryEntry,
   resolveWorkspaceApp,
   resolveWorkspaceAppRuntime,
+  writeWorkspaceMcpRegistryEntry,
   type ParsedInstalledApp
 } from "./workspace-apps.js";
 import {
@@ -1206,6 +1210,23 @@ async function extractTemplateZipArchive(zipPath: string, workspaceDir: string):
   });
 }
 
+function appCatalogEntryToWire(record: AppCatalogEntryRecord): Record<string, unknown> {
+  return {
+    app_id: record.appId,
+    source: record.source,
+    name: record.name,
+    description: record.description,
+    icon: record.icon,
+    category: record.category,
+    tags: record.tags,
+    version: record.version,
+    archive_url: record.archiveUrl,
+    archive_path: record.archivePath,
+    target: record.target,
+    cached_at: record.cachedAt,
+  };
+}
+
 function sanitizeAppId(appId: string): string {
   const value = appId.trim();
   if (!value) {
@@ -1218,6 +1239,84 @@ function sanitizeAppId(appId: string): string {
     throw new Error("app_id contains invalid characters");
   }
   return value;
+}
+
+export function isAllowedArchivePath(p: string): boolean {
+  if (!p) return false;
+  const abs = path.resolve(p);
+  const candidates: string[] = [];
+  candidates.push(path.resolve(os.tmpdir()));
+  const envOverride = process.env.HOLABOSS_APP_ARCHIVE_DIR;
+  if (envOverride && envOverride.trim().length > 0) {
+    candidates.push(path.resolve(envOverride.trim()));
+  }
+  const home = process.env.HOME || process.env.USERPROFILE;
+  if (home && home.trim().length > 0) {
+    candidates.push(path.resolve(home.trim(), ".holaboss", "downloads"));
+  }
+  for (const root of candidates) {
+    if (abs === root || abs.startsWith(root + path.sep)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function isAllowedArchiveUrl(url: string): boolean {
+  if (!url) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    return false;
+  }
+
+  const defaultPrefixes = [
+    "https://github.com/holaboss-ai/holaboss-apps/releases/download/",
+  ];
+  const envOverride = process.env.HOLABOSS_APP_ARCHIVE_URL_ALLOWLIST;
+  const extraPrefixes = envOverride
+    ? envOverride.split(",").map((p) => p.trim()).filter((p) => p.length > 0)
+    : [];
+  const allPrefixes = [...defaultPrefixes, ...extraPrefixes];
+
+  // http:// only allowed if explicitly in the override list
+  if (parsed.protocol === "http:") {
+    return extraPrefixes.some((prefix) => url.startsWith(prefix));
+  }
+
+  return allPrefixes.some((prefix) => url.startsWith(prefix));
+}
+
+async function downloadArchiveToTemp(url: string, appId: string): Promise<string> {
+  const dir = path.join(os.tmpdir(), "holaboss-app-archives");
+  fs.mkdirSync(dir, { recursive: true });
+  const filePath = path.join(dir, `${appId}-${Date.now()}.tar.gz`);
+
+  const res = await fetch(url);
+  if (!res.ok || !res.body) {
+    throw new Error(`Download failed: ${res.status} ${res.statusText}`);
+  }
+
+  const fileStream = fs.createWriteStream(filePath);
+  const reader = res.body.getReader();
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) fileStream.write(value);
+    }
+  } finally {
+    fileStream.end();
+    await new Promise<void>((resolve, reject) => {
+      fileStream.on("finish", () => resolve());
+      fileStream.on("error", reject);
+    });
+  }
+  return filePath;
 }
 
 function collectSystemStatus(workspaceRoot: string, store: RuntimeStateStore): Record<string, unknown> {
@@ -1613,6 +1712,35 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const autoRestartAttempts = new Map<string, number>();
   let healthMonitorTimer: ReturnType<typeof setInterval> | null = null;
 
+  /**
+   * Ensures this app's MCP tools are registered in workspace.yaml's
+   * `mcp_registry`. Runs idempotently after every app start so apps
+   * installed via legacy paths or stale templates get auto-healed.
+   */
+  function reconcileAppMcpRegistry(
+    workspaceDir: string,
+    appId: string,
+    resolved: { ports: { mcp: number }; resolvedApp: { mcpTools: string[]; mcp: { path: string } } },
+  ): void {
+    if (resolved.resolvedApp.mcpTools.length === 0) {
+      return;
+    }
+    try {
+      writeWorkspaceMcpRegistryEntry(workspaceDir, appId, {
+        mcpEnabled: true,
+        mcpTools: resolved.resolvedApp.mcpTools,
+        mcpPath: resolved.resolvedApp.mcp.path || "/mcp/sse",
+        mcpTimeoutMs: 30000,
+        mcpPort: resolved.ports.mcp,
+      });
+    } catch (error) {
+      app.log.warn(
+        { appId, err: error },
+        "mcp_registry reconcile failed for app",
+      );
+    }
+  }
+
   async function ensureAppRunning(workspaceId: string, appId: string): Promise<void> {
     const taskKey = `${workspaceId}:${appId}`;
     const inFlight = appEnsureRunningTasks.get(taskKey);
@@ -1638,6 +1766,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         })
       ) {
         store.upsertAppBuild({ workspaceId, appId, status: "running" });
+        reconcileAppMcpRegistry(workspaceDir, appId, resolved);
         return;
       }
 
@@ -1675,6 +1804,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         appId,
         status: result.status === "started" ? "running" : result.status
       });
+
+      reconcileAppMcpRegistry(workspaceDir, appId, resolved);
     })();
 
     appEnsureRunningTasks.set(taskKey, task);
@@ -3434,6 +3565,61 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     return record ? appBuildPayload(record) : { status: entry ? fallbackAppBuildStatus(entry) : "unknown" };
   });
 
+  app.get("/api/v1/apps/catalog", async (request) => {
+    const query = isRecord(request.query) ? request.query : {};
+    const rawSource = typeof query.source === "string" ? query.source.trim() : "";
+    const source =
+      rawSource === "marketplace" || rawSource === "local" ? rawSource : undefined;
+    const entries = store.listAppCatalogEntries(source ? { source } : undefined);
+    return { entries: entries.map(appCatalogEntryToWire), count: entries.length };
+  });
+
+  app.post("/api/v1/apps/catalog/sync", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const rawSource = requiredString(request.body.source, "source");
+    if (rawSource !== "marketplace" && rawSource !== "local") {
+      return sendError(reply, 400, "source must be 'marketplace' or 'local'");
+    }
+    const source: "marketplace" | "local" = rawSource;
+    const target = requiredString(request.body.target, "target");
+    const entries = Array.isArray(request.body.entries) ? request.body.entries : [];
+
+    store.clearAppCatalogSource(source);
+    const now = new Date().toISOString();
+    let synced = 0;
+    for (const raw of entries) {
+      if (!isRecord(raw)) continue;
+      let appId: string;
+      try {
+        appId = sanitizeAppId(requiredString(raw.app_id, "app_id"));
+      } catch {
+        continue;
+      }
+      const tagsRaw = raw.tags;
+      const tags = Array.isArray(tagsRaw)
+        ? tagsRaw.filter((t): t is string => typeof t === "string")
+        : [];
+      store.upsertAppCatalogEntry({
+        appId,
+        source,
+        name: requiredString(raw.name, "name"),
+        description: typeof raw.description === "string" ? raw.description : null,
+        icon: typeof raw.icon === "string" ? raw.icon : null,
+        category: typeof raw.category === "string" ? raw.category : null,
+        tags,
+        version: typeof raw.version === "string" ? raw.version : null,
+        archiveUrl: typeof raw.archive_url === "string" ? raw.archive_url : null,
+        archivePath: typeof raw.archive_path === "string" ? raw.archive_path : null,
+        target,
+        cachedAt: now,
+      });
+      synced += 1;
+    }
+    return { synced, source, target };
+  });
+
   app.get("/api/v1/apps", async (request, reply) => {
     const query = isRecord(request.query) ? request.query : {};
     const workspaceId = requiredString(query.workspace_id, "workspace_id");
@@ -3474,6 +3660,200 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return await ensureAllAppsRunning(workspaceId);
     } catch (error) {
       return sendError(reply, 500, error instanceof Error ? error.message : "failed to ensure apps running");
+    }
+  });
+
+  app.post("/api/v1/apps/install-archive", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const workspaceId = requiredString(request.body.workspace_id, "workspace_id");
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    let appId: string;
+    try {
+      appId = sanitizeAppId(requiredString(request.body.app_id, "app_id"));
+    } catch (error) {
+      return sendError(reply, 400, error instanceof Error ? error.message : "invalid app_id");
+    }
+
+    const rawArchivePath =
+      typeof request.body.archive_path === "string" ? request.body.archive_path : "";
+    const rawArchiveUrl =
+      typeof request.body.archive_url === "string" ? request.body.archive_url : "";
+
+    if (rawArchivePath && rawArchiveUrl) {
+      return sendError(reply, 400, "provide either archive_path or archive_url, not both");
+    }
+    if (!rawArchivePath && !rawArchiveUrl) {
+      return sendError(reply, 400, "archive_path or archive_url is required");
+    }
+
+    let archivePath: string;
+    let cleanupTempFile = false;
+
+    if (rawArchiveUrl) {
+      if (!isAllowedArchiveUrl(rawArchiveUrl)) {
+        return sendError(reply, 400, "archive_url outside allowlist");
+      }
+      try {
+        archivePath = await downloadArchiveToTemp(rawArchiveUrl, appId);
+        cleanupTempFile = true;
+      } catch (error) {
+        return sendError(
+          reply,
+          400,
+          `archive download failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    } else {
+      archivePath = rawArchivePath;
+      if (!isAllowedArchivePath(archivePath)) {
+        return sendError(reply, 400, "archive_path outside allowed roots");
+      }
+      if (!fs.existsSync(archivePath) || !fs.statSync(archivePath).isFile()) {
+        return sendError(reply, 400, "archive_path does not exist");
+      }
+    }
+
+    const workspaceDir = store.workspaceDir(workspaceId);
+    const appDir = path.join(workspaceDir, "apps", appId);
+    if (fs.existsSync(appDir) && fs.readdirSync(appDir).length > 0) {
+      if (cleanupTempFile) {
+        try { fs.rmSync(archivePath, { force: true }); } catch { /* best effort */ }
+      }
+      return sendError(reply, 409, "app already installed — uninstall first");
+    }
+    fs.mkdirSync(appDir, { recursive: true });
+
+    try {
+      try {
+        await tar.x({ file: archivePath, cwd: appDir, strict: true });
+      } catch (error) {
+        fs.rmSync(appDir, { recursive: true, force: true });
+        return sendError(
+          reply,
+          400,
+          `archive extraction failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+
+      const appYamlPath = path.join(appDir, "app.runtime.yaml");
+      if (!fs.existsSync(appYamlPath)) {
+        fs.rmSync(appDir, { recursive: true, force: true });
+        return sendError(reply, 400, "app.runtime.yaml not found in archive root");
+      }
+
+      // Patch app.runtime.yaml on disk before parsing:
+      // 1. Rewrite app_id to match the caller's appId (archives use "{name}-module"
+      //    but the catalog uses short names like "twitter", "gmail", etc.)
+      // 2. For pre-built archives (.output/server/index.mjs exists), replace the
+      //    setup command with "true" so ensureAppRunning skips the source build.
+      {
+        let yamlContent = fs.readFileSync(appYamlPath, "utf8");
+        let changed = false;
+
+        // Patch app_id to match the caller's expected id
+        const appIdPatched = yamlContent.replace(
+          /^(app_id:\s*).*$/m,
+          `$1"${appId}"`,
+        );
+        if (appIdPatched !== yamlContent) {
+          yamlContent = appIdPatched;
+          changed = true;
+        }
+
+        // Patch setup to "true" for pre-built archives
+        const isPrebuilt = fs.existsSync(path.join(appDir, ".output", "server", "index.mjs"));
+        if (isPrebuilt) {
+          const setupPatched = yamlContent.replace(
+            /^(\s*setup:\s*).*$/m,
+            '$1"true"',
+          );
+          if (setupPatched !== yamlContent) {
+            yamlContent = setupPatched;
+            changed = true;
+          }
+        }
+
+        if (changed) {
+          fs.writeFileSync(appYamlPath, yamlContent, "utf8");
+        }
+      }
+
+      let parsed: ParsedInstalledApp;
+      try {
+        parsed = parseInstalledAppRuntime(
+          fs.readFileSync(appYamlPath, "utf8"),
+          appId,
+          `apps/${appId}/app.runtime.yaml`,
+        );
+      } catch (error) {
+        fs.rmSync(appDir, { recursive: true, force: true });
+        return sendError(
+          reply,
+          400,
+          error instanceof Error ? error.message : "invalid app.runtime.yaml",
+        );
+      }
+
+      const lifecycle: Record<string, string> = {};
+      if (parsed.lifecycle.setup) lifecycle.setup = parsed.lifecycle.setup;
+      if (parsed.lifecycle.start) lifecycle.start = parsed.lifecycle.start;
+      if (parsed.lifecycle.stop) lifecycle.stop = parsed.lifecycle.stop;
+      appendWorkspaceApplication(workspaceDir, {
+        appId,
+        configPath: parsed.configPath,
+        lifecycle: Object.keys(lifecycle).length > 0 ? lifecycle : null,
+      });
+
+      let runResult: { ready: boolean; error: string | null; detail: string };
+      try {
+        await ensureAppRunning(workspaceId, appId);
+        runResult = { ready: true, error: null, detail: "App installed and running" };
+      } catch (error) {
+        const message = (error instanceof Error ? error.message : String(error)).slice(0, 2000);
+        runResult = { ready: false, error: message, detail: message };
+      }
+
+      // Write the MCP registry entry now that ensureAppRunning has allocated ports.
+      // Best-effort: if port lookup fails (e.g. embedded runtime flag not set), fall back to null.
+      if (parsed.mcpTools.length > 0) {
+        try {
+          const resolvedApp = resolveWorkspaceApp(workspaceDir, appId, { store, workspaceId });
+          writeWorkspaceMcpRegistryEntry(workspaceDir, appId, {
+            mcpEnabled: true,
+            mcpTools: parsed.mcpTools,
+            mcpPath: "/mcp/sse",
+            mcpTimeoutMs: 30000,
+            mcpPort: resolvedApp.ports.mcp,
+          });
+        } catch (error) {
+          app.log.warn(
+            { workspaceId, appId, err: error },
+            "failed to write mcp_registry entry after install-archive"
+          );
+        }
+      }
+
+      return {
+        app_id: appId,
+        status: "enabled",
+        detail: runResult.detail,
+        ready: runResult.ready,
+        error: runResult.error,
+      };
+    } finally {
+      if (cleanupTempFile) {
+        try {
+          fs.rmSync(archivePath, { force: true });
+        } catch {
+          /* best effort cleanup */
+        }
+      }
     }
   });
 
@@ -3657,6 +4037,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
     fs.rmSync(path.join(workspaceDir, "apps", appId), { recursive: true, force: true });
     removeWorkspaceApplication(workspaceDir, appId);
+    removeWorkspaceMcpRegistryEntry(workspaceDir, appId);
     releaseWorkspaceAppPorts({ store, workspaceId, appId });
     store.deleteAppBuild({ workspaceId, appId });
     return {

@@ -68,7 +68,7 @@ export function KitDetail({
               ) : null}
               {template.apps.length > 0 ? (
                 <Badge variant="secondary">
-                  {template.apps.join(" · ")}
+                  {template.apps.map((a) => a.name).join(" · ")}
                 </Badge>
               ) : null}
             </div>

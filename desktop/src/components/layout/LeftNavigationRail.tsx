@@ -49,7 +49,7 @@ export function LeftNavigationRail({
   appVersionLabel = "",
 }: LeftNavigationRailProps) {
   return (
-    <aside className="relative hidden h-full min-h-0 w-15 flex-col overflow-visible rounded-xl border border-border bg-card/80 px-2 py-3 shadow-md backdrop-blur-sm lg:flex">
+    <aside className="relative hidden h-full min-h-0 w-15 flex-col overflow-visible rounded-xl border border-border bg-card/80 px-2 py-3 shadow-xs backdrop-blur-sm lg:flex">
       <div className="flex min-h-0 flex-1 flex-col items-center gap-2 overflow-visible">
         <nav className="grid justify-items-center gap-0.5">
           {PRIMARY_ITEMS.map((item) => {

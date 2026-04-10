@@ -16,7 +16,7 @@ function MarketplaceCard({ template, onChangeKit }: MarketplaceCardProps) {
           {template.name}
         </div>
         <div className="truncate text-xs text-muted-foreground">
-          {template.description || template.apps.join(", ")}
+          {template.description || template.apps.map((a) => a.name).join(", ")}
         </div>
       </div>
       <Button variant="link" size="sm" onClick={onChangeKit}>

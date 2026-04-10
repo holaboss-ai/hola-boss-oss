@@ -11,9 +11,11 @@ import { once } from "node:events";
 
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 import yazl from "yazl";
+import * as tar from "tar";
 
 import { buildRuntimeApiServer, type BuildRuntimeApiServerOptions } from "./app.js";
 import { appLocalNpmCacheDir, buildAppSetupEnv } from "./app-setup-env.js";
+import { parseInstalledAppRuntime, writeWorkspaceMcpRegistryEntry, removeWorkspaceMcpRegistryEntry } from "./workspace-apps.js";
 import type { AppLifecycleExecutorLike } from "./app-lifecycle-worker.js";
 import type { MemoryServiceLike } from "./memory.js";
 import type { RuntimeConfigServiceLike } from "./runtime-config.js";
@@ -24,6 +26,12 @@ const ORIGINAL_ENV = {
   HB_SANDBOX_ROOT: process.env.HB_SANDBOX_ROOT,
   HOLABOSS_RUNTIME_CONFIG_PATH: process.env.HOLABOSS_RUNTIME_CONFIG_PATH,
 };
+
+const MINIMAL_APP_FIXTURE = path.join(
+  path.dirname(new URL(import.meta.url).pathname),
+  "__fixtures__",
+  "minimal-app.tar.gz",
+);
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
@@ -2487,6 +2495,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
       resolvedApp: {
         appId: "app-b",
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+        mcpTools: [],
         healthCheck: { path: "/health", timeoutS: 60, intervalS: 5 },
         envContract: [],
         integrations: undefined,
@@ -2503,6 +2512,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
       resolvedApp: {
         appId: "app-b",
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+        mcpTools: [],
         healthCheck: { path: "/health", timeoutS: 60, intervalS: 5 },
         envContract: [],
         integrations: undefined,
@@ -2519,6 +2529,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
       resolvedApp: {
         appId: "app-b",
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+        mcpTools: [],
         healthCheck: { path: "/health", timeoutS: 60, intervalS: 5 },
         envContract: [],
         integrations: undefined,
@@ -4134,3 +4145,867 @@ test("queue route accepts staged attachments and history hydrates attachment met
   await app.close();
   store.close();
 });
+
+test("GET /api/v1/apps/catalog returns entries filtered by source", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  store.upsertAppCatalogEntry({
+    appId: "twitter",
+    source: "marketplace",
+    name: "Twitter / X",
+    description: null,
+    icon: null,
+    category: null,
+    tags: ["social"],
+    version: "v0.1.0",
+    archiveUrl: "https://example.test/twitter-module-darwin-arm64.tar.gz",
+    archivePath: null,
+    target: "darwin-arm64",
+    cachedAt: "2026-04-09T00:00:00Z",
+  });
+  store.upsertAppCatalogEntry({
+    appId: "linkedin",
+    source: "local",
+    name: "LinkedIn",
+    description: null,
+    icon: null,
+    category: null,
+    tags: [],
+    version: null,
+    archiveUrl: null,
+    archivePath: "/tmp/linkedin-module-darwin-arm64.tar.gz",
+    target: "darwin-arm64",
+    cachedAt: "2026-04-09T00:00:00Z",
+  });
+
+  const res = await app.inject({ method: "GET", url: "/api/v1/apps/catalog?source=marketplace" });
+  assert.equal(res.statusCode, 200);
+  const body = res.json();
+  assert.equal(body.count, 1);
+  assert.equal(body.entries[0].app_id, "twitter");
+  assert.deepEqual(body.entries[0].tags, ["social"]);
+
+  await app.close();
+  store.close();
+});
+
+test("POST /api/v1/apps/catalog/sync replaces all entries for a source", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  store.upsertAppCatalogEntry({
+    appId: "old",
+    source: "marketplace",
+    name: "Old",
+    description: null,
+    icon: null,
+    category: null,
+    tags: [],
+    version: "v0.0.1",
+    archiveUrl: "https://example.test/old.tar.gz",
+    archivePath: null,
+    target: "darwin-arm64",
+    cachedAt: "2026-04-08T00:00:00Z",
+  });
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/catalog/sync",
+    payload: {
+      source: "marketplace",
+      target: "darwin-arm64",
+      entries: [
+        {
+          app_id: "twitter",
+          name: "Twitter / X",
+          description: "Tweet stuff",
+          icon: null,
+          category: "social",
+          tags: ["social"],
+          version: "v0.1.0",
+          archive_url: "https://example.test/twitter.tar.gz",
+          archive_path: null,
+        },
+      ],
+    },
+  });
+  assert.equal(res.statusCode, 200);
+  const body = res.json();
+  assert.equal(body.synced, 1);
+  assert.equal(body.source, "marketplace");
+
+  const remaining = store.listAppCatalogEntries({ source: "marketplace" });
+  assert.equal(remaining.length, 1);
+  assert.equal(remaining[0].appId, "twitter");
+
+  await app.close();
+  store.close();
+});
+
+test("POST /api/v1/apps/catalog/sync rejects invalid source", async () => {
+  const root = makeTempDir("hb-runtime-api-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/catalog/sync",
+    payload: { source: "bogus", target: "darwin-arm64", entries: [] },
+  });
+  assert.equal(res.statusCode, 400);
+
+  await app.close();
+  store.close();
+});
+
+test("isAllowedArchivePath accepts tmpdir and rejects arbitrary paths", async () => {
+  const { isAllowedArchivePath } = await import("./app.js");
+  const tmp = path.join(os.tmpdir(), "holaboss-test-archive.tar.gz");
+  assert.equal(isAllowedArchivePath(tmp), true);
+  assert.equal(isAllowedArchivePath("/etc/passwd"), false);
+  assert.equal(isAllowedArchivePath(""), false);
+});
+
+test("POST /apps/install-archive rejects path outside allowed roots", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/install-archive",
+    payload: {
+      workspace_id: workspace.id,
+      app_id: "minimal",
+      archive_path: "/etc/passwd",
+    },
+  });
+  assert.equal(res.statusCode, 400);
+  const body = res.json();
+  const msg = body.error || body.detail || body.message || "";
+  assert.match(String(msg), /outside allowed roots/);
+
+  await app.close();
+  store.close();
+});
+
+test("POST /apps/install-archive rejects missing file", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/install-archive",
+    payload: {
+      workspace_id: workspace.id,
+      app_id: "minimal",
+      archive_path: path.join(os.tmpdir(), `does-not-exist-${Date.now()}.tar.gz`),
+    },
+  });
+  assert.equal(res.statusCode, 400);
+
+  await app.close();
+  store.close();
+});
+
+test("POST /apps/install-archive extracts tarball and registers in workspace.yaml", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const stagedArchive = path.join(os.tmpdir(), `install-archive-test-${Date.now()}.tar.gz`);
+  fs.copyFileSync(MINIMAL_APP_FIXTURE, stagedArchive);
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/install-archive",
+    payload: {
+      workspace_id: workspace.id,
+      app_id: "minimal",
+      archive_path: stagedArchive,
+    },
+  });
+  assert.equal(res.statusCode, 200);
+  const body = res.json();
+  assert.equal(body.app_id, "minimal");
+  assert.equal(body.status, "enabled");
+
+  const appDir = path.join(workspaceDir, "apps", "minimal");
+  assert.equal(fs.existsSync(path.join(appDir, "app.runtime.yaml")), true);
+  assert.equal(fs.existsSync(path.join(appDir, "package.json")), true);
+
+  const yamlBody = fs.readFileSync(path.join(workspaceDir, "workspace.yaml"), "utf8");
+  assert.match(yamlBody, /app_id:\s*["']?minimal["']?/);
+
+  fs.rmSync(stagedArchive, { force: true });
+
+  await app.close();
+  store.close();
+});
+
+test("POST /apps/install-archive rejects re-install when apps/{id} already exists", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  const preDir = path.join(workspaceDir, "apps", "minimal");
+  fs.mkdirSync(preDir, { recursive: true });
+  fs.writeFileSync(path.join(preDir, "sentinel.txt"), "existing");
+  const app = buildTestRuntimeApiServer({ store });
+
+  const stagedArchive = path.join(os.tmpdir(), `install-archive-reinstall-${Date.now()}.tar.gz`);
+  fs.copyFileSync(MINIMAL_APP_FIXTURE, stagedArchive);
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/v1/apps/install-archive",
+    payload: {
+      workspace_id: workspace.id,
+      app_id: "minimal",
+      archive_path: stagedArchive,
+    },
+  });
+  assert.equal(res.statusCode, 409);
+  fs.rmSync(stagedArchive, { force: true });
+
+  await app.close();
+  store.close();
+});
+
+test("parseInstalledAppRuntime extracts mcp.tools list", () => {
+  const yamlBody = `
+app_id: "twitter"
+name: "Twitter"
+slug: "twitter"
+
+lifecycle:
+  setup: "true"
+  start: "true"
+  stop: "true"
+
+mcp:
+  enabled: true
+  transport: http-sse
+  port: 3099
+  path: /mcp/sse
+  tools:
+    - create_post
+    - list_posts
+    - publish_post
+`;
+  const parsed = parseInstalledAppRuntime(yamlBody, "twitter", "apps/twitter/app.runtime.yaml");
+  assert.deepEqual(parsed.mcpTools, ["create_post", "list_posts", "publish_post"]);
+});
+
+test("parseInstalledAppRuntime returns empty mcpTools when not declared", () => {
+  const yamlBody = `
+app_id: "twitter"
+name: "Twitter"
+slug: "twitter"
+
+lifecycle:
+  setup: "true"
+
+mcp:
+  enabled: true
+  transport: http-sse
+  port: 3099
+  path: /mcp/sse
+`;
+  const parsed = parseInstalledAppRuntime(yamlBody, "twitter", "apps/twitter/app.runtime.yaml");
+  assert.deepEqual(parsed.mcpTools, []);
+});
+
+test("parseInstalledAppRuntime returns empty mcpTools when mcp block missing", () => {
+  const yamlBody = `
+app_id: "minimal"
+name: "Minimal"
+
+lifecycle:
+  setup: "true"
+`;
+  const parsed = parseInstalledAppRuntime(yamlBody, "minimal", "apps/minimal/app.runtime.yaml");
+  assert.deepEqual(parsed.mcpTools, []);
+});
+
+test("writeWorkspaceMcpRegistryEntry adds server and tool_ids to workspace.yaml", () => {
+  const tmpWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "wmcp-test-"));
+  try {
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      "template_id: test\nname: Test\n",
+    );
+
+    writeWorkspaceMcpRegistryEntry(tmpWorkspace, "twitter", {
+      mcpEnabled: true,
+      mcpTools: ["create_post", "list_posts"],
+      mcpPath: "/mcp/sse",
+      mcpTimeoutMs: 30000,
+      mcpPort: 13100,
+    });
+
+    const yamlText = fs.readFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      "utf8",
+    );
+    assert.match(yamlText, /mcp_registry/);
+    assert.match(yamlText, /servers:/);
+    assert.match(yamlText, /twitter:/);
+    assert.match(yamlText, /allowlist:/);
+    assert.match(yamlText, /twitter\.create_post/);
+    assert.match(yamlText, /twitter\.list_posts/);
+    assert.match(yamlText, /13100/);
+  } finally {
+    fs.rmSync(tmpWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("writeWorkspaceMcpRegistryEntry is a no-op when mcp is disabled", () => {
+  const tmpWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "wmcp-test-"));
+  try {
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      "template_id: test\nname: Test\n",
+    );
+
+    writeWorkspaceMcpRegistryEntry(tmpWorkspace, "twitter", {
+      mcpEnabled: false,
+      mcpTools: ["create_post"],
+      mcpPath: "/mcp/sse",
+      mcpTimeoutMs: 30000,
+      mcpPort: 13100,
+    });
+
+    const yamlText = fs.readFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      "utf8",
+    );
+    assert.doesNotMatch(yamlText, /mcp_registry/);
+  } finally {
+    fs.rmSync(tmpWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("writeWorkspaceMcpRegistryEntry replaces existing entry for the same app", () => {
+  const tmpWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "wmcp-test-"));
+  try {
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      `template_id: test
+name: Test
+mcp_registry:
+  allowlist:
+    tool_ids:
+      - twitter.old_tool
+      - linkedin.create_post
+  servers:
+    twitter:
+      type: remote
+      url: http://localhost:99999/old
+      enabled: true
+    linkedin:
+      type: remote
+      url: http://localhost:13101/mcp/sse
+      enabled: true
+`,
+    );
+
+    writeWorkspaceMcpRegistryEntry(tmpWorkspace, "twitter", {
+      mcpEnabled: true,
+      mcpTools: ["new_tool"],
+      mcpPath: "/mcp/sse",
+      mcpTimeoutMs: 30000,
+      mcpPort: 13100,
+    });
+
+    const yamlText = fs.readFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      "utf8",
+    );
+    // old twitter tool replaced
+    assert.doesNotMatch(yamlText, /twitter\.old_tool/);
+    assert.match(yamlText, /twitter\.new_tool/);
+    // linkedin entries untouched
+    assert.match(yamlText, /linkedin\.create_post/);
+    assert.match(yamlText, /13101/);
+    // twitter server replaced
+    assert.doesNotMatch(yamlText, /99999/);
+    assert.match(yamlText, /13100/);
+  } finally {
+    fs.rmSync(tmpWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("removeWorkspaceMcpRegistryEntry strips server and tool_ids for the app", () => {
+  const tmpWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "wmcp-rm-test-"));
+  try {
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      `template_id: test
+name: Test
+mcp_registry:
+  allowlist:
+    tool_ids:
+      - twitter.create_post
+      - twitter.list_posts
+      - linkedin.create_post
+  servers:
+    twitter:
+      type: remote
+      url: http://localhost:13100/mcp/sse
+      enabled: true
+    linkedin:
+      type: remote
+      url: http://localhost:13101/mcp/sse
+      enabled: true
+`,
+    );
+
+    removeWorkspaceMcpRegistryEntry(tmpWorkspace, "twitter");
+
+    const yamlText = fs.readFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      "utf8",
+    );
+    assert.doesNotMatch(yamlText, /twitter\.create_post/);
+    assert.doesNotMatch(yamlText, /twitter\.list_posts/);
+    assert.match(yamlText, /linkedin\.create_post/);
+    assert.match(yamlText, /linkedin:/);
+  } finally {
+    fs.rmSync(tmpWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("removeWorkspaceMcpRegistryEntry is a no-op when workspace.yaml has no mcp_registry", () => {
+  const tmpWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "wmcp-rm-test-"));
+  try {
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      "template_id: test\nname: Test\n",
+    );
+
+    // Should not throw
+    removeWorkspaceMcpRegistryEntry(tmpWorkspace, "twitter");
+
+    const yamlText = fs.readFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      "utf8",
+    );
+    assert.doesNotMatch(yamlText, /mcp_registry/);
+  } finally {
+    fs.rmSync(tmpWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("install-archive populates workspace.yaml mcp_registry from declared mcp.tools", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-mcp-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-fixture-"));
+  fs.writeFileSync(
+    path.join(stageDir, "app.runtime.yaml"),
+    `app_id: "twitter"
+name: "Twitter"
+slug: "twitter"
+
+lifecycle:
+  setup: "true"
+  start: "true"
+  stop: "true"
+
+healthchecks:
+  mcp:
+    path: /mcp/health
+    timeout_s: 5
+
+mcp:
+  enabled: true
+  transport: http-sse
+  port: 3099
+  path: /mcp/sse
+  tools:
+    - create_post
+    - list_posts
+`,
+  );
+  fs.writeFileSync(path.join(stageDir, "package.json"), "{}");
+
+  const archivePath = path.join(os.tmpdir(), `mcp-test-${Date.now()}.tar.gz`);
+  await tar.c(
+    { gzip: true, file: archivePath, cwd: stageDir, portable: true, noMtime: true },
+    ["app.runtime.yaml", "package.json"],
+  );
+
+  try {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/apps/install-archive",
+      payload: {
+        workspace_id: workspace.id,
+        app_id: "twitter",
+        archive_path: archivePath,
+      },
+    });
+    assert.equal(res.statusCode, 200);
+
+    const yamlBody = fs.readFileSync(
+      path.join(workspaceDir, "workspace.yaml"),
+      "utf8",
+    );
+    assert.match(yamlBody, /mcp_registry/);
+    assert.match(yamlBody, /twitter\.create_post/);
+    assert.match(yamlBody, /twitter\.list_posts/);
+    assert.match(yamlBody, /servers:/);
+    assert.match(yamlBody, /twitter:/);
+  } finally {
+    fs.rmSync(stageDir, { recursive: true, force: true });
+    fs.rmSync(archivePath, { force: true });
+    await app.close();
+    store.close();
+  }
+});
+
+test("DELETE /apps/:appId removes mcp_registry entry", async () => {
+  const root = makeTempDir("hb-runtime-api-delete-app-mcp-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+
+  // Pre-seed workspace.yaml with applications + mcp_registry
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(workspaceDir, "workspace.yaml"),
+    `template_id: test
+name: Test
+applications:
+  - app_id: twitter
+    config_path: apps/twitter/app.runtime.yaml
+    lifecycle:
+      stop: "true"
+mcp_registry:
+  allowlist:
+    tool_ids:
+      - twitter.create_post
+      - linkedin.create_post
+  servers:
+    twitter:
+      type: remote
+      url: http://localhost:13100/mcp/sse
+      enabled: true
+    linkedin:
+      type: remote
+      url: http://localhost:13101/mcp/sse
+      enabled: true
+`,
+  );
+
+  // Create apps/twitter dir with a minimal app.runtime.yaml so the DELETE
+  // handler can stop the app (best-effort) before uninstalling
+  const appDir = path.join(workspaceDir, "apps", "twitter");
+  fs.mkdirSync(appDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(appDir, "app.runtime.yaml"),
+    `app_id: twitter
+name: Twitter
+lifecycle:
+  stop: "true"
+mcp:
+  enabled: false
+  port: 3099
+`,
+  );
+
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const res = await app.inject({
+      method: "DELETE",
+      url: "/api/v1/apps/twitter",
+      payload: { workspace_id: workspace.id },
+    });
+    assert.equal(res.statusCode, 200);
+
+    const yamlBody = fs.readFileSync(
+      path.join(workspaceDir, "workspace.yaml"),
+      "utf8",
+    );
+    assert.doesNotMatch(yamlBody, /twitter\.create_post/);
+    assert.match(yamlBody, /linkedin\.create_post/);
+    assert.match(yamlBody, /linkedin:/);
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
+// ── archive_url tests ──────────────────────────────────────────────────────────
+
+test("isAllowedArchiveUrl accepts github releases and rejects others", async () => {
+  const { isAllowedArchiveUrl } = await import("./app.js");
+  assert.equal(
+    isAllowedArchiveUrl(
+      "https://github.com/holaboss-ai/holaboss-apps/releases/download/v0.1.0/twitter-module-darwin-arm64.tar.gz",
+    ),
+    true,
+  );
+  assert.equal(isAllowedArchiveUrl("https://evil.test/twitter.tar.gz"), false);
+  assert.equal(
+    isAllowedArchiveUrl("http://github.com/holaboss-ai/holaboss-apps/releases/download/x.tar.gz"),
+    false,
+  );
+  assert.equal(isAllowedArchiveUrl(""), false);
+  assert.equal(isAllowedArchiveUrl("not-a-url"), false);
+});
+
+test("POST /apps/install-archive rejects url outside allowlist", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-url-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/apps/install-archive",
+      payload: {
+        workspace_id: workspace.id,
+        app_id: "evil",
+        archive_url: "https://evil.test/twitter.tar.gz",
+      },
+    });
+    assert.equal(res.statusCode, 400);
+    const body = res.json();
+    assert.match(
+      String(body.error ?? body.detail ?? body.message ?? ""),
+      /allowlist|archive_url/,
+    );
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
+test("POST /apps/install-archive rejects both archive_path and archive_url", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-both-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/apps/install-archive",
+      payload: {
+        workspace_id: workspace.id,
+        app_id: "twitter",
+        archive_path: "/tmp/x.tar.gz",
+        archive_url:
+          "https://github.com/holaboss-ai/holaboss-modules/releases/download/v0.1.0/twitter-module-darwin-arm64.tar.gz",
+      },
+    });
+    assert.equal(res.statusCode, 400);
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
+test("POST /apps/install-archive rejects request with neither path nor url", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-neither-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/apps/install-archive",
+      payload: {
+        workspace_id: workspace.id,
+        app_id: "twitter",
+      },
+    });
+    assert.equal(res.statusCode, 400);
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
+test("POST /apps/install-archive with archive_url downloads and installs", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-url-dl-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const fixtureBuf = fs.readFileSync(MINIMAL_APP_FIXTURE);
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/gzip" });
+    res.end(fixtureBuf);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const addr = server.address();
+  if (!addr || typeof addr === "string") throw new Error("no server address");
+  const url = `http://127.0.0.1:${addr.port}/minimal.tar.gz`;
+
+  const savedEnv = process.env.HOLABOSS_APP_ARCHIVE_URL_ALLOWLIST;
+  process.env.HOLABOSS_APP_ARCHIVE_URL_ALLOWLIST = `http://127.0.0.1:${addr.port}/`;
+
+  try {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/apps/install-archive",
+      payload: {
+        workspace_id: workspace.id,
+        app_id: "minimal",
+        archive_url: url,
+      },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.app_id, "minimal");
+
+    const installed = path.join(
+      store.workspaceDir(workspace.id),
+      "apps",
+      "minimal",
+      "app.runtime.yaml",
+    );
+    assert.equal(fs.existsSync(installed), true);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve())),
+    );
+    if (savedEnv === undefined) {
+      delete process.env.HOLABOSS_APP_ARCHIVE_URL_ALLOWLIST;
+    } else {
+      process.env.HOLABOSS_APP_ARCHIVE_URL_ALLOWLIST = savedEnv;
+    }
+    await app.close();
+    store.close();
+  }
+});
+
