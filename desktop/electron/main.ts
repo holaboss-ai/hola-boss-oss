@@ -2552,12 +2552,14 @@ function browserAcceptedLanguages(): string {
   return [...new Set(preferred)].join(",");
 }
 
-function browserChromeLikeIdentity(): BrowserSessionIdentity {
+function browserNativeIdentity(session: Session): BrowserSessionIdentity {
+  const nativeUserAgent = session.getUserAgent().trim();
   const chromeVersion = (process.versions.chrome || "141.0.0.0").trim();
   return {
     userAgent:
+      nativeUserAgent ||
       `Mozilla/5.0 (${browserChromeLikePlatformToken()}) AppleWebKit/537.36 ` +
-      `(KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`,
+        `(KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`,
     acceptLanguages: browserAcceptedLanguages(),
   };
 }
@@ -2578,7 +2580,7 @@ function setRequestHeaderValue(
 }
 
 function configureBrowserWorkspaceSession(session: Session): BrowserSessionIdentity {
-  const browserIdentity = browserChromeLikeIdentity();
+  const browserIdentity = browserNativeIdentity(session);
   session.setUserAgent(
     browserIdentity.userAgent,
     browserIdentity.acceptLanguages,
@@ -2589,11 +2591,6 @@ function configureBrowserWorkspaceSession(session: Session): BrowserSessionIdent
       const requestHeaders = {
         ...details.requestHeaders,
       } as Record<string, string>;
-      setRequestHeaderValue(
-        requestHeaders,
-        "User-Agent",
-        browserIdentity.userAgent,
-      );
       setRequestHeaderValue(
         requestHeaders,
         "Accept-Language",
@@ -10713,6 +10710,14 @@ async function startEmbeddedRuntime() {
     const workflowBackend =
       process.env.HOLABOSS_RUNTIME_WORKFLOW_BACKEND || "remote_api";
     const url = `http://127.0.0.1:${RUNTIME_API_PORT}`;
+
+    // A previous Electron process can leave the embedded runtime alive across
+    // an app restart or upgrade. Reuse that healthy process without emitting a
+    // synthetic "starting" state that would bounce the renderer back into
+    // workspace activation.
+    if (await isRuntimeHealthy(url)) {
+      return refreshRuntimeStatus();
+    }
 
     runtimeStatus = withDesktopBrowserStatus({
       ...runtimeStatus,
