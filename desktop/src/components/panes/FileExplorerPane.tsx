@@ -24,7 +24,9 @@ import {
   Undo2
 } from "lucide-react";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
+import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/IconButton";
+import { Input } from "@/components/ui/input";
 import { PaneCard } from "@/components/ui/PaneCard";
 import {
   EXPLORER_ATTACHMENT_DRAG_TYPE,
@@ -1171,14 +1173,15 @@ export function FileExplorerPane({
         actions={
           preview || previewLoading || previewError ? (
             <>
-              <button
-                type="button"
+              <Button
+                variant="outline"
+                size="xs"
                 onClick={closePreview}
-                className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                className="text-muted-foreground"
               >
                 <ArrowLeft size={12} />
                 Files
-              </button>
+              </Button>
               <IconButton
                 icon={<Star size={12} className={activeBookmark ? "fill-current" : ""} />}
                 label={activeBookmark ? "Remove bookmark" : "Add bookmark"}
@@ -1188,40 +1191,43 @@ export function FileExplorerPane({
               />
               {isMarkdownPreview ? (
                 <div className="inline-flex items-center rounded-md border border-border bg-muted/50 p-0.5">
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost"
+                    size="xs"
                     onClick={() => setTextPreviewMode("preview")}
-                    className={`rounded px-2 py-1 text-xs transition-colors ${
+                    className={`rounded px-2 py-1 ${
                       textPreviewMode === "preview"
                         ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                        : "text-muted-foreground"
                     }`}
                   >
                     Preview
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="xs"
                     onClick={() => setTextPreviewMode("edit")}
-                    className={`rounded px-2 py-1 text-xs transition-colors ${
+                    className={`rounded px-2 py-1 ${
                       textPreviewMode === "edit"
                         ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                        : "text-muted-foreground"
                     }`}
                   >
                     Edit
-                  </button>
+                  </Button>
                 </div>
               ) : null}
               {preview?.isEditable ? (
-                <button
-                  type="button"
+                <Button
+                  variant="outline"
+                  size="xs"
                   onClick={() => void savePreview()}
                   disabled={!isDirty || saving}
-                  className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                  className="text-muted-foreground"
                 >
                   <Save size={12} />
                   {saving ? "Saving" : "Save"}
-                </button>
+                </Button>
               ) : null}
             </>
           ) : undefined
@@ -1294,18 +1300,19 @@ export function FileExplorerPane({
                     {previewTableSheets.map((sheet, index) => {
                       const isActive = index === activeTableSheetIndex;
                       return (
-                        <button
+                        <Button
                           key={`${sheet.name}-${sheet.index}`}
-                          type="button"
+                          variant={isActive ? "secondary" : "outline"}
+                          size="xs"
                           onClick={() => setActiveTableSheetIndex(index)}
-                          className={`rounded-md border px-2 py-1 text-[11px] transition-colors ${
+                          className={`text-[11px] ${
                             isActive
                               ? "border-primary/35 bg-primary/12 text-primary"
-                              : "border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                              : ""
                           }`}
                         >
                           {sheet.name}
-                        </button>
+                        </Button>
                       );
                     })}
                   </div>
@@ -1388,19 +1395,20 @@ export function FileExplorerPane({
                     bookmark.isDirectory
                   );
                   return (
-                    <button
+                    <Button
                       key={bookmark.id}
-                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
                       onClick={() => void openBookmarkedTarget(bookmark)}
                       title={bookmark.label}
-                      className={`grid size-7 shrink-0 place-items-center rounded-md transition-colors ${
+                      className={`shrink-0 ${
                         isActive
                           ? "bg-primary/12 text-primary"
-                          : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                          : "text-muted-foreground"
                       }`}
                     >
                       <Icon size={14} className={className} />
-                    </button>
+                    </Button>
                   );
                 })}
               </div>
@@ -1433,10 +1441,10 @@ export function FileExplorerPane({
               </div>
               <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs transition-colors focus-within:border-ring">
                 <Search size={13} className="shrink-0 text-muted-foreground" />
-                <input
+                <Input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  className="embedded-input w-full bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/50"
+                  className="h-auto w-full border-0 bg-transparent p-0 text-xs text-foreground shadow-none outline-none ring-0 placeholder:text-muted-foreground/50 focus-visible:border-0 focus-visible:ring-0"
                   placeholder="Search files"
                 />
               </div>
@@ -1455,15 +1463,16 @@ export function FileExplorerPane({
                           {breadcrumb.label}
                         </span>
                       ) : (
-                        <button
-                          type="button"
+                        <Button
+                          variant="ghost"
+                          size="xs"
                           onClick={() => {
                             void openPath(breadcrumb.absolutePath);
                           }}
-                          className="truncate transition-colors hover:text-foreground"
+                          className="h-auto truncate p-0 text-[10px] uppercase tracking-widest hover:text-foreground"
                         >
                           {breadcrumb.label}
-                        </button>
+                        </Button>
                       )}
                     </div>
                   ))
@@ -1504,7 +1513,7 @@ export function FileExplorerPane({
                         : "text-foreground/80 hover:bg-accent hover:text-accent-foreground"
                     } ${isRenaming ? "cursor-default" : "cursor-pointer"}`;
                     const nameField = isRenaming ? (
-                      <input
+                      <Input
                         ref={renameInputRef}
                         value={renameDraft}
                         onChange={(event) => setRenameDraft(event.target.value)}
@@ -1524,7 +1533,7 @@ export function FileExplorerPane({
                           }
                         }}
                         disabled={renameSaving}
-                        className="embedded-input h-6 min-w-0 flex-1 rounded-sm border border-border/70 bg-background px-1.5 text-xs font-medium text-foreground outline-none focus:border-ring disabled:opacity-60"
+                        className="h-6 min-w-0 flex-1 rounded-sm border-border/70 bg-background px-1.5 text-xs font-medium"
                       />
                     ) : (
                       <span className="truncate text-xs font-medium">{entry.name}</span>
@@ -1656,33 +1665,33 @@ export function FileExplorerPane({
               style={contextMenuPosition}
               className="fixed z-[80] rounded-xl border border-border/70 bg-popover/92 p-1.5 text-popover-foreground shadow-xl ring-1 ring-foreground/10 backdrop-blur-xl"
             >
-              <button
-                type="button"
+              <Button
+                variant="ghost"
                 onClick={() => {
                   void openEntryFromContextMenu(contextMenu.entry);
                 }}
-                className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                className="w-full justify-start rounded-lg px-3 py-2"
               >
                 {contextMenu.entry.isDirectory ? "Open folder" : "Open file"}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="ghost"
                 onClick={() => {
                   void renameEntryFromContextMenu(contextMenu.entry);
                 }}
-                className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                className="w-full justify-start rounded-lg px-3 py-2"
               >
                 Rename…
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="ghost"
                 onClick={() => {
                   void deleteEntryFromContextMenu(contextMenu.entry);
                 }}
-                className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm text-destructive transition-colors hover:bg-destructive/10 hover:text-destructive"
+                className="w-full justify-start rounded-lg px-3 py-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
               >
                 Delete…
-              </button>
+              </Button>
             </div>,
             document.body,
           )
