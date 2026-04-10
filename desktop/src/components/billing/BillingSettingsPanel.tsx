@@ -37,7 +37,7 @@ export function BillingSettingsPanel() {
     <div className="grid max-w-[760px] gap-4">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <div className="text-xl font-semibold text-foreground">Billing</div>
+          <div className="text-base font-semibold text-foreground">Billing</div>
           <div className="text-sm text-muted-foreground">
             Hosted credits and managed usage for this desktop account.
           </div>
@@ -61,7 +61,7 @@ export function BillingSettingsPanel() {
       </div>
 
       {showExpirationBanner ? (
-        <div className="flex items-center justify-between gap-3 rounded-[16px] border border-amber-400/25 bg-amber-400/10 px-4 py-3">
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-400/25 bg-amber-400/10 px-4 py-3">
           <div className="flex min-w-0 items-center gap-2 text-sm text-amber-200">
             <AlertCircle size={16} className="shrink-0" />
             <span className="truncate">
@@ -86,9 +86,9 @@ export function BillingSettingsPanel() {
         isLoading={isLoading}
         error={error}
       />
-      <Card className="rounded-[24px] border-border/40 bg-card/40">
+      <Card className="rounded-xl border-border/40 bg-card/40">
         <CardContent className="grid gap-3">
-          <div className="text-xl font-semibold text-foreground">Usage record</div>
+          <div className="text-base font-semibold text-foreground">Usage record</div>
 
           <div className="grid grid-cols-[minmax(0,1fr)_140px_120px] gap-3 border-b border-border/40 pb-3 text-sm text-muted-foreground">
             <div>Details</div>

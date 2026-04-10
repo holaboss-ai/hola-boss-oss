@@ -67,7 +67,7 @@ export function BillingSummaryCard({
 
   return (
     <Card
-      className="rounded-[24px] border-border/40 px-5 py-5"
+      className="rounded-xl border-border/40 px-4 py-4"
       style={{ backgroundColor: "rgb(243, 243, 244)" }}
     >
       <div className="flex items-start justify-between gap-4">
@@ -98,22 +98,22 @@ export function BillingSummaryCard({
       </div>
 
       {error ? (
-        <div className="mt-4 rounded-[16px] border border-rose-400/35 bg-rose-500/8 px-4 py-3 text-sm text-rose-400">
+        <div className="mt-4 rounded-lg border border-rose-400/35 bg-rose-500/8 px-4 py-3 text-sm text-rose-400">
           {error.message}
         </div>
       ) : null}
 
       {!isLoading && !hasOverview && !error ? (
-        <div className="mt-4 rounded-[16px] border border-border/35 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+        <div className="mt-4 rounded-lg border border-border/35 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
           Sign in to view billing.
         </div>
       ) : null}
 
       <div className="mt-5 border-t border-dashed border-border/50 pt-5">
-        <div className="grid gap-5">
+        <div className="grid gap-4">
           <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3">
             <div>
-              <div className="text-xl font-semibold tracking-[-0.03em] text-foreground tabular-nums">
+              <div className="text-lg font-semibold tracking-[-0.03em] text-foreground tabular-nums">
                 {creditsValue}
               </div>
               <div className="mt-1 flex items-center gap-1 text-sm text-muted-foreground">
@@ -145,7 +145,7 @@ export function BillingSummaryCard({
               </div>
             </div>
             <div className="text-right">
-              <div className="text-xl font-semibold tracking-[-0.03em] text-foreground tabular-nums">
+              <div className="text-lg font-semibold tracking-[-0.03em] text-foreground tabular-nums">
                 {overview?.monthlyCreditsIncluded?.toLocaleString() ?? "—"}
               </div>
               <div className="mt-1 text-sm text-muted-foreground">Monthly credits</div>
