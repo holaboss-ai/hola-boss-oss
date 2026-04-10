@@ -33,7 +33,9 @@ import {
   Waypoints,
   X,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { PaneCard } from "@/components/ui/PaneCard";
 import {
@@ -3997,13 +3999,14 @@ export function ChatPane({
                     </div>
                   </div>
 
-                  <div
-                    className={`inline-flex shrink-0 items-center rounded-full border px-3 py-1 text-[10px] font-medium uppercase tracking-[0.16em] ${onboardingStatusTone(
+                  <Badge
+                    variant="outline"
+                    className={`shrink-0 px-3 py-1 text-[10px] uppercase tracking-[0.16em] ${onboardingStatusTone(
                       selectedWorkspace.onboarding_status,
                     )}`}
                   >
                     {onboardingStatusLabel(selectedWorkspace.onboarding_status)}
-                  </div>
+                  </Badge>
                 </div>
               </div>
             </div>
@@ -4024,23 +4027,25 @@ export function ChatPane({
                 </div>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <button
-                  type="button"
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={() => openExternalUrl(billingLinks?.addCreditsUrl)}
-                  className="inline-flex items-center rounded-full border border-primary/35 bg-primary/10 px-3 py-1.5 text-[12px] font-medium text-primary transition hover:bg-primary/16"
+                  className="rounded-full border-primary/35 bg-primary/10 text-primary hover:bg-primary/16"
                 >
                   Add credits
-                </button>
+                </Button>
                 {showOutOfCreditsWarning ? (
-                  <button
-                    type="button"
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={() =>
                       openExternalUrl(billingLinks?.billingPageUrl)
                     }
-                    className="inline-flex items-center rounded-full border border-border/60 bg-background px-3 py-1.5 text-[12px] font-medium text-foreground transition hover:border-primary/35 hover:text-primary"
+                    className="rounded-full border-border/60 bg-background hover:border-primary/35 hover:text-primary"
                   >
                     Manage on web
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             </div>
@@ -4050,42 +4055,47 @@ export function ChatPane({
         {chatErrorMessage || verboseTelemetryEnabled ? (
           <div className="shrink-0 px-4 pt-3 sm:px-5">
             {chatErrorMessage ? (
-              <div className="theme-chat-system-bubble rounded-[14px] border px-3 py-2 text-[11px]">
-                {chatErrorMessage}
-              </div>
+              <Card size="sm" className="theme-chat-system-bubble rounded-[14px] py-0">
+                <CardContent className="px-3 py-2 text-[11px]">
+                  {chatErrorMessage}
+                </CardContent>
+              </Card>
             ) : null}
 
             {verboseTelemetryEnabled ? (
-              <div className="bg-muted mt-3 rounded-[14px] border border-border/45 px-3 py-2">
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="text-[10px] tracking-[0.12em] text-muted-foreground">
-                    Stream telemetry ({streamTelemetry.length})
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setStreamTelemetry([])}
-                    className="rounded border border-border/50 px-2 py-1 text-[10px] text-muted-foreground transition hover:border-primary/35 hover:text-foreground"
-                  >
-                    Clear
-                  </button>
-                </div>
-                <div className="bg-muted max-h-36 overflow-y-auto rounded border border-border/35 p-2 font-mono text-[10px] text-muted-foreground">
-                  {streamTelemetryTail.length === 0 ? (
-                    <div className="text-muted-foreground">
-                      No stream events yet.
+              <Card size="sm" className="mt-3 rounded-[14px] border-border/45 bg-muted py-0">
+                <CardContent className="px-3 py-2">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="text-[10px] tracking-[0.12em] text-muted-foreground">
+                      Stream telemetry ({streamTelemetry.length})
                     </div>
-                  ) : (
-                    streamTelemetryTail.map((entry) => (
-                      <div
-                        key={entry.id}
-                        className="whitespace-pre-wrap break-all"
-                      >
-                        {`${entry.at} ${entry.action} stream=${entry.streamId} transport=${entry.transportType} event=${entry.eventType || entry.eventName} input=${entry.inputId || "-"} session=${entry.sessionId || "-"} detail=${entry.detail || "-"}`}
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      onClick={() => setStreamTelemetry([])}
+                      className="border-border/50 text-[10px] text-muted-foreground hover:border-primary/35 hover:text-foreground"
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                  <div className="bg-muted max-h-36 overflow-y-auto rounded border border-border/35 p-2 font-mono text-[10px] text-muted-foreground">
+                    {streamTelemetryTail.length === 0 ? (
+                      <div className="text-muted-foreground">
+                        No stream events yet.
                       </div>
-                    ))
-                  )}
-                </div>
-              </div>
+                    ) : (
+                      streamTelemetryTail.map((entry) => (
+                        <div
+                          key={entry.id}
+                          className="whitespace-pre-wrap break-all"
+                        >
+                          {`${entry.at} ${entry.action} stream=${entry.streamId} transport=${entry.transportType} event=${entry.eventType || entry.eventName} input=${entry.inputId || "-"} session=${entry.sessionId || "-"} detail=${entry.detail || "-"}`}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
             ) : null}
           </div>
         ) : null}
@@ -4765,11 +4775,11 @@ function AssistantTurnOutputs({
   return (
     <div className="mt-3 flex flex-col gap-2">
       {outputs.map((output) => (
-        <button
+        <Button
           key={output.id}
-          type="button"
+          variant="ghost"
           onClick={() => onOpenOutput?.(output)}
-          className="flex max-w-[360px] items-center gap-3 rounded-xl border border-border/50 bg-card px-3.5 py-2.5 text-left transition-colors hover:bg-accent disabled:cursor-default disabled:hover:bg-card"
+          className="flex h-auto max-w-[360px] items-center gap-3 rounded-xl border border-border/50 bg-card px-3.5 py-2.5 text-left hover:bg-accent disabled:cursor-default disabled:hover:bg-card"
           disabled={!onOpenOutput}
         >
           <OutputArtifactIcon output={output} />
@@ -4781,20 +4791,20 @@ function AssistantTurnOutputs({
               {outputSecondaryLabel(output)}
             </div>
           </div>
-        </button>
+        </Button>
       ))}
 
       {sessionOutputs.length > 1 ? (
-        <button
-          type="button"
+        <Button
+          variant="ghost"
           onClick={onOpenAllArtifacts}
-          className="flex max-w-[360px] items-center gap-3 rounded-xl border border-border/50 px-3.5 py-2.5 text-left text-muted-foreground transition-colors hover:bg-accent"
+          className="flex h-auto max-w-[360px] items-center gap-3 rounded-xl border border-border/50 px-3.5 py-2.5 text-left text-muted-foreground hover:bg-accent"
         >
           <FileText size={15} className="shrink-0" />
           <span className="text-[13px]">
             View all artifacts ({sessionOutputs.length})
           </span>
-        </button>
+        </Button>
       ) : null}
     </div>
   );
@@ -4822,12 +4832,12 @@ function CurrentTodoPanel({
     totalTaskCount > 0 ? `${currentTaskPosition}/${totalTaskCount}` : "0/0";
 
   return (
-    <div className="overflow-hidden rounded-[18px] border border-border/35 bg-muted/50">
-      <button
-        type="button"
+    <Card size="sm" className="overflow-hidden rounded-[18px] border-border/35 bg-muted/50 py-0">
+      <Button
+        variant="ghost"
         onClick={onToggle}
         aria-expanded={expanded}
-        className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-background/30"
+        className="flex h-auto w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-background/30"
       >
         <div
           className={`inline-flex size-5 shrink-0 items-center justify-center rounded-full ${
@@ -4852,7 +4862,7 @@ function CurrentTodoPanel({
           size={14}
           className={`shrink-0 text-muted-foreground transition ${expanded ? "rotate-0" : "-rotate-90"}`}
         />
-      </button>
+      </Button>
 
       {expanded ? (
         <div className="border-t border-border/20 px-3 py-3">
@@ -4903,7 +4913,7 @@ function CurrentTodoPanel({
           </div>
         </div>
       ) : null}
-    </div>
+    </Card>
   );
 }
 
@@ -4977,29 +4987,30 @@ function AssistantTurnMemoryProposals({
               </div>
 
               <div className="flex shrink-0 items-start gap-2">
-                <div className="rounded-full border border-border/45 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                <Badge variant="outline" className="border-border/45 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
                   {memoryProposalStateLabel(proposal.state)}
-                </div>
+                </Badge>
                 {isPending ? (
-                  <button
-                    type="button"
+                  <Button
+                    variant="outline"
+                    size="icon"
                     onClick={() => onEditProposal(proposal.proposal_id)}
-                    className="grid h-9 w-9 place-items-center rounded-[14px] border border-border/45 text-muted-foreground transition hover:border-border/70 hover:text-foreground"
+                    className="rounded-[14px] border-border/45 hover:border-border/70 hover:text-foreground"
                     aria-label="Edit memory proposal"
                   >
                     <PencilLine size={14} />
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             </div>
 
             {isPending ? (
               <div className="mt-4 flex flex-wrap gap-2">
-                <button
-                  type="button"
+                <Button
+                  variant="outline"
                   onClick={() => onDismissProposal(proposal)}
                   disabled={isActing}
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl border border-border/45 px-3 text-sm text-muted-foreground transition hover:border-primary/28 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  className="h-10 gap-2 rounded-2xl border-border/45 text-muted-foreground hover:border-primary/28 hover:text-foreground"
                 >
                   {isActing && proposalAction?.action === "dismiss" ? (
                     <Loader2 size={12} className="animate-spin" />
@@ -5007,12 +5018,12 @@ function AssistantTurnMemoryProposals({
                     <X size={12} />
                   )}
                   <span>Dismiss</span>
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="outline"
                   onClick={() => onAcceptProposal(proposal)}
                   disabled={isActing}
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl border border-primary/40 bg-primary/10 px-3 text-sm text-primary transition hover:bg-primary/14 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="h-10 gap-2 rounded-2xl border-primary/40 bg-primary/10 text-primary hover:bg-primary/14"
                 >
                   {isActing && proposalAction?.action === "accept" ? (
                     <Loader2 size={12} className="animate-spin" />
@@ -5020,7 +5031,7 @@ function AssistantTurnMemoryProposals({
                     <Check size={12} />
                   )}
                   <span>Accept</span>
-                </button>
+                </Button>
               </div>
             ) : null}
           </article>
@@ -5077,32 +5088,34 @@ function ArtifactBrowserModal({
               {outputs.length} artifact{outputs.length === 1 ? "" : "s"}
             </div>
           </div>
-          <button
-            type="button"
+          <Button
+            variant="outline"
+            size="icon"
             onClick={onClose}
-            className="grid h-9 w-9 place-items-center rounded-full border border-border/45 text-muted-foreground transition hover:border-border/70 hover:text-foreground"
+            className="rounded-full border-border/45 hover:border-border/70 hover:text-foreground"
             aria-label="Close artifacts browser"
           >
             <X size={16} />
-          </button>
+          </Button>
         </div>
 
         <div className="flex flex-wrap gap-2 px-5 py-4">
           {filterLabels.map((item) => {
             const active = filter === item.id;
             return (
-              <button
+              <Button
                 key={item.id}
-                type="button"
+                variant="outline"
+                size="sm"
                 onClick={() => onFilterChange(item.id)}
-                className={`rounded-full border px-3 py-1.5 text-[12px] transition ${
+                className={`rounded-full ${
                   active
-                    ? "border-foreground bg-foreground text-background"
+                    ? "border-foreground bg-foreground text-background hover:bg-foreground hover:text-background"
                     : "border-border/45 text-muted-foreground hover:border-border/70 hover:text-foreground"
                 }`}
               >
                 {item.label}
-              </button>
+              </Button>
             );
           })}
         </div>
@@ -5115,15 +5128,15 @@ function ArtifactBrowserModal({
           ) : (
             <div className="grid gap-2">
               {filteredOutputs.map((output) => (
-                <button
+                <Button
                   key={output.id}
-                  type="button"
+                  variant="ghost"
                   onClick={() => {
                     onClose();
                     onOpenOutput?.(output);
                   }}
                   disabled={!onOpenOutput}
-                  className="flex items-center gap-3 rounded-[18px] border border-border/35 px-4 py-3 text-left transition hover:border-border/60 hover:bg-muted/45 disabled:cursor-default disabled:hover:border-border/35 disabled:hover:bg-transparent"
+                  className="flex h-auto items-center gap-3 rounded-[18px] border border-border/35 px-4 py-3 text-left hover:border-border/60 hover:bg-muted/45 disabled:cursor-default disabled:hover:border-border/35 disabled:hover:bg-transparent"
                 >
                   <OutputArtifactIcon output={output} />
                   <div className="min-w-0 flex-1">
@@ -5135,11 +5148,11 @@ function ArtifactBrowserModal({
                     </div>
                   </div>
                   {outputChangeLabel(output) ? (
-                    <div className="rounded-full border border-border/45 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                    <Badge variant="outline" className="border-border/45 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
                       {outputChangeLabel(output)}
-                    </div>
+                    </Badge>
                   ) : null}
-                </button>
+                </Button>
               ))}
             </div>
           )}
@@ -5242,10 +5255,11 @@ function TraceStepGroup({
 
   return (
     <div className="mt-3">
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={() => setGroupExpanded((v) => !v)}
-        className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 -ml-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60"
+        className="-ml-2.5 text-muted-foreground hover:bg-muted/60"
       >
         {groupHasTerminalError ? (
           <AlertTriangle size={13} className="text-destructive" />
@@ -5272,7 +5286,7 @@ function TraceStepGroup({
           size={12}
           className={`transition-transform ${groupExpanded ? "rotate-180" : ""}`}
         />
-      </button>
+      </Button>
 
       {groupExpanded ? (
         <div className="mt-1 ml-1 space-y-0.5">
@@ -5280,12 +5294,12 @@ function TraceStepGroup({
             const expanded = !(collapsedByStepId[step.id] ?? true);
             return (
               <div key={step.id}>
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
                   onClick={() =>
                     step.details.length > 0 && onToggleStep(step.id)
                   }
-                  className={`flex w-full items-start gap-2 rounded-md px-2.5 -ml-2.5 py-1 text-left text-xs transition-colors ${step.details.length > 0 ? "hover:bg-muted/50 cursor-pointer" : "cursor-default"}`}
+                  className={`flex h-auto w-full items-start gap-2 rounded-md px-2.5 -ml-2.5 py-1 text-left text-xs ${step.details.length > 0 ? "hover:bg-muted/50 cursor-pointer" : "cursor-default hover:bg-transparent"}`}
                 >
                   <span className="mt-0.5 shrink-0">
                     {step.status === "completed" ? (
@@ -5317,7 +5331,7 @@ function TraceStepGroup({
                       className={`mt-0.5 shrink-0 text-muted-foreground/50 transition-transform ${expanded ? "rotate-180" : ""}`}
                     />
                   ) : null}
-                </button>
+                </Button>
                 {expanded && step.details.length > 1 ? (
                   <div className="ml-6 mt-0.5 mb-1 rounded-md border border-border/30 bg-muted/30 px-3 py-2 text-[11px] leading-5 text-muted-foreground whitespace-pre-wrap">
                     {step.details.slice(1).join("\n")}
@@ -5357,11 +5371,11 @@ function ThinkingPanel({
 
   return (
     <div className="mt-4">
-      <button
-        type="button"
+      <Button
+        variant="ghost"
         onClick={onToggle}
         aria-expanded={!collapsed}
-        className="bg-muted flex w-full items-center justify-between gap-3 rounded-[18px] border border-border/35 px-3.5 py-3 text-left transition hover:border-border/55"
+        className="flex h-auto w-full items-center justify-between gap-3 rounded-[18px] border border-border/35 bg-muted px-3.5 py-3 text-left hover:border-border/55"
       >
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -5369,9 +5383,9 @@ function ThinkingPanel({
               {live ? "Thinking" : "Reasoning"}
             </span>
             {live ? (
-              <span className="rounded-full border border-[rgba(247,90,84,0.18)] bg-[rgba(247,90,84,0.08)] px-2 py-0.5 text-[9px] uppercase tracking-[0.14em] text-[rgba(206,92,84,0.92)]">
+              <Badge variant="outline" className="border-[rgba(247,90,84,0.18)] bg-[rgba(247,90,84,0.08)] px-2 py-0.5 text-[9px] uppercase tracking-[0.14em] text-[rgba(206,92,84,0.92)]">
                 LIVE
-              </span>
+              </Badge>
             ) : null}
           </div>
           <div className="mt-1 truncate text-[12px] text-muted-foreground/76">
@@ -5382,7 +5396,7 @@ function ThinkingPanel({
           size={14}
           className={`shrink-0 text-muted-foreground transition ${collapsed ? "" : "rotate-180"}`}
         />
-      </button>
+      </Button>
       {!collapsed ? (
         <div className="theme-chat-thinking-inner mt-2 whitespace-pre-wrap rounded-[18px] border border-border/30 px-4 py-3 text-[12px] leading-6 text-muted-foreground/86">
           {text}
@@ -5409,9 +5423,10 @@ function AttachmentList({
   return (
     <div className={`flex flex-wrap gap-2 ${className}`.trim()}>
       {attachments.map((attachment) => (
-        <div
+        <Badge
           key={attachment.id}
-          className="bg-muted inline-flex max-w-full items-center gap-2 rounded-full border border-border/35 px-3 py-1.5 text-[11px] text-foreground/84"
+          variant="outline"
+          className="h-auto max-w-full gap-2 border-border/35 bg-muted px-3 py-1.5 text-[11px] text-foreground/84"
         >
           {attachment.kind === "image" ? (
             <ImageIcon size={12} className="shrink-0 text-primary/72" />
@@ -5420,16 +5435,17 @@ function AttachmentList({
           )}
           <span className="truncate">{attachmentButtonLabel(attachment)}</span>
           {onRemove ? (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="icon-xs"
               onClick={() => onRemove(attachment.id)}
-              className="grid h-4 w-4 place-items-center rounded-full text-muted-foreground transition hover:text-foreground"
+              className="size-4 rounded-full text-muted-foreground hover:text-foreground"
               aria-label={`Remove ${attachment.name}`}
             >
               <X size={11} />
-            </button>
+            </Button>
           ) : null}
-        </div>
+        </Badge>
       ))}
     </div>
   );
@@ -5523,9 +5539,10 @@ function ModelCombobox({
     const active = option.value === selectedModel;
     const optionDisabled = Boolean(option.disabled);
     return (
-      <button
+      <Button
         key={option.value}
-        type="button"
+        variant="ghost"
+        size="sm"
         disabled={optionDisabled}
         onClick={() => {
           if (optionDisabled) {
@@ -5535,7 +5552,7 @@ function ModelCombobox({
           setOpen(false);
           setQuery("");
         }}
-        className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs transition-colors ${
+        className={`flex w-full justify-between rounded-none px-3 py-2 text-left text-xs ${
           active
             ? "bg-accent text-accent-foreground"
             : optionDisabled
@@ -5551,7 +5568,7 @@ function ModelCombobox({
             {option.statusLabel}
           </span>
         ) : null}
-      </button>
+      </Button>
     );
   };
 
@@ -5793,10 +5810,11 @@ function Composer({
           >
             {noAvailableModels ? (
               <>
-                <button
-                  type="button"
+                <Button
+                  variant="outline"
+                  size="lg"
                   onClick={onOpenModelProviders}
-                  className="bg-card flex h-9 shrink-0 items-center justify-between gap-2 rounded-[11px] border border-border/28 px-3 text-left text-[12px] font-semibold text-foreground transition hover:border-primary/35 hover:bg-card/92"
+                  className="shrink-0 justify-between gap-2 rounded-[11px] border-border/28 bg-card text-[12px] font-semibold hover:border-primary/35 hover:bg-card/92"
                   aria-label="Configure model providers"
                 >
                   <span className="flex min-w-0 items-center gap-2">
@@ -5810,7 +5828,7 @@ function Composer({
                     size={14}
                     className="shrink-0 text-muted-foreground"
                   />
-                </button>
+                </Button>
                 <div className="min-w-0 text-[10px] leading-5 text-muted-foreground">
                   Open provider settings to connect a model.
                 </div>
