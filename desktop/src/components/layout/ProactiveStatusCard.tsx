@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ChevronDown, Loader2, Sparkles } from "lucide-react";
@@ -64,7 +65,7 @@ function proactiveStateClasses(state: string): string {
     return "border-indigo-500/25 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300";
   }
   if (state === "analyzing") {
-    return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+    return "border-warning/30 bg-warning/10 text-warning";
   }
   if (state === "error" || state === "unavailable") {
     return "border-destructive/30 bg-destructive/10 text-destructive";
@@ -82,7 +83,7 @@ function proactiveToggleClasses(enabled: boolean): string {
 }
 
 function proactiveToggleDotClasses(enabled: boolean): string {
-  return enabled ? "bg-emerald-500" : "bg-amber-500";
+  return enabled ? "bg-success" : "bg-warning";
 }
 
 type ProactiveScheduleUnit = "minute" | "hour" | "day";
@@ -269,7 +270,7 @@ function ProactiveScheduleEditor({
         variant="ghost"
         aria-expanded={drawerOpen}
         onClick={() => setDrawerOpen((current) => !current)}
-        className="flex h-auto w-full items-center justify-between gap-3 rounded-[16px] px-1 py-1 text-left"
+        className="flex h-auto w-full items-center justify-between gap-3 rounded-lg px-1 py-1 text-left"
       >
         <div className="min-w-0">
           <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
@@ -287,7 +288,7 @@ function ProactiveScheduleEditor({
         />
       </Button>
       {drawerOpen ? (
-        <div className="mt-3 rounded-[18px] border border-border/35 bg-background/55 px-3 py-3">
+        <div className="mt-3 rounded-lg border border-border/35 bg-background/55 px-3 py-3">
           <div className="text-[11px] leading-5 text-muted-foreground/82">
             Server schedule for this desktop instance.
           </div>
@@ -461,15 +462,16 @@ export function ProactiveLifecyclePanel({
 
   if (compact) {
     return (
-      <section className="w-full overflow-hidden rounded-[20px] border border-border/40 bg-card">
+      <section className="w-full overflow-hidden rounded-xl border border-border/40 bg-card">
         <div className="flex items-center justify-between gap-3 px-3 py-3">
-          <div
-            className={`inline-flex items-center rounded-full border px-3 py-1 text-[10px] font-medium tracking-[0.14em] ${proactiveStateClasses(
+          <Badge
+            variant="outline"
+            className={`border-transparent text-[10px] tracking-[0.14em] ${proactiveStateClasses(
               state,
             )}`}
           >
             {proactiveStateLabel(state)}
-          </div>
+          </Badge>
           <div className="flex shrink-0 items-center gap-1.5">
             {onProactiveWorkspaceEnabledChange ? (
               <Button
@@ -549,7 +551,7 @@ export function ProactiveLifecyclePanel({
   }
 
   return (
-    <section className="w-full overflow-hidden rounded-[20px] border border-border/40 bg-card shadow-sm">
+    <section className="w-full overflow-hidden rounded-xl border border-border/40 bg-card shadow-sm">
       <div className="px-4 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
@@ -563,13 +565,14 @@ export function ProactiveLifecyclePanel({
             ) : null}
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1.5">
-            <div
-              className={`inline-flex items-center rounded-full border px-3 py-1 text-[10px] font-medium tracking-[0.14em] ${proactiveStateClasses(
+            <Badge
+              variant="outline"
+              className={`border-transparent text-[10px] tracking-[0.14em] ${proactiveStateClasses(
                 state,
               )}`}
             >
               {proactiveStateLabel(state)}
-            </div>
+            </Badge>
             <div className="flex items-center gap-1.5">
               {onProactiveWorkspaceEnabledChange ? (
                 <Button

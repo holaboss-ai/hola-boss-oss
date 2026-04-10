@@ -11,6 +11,7 @@ import {
   Clock3,
 } from "lucide-react";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ProactiveLifecyclePanel } from "@/components/layout/ProactiveStatusCard";
@@ -608,7 +609,7 @@ function InboxPanel({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
         {isSignedIn && proposalStatusMessage ? (
-          <div className="mb-3 rounded-[18px] border border-border/45 bg-muted/35 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+          <div className="mb-3 rounded-lg border border-border/45 bg-muted/35 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
             {proposalStatusMessage}
           </div>
         ) : null}
@@ -755,7 +756,7 @@ function SignedOutInboxNotice({
   isAuthPending: boolean;
 }) {
   return (
-    <div className="rounded-[22px] border border-amber-500/20 bg-amber-500/10 px-4 py-5">
+    <div className="rounded-xl border border-warning/20 bg-warning/10 px-4 py-5">
       <div className="flex flex-col gap-4">
         <div className="space-y-1">
           <div className="text-sm font-semibold text-foreground">
@@ -808,16 +809,19 @@ function RunningPanel({
         <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
           Sessions
         </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          onClick={onCreateSession}
-          disabled={!hasWorkspace}
-          className="rounded-full border border-border/55 px-3 text-xs"
+        <Badge
+          variant="outline"
+          render={
+            <button
+              type="button"
+              onClick={onCreateSession}
+              disabled={!hasWorkspace}
+            />
+          }
+          className="cursor-pointer px-3 text-xs disabled:pointer-events-none disabled:opacity-50"
         >
-          <span>New Session</span>
-        </Button>
+          New Session
+        </Badge>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {!hasWorkspace ? (
