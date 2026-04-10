@@ -364,13 +364,14 @@ export function PublishDialog({
               )}
               {success && <span />}
               {!isSubmitting && (
-                <button
-                  type="button"
-                  className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-muted-foreground"
                   onClick={close}
                 >
                   <X className="size-4" />
-                </button>
+                </Button>
               )}
             </div>
 
@@ -473,9 +474,9 @@ export function PublishDialog({
                         <span className="text-xs text-muted-foreground">
                           {selectedApps.size} of {installedApps.length} selected
                         </span>
-                        <button
-                          type="button"
-                          className="text-xs text-primary hover:underline"
+                        <Button
+                          variant="link"
+                          size="xs"
                           onClick={() => {
                             if (selectedApps.size === installedApps.length) {
                               setSelectedApps(new Set());
@@ -489,7 +490,7 @@ export function PublishDialog({
                           {selectedApps.size === installedApps.length
                             ? "Deselect all"
                             : "Select all"}
-                        </button>
+                        </Button>
                       </div>
                       <div className="space-y-1.5">
                         {installedApps.map((app) => (
@@ -749,13 +750,14 @@ function ReviewCard({
         <p className="truncate text-sm font-medium">{title}</p>
         <p className="truncate text-xs text-muted-foreground">{detail}</p>
       </div>
-      <button
-        type="button"
-        className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="shrink-0 text-muted-foreground/60"
         onClick={onEdit}
       >
         <Pencil className="size-3.5" />
-      </button>
+      </Button>
     </div>
   );
 }
@@ -775,7 +777,13 @@ function MarkdownToolbar({
     <div className="flex items-center gap-1">
       <Tooltip>
         <TooltipTrigger
-          className="inline-flex size-7 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          render={
+            <Button
+              variant="outline"
+              size="icon-sm"
+              className="text-muted-foreground"
+            />
+          }
           disabled={isGenerating || disabled}
           onClick={onGenerate}
         >
@@ -791,7 +799,13 @@ function MarkdownToolbar({
       </Tooltip>
       <Tooltip>
         <TooltipTrigger
-          className="inline-flex size-7 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          render={
+            <Button
+              variant="outline"
+              size="icon-sm"
+              className="text-muted-foreground"
+            />
+          }
           onClick={onUpload}
         >
           <FileUp size={14} />
