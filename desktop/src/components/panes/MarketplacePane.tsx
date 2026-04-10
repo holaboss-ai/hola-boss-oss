@@ -2,6 +2,7 @@ import { AppsGallery } from "@/components/marketplace/AppsGallery";
 import { KitDetail } from "@/components/marketplace/KitDetail";
 import { KitEmoji } from "@/components/marketplace/KitEmoji";
 import { MarketplaceGallery } from "@/components/marketplace/MarketplaceGallery";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
@@ -40,9 +41,6 @@ export function MarketplacePane() {
     clearPendingIntegrations,
   } = useWorkspaceDesktop();
 
-  const [marketplaceTab, setMarketplaceTab] = useState<"templates" | "apps">(
-    "templates",
-  );
   const [view, setView] = useState<View>("gallery");
   const [detailTemplate, setDetailTemplate] =
     useState<TemplateMetadataPayload | null>(null);
@@ -121,44 +119,14 @@ export function MarketplacePane() {
   }
 
   return (
-    <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-muted/50 border border-border">
-      <div className="flex items-center gap-1 border-b border-border px-4 pt-3 pb-0">
-        <button
-          type="button"
-          onClick={() => setMarketplaceTab("templates")}
-          className={[
-            "relative px-4 pb-2.5 text-sm font-medium transition-colors",
-            marketplaceTab === "templates"
-              ? "text-foreground"
-              : "text-muted-foreground hover:text-foreground",
-          ].join(" ")}
-        >
-          Templates
-          {marketplaceTab === "templates" ? (
-            <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-primary" />
-          ) : null}
-        </button>
-        <button
-          type="button"
-          onClick={() => setMarketplaceTab("apps")}
-          className={[
-            "relative px-4 pb-2.5 text-sm font-medium transition-colors",
-            marketplaceTab === "apps"
-              ? "text-foreground"
-              : "text-muted-foreground hover:text-foreground",
-          ].join(" ")}
-        >
-          Apps
-          {marketplaceTab === "apps" ? (
-            <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-primary" />
-          ) : null}
-        </button>
-      </div>
-      <div className="relative min-h-0 flex-1 overflow-auto p-4">
+    <Tabs defaultValue="templates" className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-muted/50">
+      <TabsList variant="line" className="border-b border-border px-4 pt-2">
+        <TabsTrigger value="templates">Templates</TabsTrigger>
+        <TabsTrigger value="apps">Apps</TabsTrigger>
+      </TabsList>
+      <TabsContent value="templates" className="relative min-h-0 flex-1 overflow-auto p-4">
         <div className="mx-auto max-w-5xl">
-          {marketplaceTab === "templates" ? (
-            <>
-              {view === "gallery" ? (
+          {view === "gallery" ? (
                 <MarketplaceGallery
                   mode="browse"
                   templates={marketplaceTemplates}
@@ -336,12 +304,13 @@ export function MarketplacePane() {
                   </div>
                 </div>
               ) : null}
-            </>
-          ) : (
-            <AppsGallery />
-          )}
         </div>
-      </div>
-    </section>
+      </TabsContent>
+      <TabsContent value="apps" className="relative min-h-0 flex-1 overflow-auto p-4">
+        <div className="mx-auto max-w-5xl">
+          <AppsGallery />
+        </div>
+      </TabsContent>
+    </Tabs>
   );
 }
