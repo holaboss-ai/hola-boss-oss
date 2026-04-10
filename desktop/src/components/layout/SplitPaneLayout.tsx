@@ -17,7 +17,7 @@ export function SplitPaneLayout({ sizes, onSizesChange, left, center, right }: S
   const [dragHandle, setDragHandle] = useState<1 | 2 | null>(null);
 
   const templateColumns = useMemo(
-    () => `${sizes[0]}fr 4px ${sizes[1]}fr 4px ${sizes[2]}fr`,
+    () => `${sizes[0]}fr 0px ${sizes[1]}fr 0px ${sizes[2]}fr`,
     [sizes]
   );
 
@@ -81,13 +81,13 @@ export function SplitPaneLayout({ sizes, onSizesChange, left, center, right }: S
 
 function Handle({ onPointerDown, active }: { onPointerDown: () => void; active: boolean }) {
   return (
-    <div className="flex h-full min-h-0 items-stretch justify-center">
-      <button
-        type="button"
-        aria-label="Resize pane"
-        onPointerDown={onPointerDown}
-        className="w-[4px] cursor-col-resize bg-transparent"
-      />
+    <div
+      role="separator"
+      aria-label="Resize pane"
+      onPointerDown={onPointerDown}
+      className="relative z-10 h-full w-0 cursor-col-resize"
+    >
+      <div className="absolute inset-y-0 -left-[3px] w-[6px]" />
     </div>
   );
 }
