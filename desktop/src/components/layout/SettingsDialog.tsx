@@ -200,10 +200,10 @@ export function SettingsDialog({
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        className="pointer-events-auto relative z-10 grid h-[min(780px,calc(100vh-32px))] w-[min(1080px,calc(100vw-24px))] min-w-0 overflow-hidden rounded-[28px] border border-border bg-background shadow-lg grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[248px_minmax(0,1fr)] lg:grid-rows-1"
+        className="pointer-events-auto relative z-10 grid h-[min(680px,calc(100vh-48px))] w-[min(880px,calc(100vw-48px))] min-w-0 overflow-hidden rounded-2xl border border-border bg-background shadow-xl grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[220px_minmax(0,1fr)] lg:grid-rows-1"
       >
-        <aside className="border-b border-sidebar-border bg-sidebar p-4 text-sidebar-foreground lg:border-b-0 lg:border-r">
-          <nav className="mt-6 grid gap-1.5">
+        <aside className="border-b border-sidebar-border bg-sidebar px-3 py-5 text-sidebar-foreground lg:border-b-0 lg:border-r">
+          <nav className="mt-1 grid gap-0.5">
             {SETTINGS_SECTIONS.map(({ id, label, icon: Icon }) => {
               const active = id === activeSection;
 
@@ -212,22 +212,14 @@ export function SettingsDialog({
                   key={id}
                   variant="ghost"
                   onClick={() => onSectionChange(id)}
-                  className={`flex h-auto items-center justify-start gap-3 px-2.5 py-2 text-left ${
+                  className={`h-8 justify-start gap-2.5 rounded-lg px-2.5 ${
                     active
                       ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                      : "text-sidebar-foreground/72 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                      : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                   }`}
                 >
-                  <span
-                    className={`grid h-8 w-8 shrink-0 place-items-center rounded-[10px] ${
-                      active
-                        ? "bg-sidebar-primary/12 text-sidebar-primary"
-                        : "text-sidebar-foreground/60"
-                    }`}
-                  >
-                    <Icon className="size-4" />
-                  </span>
-                  <span className="min-w-0 text-sm font-medium">{label}</span>
+                  <Icon className={`size-4 shrink-0 ${active ? "text-sidebar-primary" : "text-sidebar-foreground/50"}`} />
+                  <span className="min-w-0 truncate text-[13px] font-medium">{label}</span>
                 </Button>
               );
             })}
@@ -235,23 +227,23 @@ export function SettingsDialog({
         </aside>
 
         <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
-          <header className="flex items-center justify-between gap-4 border-b border-border/35 px-6 py-5">
-            <div className="text-xl font-semibold text-foreground">
+          <header className="flex items-center justify-between gap-3 border-b border-border/30 px-6 py-4">
+            <h2 className="text-base font-semibold text-foreground">
               {titleForSection(activeSection)}
-            </div>
+            </h2>
 
             <Button
-              variant="outline"
-              size="icon-lg"
+              variant="ghost"
+              size="icon"
               onClick={onClose}
               aria-label="Close settings"
-              className="shrink-0 rounded-[14px] border-border/45 text-muted-foreground hover:border-primary/35 hover:text-foreground"
+              className="shrink-0 text-muted-foreground"
             >
               <X size={16} />
             </Button>
           </header>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 [scrollbar-gutter:stable]">
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 [scrollbar-gutter:stable]">
             {activeSection === "account" ? (
               <div className="w-full">
                 <AuthPanel view="account" />
@@ -277,13 +269,13 @@ export function SettingsDialog({
             ) : null}
 
             {activeSection === "settings" ? (
-              <div className="grid gap-6">
-                <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
-                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+              <div className="grid gap-5">
+                <section>
+                  <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
                     Appearance
                   </div>
 
-                  <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {themes.map((themeOption) => {
                       const selected = themeOption === theme;
                       const swatches = THEME_SWATCHES[themeOption] ?? [
@@ -297,51 +289,45 @@ export function SettingsDialog({
                           key={themeOption}
                           variant="ghost"
                           onClick={() => onThemeChange(themeOption)}
-                          className={`h-auto flex-col items-stretch rounded-[20px] border p-3 text-left ${
+                          className={`h-auto flex-col items-stretch rounded-xl border p-2.5 text-left ${
                             selected
-                              ? "border-primary/45 bg-primary/10 shadow-sm"
-                              : "border-border/40 bg-card/80 hover:border-primary/28 hover:bg-accent"
+                              ? "border-primary/40 bg-primary/6"
+                              : "border-border/40 hover:border-border hover:bg-accent"
                           }`}
                         >
-                          <Card size="sm" className="border-border/30 bg-card/80">
-                            <CardContent>
-                              <div className="grid grid-cols-[1.2fr_0.9fr] gap-2">
-                                <div
-                                  className="h-16 rounded-[14px] border border-white/10"
-                                  style={{
-                                    background: `linear-gradient(160deg, ${swatches[0]}, ${swatches[2]})`,
-                                  }}
-                                />
-                                <div className="grid gap-2">
-                                  <div
-                                    className="h-7 rounded-[10px] border border-white/10"
-                                    style={{ background: swatches[1] }}
-                                  />
-                                  <div
-                                    className="h-7 rounded-[10px] border border-white/10"
-                                    style={{
-                                      background: `color-mix(in srgb, ${swatches[1]} 42%, ${swatches[0]} 58%)`,
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                            </CardContent>
-                          </Card>
+                          <div className="grid grid-cols-[1.2fr_0.9fr] gap-2">
+                            <div
+                              className="h-14 rounded-lg border border-white/10"
+                              style={{
+                                background: `linear-gradient(160deg, ${swatches[0]}, ${swatches[2]})`,
+                              }}
+                            />
+                            <div className="grid gap-2">
+                              <div
+                                className="h-6 rounded-md border border-white/10"
+                                style={{ background: swatches[1] }}
+                              />
+                              <div
+                                className="h-6 rounded-md border border-white/10"
+                                style={{
+                                  background: `color-mix(in srgb, ${swatches[1]} 42%, ${swatches[0]} 58%)`,
+                                }}
+                              />
+                            </div>
+                          </div>
 
-                          <div className="mt-3 flex items-center justify-between gap-3">
-                            <span className="text-sm font-medium text-foreground">
+                          <div className="mt-2.5 flex items-center justify-between gap-2">
+                            <span className="text-[13px] font-medium text-foreground">
                               {prettifyThemeLabel(themeOption)}
                             </span>
-                            <Badge
-                              variant="outline"
-                              className={`uppercase tracking-[0.14em] ${
-                                selected
-                                  ? "border-primary/40 bg-primary/12 text-primary"
-                                  : "border-border/35 text-muted-foreground/68"
-                              }`}
-                            >
-                              {selected ? "Active" : "Preview"}
-                            </Badge>
+                            {selected ? (
+                              <Badge
+                                variant="outline"
+                                className="border-primary/40 bg-primary/10 text-primary"
+                              >
+                                Active
+                              </Badge>
+                            ) : null}
                           </div>
                         </Button>
                       );
@@ -352,47 +338,45 @@ export function SettingsDialog({
             ) : null}
 
             {activeSection === "about" ? (
-              <div className="grid max-w-[720px] gap-4">
-                <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
-                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+              <div className="grid max-w-[640px] gap-5">
+                <section>
+                  <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
                     Links
                   </div>
 
-                  <div className="mt-5 grid gap-3">
+                  <div className="mt-3 grid gap-1">
                     {ABOUT_LINKS.map(({ id, label, icon: Icon, href }) => (
                       <Button
                         key={id}
-                        variant="outline"
+                        variant="ghost"
                         onClick={() => onOpenExternalUrl(href)}
-                        className="flex h-auto items-center justify-between gap-3 rounded-[18px] border-border/40 bg-card/80 px-4 py-3 text-left hover:border-primary/30 hover:bg-accent"
+                        className="h-9 justify-between gap-3 rounded-lg px-3"
                       >
-                        <span className="flex min-w-0 items-center gap-3">
-                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-border/35 text-muted-foreground/82">
-                            <Icon size={16} />
-                          </span>
-                          <span className="min-w-0 text-sm font-medium text-foreground">
+                        <span className="flex min-w-0 items-center gap-2.5">
+                          <Icon size={15} className="shrink-0 text-muted-foreground" />
+                          <span className="min-w-0 text-[13px] text-foreground">
                             {label}
                           </span>
                         </span>
                         <ExternalLink
-                          size={15}
-                          className="shrink-0 text-muted-foreground/70"
+                          size={13}
+                          className="shrink-0 text-muted-foreground/50"
                         />
                       </Button>
                     ))}
                   </div>
                 </section>
 
-                <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
-                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                <section>
+                  <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
                     Diagnostics
                   </div>
-                  <div className="mt-3 max-w-[620px] text-sm leading-6 text-muted-foreground">
+                  <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">
                     Export a local diagnostics bundle with <code>runtime.log</code>,
-                    a consistent snapshot of <code>runtime.db</code>, and a
-                    redacted runtime config file. No upload happens automatically.
-                  </div>
-                  <div className="mt-5 flex flex-wrap items-center gap-3">
+                    a snapshot of <code>runtime.db</code>, and a
+                    redacted runtime config. No upload happens automatically.
+                  </p>
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
                     <Button
                       type="button"
                       variant="outline"
@@ -404,18 +388,18 @@ export function SettingsDialog({
                       ) : (
                         <FileArchive className="size-4" />
                       )}
-                      Export Diagnostics Bundle
+                      Export Bundle
                     </Button>
-                    <span className="text-xs text-muted-foreground/80">
-                      Saved to Downloads as a zip file.
+                    <span className="text-xs text-muted-foreground/70">
+                      Saves to Downloads as a zip.
                     </span>
                   </div>
                   {diagnosticsExportState.message ? (
                     <div
-                      className={`mt-4 rounded-[18px] border px-4 py-3 text-sm ${
+                      className={`mt-4 rounded-lg border px-4 py-3 text-sm ${
                         diagnosticsExportState.status === "error"
                           ? "border-destructive/30 bg-destructive/5 text-destructive"
-                          : "border-border/40 bg-card/70 text-foreground"
+                          : "border-border/40 text-foreground"
                       }`}
                     >
                       <div>{diagnosticsExportState.message}</div>
