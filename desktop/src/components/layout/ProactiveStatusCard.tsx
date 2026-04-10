@@ -287,123 +287,93 @@ function ProactiveScheduleEditor({
         />
       </Button>
       {drawerOpen ? (
-        <div className="mt-1 px-2 pb-1">
-          <div
-            className={
-              compact
-                ? "grid gap-2"
-                : "flex flex-wrap items-center gap-2"
+        <div className="mt-1 flex items-center gap-2 px-2 pb-1">
+          <span className="shrink-0 text-xs text-muted-foreground">Every</span>
+          <Input
+            type="number"
+            min={1}
+            max={
+              scheduleDraft.unit === "minute"
+                ? 59
+                : scheduleDraft.unit === "hour"
+                  ? 23
+                  : 31
+            }
+            step={1}
+            value={String(scheduleDraft.interval)}
+            onChange={(event) => {
+              const nextValue = Number.parseInt(event.target.value, 10);
+              setScheduleDraft((current) => ({
+                ...current,
+                interval: Number.isFinite(nextValue)
+                  ? clampScheduleInterval(nextValue, current.unit)
+                  : 1,
+              }));
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") {
+                return;
+              }
+              event.preventDefault();
+              handleSave();
+            }}
+            inputMode="numeric"
+            disabled={
+              !hasWorkspace ||
+              isLoadingProactiveHeartbeatConfig ||
+              isUpdatingProactiveHeartbeatConfig
+            }
+            className="h-7 w-14 text-center text-xs"
+          />
+          <Select
+            value={scheduleDraft.unit}
+            onValueChange={(value) => {
+              if (!value) {
+                return;
+              }
+              const nextUnit = value as ProactiveScheduleUnit;
+              setScheduleDraft((current) => ({
+                ...current,
+                unit: nextUnit,
+                interval: clampScheduleInterval(
+                  current.interval,
+                  nextUnit,
+                ),
+              }));
+            }}
+            disabled={
+              !hasWorkspace ||
+              isLoadingProactiveHeartbeatConfig ||
+              isUpdatingProactiveHeartbeatConfig
             }
           >
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="shrink-0 text-[11px] font-medium text-muted-foreground/88">
-                Every
-              </span>
-              <Input
-                type="number"
-                min={1}
-                max={
-                  scheduleDraft.unit === "minute"
-                    ? 59
-                    : scheduleDraft.unit === "hour"
-                      ? 23
-                      : 31
-                }
-                step={1}
-                value={String(scheduleDraft.interval)}
-                onChange={(event) => {
-                  const nextValue = Number.parseInt(event.target.value, 10);
-                  setScheduleDraft((current) => ({
-                    ...current,
-                    interval: Number.isFinite(nextValue)
-                      ? clampScheduleInterval(nextValue, current.unit)
-                      : 1,
-                  }));
-                }}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter") {
-                    return;
-                  }
-                  event.preventDefault();
-                  handleSave();
-                }}
-                inputMode="numeric"
-                disabled={
-                  !hasWorkspace ||
-                  isLoadingProactiveHeartbeatConfig ||
-                  isUpdatingProactiveHeartbeatConfig
-                }
-                className={`h-8 rounded-full bg-background/90 px-3 text-center text-[11px] ${
-                  compact ? "w-[72px]" : "w-20"
-                }`}
-              />
-              <div className={compact ? "min-w-0 flex-1" : ""}>
-                <Select
-                  value={scheduleDraft.unit}
-                  onValueChange={(value) => {
-                    if (!value) {
-                      return;
-                    }
-                    const nextUnit = value as ProactiveScheduleUnit;
-                    setScheduleDraft((current) => ({
-                      ...current,
-                      unit: nextUnit,
-                      interval: clampScheduleInterval(
-                        current.interval,
-                        nextUnit,
-                      ),
-                    }));
-                  }}
-                  disabled={
-                    !hasWorkspace ||
-                    isLoadingProactiveHeartbeatConfig ||
-                    isUpdatingProactiveHeartbeatConfig
-                  }
-                >
-                  <SelectTrigger
-                    className={`h-8 rounded-full bg-background/90 px-3 text-[11px] ${
-                      compact ? "w-full min-w-0" : "min-w-[120px]"
-                    }`}
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="minute">
-                      {scheduleUnitLabel("minute", scheduleDraft.interval)}
-                    </SelectItem>
-                    <SelectItem value="hour">
-                      {scheduleUnitLabel("hour", scheduleDraft.interval)}
-                    </SelectItem>
-                    <SelectItem value="day">
-                      {scheduleUnitLabel("day", scheduleDraft.interval)}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className={`h-8 rounded-full px-3 text-[11px] font-medium ${
-                compact ? "w-full" : ""
-              }`}
-              onClick={handleSave}
-              disabled={!canSave}
-            >
-              {isUpdatingProactiveHeartbeatConfig ? (
-                <Loader2 size={12} className="animate-spin" />
-              ) : (
-                "Save"
-              )}
-            </Button>
-          </div>
-          {currentSchedule.customCronDetected ? (
-            <div className="mt-2 text-[11px] leading-5 text-muted-foreground/72">
-              Saving here replaces the current custom cron with this simpler
-              cadence.
-            </div>
-          ) : null}
+            <SelectTrigger className="h-7 w-24 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="minute">
+                {scheduleUnitLabel("minute", scheduleDraft.interval)}
+              </SelectItem>
+              <SelectItem value="hour">
+                {scheduleUnitLabel("hour", scheduleDraft.interval)}
+              </SelectItem>
+              <SelectItem value="day">
+                {scheduleUnitLabel("day", scheduleDraft.interval)}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            type="button"
+            size="xs"
+            onClick={handleSave}
+            disabled={!canSave}
+          >
+            {isUpdatingProactiveHeartbeatConfig ? (
+              <Loader2 size={11} className="animate-spin" />
+            ) : (
+              "Save"
+            )}
+          </Button>
         </div>
       ) : null}
     </div>
