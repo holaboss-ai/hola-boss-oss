@@ -36,22 +36,19 @@ const STATUS_CONFIG: Record<
   { label: string; icon: typeof Clock; badgeClass: string }
 > = {
   pending_review: {
-    label: "Pending Review",
+    label: "Pending",
     icon: Clock,
-    badgeClass:
-      "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    badgeClass: "border-warning/30 bg-warning/10 text-warning",
   },
   published: {
     label: "Published",
     icon: CheckCircle2,
-    badgeClass:
-      "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    badgeClass: "border-success/30 bg-success/10 text-success",
   },
   rejected: {
     label: "Rejected",
     icon: XCircle,
-    badgeClass:
-      "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400",
+    badgeClass: "border-destructive/30 bg-destructive/10 text-destructive",
   },
 };
 
@@ -64,14 +61,10 @@ function formatDate(dateString: string): string {
   });
 }
 
-function categoryFromManifest(
-  manifest: Record<string, unknown>,
-): string | null {
-  const category = manifest.category;
-  if (typeof category === "string" && category.length > 0) {
-    return category.charAt(0).toUpperCase() + category.slice(1);
-  }
-  return null;
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function SubmissionsPanel() {
@@ -145,139 +138,144 @@ export function SubmissionsPanel() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="size-4 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3">
-        <div className="flex items-center gap-2.5">
-          <AlertTriangle className="size-4 shrink-0 text-destructive" />
-          <p className="text-sm text-destructive">{error}</p>
-        </div>
+      <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
+        <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
+        <p className="text-xs text-destructive">{error}</p>
       </div>
     );
   }
 
   if (!isSignedIn) {
     return (
-      <div className="rounded-xl border border-border/40 bg-card/80 px-5 py-4">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-              <ShieldAlert className="size-3.5 text-primary" />
-              <span>Sign-In Required</span>
-            </div>
-            <p className="mt-2 text-sm font-medium text-foreground">
-              Your template submissions are only available after you sign in.
-            </p>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              Sign in to review and manage your marketplace submissions.
-            </p>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void authSessionState.requestAuth()}
-          >
-            <LogIn className="size-3.5" />
-            Sign in
-          </Button>
+      <div className="flex items-center justify-between gap-4 rounded-lg border border-border/40 px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <ShieldAlert className="size-4 shrink-0 text-muted-foreground" />
+          <span className="text-sm text-muted-foreground">
+            Sign in to view your submissions.
+          </span>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void authSessionState.requestAuth()}
+        >
+          <LogIn className="size-3.5" />
+          Sign in
+        </Button>
       </div>
     );
   }
 
   if (submissions.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-border/50 px-5 py-10 text-center">
-        <Package className="mx-auto mb-3 size-8 text-muted-foreground/40" />
-        <p className="text-sm font-medium text-foreground">
-          No submissions yet
-        </p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Publish a workspace template to see it listed here.
+      <div className="py-12 text-center">
+        <Package className="mx-auto size-6 text-muted-foreground/30" />
+        <p className="mt-2 text-sm text-muted-foreground">No submissions yet</p>
+        <p className="mt-0.5 text-xs text-muted-foreground/70">
+          Publish a workspace template to see it here.
         </p>
       </div>
     );
   }
 
   return (
-    <div className="grid max-w-[920px] gap-3">
-      {submissions.map((submission) => {
-        const config = STATUS_CONFIG[submission.status] ?? {
-          label: submission.status,
-          icon: Clock,
-          badgeClass:
-            "border-border/40 bg-muted/50 text-muted-foreground",
-        };
-        const StatusIcon = config.icon;
-        const category = categoryFromManifest(submission.manifest);
+    <div className="max-w-3xl">
+      {/* Table header */}
+      <div className="grid grid-cols-[minmax(0,1fr)_100px_80px_80px_36px] items-center gap-3 border-b border-border/40 px-1 pb-2 text-xs font-medium text-muted-foreground">
+        <div>Template</div>
+        <div>Status</div>
+        <div>Size</div>
+        <div>Date</div>
+        <div />
+      </div>
 
-        return (
-          <div
-            key={submission.id}
-            className="rounded-lg border border-border/40 bg-card/80 px-4 py-3"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2.5">
-                  <span className="truncate text-sm font-medium text-foreground">
+      {/* Table rows */}
+      <div>
+        {submissions.map((submission) => {
+          const config = STATUS_CONFIG[submission.status] ?? {
+            label: submission.status,
+            icon: Clock,
+            badgeClass: "border-border/40 text-muted-foreground",
+          };
+          const StatusIcon = config.icon;
+          const isDeleting = deletingId === submission.id;
+
+          return (
+            <div key={submission.id}>
+              <div className="grid grid-cols-[minmax(0,1fr)_100px_80px_80px_36px] items-center gap-3 border-b border-border/20 px-1 py-2.5">
+                {/* Template name + version */}
+                <div className="min-w-0">
+                  <span className="truncate text-sm text-foreground">
                     {submission.template_name}
                   </span>
-                  {category ? (
-                    <Badge variant="outline" className="border-border/35 text-muted-foreground">
-                      {category}
-                    </Badge>
+                  {submission.version ? (
+                    <span className="ml-1.5 text-xs text-muted-foreground">
+                      v{submission.version}
+                    </span>
                   ) : null}
                 </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Submitted {formatDate(submission.created_at)}
-                </p>
+
+                {/* Status badge */}
+                <div>
+                  <Badge variant="outline" className={config.badgeClass}>
+                    <StatusIcon className="size-3" />
+                    {config.label}
+                  </Badge>
+                </div>
+
+                {/* Size */}
+                <div className="text-xs tabular-nums text-muted-foreground">
+                  {formatBytes(submission.archive_size_bytes)}
+                </div>
+
+                {/* Date */}
+                <div className="text-xs tabular-nums text-muted-foreground">
+                  {formatDate(submission.created_at)}
+                </div>
+
+                {/* Delete */}
+                <div className="flex justify-end">
+                  {submission.status !== "published" ? (
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      disabled={isDeleting}
+                      onClick={() => void handleDelete(submission)}
+                      className="text-muted-foreground/50 hover:bg-destructive/10 hover:text-destructive"
+                    >
+                      {isDeleting ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : (
+                        <Trash2 className="size-3" />
+                      )}
+                    </Button>
+                  ) : null}
+                </div>
               </div>
 
-              <div className="flex shrink-0 items-center gap-2">
-                <Badge
-                  variant="outline"
-                  className={config.badgeClass}
-                >
-                  <StatusIcon className="size-3" />
-                  {config.label}
-                </Badge>
-                {submission.status !== "published" ? (
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    disabled={deletingId === submission.id}
-                    onClick={() => void handleDelete(submission)}
-                    className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                  >
-                    {deletingId === submission.id ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <Trash2 className="size-3.5" />
-                    )}
-                  </Button>
-                ) : null}
-              </div>
+              {/* Rejection feedback — inline below row */}
+              {submission.status === "rejected" && submission.review_notes ? (
+                <div className="border-b border-border/20 px-1 pb-2.5 pt-1">
+                  <div className="rounded-md bg-destructive/5 px-3 py-2">
+                    <p className="text-xs text-destructive">
+                      <span className="font-medium">Feedback:</span>{" "}
+                      {submission.review_notes}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
             </div>
-
-            {submission.status === "rejected" && submission.review_notes ? (
-              <div className="mt-3 rounded-[12px] border border-red-500/15 bg-red-500/5 px-3.5 py-2.5">
-                <p className="text-xs font-medium text-red-600 dark:text-red-400">
-                  Review feedback
-                </p>
-                <p className="mt-1 text-xs leading-relaxed text-red-600/80 dark:text-red-400/80">
-                  {submission.review_notes}
-                </p>
-              </div>
-            ) : null}
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
