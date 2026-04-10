@@ -14,14 +14,11 @@ import {
   FileText,
   FileVideoCamera,
   Folder,
-  Forward,
-  Home,
   Save,
   Search,
   Shield,
   Star,
   type LucideIcon,
-  Undo2
 } from "lucide-react";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import { IconButton } from "@/components/ui/IconButton";
@@ -41,6 +38,9 @@ export type FileExplorerFocusRequest = {
 interface FileExplorerPaneProps {
   focusRequest?: FileExplorerFocusRequest | null;
   onFocusRequestConsumed?: (requestKey: number) => void;
+  previewInPane?: boolean;
+  onFileOpen?: (path: string) => void;
+  embedded?: boolean;
 }
 
 const SPREADSHEET_EXTENSIONS = new Set([
@@ -153,12 +153,6 @@ type ExplorerIconDescriptor = {
   className: string;
 };
 
-type FileExplorerBreadcrumb = {
-  label: string;
-  absolutePath: string;
-  isCurrent: boolean;
-};
-
 type FileExplorerContextMenuState = {
   entry: LocalFileEntry;
   x: number;
@@ -172,6 +166,23 @@ type FileExplorerContextMenuState = {
     height: number;
   };
 };
+
+type FileExplorerVisibleRow =
+  | {
+      type: "entry";
+      entry: LocalFileEntry;
+      depth: number;
+      isExpanded: boolean;
+      isLoadingChildren: boolean;
+      childError: string;
+    }
+  | {
+      type: "feedback";
+      id: string;
+      depth: number;
+      tone: "loading" | "error";
+      message: string;
+    };
 
 function getComparableFileName(targetName: string) {
   const normalized = targetName.trim().toLowerCase().replace(/[\\/]+$/, "");
@@ -332,6 +343,18 @@ function normalizeComparablePath(targetPath: string) {
   return normalized;
 }
 
+function isPathWithin(parentPath: string, targetPath: string) {
+  const normalizedParent = normalizeComparablePath(parentPath);
+  const normalizedTarget = normalizeComparablePath(targetPath);
+  if (!normalizedParent || !normalizedTarget) {
+    return false;
+  }
+  return (
+    normalizedTarget === normalizedParent ||
+    normalizedTarget.startsWith(`${normalizedParent}/`)
+  );
+}
+
 function isAbsolutePath(targetPath: string) {
   return /^(?:[a-zA-Z]:[\\/]|\/)/.test(targetPath.trim());
 }
@@ -351,53 +374,123 @@ function resolveWorkspaceTargetPath(workspaceRoot: string, targetPath: string) {
   return `${normalizedRoot}${separator}${normalizedTarget}`;
 }
 
-function buildPathBreadcrumbs(
-  currentPath: string,
-  workspaceRootPath: string | null,
-): FileExplorerBreadcrumb[] {
-  const trimmedCurrentPath = currentPath.trim();
-  if (!trimmedCurrentPath) {
-    return [];
+function findLoadedEntry(
+  entries: LocalFileEntry[],
+  targetPath: string,
+  directoryEntriesByPath: Record<string, LocalFileEntry[]>,
+): LocalFileEntry | null {
+  const normalizedTargetPath = normalizeComparablePath(targetPath);
+  if (!normalizedTargetPath) {
+    return null;
   }
 
-  const normalizedWorkspaceRoot = workspaceRootPath
-    ? normalizeComparablePath(workspaceRootPath)
-    : "";
-  const breadcrumbs: FileExplorerBreadcrumb[] = [];
-  const seenPaths = new Set<string>();
-  let cursor: string | null = trimmedCurrentPath;
-
-  while (cursor) {
-    const normalizedCursor = normalizeComparablePath(cursor);
-    if (!normalizedCursor || seenPaths.has(normalizedCursor)) {
-      break;
+  const stack = [...entries];
+  while (stack.length > 0) {
+    const entry = stack.shift();
+    if (!entry) {
+      continue;
     }
-    seenPaths.add(normalizedCursor);
-    breadcrumbs.unshift({
-      label: getFolderName(cursor),
-      absolutePath: cursor,
-      isCurrent: false,
+
+    if (normalizeComparablePath(entry.absolutePath) === normalizedTargetPath) {
+      return entry;
+    }
+
+    if (!entry.isDirectory) {
+      continue;
+    }
+
+    const childEntries = directoryEntriesByPath[entry.absolutePath];
+    if (childEntries?.length) {
+      stack.unshift(...childEntries);
+    }
+  }
+
+  return null;
+}
+
+function buildVisibleExplorerRows(
+  entries: LocalFileEntry[],
+  directoryEntriesByPath: Record<string, LocalFileEntry[]>,
+  expandedDirectoryPaths: Record<string, boolean>,
+  directoryLoadingByPath: Record<string, boolean>,
+  directoryErrorByPath: Record<string, string>,
+  query: string,
+  depth = 0,
+): FileExplorerVisibleRow[] {
+  const rows: FileExplorerVisibleRow[] = [];
+
+  for (const entry of entries) {
+    const isExpanded = Boolean(expandedDirectoryPaths[entry.absolutePath]);
+    const isLoadingChildren = Boolean(directoryLoadingByPath[entry.absolutePath]);
+    const childError = directoryErrorByPath[entry.absolutePath] ?? "";
+    const shouldSearchChildren =
+      entry.isDirectory && (isExpanded || query.length > 0);
+    const childEntries = shouldSearchChildren
+      ? directoryEntriesByPath[entry.absolutePath] ?? []
+      : [];
+    const childRows = shouldSearchChildren
+      ? buildVisibleExplorerRows(
+          childEntries,
+          directoryEntriesByPath,
+          expandedDirectoryPaths,
+          directoryLoadingByPath,
+          directoryErrorByPath,
+          query,
+          depth + 1,
+        )
+      : [];
+    const matchesSelf =
+      query.length === 0 || entry.name.toLowerCase().includes(query);
+    const hasMatchingDescendants = childRows.length > 0;
+
+    if (query.length > 0 && !matchesSelf && !hasMatchingDescendants) {
+      continue;
+    }
+
+    rows.push({
+      type: "entry",
+      entry,
+      depth,
+      isExpanded,
+      isLoadingChildren,
+      childError,
     });
-    if (
-      normalizedWorkspaceRoot &&
-      normalizedCursor === normalizedWorkspaceRoot
-    ) {
-      break;
+
+    const shouldShowChildren = entry.isDirectory
+      ? query.length > 0
+        ? hasMatchingDescendants
+        : isExpanded
+      : false;
+    if (!shouldShowChildren) {
+      continue;
     }
-    const parentPath = getParentFolderPath(cursor);
-    if (
-      !parentPath ||
-      normalizeComparablePath(parentPath) === normalizedCursor
-    ) {
-      break;
+
+    if (isLoadingChildren) {
+      rows.push({
+        type: "feedback",
+        id: `loading:${entry.absolutePath}`,
+        depth: depth + 1,
+        tone: "loading",
+        message: "Loading folder...",
+      });
+      continue;
     }
-    cursor = parentPath;
+
+    if (childError) {
+      rows.push({
+        type: "feedback",
+        id: `error:${entry.absolutePath}`,
+        depth: depth + 1,
+        tone: "error",
+        message: childError,
+      });
+      continue;
+    }
+
+    rows.push(...childRows);
   }
 
-  return breadcrumbs.map((breadcrumb, index) => ({
-    ...breadcrumb,
-    isCurrent: index === breadcrumbs.length - 1,
-  }));
+  return rows;
 }
 
 function formatFileSize(size: number) {
@@ -485,6 +578,9 @@ function createAttachmentDragPreview(entry: LocalFileEntry) {
 export function FileExplorerPane({
   focusRequest = null,
   onFocusRequestConsumed,
+  previewInPane = true,
+  onFileOpen,
+  embedded = false,
 }: FileExplorerPaneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
@@ -493,12 +589,23 @@ export function FileExplorerPane({
   const dragPreviewRef = useRef<HTMLDivElement | null>(null);
   const lastSyncedWorkspaceRootRef = useRef<{ workspaceId: string; rootPath: string } | null>(null);
   const lastProcessedFocusRequestKeyRef = useRef<number | null>(null);
+  const currentPathRef = useRef("");
   const [currentPath, setCurrentPath] = useState<string>("");
   const [entries, setEntries] = useState<LocalFileEntry[]>([]);
+  const [directoryEntriesByPath, setDirectoryEntriesByPath] = useState<
+    Record<string, LocalFileEntry[]>
+  >({});
+  const [expandedDirectoryPaths, setExpandedDirectoryPaths] = useState<
+    Record<string, boolean>
+  >({});
+  const [directoryLoadingByPath, setDirectoryLoadingByPath] = useState<
+    Record<string, boolean>
+  >({});
+  const [directoryErrorByPath, setDirectoryErrorByPath] = useState<
+    Record<string, string>
+  >({});
   const [selectedPath, setSelectedPath] = useState<string>("");
   const [workspaceRootPath, setWorkspaceRootPath] = useState<string | null>(null);
-  const [history, setHistory] = useState<string[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
@@ -515,9 +622,9 @@ export function FileExplorerPane({
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameSaving, setRenameSaving] = useState(false);
-  const historyRef = useRef<string[]>([]);
-  const historyIndexRef = useRef(-1);
   const { selectedWorkspaceId } = useWorkspaceSelection();
+
+  currentPathRef.current = currentPath;
 
   const loadDirectory = useCallback(async (targetPath?: string | null, pushHistory = true) => {
     setLoading(true);
@@ -528,31 +635,31 @@ export function FileExplorerPane({
         targetPath ?? null,
         selectedWorkspaceId ?? null,
       );
+      const previousCurrentPath = currentPathRef.current;
+      const shouldResetTree =
+        pushHistory ||
+        normalizeComparablePath(previousCurrentPath) !==
+          normalizeComparablePath(payload.currentPath);
       setCurrentPath(payload.currentPath);
+      currentPathRef.current = payload.currentPath;
       setEntries(payload.entries);
-
-      if (pushHistory) {
-        const currentHistory = historyRef.current;
-        const currentIndex = historyIndexRef.current;
-        const base = currentIndex >= 0 ? currentHistory.slice(0, currentIndex + 1) : currentHistory;
-        const last = base[base.length - 1];
-
-        if (last === payload.currentPath) {
-          historyRef.current = base;
-          historyIndexRef.current = base.length - 1;
-          setHistory(base);
-          setHistoryIndex(base.length - 1);
-        } else {
-          const next = [...base, payload.currentPath];
-          historyRef.current = next;
-          historyIndexRef.current = next.length - 1;
-          setHistory(next);
-          setHistoryIndex(next.length - 1);
-        }
+      setDirectoryEntriesByPath((current) =>
+        shouldResetTree
+          ? { [payload.currentPath]: payload.entries }
+          : { ...current, [payload.currentPath]: payload.entries },
+      );
+      if (shouldResetTree) {
+        setExpandedDirectoryPaths({});
+        setDirectoryLoadingByPath({});
+        setDirectoryErrorByPath({});
       }
 
       setSelectedPath((prev) =>
-        !prev || !payload.entries.some((entry) => entry.absolutePath === prev) ? (payload.entries[0]?.absolutePath ?? "") : prev
+        !prev ||
+        (!payload.entries.some((entry) => entry.absolutePath === prev) &&
+          !isPathWithin(payload.currentPath, prev))
+          ? (payload.entries[0]?.absolutePath ?? "")
+          : prev
       );
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Failed to open directory.";
@@ -630,8 +737,16 @@ export function FileExplorerPane({
           return;
         }
         setEntries(payload.entries);
+        setDirectoryEntriesByPath((current) => ({
+          ...current,
+          [payload.currentPath]: payload.entries,
+        }));
         setSelectedPath((prev) =>
-          !prev || !payload.entries.some((entry) => entry.absolutePath === prev) ? (payload.entries[0]?.absolutePath ?? "") : prev
+          !prev ||
+          (!payload.entries.some((entry) => entry.absolutePath === prev) &&
+            !isPathWithin(payload.currentPath, prev))
+            ? (payload.entries[0]?.absolutePath ?? "")
+            : prev
         );
       } catch {
         // Best-effort background refresh; keep current listing on transient failures.
@@ -733,25 +848,31 @@ export function FileExplorerPane({
     };
   }, [contextMenu]);
 
-  const canGoBack = historyIndex > 0;
-  const canGoForward = historyIndex >= 0 && historyIndex < history.length - 1;
-  const isAtWorkspaceRoot = workspaceRootPath
-    ? normalizeComparablePath(currentPath) === normalizeComparablePath(workspaceRootPath)
-    : false;
-  const breadcrumbs = useMemo(
-    () => buildPathBreadcrumbs(currentPath, workspaceRootPath),
-    [currentPath, workspaceRootPath],
-  );
-
   const filteredEntries = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) return entries;
-    return entries.filter((entry) => entry.name.toLowerCase().includes(normalizedQuery));
-  }, [entries, query]);
+    return buildVisibleExplorerRows(
+      entries,
+      directoryEntriesByPath,
+      expandedDirectoryPaths,
+      directoryLoadingByPath,
+      directoryErrorByPath,
+      normalizedQuery,
+    );
+  }, [
+    directoryEntriesByPath,
+    directoryErrorByPath,
+    directoryLoadingByPath,
+    entries,
+    expandedDirectoryPaths,
+    query,
+  ]);
 
-  const selectedEntry = entries.find((entry) => entry.absolutePath === selectedPath);
+  const selectedEntry = useMemo(
+    () => findLoadedEntry(entries, selectedPath, directoryEntriesByPath),
+    [directoryEntriesByPath, entries, selectedPath],
+  );
   const renamingEntry = renamingPath
-    ? entries.find((entry) => entry.absolutePath === renamingPath) ?? null
+    ? findLoadedEntry(entries, renamingPath, directoryEntriesByPath)
     : null;
   const isDirty = preview?.isEditable ? previewDraft !== (preview.content ?? "") : false;
   const isMarkdownPreview = isMarkdownPreviewPayload(preview);
@@ -759,6 +880,170 @@ export function FileExplorerPane({
   const openPreviewLink = useCallback((url: string) => {
     void window.electronAPI.ui.openExternalUrl(url);
   }, []);
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(null);
+  }, []);
+
+  const ensureDirectoryEntriesLoaded = useCallback(
+    async (targetPath: string) => {
+      const normalizedTargetPath = targetPath.trim();
+      if (!normalizedTargetPath) {
+        return null;
+      }
+
+      if (directoryEntriesByPath[normalizedTargetPath]) {
+        return directoryEntriesByPath[normalizedTargetPath];
+      }
+
+      setDirectoryLoadingByPath((current) => ({
+        ...current,
+        [normalizedTargetPath]: true,
+      }));
+      setDirectoryErrorByPath((current) => {
+        if (!current[normalizedTargetPath]) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[normalizedTargetPath];
+        return next;
+      });
+
+      try {
+        const payload = await window.electronAPI.fs.listDirectory(
+          normalizedTargetPath,
+          selectedWorkspaceId ?? null,
+        );
+        setDirectoryEntriesByPath((current) => ({
+          ...current,
+          [payload.currentPath]: payload.entries,
+        }));
+        return payload.entries;
+      } catch (cause) {
+        const message =
+          cause instanceof Error ? cause.message : "Failed to open directory.";
+        setDirectoryErrorByPath((current) => ({
+          ...current,
+          [normalizedTargetPath]: message,
+        }));
+        return null;
+      } finally {
+        setDirectoryLoadingByPath((current) => {
+          if (!current[normalizedTargetPath]) {
+            return current;
+          }
+          const next = { ...current };
+          delete next[normalizedTargetPath];
+          return next;
+        });
+      }
+    },
+    [directoryEntriesByPath, selectedWorkspaceId],
+  );
+
+  const refreshDirectoryEntries = useCallback(
+    async (targetPath: string) => {
+      const normalizedTargetPath = targetPath.trim();
+      if (!normalizedTargetPath) {
+        return;
+      }
+
+      if (
+        normalizeComparablePath(normalizedTargetPath) ===
+        normalizeComparablePath(currentPathRef.current)
+      ) {
+        await loadDirectory(currentPathRef.current, false);
+        return;
+      }
+
+      const payload = await window.electronAPI.fs.listDirectory(
+        normalizedTargetPath,
+        selectedWorkspaceId ?? null,
+      );
+      setDirectoryEntriesByPath((current) => ({
+        ...current,
+        [payload.currentPath]: payload.entries,
+      }));
+      setDirectoryErrorByPath((current) => {
+        if (!current[payload.currentPath]) {
+          return current;
+        }
+        const next = { ...current };
+        delete next[payload.currentPath];
+        return next;
+      });
+    },
+    [loadDirectory, selectedWorkspaceId],
+  );
+
+  const revealPathInTree = useCallback(
+    async (targetPath: string) => {
+      const parentFolderPath = getParentFolderPath(targetPath);
+      if (!parentFolderPath) {
+        return;
+      }
+
+      const treeRootPath = currentPathRef.current;
+      if (!treeRootPath || !isPathWithin(treeRootPath, parentFolderPath)) {
+        await loadDirectory(parentFolderPath, true);
+        return;
+      }
+
+      const ancestorPaths: string[] = [];
+      const normalizedTreeRoot = normalizeComparablePath(treeRootPath);
+      let cursor: string | null = parentFolderPath;
+
+      while (cursor && normalizeComparablePath(cursor) !== normalizedTreeRoot) {
+        ancestorPaths.unshift(cursor);
+        const nextParent = getParentFolderPath(cursor);
+        if (
+          !nextParent ||
+          normalizeComparablePath(nextParent) === normalizeComparablePath(cursor)
+        ) {
+          break;
+        }
+        cursor = nextParent;
+      }
+
+      for (const ancestorPath of ancestorPaths) {
+        const childEntries = await ensureDirectoryEntriesLoaded(ancestorPath);
+        if (childEntries === null) {
+          return;
+        }
+        setExpandedDirectoryPaths((current) => ({
+          ...current,
+          [ancestorPath]: true,
+        }));
+      }
+    },
+    [ensureDirectoryEntriesLoaded, loadDirectory],
+  );
+
+  const toggleDirectoryExpansion = useCallback(
+    async (entry: LocalFileEntry) => {
+      setSelectedPath(entry.absolutePath);
+      closeContextMenu();
+
+      if (expandedDirectoryPaths[entry.absolutePath]) {
+        setExpandedDirectoryPaths((current) => ({
+          ...current,
+          [entry.absolutePath]: false,
+        }));
+        return;
+      }
+
+      const childEntries = await ensureDirectoryEntriesLoaded(entry.absolutePath);
+      if (childEntries === null) {
+        return;
+      }
+
+      setExpandedDirectoryPaths((current) => ({
+        ...current,
+        [entry.absolutePath]: true,
+      }));
+    },
+    [closeContextMenu, ensureDirectoryEntriesLoaded, expandedDirectoryPaths],
+  );
 
   const confirmDiscardIfDirty = useCallback(() => {
     if (!isDirty) {
@@ -795,29 +1080,6 @@ export function FileExplorerPane({
     input.setSelectionRange(0, selectionEnd);
   }, [renamingEntry]);
 
-  const openPath = async (targetPath: string) => {
-    if (!confirmDiscardIfDirty()) {
-      return;
-    }
-
-    setPreview(null);
-    setPreviewDraft("");
-    setTextPreviewMode("edit");
-    setPreviewError("");
-    await loadDirectory(targetPath, true);
-  };
-
-  const openSelectedDirectory = async () => {
-    const targetEntry = entries.find((entry) => entry.absolutePath === selectedPath);
-    if (targetEntry?.isDirectory) {
-      await openPath(targetEntry.absolutePath);
-    }
-  };
-
-  const closeContextMenu = useCallback(() => {
-    setContextMenu(null);
-  }, []);
-
   const stopRenamingEntry = useCallback(() => {
     setRenamingPath(null);
     setRenameDraft("");
@@ -832,33 +1094,6 @@ export function FileExplorerPane({
     setRenameDraft(entry.name);
   }, [closeContextMenu]);
 
-  const openHomeDirectory = async () => {
-    if (!confirmDiscardIfDirty()) {
-      return;
-    }
-
-    if (selectedWorkspaceId) {
-      try {
-        const workspaceRoot = await window.electronAPI.workspace.getWorkspaceRoot(selectedWorkspaceId);
-        if (workspaceRoot) {
-          setPreview(null);
-          setPreviewDraft("");
-          setTextPreviewMode("edit");
-          setPreviewError("");
-          await loadDirectory(workspaceRoot, true);
-          return;
-        }
-      } catch {
-        // Fall through to default home root.
-      }
-    }
-
-    setPreview(null);
-    setPreviewDraft("");
-    setTextPreviewMode("edit");
-    setPreviewError("");
-    await loadDirectory(null, true);
-  };
 
   const openFilePreview = async (targetPath: string, options?: { skipConfirm?: boolean; syncDirectory?: boolean }) => {
     const skipConfirm = options?.skipConfirm ?? false;
@@ -867,10 +1102,7 @@ export function FileExplorerPane({
     }
 
     if (options?.syncDirectory) {
-      const parentFolderPath = getParentFolderPath(targetPath);
-      if (parentFolderPath && parentFolderPath !== currentPath) {
-        await loadDirectory(parentFolderPath, true);
-      }
+      await revealPathInTree(targetPath);
     }
 
     setSelectedPath(targetPath);
@@ -895,6 +1127,44 @@ export function FileExplorerPane({
       setPreviewLoading(false);
     }
   };
+
+  const openFileTarget = useCallback(
+    async (
+      targetPath: string,
+      options?: { skipConfirm?: boolean; syncDirectory?: boolean },
+    ) => {
+      if (previewInPane || !onFileOpen) {
+        await openFilePreview(targetPath, options);
+        return;
+      }
+
+      const skipConfirm = options?.skipConfirm ?? false;
+      if (!skipConfirm && !confirmDiscardIfDirty()) {
+        return;
+      }
+
+      if (options?.syncDirectory) {
+        await revealPathInTree(targetPath);
+      }
+
+      setSelectedPath(targetPath);
+      setPreview(null);
+      setPreviewDraft("");
+      setTextPreviewMode("edit");
+      setActiveTableSheetIndex(0);
+      setPreviewError("");
+      setPreviewLoading(false);
+      setSaving(false);
+      onFileOpen(targetPath);
+    },
+    [
+      confirmDiscardIfDirty,
+      onFileOpen,
+      openFilePreview,
+      previewInPane,
+      revealPathInTree,
+    ],
+  );
 
   const closePreview = () => {
     if (!confirmDiscardIfDirty()) {
@@ -934,36 +1204,6 @@ export function FileExplorerPane({
     }
   };
 
-  const onBack = async () => {
-    if (!canGoBack || !confirmDiscardIfDirty()) return;
-    const targetIndex = historyIndex - 1;
-    const targetPath = history[targetIndex];
-    if (!targetPath) return;
-
-    historyIndexRef.current = targetIndex;
-    setHistoryIndex(targetIndex);
-    setPreview(null);
-    setPreviewDraft("");
-    setTextPreviewMode("edit");
-    setPreviewError("");
-    await loadDirectory(targetPath, false);
-  };
-
-  const onForward = async () => {
-    if (!canGoForward || !confirmDiscardIfDirty()) return;
-    const targetIndex = historyIndex + 1;
-    const targetPath = history[targetIndex];
-    if (!targetPath) return;
-
-    historyIndexRef.current = targetIndex;
-    setHistoryIndex(targetIndex);
-    setPreview(null);
-    setPreviewDraft("");
-    setTextPreviewMode("edit");
-    setPreviewError("");
-    await loadDirectory(targetPath, false);
-  };
-
   const previewTableSheets =
     preview?.kind === "table" && Array.isArray(preview.tableSheets)
       ? preview.tableSheets
@@ -972,12 +1212,20 @@ export function FileExplorerPane({
     previewTableSheets.length > 0
       ? previewTableSheets[Math.min(activeTableSheetIndex, previewTableSheets.length - 1)]
       : null;
-  const bookmarkTargetPath = preview?.absolutePath ?? currentPath;
-  const bookmarkTargetLabel = preview?.name ?? getFolderName(currentPath);
+  const showInlinePreview = previewInPane && Boolean(preview || previewLoading || previewError);
+  const selectedFileEntry =
+    !previewInPane && selectedEntry && !selectedEntry.isDirectory
+      ? selectedEntry
+      : null;
+  const bookmarkTargetPath =
+    preview?.absolutePath ?? selectedFileEntry?.absolutePath ?? currentPath;
+  const bookmarkTargetLabel =
+    preview?.name ?? selectedFileEntry?.name ?? getFolderName(currentPath);
   const activeBookmark = fileBookmarks.find((bookmark) => bookmark.targetPath === bookmarkTargetPath);
-  const activeBookmarkId = preview?.absolutePath ?? currentPath;
+  const activeBookmarkId =
+    preview?.absolutePath ?? selectedFileEntry?.absolutePath ?? currentPath;
   const isCompact = containerWidth > 0 && containerWidth < 420;
-  const isVeryCompact = containerWidth > 0 && containerWidth < 320;
+  const normalizedQuery = query.trim().toLowerCase();
 
   const toggleBookmark = async () => {
     if (!bookmarkTargetPath) {
@@ -998,11 +1246,29 @@ export function FileExplorerPane({
 
   const openBookmarkedTarget = async (bookmark: FileBookmarkPayload) => {
     if (bookmark.isDirectory) {
-      await openPath(bookmark.targetPath);
+      setSelectedPath(bookmark.targetPath);
+      if (
+        !currentPathRef.current ||
+        !isPathWithin(currentPathRef.current, bookmark.targetPath)
+      ) {
+        await loadDirectory(bookmark.targetPath, true);
+        return;
+      }
+
+      await revealPathInTree(
+        `${bookmark.targetPath}${bookmark.targetPath.includes("\\") ? "\\" : "/"}.__bookmark__`,
+      );
+      const childEntries = await ensureDirectoryEntriesLoaded(bookmark.targetPath);
+      if (childEntries !== null) {
+        setExpandedDirectoryPaths((current) => ({
+          ...current,
+          [bookmark.targetPath]: true,
+        }));
+      }
       return;
     }
 
-    await openFilePreview(bookmark.targetPath, { skipConfirm: false, syncDirectory: true });
+    await openFileTarget(bookmark.targetPath, { skipConfirm: false, syncDirectory: true });
   };
 
   useEffect(() => {
@@ -1037,7 +1303,7 @@ export function FileExplorerPane({
       }
 
       try {
-        await openFilePreview(targetPath, { syncDirectory: true });
+        await openFileTarget(targetPath, { syncDirectory: true });
       } finally {
         if (!cancelled) {
           onFocusRequestConsumed?.(request.requestKey);
@@ -1052,7 +1318,7 @@ export function FileExplorerPane({
   }, [
     focusRequest,
     onFocusRequestConsumed,
-    openFilePreview,
+    openFileTarget,
     selectedWorkspaceId,
     workspaceRootPath,
   ]);
@@ -1060,11 +1326,11 @@ export function FileExplorerPane({
   const openEntryFromContextMenu = useCallback(async (entry: LocalFileEntry) => {
     closeContextMenu();
     if (entry.isDirectory) {
-      await openPath(entry.absolutePath);
+      await toggleDirectoryExpansion(entry);
       return;
     }
-    await openFilePreview(entry.absolutePath);
-  }, [closeContextMenu, openFilePreview]);
+    await openFileTarget(entry.absolutePath);
+  }, [closeContextMenu, openFileTarget, toggleDirectoryExpansion]);
 
   const submitRenameEntry = useCallback(async () => {
     if (!renamingEntry || renameInFlightRef.current) {
@@ -1086,7 +1352,9 @@ export function FileExplorerPane({
         nextName,
         selectedWorkspaceId ?? null,
       );
-      await loadDirectory(currentPath, false);
+      const parentPath =
+        getParentFolderPath(renamingEntry.absolutePath) ?? currentPathRef.current;
+      await refreshDirectoryEntries(parentPath);
       setSelectedPath(payload.absolutePath);
       stopRenamingEntry();
     } catch (cause) {
@@ -1101,10 +1369,9 @@ export function FileExplorerPane({
       setRenameSaving(false);
     }
   }, [
-    currentPath,
-    loadDirectory,
     renameDraft,
     renamingEntry,
+    refreshDirectoryEntries,
     selectedWorkspaceId,
     stopRenamingEntry,
   ]);
@@ -1137,13 +1404,15 @@ export function FileExplorerPane({
         entry.absolutePath,
         selectedWorkspaceId ?? null,
       );
-      await loadDirectory(currentPath, false);
+      const parentPath =
+        getParentFolderPath(entry.absolutePath) ?? currentPathRef.current;
+      await refreshDirectoryEntries(parentPath);
       setSelectedPath("");
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Failed to delete file.";
       setError(message);
     }
-  }, [closeContextMenu, currentPath, loadDirectory, selectedWorkspaceId]);
+  }, [closeContextMenu, refreshDirectoryEntries, selectedWorkspaceId]);
 
   const contextMenuPosition = useMemo(() => {
     if (!contextMenu) {
@@ -1164,491 +1433,490 @@ export function FileExplorerPane({
     };
   }, [contextMenu]);
 
-  return (
-    <>
-      <PaneCard
-        title={preview || previewLoading || previewError ? "File" : ""}
-        actions={
-          preview || previewLoading || previewError ? (
-            <>
-              <button
-                type="button"
-                onClick={closePreview}
-                className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-              >
-                <ArrowLeft size={12} />
-                Files
-              </button>
-              <IconButton
-                icon={<Star size={12} className={activeBookmark ? "fill-current" : ""} />}
-                label={activeBookmark ? "Remove bookmark" : "Add bookmark"}
-                active={Boolean(activeBookmark)}
-                onClick={() => void toggleBookmark()}
-                disabled={!bookmarkTargetPath}
-              />
-              {isMarkdownPreview ? (
-                <div className="inline-flex items-center rounded-md border border-border bg-muted/50 p-0.5">
-                  <button
-                    type="button"
-                    onClick={() => setTextPreviewMode("preview")}
-                    className={`rounded px-2 py-1 text-xs transition-colors ${
-                      textPreviewMode === "preview"
-                        ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                    }`}
-                  >
-                    Preview
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTextPreviewMode("edit")}
-                    className={`rounded px-2 py-1 text-xs transition-colors ${
-                      textPreviewMode === "edit"
-                        ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                    }`}
-                  >
-                    Edit
-                  </button>
-                </div>
-              ) : null}
-              {preview?.isEditable ? (
-                <button
-                  type="button"
-                  onClick={() => void savePreview()}
-                  disabled={!isDirty || saving}
-                  className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <Save size={12} />
-                  {saving ? "Saving" : "Save"}
-                </button>
-              ) : null}
-            </>
-          ) : undefined
-        }
-      >
-        {preview || previewLoading || previewError ? (
-          <div className="flex h-full min-h-0 flex-col">
-          <div className="shrink-0 border-b border-border px-4 py-2.5">
-            <div className="truncate text-sm font-semibold text-foreground">
-              {preview?.name || selectedEntry?.name || "Preview"}
-              {isDirty ? <span className="ml-2 text-xs text-primary">unsaved</span> : null}
-            </div>
-            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
-              {preview?.absolutePath ? <span>{preview.absolutePath}</span> : null}
-              {preview?.size != null ? <span>{formatFileSize(preview.size)}</span> : null}
-              {preview?.modifiedAt ? <span>{formatModified(preview.modifiedAt)}</span> : null}
-            </div>
-          </div>
-
-          <div className="min-h-0 flex-1 overflow-hidden p-2.5">
-            {previewLoading ? (
-              <div className="grid h-full place-items-center rounded-lg border border-border bg-muted text-sm text-muted-foreground">
-                Loading file...
-              </div>
-            ) : previewError ? (
-              <div className="grid h-full place-items-center rounded-lg border border-destructive/30 bg-destructive/5 px-4 text-center text-sm text-destructive">
-                {previewError}
-              </div>
-            ) : preview?.kind === "text" ? (
-              isMarkdownPreview && textPreviewMode === "preview" ? (
-                <div className="h-full overflow-auto rounded-lg border border-border bg-muted/55 p-4">
-                  {previewDraft.trim() ? (
-                    <SimpleMarkdown
-                      className="chat-markdown text-sm text-foreground"
-                      onLinkClick={openPreviewLink}
-                    >
-                      {previewDraft}
-                    </SimpleMarkdown>
-                  ) : (
-                    <div className="grid h-full min-h-[120px] place-items-center text-sm text-muted-foreground">
-                      Nothing to preview yet.
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <textarea
-                  value={previewDraft}
-                  onChange={(event) => setPreviewDraft(event.target.value)}
-                  readOnly={!preview.isEditable}
-                  spellCheck={false}
-                  className={`h-full w-full resize-none rounded-lg border border-border bg-muted p-4 font-mono text-xs leading-6 text-foreground outline-none transition-colors ${
-                    preview.isEditable
-                      ? "embedded-input focus:border-border/70"
-                      : "cursor-default opacity-90"
-                  }`}
-                />
-              )
-            ) : preview?.kind === "image" && preview.dataUrl ? (
-              <div className="flex h-full items-center justify-center overflow-auto rounded-lg border border-border bg-muted p-3">
-                <img src={preview.dataUrl} alt={preview.name} className="max-h-full max-w-full rounded-md object-contain" />
-              </div>
-            ) : preview?.kind === "pdf" && preview.dataUrl ? (
-              <div className="h-full overflow-hidden rounded-lg border border-border bg-white">
-                <iframe src={preview.dataUrl} title={preview.name} className="h-full w-full border-0" />
-              </div>
-            ) : preview?.kind === "table" && activeTableSheet ? (
-              <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-muted">
-                {previewTableSheets.length > 1 ? (
-                  <div className="chat-scrollbar-hidden flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border p-2">
-                    {previewTableSheets.map((sheet, index) => {
-                      const isActive = index === activeTableSheetIndex;
-                      return (
-                        <button
-                          key={`${sheet.name}-${sheet.index}`}
-                          type="button"
-                          onClick={() => setActiveTableSheetIndex(index)}
-                          className={`rounded-md border px-2 py-1 text-[11px] transition-colors ${
-                            isActive
-                              ? "border-primary/35 bg-primary/12 text-primary"
-                              : "border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                          }`}
-                        >
-                          {sheet.name}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : null}
-                <div className="min-h-0 flex-1 overflow-auto">
-                  <table className="w-max min-w-full border-collapse text-xs text-foreground">
-                    <thead className="sticky top-0 z-[1] bg-muted">
-                      <tr>
-                        <th className="border-b border-r border-border bg-muted px-2 py-1.5 text-left text-[11px] text-muted-foreground">
-                          #
-                        </th>
-                        {activeTableSheet.columns.map((column, columnIndex) => (
-                          <th
-                            key={`${column}-${columnIndex}`}
-                            className="border-b border-r border-border bg-muted px-2 py-1.5 text-left text-[11px] text-muted-foreground"
-                          >
-                            {column}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {activeTableSheet.rows.length === 0 ? (
-                        <tr>
-                          <td
-                            colSpan={activeTableSheet.columns.length + 1}
-                            className="px-3 py-4 text-center text-xs text-muted-foreground"
-                          >
-                            No rows in this sheet.
-                          </td>
-                        </tr>
-                      ) : (
-                        activeTableSheet.rows.map((row, rowIndex) => (
-                          <tr key={`row-${rowIndex}`} className="odd:bg-background/20 even:bg-transparent">
-                            <td className="border-b border-r border-border px-2 py-1.5 align-top text-[11px] text-muted-foreground">
-                              {rowIndex + 1}
-                            </td>
-                            {row.map((value, columnIndex) => (
-                              <td
-                                key={`cell-${rowIndex}-${columnIndex}`}
-                                className="max-w-[320px] border-b border-r border-border px-2 py-1.5 align-top"
-                              >
-                                <div className="break-words whitespace-pre-wrap">{value || "\u00a0"}</div>
-                              </td>
-                            ))}
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                {activeTableSheet.truncated ? (
-                  <div className="shrink-0 border-t border-border px-3 py-1.5 text-[11px] text-muted-foreground">
-                    Showing {activeTableSheet.rows.length} of {activeTableSheet.totalRows} rows and{" "}
-                    {Math.min(activeTableSheet.columns.length, activeTableSheet.totalColumns)} of{" "}
-                    {Math.max(activeTableSheet.totalColumns, activeTableSheet.columns.length)} columns.
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              <div className="flex h-full flex-col items-center justify-center rounded-lg border border-border bg-muted px-5 text-center">
-                <FileText size={22} className="mb-3 text-muted-foreground" />
-                <div className="text-sm font-medium text-foreground">Preview unavailable</div>
-                <div className="mt-2 max-w-xs text-xs leading-6 text-muted-foreground">
-                  {preview?.unsupportedReason || "This file type is not supported for inline preview yet."}
-                </div>
-              </div>
-            )}
-          </div>
+  const content = showInlinePreview ? (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b border-border px-4 py-2.5">
+        <div className="truncate text-sm font-semibold text-foreground">
+          {preview?.name || selectedEntry?.name || "Preview"}
+          {isDirty ? <span className="ml-2 text-xs text-primary">unsaved</span> : null}
         </div>
-      ) : (
-          <div ref={containerRef} className="flex h-full min-h-0">
-          {fileBookmarks.length > 0 ? (
-            <aside className="flex w-11 flex-col items-center gap-1.5 border-r border-border py-2.5">
-              <div className="chat-scrollbar-hidden flex min-h-0 flex-1 flex-col items-center gap-1 overflow-x-hidden overflow-y-auto px-1">
-                {fileBookmarks.map((bookmark) => {
-                  const isActive = activeBookmarkId === bookmark.targetPath;
-                  const { Icon, className } = getExplorerIconDescriptor(
-                    bookmark.targetPath,
-                    bookmark.isDirectory
-                  );
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+          {preview?.size != null ? <span>{formatFileSize(preview.size)}</span> : null}
+          {preview?.modifiedAt ? <span>{formatModified(preview.modifiedAt)}</span> : null}
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-hidden p-2.5">
+        {previewLoading ? (
+          <div className="grid h-full place-items-center rounded-lg border border-border bg-muted text-sm text-muted-foreground">
+            Loading file...
+          </div>
+        ) : previewError ? (
+          <div className="grid h-full place-items-center rounded-lg border border-destructive/30 bg-destructive/5 px-4 text-center text-sm text-destructive">
+            {previewError}
+          </div>
+        ) : preview?.kind === "text" ? (
+          isMarkdownPreview && textPreviewMode === "preview" ? (
+            <div className="h-full overflow-auto rounded-lg border border-border bg-muted/55 p-4">
+              {previewDraft.trim() ? (
+                <SimpleMarkdown
+                  className="chat-markdown text-sm text-foreground"
+                  onLinkClick={openPreviewLink}
+                >
+                  {previewDraft}
+                </SimpleMarkdown>
+              ) : (
+                <div className="grid h-full min-h-[120px] place-items-center text-sm text-muted-foreground">
+                  Nothing to preview yet.
+                </div>
+              )}
+            </div>
+          ) : (
+            <textarea
+              value={previewDraft}
+              onChange={(event) => setPreviewDraft(event.target.value)}
+              readOnly={!preview.isEditable}
+              spellCheck={false}
+              className={`h-full w-full resize-none rounded-lg border border-border bg-muted p-4 font-mono text-xs leading-6 text-foreground outline-none transition-colors ${
+                preview.isEditable
+                  ? "embedded-input focus:border-border/70"
+                  : "cursor-default opacity-90"
+              }`}
+            />
+          )
+        ) : preview?.kind === "image" && preview.dataUrl ? (
+          <div className="flex h-full items-center justify-center overflow-auto rounded-lg border border-border bg-muted p-3">
+            <img src={preview.dataUrl} alt={preview.name} className="max-h-full max-w-full rounded-md object-contain" />
+          </div>
+        ) : preview?.kind === "pdf" && preview.dataUrl ? (
+          <div className="h-full overflow-hidden rounded-lg border border-border bg-white">
+            <iframe src={preview.dataUrl} title={preview.name} className="h-full w-full border-0" />
+          </div>
+        ) : preview?.kind === "table" && activeTableSheet ? (
+          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-muted">
+            {previewTableSheets.length > 1 ? (
+              <div className="chat-scrollbar-hidden flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border p-2">
+                {previewTableSheets.map((sheet, index) => {
+                  const isActive = index === activeTableSheetIndex;
                   return (
                     <button
-                      key={bookmark.id}
+                      key={`${sheet.name}-${sheet.index}`}
                       type="button"
-                      onClick={() => void openBookmarkedTarget(bookmark)}
-                      title={bookmark.label}
-                      className={`grid size-7 shrink-0 place-items-center rounded-md transition-colors ${
+                      onClick={() => setActiveTableSheetIndex(index)}
+                      className={`rounded-md border px-2 py-1 text-[11px] transition-colors ${
                         isActive
-                          ? "bg-primary/12 text-primary"
-                          : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                          ? "border-primary/35 bg-primary/12 text-primary"
+                          : "border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                       }`}
                     >
-                      <Icon size={14} className={className} />
+                      {sheet.name}
                     </button>
                   );
                 })}
               </div>
-            </aside>
-          ) : null}
-
-          <div className="flex min-w-0 flex-1 flex-col">
-            <div className="shrink-0 border-b border-border px-3 py-2">
-              <div className="mb-2 flex min-w-0 items-center gap-0.5">
-                <IconButton icon={<Undo2 size={13} />} label="Back" onClick={() => void onBack()} disabled={!canGoBack} />
-                <IconButton icon={<Forward size={13} />} label="Forward" onClick={() => void onForward()} disabled={!canGoForward} />
-                {!isVeryCompact ? (
-                  <IconButton
-                    icon={<Home size={13} />}
-                    label="Home"
-                    onClick={() => {
-                      void openHomeDirectory();
-                    }}
-                    disabled={isAtWorkspaceRoot}
-                  />
-                ) : null}
-                <div className="min-w-0 flex-1" />
-                <IconButton
-                  icon={<Star size={13} className={activeBookmark ? "fill-current" : ""} />}
-                  label={activeBookmark ? "Remove bookmark" : "Add bookmark"}
-                  active={Boolean(activeBookmark)}
-                  onClick={() => void toggleBookmark()}
-                  disabled={!bookmarkTargetPath}
-                />
-              </div>
-              <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs transition-colors focus-within:border-ring">
-                <Search size={13} className="shrink-0 text-muted-foreground" />
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  className="embedded-input w-full bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/50"
-                  placeholder="Search files"
-                />
-              </div>
-              <div className="chat-scrollbar-hidden mt-1.5 flex items-center gap-1 overflow-x-auto text-[10px] uppercase tracking-widest text-muted-foreground/60">
-                {breadcrumbs.length > 0 ? (
-                  breadcrumbs.map((breadcrumb) => (
-                    <div
-                      key={breadcrumb.absolutePath}
-                      className="flex shrink-0 items-center gap-1"
-                    >
-                      {breadcrumb !== breadcrumbs[0] ? (
-                        <ChevronRight size={10} className="text-muted-foreground/45" />
-                      ) : null}
-                      {breadcrumb.isCurrent ? (
-                        <span className="truncate text-foreground/78">
-                          {breadcrumb.label}
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void openPath(breadcrumb.absolutePath);
-                          }}
-                          className="truncate transition-colors hover:text-foreground"
-                        >
-                          {breadcrumb.label}
-                        </button>
-                      )}
-                    </div>
-                  ))
-                ) : (
-                  <span>{isCompact ? getFolderName(currentPath) : currentPath}</span>
-                )}
-              </div>
+            ) : null}
+            <div className="min-h-0 flex-1 overflow-auto">
+              <table className="w-max min-w-full border-collapse text-xs text-foreground">
+                <thead className="sticky top-0 z-[1] bg-muted">
+                  <tr>
+                    <th className="border-b border-r border-border bg-muted px-2 py-1.5 text-left text-[11px] text-muted-foreground">
+                      #
+                    </th>
+                    {activeTableSheet.columns.map((column, columnIndex) => (
+                      <th
+                        key={`${column}-${columnIndex}`}
+                        className="border-b border-r border-border bg-muted px-2 py-1.5 text-left text-[11px] text-muted-foreground"
+                      >
+                        {column}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {activeTableSheet.rows.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={activeTableSheet.columns.length + 1}
+                        className="px-3 py-4 text-center text-xs text-muted-foreground"
+                      >
+                        No rows in this sheet.
+                      </td>
+                    </tr>
+                  ) : (
+                    activeTableSheet.rows.map((row, rowIndex) => (
+                      <tr key={`row-${rowIndex}`} className="odd:bg-background/20 even:bg-transparent">
+                        <td className="border-b border-r border-border px-2 py-1.5 align-top text-[11px] text-muted-foreground">
+                          {rowIndex + 1}
+                        </td>
+                        {row.map((value, columnIndex) => (
+                          <td
+                            key={`cell-${rowIndex}-${columnIndex}`}
+                            className="max-w-[320px] border-b border-r border-border px-2 py-1.5 align-top"
+                          >
+                            <div className="break-words whitespace-pre-wrap">{value || "\u00a0"}</div>
+                          </td>
+                        ))}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
-
-            {!isCompact ? (
-              <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_110px] border-b border-border px-3 py-1.5 text-[10px] uppercase tracking-widest text-muted-foreground/60 lg:grid-cols-[minmax(0,1fr)_140px_90px]">
-                <span>Name</span>
-                <span>Modified</span>
-                <span className="hidden lg:block">Size</span>
+            {activeTableSheet.truncated ? (
+              <div className="shrink-0 border-t border-border px-3 py-1.5 text-[11px] text-muted-foreground">
+                Showing {activeTableSheet.rows.length} of {activeTableSheet.totalRows} rows and{" "}
+                {Math.min(activeTableSheet.columns.length, activeTableSheet.totalColumns)} of{" "}
+                {Math.max(activeTableSheet.totalColumns, activeTableSheet.columns.length)} columns.
               </div>
             ) : null}
-
-            <div className="chat-scrollbar-hidden min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-1.5 pb-1.5 pt-1">
-              {loading ? <div className="px-2 py-4 text-xs text-muted-foreground">Loading directory...</div> : null}
-
-              {error ? <div className="px-2 py-3 text-xs text-destructive">{error}</div> : null}
-
-              {!loading && !error && filteredEntries.length === 0 ? (
-                <div className="px-2 py-4 text-xs text-muted-foreground">No files matched your search.</div>
-              ) : null}
-
-              {!loading && !error
-                ? filteredEntries.map((entry) => {
-                    const { Icon, className } = getExplorerIconDescriptor(
-                      entry.name,
-                      entry.isDirectory
-                    );
-                    const selected = selectedPath === entry.absolutePath;
-                    const isRenaming = renamingPath === entry.absolutePath;
-                    const rowClassName = `group mb-0.5 w-full rounded-md px-2 py-1.5 text-left transition-colors ${
-                      selected
-                        ? "bg-primary/10 text-primary"
-                        : "text-foreground/80 hover:bg-accent hover:text-accent-foreground"
-                    } ${isRenaming ? "cursor-default" : "cursor-pointer"}`;
-                    const nameField = isRenaming ? (
-                      <input
-                        ref={renameInputRef}
-                        value={renameDraft}
-                        onChange={(event) => setRenameDraft(event.target.value)}
-                        onBlur={() => {
-                          void submitRenameEntry();
-                        }}
-                        onClick={(event) => event.stopPropagation()}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            void submitRenameEntry();
-                            return;
-                          }
-                          if (event.key === "Escape") {
-                            event.preventDefault();
-                            cancelRenameEntry();
-                          }
-                        }}
-                        disabled={renameSaving}
-                        className="embedded-input h-6 min-w-0 flex-1 rounded-sm border border-border/70 bg-background px-1.5 text-xs font-medium text-foreground outline-none focus:border-ring disabled:opacity-60"
-                      />
-                    ) : (
-                      <span className="truncate text-xs font-medium">{entry.name}</span>
-                    );
-                    const rowContent = isCompact ? (
-                      <span className="flex min-w-0 flex-col gap-0.5">
-                        <span className="flex min-w-0 items-center gap-2">
-                          <Icon size={14} className={`shrink-0 ${className}`} />
-                          {nameField}
-                        </span>
-                        <span className="flex min-w-0 items-center gap-2 pl-6 text-[11px] text-muted-foreground">
-                          <span className="truncate">{formatModified(entry.modifiedAt)}</span>
-                          {!entry.isDirectory ? <span className="shrink-0">{formatFileSize(entry.size)}</span> : null}
-                        </span>
-                      </span>
-                    ) : (
-                      <span className="grid min-w-0 grid-cols-[minmax(0,1fr)_110px] items-center lg:grid-cols-[minmax(0,1fr)_140px_90px]">
-                        <span className="flex min-w-0 items-center gap-2">
-                          <Icon size={14} className={className} />
-                          {nameField}
-                        </span>
-                        <span className="truncate text-[11px] text-muted-foreground">
-                          {formatModified(entry.modifiedAt)}
-                        </span>
-                        <span className="hidden text-[11px] text-muted-foreground lg:block">
-                          {entry.isDirectory ? "-" : formatFileSize(entry.size)}
-                        </span>
-                      </span>
-                    );
-                    return (
-                    <div
-                      key={entry.absolutePath}
-                      className={rowClassName}
-                      title={
-                        entry.isDirectory
-                          ? `${entry.name} — double-click to open folder`
-                          : `${entry.name} — drag into chat to attach`
-                      }
-                    >
-                      {isRenaming ? (
-                        <div className="w-full">
-                          {rowContent}
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          draggable={!entry.isDirectory}
-                          onClick={() => {
-                            setSelectedPath(entry.absolutePath);
-                            closeContextMenu();
-                          }}
-                          onContextMenu={(event) => {
-                            event.preventDefault();
-                            const paneRect = containerRef.current?.getBoundingClientRect();
-                            if (!paneRect) {
-                              return;
-                            }
-                            setSelectedPath(entry.absolutePath);
-                            setContextMenu({
-                              entry,
-                              x: event.clientX,
-                              y: event.clientY,
-                              paneBounds: {
-                                left: paneRect.left,
-                                top: paneRect.top,
-                                right: paneRect.right,
-                                bottom: paneRect.bottom,
-                                width: paneRect.width,
-                                height: paneRect.height,
-                              },
-                            });
-                          }}
-                          onDoubleClick={() => {
-                            if (entry.isDirectory) {
-                              void openPath(entry.absolutePath);
-                              return;
-                            }
-                            void openFilePreview(entry.absolutePath);
-                          }}
-                          onDragStart={(event) => {
-                            if (entry.isDirectory) {
-                              event.preventDefault();
-                              return;
-                            }
-
-                            event.dataTransfer.effectAllowed = "copy";
-                            event.dataTransfer.setData(
-                              EXPLORER_ATTACHMENT_DRAG_TYPE,
-                              serializeExplorerAttachmentDragPayload({
-                                absolutePath: entry.absolutePath,
-                                name: entry.name,
-                                size: entry.size,
-                              })
-                            );
-                            event.dataTransfer.setData("text/plain", entry.name);
-                            const preview = createAttachmentDragPreview(entry);
-                            dragPreviewRef.current?.remove();
-                            dragPreviewRef.current = preview;
-                            event.dataTransfer.setDragImage(preview, 18, 18);
-                          }}
-                          onDragEnd={() => {
-                            dragPreviewRef.current?.remove();
-                            dragPreviewRef.current = null;
-                          }}
-                          className="w-full cursor-pointer text-left"
-                          title={
-                            entry.isDirectory
-                              ? `${entry.name} — double-click to open folder`
-                              : `${entry.name} — drag into chat to attach`
-                          }
-                        >
-                          {rowContent}
-                        </button>
-                      )}
-                    </div>
-                    );
-                  })
-                : null}
-            </div>
-
           </div>
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center rounded-lg border border-border bg-muted px-5 text-center">
+            <FileText size={22} className="mb-3 text-muted-foreground" />
+            <div className="text-sm font-medium text-foreground">Preview unavailable</div>
+            <div className="mt-2 max-w-xs text-xs leading-6 text-muted-foreground">
+              {preview?.unsupportedReason || "This file type is not supported for inline preview yet."}
+            </div>
           </div>
         )}
-      </PaneCard>
+      </div>
+    </div>
+  ) : (
+    <div ref={containerRef} className="flex h-full min-h-0">
+      {fileBookmarks.length > 0 ? (
+        <aside className="flex w-11 flex-col items-center gap-1.5 border-r border-border py-2.5">
+          <div className="chat-scrollbar-hidden flex min-h-0 flex-1 flex-col items-center gap-1 overflow-x-hidden overflow-y-auto px-1">
+            {fileBookmarks.map((bookmark) => {
+              const isActive = activeBookmarkId === bookmark.targetPath;
+              const { Icon, className } = getExplorerIconDescriptor(
+                bookmark.targetPath,
+                bookmark.isDirectory
+              );
+              return (
+                <button
+                  key={bookmark.id}
+                  type="button"
+                  onClick={() => void openBookmarkedTarget(bookmark)}
+                  title={bookmark.label}
+                  className={`grid size-7 shrink-0 place-items-center rounded-md transition-colors ${
+                    isActive
+                      ? "bg-primary/12 text-primary"
+                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  }`}
+                >
+                  <Icon size={14} className={className} />
+                </button>
+              );
+            })}
+          </div>
+        </aside>
+      ) : null}
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="shrink-0 border-b border-border px-3 py-2">
+          <div className="mb-2 flex min-w-0 items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/72">
+                Files
+              </div>
+            </div>
+            <IconButton
+              icon={<Star size={13} className={activeBookmark ? "fill-current" : ""} />}
+              label={activeBookmark ? "Remove bookmark" : "Add bookmark"}
+              active={Boolean(activeBookmark)}
+              onClick={() => void toggleBookmark()}
+              disabled={!bookmarkTargetPath}
+            />
+          </div>
+          <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-xs transition-colors focus-within:border-ring">
+            <Search size={13} className="shrink-0 text-muted-foreground" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              className="embedded-input w-full bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/50"
+              placeholder="Search files"
+            />
+          </div>
+        </div>
+
+        <div className="chat-scrollbar-hidden min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-1.5 pb-1.5 pt-1">
+          {loading ? <div className="px-2 py-4 text-xs text-muted-foreground">Loading directory...</div> : null}
+
+          {error ? <div className="px-2 py-3 text-xs text-destructive">{error}</div> : null}
+
+          {!loading && !error && filteredEntries.length === 0 ? (
+            <div className="px-2 py-4 text-xs text-muted-foreground">No files matched your search.</div>
+          ) : null}
+
+          {!loading && !error
+            ? filteredEntries.map((row) => {
+                if (row.type === "feedback") {
+                  return (
+                    <div
+                      key={row.id}
+                      className={`mb-0.5 rounded-md px-2 py-1.5 text-[11px] ${
+                        row.tone === "error"
+                          ? "text-destructive"
+                          : "text-muted-foreground"
+                      }`}
+                      style={{ paddingLeft: `${8 + row.depth * 16}px` }}
+                    >
+                      {row.message}
+                    </div>
+                  );
+                }
+
+                const { entry, depth, isExpanded, isLoadingChildren } = row;
+                const { Icon, className } = getExplorerIconDescriptor(
+                  entry.name,
+                  entry.isDirectory
+                );
+                const selected = selectedPath === entry.absolutePath;
+                const isRenaming = renamingPath === entry.absolutePath;
+                const rowClassName = `group mb-0.5 w-full rounded-md px-2 py-1.5 text-left transition-colors ${
+                  selected
+                    ? "bg-primary/10 text-primary"
+                    : "text-foreground/80 hover:bg-accent hover:text-accent-foreground"
+                } ${isRenaming ? "cursor-default" : "cursor-pointer"}`;
+                const nameField = isRenaming ? (
+                  <input
+                    ref={renameInputRef}
+                    value={renameDraft}
+                    onChange={(event) => setRenameDraft(event.target.value)}
+                    onBlur={() => {
+                      void submitRenameEntry();
+                    }}
+                    onClick={(event) => event.stopPropagation()}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void submitRenameEntry();
+                        return;
+                      }
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        cancelRenameEntry();
+                      }
+                    }}
+                    disabled={renameSaving}
+                    className="embedded-input h-6 min-w-0 flex-1 rounded-sm border border-border/70 bg-background px-1.5 text-xs font-medium text-foreground outline-none focus:border-ring disabled:opacity-60"
+                  />
+                ) : (
+                  <span className="truncate text-xs font-medium">{entry.name}</span>
+                );
+                const disclosureControl = entry.isDirectory ? (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void toggleDirectoryExpansion(entry);
+                    }}
+                    className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-foreground"
+                    aria-label={isExpanded ? "Collapse folder" : "Expand folder"}
+                  >
+                    <ChevronRight
+                      size={12}
+                      className={`transition-transform duration-200 ${
+                        isExpanded ? "rotate-90" : ""
+                      } ${isLoadingChildren ? "opacity-60" : ""}`}
+                    />
+                  </button>
+                ) : (
+                  <span className="size-4 shrink-0" />
+                );
+                const rowContent = (
+                  <span className="flex min-w-0 flex-col gap-0.5">
+                    <span
+                      className="flex min-w-0 items-center gap-2"
+                      style={{ paddingLeft: `${depth * 16}px` }}
+                    >
+                      {disclosureControl}
+                      <Icon size={14} className={`shrink-0 ${className}`} />
+                      {nameField}
+                    </span>
+                    <span
+                      className="flex min-w-0 items-center gap-2 pl-6 text-[11px] text-muted-foreground"
+                      style={{ paddingLeft: `${depth * 16 + 24}px` }}
+                    >
+                      <span className="truncate">{formatModified(entry.modifiedAt)}</span>
+                      {!entry.isDirectory ? <span className="shrink-0">{formatFileSize(entry.size)}</span> : null}
+                    </span>
+                  </span>
+                );
+                return (
+                <div
+                  key={entry.absolutePath}
+                  className={rowClassName}
+                  title={
+                    entry.isDirectory
+                      ? `${entry.name} — click to ${isExpanded ? "collapse" : "expand"} folder`
+                      : previewInPane
+                        ? `${entry.name} — drag into chat to attach`
+                        : `${entry.name} — click to open file, drag into chat to attach`
+                  }
+                >
+                  {isRenaming ? (
+                    <div className="w-full">
+                      {rowContent}
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      draggable={!entry.isDirectory}
+                      onClick={() => {
+                        setSelectedPath(entry.absolutePath);
+                        closeContextMenu();
+                        if (entry.isDirectory) {
+                          void toggleDirectoryExpansion(entry);
+                          return;
+                        }
+                        if (!previewInPane) {
+                          void openFileTarget(entry.absolutePath);
+                        }
+                      }}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        const paneRect = containerRef.current?.getBoundingClientRect();
+                        if (!paneRect) {
+                          return;
+                        }
+                        setSelectedPath(entry.absolutePath);
+                        setContextMenu({
+                          entry,
+                          x: event.clientX,
+                          y: event.clientY,
+                          paneBounds: {
+                            left: paneRect.left,
+                            top: paneRect.top,
+                            right: paneRect.right,
+                            bottom: paneRect.bottom,
+                            width: paneRect.width,
+                            height: paneRect.height,
+                          },
+                        });
+                      }}
+                      onDoubleClick={() => {
+                        if (!entry.isDirectory && previewInPane) {
+                          void openFilePreview(entry.absolutePath);
+                        }
+                      }}
+                      onDragStart={(event) => {
+                        if (entry.isDirectory) {
+                          event.preventDefault();
+                          return;
+                        }
+
+                        event.dataTransfer.effectAllowed = "copy";
+                        event.dataTransfer.setData(
+                          EXPLORER_ATTACHMENT_DRAG_TYPE,
+                          serializeExplorerAttachmentDragPayload({
+                            absolutePath: entry.absolutePath,
+                            name: entry.name,
+                            size: entry.size,
+                          })
+                        );
+                        event.dataTransfer.setData("text/plain", entry.name);
+                        const preview = createAttachmentDragPreview(entry);
+                        dragPreviewRef.current?.remove();
+                        dragPreviewRef.current = preview;
+                        event.dataTransfer.setDragImage(preview, 18, 18);
+                      }}
+                      onDragEnd={() => {
+                        dragPreviewRef.current?.remove();
+                        dragPreviewRef.current = null;
+                      }}
+                      className="w-full cursor-pointer text-left"
+                      title={
+                        entry.isDirectory
+                          ? `${entry.name} — click to ${isExpanded ? "collapse" : "expand"} folder`
+                          : previewInPane
+                            ? `${entry.name} — drag into chat to attach`
+                            : `${entry.name} — click to open file, drag into chat to attach`
+                      }
+                    >
+                      {rowContent}
+                    </button>
+                  )}
+                </div>
+                );
+              })
+            : null}
+        </div>
+      </div>
+    </div>
+  );
+
+  const explorerPane = embedded ? (
+    content
+  ) : (
+    <PaneCard
+      title={showInlinePreview ? "File" : ""}
+      actions={
+        showInlinePreview ? (
+          <>
+            <button
+              type="button"
+              onClick={closePreview}
+              className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+            >
+              <ArrowLeft size={12} />
+              Files
+            </button>
+            <IconButton
+              icon={<Star size={12} className={activeBookmark ? "fill-current" : ""} />}
+              label={activeBookmark ? "Remove bookmark" : "Add bookmark"}
+              active={Boolean(activeBookmark)}
+              onClick={() => void toggleBookmark()}
+              disabled={!bookmarkTargetPath}
+            />
+            {isMarkdownPreview ? (
+              <div className="inline-flex items-center rounded-md border border-border bg-muted/50 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setTextPreviewMode("preview")}
+                  className={`rounded px-2 py-1 text-xs transition-colors ${
+                    textPreviewMode === "preview"
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  }`}
+                >
+                  Preview
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTextPreviewMode("edit")}
+                  className={`rounded px-2 py-1 text-xs transition-colors ${
+                    textPreviewMode === "edit"
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  }`}
+                >
+                  Edit
+                </button>
+              </div>
+            ) : null}
+            {preview?.isEditable ? (
+              <button
+                type="button"
+                onClick={() => void savePreview()}
+                disabled={!isDirty || saving}
+                className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Save size={12} />
+                {saving ? "Saving" : "Save"}
+              </button>
+            ) : null}
+          </>
+        ) : undefined
+      }
+    >
+      {content}
+    </PaneCard>
+  );
+
+  return (
+    <>
+      {explorerPane}
       {contextMenu && contextMenuPosition
         ? createPortal(
             <div
@@ -1663,7 +1931,11 @@ export function FileExplorerPane({
                 }}
                 className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
               >
-                {contextMenu.entry.isDirectory ? "Open folder" : "Open file"}
+                {contextMenu.entry.isDirectory
+                  ? expandedDirectoryPaths[contextMenu.entry.absolutePath]
+                    ? "Collapse folder"
+                    : "Expand folder"
+                  : "Open file"}
               </button>
               <button
                 type="button"
