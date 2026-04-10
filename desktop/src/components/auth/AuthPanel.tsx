@@ -2266,7 +2266,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                           : ""
                     }
                   >
-                    <span className={`inline-block h-1.5 w-1.5 rounded-full ${runtimeBindingReady ? "bg-success" : isSignedIn ? "bg-warning" : "bg-muted-foreground/50"}`} />
+                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-current" />
                     {runtimeBindingReady
                       ? "Runtime ready"
                       : isSignedIn
