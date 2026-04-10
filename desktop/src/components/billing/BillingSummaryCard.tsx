@@ -1,4 +1,6 @@
 import { CircleHelp } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Popover,
   PopoverContent,
@@ -64,8 +66,8 @@ export function BillingSummaryCard({
       : "—";
 
   return (
-    <section
-      className="rounded-[24px] border border-border/40 px-5 py-5"
+    <Card
+      className="rounded-[24px] border-border/40 px-5 py-5"
       style={{ backgroundColor: "rgb(243, 243, 244)" }}
     >
       <div className="flex items-start justify-between gap-4">
@@ -79,20 +81,19 @@ export function BillingSummaryCard({
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
+          <Button
+            variant="outline"
             onClick={() => openBillingLink(links?.billingPageUrl)}
-            className="theme-control-surface inline-flex h-10 items-center justify-center rounded-full border border-border/45 px-4 text-sm font-medium text-foreground transition hover:border-primary/35"
+            className="theme-control-surface h-10 rounded-full border-border/45 px-4 hover:border-primary/35"
           >
             Manage on web
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
             onClick={() => openBillingLink(links?.addCreditsUrl)}
-            className="inline-flex h-10 items-center justify-center rounded-full border border-primary/35 bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+            className="h-10 rounded-full border-primary/35 px-4"
           >
             Add credits
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -120,10 +121,11 @@ export function BillingSummaryCard({
                 <Popover>
                   <PopoverTrigger
                     render={
-                      <button
-                        type="button"
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
                         aria-label="About credits"
-                        className="inline-flex size-5 items-center justify-center rounded-full text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                        className="size-5 rounded-full text-muted-foreground"
                       />
                     }
                   >
@@ -174,6 +176,6 @@ export function BillingSummaryCard({
           </div>
         </div>
       </div>
-    </section>
+    </Card>
   );
 }
