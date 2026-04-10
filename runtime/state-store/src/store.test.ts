@@ -1473,9 +1473,11 @@ test("task proposals round trip supports create, list, unreviewed, get, and stat
   const updated = store.updateTaskProposalState({ proposalId: "proposal-1", state: "accepted" });
 
   assert.equal(proposal.proposalId, "proposal-1");
+  assert.equal(proposal.proposalSource, "proactive");
   assert.equal(listed.length, 1);
   assert.equal(unreviewed.length, 1);
   assert.ok(fetched);
+  assert.equal(fetched?.proposalSource, "proactive");
   assert.ok(updated);
   assert.equal(updated.state, "accepted");
   store.close();
@@ -1526,6 +1528,28 @@ test("task proposal acceptance fields and child session metadata round trip", ()
   assert.equal(updated.acceptedSessionId, "proposal-session-1");
   assert.equal(updated.acceptedInputId, "input-1");
   assert.equal(updated.acceptedAt, "2026-01-01T01:00:00+00:00");
+  store.close();
+});
+
+test("task proposal round trip preserves explicit evolve source", () => {
+  const root = makeTempDir("hb-state-store-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const proposal = store.createTaskProposal({
+    proposalId: "proposal-evolve-1",
+    workspaceId: "workspace-1",
+    taskName: "Review generated skill patch",
+    taskPrompt: "Inspect the queued evolve skill patch.",
+    taskGenerationRationale: "Evolve flagged a risky patch for review",
+    proposalSource: "evolve",
+    createdAt: "2026-01-01T00:00:00+00:00"
+  });
+
+  assert.equal(proposal.proposalSource, "evolve");
+  assert.equal(store.getTaskProposal("proposal-evolve-1")?.proposalSource, "evolve");
   store.close();
 });
 

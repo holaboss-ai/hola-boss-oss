@@ -37,7 +37,7 @@ test("runtime auth panel keeps model provider settings compact", async () => {
     source.match(/const runtimeProviderSettings = \([\s\S]*?\n  \);\n\n  if \(view === "account"\)/)?.[0] ?? "";
 
   assert.match(source, /Background tasks/);
-  assert.match(source, /Used for memory recall and post-run tasks\./);
+  assert.match(source, /Used for memory recall and evolve tasks\./);
   assert.match(source, /Image generation/);
   assert.match(source, /Used when the agent generates new images into the workspace\./);
   assert.match(source, /Select a model to enable image generation\./);

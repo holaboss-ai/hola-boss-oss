@@ -40,5 +40,6 @@ export {
   type TurnRequestSnapshotRecord,
   type TurnResultRecord,
   type TaskProposalRecord,
+  type TaskProposalSource,
   type WorkspaceRecord
 } from "./store.js";

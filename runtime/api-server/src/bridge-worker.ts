@@ -46,6 +46,7 @@ type TaskProposalCreatePayload = {
   task_name: string;
   task_prompt: string;
   task_generation_rationale: string;
+  proposal_source?: string;
   source_event_ids?: string[];
 };
 
@@ -248,6 +249,7 @@ function taskProposalPayload(payload: Record<string, unknown>): TaskProposalCrea
     task_name: requiredStringField(payload, "task_name"),
     task_prompt: requiredStringField(payload, "task_prompt"),
     task_generation_rationale: requiredStringField(payload, "task_generation_rationale"),
+    proposal_source: optionalStringField(payload, "proposal_source"),
     source_event_ids: optionalStringListField(payload, "source_event_ids")
   };
 }
@@ -272,6 +274,7 @@ export async function executeBridgeJobNatively(params: {
         taskName: payload.task_name,
         taskPrompt: payload.task_prompt,
         taskGenerationRationale: payload.task_generation_rationale,
+        proposalSource: payload.proposal_source ?? "proactive",
         sourceEventIds: payload.source_event_ids,
         createdAt: nowIso(),
         state: "not_reviewed"

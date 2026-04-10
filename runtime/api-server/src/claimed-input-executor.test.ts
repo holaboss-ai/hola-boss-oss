@@ -131,7 +131,7 @@ test("claimed input marks missing workspace failed and runtime error", async () 
 
 test("claimed input persists runner events, assistant text, and idle state on success", async () => {
   const store = makeStore("hb-claimed-input-success-");
-  let scheduledPostRunTasks = 0;
+  let scheduledEvolveTasks = 0;
   let eventTypesAtSchedule: string[] = [];
   const memoryService: MemoryServiceLike = {
     async search() { return { results: [] }; },
@@ -180,8 +180,8 @@ test("claimed input persists runner events, assistant text, and idle state on su
     record: claimed[0],
     claimedBy: "sandbox-agent-ts-worker",
     memoryService,
-    runPostRunTasksFn: async (options) => {
-      scheduledPostRunTasks += 1;
+    runEvolveTasksFn: async (options) => {
+      scheduledEvolveTasks += 1;
       eventTypesAtSchedule = store
         .listOutputEvents({
           sessionId: options.record.sessionId,
@@ -228,7 +228,7 @@ test("claimed input persists runner events, assistant text, and idle state on su
       "run_completed",
     ]
   );
-  assert.equal(scheduledPostRunTasks, 1);
+  assert.equal(scheduledEvolveTasks, 1);
   assert.deepEqual(eventTypesAtSchedule, [
     "run_started",
     "tool_call",
@@ -527,14 +527,14 @@ test("claimed input persists a paused turn when the run is aborted mid-execution
     leaseSeconds: 300
   });
   const controller = new AbortController();
-  let postRunCalls = 0;
+  let evolveCalls = 0;
   const execution = processClaimedInput({
     store,
     record: claimed[0],
     claimedBy: "sandbox-agent-ts-worker",
     abortSignal: controller.signal,
-    runPostRunTasksFn: async () => {
-      postRunCalls += 1;
+    runEvolveTasksFn: async () => {
+      evolveCalls += 1;
     },
   });
 
@@ -563,7 +563,7 @@ test("claimed input persists a paused turn when the run is aborted mid-execution
   });
   const turnResult = store.getTurnResult({ inputId: queued.inputId });
 
-  assert.equal(postRunCalls, 1);
+  assert.equal(evolveCalls, 1);
   assert.ok(updated);
   assert.equal(updated.status, "PAUSED");
   assert.ok(runtimeState);
@@ -973,7 +973,7 @@ test("claimed input hydrates runtime exec context from runtime config", async ()
   store.close();
 });
 
-test("claimed input resolves post-run model context from the provider background tasks model", async () => {
+test("claimed input resolves evolve model context from the provider background tasks model", async () => {
   const store = makeStore("hb-claimed-input-background-model-");
   const sandboxRoot = makeTempDir("hb-claimed-input-background-root-");
   process.env.HB_SANDBOX_ROOT = sandboxRoot;
@@ -1060,7 +1060,7 @@ test("claimed input resolves post-run model context from the provider background
         sawTerminal: true
       };
     },
-    runPostRunTasksFn: async (options) => {
+    runEvolveTasksFn: async (options) => {
       capturedModelContext = options.modelContext as unknown as Record<string, unknown>;
     },
   });

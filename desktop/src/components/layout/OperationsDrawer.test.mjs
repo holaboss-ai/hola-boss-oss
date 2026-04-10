@@ -16,6 +16,14 @@ test("operations drawer inbox surfaces lifecycle status and trigger feedback", a
   assert.doesNotMatch(source, /InboxHeaderActions/);
 });
 
+test("operations drawer shows proposal source lane and rationale copy", async () => {
+  const source = await readFile(OPERATIONS_DRAWER_PATH, "utf8");
+
+  assert.match(source, /function proposalSourceLabel\(source: TaskProposalRecordPayload\["proposal_source"\]\): string/);
+  assert.match(source, /proposalSourceLabel\(proposal\.proposal_source\)/);
+  assert.match(source, /Why: \{proposal\.task_generation_rationale\}/);
+});
+
 test("operations drawer session rows expose pointer cursor affordance", async () => {
   const source = await readFile(OPERATIONS_DRAWER_PATH, "utf8");
 

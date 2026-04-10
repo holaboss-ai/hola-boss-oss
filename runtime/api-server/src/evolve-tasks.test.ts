@@ -6,7 +6,7 @@ import { afterEach, test } from "node:test";
 
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 
-import { runPostRunTasks, schedulePostRunTasks, type PostRunTaskContext } from "./post-run-tasks.js";
+import { runEvolveTasks, scheduleEvolveTasks, type EvolveTaskContext } from "./evolve-tasks.js";
 
 const tempDirs: string[] = [];
 
@@ -22,8 +22,8 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
-function makeContext(): PostRunTaskContext {
-  const root = makeTempDir("hb-post-run-tasks-");
+function makeContext(): EvolveTaskContext {
+  const root = makeTempDir("hb-evolve-tasks-");
   const store = new RuntimeStateStore({
     dbPath: path.join(root, "runtime.db"),
     workspaceRoot: path.join(root, "workspaces"),
@@ -57,11 +57,11 @@ function makeContext(): PostRunTaskContext {
   };
 }
 
-test("schedulePostRunTasks defers task execution", async () => {
+test("scheduleEvolveTasks defers task execution", async () => {
   const context = makeContext();
   let ran = false;
 
-  schedulePostRunTasks({
+  scheduleEvolveTasks({
     ...context,
     tasks: [
       {
@@ -81,12 +81,12 @@ test("schedulePostRunTasks defers task execution", async () => {
   context.store.close();
 });
 
-test("runPostRunTasks continues after a task error", async () => {
+test("runEvolveTasks continues after a task error", async () => {
   const context = makeContext();
   const errors: string[] = [];
   const ran: string[] = [];
 
-  await runPostRunTasks({
+  await runEvolveTasks({
     ...context,
     tasks: [
       {

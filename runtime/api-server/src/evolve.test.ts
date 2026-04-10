@@ -9,10 +9,13 @@ import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 import { processClaimedInput } from "./claimed-input-executor.js";
 import { FilesystemMemoryService } from "./memory.js";
 import {
-  enqueueDurableMemoryWritebackJob,
-  processDurableMemoryWritebackJob,
-} from "./post-run-durable-memory.js";
-import { RuntimePostRunDurableMemoryWorker } from "./post-run-durable-memory-worker.js";
+  LEGACY_DURABLE_MEMORY_WRITEBACK_JOB_TYPE,
+  EVOLVE_JOB_TYPE,
+  createEvolveTaskProposal,
+  enqueueEvolveJob,
+  processEvolveJob,
+} from "./evolve.js";
+import { RuntimeEvolveWorker } from "./evolve-worker.js";
 import { writeTurnContinuity } from "./turn-memory-writeback.js";
 
 const tempDirs: string[] = [];
@@ -53,8 +56,8 @@ function seedWorkspace(store: RuntimeStateStore): void {
   });
 }
 
-test("queued durable memory writeback persists durable memories and refreshes indexes", async () => {
-  const { store, memoryService } = makeRuntimeState("hb-post-run-durable-memory-");
+test("queued evolve memory writeback persists durable memories and refreshes indexes", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-evolve-memory-");
   seedWorkspace(store);
   store.insertSessionMessage({
     workspaceId: "workspace-1",
@@ -90,7 +93,7 @@ test("queued durable memory writeback persists durable memories and refreshes in
     memoryService,
     turnResult,
   });
-  const queued = enqueueDurableMemoryWritebackJob({
+  const queued = enqueueEvolveJob({
     store,
     workspaceId: updatedTurnResult.workspaceId,
     sessionId: updatedTurnResult.sessionId,
@@ -98,7 +101,7 @@ test("queued durable memory writeback persists durable memories and refreshes in
     instruction: "Remember the durable workspace rules from this turn.",
   });
 
-  await processDurableMemoryWritebackJob({
+  await processEvolveJob({
     store,
     record: queued,
     memoryService,
@@ -124,8 +127,27 @@ test("queued durable memory writeback persists durable memories and refreshes in
   store.close();
 });
 
-test("sample completed turn writes continuity immediately and durable memory through the queued worker", async () => {
-  const { store, memoryService } = makeRuntimeState("hb-post-run-durable-e2e-");
+test("createEvolveTaskProposal tags task proposals with the evolve source", () => {
+  const { store } = makeRuntimeState("hb-evolve-proposal-");
+  seedWorkspace(store);
+
+  const proposal = createEvolveTaskProposal({
+    store,
+    workspaceId: "workspace-1",
+    taskName: "Review risky evolve patch",
+    taskPrompt: "Inspect the candidate skill patch before promotion.",
+    taskGenerationRationale: "Evolve detected a risky procedural change that needs review.",
+    proposalId: "proposal-evolve-1",
+    createdAt: "2026-04-10T00:00:00.000Z",
+  });
+
+  assert.equal(proposal.proposalSource, "evolve");
+  assert.equal(store.getTaskProposal("proposal-evolve-1")?.proposalSource, "evolve");
+  store.close();
+});
+
+test("sample completed turn writes continuity immediately and durable memory through the evolve worker", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-evolve-e2e-");
   seedWorkspace(store);
   const queued = store.enqueueInput({
     workspaceId: "workspace-1",
@@ -156,7 +178,7 @@ test("sample completed turn writes continuity immediately and durable memory thr
     claimedBy: "sandbox-agent-ts-worker",
     leaseSeconds: 300,
   });
-  const worker = new RuntimePostRunDurableMemoryWorker({
+  const worker = new RuntimeEvolveWorker({
     store,
     memoryService,
   });
@@ -200,7 +222,7 @@ test("sample completed turn writes continuity immediately and durable memory thr
 
   const immediateCapture = await memoryService.capture({ workspace_id: "workspace-1" });
   const immediateFiles = immediateCapture.files as Record<string, string>;
-  const queuedJob = store.getPostRunJobByIdempotencyKey(`durable_memory_writeback:${queued.inputId}`);
+  const queuedJob = store.getPostRunJobByIdempotencyKey(`${EVOLVE_JOB_TYPE}:${queued.inputId}`);
 
   assert.ok(queuedJob);
   assert.equal(queuedJob.status, "QUEUED");
@@ -209,7 +231,7 @@ test("sample completed turn writes continuity immediately and durable memory thr
   assert.ok(!immediateFiles["workspace/workspace-1/knowledge/procedures/release-procedure.md"]);
 
   const processed = await worker.processAvailableJobsOnce();
-  const updatedJob = store.getPostRunJobByIdempotencyKey(`durable_memory_writeback:${queued.inputId}`);
+  const updatedJob = store.getPostRunJobByIdempotencyKey(`${EVOLVE_JOB_TYPE}:${queued.inputId}`);
   const finalCapture = await memoryService.capture({ workspace_id: "workspace-1" });
   const finalFiles = finalCapture.files as Record<string, string>;
 
@@ -224,8 +246,8 @@ test("sample completed turn writes continuity immediately and durable memory thr
   store.close();
 });
 
-test("queued durable memory writeback skips empty index generation when no durable memories are found", async () => {
-  const { store, memoryService } = makeRuntimeState("hb-post-run-durable-noop-");
+test("queued evolve memory writeback skips empty index generation when no durable memories are found", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-evolve-noop-");
   seedWorkspace(store);
   store.insertSessionMessage({
     workspaceId: "workspace-1",
@@ -252,7 +274,7 @@ test("queued durable memory writeback skips empty index generation when no durab
     memoryService,
     turnResult,
   });
-  const queued = enqueueDurableMemoryWritebackJob({
+  const queued = enqueueEvolveJob({
     store,
     workspaceId: updatedTurnResult.workspaceId,
     sessionId: updatedTurnResult.sessionId,
@@ -260,7 +282,7 @@ test("queued durable memory writeback skips empty index generation when no durab
     instruction: "Remember the durable workspace rules from this turn.",
   });
 
-  await processDurableMemoryWritebackJob({
+  await processEvolveJob({
     store,
     record: queued,
     memoryService,
@@ -278,10 +300,10 @@ test("queued durable memory writeback skips empty index generation when no durab
   store.close();
 });
 
-test("post-run durable memory worker marks claimed jobs done after successful execution", async () => {
-  const { store, memoryService } = makeRuntimeState("hb-post-run-durable-worker-");
+test("evolve memory worker marks claimed jobs done after successful execution", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-evolve-worker-");
   const queued = store.enqueuePostRunJob({
-    jobType: "durable_memory_writeback",
+    jobType: EVOLVE_JOB_TYPE,
     workspaceId: "workspace-1",
     sessionId: "session-main",
     inputId: "input-1",
@@ -289,7 +311,7 @@ test("post-run durable memory worker marks claimed jobs done after successful ex
   });
 
   const seen: string[] = [];
-  const worker = new RuntimePostRunDurableMemoryWorker({
+  const worker = new RuntimeEvolveWorker({
     store,
     memoryService,
     executeClaimedJob: async (record) => {
@@ -310,17 +332,17 @@ test("post-run durable memory worker marks claimed jobs done after successful ex
   store.close();
 });
 
-test("post-run durable memory worker retries once and then marks persistent failures failed", async () => {
-  const { store, memoryService } = makeRuntimeState("hb-post-run-durable-worker-retry-");
+test("evolve memory worker retries once and then marks persistent failures failed", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-evolve-worker-retry-");
   const queued = store.enqueuePostRunJob({
-    jobType: "durable_memory_writeback",
+    jobType: EVOLVE_JOB_TYPE,
     workspaceId: "workspace-1",
     sessionId: "session-main",
     inputId: "input-1",
     payload: {},
   });
 
-  const worker = new RuntimePostRunDurableMemoryWorker({
+  const worker = new RuntimeEvolveWorker({
     store,
     memoryService,
     maxAttempts: 2,
@@ -346,6 +368,55 @@ test("post-run durable memory worker retries once and then marks persistent fail
   assert.equal(secondUpdated.status, "FAILED");
   assert.equal(secondUpdated.attempt, 2);
   assert.deepEqual(secondUpdated.lastError, { message: "boom" });
+
+  store.close();
+});
+
+test("evolve memory processor accepts legacy durable-memory job types", async () => {
+  const { store, memoryService } = makeRuntimeState("hb-evolve-legacy-job-");
+  seedWorkspace(store);
+  store.insertSessionMessage({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    role: "user",
+    text: "For verification, use `npm run test`.",
+    messageId: "user-1",
+    createdAt: "2026-04-02T12:00:00.000Z",
+  });
+  const turnResult = store.upsertTurnResult({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    startedAt: "2026-04-02T12:00:00.000Z",
+    completedAt: "2026-04-02T12:00:05.000Z",
+    status: "completed",
+    stopReason: "ok",
+    assistantText: "Captured workspace-specific instructions for future runs.",
+  });
+  await writeTurnContinuity({
+    store,
+    memoryService,
+    turnResult,
+  });
+  const legacyJob = store.enqueuePostRunJob({
+    jobType: LEGACY_DURABLE_MEMORY_WRITEBACK_JOB_TYPE,
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    payload: { instruction: "Remember the durable workspace rules from this turn." },
+    idempotencyKey: `${LEGACY_DURABLE_MEMORY_WRITEBACK_JOB_TYPE}:input-1`,
+  });
+
+  await processEvolveJob({
+    store,
+    record: legacyJob,
+    memoryService,
+  });
+
+  const captured = await memoryService.capture({ workspace_id: "workspace-1" });
+  const files = captured.files as Record<string, string>;
+
+  assert.ok(files["workspace/workspace-1/knowledge/facts/verification-command.md"]);
 
   store.close();
 });

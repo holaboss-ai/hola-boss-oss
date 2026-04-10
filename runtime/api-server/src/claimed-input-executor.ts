@@ -14,7 +14,7 @@ import { normalizeHarnessId, resolveRuntimeHarnessAdapter } from "./harness-regi
 import type { MemoryServiceLike } from "./memory.js";
 import { createBackgroundTaskMemoryModelClient } from "./background-task-model.js";
 import type { TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
-import { runPostRunTasks } from "./post-run-tasks.js";
+import { runEvolveTasks } from "./evolve-tasks.js";
 import { collectWorkspaceFileManifest, detectWorkspaceFileOutputs, type WorkspaceFileManifest } from "./turn-output-capture.js";
 import { compactTurnSummary } from "./turn-result-summary.js";
 
@@ -656,9 +656,9 @@ export async function processClaimedInput(params: {
   record: SessionInputRecord;
   claimedBy?: string;
   memoryService?: MemoryServiceLike | null;
-  runPostRunTasksFn?: typeof runPostRunTasks;
+  runEvolveTasksFn?: typeof runEvolveTasks;
   wakeDurableMemoryWorker?: (() => void) | null;
-  onPostRunTaskError?: (taskName: string, error: unknown) => void;
+  onEvolveTaskError?: (taskName: string, error: unknown) => void;
   executeRunnerRequestFn?: typeof executeRunnerRequest;
   resolveProductRuntimeConfigFn?: typeof resolveProductRuntimeConfig;
   abortSignal?: AbortSignal;
@@ -1139,14 +1139,14 @@ export async function processClaimedInput(params: {
       });
       deferredTerminalEvent = null;
     }
-    await (params.runPostRunTasksFn ?? runPostRunTasks)({
+    await (params.runEvolveTasksFn ?? runEvolveTasks)({
       store,
       record,
       turnResult,
       memoryService: params.memoryService,
       modelContext: memoryWritebackModelContext,
       wakeDurableMemoryWorker: params.wakeDurableMemoryWorker ?? null,
-      onTaskError: params.onPostRunTaskError,
+      onTaskError: params.onEvolveTaskError,
     });
     maybeCreateCronjobCompletionNotification({
       store,
@@ -1193,14 +1193,14 @@ export async function processClaimedInput(params: {
       promptCacheProfile: null,
       tokenUsage: null,
     });
-    await (params.runPostRunTasksFn ?? runPostRunTasks)({
+    await (params.runEvolveTasksFn ?? runEvolveTasks)({
       store,
       record,
       turnResult,
       memoryService: params.memoryService,
       modelContext: memoryWritebackModelContext,
       wakeDurableMemoryWorker: params.wakeDurableMemoryWorker ?? null,
-      onTaskError: params.onPostRunTaskError,
+      onTaskError: params.onEvolveTaskError,
     });
     maybeCreateCronjobCompletionNotification({
       store,

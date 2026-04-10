@@ -1972,6 +1972,7 @@ test("cronjobs, task proposals, and session state routes preserve local payload 
     }
   });
   assert.equal(createdProposal.statusCode, 200);
+  assert.equal(createdProposal.json().proposal.proposal_source, "proactive");
 
   const listedProposals = await app.inject({
     method: "GET",
@@ -1993,6 +1994,7 @@ test("cronjobs, task proposals, and session state routes preserve local payload 
   assert.equal(unreviewed.json().count, 1);
   assert.equal(updatedProposal.statusCode, 200);
   assert.equal(updatedProposal.json().proposal.state, "accepted");
+  assert.equal(updatedProposal.json().proposal.proposal_source, "proactive");
 
   store.ensureSession({
     workspaceId: workspace.id,
@@ -3940,6 +3942,7 @@ test("accept task proposal creates a child session with queued work", async () =
   assert.equal(response.statusCode, 200);
   const body = response.json();
   assert.equal(body.proposal.state, "accepted");
+  assert.equal(body.proposal.proposal_source, "proactive");
   assert.equal(body.proposal.accepted_input_id, body.input.input_id);
   assert.equal(body.proposal.accepted_session_id, body.session.session_id);
   assert.equal(body.session.kind, "task_proposal");

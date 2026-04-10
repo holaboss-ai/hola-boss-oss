@@ -485,9 +485,9 @@ The current memory lifecycle is:
 
 This keeps replay, inspection, and durable recall separate instead of overloading one mechanism for all three jobs.
 
-#### Current Post-Run Writeback
+#### Current Evolve Phase
 
-The runtime now splits post-run writeback into two phases:
+The runtime now splits evolve into two phases:
 
 1. `write_turn_continuity`
    - runs inline after the foreground `turn_results` row is committed
@@ -531,7 +531,7 @@ The queued durable-memory phase currently performs:
 
 This split is intentional:
 
-- request snapshots are not post-run work; the runtime persists the turn request snapshot during bootstrap before the harness starts
+- request snapshots are not evolve work; the runtime persists the turn request snapshot during bootstrap before the harness starts
 - immediate continuity work stays cheap and close to the completed run so the next turn has a fresh restoration anchor
 - durable-memory promotion is now persisted in a queue, so it no longer depends on an in-process `setImmediate(...)` callback surviving until completion
 - durable-memory writeback still runs for both successful turns and executor-error terminal paths, because failed turns can still contain continuity and durable-memory signals worth preserving
@@ -733,7 +733,7 @@ Holaboss already provides model configuration in the desktop app.
 - Open `Settings` -> `Model Providers`.
 - Connect a provider such as OpenAI, Anthropic, OpenRouter, Gemini, or Ollama.
 - Enter your API key and use the built-in provider defaults or edit the model list for that provider.
-- Use the dedicated `Background tasks` panel to choose one connected provider and model for memory recall and post-run tasks.
+- Use the dedicated `Background tasks` panel to choose one connected provider and model for memory recall and evolve tasks.
 - When the first provider is connected, the desktop app automatically seeds background tasks to that provider and its built-in default background model. For `ollama_direct`, the provider can be selected but you must choose a model explicitly before background LLM tasks are enabled.
 - Changes autosave to `runtime-config.json`, and the chat model picker will use the configured provider models.
 
@@ -783,7 +783,7 @@ You can override that path with:
 - `providers.<id>.api_key`
   - direct provider credential for that configured provider
 - `runtime.background_tasks.provider`
-  - configured provider for durable memory recall and post-run tasks; for example `openai_direct` or `anthropic_direct`
+  - configured provider for durable memory recall and evolve tasks; for example `openai_direct` or `anthropic_direct`
 - `runtime.background_tasks.model`
   - model id used for that background provider, for example `gpt-5.4-mini` or `claude-sonnet-4-6`
 - `sandbox_id`

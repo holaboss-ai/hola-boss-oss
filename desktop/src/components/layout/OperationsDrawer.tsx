@@ -71,6 +71,10 @@ interface RunningSessionEntry {
 
 const RUNNING_SESSIONS_POLL_INTERVAL_MS = 1000;
 
+function proposalSourceLabel(source: TaskProposalRecordPayload["proposal_source"]): string {
+  return source === "evolve" ? "Evolve" : "Proactive";
+}
+
 export function OperationsDrawer({
   activeTab,
   onTabChange,
@@ -681,8 +685,13 @@ function InboxPanel({
                   className="gap-2 py-3 ring-border/40"
                 >
                   <div className="flex items-start justify-between gap-2 px-3">
-                    <div className="min-w-0 flex-1 text-sm font-medium text-foreground">
-                      {proposal.task_name}
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                        {proposalSourceLabel(proposal.proposal_source)}
+                      </div>
+                      <div className="text-sm font-medium text-foreground">
+                        {proposal.task_name}
+                      </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-0.5">
                       <Tooltip>
@@ -733,6 +742,9 @@ function InboxPanel({
                   </div>
                   <div className="line-clamp-2 px-3 text-xs leading-relaxed text-muted-foreground">
                     {proposal.task_prompt}
+                  </div>
+                  <div className="line-clamp-2 px-3 text-xs leading-relaxed text-muted-foreground/90">
+                    Why: {proposal.task_generation_rationale}
                   </div>
                   <div className="px-3 text-xs text-muted-foreground">
                     {relativeTime(proposal.created_at)}

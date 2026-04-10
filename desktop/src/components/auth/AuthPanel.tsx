@@ -1975,11 +1975,11 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       <div className="rounded-[18px] border border-border/40 bg-card/80 p-4">
         <div className="grid gap-3">
         <div className="text-sm font-medium text-foreground">Connected providers</div>
-        <div className="rounded-[14px] border border-border/35 bg-muted/25 p-3">
-          <div className="text-sm font-medium text-foreground">Background tasks</div>
-          <div className="mt-1 text-sm text-muted-foreground">
-            Used for memory recall and post-run tasks.
-          </div>
+            <div className="rounded-[14px] border border-border/35 bg-muted/25 p-3">
+              <div className="text-sm font-medium text-foreground">Background tasks</div>
+              <div className="mt-1 text-sm text-muted-foreground">
+                Used for memory recall and evolve tasks.
+              </div>
           <div className="mt-3 grid gap-2">
             <label className="grid gap-1">
               <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Provider</span>

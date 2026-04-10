@@ -369,6 +369,7 @@ export interface TaskProposalRecord {
   taskName: string;
   taskPrompt: string;
   taskGenerationRationale: string;
+  proposalSource: TaskProposalSource;
   sourceEventIds: string[];
   createdAt: string;
   state: string;
@@ -376,6 +377,8 @@ export interface TaskProposalRecord {
   acceptedInputId: string | null;
   acceptedAt: string | null;
 }
+
+export type TaskProposalSource = "proactive" | "evolve";
 
 export type MemoryUpdateProposalKind = "preference" | "identity" | "profile";
 export type MemoryUpdateProposalState = "pending" | "accepted" | "dismissed";
@@ -507,6 +510,15 @@ type WorkspaceRow = {
   updated_at: string | null;
   deleted_at_utc: string | null;
 };
+
+const TASK_PROPOSAL_SOURCES = new Set<TaskProposalSource>(["proactive", "evolve"]);
+
+function normalizeTaskProposalSource(value: string | null | undefined): TaskProposalSource {
+  if (!value) {
+    return "proactive";
+  }
+  return TASK_PROPOSAL_SOURCES.has(value as TaskProposalSource) ? (value as TaskProposalSource) : "proactive";
+}
 
 export function utcNowIso(): string {
   return new Date().toISOString();
@@ -3222,10 +3234,12 @@ export class RuntimeStateStore {
     taskName: string;
     taskPrompt: string;
     taskGenerationRationale: string;
+    proposalSource?: TaskProposalSource | string;
     sourceEventIds?: string[];
     createdAt: string;
     state?: string;
   }): TaskProposalRecord {
+    const proposalSource = normalizeTaskProposalSource(params.proposalSource);
     this.db()
       .prepare(`
         INSERT INTO task_proposals (
@@ -3234,13 +3248,14 @@ export class RuntimeStateStore {
             task_name,
             task_prompt,
             task_generation_rationale,
+            proposal_source,
             source_event_ids,
             created_at,
             state,
             accepted_session_id,
             accepted_input_id,
             accepted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
       `)
       .run(
         params.proposalId,
@@ -3248,6 +3263,7 @@ export class RuntimeStateStore {
         params.taskName,
         params.taskPrompt,
         params.taskGenerationRationale,
+        proposalSource,
         JSON.stringify(params.sourceEventIds ?? []),
         params.createdAt,
         params.state ?? "not_reviewed"
@@ -3745,6 +3761,7 @@ export class RuntimeStateStore {
           task_name TEXT NOT NULL,
           task_prompt TEXT NOT NULL,
           task_generation_rationale TEXT NOT NULL,
+          proposal_source TEXT NOT NULL DEFAULT 'proactive',
           source_event_ids TEXT NOT NULL DEFAULT '[]',
           created_at TEXT NOT NULL,
           state TEXT NOT NULL DEFAULT 'not_reviewed',
@@ -4175,6 +4192,10 @@ export class RuntimeStateStore {
     if (!columns.has("accepted_at")) {
       db.exec("ALTER TABLE task_proposals ADD COLUMN accepted_at TEXT;");
     }
+    if (!columns.has("proposal_source")) {
+      db.exec("ALTER TABLE task_proposals ADD COLUMN proposal_source TEXT NOT NULL DEFAULT 'proactive';");
+    }
+    db.exec("UPDATE task_proposals SET proposal_source = 'proactive' WHERE trim(coalesce(proposal_source, '')) = '';");
   }
 
   private ensureMemoryUpdateProposalsTableSchema(db: Database.Database): void {
@@ -5076,6 +5097,7 @@ export class RuntimeStateStore {
       taskName: String(row.task_name),
       taskPrompt: String(row.task_prompt),
       taskGenerationRationale: String(row.task_generation_rationale),
+      proposalSource: normalizeTaskProposalSource(row.proposal_source == null ? null : String(row.proposal_source)),
       sourceEventIds,
       createdAt: String(row.created_at),
       state: String(row.state),

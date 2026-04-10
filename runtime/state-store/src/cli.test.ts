@@ -264,6 +264,7 @@ test("handleRequest maps cronjobs and task proposals to snake_case payloads", ()
   assert.equal(job.instruction, "Say hello");
   assert.equal(updatedJob.description, "Updated check");
   assert.equal(updatedJob.instruction, "Say hello louder");
+  assert.equal(proposal.proposal_source, "proactive");
   assert.equal(proposal.source_event_ids instanceof Array, true);
   assert.equal(updatedProposal.state, "accepted");
 });

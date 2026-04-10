@@ -1808,6 +1808,7 @@ interface TaskProposalRecordPayload {
   task_name: string;
   task_prompt: string;
   task_generation_rationale: string;
+  proposal_source: "proactive" | "evolve";
   created_at: string;
   state: string;
   source_event_ids: string[];

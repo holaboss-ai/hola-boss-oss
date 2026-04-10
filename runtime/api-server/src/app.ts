@@ -37,8 +37,8 @@ import {
 } from "./queue-worker.js";
 import {
   type DurableMemoryWorkerLike,
-  RuntimePostRunDurableMemoryWorker,
-} from "./post-run-durable-memory-worker.js";
+  RuntimeEvolveWorker,
+} from "./evolve-worker.js";
 import {
   type CronWorkerLike,
   executeLocalCronjobDelivery,
@@ -173,7 +173,7 @@ function resolveDurableMemoryWorker(
   if (options.durableMemoryWorker !== undefined) {
     return options.durableMemoryWorker;
   }
-  return new RuntimePostRunDurableMemoryWorker({ store, logger: app.log, memoryService });
+  return new RuntimeEvolveWorker({ store, logger: app.log, memoryService });
 }
 
 function resolveCronWorker(
@@ -768,6 +768,7 @@ function taskProposalPayload(record: TaskProposalRecord): Record<string, unknown
     task_name: record.taskName,
     task_prompt: record.taskPrompt,
     task_generation_rationale: record.taskGenerationRationale,
+    proposal_source: record.proposalSource,
     source_event_ids: record.sourceEventIds,
     created_at: record.createdAt,
     state: record.state,
@@ -4667,6 +4668,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       taskName: requiredString(request.body.task_name, "task_name"),
       taskPrompt: requiredString(request.body.task_prompt, "task_prompt"),
       taskGenerationRationale: requiredString(request.body.task_generation_rationale, "task_generation_rationale"),
+      proposalSource: optionalString(request.body.proposal_source) ?? "proactive",
       sourceEventIds: optionalStringList(request.body.source_event_ids),
       createdAt: requiredString(request.body.created_at, "created_at"),
       state: optionalString(request.body.state) ?? "not_reviewed"
