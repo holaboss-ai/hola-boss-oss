@@ -338,7 +338,7 @@ export function SettingsDialog({
             ) : null}
 
             {activeSection === "about" ? (
-              <div className="grid max-w-[640px] gap-5">
+              <div className="grid max-w-[640px] gap-8">
                 <section>
                   <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
                     Links
@@ -376,23 +376,21 @@ export function SettingsDialog({
                     a snapshot of <code>runtime.db</code>, and a
                     redacted runtime config. No upload happens automatically.
                   </p>
-                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <div className="mt-3">
                     <Button
                       type="button"
                       variant="outline"
+                      size="sm"
                       onClick={() => void handleExportDiagnosticsBundle()}
                       disabled={diagnosticsExportState.status === "exporting"}
                     >
                       {diagnosticsExportState.status === "exporting" ? (
-                        <Loader2 className="size-4 animate-spin" />
+                        <Loader2 className="size-3.5 animate-spin" />
                       ) : (
-                        <FileArchive className="size-4" />
+                        <FileArchive className="size-3.5" />
                       )}
                       Export Bundle
                     </Button>
-                    <span className="text-xs text-muted-foreground/70">
-                      Saves to Downloads as a zip.
-                    </span>
                   </div>
                   {diagnosticsExportState.message ? (
                     <div
