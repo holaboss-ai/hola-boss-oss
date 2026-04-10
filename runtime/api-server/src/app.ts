@@ -3575,13 +3575,29 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
       // Detect pre-built archives: if .output/server/index.mjs exists, the app
       // is already compiled and the setup command (which typically runs pnpm install
-      // + build) must be skipped. Override to "true" so ensureAppRunning marks
-      // setup as completed without running the source-build pipeline.
+      // + build) must be skipped. Patch app.runtime.yaml ON DISK so that
+      // ensureAppRunning (which reads the file directly, not workspace.yaml)
+      // sees setup: "true" instead of the source-build pipeline.
       const isPrebuilt = fs.existsSync(path.join(appDir, ".output", "server", "index.mjs"));
-      const lifecycle: Record<string, string> = {};
-      if (parsed.lifecycle.setup) {
-        lifecycle.setup = isPrebuilt ? "true" : parsed.lifecycle.setup;
+      if (isPrebuilt && parsed.lifecycle.setup && parsed.lifecycle.setup !== "true") {
+        try {
+          const yamlContent = fs.readFileSync(appYamlPath, "utf8");
+          // Replace the setup line in-place. Matches both quoted and unquoted YAML values.
+          const patched = yamlContent.replace(
+            /^(\s*setup:\s*).*$/m,
+            '$1"true"',
+          );
+          if (patched !== yamlContent) {
+            fs.writeFileSync(appYamlPath, patched, "utf8");
+            parsed = parseInstalledAppRuntime(patched, appId, `apps/${appId}/app.runtime.yaml`);
+          }
+        } catch {
+          // Best effort — if patching fails, continue with original lifecycle
+        }
       }
+
+      const lifecycle: Record<string, string> = {};
+      if (parsed.lifecycle.setup) lifecycle.setup = parsed.lifecycle.setup;
       if (parsed.lifecycle.start) lifecycle.start = parsed.lifecycle.start;
       if (parsed.lifecycle.stop) lifecycle.stop = parsed.lifecycle.stop;
       appendWorkspaceApplication(workspaceDir, {
