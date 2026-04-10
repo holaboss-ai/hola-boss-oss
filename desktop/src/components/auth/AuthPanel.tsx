@@ -1200,8 +1200,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       <div className="flex size-8 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-primary">
         <Loader2 size={18} className="animate-spin" />
       </div>
-      <div className="text-base font-medium text-foreground">
-        {isExchangingRuntimeBinding ? "Refreshing desktop connection..." : "Connecting your Holaboss account..."}
+      <div className="text-sm font-medium text-foreground">
+        {isExchangingRuntimeBinding ? "Refreshing desktop connection..." : "Connecting your account..."}
       </div>
       <div className="max-w-[520px] text-sm leading-6 text-muted-foreground">
         Finalizing your desktop session and runtime binding. This should only take a moment.
@@ -2231,16 +2231,16 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         <div className="grid gap-4">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div className="flex min-w-0 items-center gap-4">
-              <div className="grid h-16 w-16 shrink-0 place-items-center rounded-full border border-border/30 bg-muted/70 text-2xl font-semibold text-foreground">
+              <div className="grid h-12 w-12 shrink-0 place-items-center rounded-full border border-border/30 bg-muted/70 text-lg font-semibold text-foreground">
                 {sessionInitials(session)}
               </div>
               <div className="min-w-0">
-                <div className="truncate text-[28px] font-semibold tracking-[-0.04em] text-foreground">
+                <div className="truncate text-lg font-semibold text-foreground">
                   {isSignedIn
-                    ? sessionDisplayName(session) || "Holaboss account"
-                    : "Holaboss account"}
+                    ? sessionDisplayName(session) || "Your account"
+                    : "Your account"}
                 </div>
-                <div className="mt-1 truncate text-base text-muted-foreground">
+                <div className="mt-1 truncate text-sm text-muted-foreground">
                   {isSignedIn ? sessionEmail(session) || "Signed in" : "Not connected"}
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -2251,12 +2251,12 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                     <span>{statusBadgeLabel}</span>
                   </div>
                   <div className="inline-flex items-center gap-1.5 rounded-full border border-border/40 bg-muted/40 px-3 py-1 text-[11px] font-medium text-muted-foreground">
-                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary/70" />
+                    <span className={`inline-block h-1.5 w-1.5 rounded-full ${runtimeBindingReady ? "bg-neon-green" : isSignedIn ? "bg-amber-400" : "bg-muted-foreground/50"}`} />
                     <span>
                       {runtimeBindingReady
-                        ? "Runtime ready on this desktop"
+                        ? "Runtime ready"
                         : isSignedIn
-                          ? "Runtime setup in progress"
+                          ? "Setting up runtime"
                           : "Runtime unavailable"}
                     </span>
                   </div>
@@ -2368,8 +2368,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   {sessionInitials(session)}
                 </div>
                 <div className="min-w-0">
-                  <div className="text-base font-medium text-foreground">
-                    {isSignedIn ? sessionDisplayName(session) || "Holaboss account" : "Holaboss account"}
+                  <div className="text-sm font-medium text-foreground">
+                    {isSignedIn ? sessionDisplayName(session) || "Your account" : "Your account"}
                   </div>
                   <div className="mt-0.5 truncate text-sm text-muted-foreground">
                     {isSignedIn ? sessionEmail(session) || "Signed in" : "Not connected"}
