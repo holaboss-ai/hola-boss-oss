@@ -265,38 +265,34 @@ function ProactiveScheduleEditor({
   };
 
   return (
-    <div className="border-t border-border/40 px-3 py-3">
+    <div>
       <Button
         variant="ghost"
+        size="sm"
         aria-expanded={drawerOpen}
         onClick={() => setDrawerOpen((current) => !current)}
-        className="flex h-auto w-full items-center justify-between gap-3 rounded-lg px-1 py-1 text-left"
+        className="w-full justify-between gap-2 text-muted-foreground"
       >
-        <div className="min-w-0">
-          <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-            Schedule
-          </div>
-          <div className="mt-1 text-[11px] leading-5 text-muted-foreground/82">
+        <span className="flex items-center gap-1.5">
+          <span className="text-xs">Schedule</span>
+          <span className="text-xs text-muted-foreground/60">
             {scheduleSummaryLabel(currentSchedule)}
-          </div>
-        </div>
+          </span>
+        </span>
         <ChevronDown
-          size={14}
-          className={`shrink-0 text-muted-foreground transition-transform ${
+          size={12}
+          className={`shrink-0 transition-transform ${
             drawerOpen ? "rotate-180" : ""
           }`}
         />
       </Button>
       {drawerOpen ? (
-        <div className="mt-3 rounded-lg border border-border/35 bg-background/55 px-3 py-3">
-          <div className="text-[11px] leading-5 text-muted-foreground/82">
-            Server schedule for this desktop instance.
-          </div>
+        <div className="mt-1 px-2 pb-1">
           <div
             className={
               compact
-                ? "mt-2 grid gap-2"
-                : "mt-2 flex flex-wrap items-center gap-2"
+                ? "grid gap-2"
+                : "flex flex-wrap items-center gap-2"
             }
           >
             <div className="flex min-w-0 items-center gap-2">
