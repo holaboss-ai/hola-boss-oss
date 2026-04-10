@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { ChevronDown, Loader2, Sparkles } from "lucide-react";
 import {
   Select,
@@ -475,24 +476,15 @@ export function ProactiveLifecyclePanel({
           </div>
           <div className="flex shrink-0 items-center gap-1">
             {onProactiveWorkspaceEnabledChange ? (
-              <Button
-                type="button"
-                size="xs"
-                variant={proactiveWorkspaceEnabled ? "outline" : "ghost"}
-                onClick={() =>
-                  !isUpdatingProactiveWorkspaceEnabled &&
-                  onProactiveWorkspaceEnabledChange(!proactiveWorkspaceEnabled)
-                }
-                disabled={isUpdatingProactiveWorkspaceEnabled || !hasWorkspace}
-                className={proactiveWorkspaceEnabled ? "border-success/30 text-success" : "text-muted-foreground"}
-              >
-                {isUpdatingProactiveWorkspaceEnabled ? (
-                  <Loader2 size={11} className="animate-spin" />
-                ) : (
-                  <span className={`inline-block size-1.5 rounded-full bg-current`} />
-                )}
-                {proactiveWorkspaceEnabled ? "Enabled" : "Disabled"}
-              </Button>
+              isUpdatingProactiveWorkspaceEnabled ? (
+                <Loader2 size={12} className="animate-spin text-muted-foreground" />
+              ) : (
+                <Switch
+                  checked={proactiveWorkspaceEnabled}
+                  onCheckedChange={(checked) => onProactiveWorkspaceEnabledChange(checked)}
+                  disabled={isUpdatingProactiveWorkspaceEnabled || !hasWorkspace}
+                />
+              )
             ) : null}
             {onTriggerProposal ? (
               <Tooltip>
@@ -559,36 +551,15 @@ export function ProactiveLifecyclePanel({
             </Badge>
             <div className="flex items-center gap-1.5">
               {onProactiveWorkspaceEnabledChange ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className={`h-8 rounded-full px-3 text-[11px] font-medium ${proactiveToggleClasses(
-                    proactiveWorkspaceEnabled,
-                  )}`}
-                  onClick={() =>
-                    !isUpdatingProactiveWorkspaceEnabled &&
-                    onProactiveWorkspaceEnabledChange(
-                      !proactiveWorkspaceEnabled,
-                    )
-                  }
-                  disabled={
-                    isUpdatingProactiveWorkspaceEnabled || !hasWorkspace
-                  }
-                >
-                  {isUpdatingProactiveWorkspaceEnabled ? (
-                    <Loader2 size={12} className="animate-spin" />
-                  ) : (
-                    <span
-                      className={`inline-block size-1.5 rounded-full ${proactiveToggleDotClasses(
-                        proactiveWorkspaceEnabled,
-                      )}`}
-                    />
-                  )}
-                  <span>
-                    {proactiveWorkspaceEnabled ? "Enabled" : "Disabled"}
-                  </span>
-                </Button>
+                isUpdatingProactiveWorkspaceEnabled ? (
+                  <Loader2 size={12} className="animate-spin text-muted-foreground" />
+                ) : (
+                  <Switch
+                    checked={proactiveWorkspaceEnabled}
+                    onCheckedChange={(checked) => onProactiveWorkspaceEnabledChange(checked)}
+                    disabled={isUpdatingProactiveWorkspaceEnabled || !hasWorkspace}
+                  />
+                )
               ) : null}
               {onTriggerProposal ? (
                 <Tooltip>
