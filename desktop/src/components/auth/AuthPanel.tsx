@@ -1979,10 +1979,10 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         )}
       </div>
 
-      {/* Defaults section */}
-      <div className="mt-4 border-t border-border/30 pt-4">
+      {/* Task configuration — which provider+model handles each task type */}
+      <div className="mt-5 border-t border-border/30 pt-5">
         <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
-          Defaults
+          Task Configuration
         </div>
 
         <div className="mt-3 grid gap-4">
