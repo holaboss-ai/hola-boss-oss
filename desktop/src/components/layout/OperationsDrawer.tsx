@@ -183,7 +183,7 @@ export function OperationsDrawer({
   }, [activeTab, mainSessionId, selectedWorkspaceId]);
 
   return (
-    <aside className="theme-shell neon-border relative flex h-full min-h-0 min-w-[360px] max-w-[420px] flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
+    <aside className="theme-shell neon-border relative flex h-full min-h-0 min-w-[360px] max-w-[420px] flex-col overflow-hidden rounded-xl shadow-lg">
       <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border/40 px-3 py-2">
         <div className="flex items-center gap-1.5">
           <DrawerTabButton

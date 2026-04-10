@@ -1,10 +1,10 @@
-import { useState } from "react";
-import { Loader2 } from "lucide-react";
-import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
-import { MarketplaceGallery } from "@/components/marketplace/MarketplaceGallery";
+import { AppsGallery } from "@/components/marketplace/AppsGallery";
 import { KitDetail } from "@/components/marketplace/KitDetail";
 import { KitEmoji } from "@/components/marketplace/KitEmoji";
-import { AppsGallery } from "@/components/marketplace/AppsGallery";
+import { MarketplaceGallery } from "@/components/marketplace/MarketplaceGallery";
+import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
+import { Loader2 } from "lucide-react";
+import { useState } from "react";
 
 type View = "gallery" | "detail" | "creating" | "connect_integrations";
 
@@ -13,7 +13,7 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   github: "GitHub",
   reddit: "Reddit",
   twitter: "Twitter / X",
-  linkedin: "LinkedIn"
+  linkedin: "LinkedIn",
 };
 
 function providerDisplayName(provider: string): string {
@@ -37,13 +37,18 @@ export function MarketplacePane() {
     pendingIntegrations,
     isResolvingIntegrations,
     resolveIntegrationsBeforeCreate,
-    clearPendingIntegrations
+    clearPendingIntegrations,
   } = useWorkspaceDesktop();
 
-  const [marketplaceTab, setMarketplaceTab] = useState<"templates" | "apps">("templates");
+  const [marketplaceTab, setMarketplaceTab] = useState<"templates" | "apps">(
+    "templates",
+  );
   const [view, setView] = useState<View>("gallery");
-  const [detailTemplate, setDetailTemplate] = useState<TemplateMetadataPayload | null>(null);
-  const [connectingProvider, setConnectingProvider] = useState<string | null>(null);
+  const [detailTemplate, setDetailTemplate] =
+    useState<TemplateMetadataPayload | null>(null);
+  const [connectingProvider, setConnectingProvider] = useState<string | null>(
+    null,
+  );
   const [connectStatus, setConnectStatus] = useState("");
 
   function handleSelectKit(template: TemplateMetadataPayload) {
@@ -78,20 +83,22 @@ export function MarketplacePane() {
 
       const link = await window.electronAPI.workspace.composioConnect({
         provider,
-        owner_user_id: userId
+        owner_user_id: userId,
       });
 
       await window.electronAPI.ui.openExternalUrl(link.redirect_url);
 
       for (let i = 0; i < 100; i++) {
         await new Promise((r) => setTimeout(r, 3000));
-        const status = await window.electronAPI.workspace.composioAccountStatus(link.connected_account_id);
+        const status = await window.electronAPI.workspace.composioAccountStatus(
+          link.connected_account_id,
+        );
         if (status.status === "ACTIVE") {
           await window.electronAPI.workspace.composioFinalize({
             connected_account_id: link.connected_account_id,
             provider,
             owner_user_id: userId,
-            account_label: `${provider} (Managed)`
+            account_label: `${provider} (Managed)`,
           });
           setConnectStatus("");
           setConnectingProvider(null);
@@ -114,7 +121,7 @@ export function MarketplacePane() {
   }
 
   return (
-    <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--radius-xl)] bg-background">
+    <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-muted/50 border border-border">
       <div className="flex items-center gap-1 border-b border-border px-4 pt-3 pb-0">
         <button
           type="button"
@@ -149,7 +156,6 @@ export function MarketplacePane() {
       </div>
       <div className="relative min-h-0 flex-1 overflow-auto p-4">
         <div className="mx-auto max-w-5xl">
-
           {marketplaceTab === "templates" ? (
             <>
               {view === "gallery" ? (
@@ -185,7 +191,10 @@ export function MarketplacePane() {
                   {isCreatingWorkspace ? (
                     <div className="flex flex-1 items-center justify-center">
                       <div className="text-center">
-                        <Loader2 size={18} className="mx-auto animate-spin text-muted-foreground/60" />
+                        <Loader2
+                          size={18}
+                          className="mx-auto animate-spin text-muted-foreground/60"
+                        />
                         <div className="mt-3 text-[13px] font-medium text-foreground">
                           Creating workspace...
                         </div>
@@ -204,8 +213,14 @@ export function MarketplacePane() {
                         <div className="mt-4 flex items-center gap-3 rounded-[14px] border border-border/35 bg-muted px-3 py-2.5">
                           <KitEmoji emoji={detailTemplate.emoji} size={28} />
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-[13px] font-medium text-foreground">{detailTemplate.name}</div>
-                            <div className="truncate text-[11px] text-muted-foreground/72">{detailTemplate.apps.map((a) => a.name).join(", ")}</div>
+                            <div className="truncate text-[13px] font-medium text-foreground">
+                              {detailTemplate.name}
+                            </div>
+                            <div className="truncate text-[11px] text-muted-foreground/72">
+                              {detailTemplate.apps
+                                .map((a) => a.name)
+                                .join(", ")}
+                            </div>
                           </div>
                           <button
                             type="button"
@@ -224,7 +239,9 @@ export function MarketplacePane() {
                           </span>
                           <input
                             value={newWorkspaceName}
-                            onChange={(e) => setNewWorkspaceName(e.target.value)}
+                            onChange={(e) =>
+                              setNewWorkspaceName(e.target.value)
+                            }
                             placeholder="My workspace"
                             className="theme-control-surface h-12 rounded-[18px] border border-border/45 px-4 text-[14px] text-foreground outline-none placeholder:text-muted-foreground/50"
                           />
@@ -239,11 +256,15 @@ export function MarketplacePane() {
 
                       <button
                         type="button"
-                        disabled={!newWorkspaceName.trim() || isResolvingIntegrations}
+                        disabled={
+                          !newWorkspaceName.trim() || isResolvingIntegrations
+                        }
                         onClick={handleCreate}
                         className="mt-5 w-full rounded-[18px] border border-[rgba(247,90,84,0.38)] bg-[rgba(247,90,84,0.9)] px-6 py-3 text-[14px] font-medium text-white transition-colors hover:bg-[rgba(247,90,84,1)] disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {isResolvingIntegrations ? "Checking integrations..." : "Create workspace"}
+                        {isResolvingIntegrations
+                          ? "Checking integrations..."
+                          : "Create workspace"}
                       </button>
                     </div>
                   )}
@@ -252,38 +273,65 @@ export function MarketplacePane() {
                 <div className="flex h-full min-h-0 flex-col">
                   <button
                     type="button"
-                    onClick={() => { clearPendingIntegrations(); setView("creating"); }}
+                    onClick={() => {
+                      clearPendingIntegrations();
+                      setView("creating");
+                    }}
                     className="mb-4 self-start text-[12px] text-muted-foreground/76 underline transition-colors hover:text-foreground"
                   >
                     &larr; Back
                   </button>
                   <div className="mx-auto w-full max-w-md">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/72">Connect integrations</div>
-                    <div className="mt-1 text-[20px] font-semibold tracking-[-0.03em] text-foreground">This workspace needs access</div>
-                    <div className="mt-2 text-[13px] leading-7 text-muted-foreground/84">Connect the following accounts to continue.</div>
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/72">
+                      Connect integrations
+                    </div>
+                    <div className="mt-1 text-[20px] font-semibold tracking-[-0.03em] text-foreground">
+                      This workspace needs access
+                    </div>
+                    <div className="mt-2 text-[13px] leading-7 text-muted-foreground/84">
+                      Connect the following accounts to continue.
+                    </div>
                     <div className="mt-4 grid gap-3">
                       {pendingIntegrations.missing_providers.map((provider) => (
-                        <div key={provider} className="flex items-center justify-between rounded-[14px] border border-border/35 bg-muted px-4 py-3">
-                          <div className="text-[13px] font-medium text-foreground">{providerDisplayName(provider)}</div>
+                        <div
+                          key={provider}
+                          className="flex items-center justify-between rounded-[14px] border border-border/35 bg-muted px-4 py-3"
+                        >
+                          <div className="text-[13px] font-medium text-foreground">
+                            {providerDisplayName(provider)}
+                          </div>
                           <button
                             type="button"
                             disabled={connectingProvider !== null}
                             onClick={() => void handleConnectProvider(provider)}
                             className="rounded-[12px] border border-primary/35 bg-primary/8 px-3 py-1.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/14 disabled:opacity-50"
                           >
-                            {connectingProvider === provider ? "Connecting..." : "Connect"}
+                            {connectingProvider === provider
+                              ? "Connecting..."
+                              : "Connect"}
                           </button>
                         </div>
                       ))}
-                      {pendingIntegrations.connected_providers.map((provider) => (
-                        <div key={provider} className="flex items-center justify-between rounded-[14px] border border-primary/20 bg-primary/4 px-4 py-3">
-                          <div className="text-[13px] font-medium text-foreground">{providerDisplayName(provider)}</div>
-                          <span className="text-[11px] text-primary">Connected</span>
-                        </div>
-                      ))}
+                      {pendingIntegrations.connected_providers.map(
+                        (provider) => (
+                          <div
+                            key={provider}
+                            className="flex items-center justify-between rounded-[14px] border border-primary/20 bg-primary/4 px-4 py-3"
+                          >
+                            <div className="text-[13px] font-medium text-foreground">
+                              {providerDisplayName(provider)}
+                            </div>
+                            <span className="text-[11px] text-primary">
+                              Connected
+                            </span>
+                          </div>
+                        ),
+                      )}
                     </div>
                     {connectStatus ? (
-                      <div className="mt-3 text-[12px] text-muted-foreground">{connectStatus}</div>
+                      <div className="mt-3 text-[12px] text-muted-foreground">
+                        {connectStatus}
+                      </div>
                     ) : null}
                   </div>
                 </div>

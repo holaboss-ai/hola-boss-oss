@@ -1,11 +1,11 @@
 import {
-    LeftNavigationRail,
-    type LeftRailItem,
+  LeftNavigationRail,
+  type LeftRailItem,
 } from "@/components/layout/LeftNavigationRail";
 import { NotificationToastStack } from "@/components/layout/NotificationToastStack";
 import {
-    OperationsDrawer,
-    type OperationsDrawerTab,
+  OperationsDrawer,
+  type OperationsDrawerTab,
 } from "@/components/layout/OperationsDrawer";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
@@ -17,8 +17,8 @@ import { AutomationsPane } from "@/components/panes/AutomationsPane";
 import { BrowserPane } from "@/components/panes/BrowserPane";
 import { ChatPane } from "@/components/panes/ChatPane";
 import {
-    FileExplorerPane,
-    type FileExplorerFocusRequest,
+  FileExplorerPane,
+  type FileExplorerFocusRequest,
 } from "@/components/panes/FileExplorerPane";
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { MarketplacePane } from "@/components/panes/MarketplacePane";
@@ -29,30 +29,30 @@ import { UpdateReminder } from "@/components/ui/UpdateReminder";
 import { DesktopBillingProvider } from "@/lib/billing/useDesktopBilling";
 import { getWorkspaceAppDefinition } from "@/lib/workspaceApps";
 import {
-    useWorkspaceDesktop,
-    WorkspaceDesktopProvider,
+  useWorkspaceDesktop,
+  WorkspaceDesktopProvider,
 } from "@/lib/workspaceDesktop";
 import {
-    useWorkspaceSelection,
-    WorkspaceSelectionProvider,
+  useWorkspaceSelection,
+  WorkspaceSelectionProvider,
 } from "@/lib/workspaceSelection";
 import {
-    CircleCheck,
-    Clock3,
-    Inbox as InboxIcon,
-    Loader2,
-    PanelRightClose,
-    PanelRightOpen,
-    TriangleAlert,
-    XCircle,
+  CircleCheck,
+  Clock3,
+  Inbox as InboxIcon,
+  Loader2,
+  PanelRightClose,
+  PanelRightOpen,
+  TriangleAlert,
+  XCircle,
 } from "lucide-react";
 import {
-    useCallback,
-    useEffect,
-    useMemo,
-    useRef,
-    useState,
-    type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 
 const THEME_STORAGE_KEY = "holaboss-theme-v1";
@@ -174,7 +174,9 @@ type WorkspaceOutputNavigationTarget =
       htmlContent?: string | null;
     };
 
-function notificationPriorityRank(priority: RuntimeNotificationPriority): number {
+function notificationPriorityRank(
+  priority: RuntimeNotificationPriority,
+): number {
   if (priority === "critical") {
     return 3;
   }
@@ -223,9 +225,7 @@ function appUpdateReleaseLabel(status: AppUpdateStatusPayload): string {
   return status.latestVersion || "latest";
 }
 
-function appUpdateChangelogUrl(
-  status: AppUpdateStatusPayload,
-): string | null {
+function appUpdateChangelogUrl(status: AppUpdateStatusPayload): string | null {
   const version = status.latestVersion?.trim();
   if (!version) {
     return null;
@@ -625,7 +625,7 @@ function FocusPlaceholder({
   description: string;
 }) {
   return (
-    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
+    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-xl shadow-lg">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(87,255,173,0.08),transparent_45%)]" />
       <div className="relative max-w-[520px] px-8 text-center">
         <div className="text-[10px] uppercase tracking-[0.18em] text-primary/78">
@@ -644,7 +644,7 @@ function FocusPlaceholder({
 
 function WorkspaceStartupErrorPane({ message }: { message: string }) {
   return (
-    <section className="theme-shell relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
+    <section className="theme-shell relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-xl shadow-lg">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(247,90,84,0.12),transparent_32%),radial-gradient(circle_at_bottom,rgba(247,170,126,0.08),transparent_36%)]" />
       <div className="relative w-full max-w-[720px] px-6 py-8">
         <div className="theme-subtle-surface rounded-[30px] border border-[rgba(247,90,84,0.24)] p-6 shadow-lg sm:p-8">
@@ -800,7 +800,10 @@ function AppShellContent() {
   spaceVisibilityRef.current = spaceVisibility;
 
   const appUpdateNotification = useMemo(() => {
-    if (!appUpdateStatus || (!appUpdateStatus.available && !appUpdateStatus.downloaded)) {
+    if (
+      !appUpdateStatus ||
+      (!appUpdateStatus.available && !appUpdateStatus.downloaded)
+    ) {
       return null;
     }
     const notificationId = appUpdateNotificationId(appUpdateStatus);
@@ -818,9 +821,9 @@ function AppShellContent() {
     for (const notification of notifications) {
       activeNotificationIds.add(notification.id);
     }
-    const syntheticHistory = Object.values(dismissedSyntheticNotifications).filter(
-      (notification) => !activeNotificationIds.has(notification.id),
-    );
+    const syntheticHistory = Object.values(
+      dismissedSyntheticNotifications,
+    ).filter((notification) => !activeNotificationIds.has(notification.id));
     const items = appUpdateNotification
       ? [appUpdateNotification, ...notifications, ...syntheticHistory]
       : [...notifications, ...syntheticHistory];
@@ -829,12 +832,18 @@ function AppShellContent() {
 
   const notificationById = useMemo(
     () =>
-      new Map(combinedNotifications.map((notification) => [notification.id, notification])),
+      new Map(
+        combinedNotifications.map((notification) => [
+          notification.id,
+          notification,
+        ]),
+      ),
     [combinedNotifications],
   );
 
   const notificationUnreadCount = useMemo(
-    () => combinedNotifications.filter((item) => item.state === "unread").length,
+    () =>
+      combinedNotifications.filter((item) => item.state === "unread").length,
     [combinedNotifications],
   );
 
@@ -1203,7 +1212,10 @@ function AppShellContent() {
       const next = current.filter((item) => activeNotificationIds.has(item.id));
       return next.length === current.length ? current : next;
     });
-    for (const [notificationId, timeoutId] of notificationToastTimeoutsRef.current.entries()) {
+    for (const [
+      notificationId,
+      timeoutId,
+    ] of notificationToastTimeoutsRef.current.entries()) {
       if (activeNotificationIds.has(notificationId)) {
         continue;
       }
@@ -1349,7 +1361,9 @@ function AppShellContent() {
           }),
         ),
         ...appUpdateNotifications.map((notification) =>
-          window.electronAPI.appUpdate.dismiss(notificationReleaseTag(notification)),
+          window.electronAPI.appUpdate.dismiss(
+            notificationReleaseTag(notification),
+          ),
         ),
       ]);
       if (runtimeNotificationIds.length > 0) {
@@ -1903,11 +1917,14 @@ function AppShellContent() {
     setChatFocusRequestKey((current) => current + 1);
   }, [selectedWorkspace?.main_session_id]);
 
-  const handleChatComposerPrefillConsumed = useCallback((requestKey: number) => {
-    setChatComposerPrefillRequest((current) =>
-      current?.requestKey === requestKey ? null : current,
-    );
-  }, []);
+  const handleChatComposerPrefillConsumed = useCallback(
+    (requestKey: number) => {
+      setChatComposerPrefillRequest((current) =>
+        current?.requestKey === requestKey ? null : current,
+      );
+    },
+    [],
+  );
 
   const handleOpenWorkspaceOutput = useCallback(
     (output: WorkspaceOutputRecordPayload) => {
@@ -2013,7 +2030,8 @@ function AppShellContent() {
   const showOperationsDrawer =
     spaceMode && spaceVisibility.agent && operationsDrawerOpen;
   const shouldShowAppUpdateReminder = Boolean(
-    appUpdateStatus && (appUpdateStatus.available || appUpdateStatus.downloaded),
+    appUpdateStatus &&
+    (appUpdateStatus.available || appUpdateStatus.downloaded),
   );
   const appVersionLabel = appUpdateStatus?.currentVersion?.trim() || "";
   const shouldSuspendBrowserNativeView =
@@ -2425,7 +2443,7 @@ function AppShellContent() {
                             return (
                               <div key={pane.id} className="contents">
                                 <div
-                                  className={`relative min-h-0 min-w-0 overflow-hidden rounded-[var(--radius-xl)] ${pane.flex ? "flex-1" : "shrink-0"}`}
+                                  className={`relative min-h-0 min-w-0 overflow-hidden ${pane.flex ? "flex-1" : "shrink-0"}`}
                                   style={
                                     pane.flex
                                       ? undefined
@@ -2447,18 +2465,15 @@ function AppShellContent() {
                                         event,
                                       )
                                     }
-                                    className="group relative z-10 flex w-4 shrink-0 cursor-col-resize touch-none items-center justify-center"
-                                  >
-                                    <div className="pointer-events-none absolute inset-y-2 left-1/2 w-px -translate-x-1/2 rounded-full bg-border/55 transition-all duration-150 group-hover:w-[2px] group-hover:bg-[rgba(247,90,84,0.5)]" />
-                                    <div className="pointer-events-none absolute left-1/2 top-1/2 h-14 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[rgba(247,90,84,0.08)] opacity-0 transition duration-150 group-hover:opacity-100" />
-                                  </div>
+                                    className="w-1 shrink-0 cursor-col-resize touch-none bg-transparent"
+                                  />
                                 ) : null}
                               </div>
                             );
                           })}
                         </div>
                       ) : (
-                        <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-[var(--radius-xl)] border border-border/45 shadow-lg">
+                        <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-xl border border-border/45 shadow-lg">
                           <div className="max-w-[360px] px-6 text-center">
                             <div className="text-[22px] font-medium tracking-[-0.03em] text-foreground">
                               Turn on a space surface
@@ -2473,7 +2488,7 @@ function AppShellContent() {
                     </div>
                   </div>
                 ) : activeLeftRailItem === "app" ? (
-                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
+                  <div className="h-full min-h-0 overflow-hidden rounded-xl">
                     {agentView.type === "app" ? (
                       <AppSurfacePane
                         appId={agentView.appId}
@@ -2489,7 +2504,7 @@ function AppShellContent() {
                         view={agentView.view}
                       />
                     ) : (
-                      <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-[var(--radius-xl)] border border-border/45 shadow-lg">
+                      <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-xl border border-border/45 shadow-lg">
                         <div className="max-w-[360px] px-6 text-center">
                           <div className="text-[22px] font-medium tracking-[-0.03em] text-foreground">
                             Choose an app
@@ -2503,18 +2518,18 @@ function AppShellContent() {
                     )}
                   </div>
                 ) : activeLeftRailItem === "automations" ? (
-                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
+                  <div className="h-full min-h-0 overflow-hidden rounded-xl">
                     <AutomationsPane
                       onOpenRunSession={handleOpenAutomationRunSession}
                       onCreateSchedule={handleCreateScheduleInChat}
                     />
                   </div>
                 ) : activeLeftRailItem === "marketplace" ? (
-                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
+                  <div className="h-full min-h-0 overflow-hidden rounded-xl">
                     <MarketplacePane />
                   </div>
                 ) : (
-                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
+                  <div className="h-full min-h-0 overflow-hidden rounded-xl">
                     <SkillsPane />
                   </div>
                 )}
