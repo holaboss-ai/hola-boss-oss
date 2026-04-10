@@ -1,4 +1,4 @@
-import { CircleHelp } from "lucide-react";
+import { CircleHelp, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -16,6 +16,7 @@ interface BillingSummaryCardProps {
   links: DesktopBillingLinksPayload | null;
   isLoading?: boolean;
   error?: Error | null;
+  onRefresh?: () => void;
 }
 
 const CREDITS_HELP_ITEMS = [
@@ -58,6 +59,7 @@ export function BillingSummaryCard({
   links,
   isLoading = false,
   error = null,
+  onRefresh,
 }: BillingSummaryCardProps) {
   const hasOverview = Boolean(overview);
   const creditsValue = isLoading
@@ -84,23 +86,36 @@ export function BillingSummaryCard({
           ) : null}
         </div>
 
-        {!isLoading ? (
-          <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1">
+          {onRefresh ? (
             <Button
               variant="ghost"
-              size="sm"
-              onClick={() => openBillingLink(links?.billingPageUrl)}
+              size="icon-sm"
+              aria-label="Refresh billing"
+              onClick={onRefresh}
+              disabled={isLoading}
             >
-              Manage
+              <RefreshCw size={13} className={isLoading ? "animate-spin" : ""} />
             </Button>
-            <Button
-              size="sm"
-              onClick={() => openBillingLink(links?.addCreditsUrl)}
-            >
-              Add credits
-            </Button>
-          </div>
-        ) : null}
+          ) : null}
+          {!isLoading ? (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => openBillingLink(links?.billingPageUrl)}
+              >
+                Manage
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => openBillingLink(links?.addCreditsUrl)}
+              >
+                Add credits
+              </Button>
+            </>
+          ) : null}
+        </div>
       </div>
 
       {/* Error state */}

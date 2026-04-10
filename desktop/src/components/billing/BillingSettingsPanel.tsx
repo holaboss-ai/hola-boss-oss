@@ -1,4 +1,4 @@
-import { AlertCircle, Loader2, RefreshCw } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { BillingSummaryCard } from "@/components/billing/BillingSummaryCard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -35,30 +35,6 @@ export function BillingSettingsPanel() {
 
   return (
     <div className="grid max-w-[760px] gap-4">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="text-sm font-semibold text-foreground">Billing</div>
-          <div className="text-sm text-muted-foreground">
-            Hosted credits and managed usage for this desktop account.
-          </div>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            void refresh();
-          }}
-          disabled={isLoading}
-        >
-          {isLoading ? (
-            <Loader2 size={14} className="animate-spin" />
-          ) : (
-            <RefreshCw size={14} />
-          )}
-          {isLoading ? "Refreshing..." : "Refresh"}
-        </Button>
-      </div>
 
       {showExpirationBanner ? (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-400/25 bg-amber-400/10 px-4 py-3">
@@ -85,6 +61,7 @@ export function BillingSettingsPanel() {
         links={links}
         isLoading={isLoading}
         error={error}
+        onRefresh={() => void refresh()}
       />
       <Card className="rounded-xl border-border/40 bg-card/40">
         <CardContent className="grid gap-3">
