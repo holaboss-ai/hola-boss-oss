@@ -114,36 +114,41 @@ export function MarketplacePane() {
   }
 
   return (
-    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.03),transparent_24%)]" />
+    <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--radius-xl)] bg-background">
+      <div className="flex items-center gap-1 border-b border-border px-4 pt-3 pb-0">
+        <button
+          type="button"
+          onClick={() => setMarketplaceTab("templates")}
+          className={[
+            "relative px-4 pb-2.5 text-sm font-medium transition-colors",
+            marketplaceTab === "templates"
+              ? "text-foreground"
+              : "text-muted-foreground hover:text-foreground",
+          ].join(" ")}
+        >
+          Templates
+          {marketplaceTab === "templates" ? (
+            <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-primary" />
+          ) : null}
+        </button>
+        <button
+          type="button"
+          onClick={() => setMarketplaceTab("apps")}
+          className={[
+            "relative px-4 pb-2.5 text-sm font-medium transition-colors",
+            marketplaceTab === "apps"
+              ? "text-foreground"
+              : "text-muted-foreground hover:text-foreground",
+          ].join(" ")}
+        >
+          Apps
+          {marketplaceTab === "apps" ? (
+            <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-primary" />
+          ) : null}
+        </button>
+      </div>
       <div className="relative min-h-0 flex-1 overflow-auto p-4">
         <div className="mx-auto max-w-5xl">
-          <div className="mb-4 flex w-fit items-center gap-0.5 rounded-full border border-border bg-muted/30 p-0.5">
-            <button
-              type="button"
-              onClick={() => setMarketplaceTab("templates")}
-              className={[
-                "rounded-full px-4 py-1.5 text-xs font-medium transition-colors",
-                marketplaceTab === "templates"
-                  ? "bg-card text-foreground"
-                  : "text-muted-foreground hover:text-foreground",
-              ].join(" ")}
-            >
-              Templates
-            </button>
-            <button
-              type="button"
-              onClick={() => setMarketplaceTab("apps")}
-              className={[
-                "rounded-full px-4 py-1.5 text-xs font-medium transition-colors",
-                marketplaceTab === "apps"
-                  ? "bg-card text-foreground"
-                  : "text-muted-foreground hover:text-foreground",
-              ].join(" ")}
-            >
-              Apps
-            </button>
-          </div>
 
           {marketplaceTab === "templates" ? (
             <>
