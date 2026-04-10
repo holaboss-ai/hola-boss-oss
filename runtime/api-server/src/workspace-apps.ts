@@ -302,6 +302,86 @@ export function appendWorkspaceApplication(
   });
 }
 
+export interface McpRegistryEntryParams {
+  mcpEnabled: boolean;
+  mcpTools: string[];
+  mcpPath: string | null;
+  mcpTimeoutMs: number;
+  mcpPort: number | null;
+}
+
+export function writeWorkspaceMcpRegistryEntry(
+  workspaceDir: string,
+  appId: string,
+  params: McpRegistryEntryParams,
+): void {
+  if (!params.mcpEnabled) {
+    return;
+  }
+  const yamlPath = path.join(workspaceDir, "workspace.yaml");
+  const raw = fs.existsSync(yamlPath) ? fs.readFileSync(yamlPath, "utf8") : "";
+  const data = (raw ? (yaml.load(raw) as Record<string, unknown>) : {}) || {};
+
+  const registry = (data.mcp_registry as Record<string, unknown> | undefined) ?? {};
+  const servers = (registry.servers as Record<string, unknown> | undefined) ?? {};
+  const allowlist = (registry.allowlist as Record<string, unknown> | undefined) ?? {};
+  const existingToolIds: string[] = Array.isArray(allowlist.tool_ids)
+    ? (allowlist.tool_ids as unknown[]).filter((t): t is string => typeof t === "string")
+    : [];
+
+  // Replace this app's server entry
+  const port = params.mcpPort ?? 13100;
+  const mcpPath = params.mcpPath || "/mcp/sse";
+  servers[appId] = {
+    type: "remote",
+    url: `http://localhost:${port}${mcpPath}`,
+    enabled: true,
+    timeout_ms: params.mcpTimeoutMs,
+  };
+
+  // Replace this app's tool ids: drop existing entries prefixed with `${appId}.`,
+  // append the new ones
+  const otherToolIds = existingToolIds.filter((id) => !id.startsWith(`${appId}.`));
+  const newToolIds = [
+    ...otherToolIds,
+    ...params.mcpTools.map((name) => `${appId}.${name}`),
+  ];
+
+  allowlist.tool_ids = newToolIds;
+  registry.servers = servers;
+  registry.allowlist = allowlist;
+  data.mcp_registry = registry;
+
+  fs.writeFileSync(yamlPath, yaml.dump(data), "utf8");
+}
+
+export function removeWorkspaceMcpRegistryEntry(
+  workspaceDir: string,
+  appId: string,
+): void {
+  const yamlPath = path.join(workspaceDir, "workspace.yaml");
+  if (!fs.existsSync(yamlPath)) {
+    return;
+  }
+  const raw = fs.readFileSync(yamlPath, "utf8");
+  const data = (yaml.load(raw) as Record<string, unknown> | undefined) ?? {};
+  const registry = data.mcp_registry as Record<string, unknown> | undefined;
+  if (!registry) {
+    return;
+  }
+  const servers = registry.servers as Record<string, unknown> | undefined;
+  if (servers && appId in servers) {
+    delete servers[appId];
+  }
+  const allowlist = registry.allowlist as Record<string, unknown> | undefined;
+  if (allowlist && Array.isArray(allowlist.tool_ids)) {
+    allowlist.tool_ids = (allowlist.tool_ids as unknown[]).filter(
+      (id) => typeof id === "string" && !(id as string).startsWith(`${appId}.`),
+    );
+  }
+  fs.writeFileSync(yamlPath, yaml.dump(data), "utf8");
+}
+
 export function resolveWorkspaceApp(
   workspaceDir: string,
   targetAppId: string,

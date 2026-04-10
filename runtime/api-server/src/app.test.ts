@@ -14,7 +14,7 @@ import yazl from "yazl";
 
 import { buildRuntimeApiServer, type BuildRuntimeApiServerOptions } from "./app.js";
 import { appLocalNpmCacheDir, buildAppSetupEnv } from "./app-setup-env.js";
-import { parseInstalledAppRuntime } from "./workspace-apps.js";
+import { parseInstalledAppRuntime, writeWorkspaceMcpRegistryEntry, removeWorkspaceMcpRegistryEntry } from "./workspace-apps.js";
 import type { AppLifecycleExecutorLike } from "./app-lifecycle-worker.js";
 import type { MemoryServiceLike } from "./memory.js";
 import type { RuntimeConfigServiceLike } from "./runtime-config.js";
@@ -3984,4 +3984,173 @@ lifecycle:
 `;
   const parsed = parseInstalledAppRuntime(yamlBody, "minimal", "apps/minimal/app.runtime.yaml");
   assert.deepEqual(parsed.mcpTools, []);
+});
+
+test("writeWorkspaceMcpRegistryEntry adds server and tool_ids to workspace.yaml", () => {
+  const tmpWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "wmcp-test-"));
+  try {
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      "template_id: test\nname: Test\n",
+    );
+
+    writeWorkspaceMcpRegistryEntry(tmpWorkspace, "twitter", {
+      mcpEnabled: true,
+      mcpTools: ["create_post", "list_posts"],
+      mcpPath: "/mcp/sse",
+      mcpTimeoutMs: 30000,
+      mcpPort: 13100,
+    });
+
+    const yamlText = fs.readFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      "utf8",
+    );
+    assert.match(yamlText, /mcp_registry/);
+    assert.match(yamlText, /servers:/);
+    assert.match(yamlText, /twitter:/);
+    assert.match(yamlText, /allowlist:/);
+    assert.match(yamlText, /twitter\.create_post/);
+    assert.match(yamlText, /twitter\.list_posts/);
+    assert.match(yamlText, /13100/);
+  } finally {
+    fs.rmSync(tmpWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("writeWorkspaceMcpRegistryEntry is a no-op when mcp is disabled", () => {
+  const tmpWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "wmcp-test-"));
+  try {
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      "template_id: test\nname: Test\n",
+    );
+
+    writeWorkspaceMcpRegistryEntry(tmpWorkspace, "twitter", {
+      mcpEnabled: false,
+      mcpTools: ["create_post"],
+      mcpPath: "/mcp/sse",
+      mcpTimeoutMs: 30000,
+      mcpPort: 13100,
+    });
+
+    const yamlText = fs.readFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      "utf8",
+    );
+    assert.doesNotMatch(yamlText, /mcp_registry/);
+  } finally {
+    fs.rmSync(tmpWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("writeWorkspaceMcpRegistryEntry replaces existing entry for the same app", () => {
+  const tmpWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "wmcp-test-"));
+  try {
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      `template_id: test
+name: Test
+mcp_registry:
+  allowlist:
+    tool_ids:
+      - twitter.old_tool
+      - linkedin.create_post
+  servers:
+    twitter:
+      type: remote
+      url: http://localhost:99999/old
+      enabled: true
+    linkedin:
+      type: remote
+      url: http://localhost:13101/mcp/sse
+      enabled: true
+`,
+    );
+
+    writeWorkspaceMcpRegistryEntry(tmpWorkspace, "twitter", {
+      mcpEnabled: true,
+      mcpTools: ["new_tool"],
+      mcpPath: "/mcp/sse",
+      mcpTimeoutMs: 30000,
+      mcpPort: 13100,
+    });
+
+    const yamlText = fs.readFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      "utf8",
+    );
+    // old twitter tool replaced
+    assert.doesNotMatch(yamlText, /twitter\.old_tool/);
+    assert.match(yamlText, /twitter\.new_tool/);
+    // linkedin entries untouched
+    assert.match(yamlText, /linkedin\.create_post/);
+    assert.match(yamlText, /13101/);
+    // twitter server replaced
+    assert.doesNotMatch(yamlText, /99999/);
+    assert.match(yamlText, /13100/);
+  } finally {
+    fs.rmSync(tmpWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("removeWorkspaceMcpRegistryEntry strips server and tool_ids for the app", () => {
+  const tmpWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "wmcp-rm-test-"));
+  try {
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      `template_id: test
+name: Test
+mcp_registry:
+  allowlist:
+    tool_ids:
+      - twitter.create_post
+      - twitter.list_posts
+      - linkedin.create_post
+  servers:
+    twitter:
+      type: remote
+      url: http://localhost:13100/mcp/sse
+      enabled: true
+    linkedin:
+      type: remote
+      url: http://localhost:13101/mcp/sse
+      enabled: true
+`,
+    );
+
+    removeWorkspaceMcpRegistryEntry(tmpWorkspace, "twitter");
+
+    const yamlText = fs.readFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      "utf8",
+    );
+    assert.doesNotMatch(yamlText, /twitter\.create_post/);
+    assert.doesNotMatch(yamlText, /twitter\.list_posts/);
+    assert.match(yamlText, /linkedin\.create_post/);
+    assert.match(yamlText, /linkedin:/);
+  } finally {
+    fs.rmSync(tmpWorkspace, { recursive: true, force: true });
+  }
+});
+
+test("removeWorkspaceMcpRegistryEntry is a no-op when workspace.yaml has no mcp_registry", () => {
+  const tmpWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "wmcp-rm-test-"));
+  try {
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      "template_id: test\nname: Test\n",
+    );
+
+    // Should not throw
+    removeWorkspaceMcpRegistryEntry(tmpWorkspace, "twitter");
+
+    const yamlText = fs.readFileSync(
+      path.join(tmpWorkspace, "workspace.yaml"),
+      "utf8",
+    );
+    assert.doesNotMatch(yamlText, /mcp_registry/);
+  } finally {
+    fs.rmSync(tmpWorkspace, { recursive: true, force: true });
+  }
 });
