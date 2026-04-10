@@ -153,7 +153,7 @@ export function SubmissionsPanel() {
 
   if (error) {
     return (
-      <div className="rounded-[18px] border border-destructive/30 bg-destructive/5 px-5 py-4">
+      <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3">
         <div className="flex items-center gap-2.5">
           <AlertTriangle className="size-4 shrink-0 text-destructive" />
           <p className="text-sm text-destructive">{error}</p>
@@ -164,7 +164,7 @@ export function SubmissionsPanel() {
 
   if (!isSignedIn) {
     return (
-      <div className="rounded-[24px] border border-border/40 bg-card/80 px-6 py-6">
+      <div className="rounded-xl border border-border/40 bg-card/80 px-5 py-4">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
@@ -194,7 +194,7 @@ export function SubmissionsPanel() {
 
   if (submissions.length === 0) {
     return (
-      <div className="rounded-[24px] border border-dashed border-border/50 px-6 py-14 text-center">
+      <div className="rounded-xl border border-dashed border-border/50 px-5 py-10 text-center">
         <Package className="mx-auto mb-3 size-8 text-muted-foreground/40" />
         <p className="text-sm font-medium text-foreground">
           No submissions yet
@@ -221,7 +221,7 @@ export function SubmissionsPanel() {
         return (
           <div
             key={submission.id}
-            className="rounded-[18px] border border-border/40 bg-card/80 px-5 py-4"
+            className="rounded-lg border border-border/40 bg-card/80 px-4 py-3"
           >
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0 flex-1">
