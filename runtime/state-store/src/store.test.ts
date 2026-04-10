@@ -575,7 +575,7 @@ test("integration lookup methods support target lookup and provider owner filter
     ["conn-google-1", "conn-google-2"]
   );
   assert.deepEqual(
-    store.listIntegrationConnections({ ownerUserId: "user-1" }).map((record) => record.connectionId),
+    store.listIntegrationConnections({ ownerUserId: "user-1" }).map((record) => record.connectionId).sort(),
     ["conn-github-1", "conn-google-1"]
   );
   assert.deepEqual(googleOne, store.getIntegrationConnection("conn-google-1"));
