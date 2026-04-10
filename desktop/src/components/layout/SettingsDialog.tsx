@@ -18,7 +18,9 @@ import { AuthPanel } from "@/components/auth/AuthPanel";
 import { BillingSettingsPanel } from "@/components/billing/BillingSettingsPanel";
 import { IntegrationsPane } from "@/components/panes/IntegrationsPane";
 import { SubmissionsPanel } from "@/components/settings/SubmissionsPanel";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 
 const THEME_SWATCHES: Record<string, [string, string, string]> = {
   "amber-minimal-dark": ["#1a1814", "#e8853a", "#2e2920"],
@@ -206,11 +208,11 @@ export function SettingsDialog({
               const active = id === activeSection;
 
               return (
-                <button
+                <Button
                   key={id}
-                  type="button"
+                  variant="ghost"
                   onClick={() => onSectionChange(id)}
-                  className={`flex items-center gap-3 rounded-lg px-2.5 py-2 text-left transition ${
+                  className={`flex h-auto items-center justify-start gap-3 px-2.5 py-2 text-left ${
                     active
                       ? "bg-sidebar-accent text-sidebar-accent-foreground"
                       : "text-sidebar-foreground/72 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
@@ -226,7 +228,7 @@ export function SettingsDialog({
                     <Icon className="size-4" />
                   </span>
                   <span className="min-w-0 text-sm font-medium">{label}</span>
-                </button>
+                </Button>
               );
             })}
           </nav>
@@ -238,14 +240,15 @@ export function SettingsDialog({
               {titleForSection(activeSection)}
             </div>
 
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="icon-lg"
               onClick={onClose}
               aria-label="Close settings"
-              className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-border/45 text-muted-foreground transition hover:border-primary/35 hover:text-foreground"
+              className="shrink-0 rounded-[14px] border-border/45 text-muted-foreground hover:border-primary/35 hover:text-foreground"
             >
               <X size={16} />
-            </button>
+            </Button>
           </header>
 
           <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 [scrollbar-gutter:stable]">
@@ -290,54 +293,57 @@ export function SettingsDialog({
                       ];
 
                       return (
-                        <button
+                        <Button
                           key={themeOption}
-                          type="button"
+                          variant="ghost"
                           onClick={() => onThemeChange(themeOption)}
-                          className={`rounded-[20px] border p-3 text-left transition ${
+                          className={`h-auto flex-col items-stretch rounded-[20px] border p-3 text-left ${
                             selected
                               ? "border-primary/45 bg-primary/10 shadow-sm"
                               : "border-border/40 bg-card/80 hover:border-primary/28 hover:bg-accent"
                           }`}
                         >
-                          <div className="rounded-[16px] border border-border/30 bg-card/80 p-3">
-                            <div className="grid grid-cols-[1.2fr_0.9fr] gap-2">
-                              <div
-                                className="h-16 rounded-[14px] border border-white/10"
-                                style={{
-                                  background: `linear-gradient(160deg, ${swatches[0]}, ${swatches[2]})`,
-                                }}
-                              />
-                              <div className="grid gap-2">
+                          <Card size="sm" className="border-border/30 bg-card/80">
+                            <CardContent>
+                              <div className="grid grid-cols-[1.2fr_0.9fr] gap-2">
                                 <div
-                                  className="h-7 rounded-[10px] border border-white/10"
-                                  style={{ background: swatches[1] }}
-                                />
-                                <div
-                                  className="h-7 rounded-[10px] border border-white/10"
+                                  className="h-16 rounded-[14px] border border-white/10"
                                   style={{
-                                    background: `color-mix(in srgb, ${swatches[1]} 42%, ${swatches[0]} 58%)`,
+                                    background: `linear-gradient(160deg, ${swatches[0]}, ${swatches[2]})`,
                                   }}
                                 />
+                                <div className="grid gap-2">
+                                  <div
+                                    className="h-7 rounded-[10px] border border-white/10"
+                                    style={{ background: swatches[1] }}
+                                  />
+                                  <div
+                                    className="h-7 rounded-[10px] border border-white/10"
+                                    style={{
+                                      background: `color-mix(in srgb, ${swatches[1]} 42%, ${swatches[0]} 58%)`,
+                                    }}
+                                  />
+                                </div>
                               </div>
-                            </div>
-                          </div>
+                            </CardContent>
+                          </Card>
 
                           <div className="mt-3 flex items-center justify-between gap-3">
                             <span className="text-sm font-medium text-foreground">
                               {prettifyThemeLabel(themeOption)}
                             </span>
-                            <span
-                              className={`rounded-full border px-2.5 py-1 text-xs uppercase tracking-[0.14em] ${
+                            <Badge
+                              variant="outline"
+                              className={`uppercase tracking-[0.14em] ${
                                 selected
                                   ? "border-primary/40 bg-primary/12 text-primary"
                                   : "border-border/35 text-muted-foreground/68"
                               }`}
                             >
                               {selected ? "Active" : "Preview"}
-                            </span>
+                            </Badge>
                           </div>
-                        </button>
+                        </Button>
                       );
                     })}
                   </div>
@@ -354,11 +360,11 @@ export function SettingsDialog({
 
                   <div className="mt-5 grid gap-3">
                     {ABOUT_LINKS.map(({ id, label, icon: Icon, href }) => (
-                      <button
+                      <Button
                         key={id}
-                        type="button"
+                        variant="outline"
                         onClick={() => onOpenExternalUrl(href)}
-                        className="flex items-center justify-between gap-3 rounded-[18px] border border-border/40 bg-card/80 px-4 py-3 text-left transition hover:border-primary/30 hover:bg-accent"
+                        className="flex h-auto items-center justify-between gap-3 rounded-[18px] border-border/40 bg-card/80 px-4 py-3 text-left hover:border-primary/30 hover:bg-accent"
                       >
                         <span className="flex min-w-0 items-center gap-3">
                           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-border/35 text-muted-foreground/82">
@@ -372,7 +378,7 @@ export function SettingsDialog({
                           size={15}
                           className="shrink-0 text-muted-foreground/70"
                         />
-                      </button>
+                      </Button>
                     ))}
                   </div>
                 </section>
