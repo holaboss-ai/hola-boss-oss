@@ -61,7 +61,7 @@
 /* Fallback radius and semantic status colors — themes can override */
 :root {
   --radius: 0.675rem;
-  --success: oklch(0.765 0.177 163);
+  --success: oklch(0.72 0.19 145);
   --warning: oklch(0.82 0.17 83);
 }
 
