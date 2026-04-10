@@ -1560,7 +1560,7 @@ export function ChatPane({
   }
 
   async function returnToMainSession() {
-    const mainSessionId = (selectedWorkspace?.main_session_id || "").trim();
+    const mainSessionId = "";
     if (
       !selectedWorkspaceId ||
       !mainSessionId ||
@@ -2011,7 +2011,6 @@ export function ChatPane({
     sessionJumpSessionId,
     sessionOpenRequest?.sessionId,
     selectedWorkspaceId,
-    selectedWorkspace?.main_session_id,
     selectedWorkspace?.onboarding_session_id,
     selectedWorkspace?.onboarding_status,
   ]);
@@ -3195,7 +3194,7 @@ export function ChatPane({
   const textareaPlaceholder = isOnboardingVariant
     ? "Answer the onboarding prompt or share setup details"
     : "Ask anything";
-  const mainSessionId = (selectedWorkspace?.main_session_id || "").trim();
+  const mainSessionId = "";
   const showMainSessionReturn =
     !isOnboardingVariant &&
     Boolean(mainSessionId) &&

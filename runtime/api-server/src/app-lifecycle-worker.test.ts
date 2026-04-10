@@ -136,6 +136,7 @@ test("startComposeAppTarget patches ports, runs compose up, and waits healthy", 
     resolvedApp: {
       appId: "app-a",
       mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+      mcpTools: [],
       healthCheck: { path: "/health", timeoutS: 1, intervalS: 0.01 },
       envContract: [],
       startCommand: "",
@@ -213,6 +214,7 @@ test("startComposeAppTarget passes HOLABOSS_USER_ID to docker compose when reque
     resolvedApp: {
       appId: "app-a",
       mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+      mcpTools: [],
       healthCheck: { path: "/health", timeoutS: 1, intervalS: 0.01 },
       envContract: ["HOLABOSS_USER_ID"],
       startCommand: "",
@@ -309,6 +311,7 @@ test("startShellLifecycleAppTarget runs lifecycle.start and waits healthy", asyn
     resolvedApp: {
       appId: "app-a",
       mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+      mcpTools: [],
       healthCheck: { path: "/health", timeoutS: 1, intervalS: 0.01 },
       envContract: ["HOLABOSS_USER_ID"],
       startCommand: "",
@@ -402,6 +405,7 @@ test("runtime executor resolves store-backed integration env for bound shell app
     resolvedApp: {
       appId: "app-a",
       mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+      mcpTools: [],
       healthCheck: { path: "/health", timeoutS: 1, intervalS: 0.01 },
       envContract: ["HOLABOSS_USER_ID", "WORKSPACE_GOOGLE_INTEGRATION_ID", "WORKSPACE_API_URL"],
       integrations: [
@@ -473,6 +477,7 @@ test("startShellLifecycleAppTarget runs lifecycle.setup before lifecycle.start",
     resolvedApp: {
       appId: "app-a",
       mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+      mcpTools: [],
       healthCheck: { path: "/health", timeoutS: 1, intervalS: 0.01 },
       envContract: [],
       startCommand: "",
@@ -528,6 +533,7 @@ test("startShellLifecycleAppTarget requires both app HTTP and MCP health checks"
         resolvedApp: {
           appId: "app-a",
           mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+          mcpTools: [],
           healthCheck: { path: "/health", timeoutS: 0.1, intervalS: 0.01 },
           envContract: [],
           startCommand: "",
@@ -589,6 +595,7 @@ test("startShellLifecycleAppTarget coalesces concurrent starts for the same app"
     resolvedApp: {
       appId: "app-a",
       mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+      mcpTools: [],
       healthCheck: { path: "/health", timeoutS: 1, intervalS: 0.01 },
       envContract: [],
       startCommand: "",
@@ -647,6 +654,7 @@ test("startShellLifecycleAppTarget skips lifecycle.setup when skipSetup is true"
     resolvedApp: {
       appId: "app-a",
       mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+      mcpTools: [],
       healthCheck: { path: "/health", timeoutS: 1, intervalS: 0.01 },
       envContract: [],
       startCommand: "",
@@ -698,6 +706,7 @@ test("stopShellLifecycleAppTarget runs lifecycle.stop and clears tracked shell s
     resolvedApp: {
       appId: "app-a",
       mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+      mcpTools: [],
       healthCheck: { path: "/health", timeoutS: 1, intervalS: 0.01 },
       envContract: [],
       startCommand: "",
@@ -716,6 +725,7 @@ test("stopShellLifecycleAppTarget runs lifecycle.stop and clears tracked shell s
     resolvedApp: {
       appId: "app-a",
       mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+      mcpTools: [],
       healthCheck: { path: "/health", timeoutS: 1, intervalS: 0.01 },
       envContract: [],
       startCommand: "",
@@ -760,6 +770,7 @@ test("startSubprocessAppTarget runs startCommand and waits healthy", async () =>
     resolvedApp: {
       appId: "app-legacy",
       mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+      mcpTools: [],
       healthCheck: { path: "/health", timeoutS: 1, intervalS: 0.01 },
       envContract: [],
       startCommand: "npm run legacy-start",
@@ -822,6 +833,7 @@ test("startSubprocessAppTarget runs lifecycle.setup before startCommand", async 
     resolvedApp: {
       appId: "app-legacy",
       mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+      mcpTools: [],
       healthCheck: { path: "/health", timeoutS: 1, intervalS: 0.01 },
       envContract: [],
       startCommand: "npm run legacy-start",
@@ -881,6 +893,7 @@ test("startSubprocessAppTarget skips lifecycle.setup when skipSetup is true", as
     resolvedApp: {
       appId: "app-legacy",
       mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+      mcpTools: [],
       healthCheck: { path: "/health", timeoutS: 1, intervalS: 0.01 },
       envContract: [],
       startCommand: "npm run legacy-start",
@@ -931,6 +944,7 @@ test("stopSubprocessAppTarget kills tracked process and clears ports", async () 
     resolvedApp: {
       appId: "app-legacy",
       mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+      mcpTools: [],
       healthCheck: { path: "/health", timeoutS: 1, intervalS: 0.01 },
       envContract: [],
       startCommand: "npm run legacy-start",
@@ -966,6 +980,7 @@ test("lifecycle executor raises for unsupported startup configs", async () => {
         resolvedApp: {
           appId: "app-legacy",
           mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+          mcpTools: [],
           healthCheck: { path: "/health", timeoutS: 1, intervalS: 0.01 },
           envContract: [],
           startCommand: "",

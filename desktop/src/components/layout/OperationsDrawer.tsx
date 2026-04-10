@@ -429,13 +429,13 @@ function InboxPanel({
               workspaceId={selectedWorkspaceId}
               proactiveStatus={proactiveStatus}
               isLoading={isLoadingProactiveStatus}
-              proactiveTaskProposalsEnabled={proactiveTaskProposalsEnabled}
-              isUpdatingProactiveTaskProposalsEnabled={
+              proactiveWorkspaceEnabled={proactiveTaskProposalsEnabled}
+              isUpdatingProactiveWorkspaceEnabled={
                 isUpdatingProactiveTaskProposalsEnabled
               }
               isTriggeringProposal={isTriggeringProposal}
               onTriggerProposal={onTriggerProposal}
-              onProactiveTaskProposalsEnabledChange={
+              onProactiveWorkspaceEnabledChange={
                 onProactiveTaskProposalsEnabledChange
               }
               compact

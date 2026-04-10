@@ -1685,8 +1685,7 @@ function AppShellContent() {
         task_name: proposal.task_name,
         task_prompt: proposal.task_prompt,
         session_id: proposalSessionId,
-        parent_session_id:
-          (selectedWorkspace.main_session_id || "").trim() || null,
+        parent_session_id: activeChatSessionId?.trim() || null,
         priority: 0,
         model: runtimeConfig?.defaultModel ?? null,
       });
@@ -1893,8 +1892,6 @@ function AppShellContent() {
   }, []);
 
   const handleCreateScheduleInChat = useCallback(() => {
-    const mainSessionId = (selectedWorkspace?.main_session_id || "").trim();
-
     setActiveLeftRailItem("space");
     setSpaceVisibility((previous) => ({
       ...previous,
@@ -1903,9 +1900,9 @@ function AppShellContent() {
     setAgentView({ type: "chat" });
     setChatSessionJumpRequest(null);
     setChatSessionOpenRequest((previous) =>
-      mainSessionId
+      activeChatSessionId
         ? {
-            sessionId: mainSessionId,
+            sessionId: activeChatSessionId,
             requestKey: (previous?.requestKey ?? 0) + 1,
           }
         : null,
@@ -1915,7 +1912,7 @@ function AppShellContent() {
       requestKey: (previous?.requestKey ?? 0) + 1,
     }));
     setChatFocusRequestKey((current) => current + 1);
-  }, [selectedWorkspace?.main_session_id]);
+  }, [activeChatSessionId]);
 
   const handleChatComposerPrefillConsumed = useCallback(
     (requestKey: number) => {
@@ -2376,20 +2373,6 @@ function AppShellContent() {
               }}
               onOpenExternalUrl={handleOpenExternalUrl}
               onPublish={() => setPublishOpen(true)}
-              notificationUnreadCount={notificationUnreadCount}
-              onNotificationCenterOpenChange={
-                handleNotificationCenterOpenChange
-              }
-              onActivateNotification={(notificationId) => {
-                void handleActivateNotification(notificationId);
-              }}
-              onDismissNotification={(notificationId) => {
-                void handleDismissNotification(notificationId);
-              }}
-              notifications={combinedNotifications}
-              onClearAllNotifications={() => {
-                void handleClearAllNotifications();
-              }}
             />
           </div>
         ) : null}
@@ -2613,9 +2596,7 @@ function AppShellContent() {
                   hasWorkspace={hasSelectedWorkspace}
                   selectedWorkspaceId={selectedWorkspaceId}
                   selectedWorkspaceName={selectedWorkspace?.name || null}
-                  mainSessionId={
-                    (selectedWorkspace?.main_session_id || "").trim() || null
-                  }
+                  mainSessionId={null}
                 />
               </div>
             ) : null}

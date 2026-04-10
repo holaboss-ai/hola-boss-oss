@@ -100,6 +100,7 @@ export function parseResolvedApplicationRuntimePayload(value: unknown): Resolved
       port: mcpPort,
       path: requiredString(mcp.path, "resolved_application.mcp.path")
     },
+    mcpTools: optionalStringList(payload.mcp_tools),
     healthCheck: {
       path: requiredString(healthCheck.path, "resolved_application.health_check.path"),
       timeoutS,
