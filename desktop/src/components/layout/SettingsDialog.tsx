@@ -2,8 +2,10 @@ import {
   CircleHelp,
   CreditCard,
   ExternalLink,
+  FileArchive,
   Globe,
   Info,
+  Loader2,
   Plug,
   Send,
   Settings2,
@@ -11,11 +13,12 @@ import {
   Waypoints,
   X,
 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { AuthPanel } from "@/components/auth/AuthPanel";
 import { BillingSettingsPanel } from "@/components/billing/BillingSettingsPanel";
 import { IntegrationsPane } from "@/components/panes/IntegrationsPane";
 import { SubmissionsPanel } from "@/components/settings/SubmissionsPanel";
+import { Button } from "@/components/ui/button";
 
 const THEME_SWATCHES: Record<string, [string, string, string]> = {
   "amber-minimal-dark": ["#1a1814", "#e8853a", "#2e2920"],
@@ -125,6 +128,16 @@ export function SettingsDialog({
   onThemeChange,
   onOpenExternalUrl,
 }: SettingsDialogProps) {
+  const [diagnosticsExportState, setDiagnosticsExportState] = useState<{
+    status: "idle" | "exporting" | "success" | "error";
+    message: string;
+    bundlePath: string;
+  }>({
+    status: "idle",
+    message: "",
+    bundlePath: "",
+  });
+
   useEffect(() => {
     if (!open) {
       return;
@@ -141,6 +154,32 @@ export function SettingsDialog({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [open, onClose]);
+
+  async function handleExportDiagnosticsBundle() {
+    setDiagnosticsExportState({
+      status: "exporting",
+      message: "",
+      bundlePath: "",
+    });
+    try {
+      const result = await window.electronAPI.diagnostics.exportBundle();
+      setDiagnosticsExportState({
+        status: "success",
+        message:
+          "Diagnostics bundle exported to Downloads and revealed in Finder.",
+        bundlePath: result.bundlePath,
+      });
+    } catch (error) {
+      setDiagnosticsExportState({
+        status: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to export diagnostics bundle.",
+        bundlePath: "",
+      });
+    }
+  }
 
   if (!open) {
     return null;
@@ -336,6 +375,51 @@ export function SettingsDialog({
                       </button>
                     ))}
                   </div>
+                </section>
+
+                <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
+                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+                    Diagnostics
+                  </div>
+                  <div className="mt-3 max-w-[620px] text-sm leading-6 text-muted-foreground">
+                    Export a local diagnostics bundle with <code>runtime.log</code>,
+                    a consistent snapshot of <code>runtime.db</code>, and a
+                    redacted runtime config file. No upload happens automatically.
+                  </div>
+                  <div className="mt-5 flex flex-wrap items-center gap-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void handleExportDiagnosticsBundle()}
+                      disabled={diagnosticsExportState.status === "exporting"}
+                    >
+                      {diagnosticsExportState.status === "exporting" ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <FileArchive className="size-4" />
+                      )}
+                      Export Diagnostics Bundle
+                    </Button>
+                    <span className="text-xs text-muted-foreground/80">
+                      Saved to Downloads as a zip file.
+                    </span>
+                  </div>
+                  {diagnosticsExportState.message ? (
+                    <div
+                      className={`mt-4 rounded-[18px] border px-4 py-3 text-sm ${
+                        diagnosticsExportState.status === "error"
+                          ? "border-destructive/30 bg-destructive/5 text-destructive"
+                          : "border-border/40 bg-card/70 text-foreground"
+                      }`}
+                    >
+                      <div>{diagnosticsExportState.message}</div>
+                      {diagnosticsExportState.bundlePath ? (
+                        <div className="mt-2 break-all font-mono text-xs text-muted-foreground">
+                          {diagnosticsExportState.bundlePath}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </section>
               </div>
             ) : null}

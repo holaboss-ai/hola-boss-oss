@@ -575,7 +575,7 @@ test("integration lookup methods support target lookup and provider owner filter
     ["conn-google-1", "conn-google-2"]
   );
   assert.deepEqual(
-    store.listIntegrationConnections({ ownerUserId: "user-1" }).map((record) => record.connectionId),
+    store.listIntegrationConnections({ ownerUserId: "user-1" }).map((record) => record.connectionId).sort(),
     ["conn-github-1", "conn-google-1"]
   );
   assert.deepEqual(googleOne, store.getIntegrationConnection("conn-google-1"));
@@ -1752,6 +1752,125 @@ test("deleteAppPort removes port and frees it for reuse", () => {
   // Port should be available again
   const p2 = store.allocateAppPort({ workspaceId: "ws-1", appId: "twitter" });
   assert.equal(p2.port, p1.port);
+
+  store.close();
+});
+
+test("app_catalog upserts and lists entries for a given source", () => {
+  const root = makeTempDir("hb-store-catalog-upsert-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "test.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  store.upsertAppCatalogEntry({
+    appId: "twitter",
+    source: "marketplace",
+    name: "Twitter / X",
+    description: "Post tweets",
+    icon: "https://example.test/twitter.svg",
+    category: "social",
+    tags: ["social media"],
+    version: "v0.1.0",
+    archiveUrl: "https://example.test/twitter-module-darwin-arm64.tar.gz",
+    archivePath: null,
+    target: "darwin-arm64",
+    cachedAt: "2026-04-09T00:00:00Z",
+  });
+
+  const entries = store.listAppCatalogEntries({ source: "marketplace" });
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].appId, "twitter");
+  assert.equal(entries[0].source, "marketplace");
+  assert.deepEqual(entries[0].tags, ["social media"]);
+  assert.equal(entries[0].archiveUrl, "https://example.test/twitter-module-darwin-arm64.tar.gz");
+
+  store.close();
+});
+
+test("app_catalog clearAppCatalogSource wipes only the given source", () => {
+  const root = makeTempDir("hb-store-catalog-clear-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "test.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const base = {
+    name: "Sample",
+    description: null,
+    icon: null,
+    category: null,
+    tags: [] as string[],
+    version: null,
+    target: "darwin-arm64",
+    cachedAt: "2026-04-09T00:00:00Z",
+  };
+  store.upsertAppCatalogEntry({
+    ...base, appId: "twitter", source: "marketplace",
+    archiveUrl: "https://a.test/x.tar.gz", archivePath: null,
+  });
+  store.upsertAppCatalogEntry({
+    ...base, appId: "twitter", source: "local",
+    archiveUrl: null, archivePath: "/tmp/x.tar.gz",
+  });
+
+  const cleared = store.clearAppCatalogSource("marketplace");
+  assert.equal(cleared, 1);
+  const remaining = store.listAppCatalogEntries();
+  assert.equal(remaining.length, 1);
+  assert.equal(remaining[0].source, "local");
+
+  store.close();
+});
+
+test("app_catalog deleteAppCatalogEntry removes a single row", () => {
+  const root = makeTempDir("hb-store-catalog-delete-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "test.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  store.upsertAppCatalogEntry({
+    appId: "twitter", source: "marketplace", name: "X",
+    description: null, icon: null, category: null, tags: [],
+    version: "v0.1.0", archiveUrl: "https://a.test", archivePath: null,
+    target: "darwin-arm64", cachedAt: "2026-04-09T00:00:00Z",
+  });
+  const deleted = store.deleteAppCatalogEntry({ source: "marketplace", appId: "twitter" });
+  assert.equal(deleted, true);
+  assert.equal(store.listAppCatalogEntries().length, 0);
+
+  store.close();
+});
+
+test("app_catalog composite PK allows same appId in both sources", () => {
+  const root = makeTempDir("hb-store-catalog-pk-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "test.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  const base = {
+    appId: "twitter",
+    name: "X",
+    description: null,
+    icon: null,
+    category: null,
+    tags: [] as string[],
+    version: null,
+    target: "darwin-arm64",
+    cachedAt: "2026-04-09T00:00:00Z",
+  };
+  store.upsertAppCatalogEntry({
+    ...base, source: "marketplace",
+    archiveUrl: "https://a.test/x.tar.gz", archivePath: null,
+  });
+  store.upsertAppCatalogEntry({
+    ...base, source: "local",
+    archiveUrl: null, archivePath: "/tmp/x.tar.gz",
+  });
+  const all = store.listAppCatalogEntries();
+  assert.equal(all.length, 2);
 
   store.close();
 });

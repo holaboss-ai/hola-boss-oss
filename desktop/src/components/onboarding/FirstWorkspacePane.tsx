@@ -7,10 +7,16 @@ import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { ConnectIntegrationsStep } from "./ConnectIntegrationsStep";
 import { ConfigureStep } from "./ConfigureStep";
 import { CreatingView } from "./CreatingView";
+import { SelectAppsStep } from "./SelectAppsStep";
 import { PROVIDER_DISPLAY_NAMES } from "./constants";
 import { OnboardingUserButton } from "./OnboardingUserButton";
 
-type OnboardingStep = "gallery" | "detail" | "configure" | "connect_integrations";
+type OnboardingStep =
+  | "gallery"
+  | "detail"
+  | "select_apps"
+  | "configure"
+  | "connect_integrations";
 
 interface FirstWorkspacePaneProps {
   variant?: "full" | "panel";
@@ -38,6 +44,8 @@ export function FirstWorkspacePane({
     workspaceErrorMessage,
     chooseTemplateFolder,
     createWorkspace,
+    selectedApps,
+    setSelectedApps,
     pendingIntegrations,
     isResolvingIntegrations,
     resolveIntegrationsBeforeCreate,
@@ -140,7 +148,9 @@ export function FirstWorkspacePane({
     if (!newWorkspaceName.trim()) {
       setNewWorkspaceName(template.name);
     }
-    setStep("configure");
+    // Route to app selection if template has optional apps
+    const hasOptional = template.apps.some((a) => !a.required);
+    setStep(hasOptional ? "select_apps" : "configure");
   }
 
   function handleStartFromScratch() {
@@ -180,7 +190,7 @@ export function FirstWorkspacePane({
         className={`w-full ${isPanelVariant ? "h-full max-w-[1020px]" : "max-w-[1080px]"}`}
       >
         <div
-          className={`theme-shell w-full rounded-[var(--radius-xl)] border border-border/45 px-6 py-6 shadow-lg sm:px-8 sm:py-7 lg:px-10 lg:py-8 ${
+          className={`theme-shell w-full rounded-xl border border-border/45 px-6 py-6 shadow-lg sm:px-8 sm:py-7 lg:px-10 lg:py-8 ${
             isPanelVariant ? "h-full overflow-hidden" : ""
           }`}
         >
@@ -205,6 +215,30 @@ export function FirstWorkspacePane({
               selectDisabled={!canUseMarketplaceTemplates}
               selectDisabledReason="Sign in required"
               onSignIn={openAuthPopup}
+            />
+          ) : step === "select_apps" && selectedMarketplaceTemplate ? (
+            <SelectAppsStep
+              template={selectedMarketplaceTemplate}
+              selectedApps={selectedApps}
+              onToggleApp={(appName) => {
+                const app = selectedMarketplaceTemplate.apps.find(
+                  (a) => a.name === appName,
+                );
+                if (app?.required) {
+                  return;
+                }
+                setSelectedApps((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(appName)) {
+                    next.delete(appName);
+                  } else {
+                    next.add(appName);
+                  }
+                  return next;
+                });
+              }}
+              onBack={() => setStep("detail")}
+              onContinue={() => setStep("configure")}
             />
           ) : step === "configure" ? (
             <ConfigureStep

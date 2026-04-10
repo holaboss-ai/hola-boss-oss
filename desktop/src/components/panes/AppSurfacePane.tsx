@@ -89,8 +89,11 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
     setFrameLoading(true);
     setFrameError("");
 
-    void window.electronAPI.appSurface
-      .resolveUrl(selectedWorkspaceId, appId, routePath)
+    void window.electronAPI.appSurface.resolveUrl(
+      selectedWorkspaceId,
+      appId,
+      routePath,
+    )
       .then((url) => {
         if (!cancelled) setFrameUrl(url);
       })
@@ -169,16 +172,7 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
           <div className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 p-3">
             <div className="text-xs leading-5 text-foreground">{error}</div>
           </div>
-          <div className="mt-3 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void handleRetry()}
-              disabled={isRetrying}
-              className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-xs text-foreground transition-colors hover:bg-accent disabled:opacity-50"
-            >
-              {isRetrying ? <LoaderCircle size={13} className="animate-spin" /> : <RefreshCw size={13} />}
-              Retry
-            </button>
+          <div className="mt-3">
             <button
               type="button"
               onClick={() => void handleRemove()}

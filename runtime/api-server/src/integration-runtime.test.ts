@@ -26,6 +26,7 @@ function createResolvedApp() {
   return {
     appId: "gmail",
     mcp: { transport: "http-sse", port: 3099, path: "/mcp" },
+    mcpTools: [],
     healthCheck: { path: "/mcp/health", timeoutS: 30, intervalS: 1 },
     envContract: ["HOLABOSS_USER_ID", "PLATFORM_INTEGRATION_TOKEN", "WORKSPACE_GOOGLE_INTEGRATION_ID", "WORKSPACE_GITHUB_INTEGRATION_ID"],
     integrations: [
@@ -58,6 +59,7 @@ function createSingleIntegrationResolvedApp() {
   return {
     appId: "gmail",
     mcp: { transport: "http-sse", port: 3099, path: "/mcp" },
+    mcpTools: [],
     healthCheck: { path: "/mcp/health", timeoutS: 30, intervalS: 1 },
     envContract: ["HOLABOSS_USER_ID", "PLATFORM_INTEGRATION_TOKEN", "WORKSPACE_GOOGLE_INTEGRATION_ID", "WORKSPACE_API_URL"],
     integrations: [
