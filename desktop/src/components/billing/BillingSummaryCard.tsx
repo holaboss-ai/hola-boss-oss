@@ -1,6 +1,7 @@
 import { CircleHelp } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import {
   Popover,
   PopoverContent,
@@ -33,15 +34,15 @@ function formatBillingDate(value: string) {
 
 function billingTimelineLabel(overview: DesktopBillingOverviewPayload | null) {
   if (!overview) {
-    return "Billing managed on web";
+    return null;
   }
   if (overview.expiresAt) {
-    return `Expires on ${formatBillingDate(overview.expiresAt)}`;
+    return `Expires ${formatBillingDate(overview.expiresAt)}`;
   }
   if (overview.renewsAt) {
-    return `Renews on ${formatBillingDate(overview.renewsAt)}`;
+    return `Renews ${formatBillingDate(overview.renewsAt)}`;
   }
-  return "Billing managed on web";
+  return null;
 }
 
 function openBillingLink(url: string | null | undefined) {
@@ -65,115 +66,125 @@ export function BillingSummaryCard({
       ? (overview?.creditsBalance ?? 0).toLocaleString()
       : "—";
 
+  const planLabel = overview?.planName || "Free";
+  const timeline = billingTimelineLabel(overview);
+
   return (
-    <Card
-      className="rounded-xl border-border/40 px-4 py-4"
-      style={{ backgroundColor: "rgb(243, 243, 244)" }}
-    >
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="text-2xl font-semibold text-foreground">
-            {isLoading ? "Loading..." : overview?.planName || "Holaboss"}
-          </div>
-          <div className="mt-1 text-sm text-muted-foreground">
-            {isLoading ? "Checking hosted billing..." : billingTimelineLabel(overview)}
-          </div>
+    <Card className="rounded-xl px-4 py-4">
+      {/* Header: plan name + actions */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-sm font-semibold text-foreground">
+            {isLoading ? "Loading..." : planLabel}
+          </span>
+          {!isLoading && timeline ? (
+            <Badge variant="outline" className="shrink-0 text-muted-foreground">
+              {timeline}
+            </Badge>
+          ) : null}
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
-          <Button
-            variant="outline"
-            onClick={() => openBillingLink(links?.billingPageUrl)}
-            className="theme-control-surface h-10 rounded-full border-border/45 px-4 hover:border-primary/35"
-          >
-            Manage on web
-          </Button>
-          <Button
-            onClick={() => openBillingLink(links?.addCreditsUrl)}
-            className="h-10 rounded-full border-primary/35 px-4"
-          >
-            Add credits
-          </Button>
-        </div>
+        {!isLoading ? (
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => openBillingLink(links?.billingPageUrl)}
+            >
+              Manage
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => openBillingLink(links?.addCreditsUrl)}
+            >
+              Add credits
+            </Button>
+          </div>
+        ) : null}
       </div>
 
+      {/* Error state */}
       {error ? (
-        <div className="mt-4 rounded-lg border border-rose-400/35 bg-rose-500/8 px-4 py-3 text-sm text-rose-400">
+        <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
           {error.message}
         </div>
       ) : null}
 
+      {/* Not signed in */}
       {!isLoading && !hasOverview && !error ? (
-        <div className="mt-4 rounded-lg border border-border/35 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-          Sign in to view billing.
+        <div className="mt-3 rounded-md border border-border/40 px-3 py-2 text-xs text-muted-foreground">
+          Sign in to view billing details.
         </div>
       ) : null}
 
-      <div className="mt-5 border-t border-dashed border-border/50 pt-5">
-        <div className="grid gap-4">
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3">
-            <div>
-              <div className="text-base font-semibold tracking-[-0.03em] text-foreground tabular-nums">
-                {creditsValue}
-              </div>
-              <div className="mt-1 flex items-center gap-1 text-sm text-muted-foreground">
-                <span>Credits</span>
-                <Popover>
-                  <PopoverTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label="About credits"
-                        className="size-5 rounded-full text-muted-foreground"
-                      />
-                    }
-                  >
-                    <CircleHelp size={14} />
-                  </PopoverTrigger>
-                  <PopoverContent align="start" className="w-80">
-                    <PopoverHeader>
-                      <PopoverTitle>About credits</PopoverTitle>
-                    </PopoverHeader>
-                    <ul className="flex list-disc flex-col gap-2 pl-4 text-sm text-muted-foreground">
-                      {CREDITS_HELP_ITEMS.map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
-                  </PopoverContent>
-                </Popover>
-              </div>
+      {/* Credits breakdown */}
+      <div className="mt-4 border-t border-border/40 pt-4">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+          {/* Balance */}
+          <div>
+            <div className="text-lg font-semibold tabular-nums text-foreground">
+              {creditsValue}
             </div>
-            <div className="text-right">
-              <div className="text-base font-semibold tracking-[-0.03em] text-foreground tabular-nums">
-                {overview?.monthlyCreditsIncluded?.toLocaleString() ?? "—"}
-              </div>
-              <div className="mt-1 text-sm text-muted-foreground">Monthly credits</div>
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <span>Credits</span>
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label="About credits"
+                      className="size-4 rounded-full text-muted-foreground"
+                    />
+                  }
+                >
+                  <CircleHelp size={12} />
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-72">
+                  <PopoverHeader>
+                    <PopoverTitle>About credits</PopoverTitle>
+                  </PopoverHeader>
+                  <ul className="flex list-disc flex-col gap-1.5 pl-4 text-xs text-muted-foreground">
+                    {CREDITS_HELP_ITEMS.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </PopoverContent>
+              </Popover>
             </div>
           </div>
 
-          <div className="grid gap-3 text-sm text-muted-foreground">
-            <div className="flex items-center justify-between gap-3">
-              <span>Total allocated</span>
-              <span className="tabular-nums text-foreground">
-                {overview?.totalAllocated?.toLocaleString() ?? "—"}
-              </span>
+          {/* Monthly */}
+          <div className="text-right">
+            <div className="text-lg font-semibold tabular-nums text-foreground">
+              {overview?.monthlyCreditsIncluded?.toLocaleString() ?? "—"}
             </div>
-            <div className="flex items-center justify-between gap-3">
-              <span>Total used</span>
-              <span className="tabular-nums text-foreground">
-                {overview?.totalUsed?.toLocaleString() ?? "—"}
-              </span>
-            </div>
-            {overview?.dailyRefreshCredits ? (
-              <div className="flex items-center justify-between gap-3">
-                <span>Daily refresh</span>
-                <span className="tabular-nums text-foreground">
-                  {overview.dailyRefreshCredits.toLocaleString()}
-                </span>
-              </div>
-            ) : null}
+            <div className="text-xs text-muted-foreground">Monthly</div>
           </div>
+        </div>
+
+        {/* Usage rows */}
+        <div className="mt-3 grid gap-1.5 border-t border-border/30 pt-3 text-xs">
+          <div className="flex items-center justify-between text-muted-foreground">
+            <span>Total allocated</span>
+            <span className="tabular-nums text-foreground">
+              {overview?.totalAllocated?.toLocaleString() ?? "—"}
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-muted-foreground">
+            <span>Total used</span>
+            <span className="tabular-nums text-foreground">
+              {overview?.totalUsed?.toLocaleString() ?? "—"}
+            </span>
+          </div>
+          {overview?.dailyRefreshCredits ? (
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span>Daily refresh</span>
+              <span className="tabular-nums text-foreground">
+                {overview.dailyRefreshCredits.toLocaleString()}
+              </span>
+            </div>
+          ) : null}
         </div>
       </div>
     </Card>
