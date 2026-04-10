@@ -471,23 +471,14 @@ export function ProactiveLifecyclePanel({
   });
 
   if (compact) {
-    const scheduleLabel = scheduleSummaryLabel(
-      scheduleDraftFromCron(proactiveHeartbeatCron),
-    );
-
     return (
-      <section className="w-full space-y-2">
+      <section className="w-full space-y-1">
         {/* Status + Toggle row */}
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" className={proactiveStateClasses(state)}>
-              {proactiveStateLabel(state)}
-            </Badge>
-            <span className="text-xs text-muted-foreground">
-              {scheduleLabel}
-            </span>
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
+          <Badge variant="outline" className={proactiveStateClasses(state)}>
+            {proactiveStateLabel(state)}
+          </Badge>
+          <div className="flex shrink-0 items-center gap-1.5">
             {onProactiveWorkspaceEnabledChange ? (
               isUpdatingProactiveWorkspaceEnabled ? (
                 <Loader2
