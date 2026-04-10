@@ -512,19 +512,19 @@ export function ProactiveLifecyclePanel({
                   render={
                     <Button
                       type="button"
-                      size="icon-sm"
-                      variant="outline"
+                      size="icon-xs"
+                      variant="ghost"
                       aria-label="Run analysis"
                       onClick={onTriggerProposal}
                       disabled={!hasWorkspace || isTriggeringProposal}
-                      className="border-primary/30 bg-primary/8 text-primary hover:bg-primary/14"
+                      className="text-muted-foreground hover:text-primary"
                     />
                   }
                 >
                   {isTriggeringProposal ? (
-                    <Loader2 size={13} className="animate-spin" />
+                    <Loader2 size={12} className="animate-spin" />
                   ) : (
-                    <Sparkles size={13} />
+                    <Sparkles size={12} />
                   )}
                 </TooltipTrigger>
                 <TooltipContent side="bottom">Run analysis</TooltipContent>
