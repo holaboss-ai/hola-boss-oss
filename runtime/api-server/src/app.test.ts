@@ -11,6 +11,7 @@ import { once } from "node:events";
 
 import { RuntimeStateStore } from "@holaboss/runtime-state-store";
 import yazl from "yazl";
+import * as tar from "tar";
 
 import { buildRuntimeApiServer, type BuildRuntimeApiServerOptions } from "./app.js";
 import { appLocalNpmCacheDir, buildAppSetupEnv } from "./app-setup-env.js";
@@ -4154,3 +4155,85 @@ test("removeWorkspaceMcpRegistryEntry is a no-op when workspace.yaml has no mcp_
     fs.rmSync(tmpWorkspace, { recursive: true, force: true });
   }
 });
+
+test("install-archive populates workspace.yaml mcp_registry from declared mcp.tools", async () => {
+  const root = makeTempDir("hb-runtime-api-install-archive-mcp-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  const app = buildTestRuntimeApiServer({ store });
+
+  const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-fixture-"));
+  fs.writeFileSync(
+    path.join(stageDir, "app.runtime.yaml"),
+    `app_id: "twitter"
+name: "Twitter"
+slug: "twitter"
+
+lifecycle:
+  setup: "true"
+  start: "true"
+  stop: "true"
+
+healthchecks:
+  mcp:
+    path: /mcp/health
+    timeout_s: 5
+
+mcp:
+  enabled: true
+  transport: http-sse
+  port: 3099
+  path: /mcp/sse
+  tools:
+    - create_post
+    - list_posts
+`,
+  );
+  fs.writeFileSync(path.join(stageDir, "package.json"), "{}");
+
+  const archivePath = path.join(os.tmpdir(), `mcp-test-${Date.now()}.tar.gz`);
+  await tar.c(
+    { gzip: true, file: archivePath, cwd: stageDir, portable: true, noMtime: true },
+    ["app.runtime.yaml", "package.json"],
+  );
+
+  try {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/apps/install-archive",
+      payload: {
+        workspace_id: workspace.id,
+        app_id: "twitter",
+        archive_path: archivePath,
+      },
+    });
+    assert.equal(res.statusCode, 200);
+
+    const yamlBody = fs.readFileSync(
+      path.join(workspaceDir, "workspace.yaml"),
+      "utf8",
+    );
+    assert.match(yamlBody, /mcp_registry/);
+    assert.match(yamlBody, /twitter\.create_post/);
+    assert.match(yamlBody, /twitter\.list_posts/);
+    assert.match(yamlBody, /servers:/);
+    assert.match(yamlBody, /twitter:/);
+  } finally {
+    fs.rmSync(stageDir, { recursive: true, force: true });
+    fs.rmSync(archivePath, { force: true });
+    await app.close();
+    store.close();
+  }
+});
+

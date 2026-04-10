@@ -90,8 +90,10 @@ import {
   portsForAppIndex,
   releaseWorkspaceAppPorts,
   removeWorkspaceApplication,
+  removeWorkspaceMcpRegistryEntry,
   resolveWorkspaceApp,
   resolveWorkspaceAppRuntime,
+  writeWorkspaceMcpRegistryEntry,
   type ParsedInstalledApp
 } from "./workspace-apps.js";
 import {
@@ -3489,25 +3491,42 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       lifecycle: Object.keys(lifecycle).length > 0 ? lifecycle : null,
     });
 
+    let runResult: { ready: boolean; error: string | null; detail: string };
     try {
       await ensureAppRunning(workspaceId, appId);
-      return {
-        app_id: appId,
-        status: "enabled",
-        detail: "App installed and running",
-        ready: true,
-        error: null,
-      };
+      runResult = { ready: true, error: null, detail: "App installed and running" };
     } catch (error) {
       const message = (error instanceof Error ? error.message : String(error)).slice(0, 2000);
-      return {
-        app_id: appId,
-        status: "enabled",
-        detail: message,
-        ready: false,
-        error: message,
-      };
+      runResult = { ready: false, error: message, detail: message };
     }
+
+    // Write the MCP registry entry now that ensureAppRunning has allocated ports.
+    // Best-effort: if port lookup fails (e.g. embedded runtime flag not set), fall back to null.
+    if (parsed.mcpTools.length > 0) {
+      try {
+        const resolvedApp = resolveWorkspaceApp(workspaceDir, appId, { store, workspaceId });
+        writeWorkspaceMcpRegistryEntry(workspaceDir, appId, {
+          mcpEnabled: true,
+          mcpTools: parsed.mcpTools,
+          mcpPath: "/mcp/sse",
+          mcpTimeoutMs: 30000,
+          mcpPort: resolvedApp.ports.mcp,
+        });
+      } catch (error) {
+        app.log.warn(
+          { workspaceId, appId, err: error },
+          "failed to write mcp_registry entry after install-archive"
+        );
+      }
+    }
+
+    return {
+      app_id: appId,
+      status: "enabled",
+      detail: runResult.detail,
+      ready: runResult.ready,
+      error: runResult.error,
+    };
   });
 
   app.post("/api/v1/apps/install", async (request, reply) => {
