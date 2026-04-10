@@ -3573,8 +3573,15 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         );
       }
 
+      // Detect pre-built archives: if .output/server/index.mjs exists, the app
+      // is already compiled and the setup command (which typically runs pnpm install
+      // + build) must be skipped. Override to "true" so ensureAppRunning marks
+      // setup as completed without running the source-build pipeline.
+      const isPrebuilt = fs.existsSync(path.join(appDir, ".output", "server", "index.mjs"));
       const lifecycle: Record<string, string> = {};
-      if (parsed.lifecycle.setup) lifecycle.setup = parsed.lifecycle.setup;
+      if (parsed.lifecycle.setup) {
+        lifecycle.setup = isPrebuilt ? "true" : parsed.lifecycle.setup;
+      }
       if (parsed.lifecycle.start) lifecycle.start = parsed.lifecycle.start;
       if (parsed.lifecycle.stop) lifecycle.stop = parsed.lifecycle.stop;
       appendWorkspaceApplication(workspaceDir, {
