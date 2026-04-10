@@ -1586,6 +1586,22 @@ test("evolve skill candidates round trip supports create, list, lookup, and upda
     sourceTurnInputIds: ["input-1"],
   });
 
+  const patchCandidate = store.createEvolveSkillCandidate({
+    candidateId: "candidate-2",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-2",
+    kind: "skill_patch",
+    status: "draft",
+    title: "Release verification patch",
+    summary: "Update the release verification skill with a build step.",
+    slug: "release-verification",
+    skillPath: "workspace/workspace-1/evolve/skills/candidate-2/SKILL.md",
+    contentFingerprint: "fp-2",
+    confidence: 0.88,
+    evaluationNotes: "Existing skill is stale.",
+    sourceTurnInputIds: ["input-2"],
+  });
   const fetched = store.getEvolveSkillCandidate("candidate-1");
   const listed = store.listEvolveSkillCandidates({ workspaceId: "workspace-1" });
   const updated = store.updateEvolveSkillCandidate({
@@ -1600,9 +1616,10 @@ test("evolve skill candidates round trip supports create, list, lookup, and upda
   assert.equal(created.kind, "skill_create");
   assert.equal(created.status, "draft");
   assert.equal(created.slug, "release-verification");
+  assert.equal(patchCandidate.kind, "skill_patch");
   assert.equal(fetched?.candidateId, "candidate-1");
   assert.equal(fetched?.evaluationNotes, "Looks reusable.");
-  assert.equal(listed.length, 1);
+  assert.equal(listed.length, 2);
   assert.equal(updated?.taskProposalId, "proposal-1");
   assert.equal(updated?.status, "proposed");
   assert.equal(store.getEvolveSkillCandidateByTaskProposalId("proposal-1")?.candidateId, "candidate-1");

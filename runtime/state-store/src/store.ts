@@ -395,7 +395,7 @@ export interface TaskProposalRecord {
 
 export type TaskProposalSource = "proactive" | "evolve";
 
-export type EvolveSkillCandidateKind = "skill_create";
+export type EvolveSkillCandidateKind = "skill_create" | "skill_patch";
 export type EvolveSkillCandidateState = "draft" | "proposed" | "dismissed" | "accepted" | "promoted" | "discarded";
 
 export interface EvolveSkillCandidateRecord {
@@ -570,7 +570,7 @@ type WorkspaceRow = {
 };
 
 const TASK_PROPOSAL_SOURCES = new Set<TaskProposalSource>(["proactive", "evolve"]);
-const EVOLVE_SKILL_CANDIDATE_KINDS = new Set<EvolveSkillCandidateKind>(["skill_create"]);
+const EVOLVE_SKILL_CANDIDATE_KINDS = new Set<EvolveSkillCandidateKind>(["skill_create", "skill_patch"]);
 const EVOLVE_SKILL_CANDIDATE_STATES = new Set<EvolveSkillCandidateState>([
   "draft",
   "proposed",

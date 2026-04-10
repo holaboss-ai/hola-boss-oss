@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type {
+  EvolveSkillCandidateKind,
   EvolveSkillCandidateRecord,
   RuntimeStateStore,
   TurnResultRecord,
@@ -17,14 +18,16 @@ import { resolveWorkspaceSkills } from "./workspace-skills.js";
 const SKILL_REVIEW_INTERVAL_TURNS = 5;
 const RECENT_SKILL_REVIEW_TURN_LIMIT = 5;
 const RECENT_SKILL_REVIEW_USER_MESSAGES_LIMIT = 4;
+const EXISTING_WORKSPACE_SKILL_PROMPT_LIMIT = 6;
+const EXISTING_WORKSPACE_SKILL_PROMPT_CHARS = 1400;
 const MIN_SKILL_CONFIDENCE = 0.72;
 
-export type SkillCreatePromotionResult =
+export type SkillCandidatePromotionResult =
   | { status: "missing_candidate" | "not_ready" | "missing_draft" | "invalid_live_skill"; targetSkillPath: string | null }
   | { status: "already_promoted" | "promoted_existing_live_skill" | "promoted_from_draft"; targetSkillPath: string };
 
-export interface SkillCreateCandidateDraft {
-  kind: "skill_create";
+export interface SkillCandidateDraft {
+  kind: EvolveSkillCandidateKind;
   title: string;
   summary: string;
   slug: string;
@@ -34,8 +37,8 @@ export interface SkillCreateCandidateDraft {
   sourceTurnInputIds: string[];
 }
 
-export interface SkillCreateCandidateReviewResult {
-  draft: SkillCreateCandidateDraft | null;
+export interface SkillCandidateReviewResult {
+  draft: SkillCandidateDraft | null;
   reason: "not_due" | "no_model" | "no_candidate" | "duplicate" | "too_weak" | "candidate_ready";
 }
 
@@ -50,10 +53,16 @@ interface SkillReviewContext {
   permissionDenials: Array<Record<string, unknown>>;
   recentUserMessages: string[];
   recentTurnSummaries: string[];
-  existingSkillIds: string[];
+  existingResolvedSkillIds: string[];
+  existingWorkspaceSkills: Array<{
+    skillId: string;
+    markdown: string;
+  }>;
 }
 
 interface ExtractedSkillReviewCandidate {
+  kind: EvolveSkillCandidateKind;
+  targetSkillId: string | null;
   title: string;
   summary: string;
   slug: string;
@@ -167,6 +176,10 @@ function candidateMarkdown(draft: ExtractedSkillReviewCandidate, sourceTurnInput
     "## Source Context",
     `- Proposed by evolve from turn ids: ${sourceTurnInputIds.map((value) => `\`${value}\``).join(", ") || "`unknown`"}.`,
   ];
+  lines.push(`- Candidate kind: \`${draft.kind}\`.`);
+  if (draft.targetSkillId) {
+    lines.push(`- Target workspace skill id: \`${draft.targetSkillId}\`.`);
+  }
   if (draft.evaluationNotes) {
     lines.push(`- Evaluation notes: ${draft.evaluationNotes}`);
   }
@@ -240,8 +253,45 @@ function liveWorkspaceSkillExists(workspaceDir: string, slug: string): boolean {
   return resolveWorkspaceSkills(workspaceDir).some((skill) => skill.origin === "workspace" && skill.skill_id === slug);
 }
 
-function existingWorkspaceSkillIds(store: RuntimeStateStore, workspaceId: string): string[] {
+function existingResolvedSkillIds(store: RuntimeStateStore, workspaceId: string): string[] {
   return resolveWorkspaceSkills(store.workspaceDir(workspaceId)).map((skill) => skill.skill_id);
+}
+
+function existingWorkspaceSkillDrafts(
+  store: RuntimeStateStore,
+  workspaceId: string
+): Array<{ skillId: string; markdown: string }> {
+  return resolveWorkspaceSkills(store.workspaceDir(workspaceId))
+    .filter((skill) => skill.origin === "workspace")
+    .slice(0, EXISTING_WORKSPACE_SKILL_PROMPT_LIMIT)
+    .map((skill) => {
+      const skillFilePath = path.join(skill.source_dir, "SKILL.md");
+      let markdown = "";
+      try {
+        markdown = fs.readFileSync(skillFilePath, "utf8");
+      } catch {
+        markdown = "";
+      }
+      return {
+        skillId: skill.skill_id,
+        markdown: clipText(markdown, EXISTING_WORKSPACE_SKILL_PROMPT_CHARS),
+      };
+    })
+    .filter((skill) => skill.markdown.trim().length > 0);
+}
+
+function workspaceSkillMarkdown(store: RuntimeStateStore, workspaceId: string, skillId: string): string | null {
+  const match = resolveWorkspaceSkills(store.workspaceDir(workspaceId)).find(
+    (skill) => skill.origin === "workspace" && skill.skill_id === skillId
+  );
+  if (!match) {
+    return null;
+  }
+  try {
+    return fs.readFileSync(path.join(match.source_dir, "SKILL.md"), "utf8");
+  } catch {
+    return null;
+  }
 }
 
 function recentCompletedTurnSummaries(store: RuntimeStateStore, turnResult: TurnResultRecord): string[] {
@@ -272,15 +322,17 @@ function recentUserMessages(store: RuntimeStateStore, turnResult: TurnResultReco
     .filter(Boolean);
 }
 
-async function extractSkillCreateCandidateFromModel(context: SkillReviewContext): Promise<ExtractedSkillReviewCandidate | null> {
+async function extractSkillCandidateFromModel(context: SkillReviewContext): Promise<ExtractedSkillReviewCandidate | null> {
   if (!context.modelClient) {
     return null;
   }
   const payload = await queryMemoryModelJson(context.modelClient, {
     systemPrompt:
       "Review this completed turn for a reusable workspace-local skill. Return strict JSON only with this shape: " +
-      '{"candidate":{"title":"string","summary":"string","slug":"string","when_to_use":"string","workflow":["string"],"verification":["string"],"confidence":0.0,"evaluation_notes":"string"}|null}. ' +
+      '{"candidate":{"kind":"skill_create|skill_patch","target_skill_id":"string|null","title":"string","summary":"string","slug":"string","when_to_use":"string","workflow":["string"],"verification":["string"],"confidence":0.0,"evaluation_notes":"string"}|null}. ' +
       "Only propose a candidate when the workflow is reusable beyond a single one-off incident. " +
+      "Use `skill_patch` only when updating an existing workspace-owned skill would materially improve it. " +
+      "Use `skill_create` only when no existing skill captures the workflow. " +
       "Do not propose skills for transient runtime state, general advice, or facts that belong in durable memory instead of a reusable procedure.",
     userPrompt: [
       `Workspace ID: ${context.workspaceId}`,
@@ -304,8 +356,17 @@ async function extractSkillCreateCandidateFromModel(context: SkillReviewContext)
       "Permission denials JSON:",
       JSON.stringify(context.permissionDenials),
       "",
-      "Existing workspace skill ids:",
-      context.existingSkillIds.length > 0 ? context.existingSkillIds.join(", ") : "none",
+      "Existing resolved skill ids (embedded and workspace):",
+      context.existingResolvedSkillIds.length > 0 ? context.existingResolvedSkillIds.join(", ") : "none",
+      "",
+      "Existing workspace-owned skill drafts:",
+      ...(context.existingWorkspaceSkills.length > 0
+        ? context.existingWorkspaceSkills.flatMap((skill) => [
+            `## ${skill.skillId}`,
+            skill.markdown,
+            "",
+          ])
+        : ["none"]),
     ].join("\n"),
     timeoutMs: 8000,
   });
@@ -316,10 +377,12 @@ async function extractSkillCreateCandidateFromModel(context: SkillReviewContext)
   if (candidate === null) {
     return null;
   }
+  const requestedKind = String(candidate.kind ?? "").trim().toLowerCase();
   const title = clipText(String(candidate.title ?? ""), 120);
   const summary = clipText(String(candidate.summary ?? ""), 220);
   const whenToUse = clipText(String(candidate.when_to_use ?? ""), 320);
   const slug = normalizeSkillSlug(String(candidate.slug ?? title));
+  const targetSkillIdRaw = String(candidate.target_skill_id ?? "").trim();
   const workflow = normalizeLines(candidate.workflow, 8, 240);
   const verification = normalizeLines(candidate.verification, 6, 220);
   const confidence = normalizeConfidence(candidate.confidence);
@@ -327,7 +390,11 @@ async function extractSkillCreateCandidateFromModel(context: SkillReviewContext)
   if (!title || !summary || !whenToUse || workflow.length < 2) {
     return null;
   }
+  const resolvedKind: EvolveSkillCandidateKind = requestedKind === "skill_patch" ? "skill_patch" : "skill_create";
+  const targetSkillId = targetSkillIdRaw ? normalizeSkillSlug(targetSkillIdRaw) : resolvedKind === "skill_patch" ? slug : null;
   return {
+    kind: resolvedKind,
+    targetSkillId,
     title,
     summary,
     slug,
@@ -339,12 +406,12 @@ async function extractSkillCreateCandidateFromModel(context: SkillReviewContext)
   };
 }
 
-export async function reviewTurnForSkillCreateCandidate(params: {
+export async function reviewTurnForSkillCandidate(params: {
   store: RuntimeStateStore;
   turnResult: TurnResultRecord;
   modelClient: MemoryModelClientConfig | null;
   instruction: string;
-}): Promise<SkillCreateCandidateReviewResult> {
+}): Promise<SkillCandidateReviewResult> {
   const completedTurnCount = params.store.countTurnResults({
     workspaceId: params.turnResult.workspaceId,
     sessionId: params.turnResult.sessionId,
@@ -356,8 +423,10 @@ export async function reviewTurnForSkillCreateCandidate(params: {
   if (!params.modelClient) {
     return { draft: null, reason: "no_model" };
   }
-  const existingSkillIds = existingWorkspaceSkillIds(params.store, params.turnResult.workspaceId);
-  const extracted = await extractSkillCreateCandidateFromModel({
+  const resolvedSkillIds = existingResolvedSkillIds(params.store, params.turnResult.workspaceId);
+  const workspaceSkillDrafts = existingWorkspaceSkillDrafts(params.store, params.turnResult.workspaceId);
+  const workspaceSkillIdSet = new Set(workspaceSkillDrafts.map((skill) => skill.skillId));
+  const extracted = await extractSkillCandidateFromModel({
     modelClient: params.modelClient,
     workspaceId: params.turnResult.workspaceId,
     sessionId: params.turnResult.sessionId,
@@ -368,39 +437,61 @@ export async function reviewTurnForSkillCreateCandidate(params: {
     permissionDenials: params.turnResult.permissionDenials,
     recentUserMessages: recentUserMessages(params.store, params.turnResult),
     recentTurnSummaries: recentCompletedTurnSummaries(params.store, params.turnResult),
-    existingSkillIds,
+    existingResolvedSkillIds: resolvedSkillIds,
+    existingWorkspaceSkills: workspaceSkillDrafts,
   });
   if (!extracted) {
     return { draft: null, reason: "no_candidate" };
   }
-  if (existingSkillIds.includes(extracted.slug) || existingSkillIds.includes(normalizeSkillSlug(extracted.title))) {
-    return { draft: null, reason: "duplicate" };
-  }
   if ((extracted.confidence ?? 0) < MIN_SKILL_CONFIDENCE) {
     return { draft: null, reason: "too_weak" };
+  }
+  const normalizedTitleSlug = normalizeSkillSlug(extracted.title);
+  const patchTargetSkillId = extracted.targetSkillId ?? extracted.slug;
+  const isWorkspacePatchTarget = workspaceSkillIdSet.has(patchTargetSkillId);
+  const kind: EvolveSkillCandidateKind =
+    extracted.kind === "skill_patch" || isWorkspacePatchTarget ? "skill_patch" : "skill_create";
+  const draftSkill = {
+    ...extracted,
+    kind,
+    targetSkillId: kind === "skill_patch" ? patchTargetSkillId : null,
+    slug: kind === "skill_patch" ? patchTargetSkillId : extracted.slug,
+  } satisfies ExtractedSkillReviewCandidate;
+  if (kind === "skill_create") {
+    if (resolvedSkillIds.includes(draftSkill.slug) || resolvedSkillIds.includes(normalizedTitleSlug)) {
+      return { draft: null, reason: "duplicate" };
+    }
+  } else {
+    if (!workspaceSkillIdSet.has(draftSkill.slug)) {
+      return { draft: null, reason: "duplicate" };
+    }
+    const existingMarkdown = workspaceSkillMarkdown(params.store, params.turnResult.workspaceId, draftSkill.slug);
+    if (existingMarkdown && compactWhitespace(existingMarkdown) === compactWhitespace(candidateMarkdown(draftSkill, [params.turnResult.inputId]))) {
+      return { draft: null, reason: "duplicate" };
+    }
   }
 
   const sourceTurnInputIds = [params.turnResult.inputId];
   return {
     draft: {
-      kind: "skill_create",
-      title: extracted.title,
-      summary: extracted.summary,
-      slug: extracted.slug,
-      skillMarkdown: candidateMarkdown(extracted, sourceTurnInputIds),
-      confidence: extracted.confidence,
-      evaluationNotes: extracted.evaluationNotes,
+      kind: draftSkill.kind,
+      title: draftSkill.title,
+      summary: draftSkill.summary,
+      slug: draftSkill.slug,
+      skillMarkdown: candidateMarkdown(draftSkill, sourceTurnInputIds),
+      confidence: draftSkill.confidence,
+      evaluationNotes: draftSkill.evaluationNotes,
       sourceTurnInputIds,
     },
     reason: "candidate_ready",
   };
 }
 
-export async function persistSkillCreateCandidate(params: {
+export async function persistSkillCandidate(params: {
   store: RuntimeStateStore;
   memoryService: MemoryServiceLike;
   turnResult: TurnResultRecord;
-  draft: SkillCreateCandidateDraft;
+  draft: SkillCandidateDraft;
 }): Promise<EvolveSkillCandidateRecord> {
   const candidateId = skillCandidateIdForInput(params.turnResult.inputId);
   const existingById = params.store.getEvolveSkillCandidate(candidateId);
@@ -442,13 +533,13 @@ export async function persistSkillCreateCandidate(params: {
   });
 }
 
-export async function promoteAcceptedSkillCreateCandidate(params: {
+export async function promoteAcceptedSkillCandidate(params: {
   store: RuntimeStateStore;
   memoryService: MemoryServiceLike;
   candidateId: string;
-}): Promise<SkillCreatePromotionResult> {
+}): Promise<SkillCandidatePromotionResult> {
   const candidate = params.store.getEvolveSkillCandidate(params.candidateId);
-  if (!candidate || candidate.kind !== "skill_create") {
+  if (!candidate || !["skill_create", "skill_patch"].includes(candidate.kind)) {
     return { status: "missing_candidate", targetSkillPath: null };
   }
   const targetSkillPath = promotedWorkspaceSkillPath(candidate.slug);

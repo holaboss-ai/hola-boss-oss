@@ -4,8 +4,8 @@ import type { PostRunJobRecord, RuntimeStateStore, TaskProposalRecord } from "@h
 
 import { createBackgroundTaskMemoryModelClient } from "./background-task-model.js";
 import {
-  persistSkillCreateCandidate,
-  reviewTurnForSkillCreateCandidate,
+  persistSkillCandidate,
+  reviewTurnForSkillCandidate,
   skillCandidateProposalId,
 } from "./evolve-skill-review.js";
 import type { MemoryServiceLike } from "./memory.js";
@@ -141,7 +141,7 @@ export async function processEvolveJob(params: {
     modelContext,
   });
 
-  const skillReview = await reviewTurnForSkillCreateCandidate({
+  const skillReview = await reviewTurnForSkillCandidate({
     store: params.store,
     turnResult,
     modelClient: modelContext?.modelClient ?? null,
@@ -150,7 +150,7 @@ export async function processEvolveJob(params: {
   if (!skillReview.draft) {
     return;
   }
-  const candidate = await persistSkillCreateCandidate({
+  const candidate = await persistSkillCandidate({
     store: params.store,
     memoryService: params.memoryService,
     turnResult,
@@ -163,11 +163,17 @@ export async function processEvolveJob(params: {
     store: params.store,
     workspaceId: candidate.workspaceId,
     proposalId: skillCandidateProposalId(candidate.candidateId),
-    taskName: `Review new reusable skill: ${candidate.title}`,
-    taskPrompt: `Review and promote the candidate skill "${candidate.title}" for this workspace. Inspect the draft artifact at ${candidate.skillPath}, refine it if needed, and promote it only if it is broadly reusable.`,
+    taskName:
+      candidate.kind === "skill_patch" ? `Review skill patch: ${candidate.title}` : `Review new reusable skill: ${candidate.title}`,
+    taskPrompt:
+      candidate.kind === "skill_patch"
+        ? `Review and promote the candidate patch for the existing workspace skill "${candidate.slug}". Inspect the draft artifact at ${candidate.skillPath}, refine it if needed, and update the live workspace skill only if the patch is broadly reusable and correct.`
+        : `Review and promote the candidate skill "${candidate.title}" for this workspace. Inspect the draft artifact at ${candidate.skillPath}, refine it if needed, and promote it only if it is broadly reusable.`,
     taskGenerationRationale:
       candidate.evaluationNotes ??
-      "Evolve identified a reusable workflow that is not captured in the current promoted skill set.",
+      (candidate.kind === "skill_patch"
+        ? "Evolve identified an existing workspace skill that appears stale or incomplete and needs review."
+        : "Evolve identified a reusable workflow that is not captured in the current promoted skill set."),
     sourceEventIds: candidate.sourceTurnInputIds,
   });
   params.store.updateEvolveSkillCandidate({

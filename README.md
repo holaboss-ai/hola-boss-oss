@@ -179,7 +179,7 @@ One run follows a bounded lifecycle:
 5. The harness receives a reduced execution package containing the selected model, `system_prompt`, ordered `context_messages`, prompt layers, capability manifest, and workspace checksum.
 6. When the run finishes, the runtime persists the assistant turn, `turn_results`, token usage, and the terminal event immediately so the run can complete without waiting on follow-up writeback.
 7. The runtime then performs a small immediate continuity writeback inline: compact the turn, refresh runtime projections such as `session-memory`, and persist the current compaction boundary.
-8. After continuity is durable, the runtime enqueues a persistent durable-memory writeback job for heavier follow-up work such as durable extraction, durable-memory promotion, and scope-aware durable-index refresh.
+8. After continuity is durable, the runtime enqueues a persistent evolve job for heavier follow-up work such as durable-memory extraction, durable-memory promotion, skill review, candidate skill generation, and scope-aware durable-index refresh.
 9. On the next run, continuity is restored from the latest prior compaction boundary, a bounded `session-memory` excerpt, and a small recalled-memory subset instead of replaying the full transcript.
 
 That split is intentional. Post-run continuity work is valuable, but it is not allowed to hold the run open after the agent has already finished outputting. The foreground path ends at committed run state, while continuity-enhancement tasks continue asynchronously as best-effort follow-up work.
@@ -198,8 +198,8 @@ graph TD;
     J --> K["Write compaction boundary"];
     J --> L["Write runtime projections"];
     J --> M["Enqueue durable-memory writeback job"];
-    M --> P["Durable-memory worker"];
-    P --> Q["Promote durable memory and refresh indexes"];
+    M --> P["Evolve worker"];
+    P --> Q["Promote durable memory, review skills, and refresh indexes"];
     K --> N["Restore next run"];
     L --> N;
     Q --> N;
@@ -474,14 +474,16 @@ The current memory lifecycle is:
 3. A run finishes and the runtime persists `turn_results`.
 4. An immediate continuity writeback runs inline after the turn result is committed.
 5. That continuity writeback compacts the turn, updates the current compaction boundary, and generates volatile runtime projections under `memory/workspace/<workspace-id>/runtime/`, including `session-memory/`.
-6. The runtime then persists a durable-memory job in `state/runtime.db` so the heavier durable-memory work survives process restarts.
-7. The durable-memory worker reloads the finished turn, recent session state, and current memory catalog state.
+6. The runtime then persists an evolve job in `state/runtime.db` so the heavier follow-up work survives process restarts.
+7. The evolve worker reloads the finished turn, recent session state, current memory catalog state, and any existing workspace skills relevant to review.
 8. It derives deterministic durable candidates from the latest user message and assistant response, such as command facts, business facts, procedures, and repeated permission blockers.
 9. If a background-tasks model is configured, it also runs a model-assisted durable extraction pass using the current instruction, recent user messages, recent turn summaries, and the latest assistant response.
 10. Accepted model-extracted candidates are merged with deterministic durable candidates and persisted into markdown memory plus `memory_entries` catalog rows.
-11. Durable-memory indexes are then refreshed from the catalog using paged reads so large scopes are not truncated, but only for the scopes that actually changed in the current durable writeback.
-12. Future runs restore session continuity from the latest compaction boundary first, then enrich continuity with the current `session-memory` snapshot.
-13. Future runs recall a small durable subset from the indexed markdown memory graph and inject it as prompt context.
+11. On the same evolve cadence, the runtime may also review the turn for reusable workspace skill candidates. These candidates are stored as inactive draft artifacts under `memory/workspace/<workspace-id>/evolve/skills/` and surfaced through `task_proposals` only when they need attention.
+12. Accepted evolve proposals spawn tightly scoped review sessions. After a successful review run, the runtime promotes accepted skill candidates into live workspace skills under `skills/<skill-id>/SKILL.md`.
+13. Durable-memory indexes are then refreshed from the catalog using paged reads so large scopes are not truncated, but only for the scopes that actually changed in the current durable writeback.
+14. Future runs restore session continuity from the latest compaction boundary first, then enrich continuity with the current `session-memory` snapshot.
+15. Future runs recall a small durable subset from the indexed markdown memory graph and inject it as prompt context.
 
 This keeps replay, inspection, and durable recall separate instead of overloading one mechanism for all three jobs.
 
@@ -492,10 +494,10 @@ The runtime now splits evolve into two phases:
 1. `write_turn_continuity`
    - runs inline after the foreground `turn_results` row is committed
    - keeps next-run continuity fresh without waiting on LLM extraction
-2. `durable_memory_writeback`
+2. `queued_evolve`
    - persisted as a queue job in `state/runtime.db`
-   - drained by a dedicated durable-memory worker
-   - handles the heavier durable-memory promotion path
+   - drained by a dedicated evolve worker
+   - handles the heavier durable-memory promotion path plus background skill review
 
 The immediate continuity phase currently performs:
 
@@ -510,7 +512,7 @@ The immediate continuity phase currently performs:
    - permission-blocker runtime notes
 4. Persist the compaction-boundary artifact used for later session restoration, including restoration ordering and the runtime-owned restored-memory paths written during the immediate phase.
 
-The queued durable-memory phase currently performs:
+The queued evolve phase currently performs:
 
 1. Reload the finished turn plus recent session state.
 2. Build deterministic durable candidates from explicit or strongly patterned content:
@@ -528,13 +530,38 @@ The queued durable-memory phase currently performs:
    - rebuild root `memory/MEMORY.md` only when indexed scope counts changed
 7. Use paged catalog reads during index refresh so large memory scopes are fully indexed instead of being truncated at a fixed row cap.
 8. Patch the existing compaction boundary so its restored-memory path list also reflects the durable-memory and index files written by the queued phase.
+9. On the same fifth-turn cadence, review recent completed work for reusable workspace skill candidates.
+10. Persist candidate skill drafts under `memory/workspace/<workspace-id>/evolve/skills/<candidate-id>/SKILL.md`.
+11. Raise `task_proposals` with `proposal_source = "evolve"` for candidate skills that merit attention. Low-quality, duplicate, or irrelevant candidates are discarded silently.
+12. When an accepted evolve proposal completes successfully, promote the candidate into the live workspace skill namespace at `skills/<skill-id>/SKILL.md`. If the review session already produced that live skill, the runtime keeps the session-authored version and simply marks the candidate promoted.
 
 This split is intentional:
 
 - request snapshots are not evolve work; the runtime persists the turn request snapshot during bootstrap before the harness starts
 - immediate continuity work stays cheap and close to the completed run so the next turn has a fresh restoration anchor
-- durable-memory promotion is now persisted in a queue, so it no longer depends on an in-process `setImmediate(...)` callback surviving until completion
+- evolve work is now persisted in a queue, so it no longer depends on an in-process `setImmediate(...)` callback surviving until completion
 - durable-memory writeback still runs for both successful turns and executor-error terminal paths, because failed turns can still contain continuity and durable-memory signals worth preserving
+- skill review is also part of evolve, but it remains proposal-driven and review-oriented rather than silently mutating the live skill surface
+
+#### Current Skill Candidate Lifecycle
+
+`evolve` currently supports two procedural candidate kinds:
+
+- `skill_create`
+  - propose a new reusable workspace skill that does not already exist
+- `skill_patch`
+  - propose an update to an existing workspace skill when the latest turn suggests the current skill is stale, incomplete, or contradicted by successful practice
+
+Candidate skills are internal draft artifacts, not live skills. Their lifecycle is:
+
+1. The queued evolve phase reviews a cadence turn.
+2. If it detects a reusable procedural pattern, it writes a draft candidate under `memory/workspace/<workspace-id>/evolve/skills/<candidate-id>/SKILL.md`.
+3. The runtime persists candidate metadata in `state/runtime.db` via `evolve_skill_candidates`.
+4. If the candidate is worth attention, the runtime raises a `task_proposal` with `proposal_source = "evolve"`.
+5. Accepting that proposal opens a tightly scoped task-proposal session with the draft skill, target live skill path, and draft markdown injected as context.
+6. After a successful accepted review run, the runtime promotes the candidate into the live workspace `skills/` namespace and marks the candidate `promoted`.
+
+This keeps the common case invisible to the operator while still preserving auditability and a controlled attention lane for procedural evolution.
 
 The largest remaining cost centers are now concentrated in the queued durable-memory phase:
 

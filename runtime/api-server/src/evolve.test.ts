@@ -15,7 +15,7 @@ import {
   enqueueEvolveJob,
   processEvolveJob,
 } from "./evolve.js";
-import { persistSkillCreateCandidate, reviewTurnForSkillCreateCandidate } from "./evolve-skill-review.js";
+import { persistSkillCandidate, reviewTurnForSkillCandidate } from "./evolve-skill-review.js";
 import { RuntimeEvolveWorker } from "./evolve-worker.js";
 import { writeTurnContinuity } from "./turn-memory-writeback.js";
 
@@ -207,7 +207,7 @@ test("skill review only proposes candidates on the configured completed-turn cad
     createdAt: "2026-04-10T12:00:00.000Z",
   });
 
-  const notDue = await reviewTurnForSkillCreateCandidate({
+  const notDue = await reviewTurnForSkillCandidate({
     store,
     turnResult: store.upsertTurnResult({
       workspaceId: "workspace-1",
@@ -226,7 +226,7 @@ test("skill review only proposes candidates on the configured completed-turn cad
 
   const result = await withMockedFetch(
     () =>
-      reviewTurnForSkillCreateCandidate({
+      reviewTurnForSkillCandidate({
         store,
         turnResult,
         modelClient: { baseUrl: "https://example.test/openai/v1", apiKey: "token", modelId: "gpt-test" },
@@ -255,7 +255,94 @@ test("skill review only proposes candidates on the configured completed-turn cad
   store.close();
 });
 
-test("persistSkillCreateCandidate writes the draft artifact and dedupes active candidates", async () => {
+test("skill review can target an existing workspace skill as a patch candidate", async () => {
+  const { store } = makeRuntimeState("hb-evolve-skill-patch-review-");
+  seedWorkspace(store);
+  const workspaceDir = store.workspaceDir("workspace-1");
+  const liveSkillDir = path.join(workspaceDir, "skills", "release-verification");
+  fs.mkdirSync(liveSkillDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(liveSkillDir, "SKILL.md"),
+    [
+      "---",
+      "name: release-verification",
+      "description: Old release verification workflow.",
+      "---",
+      "# Release Verification",
+      "",
+      "## Workflow",
+      "1. Run the old checks.",
+    ].join("\n"),
+    "utf8"
+  );
+  for (let index = 1; index <= 4; index += 1) {
+    store.upsertTurnResult({
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      inputId: `input-patch-${index}`,
+      startedAt: `2026-04-0${Math.min(index, 9)}T12:00:00.000Z`,
+      completedAt: `2026-04-0${Math.min(index, 9)}T12:00:05.000Z`,
+      status: "completed",
+      stopReason: "ok",
+      assistantText: `Patch turn ${index} complete.`,
+    });
+  }
+  const turnResult = store.upsertTurnResult({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-patch-5",
+    startedAt: "2026-04-10T12:10:00.000Z",
+    completedAt: "2026-04-10T12:10:05.000Z",
+    status: "completed",
+    stopReason: "ok",
+    assistantText: "Updated the release verification workflow to include an explicit build verification step.",
+    toolUsageSummary: { tool_names: ["read", "bash"], total_calls: 3 },
+  });
+  store.insertSessionMessage({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    role: "user",
+    text: "Update the release verification skill to include the new build check.",
+    messageId: "user-patch-5",
+    createdAt: "2026-04-10T12:10:00.000Z",
+  });
+
+  const result = await withMockedFetch(
+    () =>
+      reviewTurnForSkillCandidate({
+        store,
+        turnResult,
+        modelClient: { baseUrl: "https://example.test/openai/v1", apiKey: "token", modelId: "gpt-test" },
+        instruction: "Update existing workspace skills when the workflow has changed materially.",
+      }),
+    {
+      candidate: {
+        kind: "skill_patch",
+        target_skill_id: "release-verification",
+        title: "Release verification skill",
+        summary: "Reusable release verification workflow with explicit build verification.",
+        slug: "release-verification",
+        when_to_use: "Use when validating release readiness before shipping.",
+        workflow: [
+          "Run the release verification checks in order.",
+          "Confirm both tests and the build output before shipping.",
+        ],
+        verification: ["Run npm run test.", "Run npm run build."],
+        confidence: 0.94,
+        evaluation_notes: "Existing skill is missing the new build verification step.",
+      },
+    }
+  );
+
+  assert.equal(result.reason, "candidate_ready");
+  assert.equal(result.draft?.kind, "skill_patch");
+  assert.equal(result.draft?.slug, "release-verification");
+  assert.match(result.draft?.skillMarkdown ?? "", /Candidate kind: `skill_patch`/);
+  assert.match(result.draft?.skillMarkdown ?? "", /Target workspace skill id: `release-verification`/);
+  store.close();
+});
+
+test("persistSkillCandidate writes the draft artifact and dedupes active candidates", async () => {
   const { store, memoryService } = makeRuntimeState("hb-evolve-skill-persist-");
   seedWorkspace(store);
   const turnResult = store.upsertTurnResult({
@@ -269,7 +356,7 @@ test("persistSkillCreateCandidate writes the draft artifact and dedupes active c
     assistantText: "Reusable workflow captured.",
   });
 
-  const candidate = await persistSkillCreateCandidate({
+  const candidate = await persistSkillCandidate({
     store,
     memoryService,
     turnResult,
@@ -291,7 +378,7 @@ test("persistSkillCreateCandidate writes the draft artifact and dedupes active c
     },
   });
 
-  const persistedAgain = await persistSkillCreateCandidate({
+  const persistedAgain = await persistSkillCandidate({
     store,
     memoryService,
     turnResult,

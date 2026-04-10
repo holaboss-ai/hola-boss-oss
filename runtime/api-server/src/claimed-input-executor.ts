@@ -15,7 +15,7 @@ import type { MemoryServiceLike } from "./memory.js";
 import { createBackgroundTaskMemoryModelClient } from "./background-task-model.js";
 import type { TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
 import { runEvolveTasks } from "./evolve-tasks.js";
-import { promoteAcceptedSkillCreateCandidate } from "./evolve-skill-review.js";
+import { promoteAcceptedSkillCandidate } from "./evolve-skill-review.js";
 import { collectWorkspaceFileManifest, detectWorkspaceFileOutputs, type WorkspaceFileManifest } from "./turn-output-capture.js";
 import { compactTurnSummary } from "./turn-result-summary.js";
 
@@ -441,7 +441,7 @@ async function maybePromoteAcceptedEvolveSkillCandidate(params: {
   if (source !== "task_proposal" || proposalSource !== "evolve" || !candidateId) {
     return;
   }
-  await promoteAcceptedSkillCreateCandidate({
+  await promoteAcceptedSkillCandidate({
     store: params.store,
     memoryService: params.memoryService,
     candidateId,
