@@ -61,6 +61,9 @@ export function compactTurnSummary(turnResult: TurnResultRecord): string | null 
   if (turnResult.status === "waiting_user") {
     return "Run paused waiting for user input.";
   }
+  if (turnResult.status === "paused") {
+    return "Run was paused by the user before completion.";
+  }
   if (turnResult.status === "failed") {
     const reason = compactWhitespace(turnResult.stopReason ?? "");
     return reason ? `Run failed: ${reason}.` : "Run failed.";

@@ -8,9 +8,9 @@ import {
   useState,
 } from "react";
 import {
+  Bot,
   ChevronLeft,
   ChevronRight,
-  Download,
   Globe,
   Loader2,
   MoreHorizontal,
@@ -24,6 +24,11 @@ import { PaneCard } from "@/components/ui/PaneCard";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 const HOME_URL = "https://www.google.com";
+const DEFAULT_BROWSER_SPACE: BrowserSpaceId = "user";
+const EXPLICIT_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z\d+\-.]*:/;
+const LOCALHOST_PATTERN = /^localhost(?::\d+)?(?:[/?#]|$)/i;
+const IPV4_HOST_PATTERN = /^(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?(?:[/?#]|$)/;
+const IPV6_HOST_PATTERN = /^\[[0-9a-fA-F:]+\](?::\d+)?(?:[/?#]|$)/;
 
 const EMPTY_BROWSER_STATE: BrowserStatePayload = {
   id: "",
@@ -37,8 +42,13 @@ const EMPTY_BROWSER_STATE: BrowserStatePayload = {
 };
 
 const INITIAL_STATE: BrowserTabListPayload = {
+  space: DEFAULT_BROWSER_SPACE,
   activeTabId: "",
   tabs: [],
+  tabCounts: {
+    user: 0,
+    agent: 0,
+  },
 };
 
 function normalizeUrl(rawInput: string) {
@@ -47,8 +57,20 @@ function normalizeUrl(rawInput: string) {
     return HOME_URL;
   }
 
-  if (/^https?:\/\//i.test(trimmed)) {
+  if (EXPLICIT_SCHEME_PATTERN.test(trimmed)) {
     return trimmed;
+  }
+
+  if (trimmed.startsWith("//")) {
+    return `https:${trimmed}`;
+  }
+
+  if (
+    LOCALHOST_PATTERN.test(trimmed) ||
+    IPV4_HOST_PATTERN.test(trimmed) ||
+    IPV6_HOST_PATTERN.test(trimmed)
+  ) {
+    return `http://${trimmed}`;
   }
 
   if (trimmed.includes(".")) {
@@ -80,7 +102,6 @@ export function BrowserPane({
     useState(-1);
   const paneRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
-  const downloadsButtonRef = useRef<HTMLButtonElement | null>(null);
   const moreButtonRef = useRef<HTMLButtonElement | null>(null);
   const addressInputRef = useRef<HTMLInputElement | null>(null);
   const addressFieldRef = useRef<HTMLDivElement | null>(null);
@@ -96,6 +117,14 @@ export function BrowserPane({
   const isCompactPane = paneWidth > 0 && paneWidth <= 320;
   const isNarrowPane = paneWidth > 0 && paneWidth <= 240;
   const showBookmarkStrip = bookmarks.length > 0 && !isCompactPane;
+  const visibleBrowserSpace = browserState.space || DEFAULT_BROWSER_SPACE;
+  const alternateBrowserSpace =
+    visibleBrowserSpace === "user" ? "agent" : "user";
+  const visibleBrowserLabel =
+    visibleBrowserSpace === "user" ? "User" : "Agent";
+  const alternateBrowserLabel =
+    alternateBrowserSpace === "user" ? "user" : "agent";
+  const VisibleBrowserIcon = visibleBrowserSpace === "user" ? Globe : Bot;
 
   useLayoutEffect(() => {
     const pane = paneRef.current;
@@ -134,7 +163,7 @@ export function BrowserPane({
     }
 
     void window.electronAPI.browser
-      .setActiveWorkspace(selectedWorkspaceId)
+      .setActiveWorkspace(selectedWorkspaceId, visibleBrowserSpace)
       .then(applyState);
     const unsubscribe = window.electronAPI.browser.onStateChange(applyState);
 
@@ -142,7 +171,7 @@ export function BrowserPane({
       mounted = false;
       unsubscribe();
     };
-  }, [selectedWorkspaceId]);
+  }, [selectedWorkspaceId, visibleBrowserSpace]);
 
   useEffect(() => {
     let mounted = true;
@@ -180,7 +209,10 @@ export function BrowserPane({
       };
     }
 
-    void window.electronAPI.browser.setActiveWorkspace(selectedWorkspaceId);
+    void window.electronAPI.browser.setActiveWorkspace(
+      selectedWorkspaceId,
+      visibleBrowserSpace,
+    );
     void window.electronAPI.browser.getBookmarks().then(applyBookmarks);
     void window.electronAPI.browser.getDownloads().then(applyDownloads);
     void window.electronAPI.browser.getHistory().then(applyHistory);
@@ -197,7 +229,7 @@ export function BrowserPane({
       unsubscribeDownloads();
       unsubscribeHistory();
     };
-  }, [selectedWorkspaceId]);
+  }, [selectedWorkspaceId, visibleBrowserSpace]);
 
   useEffect(() => {
     setInputValue(activeTab.url || "");
@@ -296,6 +328,13 @@ export function BrowserPane({
     void window.electronAPI.browser.closeTab(tabId);
   };
 
+  const onSelectBrowserSpace = (space: BrowserSpaceId) => {
+    if (!selectedWorkspaceId || space === visibleBrowserSpace) {
+      return;
+    }
+    void window.electronAPI.browser.setActiveWorkspace(selectedWorkspaceId, space);
+  };
+
   const isBookmarked = useMemo(
     () => bookmarks.some((bookmark) => bookmark.url === activeTab.url),
     [activeTab.url, bookmarks],
@@ -311,7 +350,6 @@ export function BrowserPane({
       downloads.filter((download) => download.status === "progressing").length,
     [downloads],
   );
-  const hasVisibleDownloads = downloads.length > 0;
   const historySuggestions = useMemo(() => {
     if (!addressFocused) {
       return [];
@@ -429,15 +467,6 @@ export function BrowserPane({
       navigateTo(entry.url);
     });
   }, [historySuggestions]);
-
-  const onToggleDownloadsPopup = () => {
-    const bounds = getButtonBounds(downloadsButtonRef.current);
-    if (!bounds) {
-      return;
-    }
-
-    void window.electronAPI.browser.toggleDownloadsPopup(bounds);
-  };
 
   const onAddressKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (!historySuggestions.length) {
@@ -570,32 +599,28 @@ export function BrowserPane({
                   disabled={!activeTab.initialized}
                   className="size-7"
                 />
+                <button
+                  type="button"
+                  onClick={() => onSelectBrowserSpace(alternateBrowserSpace)}
+                  className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-border/45 bg-background/80 px-2.5 text-[11px] font-medium text-muted-foreground transition hover:border-primary/28 hover:text-foreground"
+                  aria-label={`Switch to ${alternateBrowserLabel} browser`}
+                  title={`Switch to ${alternateBrowserLabel} browser`}
+                >
+                  <VisibleBrowserIcon
+                    size={12}
+                    className={
+                      visibleBrowserSpace === "agent"
+                        ? "text-primary/85"
+                        : "text-muted-foreground/80"
+                    }
+                  />
+                  {!isNarrowPane ? <span>{visibleBrowserLabel}</span> : null}
+                </button>
               </div>
 
               <div
                 className={`relative flex shrink-0 items-center gap-1 ${isCompactPane ? "" : "ml-auto"}`}
               >
-                {hasVisibleDownloads ? (
-                  <button
-                    ref={downloadsButtonRef}
-                    type="button"
-                    className={[
-                      "bg-muted relative grid size-7 place-items-center rounded-md border transition-colors",
-                      "border-border/60 text-muted-foreground hover:border-primary/45 hover:text-primary",
-                    ].join(" ")}
-                    aria-label="Downloads"
-                    title="Downloads"
-                    onClick={onToggleDownloadsPopup}
-                  >
-                    <Download size={14} />
-                    {activeDownloadCount > 0 ? (
-                      <span className="absolute -right-1 -top-1 min-w-[16px] rounded-full border border-primary/55 bg-primary/90 px-1 text-[9px] font-bold leading-4 text-black">
-                        {activeDownloadCount}
-                      </span>
-                    ) : null}
-                  </button>
-                ) : null}
-
                 <button
                   ref={moreButtonRef}
                   type="button"
@@ -615,6 +640,11 @@ export function BrowserPane({
                   }}
                 >
                   <MoreHorizontal size={14} />
+                  {activeDownloadCount > 0 ? (
+                    <span className="absolute -right-1 -top-1 min-w-[16px] rounded-full border border-primary/55 bg-primary/90 px-1 text-[9px] font-bold leading-4 text-black">
+                      {activeDownloadCount}
+                    </span>
+                  ) : null}
                 </button>
               </div>
             </div>
@@ -718,10 +748,10 @@ export function BrowserPane({
                     <Loader2 size={18} className="animate-spin" />
                   </div>
                   <div className="mt-4 text-[15px] font-medium tracking-[-0.02em] text-foreground">
-                    Starting browser
+                    Starting {visibleBrowserSpace === "agent" ? "agent" : "user"} browser
                   </div>
                   <div className="mt-1.5 text-[12px] leading-6 text-muted-foreground">
-                    Opening the embedded browser for this workspace.
+                    Opening the embedded {visibleBrowserSpace === "agent" ? "agent" : "user"} browser for this workspace.
                   </div>
                   <div className="bg-muted mt-4 overflow-hidden rounded-full border border-border/40 p-1">
                     <div className="h-1.5 rounded-full bg-primary/60 animate-pulse" />

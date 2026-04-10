@@ -11,7 +11,7 @@
     "clean": "rm -rf out build",
     "rebuild:native": "node ./node_modules/@electron/rebuild/lib/cli.js -f -w better-sqlite3",
     "predev": "node scripts/validate-dev-env.mjs && kill-port 5173 && npm run rebuild:native && node scripts/ensure-runtime-bundle.mjs && node scripts/patch-electron-plist.mjs",
-    "dev": "cross-env HOLABOSS_DESKTOP_USER_DATA_DIR=holaboss-local-dev concurrently -k \"npm:dev:renderer\" \"npm:dev:electron:build\" \"npm:dev:electron:run\"",
+    "dev": "cross-env HOLABOSS_DESKTOP_USER_DATA_DIR=holaboss-local-dev concurrently -k \"npm:dev:renderer\" \"npm:dev:electron:build\" \"npm:dev:runtime:watch\" \"npm:dev:electron:run\"",
     "dev:cp:local": "cross-env HOLABOSS_INTERNAL_DEV=1 npm run dev",
     "dev:cp:local:verbose": "cross-env HOLABOSS_INTERNAL_DEV=1 HOLABOSS_VERBOSE_TELEMETRY=1 npm run dev",
     "dev:cp:dev": "cross-env HOLABOSS_INTERNAL_DEV=1 npm run dev",
@@ -20,7 +20,9 @@
     "dev:cp:prod:verbose": "cross-env HOLABOSS_VERBOSE_TELEMETRY=1 npm run dev",
     "dev:renderer": "vite",
     "dev:electron:build": "tsup --config tsup.config.ts --watch",
+    "dev:runtime:watch": "node scripts/watch-runtime-bundle.mjs",
     "dev:electron:run": "wait-on tcp:5173 file:out/dist-electron/main.cjs && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electronmon out/dist-electron/main.cjs",
+    "release:version": "node scripts/release-version.mjs",
     "prepare:runtime": "node scripts/stage-runtime-bundle.mjs",
     "prepare:runtime:macos": "cross-env HOLABOSS_RUNTIME_PLATFORM=macos node scripts/stage-runtime-bundle.mjs",
     "prepare:runtime:linux": "cross-env HOLABOSS_RUNTIME_PLATFORM=linux node scripts/stage-runtime-bundle.mjs",
@@ -63,6 +65,7 @@
     "conf": "^15.1.0",
     "dotenv": "^16.6.1",
     "electron-updater": "^6.8.3",
+    "exceljs": "^4.4.0",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.542.0",
     "react": "^19.1.1",
@@ -71,7 +74,6 @@
     "remark-gfm": "^4.0.1",
     "shadcn": "^4.1.2",
     "tw-animate-css": "^1.4.0",
-    "xlsx": "^0.18.5",
     "yaml": "^2.8.3"
   },
   "overrides": {
@@ -87,7 +89,7 @@
     "@vitejs/plugin-react": "^5.0.4",
     "concurrently": "^9.2.1",
     "cross-env": "^10.0.0",
-    "electron": "^38.0.0",
+    "electron": "^41.1.1",
     "electron-builder": "^26.0.12",
     "electronmon": "^2.0.3",
     "kill-port": "^2.0.1",
@@ -95,7 +97,7 @@
     "tailwindcss": "^4.2.1",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",
-    "vite": "^8.0.0",
+    "vite": "^8.0.6",
     "wait-on": "^8.0.5"
   }
 }

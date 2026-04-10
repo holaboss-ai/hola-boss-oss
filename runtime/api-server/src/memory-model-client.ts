@@ -5,7 +5,7 @@ export interface MemoryModelClientConfig {
   apiKey: string;
   defaultHeaders?: Record<string, string> | null;
   modelId: string;
-  apiStyle?: "openai_compatible" | "anthropic_native" | null;
+  apiStyle?: "openai_compatible" | "anthropic_native" | "google_native" | "openrouter_image" | null;
 }
 
 export interface MemoryModelJsonQuery {
@@ -32,8 +32,8 @@ function firstNonEmptyString(...values: unknown[]): string {
 }
 
 function looksLikeOpenAiCompatBaseUrl(baseUrl: string): boolean {
-  const normalized = baseUrl.trim().toLowerCase();
-  return normalized.endsWith("/openai/v1");
+  const normalized = baseUrl.trim().toLowerCase().replace(/\/+$/, "");
+  return normalized.endsWith("/openai/v1") || normalized.endsWith("/google/v1");
 }
 
 function looksLikeAnthropicBaseUrl(baseUrl: string): boolean {

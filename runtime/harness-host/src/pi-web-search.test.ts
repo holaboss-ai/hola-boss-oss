@@ -27,6 +27,9 @@ test("Pi web search tool proxies Exa hosted MCP and returns the raw text block",
 
   assert.equal(tools.length, 1);
   assert.equal(tools[0]?.name, "web_search");
+  assert.match(tools[0]?.description ?? "", /discover and summarize information across multiple sources/i);
+  assert.match(tools[0]?.description ?? "", /exact live values, platform-native rankings or filters, UI-only state/i);
+  assert.match(tools[0]?.description ?? "", /escalate to browser tools or another more direct capability/i);
 
   const result = await tools[0]!.execute(
     "call-1",

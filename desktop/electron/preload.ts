@@ -87,9 +87,18 @@ interface BrowserStatePayload {
   error: string;
 }
 
+type BrowserSpaceId = "user" | "agent";
+
+interface BrowserTabCountsPayload {
+  user: number;
+  agent: number;
+}
+
 interface BrowserTabListPayload {
+  space: BrowserSpaceId;
   activeTabId: string;
   tabs: BrowserStatePayload[];
+  tabCounts: BrowserTabCountsPayload;
 }
 
 interface BrowserBookmarkPayload {
@@ -153,6 +162,8 @@ interface RuntimeConfigPayload {
   sandboxId: string | null;
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
+  defaultBackgroundModel: string | null;
+  defaultImageModel: string | null;
   controlPlaneBaseUrl: string | null;
   catalogVersion: string | null;
   providerModelGroups: RuntimeProviderModelGroupPayload[];
@@ -161,6 +172,7 @@ interface RuntimeConfigPayload {
 interface RuntimeProviderModelPayload {
   token: string;
   modelId: string;
+  capabilities?: string[];
 }
 
 interface RuntimeProviderModelGroupPayload {
@@ -177,6 +189,8 @@ interface RuntimeConfigUpdatePayload {
   sandboxId?: string | null;
   modelProxyBaseUrl?: string | null;
   defaultModel?: string | null;
+  defaultBackgroundModel?: string | null;
+  defaultImageModel?: string | null;
   controlPlaneBaseUrl?: string | null;
 }
 
@@ -198,6 +212,7 @@ interface AppUpdateStatusPayload {
 interface WorkbenchOpenBrowserPayload {
   workspaceId?: string | null;
   url?: string | null;
+  space?: BrowserSpaceId | null;
 }
 
 interface TemplateAgentInfoPayload {
@@ -251,7 +266,6 @@ interface WorkspaceRecordPayload {
   name: string;
   status: string;
   harness: string | null;
-  main_session_id: string | null;
   error_message: string | null;
   onboarding_status: string;
   onboarding_session_id: string | null;
@@ -388,6 +402,19 @@ interface AgentSessionListResponsePayload {
   count: number;
 }
 
+interface CreateAgentSessionPayload {
+  workspace_id: string;
+  session_id?: string | null;
+  kind?: string | null;
+  title?: string | null;
+  parent_session_id?: string | null;
+  created_by?: string | null;
+}
+
+interface CreateAgentSessionResponsePayload {
+  session: AgentSessionRecordPayload;
+}
+
 interface TaskProposalAcceptPayload {
   proposal_id: string;
   task_name?: string | null;
@@ -518,6 +545,9 @@ interface SessionRuntimeRecordPayload {
   lease_until: string | null;
   heartbeat_at: string | null;
   last_error: Record<string, unknown> | null;
+  last_turn_status: string | null;
+  last_turn_completed_at: string | null;
+  last_turn_stop_reason: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -541,8 +571,6 @@ interface SessionHistoryResponsePayload {
   harness: string;
   harness_session_id: string;
   source: string;
-  main_session_id: string | null;
-  is_main_session: boolean;
   messages: SessionHistoryMessagePayload[];
   count: number;
   total: number;
@@ -569,6 +597,12 @@ interface SessionOutputEventListResponsePayload {
 }
 
 interface EnqueueSessionInputResponsePayload {
+  input_id: string;
+  session_id: string;
+  status: string;
+}
+
+interface PauseSessionRunResponsePayload {
   input_id: string;
   session_id: string;
   status: string;
@@ -645,6 +679,11 @@ interface HolabossQueueSessionInputPayload {
   idempotency_key?: string | null;
   priority?: number;
   model?: string | null;
+}
+
+interface HolabossPauseSessionRunPayload {
+  workspace_id: string;
+  session_id: string;
 }
 
 interface HolabossStreamSessionOutputsPayload {
@@ -1065,6 +1104,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ) as Promise<RemoteTaskProposalGenerationResponsePayload>,
     listAgentSessions: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listAgentSessions", workspaceId) as Promise<AgentSessionListResponsePayload>,
+    createAgentSession: (payload: CreateAgentSessionPayload) =>
+      ipcRenderer.invoke("workspace:createAgentSession", payload) as Promise<CreateAgentSessionResponsePayload>,
     listRuntimeStates: (workspaceId: string) =>
       ipcRenderer.invoke("workspace:listRuntimeStates", workspaceId) as Promise<SessionRuntimeStateListResponsePayload>,
     getSessionHistory: (payload: { sessionId: string; workspaceId: string }) =>
@@ -1077,6 +1118,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("workspace:stageSessionAttachmentPaths", payload) as Promise<StageSessionAttachmentsResponsePayload>,
     queueSessionInput: (payload: HolabossQueueSessionInputPayload) =>
       ipcRenderer.invoke("workspace:queueSessionInput", payload) as Promise<EnqueueSessionInputResponsePayload>,
+    pauseSessionRun: (payload: HolabossPauseSessionRunPayload) =>
+      ipcRenderer.invoke("workspace:pauseSessionRun", payload) as Promise<PauseSessionRunResponsePayload>,
     openSessionOutputStream: (payload: HolabossStreamSessionOutputsPayload) =>
       ipcRenderer.invoke("workspace:openSessionOutputStream", payload) as Promise<HolabossSessionStreamHandlePayload>,
     closeSessionOutputStream: (streamId: string, reason?: string) =>
@@ -1174,8 +1217,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     }
   },
   browser: {
-    setActiveWorkspace: (workspaceId?: string | null) =>
-      ipcRenderer.invoke("browser:setActiveWorkspace", workspaceId) as Promise<BrowserTabListPayload>,
+    setActiveWorkspace: (workspaceId?: string | null, space?: BrowserSpaceId | null) =>
+      ipcRenderer.invoke("browser:setActiveWorkspace", workspaceId, space) as Promise<BrowserTabListPayload>,
     getState: () => ipcRenderer.invoke("browser:getState") as Promise<BrowserTabListPayload>,
     setBounds: (bounds: BrowserBoundsPayload) => ipcRenderer.invoke("browser:setBounds", bounds) as Promise<BrowserTabListPayload>,
     navigate: (targetUrl: string) => ipcRenderer.invoke("browser:navigate", targetUrl) as Promise<BrowserTabListPayload>,

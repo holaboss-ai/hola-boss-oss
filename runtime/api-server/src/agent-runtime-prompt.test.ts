@@ -32,7 +32,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
         tool_name: "lookup",
       },
     ],
-    sessionKind: "main",
+    sessionKind: "workspace_session",
     sessionMode: "code",
     harnessId: "pi",
     capabilityManifest,
@@ -115,6 +115,14 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     prompt.systemPrompt,
     /Only cross the workspace boundary when the user explicitly insists, and then keep scope minimal and clearly tied to that instruction\./
   );
+  assert.match(
+    prompt.systemPrompt,
+    /If you create or resume a todo, treat it as the active execution contract: continue working through its unfinished items until the todo is complete or a real blocker requires user or external input\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not stop merely to provide an intermediate progress update or ask whether to continue while executable todo items remain\./
+  );
   assert.doesNotMatch(
     prompt.systemPrompt,
     /Check repository state with git before and after substantial edits/
@@ -128,7 +136,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     /Do not create skills for transient runtime state, one-off task details, or information that only belongs in session continuity\./
   );
   assert.match(prompt.systemPrompt, /Session policy:/);
-  assert.match(prompt.systemPrompt, /This is the main workspace session/i);
+  assert.match(prompt.systemPrompt, /This is a workspace session/i);
   assert.match(prompt.systemPrompt, /Capability policy for this run:/);
   assert.match(prompt.systemPrompt, /Workspace instructions from AGENTS\.md:/);
   assert.doesNotMatch(prompt.systemPrompt, /OpenCode MCP tool naming:/);
@@ -189,6 +197,33 @@ test("composeBaseAgentPrompt includes recent runtime context only when provided"
   assert.match(prompt.contextMessages.join("\n\n"), /Previous stop reason: runner_failed\./);
   assert.match(prompt.contextMessages.join("\n\n"), /waiting for user input/i);
   assert.match(prompt.contextMessages.join("\n\n"), /Previous runtime error: config parse error\./);
+});
+
+test("composeBaseAgentPrompt warns when the previous run was user-paused", () => {
+  const prompt = composeBaseAgentPrompt("", {
+    defaultTools: ["read"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    recentRuntimeContext: {
+      summary: "Run was paused by the user before completion.",
+      last_stop_reason: "paused",
+      last_error: null,
+      waiting_for_user: null,
+    },
+  });
+
+  assert.match(prompt.contextMessages.join("\n\n"), /Previous stop reason: paused\./);
+  assert.match(
+    prompt.contextMessages.join("\n\n"),
+    /The previous run was paused before completion\. Do not treat that work as finished\./,
+  );
+  assert.match(
+    prompt.contextMessages.join("\n\n"),
+    /If the user's latest message clearly redirects to a new unrelated task, handle that new request first, keep the unfinished prior work marked unfinished, and then propose continuing it after the new task is done\./,
+  );
 });
 
 test("composeBaseAgentPrompt includes current user context when provided", () => {
@@ -384,7 +419,7 @@ test("composeBaseAgentPrompt includes cronjob delivery routing guidance when cro
     extraTools: ["holaboss_cronjobs_create"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
-    sessionKind: "main",
+    sessionKind: "workspace_session",
     harnessId: "pi",
   });
 
@@ -393,7 +428,7 @@ test("composeBaseAgentPrompt includes cronjob delivery routing guidance when cro
     extraTools: ["holaboss_cronjobs_create"],
     workspaceSkillIds: [],
     resolvedMcpToolRefs: [],
-    sessionKind: "main",
+    sessionKind: "workspace_session",
     sessionMode: "code",
     harnessId: "pi",
     capabilityManifest,
@@ -404,4 +439,65 @@ test("composeBaseAgentPrompt includes cronjob delivery routing guidance when cro
   assert.match(prompt.systemPrompt, /Use `system_notification` only for lightweight reminders or notifications/i);
   assert.match(prompt.systemPrompt, /put the executable task in `instruction`/i);
   assert.match(prompt.systemPrompt, /Do not repeat schedule wording/i);
+});
+
+test("composeBaseAgentPrompt requires proactive fallback when partial retrieval cannot satisfy required facts", () => {
+  const capabilityManifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "workspace_session",
+    browserToolsAvailable: true,
+    browserToolIds: ["browser_get_state"],
+    defaultTools: ["read"],
+    extraTools: ["browser_get_state", "web_search"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const prompt = composeBaseAgentPrompt("", {
+    defaultTools: ["read"],
+    extraTools: ["browser_get_state", "web_search"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    harnessId: "pi",
+    capabilityManifest,
+  });
+
+  assert.match(
+    prompt.systemPrompt,
+    /Treat user-specified requirements such as exact fields, counts, rankings, filters, timestamps, and verification targets as completion criteria, not optional detail\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Before answering, compare the evidence you gathered against the user's requested fields, constraints, thresholds, rankings, timestamps, and verification targets\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not present partial evidence as task completion\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /If the first retrieval path only gives partial evidence, do not stop there: proactively switch to a more direct capability path until the required facts are verified or you can clearly explain what remains unavailable\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /If a more direct capability is unavailable or blocked, explicitly name which required facts or constraints remain unverified\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /When browser capabilities are available, use them as the direct verification path for site-specific or UI-dependent requirements that search or summary tools cannot fully prove\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Within browser workflows, prefer DOM and structured page state for actions and routine extraction\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Use browser_get_state with include_screenshot=true, or browser_screenshot, only when visual appearance, layout, prominence, overlays, canvas\/chart\/PDF content, or user-visible confirmation matters, or when DOM signals remain ambiguous or unreliable\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Even in screenshot-assisted browser work, keep using DOM-grounded browser actions for clicking, typing, scrolling, and stable extraction whenever possible\./
+  );
 });

@@ -1,5 +1,6 @@
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Loader2, RefreshCw } from "lucide-react";
 import { BillingSummaryCard } from "@/components/billing/BillingSummaryCard";
+import { Button } from "@/components/ui/button";
 import { useDesktopBilling } from "@/lib/billing/useDesktopBilling";
 
 function formatBillingDate(value: string) {
@@ -25,6 +26,7 @@ export function BillingSettingsPanel() {
     links,
     isLoading,
     error,
+    refresh,
   } = useDesktopBilling();
 
   const showExpirationBanner = Boolean(overview?.expiresAt);
@@ -32,6 +34,31 @@ export function BillingSettingsPanel() {
 
   return (
     <div className="grid max-w-[760px] gap-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-xl font-semibold text-foreground">Billing</div>
+          <div className="text-sm text-muted-foreground">
+            Hosted credits and managed usage for this desktop account.
+          </div>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            void refresh();
+          }}
+          disabled={isLoading}
+        >
+          {isLoading ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : (
+            <RefreshCw size={14} />
+          )}
+          {isLoading ? "Refreshing..." : "Refresh"}
+        </Button>
+      </div>
+
       {showExpirationBanner ? (
         <div className="flex items-center justify-between gap-3 rounded-[16px] border border-amber-400/25 bg-amber-400/10 px-4 py-3">
           <div className="flex min-w-0 items-center gap-2 text-sm text-amber-200">

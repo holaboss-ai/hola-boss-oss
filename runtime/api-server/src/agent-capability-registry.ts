@@ -357,13 +357,13 @@ const BUILTIN_CAPABILITY_DEFINITIONS: Record<string, ToolCapabilityDefinition> =
     kind: "builtin_tool",
     policy: "coordinate",
     title: "Todo Write",
-    description: "Record a working checklist or plan.",
+    description: "Create or update the current working todo.",
   },
   todoread: {
     kind: "builtin_tool",
     policy: "coordinate",
     title: "Todo Read",
-    description: "Read the current working checklist or plan.",
+    description: "Read the current working todo.",
   },
   skill: {
     kind: "builtin_tool",
@@ -394,7 +394,7 @@ const BROWSER_TOOL_DEFINITIONS = new Map<string, ToolCapabilityDefinition>(
       title: titleFromToken(toolDef.id),
       description: toolDef.description,
       availability: {
-        sessionKinds: toolDef.session_scope === "main_only" ? ["main"] : undefined,
+        sessionKinds: toolDef.session_scope === "workspace_session_only" ? ["workspace_session"] : undefined,
       },
     },
   ])

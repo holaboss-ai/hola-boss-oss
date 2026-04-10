@@ -52,9 +52,9 @@ import {
   emitTsRunnerEventWithPush
 } from "./ts-runner-events.js";
 import {
-  clearWorkspaceMainSessionId,
-  persistWorkspaceMainSessionId,
-  readWorkspaceMainSessionId,
+  clearWorkspaceHarnessSessionId,
+  persistWorkspaceHarnessSessionId,
+  readWorkspaceHarnessSessionId,
   workspaceDirForId
 } from "./ts-runner-session-state.js";
 import { resolveWorkspaceSkills } from "./workspace-skills.js";
@@ -1066,13 +1066,22 @@ async function defaultBootstrapApplications(params: {
         type: "remote" as const,
         enabled: true,
         url: application.mcp_url,
-        headers: { "X-Workspace-Id": params.request.workspace_id },
+        headers: resolvedApplicationMcpHeaders(params.request),
         timeout: application.timeout_ms
       }
     }));
   } finally {
     store.close();
   }
+}
+
+export function resolvedApplicationMcpHeaders(request: TsRunnerRequest): Record<string, string> {
+  return {
+    "X-Workspace-Id": request.workspace_id,
+    "X-Holaboss-Workspace-Id": request.workspace_id,
+    "X-Holaboss-Session-Id": request.session_id,
+    "X-Holaboss-Input-Id": request.input_id,
+  };
 }
 
 async function defaultRunHarnessHost(params: {
@@ -1224,7 +1233,7 @@ export function resolveTsRunnerBootstrapState(
   const harness = selectedHarness(request);
   requireRuntimeHarnessAdapter(harness);
   const workspaceDir = workspaceDirForId(request.workspace_id);
-  const persistedHarnessSessionId = readWorkspaceMainSessionId({
+  const persistedHarnessSessionId = readWorkspaceHarnessSessionId({
     workspaceDir,
     harness,
     logger
@@ -1250,7 +1259,7 @@ export async function relayTsRunnerEvent(params: {
   await params.emitEvent(params.event);
   const sessionId = terminalHarnessSessionId(params.event);
   if (params.event.event_type === "run_failed") {
-    clearWorkspaceMainSessionId({
+    clearWorkspaceHarnessSessionId({
       workspaceDir: params.workspaceDir,
       harness: params.harness,
       logger: params.logger
@@ -1260,7 +1269,7 @@ export async function relayTsRunnerEvent(params: {
   if (!sessionId) {
     return;
   }
-  persistWorkspaceMainSessionId({
+  persistWorkspaceHarnessSessionId({
     workspaceDir: params.workspaceDir,
     harness: params.harness,
     sessionId,

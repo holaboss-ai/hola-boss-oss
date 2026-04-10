@@ -28,7 +28,11 @@ test("desktop file preview supports tabular spreadsheet kinds", async () => {
   );
   assert.match(
     source,
-    /if \(kind === "table"\) \{[\s\S]*const tableSheets = buildTablePreviewSheets\(buffer\);/,
+    /if \(kind === "table"\) \{[\s\S]*const tableSheets = await buildTablePreviewSheets\(buffer, extension\);/,
+  );
+  assert.match(
+    source,
+    /const TEXT_FILE_EXTENSIONS = new Set\(\[[\s\S]*"\.md"[\s\S]*"\.mdx"[\s\S]*"\.markdown"[\s\S]*\]\);/,
   );
 });
 

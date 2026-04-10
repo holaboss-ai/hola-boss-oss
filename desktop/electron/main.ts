@@ -41,8 +41,9 @@ import {
 } from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { URL } from "node:url";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { ensureWorkspaceGitRepo } from "./workspace-git.js";
@@ -64,7 +65,7 @@ const AUTH_POPUP_HEIGHT = 460;
 const AUTH_POPUP_CLOSE_DELAY_MS = 260;
 const AUTH_POPUP_MARGIN_PX = 8;
 const OVERFLOW_POPUP_WIDTH = 220;
-const OVERFLOW_POPUP_HEIGHT = 88;
+const OVERFLOW_POPUP_HEIGHT = 132;
 const ADDRESS_SUGGESTIONS_POPUP_MIN_HEIGHT = 88;
 const ADDRESS_SUGGESTIONS_POPUP_MAX_HEIGHT = 320;
 const MAIN_WINDOW_CLOSED_LISTENER_BUFFER = 8;
@@ -84,7 +85,7 @@ const APP_THEMES = new Set([
 const GITHUB_RELEASES_OWNER = "holaboss-ai";
 const GITHUB_RELEASES_REPO = "holaboss-ai";
 const APP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
-const APP_UPDATE_SUPPORTED_PLATFORMS = new Set(["darwin"]);
+const APP_UPDATE_SUPPORTED_PLATFORMS = new Set(["darwin", "win32"]);
 const LOCAL_OSS_TEMPLATE_USER_ID = "local-oss";
 const HOLABOSS_HOME_URL = "https://www.holaboss.ai";
 const HOLABOSS_DOCS_URL = `https://github.com/${GITHUB_RELEASES_OWNER}/${GITHUB_RELEASES_REPO}`;
@@ -94,7 +95,6 @@ const RUNTIME_PROVIDER_KIND_OPENAI_COMPATIBLE = "openai_compatible";
 const RUNTIME_PROVIDER_KIND_ANTHROPIC_NATIVE = "anthropic_native";
 const RUNTIME_PROVIDER_KIND_OPENROUTER = "openrouter";
 const RUNTIME_HOLABOSS_PROVIDER_ID = "holaboss_model_proxy";
-const RUNTIME_HOLABOSS_BACKGROUND_TASK_DEFAULT_MODEL = "gpt-5.4-mini";
 const RUNTIME_HOLABOSS_PROVIDER_ALIASES = [
   "holaboss",
   RUNTIME_HOLABOSS_PROVIDER_ID,
@@ -257,14 +257,30 @@ interface BrowserStatePayload {
   error: string;
 }
 
+const BROWSER_SPACE_IDS = ["user", "agent"] as const;
+
+type BrowserSpaceId = (typeof BROWSER_SPACE_IDS)[number];
+
+interface BrowserTabCountsPayload {
+  user: number;
+  agent: number;
+}
+
 interface BrowserTabListPayload {
+  space: BrowserSpaceId;
   activeTabId: string;
   tabs: BrowserStatePayload[];
+  tabCounts: BrowserTabCountsPayload;
 }
 
 interface BrowserTabRecord {
   view: BrowserView;
   state: BrowserStatePayload;
+}
+
+interface BrowserTabSpaceState {
+  tabs: Map<string, BrowserTabRecord>;
+  activeTabId: string;
 }
 
 interface BrowserWorkspaceTabPersistencePayload {
@@ -274,9 +290,17 @@ interface BrowserWorkspaceTabPersistencePayload {
   faviconUrl?: string;
 }
 
+interface BrowserWorkspaceTabSpacePersistencePayload {
+  activeTabId: string;
+  tabs: BrowserWorkspaceTabPersistencePayload[];
+}
+
 interface BrowserWorkspacePersistencePayload {
   activeTabId: string;
   tabs: BrowserWorkspaceTabPersistencePayload[];
+  spaces?: Partial<
+    Record<BrowserSpaceId, BrowserWorkspaceTabSpacePersistencePayload>
+  >;
   bookmarks: BrowserBookmarkPayload[];
   downloads: BrowserDownloadPayload[];
   history: BrowserHistoryEntryPayload[];
@@ -286,8 +310,8 @@ interface BrowserWorkspaceState {
   workspaceId: string;
   partition: string;
   session: Session;
-  tabs: Map<string, BrowserTabRecord>;
-  activeTabId: string;
+  browserIdentity: BrowserSessionIdentity;
+  spaces: Record<BrowserSpaceId, BrowserTabSpaceState>;
   bookmarks: BrowserBookmarkPayload[];
   downloads: BrowserDownloadPayload[];
   history: BrowserHistoryEntryPayload[];
@@ -300,6 +324,11 @@ interface BrowserDownloadOverride {
   defaultPath: string;
   dialogTitle: string;
   buttonLabel: string;
+}
+
+interface BrowserSessionIdentity {
+  userAgent: string;
+  acceptLanguages: string;
 }
 
 interface BrowserBookmarkPayload {
@@ -389,6 +418,8 @@ interface RuntimeConfigPayload {
   sandboxId: string | null;
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
+  defaultBackgroundModel: string | null;
+  defaultImageModel: string | null;
   controlPlaneBaseUrl: string | null;
   catalogVersion: string | null;
   providerModelGroups: RuntimeProviderModelGroupPayload[];
@@ -397,6 +428,7 @@ interface RuntimeConfigPayload {
 interface RuntimeProviderModelPayload {
   token: string;
   modelId: string;
+  capabilities?: string[];
 }
 
 interface RuntimeProviderModelGroupPayload {
@@ -413,6 +445,8 @@ interface RuntimeConfigUpdatePayload {
   sandboxId?: string | null;
   modelProxyBaseUrl?: string | null;
   defaultModel?: string | null;
+  defaultBackgroundModel?: string | null;
+  defaultImageModel?: string | null;
   controlPlaneBaseUrl?: string | null;
 }
 
@@ -475,6 +509,7 @@ interface DesktopWindowStatePayload {
 interface WorkbenchOpenBrowserPayload {
   workspaceId?: string | null;
   url?: string | null;
+  space?: BrowserSpaceId | null;
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -497,6 +532,7 @@ let addressSuggestionsState: {
   selectedIndex: -1,
 };
 let activeBrowserWorkspaceId = "";
+let activeBrowserSpaceId: BrowserSpaceId = "user";
 const browserWorkspaces = new Map<string, BrowserWorkspaceState>();
 const browserDownloadTrackingPartitions = new Set<string>();
 const appSurfaceViews = new Map<string, BrowserView>();
@@ -533,6 +569,8 @@ let appUpdateEventsConfigured = false;
 let appUpdatePreferences: AppUpdatePreferencesPayload = {};
 let runtimeModelCatalogState: RuntimeModelCatalogPayload = {
   catalogVersion: null,
+  defaultBackgroundModel: null,
+  defaultImageModel: null,
   providerModelGroups: [],
   fetchedAt: null,
 };
@@ -828,6 +866,8 @@ function loadRuntimeModelCatalogCache(): RuntimeModelCatalogPayload {
     if (!existsSync(cachePath)) {
       return {
         catalogVersion: null,
+        defaultBackgroundModel: null,
+        defaultImageModel: null,
         providerModelGroups: [],
         fetchedAt: null,
       };
@@ -839,6 +879,20 @@ function loadRuntimeModelCatalogCache(): RuntimeModelCatalogPayload {
         runtimeConfigField(payload.catalogVersion as string | undefined) ||
         runtimeConfigField(payload.catalog_version as string | undefined) ||
         null,
+      defaultBackgroundModel:
+        normalizeRuntimeHolabossCatalogDefaultModelId(
+          runtimeFirstNonEmptyString(
+            payload.defaultBackgroundModel as string | undefined,
+            payload.default_background_model as string | undefined,
+          ),
+        ) || null,
+      defaultImageModel:
+        normalizeRuntimeHolabossCatalogDefaultModelId(
+          runtimeFirstNonEmptyString(
+            payload.defaultImageModel as string | undefined,
+            payload.default_image_model as string | undefined,
+          ),
+        ) || null,
       providerModelGroups: normalizeRuntimeProviderModelGroups(
         Array.isArray(payload.providerModelGroups)
           ? payload.providerModelGroups
@@ -852,6 +906,8 @@ function loadRuntimeModelCatalogCache(): RuntimeModelCatalogPayload {
   } catch {
     return {
       catalogVersion: null,
+      defaultBackgroundModel: null,
+      defaultImageModel: null,
       providerModelGroups: [],
       fetchedAt: null,
     };
@@ -1191,7 +1247,8 @@ function installAppUpdateNow() {
   if (!appUpdateStatus.downloaded) {
     throw new Error("No downloaded update is ready to install.");
   }
-  autoUpdater.quitAndInstall(false, true);
+  // Treat the toast action as an immediate in-place restart, not a manual installer flow.
+  autoUpdater.quitAndInstall(true, true);
 }
 
 async function openExternalUrl(rawUrl: string): Promise<void> {
@@ -1250,6 +1307,8 @@ interface RuntimeBindingExchangePayload {
   auth_token?: string;
   model_proxy_base_url: string;
   default_model: string;
+  default_background_model?: string;
+  default_image_model?: string;
   instance_id: string;
   provider: string;
   catalog_version?: string;
@@ -1258,11 +1317,15 @@ interface RuntimeBindingExchangePayload {
 
 interface RuntimeModelCatalogResponsePayload {
   catalog_version?: string;
+  default_background_model?: string;
+  default_image_model?: string;
   provider_model_groups?: RuntimeProviderModelGroupPayload[];
 }
 
 interface RuntimeModelCatalogPayload {
   catalogVersion: string | null;
+  defaultBackgroundModel: string | null;
+  defaultImageModel: string | null;
   providerModelGroups: RuntimeProviderModelGroupPayload[];
   fetchedAt: string | null;
 }
@@ -1696,7 +1759,6 @@ interface WorkspaceRecordPayload {
   name: string;
   status: string;
   harness: string | null;
-  main_session_id: string | null;
   error_message: string | null;
   onboarding_status: string;
   onboarding_session_id: string | null;
@@ -2066,6 +2128,9 @@ interface SessionRuntimeRecordPayload {
   lease_until: string | null;
   heartbeat_at: string | null;
   last_error: Record<string, unknown> | null;
+  last_turn_status: string | null;
+  last_turn_completed_at: string | null;
+  last_turn_stop_reason: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -2124,8 +2189,6 @@ interface SessionHistoryResponsePayload {
   harness: string;
   harness_session_id: string;
   source: string;
-  main_session_id: string | null;
-  is_main_session: boolean;
   messages: SessionHistoryMessagePayload[];
   count: number;
   total: number;
@@ -2152,6 +2215,12 @@ interface SessionOutputEventListResponsePayload {
 }
 
 interface EnqueueSessionInputResponsePayload {
+  input_id: string;
+  session_id: string;
+  status: string;
+}
+
+interface PauseSessionRunResponsePayload {
   input_id: string;
   session_id: string;
   status: string;
@@ -2339,6 +2408,11 @@ interface HolabossQueueSessionInputPayload {
   model?: string | null;
 }
 
+interface HolabossPauseSessionRunPayload {
+  workspace_id: string;
+  session_id: string;
+}
+
 interface HolabossStreamSessionOutputsPayload {
   sessionId: string;
   workspaceId?: string | null;
@@ -2406,6 +2480,7 @@ let lastRuntimeBindingRefreshUserId = "";
 let lastRuntimeBindingRefreshFailureAtMs = 0;
 let lastRuntimeBindingRefreshFailureUserId = "";
 let runtimeBindingRefreshPromise: Promise<void> | null = null;
+let runtimeConfigMutationPromise: Promise<void> | null = null;
 let runtimeLifecycleChain: Promise<void> = Promise.resolve();
 let startupAuthSyncPromise: Promise<void> | null = null;
 
@@ -2458,6 +2533,73 @@ function browserWorkspaceStatePath(workspaceId: string) {
 
 function browserWorkspacePartition(workspaceId: string) {
   return `persist:holaboss-browser-${sanitizeBrowserWorkspaceSegment(workspaceId)}`;
+}
+
+function browserChromeLikePlatformToken(): string {
+  switch (process.platform) {
+    case "darwin":
+      return "Macintosh; Intel Mac OS X 10_15_7";
+    case "win32":
+      return "Windows NT 10.0; Win64; x64";
+    default:
+      return "X11; Linux x86_64";
+  }
+}
+
+function browserAcceptedLanguages(): string {
+  const locale = app.getLocale().trim().replace(/_/g, "-");
+  const preferred = [locale, "en-US", "en"].filter(Boolean);
+  return [...new Set(preferred)].join(",");
+}
+
+function browserNativeIdentity(session: Session): BrowserSessionIdentity {
+  const nativeUserAgent = session.getUserAgent().trim();
+  const chromeVersion = (process.versions.chrome || "141.0.0.0").trim();
+  return {
+    userAgent:
+      nativeUserAgent ||
+      `Mozilla/5.0 (${browserChromeLikePlatformToken()}) AppleWebKit/537.36 ` +
+        `(KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`,
+    acceptLanguages: browserAcceptedLanguages(),
+  };
+}
+
+function setRequestHeaderValue(
+  headers: Record<string, string>,
+  headerName: string,
+  value: string,
+): Record<string, string> {
+  const normalized = headerName.toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === normalized && key !== headerName) {
+      delete headers[key];
+    }
+  }
+  headers[headerName] = value;
+  return headers;
+}
+
+function configureBrowserWorkspaceSession(session: Session): BrowserSessionIdentity {
+  const browserIdentity = browserNativeIdentity(session);
+  session.setUserAgent(
+    browserIdentity.userAgent,
+    browserIdentity.acceptLanguages,
+  );
+  session.webRequest.onBeforeSendHeaders(
+    { urls: ["http://*/*", "https://*/*"] },
+    (details, callback) => {
+      const requestHeaders = {
+        ...details.requestHeaders,
+      } as Record<string, string>;
+      setRequestHeaderValue(
+        requestHeaders,
+        "Accept-Language",
+        browserIdentity.acceptLanguages,
+      );
+      callback({ requestHeaders });
+    },
+  );
+  return browserIdentity;
 }
 
 function fileBookmarksPath() {
@@ -2545,7 +2687,6 @@ function migrateLocalWorkspacesTable(database: Database.Database) {
       name TEXT NOT NULL,
       status TEXT NOT NULL,
       harness TEXT,
-      main_session_id TEXT,
       error_message TEXT,
       onboarding_status TEXT NOT NULL,
       onboarding_session_id TEXT,
@@ -2563,7 +2704,6 @@ function migrateLocalWorkspacesTable(database: Database.Database) {
       name,
       status,
       harness,
-      main_session_id,
       error_message,
       onboarding_status,
       onboarding_session_id,
@@ -2580,7 +2720,6 @@ function migrateLocalWorkspacesTable(database: Database.Database) {
       name,
       status,
       harness,
-      main_session_id,
       error_message,
       onboarding_status,
       onboarding_session_id,
@@ -2698,7 +2837,6 @@ async function bootstrapRuntimeDatabase() {
         name TEXT NOT NULL,
         status TEXT NOT NULL,
         harness TEXT,
-        main_session_id TEXT,
         error_message TEXT,
         onboarding_status TEXT NOT NULL,
         onboarding_session_id TEXT,
@@ -3106,49 +3244,62 @@ async function readRuntimeConfigDocument(): Promise<Record<string, unknown>> {
   }
 }
 
+async function writeRuntimeConfigTextAtomically(nextText: string): Promise<void> {
+  const configPath = runtimeConfigPath();
+  await fs.mkdir(path.dirname(configPath), { recursive: true });
+  const tempPath = `${configPath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tempPath, nextText, "utf-8");
+  try {
+    await fs.rename(tempPath, configPath);
+  } catch {
+    await fs.rm(configPath, { force: true }).catch(() => undefined);
+    await fs.rename(tempPath, configPath);
+  } finally {
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
+  }
+}
+
 async function updateDesktopBrowserCapabilityConfig(update: {
   enabled: boolean;
   url?: string;
   authToken?: string;
 }): Promise<void> {
-  const currentDocument = await readRuntimeConfigDocument();
-  const capabilities =
-    typeof currentDocument.capabilities === "object" &&
-    currentDocument.capabilities
-      ? { ...(currentDocument.capabilities as Record<string, unknown>) }
-      : {};
-  const desktopBrowser =
-    typeof capabilities.desktop_browser === "object" &&
-    capabilities.desktop_browser
-      ? { ...(capabilities.desktop_browser as Record<string, unknown>) }
-      : {};
+  await withRuntimeConfigMutationLock(async () => {
+    const currentDocument = await readRuntimeConfigDocument();
+    const capabilities =
+      typeof currentDocument.capabilities === "object" &&
+      currentDocument.capabilities
+        ? { ...(currentDocument.capabilities as Record<string, unknown>) }
+        : {};
+    const desktopBrowser =
+      typeof capabilities.desktop_browser === "object" &&
+      capabilities.desktop_browser
+        ? { ...(capabilities.desktop_browser as Record<string, unknown>) }
+        : {};
 
-  desktopBrowser.enabled = update.enabled;
-  if (update.url && update.url.trim()) {
-    desktopBrowser.url = update.url.trim();
-  } else {
-    delete desktopBrowser.url;
-  }
-  if (update.authToken && update.authToken.trim()) {
-    desktopBrowser.auth_token = update.authToken.trim();
-  } else {
-    delete desktopBrowser.auth_token;
-  }
-  delete desktopBrowser.mcp_url;
+    desktopBrowser.enabled = update.enabled;
+    if (update.url && update.url.trim()) {
+      desktopBrowser.url = update.url.trim();
+    } else {
+      delete desktopBrowser.url;
+    }
+    if (update.authToken && update.authToken.trim()) {
+      desktopBrowser.auth_token = update.authToken.trim();
+    } else {
+      delete desktopBrowser.auth_token;
+    }
+    delete desktopBrowser.mcp_url;
 
-  capabilities.desktop_browser = desktopBrowser;
-  const nextDocument = {
-    ...currentDocument,
-    capabilities,
-  };
+    capabilities.desktop_browser = desktopBrowser;
+    const nextDocument = {
+      ...currentDocument,
+      capabilities,
+    };
 
-  const configPath = runtimeConfigPath();
-  await fs.mkdir(path.dirname(configPath), { recursive: true });
-  await fs.writeFile(
-    configPath,
-    `${JSON.stringify(nextDocument, null, 2)}\n`,
-    "utf-8",
-  );
+    await writeRuntimeConfigTextAtomically(
+      `${JSON.stringify(nextDocument, null, 2)}\n`,
+    );
+  });
 }
 
 function desktopBrowserServiceTokenFromRequest(
@@ -3241,9 +3392,10 @@ function serializeBrowserEvalResult(value: unknown): unknown {
 async function navigateActiveBrowserTab(
   workspaceId: string,
   targetUrl: string,
+  space: BrowserSpaceId = activeBrowserSpaceId,
 ): Promise<BrowserTabListPayload> {
-  await ensureBrowserWorkspace(workspaceId);
-  const activeTab = getActiveBrowserTab(workspaceId);
+  await ensureBrowserWorkspace(workspaceId, space);
+  const activeTab = getActiveBrowserTab(workspaceId, space);
   if (!activeTab) {
     throw new Error("No active browser tab is available.");
   }
@@ -3257,11 +3409,11 @@ async function navigateActiveBrowserTab(
       loading: false,
       error: error instanceof Error ? error.message : "Failed to load URL.",
     };
-    emitBrowserState(workspaceId);
+    emitBrowserState(workspaceId, space);
     throw error;
   }
 
-  return browserWorkspaceSnapshot(workspaceId);
+  return browserWorkspaceSnapshot(workspaceId, space);
 }
 
 async function handleDesktopBrowserServiceRequest(
@@ -3297,25 +3449,25 @@ async function handleDesktopBrowserServiceRequest(
     }
 
     if (method === "GET" && pathname === "/api/v1/browser/tabs") {
-      await ensureBrowserWorkspace(targetWorkspaceId);
+      await ensureBrowserWorkspace(targetWorkspaceId, "agent");
       writeBrowserServiceJson(
         response,
         200,
-        browserWorkspaceSnapshot(targetWorkspaceId),
+        browserWorkspaceSnapshot(targetWorkspaceId, "agent"),
       );
       return;
     }
 
     if (method === "GET" && pathname === "/api/v1/browser/page") {
-      await ensureBrowserWorkspace(targetWorkspaceId);
-      const activeTab = getActiveBrowserTab(targetWorkspaceId);
+      await ensureBrowserWorkspace(targetWorkspaceId, "agent");
+      const activeTab = getActiveBrowserTab(targetWorkspaceId, "agent");
       if (!activeTab) {
         writeBrowserServiceJson(response, 409, {
           error: "No active browser tab is available.",
         });
         return;
       }
-      syncBrowserState(targetWorkspaceId, activeTab.state.id);
+      syncBrowserState(targetWorkspaceId, activeTab.state.id, "agent");
       writeBrowserServiceJson(response, 200, browserPagePayload(activeTab));
       return;
     }
@@ -3334,11 +3486,13 @@ async function handleDesktopBrowserServiceRequest(
         emitWorkbenchOpenBrowser({
           workspaceId: targetWorkspaceId,
           url: targetUrl,
+          space: "agent",
         });
       }
       const snapshot = await navigateActiveBrowserTab(
         targetWorkspaceId,
         targetUrl,
+        "agent",
       );
       writeBrowserServiceJson(response, 200, snapshot);
       return;
@@ -3351,7 +3505,8 @@ async function handleDesktopBrowserServiceRequest(
           ? payload.url.trim()
           : HOME_URL;
       const background = payload.background === true;
-      const workspace = await ensureBrowserWorkspace(targetWorkspaceId);
+      const workspace = await ensureBrowserWorkspace(targetWorkspaceId, "agent");
+      const tabSpace = browserTabSpaceState(workspace, "agent");
       if (!workspace) {
         writeBrowserServiceJson(response, 409, {
           error: "No active browser workspace is available.",
@@ -3359,7 +3514,10 @@ async function handleDesktopBrowserServiceRequest(
         return;
       }
 
-      const nextTabId = createBrowserTab(targetWorkspaceId, { url: targetUrl });
+      const nextTabId = createBrowserTab(targetWorkspaceId, {
+        url: targetUrl,
+        browserSpace: "agent",
+      });
       if (!nextTabId) {
         writeBrowserServiceJson(response, 500, {
           error: "Failed to create browser tab.",
@@ -3367,19 +3525,19 @@ async function handleDesktopBrowserServiceRequest(
         return;
       }
 
-      if (!background) {
-        workspace.activeTabId = nextTabId;
+      if (!background && tabSpace) {
+        tabSpace.activeTabId = nextTabId;
         if (targetWorkspaceId === activeBrowserWorkspaceId) {
           updateAttachedBrowserView();
         }
       }
 
-      emitBrowserState(targetWorkspaceId);
+      emitBrowserState(targetWorkspaceId, "agent");
       await persistBrowserWorkspace(targetWorkspaceId);
       writeBrowserServiceJson(
         response,
         200,
-        browserWorkspaceSnapshot(targetWorkspaceId),
+        browserWorkspaceSnapshot(targetWorkspaceId, "agent"),
       );
       return;
     }
@@ -3395,8 +3553,8 @@ async function handleDesktopBrowserServiceRequest(
         return;
       }
 
-      await ensureBrowserWorkspace(targetWorkspaceId);
-      const activeTab = getActiveBrowserTab(targetWorkspaceId);
+      await ensureBrowserWorkspace(targetWorkspaceId, "agent");
+      const activeTab = getActiveBrowserTab(targetWorkspaceId, "agent");
       if (!activeTab) {
         writeBrowserServiceJson(response, 409, {
           error: "No active browser tab is available.",
@@ -3415,8 +3573,8 @@ async function handleDesktopBrowserServiceRequest(
 
     if (method === "POST" && pathname === "/api/v1/browser/screenshot") {
       const payload = await readBrowserServiceJsonBody(request);
-      await ensureBrowserWorkspace(targetWorkspaceId);
-      const activeTab = getActiveBrowserTab(targetWorkspaceId);
+      await ensureBrowserWorkspace(targetWorkspaceId, "agent");
+      const activeTab = getActiveBrowserTab(targetWorkspaceId, "agent");
       if (!activeTab) {
         writeBrowserServiceJson(response, 409, {
           error: "No active browser tab is available.",
@@ -3600,116 +3758,169 @@ function canUsePersistedRuntimeBindingWithoutAuth(
 }
 
 async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
-  const current = await readRuntimeConfigFile();
-  const currentDocument = await readRuntimeConfigDocument();
-  const runtimePayload = runtimeConfigObject(currentDocument.runtime);
-  const providersPayload = runtimeConfigObject(currentDocument.providers);
-  const integrationsPayload = runtimeConfigObject(currentDocument.integrations);
-  const holabossIntegration = runtimeConfigObject(integrationsPayload.holaboss);
-  const holabossProvider = runtimeConfigObject(
-    providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID],
-  );
-  const next = { ...current };
-  const entries: Array<[keyof RuntimeConfigUpdatePayload, string]> = [
-    ["authToken", "auth_token"],
-    ["modelProxyApiKey", "model_proxy_api_key"],
-    ["userId", "user_id"],
-    ["sandboxId", "sandbox_id"],
-    ["modelProxyBaseUrl", "model_proxy_base_url"],
-    ["defaultModel", "default_model"],
-    ["controlPlaneBaseUrl", "control_plane_base_url"],
-  ];
+  return withRuntimeConfigMutationLock(async () => {
+    const current = await readRuntimeConfigFile();
+    const currentDocument = await readRuntimeConfigDocument();
+    const runtimePayload = runtimeConfigObject(currentDocument.runtime);
+    const providersPayload = runtimeConfigObject(currentDocument.providers);
+    const integrationsPayload = runtimeConfigObject(currentDocument.integrations);
+    const holabossIntegration = runtimeConfigObject(integrationsPayload.holaboss);
+    const holabossProvider = runtimeConfigObject(
+      providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID],
+    );
+    const next = { ...current };
+    const entries: Array<[keyof RuntimeConfigUpdatePayload, string]> = [
+      ["authToken", "auth_token"],
+      ["modelProxyApiKey", "model_proxy_api_key"],
+      ["userId", "user_id"],
+      ["sandboxId", "sandbox_id"],
+      ["modelProxyBaseUrl", "model_proxy_base_url"],
+      ["defaultModel", "default_model"],
+      ["controlPlaneBaseUrl", "control_plane_base_url"],
+    ];
 
-  for (const [inputKey, fileKey] of entries) {
-    const value = update[inputKey];
-    if (value === undefined) {
-      continue;
+    for (const [inputKey, fileKey] of entries) {
+      const value = update[inputKey];
+      if (value === undefined) {
+        continue;
+      }
+      const normalized = typeof value === "string" ? value.trim() : "";
+      if (normalized) {
+        next[fileKey] = normalized;
+      } else {
+        delete next[fileKey];
+      }
     }
-    const normalized = typeof value === "string" ? value.trim() : "";
-    if (normalized) {
-      next[fileKey] = normalized;
+
+    const modelProxyApiKey = runtimeModelProxyApiKeyFromConfig(next);
+    const managedDefaultBackgroundModel = normalizeRuntimeHolabossCatalogDefaultModelId(
+      update.defaultBackgroundModel,
+    );
+    const managedDefaultImageModel = normalizeRuntimeHolabossCatalogDefaultModelId(
+      update.defaultImageModel,
+    );
+    if (modelProxyApiKey) {
+      next.auth_token = modelProxyApiKey;
+      next.model_proxy_api_key = modelProxyApiKey;
     } else {
-      delete next[fileKey];
+      delete next.auth_token;
+      delete next.model_proxy_api_key;
     }
-  }
 
-  const modelProxyApiKey = runtimeModelProxyApiKeyFromConfig(next);
-  if (modelProxyApiKey) {
-    next.auth_token = modelProxyApiKey;
-    next.model_proxy_api_key = modelProxyApiKey;
-  } else {
-    delete next.auth_token;
-    delete next.model_proxy_api_key;
-  }
-
-  const assignOrDelete = (
-    target: Record<string, unknown>,
-    key: string,
-    value: string | undefined,
-  ) => {
-    const normalized = runtimeConfigField(value);
-    if (normalized) {
-      target[key] = normalized;
-    } else {
-      delete target[key];
-    }
-  };
-
-  assignOrDelete(holabossIntegration, "auth_token", next.auth_token);
-  assignOrDelete(holabossIntegration, "user_id", next.user_id);
-  assignOrDelete(holabossIntegration, "sandbox_id", next.sandbox_id);
-  assignOrDelete(holabossProvider, "api_key", next.auth_token);
-  assignOrDelete(holabossProvider, "base_url", next.model_proxy_base_url);
-  assignOrDelete(runtimePayload, "sandbox_id", next.sandbox_id);
-  assignOrDelete(runtimePayload, "default_model", next.default_model);
-  const currentBackgroundTasks = runtimeConfigObject(
-    runtimePayload.background_tasks ?? runtimePayload.backgroundTasks,
-  );
-  delete runtimePayload.backgroundTasks;
-  if (Object.keys(currentBackgroundTasks).length > 0) {
-    runtimePayload.background_tasks = currentBackgroundTasks;
-  } else if (
-    runtimeModelProxyApiKeyFromConfig(next) &&
-    runtimeConfigField(next.model_proxy_base_url)
-  ) {
-    runtimePayload.background_tasks = {
-      provider: RUNTIME_HOLABOSS_PROVIDER_ID,
-      model: RUNTIME_HOLABOSS_BACKGROUND_TASK_DEFAULT_MODEL,
+    const assignOrDelete = (
+      target: Record<string, unknown>,
+      key: string,
+      value: string | undefined,
+    ) => {
+      const normalized = runtimeConfigField(value);
+      if (normalized) {
+        target[key] = normalized;
+      } else {
+        delete target[key];
+      }
     };
-  }
 
-  if (
-    Object.keys(holabossProvider).length > 0 &&
-    !runtimeConfigField(holabossProvider.kind as string | undefined)
-  ) {
-    holabossProvider.kind = RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY;
-  }
-  if (Object.keys(holabossIntegration).length > 0) {
-    integrationsPayload.holaboss = holabossIntegration;
-  } else {
-    delete integrationsPayload.holaboss;
-  }
-  if (Object.keys(holabossProvider).length > 0) {
-    providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID] = holabossProvider;
-  } else {
-    delete providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID];
-  }
+    assignOrDelete(holabossIntegration, "auth_token", next.auth_token);
+    assignOrDelete(holabossIntegration, "user_id", next.user_id);
+    assignOrDelete(holabossIntegration, "sandbox_id", next.sandbox_id);
+    assignOrDelete(holabossProvider, "api_key", next.auth_token);
+    assignOrDelete(holabossProvider, "base_url", next.model_proxy_base_url);
+    assignOrDelete(runtimePayload, "sandbox_id", next.sandbox_id);
+    assignOrDelete(runtimePayload, "default_model", next.default_model);
+    const currentBackgroundTasks = runtimeConfigObject(
+      runtimePayload.background_tasks ?? runtimePayload.backgroundTasks,
+    );
+    const currentBackgroundProviderId = canonicalRuntimeProviderId(
+      runtimeFirstNonEmptyString(
+        currentBackgroundTasks.provider as string | undefined,
+        currentBackgroundTasks.provider_id as string | undefined,
+        currentBackgroundTasks.providerId as string | undefined,
+      ),
+    );
+    const currentBackgroundModel = runtimeFirstNonEmptyString(
+      currentBackgroundTasks.model as string | undefined,
+      currentBackgroundTasks.model_id as string | undefined,
+      currentBackgroundTasks.modelId as string | undefined,
+    );
+    const currentImageGeneration = runtimeConfigObject(
+      runtimePayload.image_generation ?? runtimePayload.imageGeneration,
+    );
+    const currentImageGenerationProviderId = canonicalRuntimeProviderId(
+      runtimeFirstNonEmptyString(
+        currentImageGeneration.provider as string | undefined,
+        currentImageGeneration.provider_id as string | undefined,
+        currentImageGeneration.providerId as string | undefined,
+      ),
+    );
+    const currentImageGenerationModel = runtimeFirstNonEmptyString(
+      currentImageGeneration.model as string | undefined,
+      currentImageGeneration.model_id as string | undefined,
+      currentImageGeneration.modelId as string | undefined,
+    );
+    delete runtimePayload.backgroundTasks;
+    delete runtimePayload.imageGeneration;
+    if (
+      managedDefaultBackgroundModel &&
+      runtimeModelProxyApiKeyFromConfig(next) &&
+      runtimeConfigField(next.model_proxy_base_url) &&
+      (
+        Object.keys(currentBackgroundTasks).length === 0 ||
+        (isHolabossProviderAlias(currentBackgroundProviderId) && !currentBackgroundModel)
+      )
+    ) {
+      runtimePayload.background_tasks = {
+        provider: RUNTIME_HOLABOSS_PROVIDER_ID,
+        model: managedDefaultBackgroundModel,
+      };
+    } else if (Object.keys(currentBackgroundTasks).length > 0) {
+      runtimePayload.background_tasks = currentBackgroundTasks;
+    }
+    if (
+      managedDefaultImageModel &&
+      runtimeModelProxyApiKeyFromConfig(next) &&
+      runtimeConfigField(next.model_proxy_base_url) &&
+      (
+        Object.keys(currentImageGeneration).length === 0 ||
+        (isHolabossProviderAlias(currentImageGenerationProviderId) && !currentImageGenerationModel)
+      )
+    ) {
+      runtimePayload.image_generation = {
+        provider: RUNTIME_HOLABOSS_PROVIDER_ID,
+        model: managedDefaultImageModel,
+      };
+    } else if (Object.keys(currentImageGeneration).length > 0) {
+      runtimePayload.image_generation = currentImageGeneration;
+    }
 
-  const configPath = runtimeConfigPath();
-  await fs.mkdir(path.dirname(configPath), { recursive: true });
-  const nextDocument = {
-    ...currentDocument,
-    runtime: runtimePayload,
-    providers: providersPayload,
-    integrations: integrationsPayload,
-    holaboss: next,
-  };
-  await fs.writeFile(
-    configPath,
-    `${JSON.stringify(nextDocument, null, 2)}\n`,
-    "utf-8",
-  );
-  return next;
+    if (
+      Object.keys(holabossProvider).length > 0 &&
+      !runtimeConfigField(holabossProvider.kind as string | undefined)
+    ) {
+      holabossProvider.kind = RUNTIME_PROVIDER_KIND_HOLABOSS_PROXY;
+    }
+    if (Object.keys(holabossIntegration).length > 0) {
+      integrationsPayload.holaboss = holabossIntegration;
+    } else {
+      delete integrationsPayload.holaboss;
+    }
+    if (Object.keys(holabossProvider).length > 0) {
+      providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID] = holabossProvider;
+    } else {
+      delete providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID];
+    }
+
+    const nextDocument = {
+      ...currentDocument,
+      runtime: runtimePayload,
+      providers: providersPayload,
+      integrations: integrationsPayload,
+      holaboss: next,
+    };
+    await writeRuntimeConfigTextAtomically(
+      `${JSON.stringify(nextDocument, null, 2)}\n`,
+    );
+    return next;
+  });
 }
 
 function runtimeConfigField(value: string | undefined): string {
@@ -3938,6 +4149,65 @@ function isUnsupportedHolabossRuntimeModel(
   );
 }
 
+const RUNTIME_MODEL_CAPABILITY_ALIASES: Record<string, string> = {
+  chat: "chat",
+  text: "chat",
+  completion: "chat",
+  completions: "chat",
+  responses: "chat",
+  image: "image_generation",
+  images: "image_generation",
+  image_generation: "image_generation",
+  image_gen: "image_generation",
+};
+
+function normalizeRuntimeModelCapability(value: string): string {
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (!normalized) {
+    return "";
+  }
+  return RUNTIME_MODEL_CAPABILITY_ALIASES[normalized] ?? normalized;
+}
+
+function normalizeRuntimeModelCapabilities(rawValues: unknown[]): string[] {
+  const seen = new Set<string>();
+  const capabilities: string[] = [];
+  for (const value of rawValues) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const normalized = normalizeRuntimeModelCapability(value);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    capabilities.push(normalized);
+  }
+  return capabilities;
+}
+
+function runtimeModelCapabilityList(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function upsertRuntimeProviderModel(
+  models: Map<string, RuntimeProviderModelPayload>,
+  payload: RuntimeProviderModelPayload,
+): void {
+  const existing = models.get(payload.token);
+  const mergedCapabilities = normalizeRuntimeModelCapabilities([
+    ...(Array.isArray(existing?.capabilities) ? existing.capabilities : []),
+    ...(Array.isArray(payload.capabilities) ? payload.capabilities : []),
+  ]);
+  models.set(payload.token, {
+    token: payload.token,
+    modelId: payload.modelId,
+    ...(mergedCapabilities.length > 0
+      ? { capabilities: mergedCapabilities }
+      : {}),
+  });
+}
+
 function normalizeRuntimeProviderModelGroups(
   rawGroups: unknown[],
 ): RuntimeProviderModelGroupPayload[] {
@@ -4019,9 +4289,16 @@ function normalizeRuntimeProviderModelGroups(
         ),
         modelId,
       );
-      ensureProviderGroup(providerId).set(token, {
+      const capabilities = normalizeRuntimeModelCapabilities([
+        ...runtimeModelCapabilityList(modelPayload.capabilities),
+        ...runtimeModelCapabilityList(modelPayload.model_capabilities),
+        ...runtimeModelCapabilityList(modelPayload.modalities),
+        ...runtimeModelCapabilityList(modelPayload.model_modalities),
+      ]);
+      upsertRuntimeProviderModel(ensureProviderGroup(providerId), {
         token,
         modelId,
+        ...(capabilities.length > 0 ? { capabilities } : {}),
       });
     }
   }
@@ -4040,6 +4317,27 @@ function normalizeRuntimeProviderModelGroups(
     });
   }
   return groups;
+}
+
+function normalizeRuntimeHolabossCatalogDefaultModelId(
+  value: string | null | undefined,
+): string {
+  const normalized = runtimeFirstNonEmptyString(value);
+  if (!normalized) {
+    return "";
+  }
+  const modelId = normalizeRuntimeProviderModelId(
+    RUNTIME_HOLABOSS_PROVIDER_ID,
+    runtimeModelIdFromToken(normalized),
+  );
+  if (
+    !modelId ||
+    isUnsupportedHolabossRuntimeModel(RUNTIME_HOLABOSS_PROVIDER_ID, modelId) ||
+    isDeprecatedRuntimeModelId(modelId)
+  ) {
+    return "";
+  }
+  return modelId;
 }
 
 function runtimeProviderModelGroups(
@@ -4066,7 +4364,12 @@ function runtimeProviderModelGroups(
     }
     return groupedModels.get(providerId)!;
   };
-  const addModel = (providerId: string, token: string, modelId: string) => {
+  const addModel = (
+    providerId: string,
+    token: string,
+    modelId: string,
+    capabilities?: string[],
+  ) => {
     const normalizedProviderId = canonicalRuntimeProviderId(providerId);
     const normalizedModelId = normalizeRuntimeProviderModelId(
       normalizedProviderId,
@@ -4096,12 +4399,13 @@ function runtimeProviderModelGroups(
       return;
     }
     const group = ensureProviderGroup(normalizedProviderId);
-    if (!group.has(normalizedToken)) {
-      group.set(normalizedToken, {
-        token: normalizedToken,
-        modelId: normalizedModelId,
-      });
-    }
+    upsertRuntimeProviderModel(group, {
+      token: normalizedToken,
+      modelId: normalizedModelId,
+      ...(Array.isArray(capabilities) && capabilities.length > 0
+        ? { capabilities }
+        : {}),
+    });
   };
   const mergeManagedCatalog = (
     groups: RuntimeProviderModelGroupPayload[],
@@ -4119,7 +4423,12 @@ function runtimeProviderModelGroups(
         });
       }
       for (const model of group.models) {
-        addModel(providerId, model.token, model.modelId);
+        addModel(
+          providerId,
+          model.token,
+          model.modelId,
+          Array.isArray(model.capabilities) ? model.capabilities : [],
+        );
       }
     }
   };
@@ -4225,6 +4534,17 @@ function runtimeModelCatalogPayloadFromResponse(
     catalogVersion:
       runtimeConfigField(payload?.catalog_version as string | undefined) ||
       null,
+    defaultBackgroundModel:
+      normalizeRuntimeHolabossCatalogDefaultModelId(
+        runtimeConfigField(
+          payload?.default_background_model as string | undefined,
+        ) || "",
+      ) || null,
+    defaultImageModel:
+      normalizeRuntimeHolabossCatalogDefaultModelId(
+        runtimeConfigField(payload?.default_image_model as string | undefined) ||
+          "",
+      ) || null,
     providerModelGroups: normalizeRuntimeProviderModelGroups(
       Array.isArray(payload?.provider_model_groups)
         ? payload.provider_model_groups
@@ -4238,7 +4558,12 @@ async function syncRuntimeModelCatalogFromBinding(
   binding: RuntimeBindingExchangePayload,
 ): Promise<void> {
   const payload = runtimeModelCatalogPayloadFromResponse(binding);
-  if (payload.catalogVersion || payload.providerModelGroups.length > 0) {
+  if (
+    payload.catalogVersion ||
+    payload.defaultBackgroundModel ||
+    payload.defaultImageModel ||
+    payload.providerModelGroups.length > 0
+  ) {
     await persistRuntimeModelCatalog(payload);
     return;
   }
@@ -4253,6 +4578,8 @@ async function persistRuntimeModelCatalog(
   lastRuntimeModelCatalogRefreshFailureAtMs = 0;
   await writeJsonFile(runtimeModelCatalogCachePath(), {
     catalogVersion: payload.catalogVersion,
+    defaultBackgroundModel: payload.defaultBackgroundModel,
+    defaultImageModel: payload.defaultImageModel,
     providerModelGroups: payload.providerModelGroups,
     fetchedAt: payload.fetchedAt,
   });
@@ -4261,6 +4588,8 @@ async function persistRuntimeModelCatalog(
 async function clearRuntimeModelCatalog(): Promise<void> {
   runtimeModelCatalogState = {
     catalogVersion: null,
+    defaultBackgroundModel: null,
+    defaultImageModel: null,
     providerModelGroups: [],
     fetchedAt: null,
   };
@@ -4441,6 +4770,26 @@ async function withRuntimeBindingRefreshLock<T>(
   }
 }
 
+async function withRuntimeConfigMutationLock<T>(
+  work: () => Promise<T>,
+): Promise<T> {
+  while (runtimeConfigMutationPromise) {
+    await runtimeConfigMutationPromise;
+  }
+
+  let releaseLock = () => {};
+  runtimeConfigMutationPromise = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+
+  try {
+    return await work();
+  } finally {
+    releaseLock();
+    runtimeConfigMutationPromise = null;
+  }
+}
+
 async function getRuntimeConfig(): Promise<RuntimeConfigPayload> {
   const configPath = runtimeConfigPath();
   const loaded = await readRuntimeConfigFile();
@@ -4457,6 +4806,8 @@ async function getRuntimeConfig(): Promise<RuntimeConfigPayload> {
     sandboxId: loaded.sandbox_id ?? null,
     modelProxyBaseUrl: loaded.model_proxy_base_url ?? null,
     defaultModel: loaded.default_model ?? null,
+    defaultBackgroundModel: managedCatalog.defaultBackgroundModel,
+    defaultImageModel: managedCatalog.defaultImageModel,
     controlPlaneBaseUrl: loaded.control_plane_base_url ?? null,
     catalogVersion: managedCatalog.catalogVersion,
     providerModelGroups: runtimeProviderModelGroups(
@@ -4505,17 +4856,22 @@ async function setRuntimeConfigDocument(
     throw new Error("Runtime config must be a JSON object.");
   }
 
-  const configPath = runtimeConfigPath();
   const nextText = `${JSON.stringify(parsed, null, 2)}\n`;
-  const currentDocument = await readRuntimeConfigDocument();
-  const currentText =
-    Object.keys(currentDocument).length > 0
-      ? `${JSON.stringify(currentDocument, null, 2)}\n`
-      : "";
+  let shouldRestartRuntime = false;
+  await withRuntimeConfigMutationLock(async () => {
+    const currentDocument = await readRuntimeConfigDocument();
+    const currentText =
+      Object.keys(currentDocument).length > 0
+        ? `${JSON.stringify(currentDocument, null, 2)}\n`
+        : "";
 
-  if (currentText !== nextText) {
-    await fs.mkdir(path.dirname(configPath), { recursive: true });
-    await fs.writeFile(configPath, nextText, "utf-8");
+    if (currentText !== nextText) {
+      await writeRuntimeConfigTextAtomically(nextText);
+      shouldRestartRuntime = true;
+    }
+  });
+
+  if (shouldRestartRuntime) {
     await stopEmbeddedRuntime();
     void startEmbeddedRuntime();
   }
@@ -4795,11 +5151,18 @@ function clearPersistedAuthCookie() {
     }
 
     const betterAuth = { ...(betterAuthRaw as Record<string, unknown>) };
-    if (!("cookie" in betterAuth)) {
+    let cleared = false;
+    if ("cookie" in betterAuth) {
+      delete betterAuth.cookie;
+      cleared = true;
+    }
+    if ("local_cache" in betterAuth) {
+      delete betterAuth.local_cache;
+      cleared = true;
+    }
+    if (!cleared) {
       return;
     }
-
-    delete betterAuth.cookie;
     if (Object.keys(betterAuth).length === 0) {
       delete root["better-auth"];
     } else {
@@ -5141,6 +5504,63 @@ function runtimeConfigIsControlPlaneManaged(
   return modelProxyBaseUrl.includes("/api/v1/model-proxy");
 }
 
+function runtimeBindingNeedsManagedHolabossDefaultsRefresh(
+  config: Record<string, string>,
+  document: Record<string, unknown>,
+): boolean {
+  if (!runtimeConfigIsControlPlaneManaged(config)) {
+    return false;
+  }
+  if (
+    runtimeModelCatalogState.providerModelGroups.length > 0 &&
+    (
+      !runtimeModelCatalogState.defaultBackgroundModel ||
+      !runtimeModelCatalogState.defaultImageModel
+    )
+  ) {
+    return true;
+  }
+
+  const runtimePayload = runtimeConfigObject(document.runtime);
+  const currentBackgroundTasks = runtimeConfigObject(
+    runtimePayload.background_tasks ?? runtimePayload.backgroundTasks,
+  );
+  const currentImageGeneration = runtimeConfigObject(
+    runtimePayload.image_generation ?? runtimePayload.imageGeneration,
+  );
+  const currentBackgroundProviderId = canonicalRuntimeProviderId(
+    runtimeFirstNonEmptyString(
+      currentBackgroundTasks.provider as string | undefined,
+      currentBackgroundTasks.provider_id as string | undefined,
+      currentBackgroundTasks.providerId as string | undefined,
+    ),
+  );
+  const currentBackgroundModel = runtimeFirstNonEmptyString(
+    currentBackgroundTasks.model as string | undefined,
+    currentBackgroundTasks.model_id as string | undefined,
+    currentBackgroundTasks.modelId as string | undefined,
+  );
+  const currentImageGenerationProviderId = canonicalRuntimeProviderId(
+    runtimeFirstNonEmptyString(
+      currentImageGeneration.provider as string | undefined,
+      currentImageGeneration.provider_id as string | undefined,
+      currentImageGeneration.providerId as string | undefined,
+    ),
+  );
+  const currentImageGenerationModel = runtimeFirstNonEmptyString(
+    currentImageGeneration.model as string | undefined,
+    currentImageGeneration.model_id as string | undefined,
+    currentImageGeneration.modelId as string | undefined,
+  );
+
+  return (
+    (isHolabossProviderAlias(currentBackgroundProviderId) &&
+      !currentBackgroundModel) ||
+    (isHolabossProviderAlias(currentImageGenerationProviderId) &&
+      !currentImageGenerationModel)
+  );
+}
+
 function configuredProviderIdForRuntimeModelToken(
   modelToken: string | null | undefined,
 ): string {
@@ -5267,10 +5687,17 @@ async function provisionRuntimeBindingForAuthenticatedUser(
     const forceNewSandbox = Boolean(options?.forceNewSandbox);
     const forceRefresh = Boolean(options?.forceRefresh);
     const currentConfig = await readRuntimeConfigFile();
+    const currentDocument = await readRuntimeConfigDocument();
+    const managedDefaultsNeedRefresh =
+      runtimeBindingNeedsManagedHolabossDefaultsRefresh(
+        currentConfig,
+        currentDocument,
+      );
     if (
       !forceNewSandbox &&
       !forceRefresh &&
-      !runtimeConfigNeedsBindingRefresh(currentConfig, userId)
+      !runtimeConfigNeedsBindingRefresh(currentConfig, userId) &&
+      !managedDefaultsNeedRefresh
     ) {
       await refreshRuntimeModelCatalogIfNeeded().catch(() => undefined);
       await syncRuntimeUserProfileFromAuth(user);
@@ -5309,6 +5736,8 @@ async function provisionRuntimeBindingForAuthenticatedUser(
           "127.0.0.1",
         ),
         defaultModel: binding.default_model,
+        defaultBackgroundModel: binding.default_background_model ?? null,
+        defaultImageModel: binding.default_image_model ?? null,
         controlPlaneBaseUrl: DESKTOP_CONTROL_PLANE_BASE_URL,
       });
       await syncRuntimeModelCatalogFromBinding(binding);
@@ -5364,7 +5793,31 @@ async function ensureRuntimeBindingReadyForWorkspaceFlow(
     return;
   }
 
-  const user = await getAuthenticatedUser();
+  let user: AuthUserPayload | null;
+  try {
+    user = await getAuthenticatedUser();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const canUseExistingBindingOnSessionLookupFailure =
+      runtimeConfigHasBindingMaterial(currentConfig) &&
+      !Boolean(options?.forceRefresh) &&
+      !(allowProvisionWhenUnmanaged && !controlPlaneManaged);
+    if (
+      canUseExistingBindingOnSessionLookupFailure &&
+      isTransientRuntimeError(error)
+    ) {
+      appendRuntimeEventLog({
+        category: "auth",
+        event: "runtime_binding.session_lookup",
+        outcome: "skipped",
+        detail:
+          `${reason}:using_existing_binding_after_transient_session_lookup_failure:` +
+          detail,
+      });
+      return;
+    }
+    throw error;
+  }
   if (!user) {
     if (canUsePersistedRuntimeBindingWithoutAuth(currentConfig)) {
       return;
@@ -8437,7 +8890,6 @@ function getWorkspaceRecord(
           name,
           status,
           harness,
-          main_session_id,
           error_message,
           onboarding_status,
           onboarding_session_id,
@@ -9051,7 +9503,6 @@ function renderEmptyOnboardingGuide() {
 async function createWorkspace(
   payload: HolabossCreateWorkspacePayload,
 ): Promise<WorkspaceResponsePayload> {
-  const mainSessionId = crypto.randomUUID();
   const harness = normalizeRequestedWorkspaceHarness(payload.harness);
   const templateMode = requestedWorkspaceTemplateMode(payload);
   const templateRootPath = payload.template_root_path?.trim() || "";
@@ -9110,7 +9561,6 @@ async function createWorkspace(
         name: payload.name,
         harness,
         status: "provisioning",
-        main_session_id: mainSessionId,
         onboarding_status: "not_required",
       },
     });
@@ -9334,44 +9784,6 @@ async function createWorkspace(
 async function deleteWorkspace(
   workspaceId: string,
 ): Promise<WorkspaceResponsePayload> {
-  const holabossUserId = await controlPlaneWorkspaceUserId();
-  if (holabossUserId) {
-    // Delete via control plane — soft-deletes in the backend DB.
-    // Returns 204 on success; we synthesize the expected payload shape.
-    await requestControlPlaneJson<null>({
-      service: "projects",
-      method: "DELETE",
-      path: `/api/v1/projects/workspaces/${encodeURIComponent(workspaceId)}`,
-    }).catch((err: unknown) => {
-      console.warn("[deleteWorkspace] control-plane delete failed (may already be gone):", err);
-    });
-    // Also try cleaning up local runtime state (best-effort).
-    await requestRuntimeJson<WorkspaceResponsePayload>({
-      method: "DELETE",
-      path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`,
-    }).catch((err: unknown) => {
-      console.warn("[deleteWorkspace] local runtime delete failed (may not exist locally):", err);
-    });
-    return {
-      workspace: {
-        id: workspaceId,
-        name: workspaceId,
-        status: "deleted",
-        harness: null,
-        main_session_id: null,
-        error_message: null,
-        onboarding_status: "not_required",
-        onboarding_session_id: null,
-        onboarding_completed_at: null,
-        onboarding_completion_summary: null,
-        onboarding_requested_at: null,
-        onboarding_requested_by: null,
-        created_at: null,
-        updated_at: null,
-        deleted_at_utc: new Date().toISOString(),
-      } as WorkspaceRecordPayload,
-    };
-  }
   return requestRuntimeJson<WorkspaceResponsePayload>({
     method: "DELETE",
     path: `/api/v1/workspaces/${encodeURIComponent(workspaceId)}`,
@@ -9409,6 +9821,23 @@ async function listAgentSessions(
   });
 }
 
+async function createAgentSession(
+  payload: CreateAgentSessionPayload,
+): Promise<CreateAgentSessionResponsePayload> {
+  return requestRuntimeJson<CreateAgentSessionResponsePayload>({
+    method: "POST",
+    path: "/api/v1/agent-sessions",
+    payload: {
+      workspace_id: payload.workspace_id,
+      session_id: payload.session_id ?? undefined,
+      kind: payload.kind ?? undefined,
+      title: payload.title ?? undefined,
+      parent_session_id: payload.parent_session_id ?? undefined,
+      created_by: payload.created_by ?? undefined,
+    },
+  });
+}
+
 function isMissingSessionBindingError(error: unknown): boolean {
   return (
     error instanceof Error &&
@@ -9433,8 +9862,6 @@ function emptySessionHistoryPayload(
     harness: "",
     harness_session_id: "",
     source: "sandbox_local_storage",
-    main_session_id: sessionId,
-    is_main_session: true,
     messages: [],
     count: 0,
     total: 0,
@@ -9497,6 +9924,8 @@ async function queueSessionInput(
   if (sessionQueueRequiresRuntimeBinding(currentConfig, payload.model)) {
     await ensureRuntimeBindingReadyForWorkspaceFlow("session_queue");
   }
+  const idempotencyKey =
+    payload.idempotency_key?.trim() || `desktop-session-input:${randomUUID()}`;
   return requestRuntimeJson<EnqueueSessionInputResponsePayload>({
     method: "POST",
     path: "/api/v1/agent-sessions/queue",
@@ -9506,9 +9935,22 @@ async function queueSessionInput(
       image_urls: payload.image_urls,
       attachments: payload.attachments ?? null,
       session_id: payload.session_id,
-      idempotency_key: payload.idempotency_key,
+      idempotency_key: idempotencyKey,
       priority: payload.priority ?? 0,
       model: payload.model,
+    },
+    retryTransientErrors: true,
+  });
+}
+
+async function pauseSessionRun(
+  payload: HolabossPauseSessionRunPayload,
+): Promise<PauseSessionRunResponsePayload> {
+  return requestRuntimeJson<PauseSessionRunResponsePayload>({
+    method: "POST",
+    path: `/api/v1/agent-sessions/${encodeURIComponent(payload.session_id)}/pause`,
+    payload: {
+      workspace_id: payload.workspace_id,
     },
   });
 }
@@ -10269,6 +10711,14 @@ async function startEmbeddedRuntime() {
       process.env.HOLABOSS_RUNTIME_WORKFLOW_BACKEND || "remote_api";
     const url = `http://127.0.0.1:${RUNTIME_API_PORT}`;
 
+    // A previous Electron process can leave the embedded runtime alive across
+    // an app restart or upgrade. Reuse that healthy process without emitting a
+    // synthetic "starting" state that would bounce the renderer back into
+    // workspace activation.
+    if (await isRuntimeHealthy(url)) {
+      return refreshRuntimeStatus();
+    }
+
     runtimeStatus = withDesktopBrowserStatus({
       ...runtimeStatus,
       status: runtimeRoot && executablePath ? "starting" : "missing",
@@ -10484,10 +10934,35 @@ function createBrowserState(
   };
 }
 
-function emptyBrowserTabListPayload(): BrowserTabListPayload {
+function browserSpaceId(
+  value?: string | null,
+  fallback: BrowserSpaceId = activeBrowserSpaceId,
+): BrowserSpaceId {
+  return value === "agent" ? "agent" : value === "user" ? "user" : fallback;
+}
+
+function createBrowserTabSpaceState(): BrowserTabSpaceState {
   return {
+    tabs: new Map<string, BrowserTabRecord>(),
+    activeTabId: "",
+  };
+}
+
+function emptyBrowserTabCountsPayload(): BrowserTabCountsPayload {
+  return {
+    user: 0,
+    agent: 0,
+  };
+}
+
+function emptyBrowserTabListPayload(
+  space: BrowserSpaceId = activeBrowserSpaceId,
+): BrowserTabListPayload {
+  return {
+    space,
     activeTabId: "",
     tabs: [],
+    tabCounts: emptyBrowserTabCountsPayload(),
   };
 }
 
@@ -10495,6 +10970,10 @@ function defaultBrowserWorkspacePersistence(): BrowserWorkspacePersistencePayloa
   return {
     activeTabId: "",
     tabs: [],
+    spaces: {
+      user: { activeTabId: "", tabs: [] },
+      agent: { activeTabId: "", tabs: [] },
+    },
     bookmarks: [],
     downloads: [],
     history: [],
@@ -10687,10 +11166,32 @@ function browserWorkspaceOrEmpty(
   return browserWorkspaceFromMap(normalizedWorkspaceId);
 }
 
+function browserTabSpaceState(
+  workspace: BrowserWorkspaceState | null | undefined,
+  space: BrowserSpaceId,
+): BrowserTabSpaceState | null {
+  if (!workspace) {
+    return null;
+  }
+  return workspace.spaces[space] ?? null;
+}
+
+function browserWorkspaceTabCounts(
+  workspace: BrowserWorkspaceState | null | undefined,
+): BrowserTabCountsPayload {
+  if (!workspace) {
+    return emptyBrowserTabCountsPayload();
+  }
+  return {
+    user: workspace.spaces.user.tabs.size,
+    agent: workspace.spaces.agent.tabs.size,
+  };
+}
+
 function serializedBrowserWorkspaceTabs(
-  workspace: BrowserWorkspaceState,
+  tabSpace: BrowserTabSpaceState,
 ): BrowserWorkspaceTabPersistencePayload[] {
-  return Array.from(workspace.tabs.values(), ({ state }) => ({
+  return Array.from(tabSpace.tabs.values(), ({ state }) => ({
     id: state.id,
     url: state.url,
     title: state.title,
@@ -10702,8 +11203,18 @@ function serializeBrowserWorkspace(
   workspace: BrowserWorkspaceState,
 ): BrowserWorkspacePersistencePayload {
   return {
-    activeTabId: workspace.activeTabId,
-    tabs: serializedBrowserWorkspaceTabs(workspace),
+    activeTabId: workspace.spaces.user.activeTabId,
+    tabs: serializedBrowserWorkspaceTabs(workspace.spaces.user),
+    spaces: {
+      user: {
+        activeTabId: workspace.spaces.user.activeTabId,
+        tabs: serializedBrowserWorkspaceTabs(workspace.spaces.user),
+      },
+      agent: {
+        activeTabId: workspace.spaces.agent.activeTabId,
+        tabs: serializedBrowserWorkspaceTabs(workspace.spaces.agent),
+      },
+    },
     bookmarks: workspace.bookmarks,
     downloads: workspace.downloads,
     history: workspace.history,
@@ -10724,12 +11235,19 @@ function persistBrowserWorkspace(workspaceId: string) {
 function createBrowserWorkspaceState(
   workspaceId: string,
 ): BrowserWorkspaceState {
+  const browserSession = session.fromPartition(
+    browserWorkspacePartition(workspaceId),
+  );
+  const browserIdentity = configureBrowserWorkspaceSession(browserSession);
   return {
     workspaceId,
     partition: browserWorkspacePartition(workspaceId),
-    session: session.fromPartition(browserWorkspacePartition(workspaceId)),
-    tabs: new Map<string, BrowserTabRecord>(),
-    activeTabId: "",
+    session: browserSession,
+    browserIdentity,
+    spaces: {
+      user: createBrowserTabSpaceState(),
+      agent: createBrowserTabSpaceState(),
+    },
     bookmarks: [],
     downloads: [],
     history: [],
@@ -10742,6 +11260,7 @@ const TEXT_FILE_EXTENSIONS = new Set([
   ".txt",
   ".md",
   ".mdx",
+  ".markdown",
   ".json",
   ".js",
   ".jsx",
@@ -10817,81 +11336,125 @@ function toPreviewTableCellValue(value: unknown): string {
   return String(value);
 }
 
-function buildTablePreviewSheets(
+function trimTrailingEmptyTableCells(row: string[]): string[] {
+  let lastNonEmptyIndex = row.length - 1;
+  while (lastNonEmptyIndex >= 0 && row[lastNonEmptyIndex] === "") {
+    lastNonEmptyIndex -= 1;
+  }
+  return row.slice(0, lastNonEmptyIndex + 1);
+}
+
+function worksheetPreviewRows(worksheet: ExcelJS.Worksheet): string[][] {
+  const rows: string[][] = [];
+  worksheet.eachRow({ includeEmpty: false }, (row) => {
+    const values: string[] = [];
+    row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
+      values[columnNumber - 1] = toPreviewTableCellValue(cell.text);
+    });
+    rows.push(trimTrailingEmptyTableCells(values));
+  });
+  return rows;
+}
+
+function tablePreviewSheetFromRows(
+  sheetName: string,
+  sheetIndex: number,
+  rawRows: string[][],
+  totalSheetCount: number,
+): FilePreviewTableSheetPayload {
+  const totalColumns = rawRows.reduce(
+    (max, row) => Math.max(max, row.length),
+    0,
+  );
+  const visibleColumnCount = Math.min(
+    Math.max(totalColumns, 1),
+    MAX_TABLE_PREVIEW_COLUMNS,
+  );
+  const paddedRows = rawRows.map((row) =>
+    Array.from(
+      { length: visibleColumnCount },
+      (_unused, columnIndex) => row[columnIndex] ?? "",
+    ),
+  );
+  const hasHeaderRow =
+    paddedRows.length > 0 &&
+    paddedRows[0].some((cell) => cell.trim().length > 0);
+  const columns = hasHeaderRow
+    ? paddedRows[0].map(
+        (value, columnIndex) => value.trim() || `Column ${columnIndex + 1}`,
+      )
+    : Array.from(
+        { length: visibleColumnCount },
+        (_unused, columnIndex) => `Column ${columnIndex + 1}`,
+      );
+  const allRows = hasHeaderRow ? paddedRows.slice(1) : paddedRows;
+  const rows = allRows.slice(0, MAX_TABLE_PREVIEW_ROWS);
+  const truncated =
+    allRows.length > rows.length ||
+    totalColumns > visibleColumnCount ||
+    totalSheetCount > MAX_TABLE_PREVIEW_SHEETS;
+
+  return {
+    name: sheetName || `Sheet ${sheetIndex + 1}`,
+    index: sheetIndex,
+    columns,
+    rows,
+    totalRows: allRows.length,
+    totalColumns,
+    truncated,
+  };
+}
+
+async function buildWorkbookPreviewSheets(
   buffer: Buffer,
-): FilePreviewTableSheetPayload[] {
-  const workbook = XLSX.read(buffer, {
-    type: "buffer",
-    cellDates: true,
-    dense: true,
+): Promise<FilePreviewTableSheetPayload[]> {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(
+    buffer as unknown as Parameters<ExcelJS.Workbook["xlsx"]["load"]>[0],
+  );
+
+  const worksheets = workbook.worksheets.slice(0, MAX_TABLE_PREVIEW_SHEETS);
+  return worksheets.map((worksheet, sheetIndex) =>
+    tablePreviewSheetFromRows(
+      worksheet.name,
+      sheetIndex,
+      worksheetPreviewRows(worksheet),
+      workbook.worksheets.length,
+    ),
+  );
+}
+
+async function buildCsvPreviewSheets(
+  buffer: Buffer,
+): Promise<FilePreviewTableSheetPayload[]> {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = await workbook.csv.read(Readable.from([buffer.toString("utf8")]), {
+    parserOptions: {
+      delimiter: ",",
+      quote: '"',
+      escape: '"',
+      trim: false,
+    },
   });
 
-  const sheets: FilePreviewTableSheetPayload[] = [];
-  const limitedSheetNames = workbook.SheetNames.slice(
-    0,
-    MAX_TABLE_PREVIEW_SHEETS,
-  );
-  for (const [sheetIndex, sheetName] of limitedSheetNames.entries()) {
-    const worksheet = workbook.Sheets[sheetName];
-    if (!worksheet) {
-      continue;
-    }
-
-    const matrix = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
-      header: 1,
-      blankrows: false,
-      defval: "",
-      raw: false,
-    });
-    const normalizedRows = matrix.map((row) =>
-      Array.isArray(row) ? row.map(toPreviewTableCellValue) : [],
-    );
-    const totalColumns = normalizedRows.reduce(
-      (max, row) => Math.max(max, row.length),
+  return [
+    tablePreviewSheetFromRows(
+      worksheet.name,
       0,
-    );
-    const visibleColumnCount = Math.min(
-      Math.max(totalColumns, 1),
-      MAX_TABLE_PREVIEW_COLUMNS,
-    );
-    const paddedRows = normalizedRows.map((row) =>
-      Array.from(
-        { length: visibleColumnCount },
-        (_unused, columnIndex) => row[columnIndex] ?? "",
-      ),
-    );
+      worksheetPreviewRows(worksheet),
+      1,
+    ),
+  ];
+}
 
-    const hasHeaderRow =
-      paddedRows.length > 0 &&
-      paddedRows[0].some((cell) => cell.trim().length > 0);
-    const columns = hasHeaderRow
-      ? paddedRows[0].map(
-          (value, columnIndex) => value.trim() || `Column ${columnIndex + 1}`,
-        )
-      : Array.from(
-          { length: visibleColumnCount },
-          (_unused, columnIndex) => `Column ${columnIndex + 1}`,
-        );
-
-    const allRows = hasHeaderRow ? paddedRows.slice(1) : paddedRows;
-    const rows = allRows.slice(0, MAX_TABLE_PREVIEW_ROWS);
-    const truncated =
-      allRows.length > rows.length ||
-      totalColumns > visibleColumnCount ||
-      workbook.SheetNames.length > MAX_TABLE_PREVIEW_SHEETS;
-
-    sheets.push({
-      name: sheetName || `Sheet ${sheetIndex + 1}`,
-      index: sheetIndex,
-      columns,
-      rows,
-      totalRows: allRows.length,
-      totalColumns,
-      truncated,
-    });
+async function buildTablePreviewSheets(
+  buffer: Buffer,
+  extension: string,
+): Promise<FilePreviewTableSheetPayload[]> {
+  if (extension === ".csv") {
+    return buildCsvPreviewSheets(buffer);
   }
-
-  return sheets;
+  return buildWorkbookPreviewSheets(buffer);
 }
 
 function getFilePreviewKind(targetPath: string) {
@@ -10959,7 +11522,7 @@ async function readFilePreview(
 
     try {
       const buffer = await fs.readFile(absolutePath);
-      const tableSheets = buildTablePreviewSheets(buffer);
+      const tableSheets = await buildTablePreviewSheets(buffer, extension);
       if (tableSheets.length === 0) {
         return {
           ...basePayload,
@@ -11988,26 +12551,34 @@ async function recordHistoryVisit(
 
 function browserWorkspaceSnapshot(
   workspaceId?: string | null,
+  space?: BrowserSpaceId | null,
 ): BrowserTabListPayload {
+  const browserSpace = browserSpaceId(space);
   const workspace = browserWorkspaceOrEmpty(workspaceId);
   if (!workspace) {
-    return emptyBrowserTabListPayload();
+    return emptyBrowserTabListPayload(browserSpace);
   }
-  const tabs = Array.from(workspace.tabs.values(), ({ state }) => state);
+  const tabSpace = browserTabSpaceState(workspace, browserSpace);
+  const tabs = Array.from(tabSpace?.tabs.values() ?? [], ({ state }) => state);
   return {
-    activeTabId: workspace.activeTabId || tabs[0]?.id || "",
+    space: browserSpace,
+    activeTabId: tabSpace?.activeTabId || tabs[0]?.id || "",
     tabs,
+    tabCounts: browserWorkspaceTabCounts(workspace),
   };
 }
 
 function getActiveBrowserTab(
   workspaceId?: string | null,
+  space?: BrowserSpaceId | null,
 ): BrowserTabRecord | null {
+  const browserSpace = browserSpaceId(space);
   const workspace = browserWorkspaceOrEmpty(workspaceId);
-  if (!workspace || !workspace.activeTabId) {
+  const tabSpace = browserTabSpaceState(workspace, browserSpace);
+  if (!tabSpace || !tabSpace.activeTabId) {
     return null;
   }
-  return workspace.tabs.get(workspace.activeTabId) ?? null;
+  return tabSpace.tabs.get(tabSpace.activeTabId) ?? null;
 }
 
 function reserveMainWindowClosedListenerBudget(
@@ -12031,9 +12602,13 @@ function reserveMainWindowClosedListenerBudget(
   }
 }
 
-function applyBoundsToTab(workspaceId: string, tabId: string) {
+function applyBoundsToTab(
+  workspaceId: string,
+  tabId: string,
+  space: BrowserSpaceId = activeBrowserSpaceId,
+) {
   const workspace = browserWorkspaceFromMap(workspaceId);
-  const tab = workspace?.tabs.get(tabId);
+  const tab = browserTabSpaceState(workspace, space)?.tabs.get(tabId);
   if (!tab) {
     return;
   }
@@ -12044,7 +12619,10 @@ function hasVisibleBrowserBounds() {
   return browserBounds.width > 0 && browserBounds.height > 0;
 }
 
-function emitBrowserState(workspaceId?: string | null) {
+function emitBrowserState(
+  workspaceId?: string | null,
+  space?: BrowserSpaceId | null,
+) {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
   }
@@ -12052,12 +12630,16 @@ function emitBrowserState(workspaceId?: string | null) {
     typeof workspaceId === "string"
       ? workspaceId.trim()
       : activeBrowserWorkspaceId;
+  const browserSpace = browserSpaceId(space);
   if (normalizedWorkspaceId !== activeBrowserWorkspaceId) {
+    return;
+  }
+  if (browserSpace !== activeBrowserSpaceId) {
     return;
   }
   mainWindow.webContents.send(
     "browser:state",
-    browserWorkspaceSnapshot(normalizedWorkspaceId),
+    browserWorkspaceSnapshot(normalizedWorkspaceId, browserSpace),
   );
 }
 
@@ -12125,10 +12707,12 @@ function destroyBrowserWorkspace(workspaceId: string) {
   if (!workspace) {
     return;
   }
-  for (const tab of workspace.tabs.values()) {
-    closeBrowserTabRecord(tab);
+  for (const browserSpace of BROWSER_SPACE_IDS) {
+    for (const tab of workspace.spaces[browserSpace].tabs.values()) {
+      closeBrowserTabRecord(tab);
+    }
+    workspace.spaces[browserSpace].tabs.clear();
   }
-  workspace.tabs.clear();
   browserWorkspaces.delete(workspaceId);
 }
 
@@ -12136,7 +12720,10 @@ function updateAttachedBrowserView() {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
   }
-  const activeTab = getActiveBrowserTab(activeBrowserWorkspaceId);
+  const activeTab = getActiveBrowserTab(
+    activeBrowserWorkspaceId,
+    activeBrowserSpaceId,
+  );
   if (!activeTab || !hasVisibleBrowserBounds()) {
     if (attachedBrowserTabView) {
       mainWindow.setBrowserView(null);
@@ -12149,12 +12736,16 @@ function updateAttachedBrowserView() {
     mainWindow.setBrowserView(activeTab.view);
     attachedBrowserTabView = activeTab.view;
   }
-  applyBoundsToTab(activeBrowserWorkspaceId, activeTab.state.id);
+  applyBoundsToTab(activeBrowserWorkspaceId, activeTab.state.id, activeBrowserSpaceId);
 }
 
-function syncBrowserState(workspaceId: string, tabId: string) {
+function syncBrowserState(
+  workspaceId: string,
+  tabId: string,
+  space: BrowserSpaceId,
+) {
   const workspace = browserWorkspaceFromMap(workspaceId);
-  const tab = workspace?.tabs.get(tabId);
+  const tab = browserTabSpaceState(workspace, space)?.tabs.get(tabId);
   if (!workspace || !tab) {
     return;
   }
@@ -12168,7 +12759,7 @@ function syncBrowserState(workspaceId: string, tabId: string) {
     canGoBack: viewContents.navigationHistory.canGoBack(),
     canGoForward: viewContents.navigationHistory.canGoForward(),
   };
-  emitBrowserState(workspaceId);
+  emitBrowserState(workspaceId, space);
   void persistBrowserWorkspace(workspaceId);
 }
 
@@ -12176,6 +12767,7 @@ function handleBrowserWindowOpenAsTab(
   workspaceId: string,
   targetUrl: string,
   disposition: string,
+  space: BrowserSpaceId,
 ) {
   const normalizedUrl = targetUrl.trim();
   if (!normalizedUrl) {
@@ -12192,24 +12784,28 @@ function handleBrowserWindowOpenAsTab(
     return;
   }
 
-  const nextTabId = createBrowserTab(workspaceId, { url: normalizedUrl });
+  const nextTabId = createBrowserTab(workspaceId, {
+    url: normalizedUrl,
+    browserSpace: space,
+  });
   if (!nextTabId) {
     return;
   }
 
   const workspace = browserWorkspaceFromMap(workspaceId);
-  if (!workspace) {
+  const tabSpace = browserTabSpaceState(workspace, space);
+  if (!workspace || !tabSpace) {
     return;
   }
 
   if (disposition !== "background-tab") {
-    workspace.activeTabId = nextTabId;
-    if (workspaceId === activeBrowserWorkspaceId) {
+    tabSpace.activeTabId = nextTabId;
+    if (workspaceId === activeBrowserWorkspaceId && space === activeBrowserSpaceId) {
       updateAttachedBrowserView();
     }
   }
 
-  emitBrowserState(workspaceId);
+  emitBrowserState(workspaceId, space);
   void persistBrowserWorkspace(workspaceId);
 }
 
@@ -12279,10 +12875,11 @@ function consumeBrowserDownloadOverride(
 
 function showBrowserViewContextMenu(params: {
   workspaceId: string;
+  space: BrowserSpaceId;
   view: BrowserView;
   context: ContextMenuParams;
 }) {
-  const { workspaceId, view, context } = params;
+  const { workspaceId, space, view, context } = params;
   const template: MenuItemConstructorOptions[] = [];
   const selectionText = context.selectionText.trim();
   const linkUrl = context.linkURL.trim();
@@ -12296,7 +12893,13 @@ function showBrowserViewContextMenu(params: {
     template.push(
       {
         label: "Open Link in New Tab",
-        click: () => handleBrowserWindowOpenAsTab(workspaceId, linkUrl, "foreground-tab"),
+        click: () =>
+          handleBrowserWindowOpenAsTab(
+            workspaceId,
+            linkUrl,
+            "foreground-tab",
+            space,
+          ),
       },
       {
         label: "Open Link Externally",
@@ -12319,7 +12922,12 @@ function showBrowserViewContextMenu(params: {
       {
         label: "Open Image in New Tab",
         click: () =>
-          handleBrowserWindowOpenAsTab(workspaceId, imageUrl, "foreground-tab"),
+          handleBrowserWindowOpenAsTab(
+            workspaceId,
+            imageUrl,
+            "foreground-tab",
+            space,
+          ),
       },
       {
         label: "Copy Image Address",
@@ -12405,6 +13013,7 @@ function showBrowserViewContextMenu(params: {
 function createBrowserTab(
   workspaceId: string,
   options: {
+    browserSpace?: BrowserSpaceId;
     id?: string;
     url?: string;
     title?: string;
@@ -12413,7 +13022,9 @@ function createBrowserTab(
   } = {},
 ) {
   const workspace = browserWorkspaceFromMap(workspaceId);
-  if (!mainWindow || !workspace) {
+  const browserSpace = browserSpaceId(options.browserSpace);
+  const tabSpace = browserTabSpaceState(workspace, browserSpace);
+  if (!mainWindow || !workspace || !tabSpace) {
     return null;
   }
 
@@ -12431,6 +13042,7 @@ function createBrowserTab(
       contextIsolation: true,
     },
   });
+  view.webContents.setUserAgent(workspace.browserIdentity.userAgent);
   const state = createBrowserState({
     id: tabId,
     url: initialUrl,
@@ -12438,7 +13050,7 @@ function createBrowserTab(
     faviconUrl: options.faviconUrl,
     initialized: !hasInitialUrl,
   });
-  workspace.tabs.set(tabId, { view, state });
+  tabSpace.tabs.set(tabId, { view, state });
 
   view.setBounds(browserBounds);
   view.setAutoResize({
@@ -12468,7 +13080,12 @@ function createBrowserTab(
       disposition === "background-tab" ||
       disposition === "new-window";
     if (shouldOpenAsTab) {
-      handleBrowserWindowOpenAsTab(workspaceId, normalizedUrl, disposition);
+      handleBrowserWindowOpenAsTab(
+        workspaceId,
+        normalizedUrl,
+        disposition,
+        browserSpace,
+      );
     }
     return { action: "deny" };
   });
@@ -12476,30 +13093,39 @@ function createBrowserTab(
   view.webContents.setVisualZoomLevelLimits(1, 1).catch(() => undefined);
 
   view.webContents.on("dom-ready", () => {
-    const currentTab = browserWorkspaceFromMap(workspaceId)?.tabs.get(tabId);
+    const currentTab = browserTabSpaceState(
+      browserWorkspaceFromMap(workspaceId),
+      browserSpace,
+    )?.tabs.get(tabId);
     if (!currentTab) {
       return;
     }
     currentTab.state = { ...currentTab.state, initialized: true, error: "" };
-    syncBrowserState(workspaceId, tabId);
+    syncBrowserState(workspaceId, tabId, browserSpace);
   });
 
   view.webContents.on("did-start-loading", () => {
-    const currentTab = browserWorkspaceFromMap(workspaceId)?.tabs.get(tabId);
+    const currentTab = browserTabSpaceState(
+      browserWorkspaceFromMap(workspaceId),
+      browserSpace,
+    )?.tabs.get(tabId);
     if (!currentTab) {
       return;
     }
     currentTab.state = { ...currentTab.state, loading: true, error: "" };
-    syncBrowserState(workspaceId, tabId);
+    syncBrowserState(workspaceId, tabId, browserSpace);
   });
 
   view.webContents.on("did-stop-loading", () => {
-    const currentTab = browserWorkspaceFromMap(workspaceId)?.tabs.get(tabId);
+    const currentTab = browserTabSpaceState(
+      browserWorkspaceFromMap(workspaceId),
+      browserSpace,
+    )?.tabs.get(tabId);
     if (!currentTab) {
       return;
     }
     currentTab.state = { ...currentTab.state, loading: false, error: "" };
-    syncBrowserState(workspaceId, tabId);
+    syncBrowserState(workspaceId, tabId, browserSpace);
     if (suppressNextHistoryEntry) {
       suppressNextHistoryEntry = false;
       return;
@@ -12512,11 +13138,14 @@ function createBrowserTab(
   });
 
   view.webContents.on("page-title-updated", () => {
-    syncBrowserState(workspaceId, tabId);
+    syncBrowserState(workspaceId, tabId, browserSpace);
   });
 
   view.webContents.on("page-favicon-updated", (_event, favicons) => {
-    const currentTab = browserWorkspaceFromMap(workspaceId)?.tabs.get(tabId);
+    const currentTab = browserTabSpaceState(
+      browserWorkspaceFromMap(workspaceId),
+      browserSpace,
+    )?.tabs.get(tabId);
     if (!currentTab) {
       return;
     }
@@ -12524,21 +13153,22 @@ function createBrowserTab(
       ...currentTab.state,
       faviconUrl: favicons[0] || currentTab.state.faviconUrl,
     };
-    emitBrowserState(workspaceId);
+    emitBrowserState(workspaceId, browserSpace);
     void persistBrowserWorkspace(workspaceId);
   });
 
   view.webContents.on("did-navigate", () => {
-    syncBrowserState(workspaceId, tabId);
+    syncBrowserState(workspaceId, tabId, browserSpace);
   });
 
   view.webContents.on("did-navigate-in-page", () => {
-    syncBrowserState(workspaceId, tabId);
+    syncBrowserState(workspaceId, tabId, browserSpace);
   });
 
   view.webContents.on("context-menu", (_event, params) => {
     showBrowserViewContextMenu({
       workspaceId,
+      space: browserSpace,
       view,
       context: params,
     });
@@ -12550,7 +13180,10 @@ function createBrowserTab(
       if (!isMainFrame) {
         return;
       }
-      const currentTab = browserWorkspaceFromMap(workspaceId)?.tabs.get(tabId);
+      const currentTab = browserTabSpaceState(
+        browserWorkspaceFromMap(workspaceId),
+        browserSpace,
+      )?.tabs.get(tabId);
       if (!currentTab) {
         return;
       }
@@ -12560,14 +13193,17 @@ function createBrowserTab(
         error: `${errorDescription} (${errorCode})`,
         url: validatedURL || currentTab.state.url,
       };
-      emitBrowserState(workspaceId);
+      emitBrowserState(workspaceId, browserSpace);
       void persistBrowserWorkspace(workspaceId);
     },
   );
 
   if (hasInitialUrl) {
     void view.webContents.loadURL(initialUrl).catch((error) => {
-      const currentTab = browserWorkspaceFromMap(workspaceId)?.tabs.get(tabId);
+      const currentTab = browserTabSpaceState(
+        browserWorkspaceFromMap(workspaceId),
+        browserSpace,
+      )?.tabs.get(tabId);
       if (!currentTab) {
         return;
       }
@@ -12576,12 +13212,30 @@ function createBrowserTab(
         loading: false,
         error: error instanceof Error ? error.message : "Failed to load page.",
       };
-      emitBrowserState(workspaceId);
+      emitBrowserState(workspaceId, browserSpace);
       void persistBrowserWorkspace(workspaceId);
     });
   }
 
   return tabId;
+}
+
+function ensureBrowserTabSpaceInitialized(
+  workspaceId: string,
+  space: BrowserSpaceId,
+): boolean {
+  const workspace = browserWorkspaceFromMap(workspaceId);
+  const tabSpace = browserTabSpaceState(workspace, space);
+  if (!workspace || !tabSpace || tabSpace.tabs.size > 0) {
+    return false;
+  }
+
+  const initialTabId = createBrowserTab(workspaceId, {
+    url: HOME_URL,
+    browserSpace: space,
+  });
+  tabSpace.activeTabId = initialTabId ?? "";
+  return true;
 }
 
 function ensureBrowserWorkspaceDownloadTracking(
@@ -12686,22 +13340,20 @@ function ensureBrowserWorkspaceDownloadTracking(
 
 async function ensureBrowserWorkspace(
   workspaceId?: string | null,
+  space?: BrowserSpaceId | null,
 ): Promise<BrowserWorkspaceState | null> {
   const normalizedWorkspaceId =
     typeof workspaceId === "string"
       ? workspaceId.trim()
       : activeBrowserWorkspaceId;
+  const browserSpace = browserSpaceId(space);
   if (!normalizedWorkspaceId) {
     return null;
   }
 
   const existing = browserWorkspaceFromMap(normalizedWorkspaceId);
   if (existing) {
-    if (existing.tabs.size === 0) {
-      const initialTabId = createBrowserTab(normalizedWorkspaceId, {
-        url: HOME_URL,
-      });
-      existing.activeTabId = initialTabId ?? "";
+    if (ensureBrowserTabSpaceInitialized(normalizedWorkspaceId, browserSpace)) {
       void persistBrowserWorkspace(normalizedWorkspaceId);
     }
     return existing;
@@ -12723,110 +13375,145 @@ async function ensureBrowserWorkspace(
     : [];
   workspace.history = Array.isArray(persisted.history) ? persisted.history : [];
 
-  const persistedTabs = Array.isArray(persisted.tabs) ? persisted.tabs : [];
-  for (const persistedTab of persistedTabs) {
-    if (!persistedTab || typeof persistedTab !== "object") {
-      continue;
+  const persistedSpaces =
+    persisted.spaces && typeof persisted.spaces === "object"
+      ? persisted.spaces
+      : {};
+
+  for (const persistedSpace of BROWSER_SPACE_IDS) {
+    const tabSpace = workspace.spaces[persistedSpace];
+    const storedSpace =
+      persistedSpaces[persistedSpace] &&
+      typeof persistedSpaces[persistedSpace] === "object"
+        ? persistedSpaces[persistedSpace]
+        : null;
+    const persistedTabs =
+      Array.isArray(storedSpace?.tabs)
+        ? storedSpace.tabs
+        : persistedSpace === "user" && Array.isArray(persisted.tabs)
+          ? persisted.tabs
+          : [];
+    for (const persistedTab of persistedTabs) {
+      if (!persistedTab || typeof persistedTab !== "object") {
+        continue;
+      }
+      createBrowserTab(normalizedWorkspaceId, {
+        browserSpace: persistedSpace,
+        id: typeof persistedTab.id === "string" ? persistedTab.id : undefined,
+        url:
+          typeof persistedTab.url === "string" && persistedTab.url.trim()
+            ? persistedTab.url.trim()
+            : HOME_URL,
+        title:
+          typeof persistedTab.title === "string"
+            ? persistedTab.title
+            : NEW_TAB_TITLE,
+        faviconUrl:
+          typeof persistedTab.faviconUrl === "string"
+            ? persistedTab.faviconUrl
+            : undefined,
+        skipInitialHistoryRecord: true,
+      });
     }
-    createBrowserTab(normalizedWorkspaceId, {
-      id: typeof persistedTab.id === "string" ? persistedTab.id : undefined,
-      url:
-        typeof persistedTab.url === "string" && persistedTab.url.trim()
-          ? persistedTab.url.trim()
-          : HOME_URL,
-      title:
-        typeof persistedTab.title === "string"
-          ? persistedTab.title
-          : NEW_TAB_TITLE,
-      faviconUrl:
-        typeof persistedTab.faviconUrl === "string"
-          ? persistedTab.faviconUrl
-          : undefined,
-      skipInitialHistoryRecord: true,
-    });
+
+    const persistedActiveTabId =
+      typeof storedSpace?.activeTabId === "string"
+        ? storedSpace.activeTabId.trim()
+        : persistedSpace === "user" && typeof persisted.activeTabId === "string"
+          ? persisted.activeTabId.trim()
+          : "";
+    tabSpace.activeTabId = tabSpace.tabs.has(persistedActiveTabId)
+      ? persistedActiveTabId
+      : (Array.from(tabSpace.tabs.keys())[0] ?? "");
   }
 
-  if (workspace.tabs.size === 0) {
-    createBrowserTab(normalizedWorkspaceId, { url: HOME_URL });
+  if (ensureBrowserTabSpaceInitialized(normalizedWorkspaceId, browserSpace)) {
+    void persistBrowserWorkspace(normalizedWorkspaceId);
   }
-
-  const persistedActiveTabId =
-    typeof persisted.activeTabId === "string"
-      ? persisted.activeTabId.trim()
-      : "";
-  workspace.activeTabId = workspace.tabs.has(persistedActiveTabId)
-    ? persistedActiveTabId
-    : (Array.from(workspace.tabs.keys())[0] ?? "");
   return workspace;
 }
 
 async function setActiveBrowserWorkspace(
   workspaceId: string | null | undefined,
+  space?: BrowserSpaceId | null,
 ) {
   const normalizedWorkspaceId =
     typeof workspaceId === "string" ? workspaceId.trim() : "";
+  const browserSpace = browserSpaceId(space);
   activeBrowserWorkspaceId = normalizedWorkspaceId;
+  activeBrowserSpaceId = browserSpace;
   if (!normalizedWorkspaceId) {
     emitBrowserState();
     emitBookmarksState();
     emitDownloadsState();
     emitHistoryState();
-    return emptyBrowserTabListPayload();
+    return emptyBrowserTabListPayload(browserSpace);
   }
 
-  await ensureBrowserWorkspace(normalizedWorkspaceId);
+  await ensureBrowserWorkspace(normalizedWorkspaceId, browserSpace);
   updateAttachedBrowserView();
-  emitBrowserState(normalizedWorkspaceId);
+  emitBrowserState(normalizedWorkspaceId, browserSpace);
   emitBookmarksState(normalizedWorkspaceId);
   emitDownloadsState(normalizedWorkspaceId);
   emitHistoryState(normalizedWorkspaceId);
-  return browserWorkspaceSnapshot(normalizedWorkspaceId);
+  return browserWorkspaceSnapshot(normalizedWorkspaceId, browserSpace);
 }
 
-async function setActiveBrowserTab(tabId: string) {
-  const workspace = await ensureBrowserWorkspace();
-  if (!workspace || !workspace.tabs.has(tabId)) {
-    return browserWorkspaceSnapshot();
+async function setActiveBrowserTab(tabId: string, space?: BrowserSpaceId | null) {
+  const browserSpace = browserSpaceId(space);
+  const workspace = await ensureBrowserWorkspace(undefined, browserSpace);
+  const tabSpace = browserTabSpaceState(workspace, browserSpace);
+  if (!workspace || !tabSpace || !tabSpace.tabs.has(tabId)) {
+    return browserWorkspaceSnapshot(undefined, browserSpace);
   }
 
-  workspace.activeTabId = tabId;
-  if (workspace.workspaceId === activeBrowserWorkspaceId) {
+  tabSpace.activeTabId = tabId;
+  if (
+    workspace.workspaceId === activeBrowserWorkspaceId &&
+    browserSpace === activeBrowserSpaceId
+  ) {
     updateAttachedBrowserView();
   }
-  emitBrowserState(workspace.workspaceId);
+  emitBrowserState(workspace.workspaceId, browserSpace);
   await persistBrowserWorkspace(workspace.workspaceId);
-  return browserWorkspaceSnapshot(workspace.workspaceId);
+  return browserWorkspaceSnapshot(workspace.workspaceId, browserSpace);
 }
 
-async function closeBrowserTab(tabId: string) {
-  const workspace = await ensureBrowserWorkspace();
-  const tab = workspace?.tabs.get(tabId);
-  if (!workspace || !tab) {
-    return browserWorkspaceSnapshot();
+async function closeBrowserTab(tabId: string, space?: BrowserSpaceId | null) {
+  const browserSpace = browserSpaceId(space);
+  const workspace = await ensureBrowserWorkspace(undefined, browserSpace);
+  const tabSpace = browserTabSpaceState(workspace, browserSpace);
+  const tab = tabSpace?.tabs.get(tabId);
+  if (!workspace || !tabSpace || !tab) {
+    return browserWorkspaceSnapshot(undefined, browserSpace);
   }
 
-  const tabIds = Array.from(workspace.tabs.keys());
+  const tabIds = Array.from(tabSpace.tabs.keys());
   const closedIndex = tabIds.indexOf(tabId);
-  workspace.tabs.delete(tabId);
+  tabSpace.tabs.delete(tabId);
   closeBrowserTabRecord(tab);
 
-  if (workspace.tabs.size === 0) {
+  if (tabSpace.tabs.size === 0) {
     const replacementTabId = createBrowserTab(workspace.workspaceId, {
       url: HOME_URL,
+      browserSpace,
     });
-    workspace.activeTabId = replacementTabId ?? "";
-  } else if (workspace.activeTabId === tabId) {
-    const remainingIds = Array.from(workspace.tabs.keys());
-    workspace.activeTabId =
+    tabSpace.activeTabId = replacementTabId ?? "";
+  } else if (tabSpace.activeTabId === tabId) {
+    const remainingIds = Array.from(tabSpace.tabs.keys());
+    tabSpace.activeTabId =
       remainingIds[Math.max(0, closedIndex - 1)] ?? remainingIds[0] ?? "";
   }
 
-  if (workspace.workspaceId === activeBrowserWorkspaceId) {
+  if (
+    workspace.workspaceId === activeBrowserWorkspaceId &&
+    browserSpace === activeBrowserSpaceId
+  ) {
     updateAttachedBrowserView();
   }
-  emitBrowserState(workspace.workspaceId);
+  emitBrowserState(workspace.workspaceId, browserSpace);
   await persistBrowserWorkspace(workspace.workspaceId);
-  return browserWorkspaceSnapshot(workspace.workspaceId);
+  return browserWorkspaceSnapshot(workspace.workspaceId, browserSpace);
 }
 
 function setBrowserBounds(bounds: BrowserBoundsPayload) {
@@ -12837,8 +13524,11 @@ function setBrowserBounds(bounds: BrowserBoundsPayload) {
     height: Math.max(0, Math.round(bounds.height)),
   };
 
-  const workspace = activeBrowserWorkspace();
-  if (!workspace || !workspace.activeTabId || !hasVisibleBrowserBounds()) {
+  const activeTab = getActiveBrowserTab(
+    activeBrowserWorkspaceId,
+    activeBrowserSpaceId,
+  );
+  if (!activeTab || !hasVisibleBrowserBounds()) {
     mainWindow?.setBrowserView(null);
     attachedBrowserTabView = null;
     return;
@@ -13584,9 +14274,11 @@ function createOverflowPopupHtml() {
   </head>
   <body>
     <div class="panel">
+      <button class="item" id="downloads"><span class="icon">⭳</span><span>Downloads</span></button>
       <button class="item" id="history"><span class="icon">🕘</span><span>History</span></button>
     </div>
     <script>
+      document.getElementById("downloads").addEventListener("click", () => window.overflowPopup.openDownloads());
       document.getElementById("history").addEventListener("click", () => window.overflowPopup.openHistory());
     </script>
   </body>
@@ -13938,6 +14630,7 @@ function createMainWindow() {
   reserveMainWindowClosedListenerBudget();
   browserBounds = { x: 0, y: 0, width: 0, height: 0 };
   activeBrowserWorkspaceId = "";
+  activeBrowserSpaceId = "user";
   for (const workspaceId of Array.from(browserWorkspaces.keys())) {
     destroyBrowserWorkspace(workspaceId);
   }
@@ -14025,6 +14718,7 @@ function createMainWindow() {
       destroyBrowserWorkspace(workspaceId);
     }
     activeBrowserWorkspaceId = "";
+    activeBrowserSpaceId = "user";
     attachedBrowserTabView = null;
     attachedAppSurfaceView = null;
     mainWindow = null;
@@ -14218,7 +14912,11 @@ app.whenReady().then(async () => {
     await requireAuthClient().requestAuth();
   });
   handleTrustedIpc("auth:signOut", ["main", "auth-popup"], async () => {
-    await requireAuthClient().signOut();
+    try {
+      await requireAuthClient().signOut();
+    } finally {
+      clearPersistedAuthCookie();
+    }
     const runtimeConfig = await readRuntimeConfigFile();
     if (
       runtimeConfigIsControlPlaneManaged(runtimeConfig) &&
@@ -14226,6 +14924,7 @@ app.whenReady().then(async () => {
     ) {
       await clearRuntimeBindingSecrets("auth_sign_out");
     }
+    pendingAuthError = null;
     emitAuthUserUpdated(null);
   });
   handleTrustedIpc(
@@ -14414,6 +15113,8 @@ app.whenReady().then(async () => {
           "127.0.0.1",
         ),
         defaultModel: binding.default_model,
+        defaultBackgroundModel: binding.default_background_model ?? null,
+        defaultImageModel: binding.default_image_model ?? null,
         controlPlaneBaseUrl: DESKTOP_CONTROL_PLANE_BASE_URL,
       });
       await syncRuntimeModelCatalogFromBinding(binding);
@@ -14643,6 +15344,12 @@ app.whenReady().then(async () => {
     async (_event, workspaceId: string) => listAgentSessions(workspaceId),
   );
   handleTrustedIpc(
+    "workspace:createAgentSession",
+    ["main"],
+    async (_event, payload: CreateAgentSessionPayload) =>
+      createAgentSession(payload),
+  );
+  handleTrustedIpc(
     "workspace:getSessionHistory",
     ["main"],
     async (_event, payload: { sessionId: string; workspaceId: string }) =>
@@ -14671,6 +15378,12 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, payload: HolabossQueueSessionInputPayload) =>
       queueSessionInput(payload),
+  );
+  handleTrustedIpc(
+    "workspace:pauseSessionRun",
+    ["main"],
+    async (_event, payload: HolabossPauseSessionRunPayload) =>
+      pauseSessionRun(payload),
   );
   handleTrustedIpc(
     "workspace:openSessionOutputStream",
@@ -14956,71 +15669,80 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle(
     "browser:setActiveWorkspace",
-    async (_event, workspaceId?: string | null) => {
-      return setActiveBrowserWorkspace(workspaceId);
+    async (_event, workspaceId?: string | null, space?: BrowserSpaceId | null) => {
+      return setActiveBrowserWorkspace(workspaceId, space);
     },
   );
   ipcMain.handle("browser:getState", async () => {
-    await ensureBrowserWorkspace();
-    return browserWorkspaceSnapshot();
+    await ensureBrowserWorkspace(undefined, activeBrowserSpaceId);
+    return browserWorkspaceSnapshot(undefined, activeBrowserSpaceId);
   });
   ipcMain.handle(
     "browser:setBounds",
     async (_event, bounds: BrowserBoundsPayload) => {
       setBrowserBounds(bounds);
-      return browserWorkspaceSnapshot();
+      return browserWorkspaceSnapshot(undefined, activeBrowserSpaceId);
     },
   );
   ipcMain.handle("browser:navigate", async (_event, targetUrl: string) => {
     if (!activeBrowserWorkspaceId) {
-      return emptyBrowserTabListPayload();
+      return emptyBrowserTabListPayload(activeBrowserSpaceId);
     }
-    return navigateActiveBrowserTab(activeBrowserWorkspaceId, targetUrl);
+    return navigateActiveBrowserTab(
+      activeBrowserWorkspaceId,
+      targetUrl,
+      activeBrowserSpaceId,
+    );
   });
   ipcMain.handle("browser:back", async () => {
-    await ensureBrowserWorkspace();
-    const activeTab = getActiveBrowserTab();
+    await ensureBrowserWorkspace(undefined, activeBrowserSpaceId);
+    const activeTab = getActiveBrowserTab(undefined, activeBrowserSpaceId);
     if (activeTab?.view.webContents.navigationHistory.canGoBack()) {
       activeTab.view.webContents.navigationHistory.goBack();
     }
-    return browserWorkspaceSnapshot();
+    return browserWorkspaceSnapshot(undefined, activeBrowserSpaceId);
   });
   ipcMain.handle("browser:forward", async () => {
-    await ensureBrowserWorkspace();
-    const activeTab = getActiveBrowserTab();
+    await ensureBrowserWorkspace(undefined, activeBrowserSpaceId);
+    const activeTab = getActiveBrowserTab(undefined, activeBrowserSpaceId);
     if (activeTab?.view.webContents.navigationHistory.canGoForward()) {
       activeTab.view.webContents.navigationHistory.goForward();
     }
-    return browserWorkspaceSnapshot();
+    return browserWorkspaceSnapshot(undefined, activeBrowserSpaceId);
   });
   ipcMain.handle("browser:reload", async () => {
-    await ensureBrowserWorkspace();
-    getActiveBrowserTab()?.view.webContents.reload();
-    return browserWorkspaceSnapshot();
+    await ensureBrowserWorkspace(undefined, activeBrowserSpaceId);
+    getActiveBrowserTab(undefined, activeBrowserSpaceId)?.view.webContents.reload();
+    return browserWorkspaceSnapshot(undefined, activeBrowserSpaceId);
   });
   ipcMain.handle("browser:newTab", async (_event, targetUrl?: string) => {
-    const workspace = await ensureBrowserWorkspace();
+    const workspace = await ensureBrowserWorkspace(
+      undefined,
+      activeBrowserSpaceId,
+    );
+    const tabSpace = browserTabSpaceState(workspace, activeBrowserSpaceId);
     if (!workspace) {
-      return emptyBrowserTabListPayload();
+      return emptyBrowserTabListPayload(activeBrowserSpaceId);
     }
     const nextTabId = createBrowserTab(workspace.workspaceId, {
       url: targetUrl,
+      browserSpace: activeBrowserSpaceId,
     });
-    if (nextTabId) {
-      workspace.activeTabId = nextTabId;
+    if (nextTabId && tabSpace) {
+      tabSpace.activeTabId = nextTabId;
       updateAttachedBrowserView();
-      emitBrowserState(workspace.workspaceId);
+      emitBrowserState(workspace.workspaceId, activeBrowserSpaceId);
       await persistBrowserWorkspace(workspace.workspaceId);
     }
-    return browserWorkspaceSnapshot(workspace.workspaceId);
+    return browserWorkspaceSnapshot(workspace.workspaceId, activeBrowserSpaceId);
   });
   ipcMain.handle("browser:setActiveTab", async (_event, tabId: string) => {
-    await ensureBrowserWorkspace();
-    return setActiveBrowserTab(tabId);
+    await ensureBrowserWorkspace(undefined, activeBrowserSpaceId);
+    return setActiveBrowserTab(tabId, activeBrowserSpaceId);
   });
   ipcMain.handle("browser:closeTab", async (_event, tabId: string) => {
-    await ensureBrowserWorkspace();
-    return closeBrowserTab(tabId);
+    await ensureBrowserWorkspace(undefined, activeBrowserSpaceId);
+    return closeBrowserTab(tabId, activeBrowserSpaceId);
   });
   ipcMain.handle("browser:getBookmarks", async () => {
     const workspace = await ensureBrowserWorkspace();
@@ -15035,7 +15757,7 @@ app.whenReady().then(async () => {
         return workspace?.bookmarks ?? [];
       }
 
-      const activeTab = getActiveBrowserTab();
+      const activeTab = getActiveBrowserTab(undefined, activeBrowserSpaceId);
       const faviconUrl =
         activeTab?.state.url === url ? activeTab.state.faviconUrl : undefined;
 
@@ -15128,6 +15850,12 @@ app.whenReady().then(async () => {
       toggleHistoryPopup(overflowAnchorBounds);
     }
   });
+  ipcMain.handle("browser:overflowOpenDownloads", () => {
+    overflowPopupWindow?.hide();
+    if (overflowAnchorBounds) {
+      toggleDownloadsPopup(overflowAnchorBounds);
+    }
+  });
   ipcMain.handle(
     "browser:toggleHistoryPopup",
     (_event, anchorBounds: BrowserAnchorBoundsPayload) => {
@@ -15140,10 +15868,13 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     "browser:openHistoryUrl",
     async (_event, targetUrl: string) => {
-      const workspace = await ensureBrowserWorkspace();
-      const activeTab = getActiveBrowserTab();
+      const workspace = await ensureBrowserWorkspace(
+        undefined,
+        activeBrowserSpaceId,
+      );
+      const activeTab = getActiveBrowserTab(undefined, activeBrowserSpaceId);
       if (!workspace || !activeTab) {
-        return browserWorkspaceSnapshot();
+        return browserWorkspaceSnapshot(undefined, activeBrowserSpaceId);
       }
 
       try {
@@ -15156,10 +15887,10 @@ app.whenReady().then(async () => {
           loading: false,
           error: error instanceof Error ? error.message : "Failed to load URL.",
         };
-        emitBrowserState(workspace.workspaceId);
+        emitBrowserState(workspace.workspaceId, activeBrowserSpaceId);
       }
 
-      return browserWorkspaceSnapshot(workspace.workspaceId);
+      return browserWorkspaceSnapshot(workspace.workspaceId, activeBrowserSpaceId);
     },
   );
   ipcMain.handle(

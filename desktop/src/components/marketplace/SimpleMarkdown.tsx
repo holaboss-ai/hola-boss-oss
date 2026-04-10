@@ -3,6 +3,7 @@
  * Uses react-markdown with GFM support while preserving the existing md-* CSS hooks.
  */
 
+import { memo, useMemo } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -118,8 +119,15 @@ interface SimpleMarkdownProps {
   onLinkClick?: (url: string) => void;
 }
 
-export function SimpleMarkdown({ children, className = "", onLinkClick }: SimpleMarkdownProps) {
-  const components = createMarkdownComponents(onLinkClick);
+function SimpleMarkdownComponent({
+  children,
+  className = "",
+  onLinkClick,
+}: SimpleMarkdownProps) {
+  const components = useMemo(
+    () => createMarkdownComponents(onLinkClick),
+    [onLinkClick],
+  );
 
   return (
     <div className={`simple-markdown ${className}`.trim()}>
@@ -134,3 +142,5 @@ export function SimpleMarkdown({ children, className = "", onLinkClick }: Simple
     </div>
   );
 }
+
+export const SimpleMarkdown = memo(SimpleMarkdownComponent);

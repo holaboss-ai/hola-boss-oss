@@ -5,7 +5,11 @@ import path from "node:path";
 import test from "node:test";
 import { afterEach } from "node:test";
 
-import { projectAgentRuntimeConfig } from "./agent-runtime-config.js";
+import {
+  projectAgentRuntimeConfig,
+  resolveRuntimeModelClient,
+  resolveRuntimeModelReference,
+} from "./agent-runtime-config.js";
 
 const tempDirs: string[] = [];
 const envNames = [
@@ -276,6 +280,7 @@ test("projectAgentRuntimeConfig includes resume context sections when provided",
         "Previous run stopped for confirmation.",
         "Previous stop reason: waiting_user.",
         "The previous run paused waiting for user input. Do not treat that state as completed work.",
+        "If the user's latest message clearly redirects to a new unrelated task, handle that new request first, keep the unfinished prior work marked unfinished, and then propose continuing it after the new task is done.",
       ].join("\n"),
       [
         "Session resume context:",
@@ -412,7 +417,7 @@ test("projectAgentRuntimeConfig omits workspace and recent-runtime layers when n
       session_id: "session-1",
       workspace_id: "workspace-1",
       input_id: "input-1",
-      session_kind: "main",
+      session_kind: "workspace_session",
       harness_id: "pi",
       browser_tools_available: false,
       browser_tool_ids: [],
@@ -447,7 +452,7 @@ test("projectAgentRuntimeConfig omits workspace and recent-runtime layers when n
     assert.equal(result.prompt_sections?.some((section) => section.id === "recent_runtime_context"), false);
     assert.equal(result.prompt_sections?.some((section) => section.id === "resume_context"), false);
     assert.deepEqual(result.context_messages, []);
-    assert.match(result.system_prompt, /This is the main workspace session/i);
+    assert.match(result.system_prompt, /This is a workspace session/i);
   } finally {
     delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
   }
@@ -713,7 +718,7 @@ test("projectAgentRuntimeConfig normalizes legacy Anthropic direct model aliases
   assert.equal(result.model_client.base_url, "https://api.anthropic.com");
 });
 
-test("projectAgentRuntimeConfig keeps direct Gemini providers on the OpenAI-compatible endpoint", () => {
+test("projectAgentRuntimeConfig routes direct Gemini providers through the Google-compatible adapter", () => {
   const root = makeTempDir("hb-agent-runtime-config-");
   process.env.HB_SANDBOX_ROOT = root;
   process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
@@ -779,7 +784,7 @@ test("projectAgentRuntimeConfig keeps direct Gemini providers on the OpenAI-comp
   });
 
   assert.equal(result.provider_id, "gemini_direct");
-  assert.equal(result.model_client.model_proxy_provider, "openai_compatible");
+  assert.equal(result.model_client.model_proxy_provider, "google_compatible");
   assert.equal(result.model_client.api_key, "gm-direct-key");
   assert.equal(result.model_client.base_url, "https://generativelanguage.googleapis.com/v1beta/openai");
   assert.equal(result.model_client.default_headers, null);
@@ -895,6 +900,53 @@ test("projectAgentRuntimeConfig normalizes Gemini host roots to the OpenAI-compa
   });
 
   assert.equal(result.model_client.base_url, "https://generativelanguage.googleapis.com/v1beta/openai");
+  assert.equal(result.model_client.model_proxy_provider, "google_compatible");
+});
+
+test("resolveRuntimeModelClient routes managed Holaboss Gemini models to the dedicated Google proxy path", () => {
+  const root = makeTempDir("hb-agent-runtime-config-");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {
+    runtime: {
+      default_provider: "holaboss_model_proxy"
+    },
+    providers: {
+      holaboss_model_proxy: {
+        kind: "holaboss_proxy",
+        base_url: "https://proxy.example/api/v1/model-proxy",
+        api_key: "hb-token"
+      }
+    }
+  });
+
+  const resolved = resolveRuntimeModelClient({
+    selectedModel: "holaboss_model_proxy/gemini-2.5-pro",
+    defaultProviderId: "holaboss_model_proxy",
+    sessionId: "session-1",
+    workspaceId: "workspace-1",
+    inputId: "input-1"
+  });
+
+  assert.equal(resolved.providerId, "google");
+  assert.equal(resolved.configuredProviderId, "holaboss_model_proxy");
+  assert.equal(resolved.modelId, "gemini-2.5-pro");
+  assert.equal(resolved.modelProxyProvider, "google_compatible");
+  assert.equal(resolved.modelClient.model_proxy_provider, "google_compatible");
+  assert.equal(resolved.modelClient.api_key, "hb-token");
+  assert.equal(resolved.modelClient.base_url, "https://proxy.example/api/v1/model-proxy/google/v1");
+});
+
+test("resolveRuntimeModelReference infers bare Gemini models as Google-compatible without configured providers", () => {
+  const root = makeTempDir("hb-agent-runtime-config-");
+  process.env.HB_SANDBOX_ROOT = root;
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = writeRuntimeConfigDocument(root, {});
+
+  const resolved = resolveRuntimeModelReference("gemini-2.5-pro", "holaboss_model_proxy");
+
+  assert.equal(resolved.providerId, "google");
+  assert.equal(resolved.configuredProviderId, null);
+  assert.equal(resolved.modelId, "gemini-2.5-pro");
+  assert.equal(resolved.modelProxyProvider, "google_compatible");
 });
 
 test("projectAgentRuntimeConfig keeps direct Ollama providers on the local OpenAI-compatible endpoint", () => {

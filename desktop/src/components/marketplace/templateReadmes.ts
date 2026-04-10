@@ -1003,6 +1003,79 @@ member_segments:
 > **Tip:** Start by identifying your top 10 community champions and give them special recognition. Engaged advocates drive organic growth better than any automation.
 `,
 
+  inbox_worker: `## Your inbox, managed by AI. You stay in control.
+
+Inbox Worker connects to your Gmail and acts as a smart assistant that searches, reads, and drafts — so you spend less time in email and more time on what matters.
+
+### The idea
+
+Email is where deals happen, decisions get made, and context lives. But managing it is tedious. Inbox Worker doesn't replace Gmail — it sits on top of it. The agent reads your threads, understands context, and drafts replies that sound like you. Nothing sends without your say-so.
+
+### What you can say to the agent
+
+\`\`\`
+"Find all emails from Alice in the last month"
+
+"Summarize the thread with Bob about the Q3 proposal"
+
+"Draft a reply to the latest email from Sarah — tell her we're
+interested but need to push the timeline by two weeks"
+
+"Show me unread emails with attachments from this week"
+
+"Draft a follow-up to everyone I haven't heard back from in 7 days"
+
+"Label all emails from @acme.com as 'Acme Deal'"
+\`\`\`
+
+The agent searches your inbox, reads full conversation threads for context, and creates drafts you can review and send with one click.
+
+### How it works
+
+\`\`\`
+                 ┌──────────────────┐
+  Your message   │    AI Agent       │
+  ─────────────► │    understands    │
+                 │    your intent    │
+                 └────────┬─────────┘
+                          │
+                 ┌────────▼─────────┐
+                 │   Gmail Module    │
+                 │                   │
+                 │  search · read    │
+                 │  draft  · send    │
+                 │  label · organize │
+                 └────────┬─────────┘
+                          │
+                          ▼
+                      Gmail API
+\`\`\`
+
+The **gmail module** handles all API interactions — OAuth, rate limits, pagination. The agent focuses on understanding your intent and writing contextual emails.
+
+### Views
+
+#### Inbox
+Search and browse your Gmail threads directly in the workspace. Filter by sender, date, labels, or keywords. Click into any thread to see the full conversation.
+
+#### Drafts
+Review AI-drafted replies before sending. Edit inline, approve, or ask the agent to rewrite. Every draft shows the original thread for context.
+
+### The draft-then-send rule
+
+The agent will never send an email without your explicit confirmation. Every outgoing message goes through:
+
+**Agent drafts** → **You review** → **You say "send"** → **Email sent**
+
+### Getting started
+
+1. **Launch this workspace** — The Gmail app installs automatically.
+2. **Connect your Google account** — The platform handles OAuth securely.
+3. **Ask the agent** — *"Check my inbox for unread emails from this week"* and go from there.
+
+> **Privacy:** Your email data stays between you and the Gmail API. The agent processes messages in your sandbox — nothing is stored outside your workspace.
+`,
+
   sales_worker: `## Your contacts live in a spreadsheet. Your conversations live in Gmail. This workspace connects them.
 
 Gmail CRM isn't a traditional CRM that forces you into a rigid pipeline. It's two simple tools — **Gmail** and **Google Sheets** — orchestrated by an AI agent that understands your relationships.

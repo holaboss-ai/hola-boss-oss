@@ -4,8 +4,10 @@ import {
   type DragEvent,
   FormEvent,
   KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type RefObject,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -19,6 +21,7 @@ import {
   Check,
   ChevronDown,
   Clock3,
+  Copy,
   FileText,
   Image as ImageIcon,
   Lightbulb,
@@ -26,6 +29,7 @@ import {
   Paperclip,
   PencilLine,
   Search,
+  Square,
   Waypoints,
   X,
 } from "lucide-react";
@@ -60,6 +64,7 @@ interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   text: string;
+  createdAt?: string;
   attachments?: ChatAttachment[];
   thinkingText?: string;
   traceSteps?: ChatTraceStep[];
@@ -76,6 +81,38 @@ interface ChatTraceStep {
   status: ChatTraceStepStatus;
   details: string[];
   order: number;
+}
+
+type ChatTodoStatus =
+  | "pending"
+  | "in_progress"
+  | "blocked"
+  | "completed"
+  | "abandoned";
+
+interface ChatTodoTask {
+  id: string;
+  content: string;
+  status: ChatTodoStatus;
+  notes?: string;
+  details?: string;
+}
+
+interface ChatTodoPhase {
+  id: string;
+  name: string;
+  tasks: ChatTodoTask[];
+}
+
+interface ChatTodoPlan {
+  sessionId: string;
+  updatedAt: string | null;
+  phases: ChatTodoPhase[];
+}
+
+interface ChatScrollbarDragState {
+  pointerId: number;
+  thumbPointerOffset: number;
 }
 
 interface PendingLocalAttachmentFile {
@@ -156,6 +193,17 @@ const CHAT_MODEL_PRESETS = [
   "openai/gpt-5",
   "openai/gpt-5.2",
 ] as const;
+const RUNTIME_MODEL_CAPABILITY_ALIASES: Record<string, string> = {
+  chat: "chat",
+  text: "chat",
+  completion: "chat",
+  completions: "chat",
+  responses: "chat",
+  image: "image_generation",
+  images: "image_generation",
+  image_generation: "image_generation",
+  image_gen: "image_generation",
+};
 
 function sessionUserId(
   session: { user?: { id?: string | null } | null } | null | undefined,
@@ -170,9 +218,11 @@ function isHolabossProxyModel(model: string) {
   }
   return (
     normalized.startsWith("openai/") ||
+    normalized.startsWith("google/") ||
     normalized.startsWith("anthropic/") ||
     normalized.startsWith("gpt-") ||
-    normalized.startsWith("claude-")
+    normalized.startsWith("claude-") ||
+    normalized.startsWith("gemini-")
   );
 }
 
@@ -198,6 +248,39 @@ function isUnsupportedHolabossProxyModel(providerId: string, model: string) {
 
 function isDeprecatedChatModel(model: string) {
   return DEPRECATED_CHAT_MODELS.has(model.trim().toLowerCase());
+}
+
+function normalizeRuntimeModelCapability(value: string) {
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (!normalized) {
+    return "";
+  }
+  return RUNTIME_MODEL_CAPABILITY_ALIASES[normalized] ?? normalized;
+}
+
+function runtimeModelCapabilities(model: RuntimeProviderModelPayload) {
+  if (!Array.isArray(model.capabilities)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const capabilities: string[] = [];
+  for (const value of model.capabilities) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const normalized = normalizeRuntimeModelCapability(value);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    capabilities.push(normalized);
+  }
+  return capabilities;
+}
+
+function runtimeModelHasChatCapability(model: RuntimeProviderModelPayload) {
+  const capabilities = runtimeModelCapabilities(model);
+  return capabilities.length === 0 || capabilities.includes("chat");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -370,7 +453,7 @@ function outputMetadataNumber(
 function outputBrowserFilterForOutput(
   output: WorkspaceOutputRecordPayload,
 ): ArtifactBrowserFilter {
-  if (outputMetadataString(output, "origin_type") === "app") {
+  if (outputMetadataString(output, "origin_type") === "app" || output.module_id) {
     return "apps";
   }
   const category = outputMetadataString(output, "category");
@@ -387,8 +470,12 @@ function outputBrowserFilterForOutput(
 }
 
 function outputKindLabel(output: WorkspaceOutputRecordPayload) {
-  if (outputMetadataString(output, "origin_type") === "app") {
-    return output.platform?.trim() || "App artifact";
+  if (outputMetadataString(output, "origin_type") === "app" || output.module_id) {
+    const artifactType = outputMetadataString(output, "artifact_type");
+    if (artifactType) {
+      return artifactType.charAt(0).toUpperCase() + artifactType.slice(1);
+    }
+    return "Artifact";
   }
   const category = outputMetadataString(output, "category");
   if (category === "image") {
@@ -428,6 +515,10 @@ function outputSecondaryLabel(output: WorkspaceOutputRecordPayload) {
   if (sizeLabel) {
     parts.push(sizeLabel);
   }
+  const timeLabel = chatMessageTimeLabel(output.created_at);
+  if (timeLabel) {
+    parts.push(timeLabel);
+  }
   return parts.join(" · ");
 }
 
@@ -437,6 +528,17 @@ function sortOutputs(outputs: WorkspaceOutputRecordPayload[]) {
     const rightTime = Date.parse(right.created_at || "") || 0;
     if (leftTime !== rightTime) {
       return leftTime - rightTime;
+    }
+    return left.title.localeCompare(right.title);
+  });
+}
+
+function sortOutputsLatestFirst(outputs: WorkspaceOutputRecordPayload[]) {
+  return [...outputs].sort((left, right) => {
+    const leftTime = Date.parse(left.created_at || "") || 0;
+    const rightTime = Date.parse(right.created_at || "") || 0;
+    if (leftTime !== rightTime) {
+      return rightTime - leftTime;
     }
     return left.title.localeCompare(right.title);
   });
@@ -579,6 +681,283 @@ function summarizeUnknown(value: unknown, maxLength = 140): string {
     return "";
   }
   return String(value);
+}
+
+function normalizeChatTodoStatus(value: unknown): ChatTodoStatus | null {
+  const normalized =
+    typeof value === "string"
+      ? value.trim().toLowerCase().replace(/[\s-]+/g, "_")
+      : "";
+  switch (normalized) {
+    case "pending":
+    case "in_progress":
+    case "blocked":
+    case "completed":
+    case "abandoned":
+      return normalized;
+    default:
+      return null;
+  }
+}
+
+function normalizeChatTodoTask(value: unknown): ChatTodoTask | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const id = typeof value.id === "string" ? value.id.trim() : "";
+  const content = typeof value.content === "string" ? value.content.trim() : "";
+  const status = normalizeChatTodoStatus(value.status);
+  if (!id || !content || !status) {
+    return null;
+  }
+  const notes = typeof value.notes === "string" ? value.notes.trim() : "";
+  const details =
+    typeof value.details === "string" ? value.details.trim() : "";
+  return {
+    id,
+    content,
+    status,
+    ...(notes ? { notes } : {}),
+    ...(details ? { details } : {}),
+  };
+}
+
+function normalizeChatTodoPhase(value: unknown): ChatTodoPhase | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const id = typeof value.id === "string" ? value.id.trim() : "";
+  const name = typeof value.name === "string" ? value.name.trim() : "";
+  const tasks = Array.isArray(value.tasks)
+    ? value.tasks
+        .map((task) => normalizeChatTodoTask(task))
+        .filter((task): task is ChatTodoTask => Boolean(task))
+    : [];
+  if (!id || !name) {
+    return null;
+  }
+  return { id, name, tasks };
+}
+
+function todoTaskCount(phases: ChatTodoPhase[]) {
+  return phases.reduce((total, phase) => total + phase.tasks.length, 0);
+}
+
+function todoRemainingTaskCount(phases: ChatTodoPhase[]) {
+  return phases.reduce(
+    (total, phase) =>
+      total +
+      phase.tasks.filter(
+        (task) =>
+          task.status === "pending" ||
+          task.status === "in_progress" ||
+          task.status === "blocked",
+      ).length,
+    0,
+  );
+}
+
+function currentTodoEntry(phases: ChatTodoPhase[]) {
+  for (const phase of phases) {
+    const inProgressTask = phase.tasks.find(
+      (task) => task.status === "in_progress",
+    );
+    if (inProgressTask) {
+      return { phase, task: inProgressTask };
+    }
+  }
+  for (const phase of phases) {
+    const blockedTask = phase.tasks.find((task) => task.status === "blocked");
+    if (blockedTask) {
+      return { phase, task: blockedTask };
+    }
+  }
+  for (const phase of phases) {
+    const pendingTask = phase.tasks.find((task) => task.status === "pending");
+    if (pendingTask) {
+      return { phase, task: pendingTask };
+    }
+  }
+  return null;
+}
+
+function currentTodoPosition(phases: ChatTodoPhase[]) {
+  let position = 0;
+
+  for (const phase of phases) {
+    for (const task of phase.tasks) {
+      position += 1;
+      if (
+        task.status === "in_progress" ||
+        task.status === "blocked" ||
+        task.status === "pending"
+      ) {
+        return position;
+      }
+    }
+  }
+
+  return position;
+}
+
+function latestCompletedTodoEntry(phases: ChatTodoPhase[]) {
+  for (let phaseIndex = phases.length - 1; phaseIndex >= 0; phaseIndex -= 1) {
+    const phase = phases[phaseIndex];
+    for (
+      let taskIndex = phase.tasks.length - 1;
+      taskIndex >= 0;
+      taskIndex -= 1
+    ) {
+      const task = phase.tasks[taskIndex];
+      if (task.status === "completed") {
+        return { phase, task };
+      }
+    }
+  }
+
+  for (let phaseIndex = phases.length - 1; phaseIndex >= 0; phaseIndex -= 1) {
+    const phase = phases[phaseIndex];
+    for (
+      let taskIndex = phase.tasks.length - 1;
+      taskIndex >= 0;
+      taskIndex -= 1
+    ) {
+      const task = phase.tasks[taskIndex];
+      if (task.status === "abandoned") {
+        return { phase, task };
+      }
+    }
+  }
+
+  return null;
+}
+
+function todoPlanFromToolResult(
+  result: unknown,
+): ChatTodoPlan | null | undefined {
+  if (!isRecord(result)) {
+    return undefined;
+  }
+  const details = isRecord(result.details) ? result.details : null;
+  if (!details || !Array.isArray(details.phases)) {
+    return undefined;
+  }
+
+  const sessionId =
+    typeof details.session_id === "string" ? details.session_id.trim() : "";
+  const updatedAt =
+    typeof details.updated_at === "string" && details.updated_at.trim()
+      ? details.updated_at.trim()
+      : null;
+  const phases = details.phases
+    .map((phase) => normalizeChatTodoPhase(phase))
+    .filter((phase): phase is ChatTodoPhase => Boolean(phase));
+
+  return todoTaskCount(phases) > 0
+    ? {
+        sessionId,
+        updatedAt,
+        phases,
+      }
+    : null;
+}
+
+function todoPlanFromToolPayload(
+  payload: Record<string, unknown>,
+): ChatTodoPlan | null | undefined {
+  const toolName =
+    typeof payload.tool_name === "string"
+      ? payload.tool_name.trim().toLowerCase()
+      : "";
+  const phase =
+    typeof payload.phase === "string" ? payload.phase.trim().toLowerCase() : "";
+  if (
+    (toolName !== "todoread" && toolName !== "todowrite") ||
+    phase !== "completed" ||
+    payload.error === true
+  ) {
+    return undefined;
+  }
+  return todoPlanFromToolResult(payload.result);
+}
+
+function todoPlanFromOutputEvents(outputEvents: SessionOutputEventPayload[]) {
+  const orderedEvents = [...outputEvents].sort(
+    (left, right) =>
+      Date.parse(left.created_at || "") - Date.parse(right.created_at || "") ||
+      left.id - right.id,
+  );
+  let latestTodoPlan: ChatTodoPlan | null = null;
+
+  for (const event of orderedEvents) {
+    if (event.event_type !== "tool_call" || !isRecord(event.payload)) {
+      continue;
+    }
+    const nextTodoPlan = todoPlanFromToolPayload(event.payload);
+    if (nextTodoPlan !== undefined) {
+      latestTodoPlan = nextTodoPlan;
+    }
+  }
+
+  return latestTodoPlan;
+}
+
+function todoStatusLabel(status: ChatTodoStatus) {
+  switch (status) {
+    case "in_progress":
+      return "In progress";
+    case "blocked":
+      return "Blocked";
+    case "completed":
+      return "Completed";
+    case "abandoned":
+      return "Abandoned";
+    default:
+      return "Pending";
+  }
+}
+
+function todoStatusTone(status: ChatTodoStatus) {
+  switch (status) {
+    case "in_progress":
+      return "text-primary";
+    case "blocked":
+      return "text-amber-700";
+    case "completed":
+      return "text-emerald-600";
+    case "abandoned":
+      return "text-muted-foreground";
+    default:
+      return "text-muted-foreground";
+  }
+}
+
+function TodoStatusIcon({ status }: { status: ChatTodoStatus }) {
+  const label = todoStatusLabel(status);
+  const icon =
+    status === "in_progress" ? (
+      <Loader2 size={12} className="animate-spin" />
+    ) : status === "blocked" ? (
+      <AlertTriangle size={12} />
+    ) : status === "completed" ? (
+      <Check size={12} />
+    ) : status === "abandoned" ? (
+      <X size={12} />
+    ) : (
+      <Clock3 size={12} />
+    );
+
+  return (
+    <span
+      aria-label={label}
+      title={label}
+      className={`inline-flex size-5 shrink-0 items-center justify-center ${todoStatusTone(
+        status,
+      )}`}
+    >
+      {icon}
+    </span>
+  );
 }
 
 function runFailedContextLabel(payload: Record<string, unknown>): string {
@@ -986,6 +1365,33 @@ function phaseTraceStepFromEvent(
     };
   }
 
+  if (eventType === "run_completed") {
+    const status =
+      typeof payload.status === "string"
+        ? payload.status.trim().toLowerCase()
+        : "";
+    if (status === "waiting_user") {
+      return {
+        id: "phase:awaiting-user",
+        kind: "phase",
+        title: "Waiting for your input",
+        status: "waiting",
+        details: ["The agent needs a follow-up answer before it can continue."],
+        order,
+      };
+    }
+    if (status === "paused") {
+      return {
+        id: "phase:user-paused",
+        kind: "phase",
+        title: "Run paused",
+        status: "waiting",
+        details: ["The run was paused before completion and can be continued in a later turn."],
+        order,
+      };
+    }
+  }
+
   if (eventType === "run_failed") {
     const errorText = runFailedDetail(payload);
     if (errorText) {
@@ -1026,7 +1432,7 @@ function upsertTraceStep(previous: ChatTraceStep[], step: ChatTraceStep) {
 
 function finalizeTraceSteps(
   previous: ChatTraceStep[],
-  status: Extract<ChatTraceStepStatus, "completed" | "error">,
+  status: Extract<ChatTraceStepStatus, "completed" | "error" | "waiting">,
 ) {
   return previous.map((step) =>
     step.status === "running"
@@ -1077,7 +1483,16 @@ function assistantHistoryStateFromOutputEvents(
     }
 
     if (event.event_type === "run_completed") {
-      traceSteps = finalizeTraceSteps(traceSteps, "completed");
+      const completedStatus =
+        typeof eventPayload.status === "string"
+          ? eventPayload.status.trim().toLowerCase()
+          : "";
+      traceSteps = finalizeTraceSteps(
+        traceSteps,
+        completedStatus === "paused" || completedStatus === "waiting_user"
+          ? "waiting"
+          : "completed",
+      );
     } else if (event.event_type === "run_failed") {
       traceSteps = finalizeTraceSteps(traceSteps, "error");
     }
@@ -1095,9 +1510,66 @@ function isNearChatBottom(container: HTMLDivElement) {
   return remaining <= CHAT_AUTO_SCROLL_THRESHOLD_PX;
 }
 
+function chatMessageTimeLabel(value: string | null | undefined): string {
+  const timestamp = Date.parse(value || "");
+  if (Number.isNaN(timestamp)) {
+    return "";
+  }
+  return new Date(timestamp).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+async function copyTextToClipboard(value: string) {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  if (typeof document === "undefined") {
+    throw new Error("Clipboard is unavailable.");
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+
+  if (!copied) {
+    throw new Error("Clipboard copy failed.");
+  }
+}
+
+function hasActiveChatSelection(container: HTMLDivElement | null) {
+  if (!container || typeof window === "undefined") {
+    return false;
+  }
+
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed) {
+    return false;
+  }
+
+  return (
+    container.contains(selection.anchorNode) ||
+    container.contains(selection.focusNode)
+  );
+}
+
 interface ChatPaneSessionOpenRequest {
   sessionId: string;
   requestKey: number;
+  mode?: "session" | "draft";
+  parentSessionId?: string | null;
 }
 
 interface ChatPaneComposerPrefillRequest {
@@ -1168,12 +1640,17 @@ export function ChatPane({
   >([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isResponding, setIsResponding] = useState(false);
+  const [isPausePending, setIsPausePending] = useState(false);
   const [chatErrorMessage, setChatErrorMessage] = useState("");
   const [verboseTelemetryEnabled, setVerboseTelemetryEnabled] = useState(false);
   const [composerBlockHeight, setComposerBlockHeight] = useState(0);
   const [chatModelPreference, setChatModelPreference] = useState(
     loadStoredChatModelPreference,
   );
+  const [isHistoryViewportPending, setIsHistoryViewportPending] =
+    useState(false);
+  const [historyViewportRestoreGeneration, setHistoryViewportRestoreGeneration] =
+    useState(0);
   const [chatScrollMetrics, setChatScrollMetrics] = useState({
     scrollTop: 0,
     scrollHeight: 0,
@@ -1189,6 +1666,10 @@ export function ChatPane({
     proposalId: string;
     action: "accept" | "dismiss";
   } | null>(null);
+  const [currentTodoPlan, setCurrentTodoPlan] = useState<ChatTodoPlan | null>(
+    null,
+  );
+  const [todoPanelExpanded, setTodoPanelExpanded] = useState(false);
   const [editingMemoryProposalId, setEditingMemoryProposalId] = useState<
     string | null
   >(null);
@@ -1197,11 +1678,18 @@ export function ChatPane({
   >({});
   const messagesRef = useRef<HTMLDivElement>(null);
   const messagesContentRef = useRef<HTMLDivElement>(null);
+  const chatScrollbarThumbRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerBlockRef = useRef<HTMLDivElement>(null);
   const composerIsComposingRef = useRef(false);
   const shouldAutoScrollRef = useRef(true);
+  const lastChatScrollTopRef = useRef(0);
+  const chatScrollbarDragStateRef = useRef<ChatScrollbarDragState | null>(
+    null,
+  );
+  const chatScrollbarBodyUserSelectRef = useRef<string | null>(null);
+  const chatScrollbarBodyCursorRef = useRef<string | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
   const activeStreamIdRef = useRef<string | null>(null);
   const activeAssistantMessageIdRef = useRef<string | null>(null);
@@ -1211,11 +1699,14 @@ export function ChatPane({
   const isOnboardingVariant = variant === "onboarding";
   const pendingFocusRequestKeyRef = useRef<number | null>(focusRequestKey);
   const lastHandledSessionJumpRequestKeyRef = useRef(0);
+  const lastHandledSessionOpenRequestKeyRef = useRef(0);
   const lastHandledComposerPrefillRequestKeyRef = useRef(0);
+  const draftParentSessionIdRef = useRef<string | null>(null);
   const liveAssistantTextRef = useRef("");
   const liveThinkingTextRef = useRef("");
   const liveThinkingExpandedRef = useRef(false);
   const liveTraceStepsRef = useRef<ChatTraceStep[]>([]);
+  const historyViewportGenerationRef = useRef(0);
   const [activeSessionId, setActiveSessionId] = useState("");
 
   function appendStreamTelemetry(
@@ -1262,6 +1753,21 @@ export function ChatPane({
     onActiveSessionIdChange?.(sessionId);
   }
 
+  function beginHistoryViewportRestore() {
+    historyViewportGenerationRef.current += 1;
+    shouldAutoScrollRef.current = true;
+    setIsHistoryViewportPending(true);
+  }
+
+  function requestHistoryViewportRestore() {
+    setHistoryViewportRestoreGeneration(historyViewportGenerationRef.current);
+  }
+
+  function cancelHistoryViewportRestore() {
+    historyViewportGenerationRef.current += 1;
+    setIsHistoryViewportPending(false);
+  }
+
   function resetLiveTurn() {
     liveAssistantTextRef.current = "";
     liveThinkingTextRef.current = "";
@@ -1278,6 +1784,7 @@ export function ChatPane({
   function clearSessionView() {
     setMessages([]);
     setSessionOutputs([]);
+    setCurrentTodoPlan(null);
     setArtifactBrowserOpen(false);
     setArtifactBrowserFilter("all");
     setMemoryProposalAction(null);
@@ -1350,6 +1857,7 @@ export function ChatPane({
             `history-${message.created_at ?? crypto.randomUUID()}`,
           role: message.role as ChatMessage["role"],
           text: message.text,
+          createdAt: message.created_at || undefined,
           attachments,
         };
 
@@ -1410,6 +1918,7 @@ export function ChatPane({
     }
     setActiveSession(nextSessionId);
     if (!nextSessionId) {
+      requestHistoryViewportRestore();
       return;
     }
 
@@ -1445,8 +1954,10 @@ export function ChatPane({
       memoryProposalList.proposals,
     );
     setSessionOutputs(nextOutputs);
+    setCurrentTodoPlan(todoPlanFromOutputEvents(outputEventHistory.items));
     setMessages(nextMessages);
     resetLiveTurn();
+    requestHistoryViewportRestore();
 
     const onboardingSessionId = (
       selectedWorkspaceRef.current?.onboarding_session_id || ""
@@ -1522,46 +2033,18 @@ export function ChatPane({
     }
   }
 
-  async function returnToMainSession() {
-    const mainSessionId = (selectedWorkspace?.main_session_id || "").trim();
-    if (
-      !selectedWorkspaceId ||
-      !mainSessionId ||
-      activeSessionIdRef.current === mainSessionId
-    ) {
-      return;
-    }
-
-    setIsLoadingHistory(true);
-    setChatErrorMessage("");
-    pendingInputIdRef.current = null;
-    activeAssistantMessageIdRef.current = null;
-    setIsResponding(false);
-
-    const activeStreamId = activeStreamIdRef.current;
-    activeStreamIdRef.current = null;
-    if (activeStreamId) {
-      await closeStreamWithReason(
-        activeStreamId,
-        "chatpane_return_to_main_session",
-      ).catch(() => undefined);
-    }
-
-    try {
-      const runtimeStates =
-        await window.electronAPI.workspace.listRuntimeStates(
-          selectedWorkspaceId,
-        );
-      await loadSessionConversation(
-        mainSessionId,
-        selectedWorkspaceId,
-        runtimeStates.items,
-      );
-    } catch (error) {
-      setChatErrorMessage(normalizeErrorMessage(error));
-    } finally {
-      setIsLoadingHistory(false);
-    }
+  async function createWorkspaceSession(
+    workspaceId: string,
+    parentSessionId?: string | null,
+  ): Promise<string | null> {
+    const created = await window.electronAPI.workspace.createAgentSession({
+      workspace_id: workspaceId,
+      kind: "workspace_session",
+      parent_session_id: parentSessionId?.trim() || null,
+      created_by: "workspace_user",
+    });
+    const sessionId = created.session.session_id.trim();
+    return sessionId || null;
   }
 
   function appendLiveAssistantDelta(delta: string) {
@@ -1746,6 +2229,8 @@ export function ChatPane({
       return;
     }
 
+    lastChatScrollTopRef.current = target.scrollTop;
+
     setChatScrollMetrics((previous) => {
       const next = {
         scrollTop: target.scrollTop,
@@ -1765,13 +2250,127 @@ export function ChatPane({
     });
   }
 
+  function clearChatScrollbarDragState() {
+    chatScrollbarDragStateRef.current = null;
+    if (typeof document === "undefined") {
+      return;
+    }
+    if (chatScrollbarBodyUserSelectRef.current !== null) {
+      document.body.style.userSelect = chatScrollbarBodyUserSelectRef.current;
+      chatScrollbarBodyUserSelectRef.current = null;
+    }
+    if (chatScrollbarBodyCursorRef.current !== null) {
+      document.body.style.cursor = chatScrollbarBodyCursorRef.current;
+      chatScrollbarBodyCursorRef.current = null;
+    }
+  }
+
+  function updateChatScrollFromScrollbarPointer(
+    railElement: HTMLDivElement,
+    clientY: number,
+    thumbPointerOffset: number,
+  ) {
+    const container = messagesRef.current;
+    if (!container || !showCustomChatScrollbar || chatScrollRange <= 0) {
+      return;
+    }
+
+    const railRect = railElement.getBoundingClientRect();
+    const unclampedThumbOffset =
+      clientY - railRect.top - thumbPointerOffset;
+    const nextThumbOffset = Math.min(
+      Math.max(0, unclampedThumbOffset),
+      chatScrollbarThumbTravel,
+    );
+    const nextScrollTop =
+      chatScrollbarThumbTravel > 0
+        ? (nextThumbOffset / chatScrollbarThumbTravel) * chatScrollRange
+        : 0;
+
+    shouldAutoScrollRef.current = false;
+    container.scrollTop = nextScrollTop;
+    syncChatScrollMetrics(container);
+  }
+
+  function handleChatScrollbarPointerDown(
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) {
+    if (event.button !== 0 || !showCustomChatScrollbar) {
+      return;
+    }
+
+    let thumbPointerOffset = chatScrollbarThumbHeight / 2;
+    if (
+      event.target instanceof Node &&
+      chatScrollbarThumbRef.current?.contains(event.target)
+    ) {
+      const thumbRect = chatScrollbarThumbRef.current.getBoundingClientRect();
+      thumbPointerOffset = Math.min(
+        Math.max(0, event.clientY - thumbRect.top),
+        chatScrollbarThumbHeight,
+      );
+    }
+
+    chatScrollbarDragStateRef.current = {
+      pointerId: event.pointerId,
+      thumbPointerOffset,
+    };
+
+    if (typeof document !== "undefined") {
+      if (chatScrollbarBodyUserSelectRef.current === null) {
+        chatScrollbarBodyUserSelectRef.current = document.body.style.userSelect;
+      }
+      if (chatScrollbarBodyCursorRef.current === null) {
+        chatScrollbarBodyCursorRef.current = document.body.style.cursor;
+      }
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "grabbing";
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    updateChatScrollFromScrollbarPointer(
+      event.currentTarget,
+      event.clientY,
+      thumbPointerOffset,
+    );
+    event.preventDefault();
+  }
+
+  function handleChatScrollbarPointerMove(
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) {
+    const dragState = chatScrollbarDragStateRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+    updateChatScrollFromScrollbarPointer(
+      event.currentTarget,
+      event.clientY,
+      dragState.thumbPointerOffset,
+    );
+    event.preventDefault();
+  }
+
+  function handleChatScrollbarPointerUp(
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) {
+    const dragState = chatScrollbarDragStateRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    clearChatScrollbarDragState();
+  }
+
   function upsertLiveTraceStep(step: ChatTraceStep) {
     const next = upsertTraceStep(liveTraceStepsRef.current, step);
     setLiveTraceStepsState(next);
   }
 
   function finalizeLiveTraceSteps(
-    status: Extract<ChatTraceStepStatus, "completed" | "error">,
+    status: Extract<ChatTraceStepStatus, "completed" | "error" | "waiting">,
   ) {
     const next = finalizeTraceSteps(liveTraceStepsRef.current, status);
     setLiveTraceStepsState(next);
@@ -1779,15 +2378,21 @@ export function ChatPane({
 
   useEffect(() => {
     const container = messagesRef.current;
-    if (!container || !shouldAutoScrollRef.current) {
+    if (
+      !container ||
+      !shouldAutoScrollRef.current ||
+      hasActiveChatSelection(container)
+    ) {
       return;
     }
 
     container.scrollTo({
       top: container.scrollHeight,
-      behavior: isResponding ? "auto" : "smooth",
+      behavior:
+        isResponding || isHistoryViewportPending ? "auto" : "smooth",
     });
   }, [
+    isHistoryViewportPending,
     isResponding,
     liveAssistantText,
     liveThinkingText,
@@ -1795,9 +2400,46 @@ export function ChatPane({
     messages,
   ]);
 
+  useLayoutEffect(() => {
+    if (!isHistoryViewportPending || historyViewportRestoreGeneration <= 0) {
+      return;
+    }
+
+    const container = messagesRef.current;
+    if (!container) {
+      return;
+    }
+
+    const restoreGeneration = historyViewportRestoreGeneration;
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: "auto",
+    });
+    syncChatScrollMetrics(container);
+
+    const frameId = window.requestAnimationFrame(() => {
+      if (historyViewportGenerationRef.current !== restoreGeneration) {
+        return;
+      }
+      setIsHistoryViewportPending(false);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [historyViewportRestoreGeneration, isHistoryViewportPending]);
+
   useEffect(() => {
     selectedWorkspaceRef.current = selectedWorkspace;
   }, [selectedWorkspace]);
+
+  useEffect(() => clearChatScrollbarDragState, []);
+
+  useEffect(() => {
+    if (!isResponding) {
+      setIsPausePending(false);
+    }
+  }, [isResponding]);
 
   useEffect(() => {
     setPendingAttachments([]);
@@ -1892,17 +2534,22 @@ export function ChatPane({
 
   useEffect(() => {
     if (!selectedWorkspaceId) {
+      cancelHistoryViewportRestore();
       clearSessionView();
       setPendingAttachments([]);
       setActiveSession(null);
       pendingInputIdRef.current = null;
       lastHandledSessionJumpRequestKeyRef.current = 0;
+      lastHandledSessionOpenRequestKeyRef.current = 0;
+      draftParentSessionIdRef.current = null;
       return;
     }
 
     let cancelled = false;
 
     async function loadHistory() {
+      let historyLoaded = false;
+      beginHistoryViewportRestore();
       setIsLoadingHistory(true);
       setChatErrorMessage("");
 
@@ -1929,36 +2576,43 @@ export function ChatPane({
           }
         }
 
-        const runtimeStates =
-          await window.electronAPI.workspace.listRuntimeStates(
-            selectedWorkspaceId,
-          );
+        const [runtimeStates, sessionsResponse] = await Promise.all([
+          window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId),
+          window.electronAPI.workspace.listAgentSessions(selectedWorkspaceId),
+        ]);
         if (cancelled) {
           return;
         }
 
-        const requestedOpenSessionId = (
-          sessionOpenRequest?.sessionId || ""
-        ).trim();
         const nextSessionId =
           (hasSessionJumpRequest && requestedSessionId
             ? requestedSessionId
-            : requestedOpenSessionId) ||
-          preferredSessionId(selectedWorkspaceRef.current, runtimeStates.items);
+            : null) ||
+          preferredSessionId(
+            selectedWorkspaceRef.current,
+            runtimeStates.items,
+            sessionsResponse.items,
+          );
+        const resolvedSessionId = nextSessionId || null;
+        draftParentSessionIdRef.current = null;
         await loadSessionConversation(
-          nextSessionId,
+          resolvedSessionId,
           selectedWorkspaceId,
           runtimeStates.items,
           {
             cancelled: () => cancelled,
           },
         );
+        historyLoaded = true;
       } catch (error) {
         if (!cancelled) {
           setChatErrorMessage(normalizeErrorMessage(error));
         }
       } finally {
         if (!cancelled) {
+          if (!historyLoaded) {
+            cancelHistoryViewportRestore();
+          }
           setIsLoadingHistory(false);
         }
       }
@@ -1972,26 +2626,32 @@ export function ChatPane({
     isOnboardingVariant,
     sessionJumpRequestKey,
     sessionJumpSessionId,
-    sessionOpenRequest?.sessionId,
     selectedWorkspaceId,
-    selectedWorkspace?.main_session_id,
     selectedWorkspace?.onboarding_session_id,
     selectedWorkspace?.onboarding_status,
   ]);
 
   useEffect(() => {
     const requestedSessionId = (sessionOpenRequest?.sessionId || "").trim();
-    if (!selectedWorkspaceId || !requestedSessionId) {
+    const requestKey = sessionOpenRequest?.requestKey ?? 0;
+    const requestMode = sessionOpenRequest?.mode ?? "session";
+    const requestedParentSessionId =
+      sessionOpenRequest?.parentSessionId?.trim() || null;
+    if (
+      !selectedWorkspaceId ||
+      requestKey <= 0 ||
+      requestKey === lastHandledSessionOpenRequestKeyRef.current
+    ) {
       return;
     }
 
     let cancelled = false;
 
     async function openRequestedSession() {
-      if (activeSessionIdRef.current === requestedSessionId) {
-        return;
-      }
+      lastHandledSessionOpenRequestKeyRef.current = requestKey;
 
+      let historyLoaded = false;
+      beginHistoryViewportRestore();
       setIsLoadingHistory(true);
       setChatErrorMessage("");
       pendingInputIdRef.current = null;
@@ -2008,6 +2668,27 @@ export function ChatPane({
       }
 
       try {
+        if (requestMode === "draft") {
+          draftParentSessionIdRef.current = requestedParentSessionId;
+          clearSessionView();
+          setActiveSession(null);
+          requestHistoryViewportRestore();
+          historyLoaded = true;
+          return;
+        }
+
+        if (!requestedSessionId) {
+          historyLoaded = true;
+          return;
+        }
+
+        draftParentSessionIdRef.current = null;
+        if (activeSessionIdRef.current === requestedSessionId) {
+          requestHistoryViewportRestore();
+          historyLoaded = true;
+          return;
+        }
+
         const runtimeStates =
           await window.electronAPI.workspace.listRuntimeStates(
             selectedWorkspaceId,
@@ -2020,12 +2701,16 @@ export function ChatPane({
             cancelled: () => cancelled,
           },
         );
+        historyLoaded = true;
       } catch (error) {
         if (!cancelled) {
           setChatErrorMessage(normalizeErrorMessage(error));
         }
       } finally {
         if (!cancelled) {
+          if (!historyLoaded) {
+            cancelHistoryViewportRestore();
+          }
           setIsLoadingHistory(false);
         }
       }
@@ -2039,7 +2724,13 @@ export function ChatPane({
     selectedWorkspaceId,
     sessionOpenRequest?.requestKey,
     sessionOpenRequest?.sessionId,
+    sessionOpenRequest?.mode,
+    sessionOpenRequest?.parentSessionId,
   ]);
+
+  useEffect(() => {
+    setTodoPanelExpanded(false);
+  }, [activeSessionId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2365,6 +3056,11 @@ export function ChatPane({
           upsertLiveTraceStep(toolStep);
         }
 
+        const nextTodoPlan = todoPlanFromToolPayload(eventPayload);
+        if (nextTodoPlan !== undefined) {
+          setCurrentTodoPlan(nextTodoPlan);
+        }
+
         if (eventType === "output_delta") {
           const delta =
             typeof eventPayload.delta === "string" ? eventPayload.delta : "";
@@ -2461,7 +3157,13 @@ export function ChatPane({
         }
 
         if (eventType === "run_completed") {
-          finalizeLiveTraceSteps("completed");
+          const completedStatus =
+            typeof eventPayload.status === "string"
+              ? eventPayload.status.trim().toLowerCase()
+              : "";
+          finalizeLiveTraceSteps(
+            completedStatus === "paused" ? "waiting" : "completed",
+          );
           commitLiveAssistantMessage();
           setIsResponding(false);
           activeStreamIdRef.current = null;
@@ -2596,8 +3298,17 @@ export function ChatPane({
       );
       return;
     }
-    const targetSessionId =
-      activeSessionIdRef.current || preferredSessionId(selectedWorkspace, []);
+    let targetSessionId = activeSessionIdRef.current;
+    if (!targetSessionId && selectedWorkspace) {
+      targetSessionId = await createWorkspaceSession(
+        selectedWorkspace.id,
+        draftParentSessionIdRef.current,
+      );
+      if (targetSessionId) {
+        draftParentSessionIdRef.current = null;
+        setActiveSession(targetSessionId);
+      }
+    }
     if (!targetSessionId) {
       setChatErrorMessage("No active session found for this workspace.");
       return;
@@ -2693,6 +3404,7 @@ export function ChatPane({
         id: `user-${Date.now()}`,
         role: "user",
         text: trimmed,
+        createdAt: new Date().toISOString(),
         attachments: stagedAttachments,
       };
 
@@ -2804,6 +3516,29 @@ export function ChatPane({
         action: "send_failed",
         detail: normalizeErrorMessage(error),
       });
+    }
+  }
+
+  async function pauseCurrentRun() {
+    const sessionId = activeSessionIdRef.current || activeSessionId;
+    if (!selectedWorkspaceId || !sessionId || isPausePending) {
+      return;
+    }
+
+    const previousStatus = liveAgentStatus;
+    setChatErrorMessage("");
+    setLiveAgentStatus("Pausing");
+    setIsPausePending(true);
+
+    try {
+      await window.electronAPI.workspace.pauseSessionRun({
+        workspace_id: selectedWorkspaceId,
+        session_id: sessionId,
+      });
+    } catch (error) {
+      setIsPausePending(false);
+      setLiveAgentStatus(previousStatus || "Working");
+      setChatErrorMessage(normalizeErrorMessage(error));
     }
   }
 
@@ -2968,6 +3703,9 @@ export function ChatPane({
         if (!normalizedToken || isDeprecatedChatModel(normalizedToken)) {
           return false;
         }
+        if (!runtimeModelHasChatCapability(model)) {
+          return false;
+        }
         if (
           isUnsupportedHolabossProxyModel(
             providerGroup.providerId,
@@ -3127,18 +3865,17 @@ export function ChatPane({
   const textareaPlaceholder = isOnboardingVariant
     ? "Answer the onboarding prompt or share setup details"
     : "Ask anything";
-  const mainSessionId = (selectedWorkspace?.main_session_id || "").trim();
-  const showMainSessionReturn =
-    !isOnboardingVariant &&
-    Boolean(mainSessionId) &&
-    Boolean(activeSessionId) &&
-    activeSessionId !== mainSessionId;
+  const showHistoryRestoreScreen =
+    isLoadingHistory || isHistoryViewportPending;
   const chatScrollRange = Math.max(
     0,
     chatScrollMetrics.scrollHeight - chatScrollMetrics.clientHeight,
   );
   const showCustomChatScrollbar =
-    hasMessages && chatScrollMetrics.clientHeight > 0 && chatScrollRange > 1;
+    !showHistoryRestoreScreen &&
+    hasMessages &&
+    chatScrollMetrics.clientHeight > 0 &&
+    chatScrollRange > 1;
   const chatScrollbarRailInset =
     composerBlockHeight > 0 ? composerBlockHeight / 2 : 0;
   const chatScrollbarRailHeight = chatScrollMetrics.clientHeight;
@@ -3162,6 +3899,13 @@ export function ChatPane({
         chatScrollbarThumbTravel
       : 0
     : 0;
+
+  useEffect(() => {
+    if (showCustomChatScrollbar) {
+      return;
+    }
+    clearChatScrollbarDragState();
+  }, [showCustomChatScrollbar]);
 
   useEffect(() => {
     if (!hasMessages) {
@@ -3266,30 +4010,6 @@ export function ChatPane({
           </div>
         ) : null}
 
-        {showMainSessionReturn ? (
-          <div className="shrink-0 px-4 pt-3 sm:px-5">
-            <div className="bg-muted/72 flex flex-col items-start gap-3 rounded-[16px] border border-border/55 px-3 py-2.5">
-              <div className="min-w-0">
-                <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                  Sub-session
-                </div>
-                <div className="mt-1 text-[12px] leading-5 text-muted-foreground">
-                  You are viewing a separate run session. Return to the main
-                  workspace chat to continue there.
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => void returnToMainSession()}
-                disabled={isLoadingHistory}
-                className="inline-flex items-center rounded-full border border-border/60 bg-background px-3 py-1.5 text-[12px] font-medium text-foreground transition hover:border-primary/35 hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Back to main session
-              </button>
-            </div>
-          </div>
-        ) : null}
-
         {showLowBalanceWarning || showOutOfCreditsWarning ? (
           <div className="shrink-0 px-4 pt-3 sm:px-5">
             <div className="bg-muted/72 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-border/55 px-3 py-2.5">
@@ -3374,24 +4094,34 @@ export function ChatPane({
           <div className="min-h-0 flex-1 overflow-hidden">
             <div
               ref={messagesRef}
+              onWheelCapture={(event) => {
+                if (event.deltaY < 0) {
+                  shouldAutoScrollRef.current = false;
+                }
+              }}
               onScroll={(event) => {
-                shouldAutoScrollRef.current = isNearChatBottom(
-                  event.currentTarget,
-                );
-                syncChatScrollMetrics(event.currentTarget);
+                const { currentTarget } = event;
+                const scrolledUp =
+                  currentTarget.scrollTop < lastChatScrollTopRef.current;
+                const nearBottom = isNearChatBottom(currentTarget);
+                shouldAutoScrollRef.current = scrolledUp ? false : nearBottom;
+                syncChatScrollMetrics(currentTarget);
               }}
               className={`chat-scrollbar-hidden h-full min-h-0 overflow-x-hidden overflow-y-auto ${hasMessages ? "" : "flex items-center justify-center"}`}
             >
               {hasMessages ? (
                 <div
                   ref={messagesContentRef}
-                  className="flex min-w-0 w-full flex-col gap-7 px-6 pb-3 pt-5"
+                  className={`flex min-w-0 w-full flex-col gap-7 px-6 pb-3 pt-5 ${
+                    showHistoryRestoreScreen ? "invisible" : ""
+                  }`}
                 >
                   {messages.map((message) =>
                     message.role === "user" ? (
                       <UserTurn
                         key={message.id}
                         text={message.text}
+                        createdAt={message.createdAt}
                         attachments={message.attachments ?? []}
                         onLinkClick={onOpenLinkInBrowser}
                       />
@@ -3486,7 +4216,11 @@ export function ChatPane({
                   ) : null}
                 </div>
               ) : (
-                <div className="w-full px-4 pb-10 pt-10 sm:px-5">
+                <div
+                  className={`w-full px-4 pb-10 pt-10 sm:px-5 ${
+                    showHistoryRestoreScreen ? "invisible" : ""
+                  }`}
+                >
                   <div className="mx-auto mb-6 max-w-[560px] text-center">
                     <div className="text-xl font-medium text-foreground">
                       {isLoadingBootstrap || isLoadingHistory
@@ -3505,44 +4239,62 @@ export function ChatPane({
                     </div>
                   </div>
                   <form onSubmit={onSubmit} className="w-full">
-                    <Composer
-                      input={input}
-                      attachments={pendingAttachmentItems}
-                      isResponding={isResponding}
-                      disabled={composerDisabled}
-                      disabledReason={composerDisabledReason}
-                      selectedModel={effectiveChatModelPreference}
-                      resolvedModelLabel={
-                        resolvedChatModel || modelSelectionUnavailableReason
-                      }
-                      runtimeDefaultModelLabel={runtimeDefaultModel}
-                      modelOptions={availableChatModelOptions}
-                      modelOptionGroups={availableChatModelOptionGroups}
-                      runtimeDefaultModelAvailable={
-                        runtimeDefaultModelAvailable
-                      }
-                      modelSelectionUnavailableReason={
-                        modelSelectionUnavailableReason
-                      }
-                      placeholder={textareaPlaceholder}
-                      showModelSelector={!isOnboardingVariant}
-                      onModelChange={setChatModelPreference}
-                      onOpenModelProviders={() =>
-                        void window.electronAPI.ui.openSettingsPane("providers")
-                      }
-                      textareaRef={textareaRef}
-                      fileInputRef={fileInputRef}
-                      onChange={setInput}
-                      onKeyDown={onComposerKeyDown}
-                      onCompositionStart={onComposerCompositionStart}
-                      onCompositionEnd={onComposerCompositionEnd}
-                      onAttachmentInputChange={onAttachmentInputChange}
-                      onAddDroppedFiles={appendPendingLocalFiles}
-                      onAddExplorerAttachments={
-                        appendPendingExplorerAttachments
-                      }
-                      onRemoveAttachment={removePendingAttachment}
-                    />
+                    <div className="space-y-3">
+                      {currentTodoPlan ? (
+                        <CurrentTodoPanel
+                          todoPlan={currentTodoPlan}
+                          expanded={todoPanelExpanded}
+                          onToggle={() =>
+                            setTodoPanelExpanded((value) => !value)
+                          }
+                        />
+                      ) : null}
+                      <Composer
+                        input={input}
+                        attachments={pendingAttachmentItems}
+                        isResponding={isResponding}
+                        pausePending={isPausePending}
+                        pauseDisabled={
+                          pendingInputIdRef.current === STREAM_ATTACH_PENDING
+                        }
+                        disabled={composerDisabled}
+                        disabledReason={composerDisabledReason}
+                        selectedModel={effectiveChatModelPreference}
+                        resolvedModelLabel={
+                          resolvedChatModel || modelSelectionUnavailableReason
+                        }
+                        runtimeDefaultModelLabel={runtimeDefaultModel}
+                        modelOptions={availableChatModelOptions}
+                        modelOptionGroups={availableChatModelOptionGroups}
+                        runtimeDefaultModelAvailable={
+                          runtimeDefaultModelAvailable
+                        }
+                        modelSelectionUnavailableReason={
+                          modelSelectionUnavailableReason
+                        }
+                        placeholder={textareaPlaceholder}
+                        showModelSelector={!isOnboardingVariant}
+                        onModelChange={setChatModelPreference}
+                        onOpenModelProviders={() =>
+                          void window.electronAPI.ui.openSettingsPane(
+                            "providers",
+                          )
+                        }
+                        textareaRef={textareaRef}
+                        fileInputRef={fileInputRef}
+                        onChange={setInput}
+                        onKeyDown={onComposerKeyDown}
+                        onCompositionStart={onComposerCompositionStart}
+                        onCompositionEnd={onComposerCompositionEnd}
+                        onAttachmentInputChange={onAttachmentInputChange}
+                        onPause={pauseCurrentRun}
+                        onAddDroppedFiles={appendPendingLocalFiles}
+                        onAddExplorerAttachments={
+                          appendPendingExplorerAttachments
+                        }
+                        onRemoveAttachment={removePendingAttachment}
+                      />
+                    </div>
                   </form>
                 </div>
               )}
@@ -3552,57 +4304,110 @@ export function ChatPane({
           {showCustomChatScrollbar ? (
             <div className="pointer-events-none absolute inset-y-0 right-1 z-20 w-4">
               <div
-                className="absolute left-1/2 w-[3px] -translate-x-1/2 rounded-full"
+                className="pointer-events-auto absolute inset-x-0 touch-none"
                 style={{
-                  top: `${chatScrollbarRailInset + chatScrollbarThumbOffset}px`,
-                  height: `${chatScrollbarThumbHeight}px`,
-                  background:
-                    "color-mix(in oklch, var(--primary) 28%, transparent)",
+                  top: `${chatScrollbarRailInset}px`,
+                  height: `${chatScrollbarRailHeight}px`,
                 }}
-              />
+                onPointerDown={handleChatScrollbarPointerDown}
+                onPointerMove={handleChatScrollbarPointerMove}
+                onPointerUp={handleChatScrollbarPointerUp}
+                onPointerCancel={handleChatScrollbarPointerUp}
+                onLostPointerCapture={() => {
+                  clearChatScrollbarDragState();
+                }}
+              >
+                <div
+                  className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 rounded-full"
+                  style={{
+                    background:
+                      "color-mix(in oklch, var(--foreground) 10%, transparent)",
+                  }}
+                />
+                <div
+                  ref={chatScrollbarThumbRef}
+                  data-chat-scrollbar-thumb="true"
+                  className="absolute left-1/2 w-4 -translate-x-1/2 rounded-full cursor-grab active:cursor-grabbing"
+                  style={{
+                    top: `${chatScrollbarThumbOffset}px`,
+                    height: `${chatScrollbarThumbHeight}px`,
+                  }}
+                >
+                  <div
+                    className="absolute left-1/2 top-0 h-full w-[3px] -translate-x-1/2 rounded-full"
+                    style={{
+                      background:
+                        "color-mix(in oklch, var(--primary) 28%, transparent)",
+                    }}
+                  />
+                </div>
+              </div>
             </div>
           ) : null}
 
           {hasMessages ? (
-            <div ref={composerBlockRef} className="shrink-0 px-6 pb-5 pt-3">
+            <div
+              ref={composerBlockRef}
+              className={`shrink-0 px-6 pb-5 pt-3 ${
+                showHistoryRestoreScreen ? "invisible" : ""
+              }`}
+            >
               <form onSubmit={onSubmit} className="w-full">
-                <Composer
-                  input={input}
-                  attachments={pendingAttachmentItems}
-                  isResponding={isResponding}
-                  disabled={composerDisabled}
-                  disabledReason={composerDisabledReason}
-                  selectedModel={effectiveChatModelPreference}
-                  resolvedModelLabel={
-                    resolvedChatModel || modelSelectionUnavailableReason
-                  }
-                  runtimeDefaultModelLabel={runtimeDefaultModel}
-                  modelOptions={availableChatModelOptions}
-                  modelOptionGroups={availableChatModelOptionGroups}
-                  runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
-                  modelSelectionUnavailableReason={
-                    modelSelectionUnavailableReason
-                  }
-                  placeholder={textareaPlaceholder}
-                  showModelSelector={!isOnboardingVariant}
-                  onModelChange={setChatModelPreference}
-                  onOpenModelProviders={() =>
-                    void window.electronAPI.ui.openSettingsPane("providers")
-                  }
-                  textareaRef={textareaRef}
-                  fileInputRef={fileInputRef}
-                  onChange={setInput}
-                  onKeyDown={onComposerKeyDown}
-                  onCompositionStart={onComposerCompositionStart}
-                  onCompositionEnd={onComposerCompositionEnd}
-                  onAttachmentInputChange={onAttachmentInputChange}
-                  onAddDroppedFiles={appendPendingLocalFiles}
-                  onAddExplorerAttachments={appendPendingExplorerAttachments}
-                  onRemoveAttachment={removePendingAttachment}
-                />
+                <div className="space-y-3">
+                  {currentTodoPlan ? (
+                    <CurrentTodoPanel
+                      todoPlan={currentTodoPlan}
+                      expanded={todoPanelExpanded}
+                      onToggle={() =>
+                        setTodoPanelExpanded((value) => !value)
+                      }
+                    />
+                  ) : null}
+                  <Composer
+                    input={input}
+                    attachments={pendingAttachmentItems}
+                    isResponding={isResponding}
+                    pausePending={isPausePending}
+                    pauseDisabled={
+                      pendingInputIdRef.current === STREAM_ATTACH_PENDING
+                    }
+                    disabled={composerDisabled}
+                    disabledReason={composerDisabledReason}
+                    selectedModel={effectiveChatModelPreference}
+                    resolvedModelLabel={
+                      resolvedChatModel || modelSelectionUnavailableReason
+                    }
+                    runtimeDefaultModelLabel={runtimeDefaultModel}
+                    modelOptions={availableChatModelOptions}
+                    modelOptionGroups={availableChatModelOptionGroups}
+                    runtimeDefaultModelAvailable={runtimeDefaultModelAvailable}
+                    modelSelectionUnavailableReason={
+                      modelSelectionUnavailableReason
+                    }
+                    placeholder={textareaPlaceholder}
+                    showModelSelector={!isOnboardingVariant}
+                    onModelChange={setChatModelPreference}
+                    onOpenModelProviders={() =>
+                      void window.electronAPI.ui.openSettingsPane("providers")
+                    }
+                    textareaRef={textareaRef}
+                    fileInputRef={fileInputRef}
+                    onChange={setInput}
+                    onKeyDown={onComposerKeyDown}
+                    onCompositionStart={onComposerCompositionStart}
+                    onCompositionEnd={onComposerCompositionEnd}
+                    onAttachmentInputChange={onAttachmentInputChange}
+                    onPause={pauseCurrentRun}
+                    onAddDroppedFiles={appendPendingLocalFiles}
+                    onAddExplorerAttachments={appendPendingExplorerAttachments}
+                    onRemoveAttachment={removePendingAttachment}
+                  />
+                </div>
               </form>
             </div>
           ) : null}
+
+          {showHistoryRestoreScreen ? <HistoryRestoreSkeleton /> : null}
 
           <ArtifactBrowserModal
             open={artifactBrowserOpen}
@@ -3627,6 +4432,8 @@ interface ComposerProps {
     size_bytes: number;
   }>;
   isResponding: boolean;
+  pausePending: boolean;
+  pauseDisabled: boolean;
   disabled: boolean;
   disabledReason?: string;
   selectedModel: string;
@@ -3647,6 +4454,7 @@ interface ComposerProps {
   onCompositionStart: (event: CompositionEvent<HTMLTextAreaElement>) => void;
   onCompositionEnd: (event: CompositionEvent<HTMLTextAreaElement>) => void;
   onAttachmentInputChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onPause: () => void;
   onAddDroppedFiles: (files: File[]) => void;
   onAddExplorerAttachments: (files: ExplorerAttachmentDragPayload[]) => void;
   onRemoveAttachment: (attachmentId: string) => void;
@@ -3661,15 +4469,50 @@ interface ThinkingPanelProps {
 
 function UserTurn({
   text,
+  createdAt,
   attachments,
   onLinkClick,
 }: {
   text: string;
+  createdAt?: string;
   attachments: ChatAttachment[];
   onLinkClick?: (url: string) => void;
 }) {
+  const [copyFeedbackVisible, setCopyFeedbackVisible] = useState(false);
+  const copyResetTimerRef = useRef<number | null>(null);
+  const timeLabel = chatMessageTimeLabel(createdAt);
+  const canCopy = text.trim().length > 0;
+
+  useEffect(() => {
+    return () => {
+      if (copyResetTimerRef.current !== null) {
+        window.clearTimeout(copyResetTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopy = async () => {
+    if (!canCopy) {
+      return;
+    }
+
+    try {
+      await copyTextToClipboard(text);
+    } catch {
+      return;
+    }
+    setCopyFeedbackVisible(true);
+    if (copyResetTimerRef.current !== null) {
+      window.clearTimeout(copyResetTimerRef.current);
+    }
+    copyResetTimerRef.current = window.setTimeout(() => {
+      setCopyFeedbackVisible(false);
+      copyResetTimerRef.current = null;
+    }, 1600);
+  };
+
   return (
-    <div className="flex min-w-0 justify-end">
+    <div className="group/user-turn flex min-w-0 justify-end">
       <div className="flex min-w-0 max-w-[420px] flex-col items-end gap-2 sm:max-w-[560px] lg:max-w-[680px]">
         {text ? (
           <div className="theme-chat-user-bubble inline-flex min-w-0 max-w-full rounded-[18px] border px-4 py-3 text-foreground/95">
@@ -3683,6 +4526,35 @@ function UserTurn({
         ) : null}
         {attachments.length > 0 ? (
           <AttachmentList attachments={attachments} className="justify-end" />
+        ) : null}
+        {canCopy || timeLabel ? (
+          <div className="flex min-h-6 items-center justify-end gap-2 pr-1 text-[11px] text-muted-foreground/72 opacity-0 pointer-events-none transition duration-150 group-hover/user-turn:opacity-100 group-hover/user-turn:pointer-events-auto group-focus-within/user-turn:opacity-100 group-focus-within/user-turn:pointer-events-auto">
+            {canCopy ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={
+                  copyFeedbackVisible
+                    ? "Copied user message"
+                    : "Copy user message"
+                }
+                onClick={() => {
+                  void handleCopy();
+                }}
+                className="size-6 rounded-[10px] text-muted-foreground/72 hover:bg-foreground/6 hover:text-foreground"
+              >
+                {copyFeedbackVisible ? (
+                  <Check size={13} strokeWidth={1.9} />
+                ) : (
+                  <Copy size={13} strokeWidth={1.9} />
+                )}
+              </Button>
+            ) : null}
+            {timeLabel ? (
+              <span className="select-none tabular-nums">{timeLabel}</span>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </div>
@@ -3833,6 +4705,52 @@ function OutputArtifactIcon({
   return <FileText size={16} className="shrink-0 text-primary/72" />;
 }
 
+function HistoryRestoreSkeleton() {
+  return (
+    <div
+      role="status"
+      aria-label="Loading conversation"
+      className="absolute inset-0 z-30 overflow-hidden px-6 pb-5 pt-5"
+    >
+      <div className="flex h-full flex-col">
+        <div className="animate-pulse space-y-6">
+          <div className="flex items-start justify-between gap-6">
+            <div className="h-5 w-28 rounded-md bg-muted/70" />
+            <div className="h-11 w-52 rounded-2xl bg-muted/70" />
+          </div>
+          <div className="space-y-3 px-3">
+            <div className="flex items-center gap-2">
+              <div className="h-5 w-6 rounded-md bg-muted/70" />
+              <div className="h-5 w-14 rounded-md bg-muted/70" />
+            </div>
+            <div className="h-5 w-full rounded-md bg-muted/70" />
+            <div className="h-5 w-full rounded-md bg-muted/70" />
+            <div className="h-5 w-[42%] rounded-md bg-muted/70" />
+          </div>
+        </div>
+
+        <div className="mt-auto">
+          <div className="rounded-[22px] border border-border/35 bg-muted/50 p-4">
+            <div className="animate-pulse space-y-3">
+              <div className="h-6 w-full rounded-lg bg-muted/80" />
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <div className="size-8 rounded-full bg-muted/80" />
+                  <div className="size-8 rounded-full bg-muted/80" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="size-8 rounded-full bg-muted/80" />
+                  <div className="size-8 rounded-full bg-muted/80" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AssistantTurnOutputs({
   outputs,
   sessionOutputs,
@@ -3845,49 +4763,145 @@ function AssistantTurnOutputs({
   onOpenAllArtifacts: () => void;
 }) {
   return (
-    <div className="mt-4 flex flex-wrap gap-3">
+    <div className="mt-3 flex flex-col gap-2">
       {outputs.map((output) => (
         <button
           key={output.id}
           type="button"
           onClick={() => onOpenOutput?.(output)}
-          className="bg-muted flex min-w-[240px] max-w-full flex-1 items-center gap-3 rounded-[20px] border border-border/35 px-4 py-3 text-left transition hover:border-border/55 hover:bg-card/70 disabled:cursor-default disabled:hover:border-border/35 disabled:hover:bg-muted"
+          className="flex max-w-[360px] items-center gap-3 rounded-xl border border-border/50 bg-card px-3.5 py-2.5 text-left transition-colors hover:bg-accent disabled:cursor-default disabled:hover:bg-card"
           disabled={!onOpenOutput}
         >
           <OutputArtifactIcon output={output} />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[14px] font-medium text-foreground">
+            <div className="truncate text-[13px] font-medium text-foreground">
               {output.title || "Untitled artifact"}
             </div>
-            <div className="truncate text-[12px] text-muted-foreground">
+            <div className="text-[11px] text-muted-foreground">
               {outputSecondaryLabel(output)}
             </div>
-            {outputChangeLabel(output) ? (
-              <div className="mt-1 text-[11px] uppercase tracking-[0.12em] text-muted-foreground/70">
-                {outputChangeLabel(output)}
-              </div>
-            ) : null}
           </div>
         </button>
       ))}
 
-      {sessionOutputs.length > 0 ? (
+      {sessionOutputs.length > 1 ? (
         <button
           type="button"
           onClick={onOpenAllArtifacts}
-          className="bg-card flex min-w-[240px] max-w-full flex-1 items-center gap-3 rounded-[20px] border border-border/35 px-4 py-3 text-left transition hover:border-border/55 hover:bg-card/80"
+          className="flex max-w-[360px] items-center gap-3 rounded-xl border border-border/50 px-3.5 py-2.5 text-left text-muted-foreground transition-colors hover:bg-accent"
         >
-          <FileText size={16} className="shrink-0 text-muted-foreground" />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-[14px] font-medium text-foreground">
-              View all artifacts in this session
-            </div>
-            <div className="truncate text-[12px] text-muted-foreground">
-              {sessionOutputs.length} artifact
-              {sessionOutputs.length === 1 ? "" : "s"}
-            </div>
-          </div>
+          <FileText size={15} className="shrink-0" />
+          <span className="text-[13px]">
+            View all artifacts ({sessionOutputs.length})
+          </span>
         </button>
+      ) : null}
+    </div>
+  );
+}
+
+function CurrentTodoPanel({
+  todoPlan,
+  expanded,
+  onToggle,
+}: {
+  todoPlan: ChatTodoPlan;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const totalTaskCount = todoTaskCount(todoPlan.phases);
+  const remainingTaskCount = todoRemainingTaskCount(todoPlan.phases);
+  const activeEntry = currentTodoEntry(todoPlan.phases);
+  const latestCompletedEntry = latestCompletedTodoEntry(todoPlan.phases);
+  const currentTaskPosition = currentTodoPosition(todoPlan.phases);
+  const summaryLabel = activeEntry
+    ? activeEntry.task.content
+    : latestCompletedEntry?.task.content ||
+      "All tracked todo items are complete.";
+  const progressLabel =
+    totalTaskCount > 0 ? `${currentTaskPosition}/${totalTaskCount}` : "0/0";
+
+  return (
+    <div className="overflow-hidden rounded-[18px] border border-border/35 bg-muted/50">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-background/30"
+      >
+        <div
+          className={`inline-flex size-5 shrink-0 items-center justify-center rounded-full ${
+            remainingTaskCount > 0
+              ? "text-muted-foreground"
+              : "text-emerald-500"
+          }`}
+        >
+          {remainingTaskCount > 0 ? (
+            <Clock3 size={13} className="shrink-0" />
+          ) : (
+            <Check size={13} className="shrink-0" />
+          )}
+        </div>
+        <div className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
+          {summaryLabel}
+        </div>
+        <div className="shrink-0 text-[11px] font-medium tabular-nums text-muted-foreground">
+          {progressLabel}
+        </div>
+        <ChevronDown
+          size={14}
+          className={`shrink-0 text-muted-foreground transition ${expanded ? "rotate-0" : "-rotate-90"}`}
+        />
+      </button>
+
+      {expanded ? (
+        <div className="border-t border-border/20 px-3 py-3">
+          <div className="space-y-3">
+            {todoPlan.phases.map((phase) => {
+              const phaseCompletedCount = phase.tasks.filter(
+                (task) =>
+                  task.status === "completed" || task.status === "abandoned",
+              ).length;
+              return (
+                <div
+                  key={phase.id}
+                  className="rounded-[16px] border border-border/25 bg-muted/50 px-3 py-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-[12px] font-medium text-foreground">
+                      {phase.name}
+                    </div>
+                    <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                      {phaseCompletedCount}/{phase.tasks.length} complete
+                    </div>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {phase.tasks.map((task) => {
+                      const isActiveTask = activeEntry?.task.id === task.id;
+                      const hasVisibleDetails = isActiveTask && Boolean(task.details);
+                      return (
+                        <div
+                          key={task.id}
+                          className={`flex gap-3 text-[12px] leading-5 ${hasVisibleDetails ? "items-start" : "items-center"}`}
+                        >
+                          <TodoStatusIcon status={task.status} />
+                          <div className="min-w-0 flex-1">
+                            <div className="text-foreground">{task.content}</div>
+                            {hasVisibleDetails ? (
+                              <div className="mt-1 whitespace-pre-wrap text-[11px] text-muted-foreground">
+                                {task.details}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       ) : null}
     </div>
   );
@@ -4043,12 +5057,13 @@ function ArtifactBrowserModal({
     { id: "links", label: "Links" },
     { id: "apps", label: "Apps" },
   ];
-  const filteredOutputs =
+  const filteredOutputs = sortOutputsLatestFirst(
     filter === "all"
       ? outputs
       : outputs.filter(
           (output) => outputBrowserFilterForOutput(output) === filter,
-        );
+        ),
+  );
 
   return (
     <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/45 px-4 py-6 backdrop-blur-[2px]">
@@ -4209,9 +5224,6 @@ function TraceStepGroup({
   const terminalErrorCount = steps.filter(
     (step) => step.kind === "phase" && step.status === "error",
   ).length;
-  const recoveredErrorCount = steps.filter(
-    (step) => step.kind === "tool" && step.status === "error",
-  ).length;
   const groupHasTerminalError = terminalErrorCount > 0;
   const groupIsLive = live && !groupHasTerminalError;
   const stepCount = steps.length;
@@ -4226,9 +5238,7 @@ function TraceStepGroup({
   const summaryStep = activeStep ?? (groupIsLive ? latestStep : null);
   const summarySuffix = groupHasTerminalError
     ? ` (${terminalErrorCount} failed)`
-    : recoveredErrorCount > 0
-      ? ` (${recoveredErrorCount} recovered)`
-      : "";
+    : "";
 
   return (
     <div className="mt-3">
@@ -4619,6 +5629,8 @@ function Composer({
   input,
   attachments,
   isResponding,
+  pausePending,
+  pauseDisabled,
   disabled,
   disabledReason = "",
   selectedModel,
@@ -4639,6 +5651,7 @@ function Composer({
   onCompositionStart,
   onCompositionEnd,
   onAttachmentInputChange,
+  onPause,
   onAddDroppedFiles,
   onAddExplorerAttachments,
   onRemoveAttachment,
@@ -4832,22 +5845,34 @@ function Composer({
           >
             <Paperclip size={15} />
           </Button>
-          <Button
-            size="icon"
-            disabled={
-              (!input.trim() && attachments.length === 0) ||
-              isResponding ||
-              disabled
-            }
-            render={<button type="submit" />}
-            className="rounded-full"
-          >
-            {isResponding ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : (
+          {isResponding ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={pausePending || pauseDisabled}
+              onClick={onPause}
+              className="rounded-full px-3"
+            >
+              {pausePending ? (
+                <Loader2 size={14} className="mr-1.5 animate-spin" />
+              ) : (
+                <Square size={12} className="mr-1.5 fill-current" />
+              )}
+              Pause
+            </Button>
+          ) : (
+            <Button
+              size="icon"
+              disabled={
+                (!input.trim() && attachments.length === 0) || disabled
+              }
+              render={<button type="submit" />}
+              className="rounded-full"
+            >
               <ArrowUp size={16} />
-            )}
-          </Button>
+            </Button>
+          )}
         </div>
       </div>
     </div>

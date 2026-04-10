@@ -7,13 +7,13 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.join(__dirname, "sessionRouting.ts");
 
-test("preferred session routing keeps the main session ahead of transient runtime sessions", async () => {
+test("preferred session routing prefers primary chat sessions ahead of raw runtime fallback", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  const mainSessionIndex = source.indexOf('const mainSessionId = (workspace.main_session_id || "").trim();');
-  const runtimeFallbackIndex = source.indexOf("if (runtimeStates.length > 0) {");
+  const primarySessionIndex = source.indexOf("const preferredPrimary = sessions.find((session) => {");
+  const runtimeFallbackIndex = source.indexOf("const runtimeFallback = runtimeStates.find(");
 
-  assert.notEqual(mainSessionIndex, -1);
+  assert.notEqual(primarySessionIndex, -1);
   assert.notEqual(runtimeFallbackIndex, -1);
-  assert.ok(mainSessionIndex < runtimeFallbackIndex);
+  assert.ok(primarySessionIndex < runtimeFallbackIndex);
 });

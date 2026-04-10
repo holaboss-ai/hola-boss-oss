@@ -6,12 +6,12 @@ import {
   Inbox as InboxIcon,
   Loader2,
   LogIn,
+  Pause,
   X,
   Clock3,
 } from "lucide-react";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { ProactiveLifecyclePanel } from "@/components/layout/ProactiveStatusCard";
 import {
@@ -26,6 +26,7 @@ interface OperationsDrawerProps {
   activeTab: OperationsDrawerTab;
   onTabChange: (tab: OperationsDrawerTab) => void;
   proposals: TaskProposalRecordPayload[];
+  unreadProposalCount: number;
   proactiveStatus: ProactiveAgentStatusPayload | null;
   isLoadingProactiveStatus: boolean;
   proactiveWorkspaceEnabled: boolean;
@@ -49,26 +50,32 @@ interface OperationsDrawerProps {
   onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
   onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
   onOpenRunningSession: (sessionId: string) => void;
+  onCreateSession: () => void;
   activeRunningSessionId: string | null;
   hasWorkspace: boolean;
   selectedWorkspaceId: string | null;
   selectedWorkspaceName: string | null;
-  mainSessionId: string | null;
 }
 
 interface RunningSessionEntry {
   sessionId: string;
   status: string;
+  stateLabel: string;
+  stateTimestamp: string;
+  stateDetail: string;
   title: string;
   kind: string;
   updatedAt: string;
   lastError: string | null;
 }
 
+const RUNNING_SESSIONS_POLL_INTERVAL_MS = 1000;
+
 export function OperationsDrawer({
   activeTab,
   onTabChange,
   proposals,
+  unreadProposalCount,
   proactiveStatus,
   isLoadingProactiveStatus,
   proactiveWorkspaceEnabled,
@@ -89,11 +96,11 @@ export function OperationsDrawer({
   onAcceptProposal,
   onDismissProposal,
   onOpenRunningSession,
+  onCreateSession,
   activeRunningSessionId,
   hasWorkspace,
   selectedWorkspaceId,
   selectedWorkspaceName,
-  mainSessionId,
 }: OperationsDrawerProps) {
   const {
     data: authSession,
@@ -123,9 +130,16 @@ export function OperationsDrawer({
     }
 
     let cancelled = false;
+    let requestInFlight = false;
 
-    const loadRunningSessions = async () => {
-      setIsLoadingRunningSessions(true);
+    const loadRunningSessions = async (options?: { showLoading?: boolean }) => {
+      if (requestInFlight) {
+        return;
+      }
+      requestInFlight = true;
+      if (options?.showLoading) {
+        setIsLoadingRunningSessions(true);
+      }
       try {
         const [runtimeStatesResponse, sessionsResponse] = await Promise.all([
           window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId),
@@ -141,25 +155,17 @@ export function OperationsDrawer({
             session,
           ]),
         );
-        const normalizedMainSessionId = (mainSessionId || "").trim();
         const nextEntries = runtimeStatesResponse.items
-          .filter((state) => {
-            if (
-              normalizedMainSessionId &&
-              state.session_id === normalizedMainSessionId
-            ) {
-              return false;
-            }
-            const sessionKind = (sessionById.get(state.session_id)?.kind || "")
-              .trim()
-              .toLowerCase();
-            return sessionKind !== "main";
-          })
+          .filter((state) => Boolean(state.session_id.trim()))
           .map((state) => {
             const session = sessionById.get(state.session_id);
+            const stateLabel = runningSessionState(state);
             return {
               sessionId: state.session_id,
-              status: state.status,
+              status: stateLabel,
+              stateLabel,
+              stateTimestamp: runningSessionStateTimestamp(state),
+              stateDetail: runningSessionStateDetail(stateLabel),
               title:
                 session?.title?.trim() ||
                 defaultSessionTitle(session?.kind, state.session_id),
@@ -177,22 +183,43 @@ export function OperationsDrawer({
           setRunningSessionsError(normalizeOperationError(error));
         }
       } finally {
-        if (!cancelled) {
+        requestInFlight = false;
+        if (!cancelled && options?.showLoading) {
           setIsLoadingRunningSessions(false);
         }
       }
     };
 
-    void loadRunningSessions();
-    const intervalId = window.setInterval(() => {
+    const refreshRunningSessions = () => {
       void loadRunningSessions();
-    }, 3000);
+    };
+    const refreshVisibleRunningSessions = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      refreshRunningSessions();
+    };
+
+    void loadRunningSessions({ showLoading: true });
+    const intervalId = window.setInterval(() => {
+      refreshVisibleRunningSessions();
+    }, RUNNING_SESSIONS_POLL_INTERVAL_MS);
+    window.addEventListener("focus", refreshRunningSessions);
+    document.addEventListener(
+      "visibilitychange",
+      refreshVisibleRunningSessions,
+    );
 
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshRunningSessions);
+      document.removeEventListener(
+        "visibilitychange",
+        refreshVisibleRunningSessions,
+      );
     };
-  }, [activeTab, mainSessionId, selectedWorkspaceId]);
+  }, [activeTab, selectedWorkspaceId]);
 
   return (
     <aside className="theme-shell neon-border relative flex h-full min-h-0 min-w-[296px] max-w-[336px] flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
@@ -202,12 +229,13 @@ export function OperationsDrawer({
             active={activeTab === "inbox"}
             icon={<InboxIcon size={14} />}
             label="Inbox"
+            showIndicator={unreadProposalCount > 0}
             onClick={() => onTabChange("inbox")}
           />
           <DrawerTabButton
             active={activeTab === "running"}
             icon={<Clock3 size={14} />}
-            label="Sub-Sessions"
+            label="Sessions"
             onClick={() => onTabChange("running")}
           />
         </div>
@@ -264,6 +292,7 @@ export function OperationsDrawer({
             sessions={runningSessions}
             errorMessage={runningSessionsError}
             onOpenSession={onOpenRunningSession}
+            onCreateSession={onCreateSession}
             activeSessionId={activeRunningSessionId}
           />
         ) : null}
@@ -306,26 +335,105 @@ function defaultSessionTitle(
   if (kind === "task_proposal") {
     return "Task proposal run";
   }
-  if (kind === "main") {
-    return "Main session";
-  }
   return `Session ${sessionId.slice(0, 8)}`;
+}
+
+function normalizeTurnResultStatus(status: string | null | undefined): string {
+  return typeof status === "string" ? status.trim().toLowerCase() : "";
+}
+
+function runningSessionState(entry: {
+  status: string;
+  last_turn_status: string | null;
+}): string {
+  if (entry.status === "BUSY") {
+    return "RUNNING";
+  }
+  if (entry.status === "QUEUED") {
+    return "QUEUED";
+  }
+  if (entry.status === "WAITING_USER") {
+    return "WAITING";
+  }
+  if (entry.status === "PAUSED") {
+    return "PAUSED";
+  }
+  if (entry.status === "ERROR") {
+    return "ERROR";
+  }
+
+  const lastTurnStatus = normalizeTurnResultStatus(entry.last_turn_status);
+  if (lastTurnStatus === "completed") {
+    return "COMPLETED";
+  }
+  if (lastTurnStatus === "waiting_user") {
+    return "WAITING";
+  }
+  if (lastTurnStatus === "paused") {
+    return "PAUSED";
+  }
+  if (lastTurnStatus === "failed" || lastTurnStatus === "error") {
+    return "ERROR";
+  }
+  return "IDLE";
+}
+
+function runningSessionStateTimestamp(
+  entry: {
+    status: string;
+    updated_at: string;
+    last_turn_completed_at: string | null;
+  },
+): string {
+  if (
+    entry.status === "BUSY" ||
+    entry.status === "QUEUED" ||
+    entry.status === "WAITING_USER" ||
+    entry.status === "PAUSED" ||
+    entry.status === "ERROR"
+  ) {
+    return entry.updated_at;
+  }
+  return entry.last_turn_completed_at?.trim() || entry.updated_at;
+}
+
+function runningSessionStateDetail(stateLabel: string): string {
+  switch (stateLabel) {
+    case "RUNNING":
+      return "Active";
+    case "QUEUED":
+      return "Queued";
+    case "WAITING":
+      return "Waiting for input";
+    case "PAUSED":
+      return "Paused";
+    case "ERROR":
+      return "Failed";
+    case "COMPLETED":
+      return "Completed";
+    default:
+      return "Idle";
+  }
 }
 
 function runningSessionStatusRank(status: string): number {
   switch (status) {
-    case "BUSY":
+    case "RUNNING":
       return 0;
     case "QUEUED":
       return 1;
-    case "WAITING_USER":
+    case "WAITING":
       return 2;
-    case "ERROR":
+    case "PAUSED":
       return 3;
-    case "IDLE":
+    case "ERROR":
       return 4;
-    default:
+    case "COMPLETED":
       return 5;
+    case "IDLE":
+      return 6;
+    default:
+      return 7;
   }
 }
 
@@ -342,19 +450,52 @@ function compareRunningSessionEntries(
   return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
 }
 
-function runningStatusBadgeVariant(
+function runningSessionStatusIndicator(
   status: string,
-): "default" | "secondary" | "destructive" | "outline" {
+): { className: string; icon: ReactNode; label: string } {
   switch (status) {
-    case "BUSY":
+    case "RUNNING":
+      return {
+        className: "text-primary",
+        icon: <Loader2 size={14} className="animate-spin" />,
+        label: "Running",
+      };
     case "QUEUED":
-      return "default";
-    case "WAITING_USER":
-      return "secondary";
+      return {
+        className: "text-sky-600",
+        icon: <Clock3 size={14} />,
+        label: "Queued",
+      };
+    case "WAITING":
+      return {
+        className: "text-amber-600",
+        icon: <Clock size={14} />,
+        label: "Waiting for input",
+      };
+    case "PAUSED":
+      return {
+        className: "text-orange-600",
+        icon: <Pause size={14} />,
+        label: "Paused",
+      };
     case "ERROR":
-      return "destructive";
+      return {
+        className: "text-destructive",
+        icon: <X size={14} />,
+        label: "Failed",
+      };
+    case "COMPLETED":
+      return {
+        className: "text-emerald-600",
+        icon: <Check size={14} />,
+        label: "Completed",
+      };
     default:
-      return "outline";
+      return {
+        className: "text-muted-foreground",
+        icon: <Clock3 size={14} />,
+        label: "Idle",
+      };
   }
 }
 
@@ -362,11 +503,13 @@ function DrawerTabButton({
   active,
   icon,
   label,
+  showIndicator = false,
   onClick,
 }: {
   active: boolean;
   icon: ReactNode;
   label: string;
+  showIndicator?: boolean;
   onClick: () => void;
 }) {
   return (
@@ -381,7 +524,12 @@ function DrawerTabButton({
           : "bg-muted/55 text-muted-foreground hover:bg-accent hover:text-foreground"
       }`}
     >
-      {icon}
+      <span className="relative">
+        {icon}
+        {showIndicator ? (
+          <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full border-2 border-card bg-destructive" />
+        ) : null}
+      </span>
       <span>{label}</span>
     </Button>
   );
@@ -644,6 +792,7 @@ function RunningPanel({
   sessions,
   errorMessage,
   onOpenSession,
+  onCreateSession,
   activeSessionId,
 }: {
   hasWorkspace: boolean;
@@ -651,15 +800,31 @@ function RunningPanel({
   sessions: RunningSessionEntry[];
   errorMessage: string;
   onOpenSession: (sessionId: string) => void;
+  onCreateSession: () => void;
   activeSessionId: string | null;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/40 px-4 py-3">
+        <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+          Sessions
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={onCreateSession}
+          disabled={!hasWorkspace}
+          className="rounded-full border border-border/55 px-3 text-xs"
+        >
+          <span>New Session</span>
+        </Button>
+      </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {!hasWorkspace ? (
           <EmptyNotice
             icon={<FolderOpen size={24} strokeWidth={1.5} />}
-            message="Choose a workspace to inspect sub-sessions."
+            message="Choose a workspace to inspect sessions."
           />
         ) : errorMessage ? (
           <EmptyNotice
@@ -673,48 +838,57 @@ function RunningPanel({
             icon={
               <Loader2 size={24} strokeWidth={1.5} className="animate-spin" />
             }
-            message="Loading sub-sessions..."
+            message="Loading sessions..."
           />
         ) : sessions.length === 0 ? (
           <EmptyNotice
             icon={<Clock size={24} strokeWidth={1.5} />}
-            message="No sub-sessions."
+            message="No sessions yet."
           />
         ) : (
           <div className="divide-y divide-border/30">
-            {sessions.map((session) => (
-              <button
-                key={session.sessionId}
-                type="button"
-                onClick={() => onOpenSession(session.sessionId)}
-                aria-label={`Open session ${session.title}`}
-                className={`w-full cursor-pointer px-3 py-3 text-left transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/50 ${
-                  activeSessionId === session.sessionId
-                    ? "border-l-2 border-l-primary bg-muted/30"
-                    : ""
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                    {session.title}
+            {sessions.map((session) => {
+              const statusIndicator = runningSessionStatusIndicator(
+                session.status,
+              );
+              return (
+                <button
+                  key={session.sessionId}
+                  type="button"
+                  onClick={() => onOpenSession(session.sessionId)}
+                  aria-label={`Open session ${session.title}`}
+                  className={`w-full cursor-pointer px-3 py-3 text-left transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/50 ${
+                    activeSessionId === session.sessionId
+                      ? "border-l-2 border-l-primary bg-muted/30"
+                      : ""
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium text-foreground">
+                        {session.title}
+                      </div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {session.stateDetail} {relativeTime(session.stateTimestamp)}
+                      </div>
+                      {session.lastError ? (
+                        <div className="mt-1.5 truncate text-xs text-destructive">
+                          {session.lastError}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div
+                      role="img"
+                      aria-label={`${statusIndicator.label} status`}
+                      title={statusIndicator.label}
+                      className={`shrink-0 self-center ${statusIndicator.className}`}
+                    >
+                      {statusIndicator.icon}
+                    </div>
                   </div>
-                  <Badge
-                    variant={runningStatusBadgeVariant(session.status)}
-                    className="shrink-0 text-[10px] uppercase"
-                  >
-                    {session.status}
-                  </Badge>
-                </div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {relativeTime(session.updatedAt)}
-                </div>
-                {session.lastError ? (
-                  <div className="mt-1.5 truncate text-xs text-destructive">
-                    {session.lastError}
-                  </div>
-                ) : null}
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
         )}
       </div>

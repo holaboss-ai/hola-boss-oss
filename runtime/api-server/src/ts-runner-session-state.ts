@@ -5,7 +5,8 @@ const WORKSPACE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SESSION_STATE_DIR_NAME = ".holaboss";
 const SESSION_STATE_FILE_NAME = "harness-session-state.json";
 const SESSION_STATE_VERSION = 2;
-const SESSION_STATE_MAIN_SESSION_KEY = "main_session_id";
+const SESSION_STATE_SESSION_KEY = "session_id";
+const LEGACY_SESSION_STATE_MAIN_SESSION_KEY = "main_session_id";
 const SESSION_STATE_HARNESS_SESSIONS_KEY = "harness_sessions";
 
 type LoggerLike = Pick<typeof console, "warn">;
@@ -67,7 +68,7 @@ function readHarnessSessionStateMap(
       if (!normalizedHarness || !entry || typeof entry !== "object" || Array.isArray(entry)) {
         continue;
       }
-      const sessionId = entry[SESSION_STATE_MAIN_SESSION_KEY];
+      const sessionId = entry[SESSION_STATE_SESSION_KEY] ?? entry[LEGACY_SESSION_STATE_MAIN_SESSION_KEY];
       if (typeof sessionId === "string" && sessionId.trim()) {
         sessions.set(normalizedHarness, sessionId.trim());
       }
@@ -76,13 +77,17 @@ function readHarnessSessionStateMap(
   }
 
   const legacyHarness = normalizeHarness(state.harness);
-  const legacySessionId = state[SESSION_STATE_MAIN_SESSION_KEY];
+  const legacySessionId = state[SESSION_STATE_SESSION_KEY] ?? state[LEGACY_SESSION_STATE_MAIN_SESSION_KEY];
   if (legacyHarness && typeof legacySessionId === "string" && legacySessionId.trim()) {
     sessions.set(legacyHarness, legacySessionId.trim());
     return sessions;
   }
 
-  if (state.harness !== undefined || state[SESSION_STATE_MAIN_SESSION_KEY] !== undefined) {
+  if (
+    state.harness !== undefined ||
+    state[SESSION_STATE_SESSION_KEY] !== undefined ||
+    state[LEGACY_SESSION_STATE_MAIN_SESSION_KEY] !== undefined
+  ) {
     logger.warn("Ignoring incomplete legacy workspace session state payload");
   }
   return sessions;
@@ -115,7 +120,7 @@ export function readWorkspaceSessionState(
   return parsed as Record<string, unknown>;
 }
 
-export function readWorkspaceMainSessionId(params: {
+export function readWorkspaceHarnessSessionId(params: {
   workspaceDir: string;
   harness: string;
   logger?: LoggerLike;
@@ -129,7 +134,7 @@ export function readWorkspaceMainSessionId(params: {
   return readHarnessSessionStateMap(state, { logger }).get(requestedHarness) ?? null;
 }
 
-export function persistWorkspaceMainSessionId(params: {
+export function persistWorkspaceHarnessSessionId(params: {
   workspaceDir: string;
   harness: string;
   sessionId: string;
@@ -152,7 +157,7 @@ export function persistWorkspaceMainSessionId(params: {
     [SESSION_STATE_HARNESS_SESSIONS_KEY]: Object.fromEntries(
       [...sessions.entries()]
         .sort(([left], [right]) => left.localeCompare(right))
-        .map(([harness, sessionId]) => [harness, { [SESSION_STATE_MAIN_SESSION_KEY]: sessionId }])
+        .map(([harness, sessionId]) => [harness, { [SESSION_STATE_SESSION_KEY]: sessionId }])
     )
   };
   try {
@@ -167,7 +172,7 @@ export function persistWorkspaceMainSessionId(params: {
   }
 }
 
-export function clearWorkspaceMainSessionId(params: {
+export function clearWorkspaceHarnessSessionId(params: {
   workspaceDir: string;
   harness: string;
   logger?: LoggerLike;
@@ -203,7 +208,7 @@ export function clearWorkspaceMainSessionId(params: {
     [SESSION_STATE_HARNESS_SESSIONS_KEY]: Object.fromEntries(
       [...sessions.entries()]
         .sort(([left], [right]) => left.localeCompare(right))
-        .map(([harness, sessionId]) => [harness, { [SESSION_STATE_MAIN_SESSION_KEY]: sessionId }])
+        .map(([harness, sessionId]) => [harness, { [SESSION_STATE_SESSION_KEY]: sessionId }])
     )
   };
 

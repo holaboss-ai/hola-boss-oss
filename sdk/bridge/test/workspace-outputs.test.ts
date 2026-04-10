@@ -1,5 +1,9 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test"
-import { createAppOutput, updateAppOutput } from "../src/workspace-outputs"
+import {
+  createAppOutput,
+  publishSessionArtifact,
+  updateAppOutput,
+} from "../src/workspace-outputs"
 
 const originalEnv = { ...process.env }
 
@@ -183,5 +187,84 @@ describe("updateAppOutput", () => {
     expect(body.status).toBe("published")
     expect(body.metadata).toEqual({ key: "val" })
     expect(body.title).toBeUndefined()
+  })
+})
+
+describe("publishSessionArtifact", () => {
+  beforeEach(() => {
+    clearEnv()
+  })
+
+  afterEach(() => {
+    process.env = { ...originalEnv }
+    mock.restore()
+  })
+
+  test("publishes a session-bound app artifact with routing metadata", async () => {
+    setupPublishingEnv()
+
+    const fetchMock = mock(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            artifact: {
+              id: "artifact-1",
+              output_id: "out-1",
+              session_id: "session-1",
+              workspace_id: "ws-1",
+              input_id: "input-1",
+              artifact_type: "draft",
+              external_id: "post-123",
+              platform: "twitter",
+              title: "Test Post",
+              metadata: {
+                presentation: {
+                  kind: "app_resource",
+                  view: "posts",
+                  path: "/posts/post-123",
+                },
+              },
+              created_at: "2026-01-01T00:00:00Z",
+            },
+          }),
+          { status: 200 },
+        ),
+      ),
+    )
+    globalThis.fetch = fetchMock as typeof fetch
+
+    const result = await publishSessionArtifact(
+      {
+        workspaceId: "ws-1",
+        sessionId: "session-1",
+        inputId: "input-1",
+      },
+      {
+        artifactType: "draft",
+        externalId: "post-123",
+        title: "Test Post",
+        moduleId: "twitter",
+        moduleResourceId: "post-123",
+        platform: "twitter",
+        metadata: {
+          presentation: {
+            kind: "app_resource",
+            view: "posts",
+            path: "/posts/post-123",
+          },
+        },
+      },
+    )
+
+    expect(result?.output_id).toBe("out-1")
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe("http://127.0.0.1:8080/api/v1/agent-sessions/session-1/artifacts")
+    expect(init.method).toBe("POST")
+
+    const body = JSON.parse(init.body as string)
+    expect(body.workspace_id).toBe("ws-1")
+    expect(body.input_id).toBe("input-1")
+    expect(body.module_id).toBe("twitter")
+    expect(body.module_resource_id).toBe("post-123")
   })
 })

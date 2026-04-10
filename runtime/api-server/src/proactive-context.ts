@@ -136,7 +136,6 @@ function workspacePayload(workspace: WorkspaceRecord, holabossUserId: string | n
     name: workspace.name,
     status: workspace.status,
     harness: workspace.harness,
-    main_session_id: workspace.mainSessionId,
     error_message: workspace.errorMessage,
     onboarding_status: workspace.onboardingStatus,
     onboarding_session_id: workspace.onboardingSessionId,

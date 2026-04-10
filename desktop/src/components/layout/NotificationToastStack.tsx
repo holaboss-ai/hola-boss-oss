@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   ArrowUpRight,
   Bell,
@@ -18,6 +19,11 @@ interface NotificationToastStackProps {
   style?: React.CSSProperties;
 }
 
+const COLLAPSED_TOAST_OFFSET_PX = 4;
+const COLLAPSED_TOAST_MAX_HEIGHT_PX = 76;
+const COLLAPSED_TOAST_PEEK_PX = 10;
+const EXPANDED_TOAST_GAP_PX = 12;
+
 function toastAccentClassName(level: RuntimeNotificationLevel): string {
   if (level === "success") {
     return "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30";
@@ -33,52 +39,15 @@ function toastAccentClassName(level: RuntimeNotificationLevel): string {
 
 function toastIcon(level: RuntimeNotificationLevel): React.ReactNode {
   if (level === "success") {
-    return <CircleCheck size={18} />;
+    return <CircleCheck size={16} />;
   }
   if (level === "warning") {
-    return <TriangleAlert size={18} />;
+    return <TriangleAlert size={16} />;
   }
   if (level === "error") {
-    return <XCircle size={18} />;
+    return <XCircle size={16} />;
   }
-  return <Bell size={18} />;
-}
-
-function toastTimeLabel(value: string): string {
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
-    return "Now";
-  }
-  return new Date(timestamp).toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function priorityBadgeClassName(priority: RuntimeNotificationPriority): string {
-  if (priority === "critical") {
-    return "border-rose-500/55 bg-rose-500/16 text-rose-700 dark:text-rose-100";
-  }
-  if (priority === "high") {
-    return "border-amber-400/35 bg-amber-400/12 text-amber-100";
-  }
-  if (priority === "low") {
-    return "border-border/60 bg-muted/60 text-muted-foreground";
-  }
-  return "border-sky-400/30 bg-sky-500/10 text-sky-200";
-}
-
-function priorityLabel(priority: RuntimeNotificationPriority): string {
-  if (priority === "critical") {
-    return "Critical";
-  }
-  if (priority === "high") {
-    return "High";
-  }
-  if (priority === "low") {
-    return "Low";
-  }
-  return "Normal";
+  return <Bell size={16} />;
 }
 
 function notificationTargetSessionId(
@@ -86,6 +55,30 @@ function notificationTargetSessionId(
 ): string | null {
   const raw = notification.metadata.session_id;
   return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+
+function toastCardStyle(
+  index: number,
+  total: number,
+  isExpanded: boolean,
+): React.CSSProperties {
+  const collapsedScale = Math.max(0.97, 1 - index * 0.01);
+  const collapsedOpacity = Math.max(0.78, 1 - index * 0.08);
+  return {
+    marginTop:
+      index === 0
+        ? 0
+        : isExpanded
+          ? EXPANDED_TOAST_GAP_PX
+          : -(COLLAPSED_TOAST_MAX_HEIGHT_PX - COLLAPSED_TOAST_PEEK_PX),
+    transform: isExpanded
+      ? "translateY(0px) scale(1)"
+      : `translateY(${index * COLLAPSED_TOAST_OFFSET_PX}px) scale(${collapsedScale})`,
+    opacity: isExpanded ? 1 : collapsedOpacity,
+    maxHeight:
+      isExpanded || index === 0 ? "320px" : `${COLLAPSED_TOAST_MAX_HEIGHT_PX}px`,
+    zIndex: total - index,
+  };
 }
 
 export function NotificationToastStack({
@@ -96,6 +89,8 @@ export function NotificationToastStack({
   className,
   style,
 }: NotificationToastStackProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
   if (!leadingToast && notifications.length === 0) {
     return null;
   }
@@ -103,98 +98,110 @@ export function NotificationToastStack({
   return (
     <div
       className={cn(
-        "pointer-events-none fixed bottom-4 left-4 z-[90] flex w-[min(340px,calc(100vw-2rem))] flex-col gap-3 sm:bottom-6 sm:left-6",
+        "pointer-events-none fixed right-4 top-4 z-[90] flex w-[min(320px,calc(100vw-2rem))] flex-col gap-3 sm:right-6 sm:top-6",
         className,
       )}
       style={style}
     >
       {leadingToast}
-      {notifications.map((notification) => (
-        (() => {
-          const targetSessionId = notificationTargetSessionId(notification);
-          const isSessionTarget = Boolean(targetSessionId);
-          const content = (
-            <>
-              <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                <span className="truncate">
-                  {notification.source_label || "Notification"}
-                </span>
-                <span
-                  className={cn(
-                    "rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-[0.14em]",
-                    priorityBadgeClassName(notification.priority),
-                  )}
-                >
-                  {priorityLabel(notification.priority)}
-                </span>
-                <span className="normal-case tracking-normal">
-                  {toastTimeLabel(notification.created_at)}
-                </span>
-              </div>
-              <div className="mt-1 text-base font-semibold leading-tight text-foreground">
-                {notification.title}
-              </div>
-              <p className="mt-1 text-sm leading-5 text-foreground/85">
-                {notification.message}
-              </p>
-            </>
-          );
+      {notifications.length > 0 ? (
+        <div
+          aria-expanded={isExpanded}
+          className="pointer-events-auto flex flex-col"
+          onMouseEnter={() => setIsExpanded(true)}
+          onMouseLeave={() => setIsExpanded(false)}
+          onFocusCapture={() => setIsExpanded(true)}
+          onBlurCapture={(event) => {
+            if (
+              event.relatedTarget instanceof Node &&
+              event.currentTarget.contains(event.relatedTarget)
+            ) {
+              return;
+            }
+            setIsExpanded(false);
+          }}
+        >
+          {notifications.map((notification, index) => {
+            const targetSessionId = notificationTargetSessionId(notification);
+            const isSessionTarget = Boolean(targetSessionId);
+            const isCollapsedBackgroundToast = !isExpanded && index > 0;
+            const content = (
+              <>
+                <div className="text-[15px] font-semibold leading-tight text-foreground">
+                  {notification.title}
+                </div>
+                <p className="mt-1 text-[13px] leading-[1.2rem] text-foreground/85">
+                  {notification.message}
+                </p>
+              </>
+            );
 
-          return (
-            <div
-              key={notification.id}
-              className="pointer-events-auto overflow-hidden rounded-[24px] border border-border/60 bg-popover/95 shadow-2xl ring-1 ring-foreground/5 backdrop-blur-xl animate-in fade-in-0 slide-in-from-top-2"
-            >
-              <div className="flex items-start gap-3 p-4">
-                <div
-                  className={cn(
-                    "mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-2xl ring-1",
-                    toastAccentClassName(notification.level),
-                  )}
-                >
-                  {toastIcon(notification.level)}
-                </div>
-                <div className="min-w-0 flex-1">
-                  {isSessionTarget ? (
-                    <div className="min-w-0 text-left">{content}</div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => onActivateNotification(notification.id)}
-                      className="min-w-0 text-left"
+            return (
+              <div
+                key={notification.id}
+                className={cn(
+                  "overflow-hidden rounded-[24px] border border-border/60 bg-popover/95 ring-1 ring-foreground/5 backdrop-blur-xl animate-in fade-in-0 slide-in-from-top-2 transition-[margin,transform,opacity,max-height] duration-200 ease-out",
+                  isCollapsedBackgroundToast
+                    ? "pointer-events-none shadow-lg"
+                    : "shadow-2xl",
+                )}
+                style={toastCardStyle(index, notifications.length, isExpanded)}
+              >
+                {isCollapsedBackgroundToast ? (
+                  <div aria-hidden="true" className="h-[76px]" />
+                ) : (
+                  <div className="flex items-start gap-2.5 p-3.5">
+                    <div
+                      className={cn(
+                        "mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-xl ring-1",
+                        toastAccentClassName(notification.level),
+                      )}
                     >
-                      {content}
-                    </button>
-                  )}
-                  {isSessionTarget ? (
-                    <div className="mt-2.5">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onActivateNotification(notification.id)}
-                      >
-                        <ArrowUpRight size={14} />
-                        View session
-                      </Button>
+                      {toastIcon(notification.level)}
                     </div>
-                  ) : null}
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={`Dismiss notification ${notification.title}`}
-                  onClick={() => onCloseToast(notification.id)}
-                  className="mt-0.5 text-muted-foreground hover:text-foreground"
-                >
-                  <X size={14} />
-                </Button>
+                    <div className="min-w-0 flex-1">
+                      {isSessionTarget ? (
+                        <div className="min-w-0 text-left">{content}</div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => onActivateNotification(notification.id)}
+                          className="min-w-0 text-left"
+                        >
+                          {content}
+                        </button>
+                      )}
+                      {isSessionTarget ? (
+                        <div className="mt-2.5">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => onActivateNotification(notification.id)}
+                          >
+                            <ArrowUpRight size={14} />
+                            View session
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={`Dismiss notification ${notification.title}`}
+                      onClick={() => onCloseToast(notification.id)}
+                      className="mt-0.5 text-muted-foreground hover:text-foreground"
+                    >
+                      <X size={14} />
+                    </Button>
+                  </div>
+                )}
               </div>
-            </div>
-          );
-        })()
-      ))}
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }

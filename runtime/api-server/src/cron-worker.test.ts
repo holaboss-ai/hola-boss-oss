@@ -71,7 +71,6 @@ test("runtime cron worker queues due session_run cronjobs and updates bookkeepin
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const job = store.createCronjob({
     workspaceId: workspace.id,
@@ -126,14 +125,7 @@ test("runtime cron worker queues due session_run cronjobs and updates bookkeepin
   assert.match(String(queued[0].payload.text), /^Say hello/);
   assert.match(String(queued[0].payload.text), /\[Cronjob Metadata\]/);
   assert.match(String(history[0].text), /^Say hello/);
-  assert.equal(notifications.length, 1);
-  assert.equal(notifications[0]?.title, "Daily");
-  assert.equal(notifications[0]?.message, "Daily check");
-  assert.equal(notifications[0]?.state, "unread");
-  assert.equal(notifications[0]?.cronjobId, job.id);
-  assert.equal(notifications[0]?.sourceType, "cronjob");
-  assert.equal(notifications[0]?.metadata.session_id, "session-cron");
-  assert.equal(notifications[0]?.metadata.cronjob_instruction, "Say hello");
+  assert.equal(notifications.length, 0);
 
   store.close();
 });
@@ -149,7 +141,6 @@ test("runtime cron worker inherits the main-session model when cronjob metadata 
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   store.upsertTurnRequestSnapshot({
     workspaceId: workspace.id,
@@ -205,7 +196,6 @@ test("runtime cron worker persists system_notification cronjobs as unread notifi
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const job = store.createCronjob({
     workspaceId: workspace.id,
@@ -252,7 +242,6 @@ test("runtime cron worker records failures for unsupported delivery channels", a
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const job = store.createCronjob({
     workspaceId: "workspace-1",
@@ -287,7 +276,6 @@ test("cronjob routes compute next_run_at and cron worker lifecycle hooks run", a
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
 
   let startCalls = 0;

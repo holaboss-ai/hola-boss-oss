@@ -11,14 +11,15 @@ import { decodeTsRunnerRequest, validateTsRunnerRequest } from "./ts-runner-cont
 import type { TsRunnerEvent, TsRunnerRequest } from "./ts-runner-contracts.js";
 import {
   relayTsRunnerEvent,
+  resolvedApplicationMcpHeaders,
   resolveTsRunnerBootstrapState,
   runTsRunnerCli,
   type TsRunnerExecutionDeps
 } from "./ts-runner.js";
 import { requireRuntimeHarnessAdapter, type RuntimeHarnessPlugin } from "./harness-registry.js";
 import {
-  persistWorkspaceMainSessionId,
-  readWorkspaceMainSessionId
+  persistWorkspaceHarnessSessionId,
+  readWorkspaceHarnessSessionId
 } from "./ts-runner-session-state.js";
 
 const ORIGINAL_SANDBOX_ROOT = process.env.HB_SANDBOX_ROOT;
@@ -134,7 +135,7 @@ function baseRequest(): TsRunnerRequest {
   return {
     workspace_id: "workspace-1",
     session_id: "session-1",
-    session_kind: "main",
+    session_kind: "workspace_session",
     input_id: "input-1",
     instruction: "hello world",
     context: {},
@@ -340,7 +341,7 @@ test("relayTsRunnerEvent persists harness_session_id from terminal events", asyn
       version: 2,
       harness_sessions: {
         pi: {
-          main_session_id: "persisted-session-2"
+          session_id: "persisted-session-2"
         }
       }
     }
@@ -349,7 +350,7 @@ test("relayTsRunnerEvent persists harness_session_id from terminal events", asyn
 
 test("relayTsRunnerEvent clears persisted harness session ids after run_failed", async () => {
   const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), "hb-ts-runner-relay-clear-"));
-  persistWorkspaceMainSessionId({
+  persistWorkspaceHarnessSessionId({
     workspaceDir,
     harness: "pi",
     sessionId: "persisted-session-2"
@@ -373,7 +374,7 @@ test("relayTsRunnerEvent clears persisted harness session ids after run_failed",
     emitEvent: async () => {}
   });
 
-  assert.equal(readWorkspaceMainSessionId({ workspaceDir, harness: "pi" }), null);
+  assert.equal(readWorkspaceHarnessSessionId({ workspaceDir, harness: "pi" }), null);
 });
 
 test("runTsRunnerCli relays harness-host events after run_claimed", async () => {
@@ -443,7 +444,7 @@ test("runTsRunnerCli relays harness-host events after run_claimed", async () => 
       version: 2,
       harness_sessions: {
         pi: {
-          main_session_id: "persisted-session-3"
+          session_id: "persisted-session-3"
         }
       }
     }
@@ -541,7 +542,7 @@ test("runTsRunnerCli persists pi harness session ids when runtime context select
       version: 2,
       harness_sessions: {
         pi: {
-          main_session_id: "/tmp/pi-session.jsonl"
+          session_id: "/tmp/pi-session.jsonl"
         }
       }
     }
@@ -640,7 +641,7 @@ test("runTsRunnerCli only advertises structured output when the selected harness
   let capturedRequestPayload: Record<string, unknown> | null = null;
   const capabilityManifest = buildAgentCapabilityManifest({
     harnessId: "pi",
-    sessionKind: "main",
+    sessionKind: "workspace_session",
     defaultTools: ["read"],
     extraTools: [],
     workspaceSkillIds: [],
@@ -818,7 +819,6 @@ test("runTsRunnerCli loads current user context from the runtime profile", async
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-1",
   });
   store.upsertRuntimeUserProfile({
     name: "Jeffrey",
@@ -946,7 +946,6 @@ test("runTsRunnerCli derives recent runtime context from the latest prior turn r
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-1",
   });
   store.upsertTurnResult({
     workspaceId: "workspace-1",
@@ -1063,7 +1062,6 @@ test("runTsRunnerCli restores resume context from the latest prior compaction bo
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-1",
   });
   store.upsertCompactionBoundary({
     boundaryId: "compaction:input-0",
@@ -1200,7 +1198,6 @@ test("runTsRunnerCli emits compaction_restored before harness run events when re
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-1",
   });
   store.upsertCompactionBoundary({
     boundaryId: "compaction:input-0",
@@ -1315,7 +1312,6 @@ test("runTsRunnerCli derives recalled durable memory from indexed memory entries
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-1",
   });
   store.upsertMemoryEntry({
     memoryId: "user-preference:response-style",
@@ -1553,7 +1549,6 @@ test("runTsRunnerCli uses the provider background tasks model for recall selecti
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-1",
   });
   store.upsertMemoryEntry({
     memoryId: "workspace-procedure:workspace-1:deploy",
@@ -1634,7 +1629,6 @@ test("runTsRunnerCli loads pending user memory proposals into prompt context for
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-1",
   });
   store.ensureSession({
     workspaceId: "workspace-1",
@@ -1743,14 +1737,12 @@ test("runTsRunnerCli recalls workspace memory from scoped entries even with many
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-1",
   });
   store.createWorkspace({
     workspaceId: "workspace-2",
     name: "Workspace 2",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-2",
   });
   store.upsertMemoryEntry({
     memoryId: "workspace-blocker:workspace-1:deploy",
@@ -1970,7 +1962,7 @@ test(
   }
 );
 
-test("runTsRunnerCli only stages browser tools for the main session", async () => {
+test("runTsRunnerCli only stages browser tools for workspace sessions", async () => {
   setTempSandboxRoot("hb-ts-runner-browser-scope-");
   const seenSessionKinds: Array<string | null | undefined> = [];
   let capturedProjectRequest: Record<string, unknown> | null = null;
@@ -1989,7 +1981,7 @@ test("runTsRunnerCli only stages browser tools for the main session", async () =
           pluginOverrides: {
             stageBrowserTools: ({ sessionKind }) => {
               seenSessionKinds.push(sessionKind);
-              return { changed: false, toolIds: sessionKind === "main" ? ["browser_get_state"] : [] };
+              return { changed: false, toolIds: sessionKind === "workspace_session" ? ["browser_get_state"] : [] };
             },
             stageRuntimeTools: () => ({ changed: false, toolIds: ["holaboss_onboarding_complete"] })
           }
@@ -2714,6 +2706,15 @@ test("runTsRunnerCli appends bootstrapped app MCP servers into the harness-host 
   assert.ok(capturedRequestPayload);
   const mcpServers = (capturedRequestPayload as { mcp_servers: Array<Record<string, unknown>> }).mcp_servers;
   assert.deepEqual(mcpServers.map((server) => server.name), ["app-a"]);
+});
+
+test("resolvedApplicationMcpHeaders includes Holaboss turn context for app MCP calls", () => {
+  assert.deepEqual(resolvedApplicationMcpHeaders(baseRequest()), {
+    "X-Workspace-Id": "workspace-1",
+    "X-Holaboss-Workspace-Id": "workspace-1",
+    "X-Holaboss-Session-Id": "session-1",
+    "X-Holaboss-Input-Id": "input-1",
+  });
 });
 
 test("runTsRunnerCli emits validation failures as run_failed JSONL", async () => {

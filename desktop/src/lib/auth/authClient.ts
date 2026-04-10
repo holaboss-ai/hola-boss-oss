@@ -82,11 +82,14 @@ export function useDesktopAuthSession(): DesktopAuthSessionState {
     setError(null);
     await window.electronAPI.auth.signOut();
     cachedAuthUser = null;
-    await refetch();
-  }, [refetch]);
+    setData(null);
+    setIsPending(false);
+  }, []);
 
   useEffect(() => {
-    void refetch();
+    if (cachedAuthUser === undefined) {
+      void refetch();
+    }
 
     const unsubscribeAuthenticated = window.electronAPI.auth.onAuthenticated((user) => {
       cachedAuthUser = user;

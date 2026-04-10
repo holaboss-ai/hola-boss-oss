@@ -9,6 +9,10 @@ test("billing settings panel renders a standalone billing page", async () => {
 
   assert.match(source, /BillingSummaryCard/);
   assert.match(source, /useDesktopBilling/);
+  assert.match(source, /Hosted credits and managed usage for this desktop account\./);
+  assert.match(source, /void refresh\(\);/);
+  assert.match(source, /Refreshing\.\.\./);
+  assert.match(source, /"Refreshing\.\.\." : "Refresh"/);
   assert.match(source, /Usage record/);
   assert.match(source, /Reactivate/);
   assert.doesNotMatch(source, /Website usage & billing/);

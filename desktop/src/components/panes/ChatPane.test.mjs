@@ -94,21 +94,17 @@ test("chat pane falls back to provider setup instead of holaboss pending state w
   );
 });
 
-test("chat trace summary treats recovered tool errors separately from terminal run failures", async () => {
+test("chat trace summary only surfaces terminal run failures in the summary label", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(
     source,
     /const terminalErrorCount = steps\.filter\(\s*\(step\) => step\.kind === "phase" && step\.status === "error"/,
   );
-  assert.match(
-    source,
-    /const recoveredErrorCount = steps\.filter\(\s*\(step\) => step\.kind === "tool" && step\.status === "error"/,
-  );
   assert.match(source, /const groupHasTerminalError = terminalErrorCount > 0;/);
   assert.match(
     source,
-    /const summarySuffix = groupHasTerminalError[\s\S]*`\s*\(\$\{recoveredErrorCount\} recovered\)`/,
+    /const summarySuffix = groupHasTerminalError[\s\S]*`\s*\(\$\{terminalErrorCount\} failed\)`[\s\S]*:\s*"";/,
   );
   assert.match(
     source,
@@ -221,6 +217,8 @@ test("chat pane suppresses claude options for the holaboss proxy fallback path",
     source.match(/const CHAT_MODEL_PRESETS = \[[\s\S]*?\] as const;/)?.[0] ?? "";
 
   assert.doesNotMatch(presetBlock, /claude-/);
+  assert.match(source, /normalized\.startsWith\("google\/"\)/);
+  assert.match(source, /normalized\.startsWith\("gemini-"\)/);
   assert.match(source, /function isClaudeChatModel\(model: string\)/);
   assert.match(
     source,
@@ -231,6 +229,15 @@ test("chat pane suppresses claude options for the holaboss proxy fallback path",
     source,
     /!isClaudeChatModel\(model\) &&[\s\S]*holabossProxyModelsAvailable \|\| !isHolabossProxyModel\(model\)/,
   );
+});
+
+test("chat pane filters managed catalog entries that are not chat-capable", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /function runtimeModelHasChatCapability\(model: RuntimeProviderModelPayload\)/);
+  assert.match(source, /const capabilities = runtimeModelCapabilities\(model\);/);
+  assert.match(source, /return capabilities.length === 0 \|\| capabilities.includes\("chat"\);/);
+  assert.match(source, /if \(!runtimeModelHasChatCapability\(model\)\) \{\s*return false;\s*\}/);
 });
 
 test("chat pane prefixes run failures with provider and model context", async () => {
@@ -256,27 +263,54 @@ test("chat pane binds in-flight stream attach to the current runtime input on se
   );
 });
 
-test("chat pane exposes a return path from sub-sessions back to the main session", async () => {
+test("chat pane can create a workspace session when none exists yet", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /const showMainSessionReturn =[\s\S]*activeSessionId !== mainSessionId;/);
   assert.match(
     source,
-    /You are viewing a separate run session\.[\s\S]*Return to the main[\s\S]*workspace chat to continue there\./,
+    /async function createWorkspaceSession\(\s*workspaceId: string,\s*parentSessionId\?: string \| null,\s*\): Promise<string \| null>/,
   );
-  assert.match(source, /Back to main session/);
-  assert.match(
+  assert.match(source, /window\.electronAPI\.workspace\.createAgentSession\(\{/);
+  assert.match(source, /parent_session_id: parentSessionId\?\.trim\(\) \|\| null,/);
+  assert.match(source, /const resolvedSessionId = nextSessionId \|\| null;/);
+  assert.doesNotMatch(
     source,
-    /showMainSessionReturn \? \(\s*<div className="shrink-0 px-4 pt-3 sm:px-5">\s*<div className="bg-muted\/72 flex flex-col items-start gap-3/,
-  );
-  assert.match(
-    source,
-    /await loadSessionConversation\(\s*mainSessionId,\s*selectedWorkspaceId,\s*runtimeStates\.items,\s*\);/,
+    /const resolvedSessionId =\s*nextSessionId \|\| \(await createWorkspaceSession\(selectedWorkspaceId\)\);/,
   );
   assert.match(
     source,
-    /const targetSessionId =[\s\S]*activeSessionIdRef\.current \|\| preferredSessionId\(selectedWorkspace, \[\]\);/,
+    /if \(!targetSessionId && selectedWorkspace\) \{\s*targetSessionId = await createWorkspaceSession\(\s*selectedWorkspace\.id,\s*draftParentSessionIdRef\.current,\s*\);/,
   );
+});
+
+test("chat pane hides restored history until the viewport snaps to the latest message", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /useLayoutEffect/);
+  assert.match(source, /const \[isHistoryViewportPending, setIsHistoryViewportPending\] =\s*useState\(false\);/);
+  assert.match(source, /const \[historyViewportRestoreGeneration, setHistoryViewportRestoreGeneration\] =\s*useState\(0\);/);
+  assert.match(source, /const historyViewportGenerationRef = useRef\(0\);/);
+  assert.match(source, /function beginHistoryViewportRestore\(\)/);
+  assert.match(source, /function requestHistoryViewportRestore\(\)/);
+  assert.match(source, /function cancelHistoryViewportRestore\(\)/);
+  assert.match(source, /function HistoryRestoreSkeleton\(\)/);
+  assert.match(
+    source,
+    /useLayoutEffect\(\(\) => \{[\s\S]*container\.scrollTo\(\{\s*top: container\.scrollHeight,\s*behavior: "auto",\s*\}\);[\s\S]*setIsHistoryViewportPending\(false\);[\s\S]*\}, \[historyViewportRestoreGeneration, isHistoryViewportPending\]\);/,
+  );
+  assert.match(
+    source,
+    /behavior:\s*isResponding \|\| isHistoryViewportPending \? "auto" : "smooth"/,
+  );
+  assert.match(
+    source,
+    /const showHistoryRestoreScreen =\s*isLoadingHistory \|\| isHistoryViewportPending;/,
+  );
+  assert.match(source, /role="status"/);
+  assert.match(source, /aria-label="Loading conversation"/);
+  assert.match(source, /animate-pulse/);
+  assert.match(source, /showHistoryRestoreScreen \? <HistoryRestoreSkeleton \/> : null/);
+  assert.match(source, /showHistoryRestoreScreen \? "invisible" : ""/);
 });
 
 test("chat pane shows hosted billing warnings and blocks managed sends when credits are exhausted", async () => {
@@ -322,14 +356,35 @@ test("chat turns render markdown and keep long content wrapped inside the bubble
   assert.match(source, /theme-chat-user-bubble inline-flex min-w-0 max-w-full/);
 });
 
+test("user turns expose a hover footer with copy and timestamp metadata", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /createdAt\?: string;/);
+  assert.match(source, /function chatMessageTimeLabel\(value: string \| null \| undefined\): string/);
+  assert.match(source, /navigator\.clipboard\?\.writeText/);
+  assert.match(source, /document\.execCommand\("copy"\)/);
+  assert.match(source, /const timeLabel = chatMessageTimeLabel\(createdAt\);/);
+  assert.match(source, /className="group\/user-turn flex min-w-0 justify-end"/);
+  assert.match(
+    source,
+    /group-hover\/user-turn:opacity-100[\s\S]*group-hover\/user-turn:pointer-events-auto[\s\S]*group-focus-within\/user-turn:opacity-100/,
+  );
+  assert.match(source, /aria-label=\{\s*copyFeedbackVisible[\s\S]*"Copy user message"/);
+  assert.match(source, /<Copy size=\{13\} strokeWidth=\{1\.9\} \/>/);
+  assert.match(source, /<Check size=\{13\} strokeWidth=\{1\.9\} \/>/);
+  assert.match(source, /createdAt: message\.created_at \|\| undefined,/);
+  assert.match(source, /createdAt: new Date\(\)\.toISOString\(\),/);
+  assert.match(source, /createdAt=\{message\.createdAt\}/);
+});
+
 test("chat thread uses the full pane width for normal messages", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /className=\{`chat-scrollbar-hidden h-full min-h-0 overflow-x-hidden overflow-y-auto \$\{hasMessages \? "" : "flex items-center justify-center"\}`\}/);
-  assert.match(source, /messagesContentRef\}[\s\S]*className="flex min-w-0 w-full flex-col gap-7 px-6 pb-3 pt-5"/);
+  assert.match(source, /messagesContentRef\}[\s\S]*className=\{`flex min-w-0 w-full flex-col gap-7 px-6 pb-3 pt-5 \$\{\s*showHistoryRestoreScreen \? "invisible" : ""\s*\}`\}/);
   assert.match(source, /<form onSubmit=\{onSubmit\} className="w-full">/);
   assert.match(source, /<div className="flex min-w-0 justify-start">[\s\S]*<article className="min-w-0 flex-1">/);
-  assert.match(source, /<div className="flex min-w-0 justify-end">[\s\S]*max-w-\[420px\][\s\S]*sm:max-w-\[560px\][\s\S]*lg:max-w-\[680px\]/);
+  assert.match(source, /className="group\/user-turn flex min-w-0 justify-end"[\s\S]*max-w-\[420px\][\s\S]*sm:max-w-\[560px\][\s\S]*lg:max-w-\[680px\]/);
   assert.doesNotMatch(source, /messagesContentRef\}[\s\S]*max-w-\[800px\]/);
   assert.doesNotMatch(source, /<article className="max-w-\[760px\]">/);
 });
@@ -349,6 +404,41 @@ test("chat pane renders run-scoped memory proposal cards with accept dismiss and
   assert.match(source, /Edit memory proposal/);
 });
 
+test("view all artifacts modal sorts artifacts newest first", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /function sortOutputsLatestFirst\(outputs: WorkspaceOutputRecordPayload\[\]\)/,
+  );
+  assert.match(
+    source,
+    /const filteredOutputs = sortOutputsLatestFirst\(\s*filter === "all"\s*\?\s*outputs\s*:\s*outputs\.filter\(/,
+  );
+  assert.match(
+    source,
+    /if \(leftTime !== rightTime\) \{\s*return rightTime - leftTime;\s*\}/,
+  );
+});
+
+test("artifact rows include timestamp metadata in both inline and modal lists", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /const timeLabel = chatMessageTimeLabel\(output\.created_at\);/);
+  assert.match(
+    source,
+    /if \(timeLabel\) \{\s*parts\.push\(timeLabel\);\s*\}/,
+  );
+  assert.match(
+    source,
+    /<div className="text-\[11px\] text-muted-foreground">\s*\{outputSecondaryLabel\(output\)\}\s*<\/div>/,
+  );
+  assert.match(
+    source,
+    /<div className="truncate text-\[12px\] text-muted-foreground">\s*\{outputSecondaryLabel\(output\)\}\s*<\/div>/,
+  );
+});
+
 test("tool trace steps are collapsed by default and first toggle expands them", async () => {
   const source = await readFile(sourcePath, "utf8");
 
@@ -363,12 +453,155 @@ test("chat pane can jump to a requested sub-session run", async () => {
   assert.match(source, /sessionJumpSessionId = null/);
   assert.match(source, /sessionJumpRequestKey = 0/);
   assert.match(source, /const lastHandledSessionJumpRequestKeyRef = useRef\(0\);/);
+  assert.match(source, /const lastHandledSessionOpenRequestKeyRef = useRef\(0\);/);
+  assert.match(source, /const draftParentSessionIdRef = useRef<string \| null>\(null\);/);
   assert.match(
     source,
     /const hasSessionJumpRequest =[\s\S]*sessionJumpRequestKey > 0[\s\S]*sessionJumpRequestKey !== lastHandledSessionJumpRequestKeyRef\.current/,
   );
   assert.match(
     source,
-    /const requestedOpenSessionId =[\s\S]*sessionOpenRequest\?\.sessionId \|\| ""[\s\S]*\.trim\(\);[\s\S]*const nextSessionId =[\s\S]*hasSessionJumpRequest && requestedSessionId[\s\S]*\? requestedSessionId[\s\S]*: requestedOpenSessionId\)[\s\S]*preferredSessionId\(selectedWorkspaceRef\.current, runtimeStates\.items\);/,
+    /const requestMode = sessionOpenRequest\?\.mode \?\? "session";[\s\S]*const requestedParentSessionId =[\s\S]*sessionOpenRequest\?\.parentSessionId\?\.trim\(\) \|\| null;/,
+  );
+  assert.match(
+    source,
+    /if \(requestMode === "draft"\) \{\s*draftParentSessionIdRef\.current = requestedParentSessionId;\s*clearSessionView\(\);\s*setActiveSession\(null\);\s*requestHistoryViewportRestore\(\);\s*historyLoaded = true;\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /const nextSessionId =\s*\(hasSessionJumpRequest && requestedSessionId\s*\?\s*requestedSessionId\s*:\s*null\)\s*\|\|\s*preferredSessionId\(\s*selectedWorkspaceRef\.current,\s*runtimeStates\.items,\s*sessionsResponse\.items,\s*\);[\s\S]*const resolvedSessionId = nextSessionId \|\| null;/,
+  );
+});
+
+test("chat pane restores the current todo plan from session output events and keeps it live from tool calls", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const \[currentTodoPlan, setCurrentTodoPlan\] = useState<ChatTodoPlan \| null>\(\s*null,\s*\);/,
+  );
+  assert.match(
+    source,
+    /function todoPlanFromOutputEvents\(outputEvents: SessionOutputEventPayload\[\]\)/,
+  );
+  assert.match(
+    source,
+    /setCurrentTodoPlan\(todoPlanFromOutputEvents\(outputEventHistory\.items\)\);/,
+  );
+  assert.match(
+    source,
+    /const nextTodoPlan = todoPlanFromToolPayload\(eventPayload\);[\s\S]*if \(nextTodoPlan !== undefined\) \{\s*setCurrentTodoPlan\(nextTodoPlan\);\s*\}/,
+  );
+  assert.match(source, /case "blocked":\s*return "Blocked";/);
+  assert.match(
+    source,
+    /case "blocked":\s*return "text-amber-700";/,
+  );
+  assert.match(source, /function TodoStatusIcon\(\{ status \}: \{ status: ChatTodoStatus \}\)/);
+  assert.match(source, /aria-label=\{label\}/);
+  assert.match(source, /<TodoStatusIcon status=\{task\.status\} \/>/);
+  assert.match(source, /clearSessionView\(\) \{[\s\S]*setCurrentTodoPlan\(null\);/);
+});
+
+test("chat composer exposes a pause action for in-flight runs and calls the runtime pause API", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /const \[isPausePending, setIsPausePending\] = useState\(false\);/);
+  assert.match(source, /async function pauseCurrentRun\(\)/);
+  assert.match(
+    source,
+    /window\.electronAPI\.workspace\.pauseSessionRun\(\{\s*workspace_id: selectedWorkspaceId,\s*session_id: sessionId,\s*\}\)/,
+  );
+  assert.match(
+    source,
+    /<Composer[\s\S]*pausePending=\{isPausePending\}[\s\S]*pauseDisabled=\{\s*pendingInputIdRef\.current === STREAM_ATTACH_PENDING\s*\}[\s\S]*onPause=\{pauseCurrentRun\}/,
+  );
+  assert.match(
+    source,
+    /isResponding \? \(\s*<Button[\s\S]*onClick=\{onPause\}[\s\S]*>\s*\{pausePending \? \(\s*<Loader2[\s\S]*\) : \(\s*<Square[\s\S]*\)\}\s*Pause\s*<\/Button>\s*\) : \(\s*<Button[\s\S]*<ArrowUp/,
+  );
+  assert.match(source, /disabled=\{pausePending \|\| pauseDisabled\}/);
+});
+
+test("chat pane renders a collapsed current todo panel above the composer", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /function CurrentTodoPanel\(/);
+  assert.match(source, /function currentTodoPosition\(phases: ChatTodoPhase\[\]\)/);
+  assert.match(source, /function latestCompletedTodoEntry\(phases: ChatTodoPhase\[\]\)/);
+  assert.match(source, /const summaryLabel = activeEntry/);
+  assert.match(source, /: latestCompletedEntry\?\.task\.content \|\|/);
+  assert.match(source, /const progressLabel =\s*totalTaskCount > 0 \? `\$\{currentTaskPosition\}\/\$\{totalTaskCount\}` : "0\/0";/);
+  assert.match(
+    source,
+    /<div className="space-y-3">[\s\S]*\{currentTodoPlan \? \(\s*<CurrentTodoPanel[\s\S]*todoPlan=\{currentTodoPlan\}[\s\S]*expanded=\{todoPanelExpanded\}[\s\S]*onToggle=\{\(\) =>[\s\S]*setTodoPanelExpanded\(\(value\) => !value\)[\s\S]*\}\s*\/>\s*\) : null\}[\s\S]*<Composer/,
+  );
+  assert.match(source, /aria-expanded=\{expanded\}/);
+  assert.match(
+    source,
+    /className=\{`shrink-0 text-muted-foreground transition \$\{expanded \? "rotate-0" : "-rotate-90"\}`\}/,
+  );
+  assert.match(source, /All tracked todo items are complete\./);
+  assert.match(
+    source,
+    /task\.status === "pending" \|\|\s*task\.status === "in_progress" \|\|\s*task\.status === "blocked"/,
+  );
+  assert.match(
+    source,
+    /completedStatus === "paused" \|\| completedStatus === "waiting_user"/,
+  );
+});
+
+test("chat pane stops auto-follow while the user is actively selecting chat text", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /function hasActiveChatSelection\(container: HTMLDivElement \| null\)/);
+  assert.match(source, /const selection = window\.getSelection\(\);/);
+  assert.match(
+    source,
+    /!container \|\|\s*!shouldAutoScrollRef\.current \|\|\s*hasActiveChatSelection\(container\)/,
+  );
+});
+
+test("chat pane stops auto-follow as soon as the user scrolls upward during streaming", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /const lastChatScrollTopRef = useRef\(0\);/);
+  assert.match(source, /lastChatScrollTopRef\.current = target\.scrollTop;/);
+  assert.match(
+    source,
+    /onWheelCapture=\{\(event\) => \{\s*if \(event\.deltaY < 0\) \{\s*shouldAutoScrollRef\.current = false;\s*\}\s*\}\}/,
+  );
+  assert.match(
+    source,
+    /const scrolledUp =\s*currentTarget\.scrollTop < lastChatScrollTopRef\.current;/,
+  );
+  assert.match(
+    source,
+    /shouldAutoScrollRef\.current = scrolledUp \? false : nearBottom;/,
+  );
+});
+
+test("chat pane custom scrollbar thumb can be dragged", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const chatScrollbarDragStateRef = useRef<ChatScrollbarDragState \| null>\(/,
+  );
+  assert.match(
+    source,
+    /function updateChatScrollFromScrollbarPointer\([\s\S]*container\.scrollTop = nextScrollTop;[\s\S]*syncChatScrollMetrics\(container\);/,
+  );
+  assert.match(
+    source,
+    /event\.currentTarget\.setPointerCapture\(event\.pointerId\);/,
+  );
+  assert.match(source, /data-chat-scrollbar-thumb="true"/);
+  assert.match(source, /onPointerDown=\{handleChatScrollbarPointerDown\}/);
+  assert.match(source, /onPointerMove=\{handleChatScrollbarPointerMove\}/);
+  assert.match(
+    source,
+    /onLostPointerCapture=\{\(\) => \{\s*clearChatScrollbarDragState\(\);\s*\}\}/,
   );
 });

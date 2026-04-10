@@ -155,7 +155,12 @@ function browserToolParameters(toolId: DesktopBrowserToolId) {
     case "browser_get_state":
       return Type.Object(
         {
-          include_screenshot: Type.Optional(Type.Boolean({ description: "Include a page screenshot in the response." })),
+          include_screenshot: Type.Optional(
+            Type.Boolean({
+              description:
+                "Include a page screenshot when visual appearance, layout, overlays, charts, PDFs, or user-visible confirmation matter, or when DOM signals are ambiguous.",
+            })
+          ),
         },
         { additionalProperties: false }
       );

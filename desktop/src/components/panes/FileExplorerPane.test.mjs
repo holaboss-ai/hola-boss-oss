@@ -47,6 +47,18 @@ test("file explorer opens folders on double click instead of single click", asyn
   assert.match(source, /double-click to open folder/);
 });
 
+test("file explorer keeps drag-to-attach without using a grab cursor", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /const rowClassName = `group mb-0\.5 w-full rounded-md px-2 py-1\.5 text-left transition-colors/);
+  assert.match(source, /\$\{isRenaming \? "cursor-default" : "cursor-pointer"\}/);
+  assert.match(source, /className="w-full cursor-pointer text-left"/);
+  assert.match(source, /draggable=\{!entry\.isDirectory\}/);
+  assert.match(source, /event\.dataTransfer\.effectAllowed = "copy";/);
+  assert.doesNotMatch(source, /cursor-grab/);
+  assert.doesNotMatch(source, /cursor-grabbing/);
+});
+
 test("file explorer home opens the selected workspace root when available", async () => {
   const source = await readFile(sourcePath, "utf8");
 
@@ -100,18 +112,23 @@ test("file explorer accepts one-shot focus requests for artifact files", async (
   assert.match(source, /onFocusRequestConsumed\?\.\(request\.requestKey\);/);
 });
 
-test("file explorer opens text files directly in the editor without a preview toggle", async () => {
+test("file explorer adds a markdown preview mode while keeping text editing inline", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.doesNotMatch(source, /type TextPreviewMode/);
-  assert.doesNotMatch(source, /textPreviewMode/);
-  assert.doesNotMatch(source, /getHighlightedHtml/);
-  assert.doesNotMatch(source, /Loading preview/);
+  assert.match(source, /import \{ SimpleMarkdown \} from "@\/components\/marketplace\/SimpleMarkdown";/);
+  assert.match(source, /const MARKDOWN_PREVIEW_EXTENSIONS = new Set\(\[\s*"\.md",\s*"\.mdx",\s*"\.markdown"\s*\]\);/);
+  assert.match(source, /type TextPreviewMode = "edit" \| "preview";/);
+  assert.match(source, /const \[textPreviewMode, setTextPreviewMode\] = useState<TextPreviewMode>\("edit"\);/);
+  assert.match(source, /setTextPreviewMode\(isMarkdownPreviewPayload\(payload\) \? "preview" : "edit"\);/);
   assert.match(source, /title=\{preview \|\| previewLoading \|\| previewError \? "File" : ""\}/);
   assert.match(source, /preview\?\.kind === "text" \? \(/);
+  assert.match(source, /isMarkdownPreview && textPreviewMode === "preview"/);
+  assert.match(source, /<SimpleMarkdown[\s\S]*className="chat-markdown text-sm text-foreground"[\s\S]*onLinkClick=\{openPreviewLink\}[\s\S]*\{previewDraft\}[\s\S]*<\/SimpleMarkdown>/);
   assert.match(source, /readOnly=\{!preview\.isEditable\}/);
   assert.match(source, /embedded-input focus:border-border\/70/);
-  assert.doesNotMatch(source, /focus:bg-background\/35/);
+  assert.match(source, />\s*Preview\s*<\/button>/);
+  assert.match(source, />\s*Edit\s*<\/button>/);
+  assert.match(source, /window\.electronAPI\.ui\.openExternalUrl\(url\)/);
   assert.match(
     source,
     /window\.electronAPI\.fs\.readFilePreview\(\s*targetPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
@@ -180,4 +197,13 @@ test("file explorer exposes right-click rename and delete actions for entries", 
   );
   assert.match(source, /Rename…/);
   assert.match(source, /Delete…/);
+});
+
+test("file explorer does not expose a pane-level close action", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /interface FileExplorerPaneProps \{\s*focusRequest\?: FileExplorerFocusRequest \| null;\s*onFocusRequestConsumed\?: \(requestKey: number\) => void;\s*\}/);
+  assert.match(source, /export function FileExplorerPane\(\{\s*focusRequest = null,\s*onFocusRequestConsumed,\s*}: FileExplorerPaneProps\)/);
+  assert.doesNotMatch(source, /label="Close file explorer"/);
+  assert.doesNotMatch(source, /icon=\{<X size=\{1[23]\} \/>/);
 });

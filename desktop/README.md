@@ -203,12 +203,21 @@ Notes:
 
 Signed macOS distribution is handled by the manual `.github/workflows/release-macos-desktop.yml` workflow. Normal pushes continue to run CI and publish runtime bundles separately; the signed DMG is only built when you explicitly trigger the desktop release workflow.
 
-Windows distribution is handled by the manual `.github/workflows/release-windows-desktop.yml` workflow. It builds the Windows installer on `windows-latest`, uploads the produced NSIS installer to the chosen GitHub release, and will sign the installer when `WINDOWS_CERTIFICATE` and `WINDOWS_CERTIFICATE_PASSWORD` secrets are configured. Without those secrets, the workflow still produces an unsigned installer.
+Windows distribution is handled by the manual `.github/workflows/release-windows-desktop.yml` workflow. It builds the Windows installer on `windows-latest`, uploads the produced NSIS installer to the chosen GitHub release, and requires `WINDOWS_CERTIFICATE` and `WINDOWS_CERTIFICATE_PASSWORD` so the public installer is code-signed. The workflow now fails fast instead of publishing an unsigned installer.
 
 Release channel policy:
 - runtime-only bundle releases publish under `holaboss-runtime-*` and are treated as prereleases
 - desktop-shippable stable releases stay under `holaboss-*`
 - the in-app desktop update notice is intended to track desktop-shippable releases, not runtime-only bundle releases
+
+Desktop release versioning:
+- use stable semver in `YYYY.MDD.R` format
+- `YYYY` = year, `MDD` = month without a leading zero plus a two-digit day, `R` = release number for that date
+- examples: `2026.410.1`, `2026.410.2`, `2026.1113.1`
+- do not zero-pad the month in the middle segment; `2026.0410.1` is not valid semver
+- the desktop packager derives the app update version from the trailing `X.Y.Z` suffix in `release_tag`, so tags should end with the same `YYYY.MDD.R` value
+- to print a version for today, run `npm --prefix desktop run release:version`
+- to print the second release for a specific day, run `npm --prefix desktop run release:version -- 2 --date 2026-04-10`
 
 The desktop release workflow requires these repository secrets and fails fast when any of them are missing:
 
@@ -217,6 +226,8 @@ The desktop release workflow requires these repository secrets and fails fast wh
 - `APPLE_ID`: Apple Developer account email
 - `APPLE_APP_SPECIFIC_PASSWORD`: app-specific password from Apple ID settings
 - `APPLE_TEAM_ID`: Apple Developer Team ID
+- `WINDOWS_CERTIFICATE`: base64-encoded or file-backed Windows code-signing certificate
+- `WINDOWS_CERTIFICATE_PASSWORD`: password for the Windows certificate
 
 When triggering the workflow, provide:
 

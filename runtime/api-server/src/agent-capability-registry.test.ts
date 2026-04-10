@@ -11,12 +11,12 @@ import {
 test("buildAgentCapabilityManifest classifies tools, skills, and MCP aliases", () => {
   const manifest = buildAgentCapabilityManifest({
     harnessId: "pi",
-    sessionKind: "main",
+    sessionKind: "workspace_session",
     browserToolsAvailable: true,
     browserToolIds: ["browser_get_state"],
     runtimeToolIds: ["holaboss_onboarding_complete"],
     workspaceCommandIds: ["hello"],
-    defaultTools: ["read", "edit", "question"],
+    defaultTools: ["read", "edit", "question", "todoread", "todowrite"],
     extraTools: ["browser_get_state", "holaboss_onboarding_complete"],
     workspaceSkillIds: ["skill-creator"],
     resolvedMcpToolRefs: [
@@ -30,7 +30,7 @@ test("buildAgentCapabilityManifest classifies tools, skills, and MCP aliases", (
 
   assert.deepEqual(manifest.context, {
     harness_id: "pi",
-    session_kind: "main",
+    session_kind: "workspace_session",
     browser_tools_available: true,
     browser_tool_ids: ["browser_get_state"],
     runtime_tool_ids: ["holaboss_onboarding_complete"],
@@ -55,6 +55,12 @@ test("buildAgentCapabilityManifest classifies tools, skills, and MCP aliases", (
   );
   assert.ok(manifest.coordinate.some((capability) => capability.callable_name === "question"));
   assert.ok(manifest.coordinate.some((capability) => capability.callable_name === "skill"));
+  const todoWriteCapability = manifest.coordinate.find((capability) => capability.callable_name === "todowrite");
+  const todoReadCapability = manifest.coordinate.find((capability) => capability.callable_name === "todoread");
+  assert.ok(todoWriteCapability);
+  assert.ok(todoReadCapability);
+  assert.match(String(todoWriteCapability?.description ?? ""), /current working todo/i);
+  assert.match(String(todoReadCapability?.description ?? ""), /current working todo/i);
   assert.ok(manifest.capabilities.some((capability) => capability.kind === "skill" && capability.id === "skill-creator"));
   assert.deepEqual(manifest.refresh_semantics, {
     evaluation_scope: "per_run",
@@ -72,6 +78,8 @@ test("buildAgentCapabilityManifest classifies tools, skills, and MCP aliases", (
   assert.equal(toolMap.read, true);
   assert.equal(toolMap.edit, true);
   assert.equal(toolMap.question, true);
+  assert.equal(toolMap.todoread, true);
+  assert.equal(toolMap.todowrite, true);
   assert.equal(toolMap.browser_get_state, true);
   assert.equal(toolMap.workspace_lookup, true);
   assert.equal(toolMap.skill, true);
@@ -134,10 +142,28 @@ test("buildAgentCapabilityManifest filters browser tools when policy context doe
   assert.equal(buildEnabledToolMapFromManifest(manifest).browser_get_state, undefined);
 });
 
+test("buildAgentCapabilityManifest excludes browser tools for onboarding sessions even when staged", () => {
+  const manifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "onboarding",
+    browserToolsAvailable: true,
+    browserToolIds: ["browser_get_state"],
+    runtimeToolIds: ["holaboss_onboarding_complete"],
+    defaultTools: ["read"],
+    extraTools: ["browser_get_state", "holaboss_onboarding_complete"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  assert.equal(manifest.inspect.some((capability) => capability.callable_name === "browser_get_state"), false);
+  assert.equal(manifest.mutate.some((capability) => capability.callable_name === "holaboss_onboarding_complete"), true);
+  assert.equal(buildEnabledToolMapFromManifest(manifest).browser_get_state, undefined);
+});
+
 test("buildAgentCapabilityManifest includes native web search as a custom tool", () => {
   const manifest = buildAgentCapabilityManifest({
     harnessId: "pi",
-    sessionKind: "main",
+    sessionKind: "workspace_session",
     browserToolsAvailable: false,
     browserToolIds: [],
     runtimeToolIds: [],
@@ -150,14 +176,36 @@ test("buildAgentCapabilityManifest includes native web search as a custom tool",
   const capability = manifest.custom_tools.find((entry) => entry.id === "web_search");
   assert.ok(capability);
   assert.equal(capability.title, "Web Search");
-  assert.match(capability.description, /Search the public web/i);
+  assert.match(capability.description, /discover and summarize information across multiple sources/i);
+  assert.match(capability.description, /exact live values, platform-native rankings or filters, UI-only state/i);
+  assert.match(capability.description, /escalate to browser tools or another more direct capability/i);
   assert.equal(buildEnabledToolMapFromManifest(manifest).web_search, true);
+});
+
+test("buildAgentCapabilityManifest carries browser tool descriptions that emphasize live verification", () => {
+  const manifest = buildAgentCapabilityManifest({
+    harnessId: "pi",
+    sessionKind: "workspace_session",
+    browserToolsAvailable: true,
+    browserToolIds: ["browser_get_state"],
+    runtimeToolIds: [],
+    defaultTools: ["read"],
+    extraTools: ["browser_get_state"],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+  });
+
+  const capability = manifest.browser_tools.find((entry) => entry.id === "browser_get_state");
+  assert.ok(capability);
+  assert.match(capability.description, /DOM-first browser inspection tool for actions and structured extraction/i);
+  assert.match(capability.description, /include_screenshot=true/i);
+  assert.match(capability.description, /visual appearance, layout, prominence, overlays, canvas\/chart\/PDF content/i);
 });
 
 test("evaluateAgentCapabilities keeps command and skill surfaces while excluding non-staged browser tools", () => {
   const evaluation = evaluateAgentCapabilities({
     harnessId: "pi",
-    sessionKind: "main",
+    sessionKind: "workspace_session",
     browserToolsAvailable: true,
     browserToolIds: [],
     runtimeToolIds: ["holaboss_onboarding_complete"],
@@ -223,7 +271,7 @@ test("evaluateAgentCapabilities keeps command and skill surfaces while excluding
 test("evaluateAgentCapabilities includes richer execution and authority metadata", () => {
   const evaluation = evaluateAgentCapabilities({
     harnessId: "pi",
-    sessionKind: "main",
+    sessionKind: "workspace_session",
     browserToolsAvailable: true,
     browserToolIds: ["browser_get_state"],
     runtimeToolIds: ["holaboss_onboarding_complete"],
@@ -284,7 +332,7 @@ test("evaluateAgentCapabilities includes richer execution and authority metadata
 test("evaluateAgentCapabilities fingerprints the run snapshot", () => {
   const base = evaluateAgentCapabilities({
     harnessId: "pi",
-    sessionKind: "main",
+    sessionKind: "workspace_session",
     browserToolsAvailable: true,
     browserToolIds: ["browser_get_state"],
     runtimeToolIds: ["holaboss_onboarding_complete"],
@@ -296,7 +344,7 @@ test("evaluateAgentCapabilities fingerprints the run snapshot", () => {
   });
   const same = evaluateAgentCapabilities({
     harnessId: "pi",
-    sessionKind: "main",
+    sessionKind: "workspace_session",
     browserToolsAvailable: true,
     browserToolIds: ["browser_get_state"],
     runtimeToolIds: ["holaboss_onboarding_complete"],
@@ -308,7 +356,7 @@ test("evaluateAgentCapabilities fingerprints the run snapshot", () => {
   });
   const changed = evaluateAgentCapabilities({
     harnessId: "pi",
-    sessionKind: "main",
+    sessionKind: "workspace_session",
     browserToolsAvailable: true,
     browserToolIds: ["browser_get_state"],
     runtimeToolIds: ["holaboss_onboarding_complete"],
@@ -326,7 +374,7 @@ test("evaluateAgentCapabilities fingerprints the run snapshot", () => {
 test("renderCapabilityPolicyPromptSection summarizes grouped capabilities", () => {
   const manifest = buildAgentCapabilityManifest({
     harnessId: "pi",
-    sessionKind: "main",
+    sessionKind: "workspace_session",
     browserToolsAvailable: false,
     runtimeToolIds: ["holaboss_onboarding_complete"],
     workspaceCommandIds: ["hello"],
@@ -345,7 +393,7 @@ test("renderCapabilityPolicyPromptSection summarizes grouped capabilities", () =
   const section = renderCapabilityPolicyPromptSection(manifest);
   assert.match(section, /Capability policy for this run:/);
   assert.match(section, /Harness for this run: pi\./);
-  assert.match(section, /Session kind for this run: main\./);
+  assert.match(section, /Session kind for this run: workspace_session\./);
   assert.match(section, /Inspect capabilities available now:/);
   assert.match(section, /Mutating capabilities available now:/);
   assert.match(section, /Coordination capabilities available now:/);

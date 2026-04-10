@@ -23,6 +23,7 @@ import {
   type LucideIcon,
   Undo2
 } from "lucide-react";
+import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import { IconButton } from "@/components/ui/IconButton";
 import { PaneCard } from "@/components/ui/PaneCard";
 import {
@@ -138,6 +139,14 @@ const SPECIAL_CODE_FILENAMES = new Set([
 const SPECIAL_POLICY_FILENAMES = new Set([
   "agents.md"
 ]);
+
+const MARKDOWN_PREVIEW_EXTENSIONS = new Set([
+  ".md",
+  ".mdx",
+  ".markdown"
+]);
+
+type TextPreviewMode = "edit" | "preview";
 
 type ExplorerIconDescriptor = {
   Icon: LucideIcon;
@@ -267,6 +276,15 @@ function getExplorerIconDescriptor(targetName: string, isDirectory: boolean): Ex
     Icon: FileText,
     className: "text-muted-foreground"
   };
+}
+
+function isMarkdownPreviewPayload(
+  preview: Pick<FilePreviewPayload, "kind" | "extension"> | null | undefined
+): boolean {
+  if (!preview || preview.kind !== "text") {
+    return false;
+  }
+  return MARKDOWN_PREVIEW_EXTENSIONS.has(preview.extension.trim().toLowerCase());
 }
 
 function getFolderName(targetPath: string) {
@@ -486,6 +504,7 @@ export function FileExplorerPane({
   const [error, setError] = useState<string>("");
   const [preview, setPreview] = useState<FilePreviewPayload | null>(null);
   const [previewDraft, setPreviewDraft] = useState("");
+  const [textPreviewMode, setTextPreviewMode] = useState<TextPreviewMode>("edit");
   const [activeTableSheetIndex, setActiveTableSheetIndex] = useState(0);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
@@ -735,6 +754,11 @@ export function FileExplorerPane({
     ? entries.find((entry) => entry.absolutePath === renamingPath) ?? null
     : null;
   const isDirty = preview?.isEditable ? previewDraft !== (preview.content ?? "") : false;
+  const isMarkdownPreview = isMarkdownPreviewPayload(preview);
+
+  const openPreviewLink = useCallback((url: string) => {
+    void window.electronAPI.ui.openExternalUrl(url);
+  }, []);
 
   const confirmDiscardIfDirty = useCallback(() => {
     if (!isDirty) {
@@ -778,6 +802,7 @@ export function FileExplorerPane({
 
     setPreview(null);
     setPreviewDraft("");
+    setTextPreviewMode("edit");
     setPreviewError("");
     await loadDirectory(targetPath, true);
   };
@@ -818,6 +843,7 @@ export function FileExplorerPane({
         if (workspaceRoot) {
           setPreview(null);
           setPreviewDraft("");
+          setTextPreviewMode("edit");
           setPreviewError("");
           await loadDirectory(workspaceRoot, true);
           return;
@@ -829,6 +855,7 @@ export function FileExplorerPane({
 
     setPreview(null);
     setPreviewDraft("");
+    setTextPreviewMode("edit");
     setPreviewError("");
     await loadDirectory(null, true);
   };
@@ -858,9 +885,11 @@ export function FileExplorerPane({
       );
       setPreview(payload);
       setPreviewDraft(payload.content ?? "");
+      setTextPreviewMode(isMarkdownPreviewPayload(payload) ? "preview" : "edit");
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Failed to open file.";
       setPreview(null);
+      setTextPreviewMode("edit");
       setPreviewError(message);
     } finally {
       setPreviewLoading(false);
@@ -874,6 +903,7 @@ export function FileExplorerPane({
 
     setPreview(null);
     setPreviewDraft("");
+    setTextPreviewMode("edit");
     setActiveTableSheetIndex(0);
     setPreviewError("");
     setSaving(false);
@@ -914,6 +944,7 @@ export function FileExplorerPane({
     setHistoryIndex(targetIndex);
     setPreview(null);
     setPreviewDraft("");
+    setTextPreviewMode("edit");
     setPreviewError("");
     await loadDirectory(targetPath, false);
   };
@@ -928,6 +959,7 @@ export function FileExplorerPane({
     setHistoryIndex(targetIndex);
     setPreview(null);
     setPreviewDraft("");
+    setTextPreviewMode("edit");
     setPreviewError("");
     await loadDirectory(targetPath, false);
   };
@@ -1154,6 +1186,32 @@ export function FileExplorerPane({
                 onClick={() => void toggleBookmark()}
                 disabled={!bookmarkTargetPath}
               />
+              {isMarkdownPreview ? (
+                <div className="inline-flex items-center rounded-md border border-border bg-muted/50 p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setTextPreviewMode("preview")}
+                    className={`rounded px-2 py-1 text-xs transition-colors ${
+                      textPreviewMode === "preview"
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    }`}
+                  >
+                    Preview
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTextPreviewMode("edit")}
+                    className={`rounded px-2 py-1 text-xs transition-colors ${
+                      textPreviewMode === "edit"
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    }`}
+                  >
+                    Edit
+                  </button>
+                </div>
+              ) : null}
               {preview?.isEditable ? (
                 <button
                   type="button"
@@ -1193,17 +1251,34 @@ export function FileExplorerPane({
                 {previewError}
               </div>
             ) : preview?.kind === "text" ? (
-              <textarea
-                value={previewDraft}
-                onChange={(event) => setPreviewDraft(event.target.value)}
-                readOnly={!preview.isEditable}
-                spellCheck={false}
-                className={`h-full w-full resize-none rounded-lg border border-border bg-muted p-4 font-mono text-xs leading-6 text-foreground outline-none transition-colors ${
-                  preview.isEditable
-                    ? "embedded-input focus:border-border/70"
-                    : "cursor-default opacity-90"
-                }`}
-              />
+              isMarkdownPreview && textPreviewMode === "preview" ? (
+                <div className="h-full overflow-auto rounded-lg border border-border bg-muted/55 p-4">
+                  {previewDraft.trim() ? (
+                    <SimpleMarkdown
+                      className="chat-markdown text-sm text-foreground"
+                      onLinkClick={openPreviewLink}
+                    >
+                      {previewDraft}
+                    </SimpleMarkdown>
+                  ) : (
+                    <div className="grid h-full min-h-[120px] place-items-center text-sm text-muted-foreground">
+                      Nothing to preview yet.
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <textarea
+                  value={previewDraft}
+                  onChange={(event) => setPreviewDraft(event.target.value)}
+                  readOnly={!preview.isEditable}
+                  spellCheck={false}
+                  className={`h-full w-full resize-none rounded-lg border border-border bg-muted p-4 font-mono text-xs leading-6 text-foreground outline-none transition-colors ${
+                    preview.isEditable
+                      ? "embedded-input focus:border-border/70"
+                      : "cursor-default opacity-90"
+                  }`}
+                />
+              )
             ) : preview?.kind === "image" && preview.dataUrl ? (
               <div className="flex h-full items-center justify-center overflow-auto rounded-lg border border-border bg-muted p-3">
                 <img src={preview.dataUrl} alt={preview.name} className="max-h-full max-w-full rounded-md object-contain" />
@@ -1427,13 +1502,7 @@ export function FileExplorerPane({
                       selected
                         ? "bg-primary/10 text-primary"
                         : "text-foreground/80 hover:bg-accent hover:text-accent-foreground"
-                    } ${
-                      isRenaming
-                        ? "cursor-default"
-                        : entry.isDirectory
-                          ? "cursor-pointer"
-                          : "cursor-grab active:cursor-grabbing"
-                    }`;
+                    } ${isRenaming ? "cursor-default" : "cursor-pointer"}`;
                     const nameField = isRenaming ? (
                       <input
                         ref={renameInputRef}
@@ -1560,7 +1629,7 @@ export function FileExplorerPane({
                             dragPreviewRef.current?.remove();
                             dragPreviewRef.current = null;
                           }}
-                          className="w-full text-left"
+                          className="w-full cursor-pointer text-left"
                           title={
                             entry.isDirectory
                               ? `${entry.name} — double-click to open folder`

@@ -3,7 +3,12 @@ import path from "node:path";
 
 import type { RuntimeStateStore, SessionInputRecord, TurnResultRecord, WorkspaceRecord } from "@holaboss/runtime-state-store";
 
-import { buildRunFailedEvent, executeRunnerRequest, type RunnerEvent } from "./runner-worker.js";
+import {
+  buildRunCompletedEvent,
+  buildRunFailedEvent,
+  executeRunnerRequest,
+  type RunnerEvent,
+} from "./runner-worker.js";
 import { resolveProductRuntimeConfig } from "./runtime-config.js";
 import { normalizeHarnessId, resolveRuntimeHarnessAdapter } from "./harness-registry.js";
 import type { MemoryServiceLike } from "./memory.js";
@@ -11,6 +16,7 @@ import { createBackgroundTaskMemoryModelClient } from "./background-task-model.j
 import type { TurnMemoryWritebackModelContext } from "./turn-memory-writeback.js";
 import { runPostRunTasks } from "./post-run-tasks.js";
 import { collectWorkspaceFileManifest, detectWorkspaceFileOutputs, type WorkspaceFileManifest } from "./turn-output-capture.js";
+import { compactTurnSummary } from "./turn-result-summary.js";
 
 const ONBOARD_PROMPT_HEADER = "[Holaboss Workspace Onboarding v1]";
 const RUNTIME_EXEC_CONTEXT_KEY = "_sandbox_runtime_exec_v1";
@@ -202,9 +208,6 @@ function inferSessionKind(params: {
     return persistedKind;
   }
   const sessionId = params.sessionId.trim();
-  if (sessionId && sessionId === (params.workspace.mainSessionId ?? "").trim()) {
-    return "main";
-  }
   const onboardingSessionId = (params.workspace.onboardingSessionId ?? "").trim();
   const onboardingStatus = (params.workspace.onboardingStatus ?? "").trim().toLowerCase();
   if (sessionId && sessionId === onboardingSessionId && ["pending", "awaiting_confirmation", "in_progress"].includes(onboardingStatus)) {
@@ -245,14 +248,20 @@ function tokenUsageFromPayload(payload: Record<string, unknown>): Record<string,
 function stopReasonForTerminalEvent(params: {
   eventType: string;
   payload: Record<string, unknown>;
-  terminalStatus: "IDLE" | "WAITING_USER" | "ERROR";
+  terminalStatus: "IDLE" | "WAITING_USER" | "PAUSED" | "ERROR";
 }): string | null {
   if (params.eventType === "run_completed") {
     const status = typeof params.payload.status === "string" ? params.payload.status.trim().toLowerCase() : "";
     if (status) {
       return status;
     }
-    return params.terminalStatus === "WAITING_USER" ? "waiting_user" : "completed";
+    if (params.terminalStatus === "WAITING_USER") {
+      return "waiting_user";
+    }
+    if (params.terminalStatus === "PAUSED") {
+      return "paused";
+    }
+    return "completed";
   }
   if (params.eventType === "run_failed") {
     if (typeof params.payload.type === "string" && params.payload.type.trim()) {
@@ -294,6 +303,124 @@ function optionalString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+function titleCaseWords(value: string): string {
+  return value.replace(/\b([a-z])/g, (match) => match.toUpperCase());
+}
+
+function cronjobNotificationPriority(value: unknown): "low" | "normal" | "high" | "critical" {
+  const normalized = optionalString(value)?.toLowerCase();
+  if (normalized === "low" || normalized === "high" || normalized === "critical") {
+    return normalized;
+  }
+  return "normal";
+}
+
+function cronjobNotificationBaseTitle(job: { name: string; metadata: Record<string, unknown> }): string {
+  const explicitTitle = optionalString(job.metadata.notification_title);
+  if (explicitTitle) {
+    return explicitTitle;
+  }
+  const name = optionalString(job.name);
+  if (name) {
+    return titleCaseWords(name.replace(/[_-]+/g, " ").replace(/\s+/g, " "));
+  }
+  return "Cronjob Run";
+}
+
+function cronjobCompletionNotificationTitle(turnResult: TurnResultRecord, baseTitle: string): string {
+  if (turnResult.status === "failed") {
+    return `${baseTitle} Failed`;
+  }
+  if (turnResult.status === "waiting_user") {
+    return `${baseTitle} Needs Input`;
+  }
+  if (turnResult.status === "paused") {
+    return `${baseTitle} Paused`;
+  }
+  return `${baseTitle} Completed`;
+}
+
+function cronjobCompletionNotificationLevel(
+  turnResult: TurnResultRecord,
+): "info" | "success" | "warning" | "error" {
+  if (turnResult.status === "failed") {
+    return "error";
+  }
+  if (turnResult.status === "waiting_user" || turnResult.status === "paused") {
+    return "warning";
+  }
+  return "success";
+}
+
+function cronjobCompletionNotificationMessage(turnResult: TurnResultRecord): string {
+  const summary = compactTurnSummary(turnResult);
+  if (summary) {
+    return summary;
+  }
+  if (turnResult.status === "failed") {
+    return "Cronjob run failed.";
+  }
+  if (turnResult.status === "waiting_user") {
+    return "Cronjob run is waiting for user input.";
+  }
+  if (turnResult.status === "paused") {
+    return "Cronjob run was paused.";
+  }
+  return "Cronjob run completed.";
+}
+
+function maybeCreateCronjobCompletionNotification(params: {
+  store: RuntimeStateStore;
+  record: SessionInputRecord;
+  turnResult: TurnResultRecord;
+}): void {
+  const context = isRecord(params.record.payload.context) ? params.record.payload.context : null;
+  const source = optionalString(context?.source)?.toLowerCase();
+  const cronjobId = optionalString(context?.cronjob_id);
+  if (source !== "cronjob" || !cronjobId) {
+    return;
+  }
+
+  const session = params.store.getSession({
+    workspaceId: params.record.workspaceId,
+    sessionId: params.record.sessionId,
+  });
+  if (optionalString(session?.kind)?.toLowerCase() !== "cronjob") {
+    return;
+  }
+
+  const job = params.store.getCronjob(cronjobId);
+  const workspace = params.store.getWorkspace(params.record.workspaceId);
+  if (!job || !workspace) {
+    return;
+  }
+
+  const metadata = isRecord(job.metadata) ? job.metadata : {};
+  const baseTitle = cronjobNotificationBaseTitle({ name: job.name, metadata });
+  params.store.createRuntimeNotification({
+    workspaceId: params.record.workspaceId,
+    cronjobId: job.id,
+    sourceType: "cronjob",
+    sourceLabel: workspace.name.trim() || null,
+    title: cronjobCompletionNotificationTitle(params.turnResult, baseTitle),
+    message: cronjobCompletionNotificationMessage(params.turnResult),
+    level: cronjobCompletionNotificationLevel(params.turnResult),
+    priority: cronjobNotificationPriority(metadata.notification_priority),
+    metadata: {
+      cronjob_id: job.id,
+      cronjob_name: job.name,
+      cronjob_description: job.description,
+      cronjob_instruction: job.instruction,
+      session_id: params.record.sessionId,
+      input_id: params.record.inputId,
+      turn_status: params.turnResult.status,
+      stop_reason: params.turnResult.stopReason,
+      delivery: job.delivery,
+      cronjob_metadata: metadata,
+    },
+  });
 }
 
 type SkillInvocationSummaryEntry = {
@@ -422,7 +549,7 @@ function persistTurnResult(params: {
   record: SessionInputRecord;
   startedAt: string;
   completedAt: string | null;
-  terminalStatus: "IDLE" | "WAITING_USER" | "ERROR";
+  terminalStatus: "IDLE" | "WAITING_USER" | "PAUSED" | "ERROR";
   stopReason: string | null;
   assistantText: string;
   toolUsageSummary: Record<string, unknown>;
@@ -444,6 +571,8 @@ function persistTurnResult(params: {
         ? "failed"
         : params.terminalStatus === "WAITING_USER"
         ? "waiting_user"
+        : params.terminalStatus === "PAUSED"
+        ? "paused"
         : "completed",
     stopReason: params.stopReason,
     assistantText: params.assistantText,
@@ -482,8 +611,11 @@ function appendNextOutputEvent(params: {
 function terminalStatusForCompletedPayload(
   payload: Record<string, unknown>,
   supportsWaitingUser: boolean
-): "IDLE" | "WAITING_USER" {
+): "IDLE" | "WAITING_USER" | "PAUSED" {
   const status = typeof payload.status === "string" ? payload.status.trim().toLowerCase() : "";
+  if (status === "paused") {
+    return "PAUSED";
+  }
   return supportsWaitingUser && status === "waiting_user" ? "WAITING_USER" : "IDLE";
 }
 
@@ -529,6 +661,7 @@ export async function processClaimedInput(params: {
   onPostRunTaskError?: (taskName: string, error: unknown) => void;
   executeRunnerRequestFn?: typeof executeRunnerRequest;
   resolveProductRuntimeConfigFn?: typeof resolveProductRuntimeConfig;
+  abortSignal?: AbortSignal;
 }): Promise<void> {
   const { store, record } = params;
   const turnStartedAt = new Date().toISOString();
@@ -649,7 +782,7 @@ export async function processClaimedInput(params: {
   });
 
   const assistantParts: string[] = [];
-  let terminalStatus: "IDLE" | "WAITING_USER" | "ERROR" = "IDLE";
+  let terminalStatus: "IDLE" | "WAITING_USER" | "PAUSED" | "ERROR" = "IDLE";
   let lastError: Record<string, unknown> | null = null;
   let lastSequence = 0;
   let completedAt: string | null = null;
@@ -679,6 +812,7 @@ export async function processClaimedInput(params: {
   try {
     const executeRunner = params.executeRunnerRequestFn ?? executeRunnerRequest;
     const execution = await executeRunner(payload, {
+      signal: params.abortSignal,
       onHeartbeat: () => {
         store.updateRuntimeState({
           workspaceId: record.workspaceId,
@@ -857,7 +991,34 @@ export async function processClaimedInput(params: {
       }
     });
 
-    if (!execution.sawTerminal) {
+    if (execution.aborted && !execution.sawTerminal) {
+      const pausedAt = new Date().toISOString();
+      const completed = buildRunCompletedEvent({
+        sessionId: record.sessionId,
+        inputId: record.inputId,
+        sequence: lastSequence + 1,
+        payload: {
+          status: "paused",
+          stop_reason: "paused",
+          message: "Run paused by user request",
+        },
+      });
+      const completedPayload = payloadForEvent(completed);
+      lastSequence = Math.max(lastSequence, typeof completed.sequence === "number" ? completed.sequence : lastSequence + 1);
+      deferredTerminalEvent = {
+        eventType: "run_completed",
+        payload: completedPayload,
+        createdAt: pausedAt,
+      };
+      terminalStatus = "PAUSED";
+      lastError = null;
+      completedAt = pausedAt;
+      stopReason = stopReasonForTerminalEvent({
+        eventType: "run_completed",
+        payload: completedPayload,
+        terminalStatus,
+      });
+    } else if (!execution.sawTerminal) {
       const details = execution.skippedLines.length > 0 ? execution.skippedLines.slice(0, 3).join("; ") : "";
       const suffix = details ? ` (skipped output: ${details})` : "";
       const failure = buildRunFailedEvent({
@@ -888,7 +1049,7 @@ export async function processClaimedInput(params: {
     }
 
     store.updateInput(record.inputId, {
-      status: terminalStatus === "ERROR" ? "FAILED" : "DONE",
+      status: terminalStatus === "ERROR" ? "FAILED" : terminalStatus === "PAUSED" ? "PAUSED" : "DONE",
       claimedUntil: null
     });
     store.updateRuntimeState({
@@ -987,6 +1148,11 @@ export async function processClaimedInput(params: {
       wakeDurableMemoryWorker: params.wakeDurableMemoryWorker ?? null,
       onTaskError: params.onPostRunTaskError,
     });
+    maybeCreateCronjobCompletionNotification({
+      store,
+      record,
+      turnResult,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     store.updateInput(record.inputId, {
@@ -1035,6 +1201,11 @@ export async function processClaimedInput(params: {
       modelContext: memoryWritebackModelContext,
       wakeDurableMemoryWorker: params.wakeDurableMemoryWorker ?? null,
       onTaskError: params.onPostRunTaskError,
+    });
+    maybeCreateCronjobCompletionNotification({
+      store,
+      record,
+      turnResult,
     });
   }
 }

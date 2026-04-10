@@ -23,6 +23,11 @@ interface AutomationsPaneProps {
   onCreateSchedule?: () => void;
 }
 
+interface RefreshDataOptions {
+  preserveStatusMessage?: boolean;
+  suppressErrors?: boolean;
+}
+
 function normalizeErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed.";
 }
@@ -198,7 +203,10 @@ export function AutomationsPane({
     setStatusMessage(message);
   };
 
-  const refreshData = useCallback(async () => {
+  const refreshData = useCallback(async (options?: RefreshDataOptions) => {
+    const preserveStatusMessage = options?.preserveStatusMessage ?? false;
+    const suppressErrors = options?.suppressErrors ?? false;
+
     if (!selectedWorkspaceId) {
       setCronjobs([]);
       setCompletedRuns([]);
@@ -245,10 +253,14 @@ export function AutomationsPane({
         });
 
       setCompletedRuns(nextCompletedRuns);
-      setStatusMessage("");
+      if (!preserveStatusMessage) {
+        setStatusMessage("");
+      }
     } catch (error) {
-      setStatusTone("error");
-      setStatusMessage(normalizeErrorMessage(error));
+      if (!suppressErrors) {
+        setStatusTone("error");
+        setStatusMessage(normalizeErrorMessage(error));
+      }
     } finally {
       setIsLoading(false);
     }
@@ -263,9 +275,13 @@ export function AutomationsPane({
     setStatusMessage("");
     try {
       await window.electronAPI.workspace.deleteCronjob(job.id);
+      setCronjobs((previous) => previous.filter((item) => item.id !== job.id));
       setStatusTone("success");
       setStatusMessage(`Deleted schedule "${jobTitle(job)}".`);
-      await refreshData();
+      void refreshData({
+        preserveStatusMessage: true,
+        suppressErrors: true,
+      });
     } catch (error) {
       setStatusTone("error");
       setStatusMessage(normalizeErrorMessage(error));
@@ -281,11 +297,17 @@ export function AutomationsPane({
       const updated = await window.electronAPI.workspace.updateCronjob(job.id, {
         enabled: !job.enabled,
       });
+      setCronjobs((previous) =>
+        previous.map((item) => (item.id === updated.id ? updated : item)),
+      );
       setStatusTone("success");
       setStatusMessage(
         `${updated.enabled ? "Enabled" : "Disabled"} "${jobTitle(updated)}".`,
       );
-      await refreshData();
+      void refreshData({
+        preserveStatusMessage: true,
+        suppressErrors: true,
+      });
     } catch (error) {
       setStatusTone("error");
       setStatusMessage(normalizeErrorMessage(error));
@@ -299,9 +321,17 @@ export function AutomationsPane({
     setStatusMessage("");
     try {
       const response = await window.electronAPI.workspace.runCronjobNow(job.id);
+      setCronjobs((previous) =>
+        previous.map((item) =>
+          item.id === response.cronjob.id ? response.cronjob : item,
+        ),
+      );
       setStatusTone("success");
       setStatusMessage(`Ran "${jobTitle(response.cronjob)}" now.`);
-      await refreshData();
+      void refreshData({
+        preserveStatusMessage: true,
+        suppressErrors: true,
+      });
     } catch (error) {
       setStatusTone("error");
       setStatusMessage(normalizeErrorMessage(error));

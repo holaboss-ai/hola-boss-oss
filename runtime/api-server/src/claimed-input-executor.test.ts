@@ -76,7 +76,6 @@ test("claimed input marks missing workspace failed and runtime error", async () 
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -149,7 +148,6 @@ test("claimed input persists runner events, assistant text, and idle state on su
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -305,14 +303,161 @@ test("claimed input persists runner events, assistant text, and idle state on su
   store.close();
 });
 
-test("claimed input ignores waiting_user terminal status for harnesses that do not support it", async () => {
+test("claimed input creates a completion notification for successful cronjob session runs", async () => {
+  const store = makeStore("hb-claimed-input-cronjob-success-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const job = store.createCronjob({
+    workspaceId: workspace.id,
+    initiatedBy: "workspace_agent",
+    name: "daily-sync",
+    cron: "0 9 * * *",
+    description: "Daily sync",
+    instruction: "Sync the workspace.",
+    delivery: { channel: "session_run" },
+    metadata: {
+      notification_title: "Daily Run",
+      notification_priority: "high",
+    },
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-cron",
+    kind: "cronjob",
+    title: "Daily sync",
+    createdBy: "workspace_agent",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-cron",
+    payload: {
+      text: "Sync the workspace.",
+      context: {
+        source: "cronjob",
+        cronjob_id: job.id,
+      },
+    },
+  });
+  setNodeRunnerCommand([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    `process.stdout.write(JSON.stringify({ session_id: 'session-cron', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'Sync the workspace.' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-cron', input_id: '${queued.inputId}', sequence: 2, event_type: 'output_delta', payload: { delta: 'Hello from cron' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-cron', input_id: '${queued.inputId}', sequence: 3, event_type: 'run_completed', payload: { status: 'ok' } }) + '\\n');`,
+  ]);
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+  });
+
+  const notifications = store.listRuntimeNotifications({ workspaceId: workspace.id });
+
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0]?.title, "Daily Run Completed");
+  assert.equal(notifications[0]?.message, "Hello from cron");
+  assert.equal(notifications[0]?.level, "success");
+  assert.equal(notifications[0]?.priority, "high");
+  assert.equal(notifications[0]?.cronjobId, job.id);
+  assert.equal(notifications[0]?.metadata.session_id, "session-cron");
+  assert.equal(notifications[0]?.metadata.input_id, queued.inputId);
+  assert.equal(notifications[0]?.metadata.turn_status, "completed");
+  assert.equal(notifications[0]?.metadata.stop_reason, "ok");
+
+  store.close();
+});
+
+test("claimed input creates a completion notification for failed cronjob session runs", async () => {
+  const store = makeStore("hb-claimed-input-cronjob-failure-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const job = store.createCronjob({
+    workspaceId: workspace.id,
+    initiatedBy: "workspace_agent",
+    name: "daily-sync",
+    cron: "0 9 * * *",
+    description: "Daily sync",
+    instruction: "Sync the workspace.",
+    delivery: { channel: "session_run" },
+    metadata: {
+      notification_title: "Daily Run",
+    },
+  });
+  store.ensureSession({
+    workspaceId: workspace.id,
+    sessionId: "session-cron",
+    kind: "cronjob",
+    title: "Daily sync",
+    createdBy: "workspace_agent",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-cron",
+    payload: {
+      text: "Sync the workspace.",
+      context: {
+        source: "cronjob",
+        cronjob_id: job.id,
+      },
+    },
+  });
+  setNodeRunnerCommand([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    `process.stdout.write(JSON.stringify({ session_id: 'session-cron', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'Sync the workspace.' } }) + '\\n');`,
+    `process.stdout.write(JSON.stringify({ session_id: 'session-cron', input_id: '${queued.inputId}', sequence: 2, event_type: 'run_failed', payload: { type: 'ProviderError', message: 'boom' } }) + '\\n');`,
+  ]);
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300,
+  });
+
+  await processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+  });
+
+  const notifications = store.listRuntimeNotifications({ workspaceId: workspace.id });
+
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0]?.title, "Daily Run Failed");
+  assert.equal(notifications[0]?.message, "Run failed: ProviderError.");
+  assert.equal(notifications[0]?.level, "error");
+  assert.equal(notifications[0]?.priority, "normal");
+  assert.equal(notifications[0]?.cronjobId, job.id);
+  assert.equal(notifications[0]?.metadata.session_id, "session-cron");
+  assert.equal(notifications[0]?.metadata.input_id, queued.inputId);
+  assert.equal(notifications[0]?.metadata.turn_status, "failed");
+  assert.equal(notifications[0]?.metadata.stop_reason, "ProviderError");
+
+  store.close();
+});
+
+test("claimed input persists waiting_user terminal status for harnesses that support it", async () => {
   const store = makeStore("hb-claimed-input-pi-waiting-user-");
   const workspace = store.createWorkspace({
     workspaceId: "workspace-1",
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -348,10 +493,95 @@ test("claimed input ignores waiting_user terminal status for harnesses that do n
   assert.ok(updated);
   assert.equal(updated.status, "DONE");
   assert.ok(runtimeState);
-  assert.equal(runtimeState.status, "IDLE");
+  assert.equal(runtimeState.status, "WAITING_USER");
   assert.ok(turnResult);
-  assert.equal(turnResult.status, "completed");
+  assert.equal(turnResult.status, "waiting_user");
   assert.equal(turnResult.stopReason, "waiting_user");
+
+  store.close();
+});
+
+test("claimed input persists a paused turn when the run is aborted mid-execution", async () => {
+  const store = makeStore("hb-claimed-input-paused-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "pause this run" }
+  });
+  setNodeRunnerCommand([
+    "const request = process.argv.at(-1) ?? '';",
+    "void request;",
+    `process.stdout.write(JSON.stringify({ session_id: 'session-main', input_id: '${queued.inputId}', sequence: 1, event_type: 'run_started', payload: { instruction_preview: 'pause this run' } }) + '\\n');`,
+    "setInterval(() => {}, 1000);"
+  ]);
+
+  const claimed = store.claimInputs({
+    limit: 1,
+    claimedBy: "sandbox-agent-ts-worker",
+    leaseSeconds: 300
+  });
+  const controller = new AbortController();
+  let postRunCalls = 0;
+  const execution = processClaimedInput({
+    store,
+    record: claimed[0],
+    claimedBy: "sandbox-agent-ts-worker",
+    abortSignal: controller.signal,
+    runPostRunTasksFn: async () => {
+      postRunCalls += 1;
+    },
+  });
+
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (
+      store.listOutputEvents({
+        sessionId: "session-main",
+        inputId: queued.inputId,
+      }).length > 0
+    ) {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  controller.abort("user_requested_pause");
+  await execution;
+
+  const updated = store.getInput(queued.inputId);
+  const runtimeState = store.getRuntimeState({
+    workspaceId: workspace.id,
+    sessionId: "session-main"
+  });
+  const events = store.listOutputEvents({
+    sessionId: "session-main",
+    inputId: queued.inputId
+  });
+  const turnResult = store.getTurnResult({ inputId: queued.inputId });
+
+  assert.equal(postRunCalls, 1);
+  assert.ok(updated);
+  assert.equal(updated.status, "PAUSED");
+  assert.ok(runtimeState);
+  assert.equal(runtimeState.status, "PAUSED");
+  assert.equal(runtimeState.currentInputId, null);
+  assert.equal(runtimeState.lastError, null);
+  assert.deepEqual(
+    events.map((event) => event.eventType),
+    ["run_started", "run_completed"]
+  );
+  assert.deepEqual(events[1]?.payload, {
+    status: "paused",
+    stop_reason: "paused",
+    message: "Run paused by user request",
+  });
+  assert.ok(turnResult);
+  assert.equal(turnResult.status, "paused");
+  assert.equal(turnResult.stopReason, "paused");
 
   store.close();
 });
@@ -363,7 +593,6 @@ test("claimed input captures file outputs and persists an assistant turn for out
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -436,7 +665,6 @@ test("claimed input records skill-policy denial audit in tool usage summary", as
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -518,7 +746,6 @@ test("claimed input synthesizes run_failed when runner exits without terminal ev
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -578,7 +805,6 @@ test("claimed input succeeds when runner emits terminal event but keeps the proc
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -640,7 +866,6 @@ test("claimed input fails when runner becomes idle after run_started", async () 
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -708,7 +933,6 @@ test("claimed input hydrates runtime exec context from runtime config", async ()
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -794,7 +1018,6 @@ test("claimed input resolves post-run model context from the provider background
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   const queued = store.enqueueInput({
     workspaceId: workspace.id,
@@ -862,7 +1085,6 @@ test("claimed onboarding input instructs native onboarding tools directly", asyn
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main",
     onboardingStatus: "pending",
     onboardingSessionId: "session-onboarding"
   });
@@ -921,7 +1143,6 @@ test("claimed onboarding input includes ONBOARD.md verbatim", async () => {
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main",
     onboardingStatus: "pending",
     onboardingSessionId: "session-onboarding"
   });
@@ -979,7 +1200,6 @@ test("claimed input persists replacement harness session id from terminal runner
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   store.upsertBinding({
     workspaceId: workspace.id,
@@ -1029,7 +1249,6 @@ test("claimed input passes persisted child session kind into the runner payload"
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   store.ensureSession({
     workspaceId: workspace.id,
@@ -1084,7 +1303,6 @@ test("claimed input resets harness session binding to the local session after ru
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main"
   });
   store.upsertBinding({
     workspaceId: workspace.id,

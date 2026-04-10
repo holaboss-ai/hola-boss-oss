@@ -181,6 +181,140 @@ test("Pi runtime cronjob tools send instruction separately from description", as
   ]);
 });
 
+test("Pi runtime image generation tool forwards prompt and optional output settings", async () => {
+  const requests: Array<{
+    method: string;
+    url: string;
+    workspaceId: string;
+    sessionId: string;
+    selectedModel: string;
+    body: string;
+  }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/capabilities/runtime-tools")) {
+      return new Response(JSON.stringify({ available: true }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+
+    const body = init?.body ? String(init.body) : "";
+    requests.push({
+      method: String(init?.method ?? "GET"),
+      url,
+      workspaceId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-workspace-id"] ?? ""),
+      sessionId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-session-id"] ?? ""),
+      selectedModel: String(
+        (init?.headers as Record<string, string> | undefined)?.["x-holaboss-selected-model"] ?? ""
+      ),
+      body,
+    });
+
+    return new Response(JSON.stringify({ file_path: "outputs/images/cover.png" }), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+  };
+
+  const tools = await resolvePiRuntimeToolDefinitions({
+    runtimeApiBaseUrl: "http://127.0.0.1:5060",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    selectedModel: "openai/gpt-5.4",
+    fetchImpl,
+  });
+
+  const generateTool = tools.find((tool) => tool.name === "image_generate");
+  assert.ok(generateTool);
+
+  await generateTool.execute(
+    "call-1",
+    {
+      prompt: "A product hero image with a clean studio background.",
+      filename: "cover-shot",
+      size: "1024x1024",
+    },
+    undefined,
+    undefined,
+    {} as never
+  );
+
+  assert.deepEqual(requests, [
+    {
+      method: "POST",
+      url: "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/images/generate",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      selectedModel: "openai/gpt-5.4",
+      body: JSON.stringify({
+        prompt: "A product hero image with a clean studio background.",
+        filename: "cover-shot",
+        size: "1024x1024",
+      }),
+    },
+  ]);
+});
+
+test("Pi runtime image generation tool uses an extended timeout budget", async () => {
+  const originalTimeout = AbortSignal.timeout;
+  const timeoutCalls: number[] = [];
+  const timeoutSignal = new AbortController().signal;
+  Object.defineProperty(AbortSignal, "timeout", {
+    configurable: true,
+    writable: true,
+    value: (ms: number) => {
+      timeoutCalls.push(ms);
+      return timeoutSignal;
+    },
+  });
+
+  try {
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/capabilities/runtime-tools")) {
+        return new Response(JSON.stringify({ available: true }), {
+          status: 200,
+          headers: { "content-type": "application/json; charset=utf-8" },
+        });
+      }
+      return new Response(JSON.stringify({ file_path: "outputs/images/dog.png" }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    };
+
+    const tools = await resolvePiRuntimeToolDefinitions({
+      runtimeApiBaseUrl: "http://127.0.0.1:5060",
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      selectedModel: "openai/gpt-5.4",
+      fetchImpl,
+    });
+
+    const generateTool = tools.find((tool) => tool.name === "image_generate");
+    assert.ok(generateTool);
+
+    await generateTool.execute(
+      "call-1",
+      {
+        prompt: "A friendly dog portrait.",
+      },
+      undefined,
+      undefined,
+      {} as never,
+    );
+
+    assert.ok(timeoutCalls.includes(180000));
+  } finally {
+    Object.defineProperty(AbortSignal, "timeout", {
+      configurable: true,
+      writable: true,
+      value: originalTimeout,
+    });
+  }
+});
+
 test("Pi runtime tools fall back to node http when no fetch implementation is provided", async () => {
   const requests: Array<{
     method: string;

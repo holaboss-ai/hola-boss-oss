@@ -54,6 +54,7 @@ import {
   AppLifecycleExecutorError,
   appBuildHasCompletedSetup,
   isAppHealthy,
+  killPortListeners,
   type AppLifecycleExecutorLike,
   RuntimeAppLifecycleExecutor
 } from "./app-lifecycle-worker.js";
@@ -224,6 +225,8 @@ interface SessionInputAttachmentPayload {
   workspace_path: string;
 }
 
+const SESSION_TITLE_MAX_LENGTH = 80;
+
 function defaultWorkspaceRoot(): string | undefined {
   const sandboxRoot = (process.env.HB_SANDBOX_ROOT ?? "").trim();
   if (!sandboxRoot) {
@@ -265,6 +268,31 @@ function nullableString(value: unknown): string | null | undefined {
     return null;
   }
   return typeof value === "string" ? value : undefined;
+}
+
+function normalizedSessionTitleSnippet(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= SESSION_TITLE_MAX_LENGTH) {
+    return normalized;
+  }
+  return `${normalized.slice(0, SESSION_TITLE_MAX_LENGTH - 3).trimEnd()}...`;
+}
+
+function sessionTitleFromFirstUserInput(
+  text: string,
+  attachments: SessionInputAttachmentPayload[],
+): string | null {
+  if (text.trim()) {
+    return normalizedSessionTitleSnippet(text);
+  }
+  if (attachments.length === 1) {
+    return normalizedSessionTitleSnippet(attachments[0]?.name?.trim() || "Attachment");
+  }
+  if (attachments.length > 1) {
+    const firstName = attachments[0]?.name?.trim() || "Attachment";
+    return normalizedSessionTitleSnippet(`${firstName} +${attachments.length - 1} more`);
+  }
+  return null;
 }
 
 function optionalBoolean(value: unknown, defaultValue = false): boolean {
@@ -470,7 +498,6 @@ function workspaceRecordPayload(workspace: WorkspaceRecord): Record<string, unkn
     name: workspace.name,
     status: workspace.status,
     harness: workspace.harness,
-    main_session_id: workspace.mainSessionId,
     error_message: workspace.errorMessage,
     onboarding_status: workspace.onboardingStatus,
     onboarding_session_id: workspace.onboardingSessionId,
@@ -511,6 +538,18 @@ function runtimeStatePayload(record: SessionRuntimeStateRecord): Record<string, 
     last_error: record.lastError,
     created_at: record.createdAt,
     updated_at: record.updatedAt
+  };
+}
+
+function runtimeStateListItemPayload(params: {
+  record: SessionRuntimeStateRecord;
+  lastTurnResult?: TurnResultRecord | null;
+}): Record<string, unknown> {
+  return {
+    ...runtimeStatePayload(params.record),
+    last_turn_status: params.lastTurnResult?.status ?? null,
+    last_turn_completed_at: params.lastTurnResult?.completedAt ?? null,
+    last_turn_stop_reason: params.lastTurnResult?.stopReason ?? null,
   };
 }
 
@@ -634,6 +673,7 @@ function externalIdFromOutputRecord(record: OutputRecord): string {
 function sessionArtifactPayload(record: OutputRecord): Record<string, unknown> {
   return {
     id: record.artifactId ?? record.id,
+    output_id: record.id,
     session_id: record.sessionId,
     workspace_id: record.workspaceId,
     input_id: record.inputId,
@@ -765,18 +805,56 @@ function resolvedWorkspaceHarness(workspace: WorkspaceRecord): string {
   return harness || "pi";
 }
 
+function sessionSelectionUsesOnboarding(workspace: WorkspaceRecord): boolean {
+  const onboardingSessionId = (workspace.onboardingSessionId ?? "").trim();
+  if (!onboardingSessionId) {
+    return false;
+  }
+  const onboardingStatus = (workspace.onboardingStatus ?? "").trim().toLowerCase();
+  return ["pending", "awaiting_confirmation", "in_progress"].includes(onboardingStatus);
+}
+
 function inferredSessionKind(workspace: WorkspaceRecord, sessionId: string): string {
   const trimmedSessionId = sessionId.trim();
   const onboardingSessionId = (workspace.onboardingSessionId ?? "").trim();
-  const onboardingStatus = (workspace.onboardingStatus ?? "").trim().toLowerCase();
-  if (onboardingSessionId && onboardingSessionId === trimmedSessionId && ["pending", "awaiting_confirmation", "in_progress"].includes(onboardingStatus)) {
+  if (onboardingSessionId && onboardingSessionId === trimmedSessionId && sessionSelectionUsesOnboarding(workspace)) {
     return "onboarding";
   }
-  const mainSessionId = (workspace.mainSessionId ?? "").trim();
-  if (mainSessionId && mainSessionId === trimmedSessionId) {
-    return "main";
-  }
   return "workspace_session";
+}
+
+function isPrimaryChatSessionKind(kind: string | null | undefined): boolean {
+  const normalized = (kind ?? "").trim().toLowerCase();
+  return !normalized || normalized === "workspace_session";
+}
+
+function preferredWorkspaceSessionId(params: {
+  store: RuntimeStateStore;
+  workspace: WorkspaceRecord;
+}): string | null {
+  if (sessionSelectionUsesOnboarding(params.workspace)) {
+    return (params.workspace.onboardingSessionId ?? "").trim() || null;
+  }
+
+  const onboardingSessionId = (params.workspace.onboardingSessionId ?? "").trim();
+  const sessions = params.store.listSessions({
+    workspaceId: params.workspace.id,
+    includeArchived: false,
+    limit: 200,
+    offset: 0,
+  });
+  const preferredPrimary = sessions.find((session) => {
+    if (session.sessionId === onboardingSessionId) {
+      return false;
+    }
+    return isPrimaryChatSessionKind(session.kind);
+  });
+  if (preferredPrimary) {
+    return preferredPrimary.sessionId;
+  }
+
+  const fallback = sessions.find((session) => session.sessionId !== onboardingSessionId) ?? sessions[0] ?? null;
+  return fallback?.sessionId ?? null;
 }
 
 function outputTypeForArtifact(artifactType: string): string {
@@ -810,22 +888,15 @@ function resolveOutputInputId(params: {
   return runtimeState?.currentInputId?.trim() || null;
 }
 
-function resolveQueueSessionId(requestedSessionId: string | undefined, workspace: WorkspaceRecord): string {
+function resolveQueueSessionId(
+  requestedSessionId: string | undefined,
+  store: RuntimeStateStore,
+  workspace: WorkspaceRecord,
+): string {
   if (requestedSessionId && requestedSessionId.trim()) {
     return requestedSessionId.trim();
   }
-  const onboardingStatus = (workspace.onboardingStatus ?? "").trim().toLowerCase();
-  if (
-    ["pending", "awaiting_confirmation"].includes(onboardingStatus) &&
-    workspace.onboardingSessionId &&
-    workspace.onboardingSessionId.trim()
-  ) {
-    return workspace.onboardingSessionId;
-  }
-  if (workspace.mainSessionId && workspace.mainSessionId.trim()) {
-    return workspace.mainSessionId;
-  }
-  throw new Error("workspace main_session_id is not configured");
+  return preferredWorkspaceSessionId({ store, workspace }) ?? randomUUID();
 }
 
 function activeUserPreferenceMemoryMatchesProposal(params: {
@@ -1454,6 +1525,50 @@ async function executeWorkspaceCommand(command: string, cwd: string, timeoutSeco
   });
 }
 
+/**
+ * Kill processes that are still listening on ports allocated to deleted or
+ * non-existent workspaces.  Runs once at startup to recover from unclean
+ * shutdowns where the normal stopApp cleanup never ran.
+ */
+async function cleanupOrphanAppProcesses(
+  store: RuntimeStateStore,
+  log: { info: (...args: unknown[]) => void; debug: (...args: unknown[]) => void }
+): Promise<void> {
+  const allPorts = store.listAllAppPorts();
+  if (allPorts.length === 0) {
+    return;
+  }
+
+  const activeWorkspaceIds = new Set(
+    store.listWorkspaces({ includeDeleted: false }).map((ws) => ws.id)
+  );
+
+  const orphanPorts: number[] = [];
+  const orphanRecords: Array<{ workspaceId: string; appId: string }> = [];
+
+  for (const record of allPorts) {
+    if (!activeWorkspaceIds.has(record.workspaceId)) {
+      orphanPorts.push(record.port);
+      orphanRecords.push({ workspaceId: record.workspaceId, appId: record.appId });
+    }
+  }
+
+  if (orphanPorts.length === 0) {
+    return;
+  }
+
+  log.info(
+    { orphanPorts, count: orphanPorts.length },
+    "cleaning up orphan app processes from deleted workspaces"
+  );
+
+  await killPortListeners(orphanPorts);
+
+  for (const record of orphanRecords) {
+    store.deleteAppPort({ workspaceId: record.workspaceId, appId: record.appId });
+  }
+}
+
 export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}): FastifyInstance {
   const ownsStore = !options.store;
   const store =
@@ -1482,7 +1597,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     : null;
   const brokerService = new IntegrationBrokerService(store, composioService);
   const oauthService = new OAuthService(store);
-  const runtimeAgentToolsService = new RuntimeAgentToolsService(store);
+  const runtimeAgentToolsService = new RuntimeAgentToolsService(store, { workspaceRoot: store.workspaceRoot });
   const runnerExecutor = options.runnerExecutor ?? new NativeRunnerExecutor();
   const durableMemoryWorker = resolveDurableMemoryWorker(options, app, store, memoryService);
   const queueWorker = resolveQueueWorker(options, app, store, memoryService, durableMemoryWorker);
@@ -1551,6 +1666,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         appDir: resolved.appDir,
         httpPort: resolved.ports.http,
         mcpPort: resolved.ports.mcp,
+        workspaceId,
         resolvedApp: resolved.resolvedApp,
         skipSetup: true
       });
@@ -1669,6 +1785,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       await appLifecycleExecutor.stopApp({
         appId,
         appDir: resolved.appDir,
+        workspaceId: params.workspaceId,
         resolvedApp: resolved.resolvedApp
       });
       store.upsertAppBuild({ workspaceId: params.workspaceId, appId, status: "stopped" });
@@ -1680,6 +1797,12 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     workspaceId: string;
     workspaceDir: string;
   }): Promise<void> {
+    // Collect all port records BEFORE any cleanup so we can force-kill as a safety net
+    // even if the normal stopApp flow fails or in-memory maps are stale.
+    const allocatedPorts: number[] = store
+      .listAppPorts({ workspaceId: params.workspaceId })
+      .map((p) => p.port);
+
     let entries: Array<Record<string, unknown>> = [];
     try {
       entries = listWorkspaceApplications(params.workspaceDir);
@@ -1712,13 +1835,15 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         await appLifecycleExecutor.stopApp({
           appId,
           appDir: resolved.appDir,
+          workspaceId: params.workspaceId,
           resolvedApp: resolved.resolvedApp
         });
       } catch (error) {
         try {
           await appLifecycleExecutor.stopApp({
             appId,
-            appDir: fallbackAppDir
+            appDir: fallbackAppDir,
+            workspaceId: params.workspaceId
           });
         } catch (fallbackError) {
           app.log.debug(
@@ -1734,6 +1859,20 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       } finally {
         releaseWorkspaceAppPorts({ store, workspaceId: params.workspaceId, appId });
         store.deleteAppBuild({ workspaceId: params.workspaceId, appId });
+      }
+    }
+
+    // Safety net: force-kill any process still listening on the allocated ports.
+    // This handles the case where stopApp failed, in-memory maps were stale after
+    // a runtime restart, or multiple workspaces had colliding appId keys.
+    if (allocatedPorts.length > 0) {
+      try {
+        await killPortListeners(allocatedPorts);
+      } catch {
+        app.log.debug(
+          { workspaceId: params.workspaceId, ports: allocatedPorts },
+          "best-effort port kill during workspace delete"
+        );
       }
     }
 
@@ -1851,6 +1990,14 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     await bridgeWorker?.start();
     if (options.enableAppHealthMonitor !== false) {
       startHealthMonitor();
+    }
+
+    // Clean up orphan processes from deleted workspaces whose ports were
+    // never properly released (e.g. runtime crashed before cleanup finished).
+    try {
+      await cleanupOrphanAppProcesses(store, app.log);
+    } catch (err) {
+      app.log.error({ err: err instanceof Error ? err.message : String(err) }, "orphan app process cleanup failed");
     }
 
     if (options.startAppsOnReady !== false) {
@@ -2284,7 +2431,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 502, error instanceof Error ? error.message : "composio finalize failed");
     }
   });
-  // ---- Runtime Agent Tools (onboarding, cronjobs) ----
+  // ---- Runtime Agent Tools (onboarding, cronjobs, media) ----
 
   app.get("/api/v1/capabilities/runtime-tools", async (request) => {
     const workspaceId = capabilityWorkspaceId({
@@ -2449,6 +2596,36 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 400, error instanceof Error ? error.message : "runtime cronjob delete failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/images/generate", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      return await runtimeAgentToolsService.generateImage({
+        workspaceId: requiredCapabilityWorkspaceId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        sessionId: capabilitySessionId({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        selectedModel: capabilitySelectedModel({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        prompt: requiredString(request.body.prompt, "prompt"),
+        filename: nullableString(request.body.filename) ?? undefined,
+        size: nullableString(request.body.size) ?? undefined,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime image generation failed");
     }
   });
 
@@ -2675,7 +2852,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         name: requiredString(request.body.name, "name"),
         harness: requiredString(request.body.harness, "harness"),
         status: optionalString(request.body.status) ?? "provisioning",
-        mainSessionId: nullableString(request.body.main_session_id) ?? null,
         onboardingStatus: optionalString(request.body.onboarding_status) ?? "not_required",
         onboardingSessionId: nullableString(request.body.onboarding_session_id) ?? null,
         errorMessage: nullableString(request.body.error_message) ?? null
@@ -2756,9 +2932,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       if (hasOwn(request.body, "status")) {
         fields.status = nullableString(request.body.status);
       }
-      if (hasOwn(request.body, "main_session_id")) {
-        fields.mainSessionId = nullableString(request.body.main_session_id);
-      }
       if (hasOwn(request.body, "error_message")) {
         fields.errorMessage = nullableString(request.body.error_message) ?? null;
       }
@@ -2804,7 +2977,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
           name: workspace?.name ?? params.workspaceId,
           status: "deleted",
           harness: workspace?.harness ?? null,
-          main_session_id: workspace?.mainSessionId ?? null,
           error_message: null,
           onboarding_status: workspace?.onboardingStatus ?? "not_required",
           onboarding_session_id: null,
@@ -3174,6 +3346,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         httpPort: resolvedApp.ports.http,
         mcpPort: resolvedApp.ports.mcp,
         holabossUserId,
+        workspaceId,
         resolvedApp: resolvedApp.resolvedApp,
         skipSetup: appBuildHasCompletedSetup(build?.status)
       });
@@ -3225,6 +3398,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       const result = await appLifecycleExecutor.stopApp({
         appId,
         appDir: resolvedApp.appDir,
+        workspaceId,
         resolvedApp: resolvedApp.resolvedApp
       });
       store.upsertAppBuild({
@@ -3474,6 +3648,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       await appLifecycleExecutor.stopApp({
         appId,
         appDir: resolvedApp.appDir,
+        workspaceId,
         resolvedApp: resolvedApp.resolvedApp
       });
     } catch {
@@ -3489,6 +3664,49 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       status: "uninstalled",
       detail: "App stopped, files removed, workspace.yaml updated",
       ports: {}
+    };
+  });
+
+  app.post("/api/v1/agent-sessions", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+
+    const workspaceId = requiredString(request.body.workspace_id, "workspace_id");
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+
+    const sessionId = optionalString(request.body.session_id) ?? randomUUID();
+    if (store.getSession({ workspaceId, sessionId })) {
+      return sendError(reply, 409, "session_id is already in use");
+    }
+
+    const session = store.ensureSession({
+      workspaceId,
+      sessionId,
+      kind: optionalString(request.body.kind) ?? inferredSessionKind(workspace, sessionId),
+      title: nullableString(request.body.title) ?? null,
+      parentSessionId: nullableString(request.body.parent_session_id) ?? null,
+      createdBy: nullableString(request.body.created_by) ?? "workspace_user",
+    });
+    if (!store.getBinding({ workspaceId, sessionId })) {
+      store.upsertBinding({
+        workspaceId,
+        sessionId,
+        harness: resolvedWorkspaceHarness(workspace),
+        harnessSessionId: sessionId,
+      });
+    }
+    store.ensureRuntimeState({
+      workspaceId,
+      sessionId,
+      status: "IDLE",
+    });
+
+    return {
+      session: agentSessionPayload(session),
     };
   });
 
@@ -3508,9 +3726,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
     let resolvedSessionId: string;
     try {
-      resolvedSessionId = resolveQueueSessionId(optionalString(request.body.session_id), workspace);
+      resolvedSessionId = resolveQueueSessionId(optionalString(request.body.session_id), store, workspace);
     } catch (error) {
-      return sendError(reply, 409, error instanceof Error ? error.message : "workspace main_session_id is not configured");
+      return sendError(reply, 409, error instanceof Error ? error.message : "workspace session is not configured");
     }
 
     const workspaceDir = store.workspaceDir(workspaceId);
@@ -3525,16 +3743,18 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 422, "text or attachments are required");
     }
 
+    const existingSession = store.getSession({
+      workspaceId,
+      sessionId: resolvedSessionId
+    });
+    const inferredKind = inferredSessionKind(workspace, resolvedSessionId);
+    const generatedSessionTitle = sessionTitleFromFirstUserInput(trimmedText, attachments);
+
     store.ensureSession({
       workspaceId,
       sessionId: resolvedSessionId,
-      kind: inferredSessionKind(workspace, resolvedSessionId),
-      title:
-        inferredSessionKind(workspace, resolvedSessionId) === "onboarding"
-          ? "Onboarding"
-          : inferredSessionKind(workspace, resolvedSessionId) === "main"
-          ? "Main"
-          : null
+      kind: inferredKind,
+      title: existingSession?.title?.trim() ? undefined : generatedSessionTitle
     });
     if (!store.getBinding({ workspaceId, sessionId: resolvedSessionId })) {
       store.upsertBinding({
@@ -3595,6 +3815,38 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     };
   });
 
+  app.post("/api/v1/agent-sessions/:sessionId/pause", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    const params = request.params as { sessionId: string };
+    const workspaceId = optionalString(request.body.workspace_id);
+    if (!workspaceId) {
+      return sendError(reply, 400, "workspace_id is required");
+    }
+    const workspace = store.getWorkspace(workspaceId);
+    if (!workspace) {
+      return sendError(reply, 404, "workspace not found");
+    }
+    if (!queueWorker?.pauseSessionRun) {
+      return sendError(reply, 409, "runtime pause is not available");
+    }
+
+    const paused = await queueWorker.pauseSessionRun({
+      workspaceId,
+      sessionId: params.sessionId,
+    });
+    if (!paused) {
+      return sendError(reply, 409, "session is not currently running");
+    }
+
+    return {
+      input_id: paused.inputId,
+      session_id: paused.sessionId,
+      status: paused.status,
+    };
+  });
+
   app.get("/api/v1/agent-sessions", async (request, reply) => {
     const query = isRecord(request.query) ? request.query : {};
     const workspaceId = optionalString(query.workspace_id);
@@ -3642,7 +3894,18 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     const params = request.params as { workspaceId: string };
     const items = store
       .listRuntimeStates(params.workspaceId)
-      .map((item: SessionRuntimeStateRecord) => runtimeStatePayload(item));
+      .map((item: SessionRuntimeStateRecord) =>
+        runtimeStateListItemPayload({
+          record: item,
+          lastTurnResult:
+            store.listTurnResults({
+              workspaceId: params.workspaceId,
+              sessionId: item.sessionId,
+              limit: 1,
+              offset: 0,
+            })[0] ?? null,
+        }),
+      );
     return { items, count: items.length };
   });
 
@@ -3681,8 +3944,6 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       harness: binding.harness,
       harness_session_id: binding.harnessSessionId,
       source: "sandbox_local_storage",
-      main_session_id: workspace.mainSessionId,
-      is_main_session: workspace.mainSessionId === params.sessionId,
       messages,
       count: messages.length,
       total: allMessages.length,
@@ -3968,13 +4229,22 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         artifactsBySession.set(sessionId, [payload]);
       }
     }
-    const items = runtimeStates.map((row) => ({
-      session_id: row.sessionId,
-      status: row.status,
-      created_at: row.createdAt,
-      updated_at: row.updatedAt,
-      artifacts: artifactsBySession.get(row.sessionId) ?? [],
-    }));
+    const items = runtimeStates.map((row) => {
+      const lastTurnResult =
+        store.listTurnResults({
+          workspaceId: params.workspaceId,
+          sessionId: row.sessionId,
+          limit: 1,
+          offset: 0,
+        })[0] ?? null;
+      return {
+        ...runtimeStateListItemPayload({
+          record: row,
+          lastTurnResult,
+        }),
+        artifacts: artifactsBySession.get(row.sessionId) ?? [],
+      };
+    });
     return { items, count: items.length };
   });
 
@@ -4079,12 +4349,17 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     if (!isRecord(request.body)) {
       return sendError(reply, 400, "request body must be an object");
     }
+    const moduleId = nullableString(request.body.module_id) ?? null;
+    const metadata = optionalDict(request.body.metadata) ?? {};
+    if (moduleId && !metadata.origin_type) {
+      metadata.origin_type = "app";
+    }
     const output = store.createOutput({
       workspaceId: requiredString(request.body.workspace_id, "workspace_id"),
       outputType: requiredString(request.body.output_type, "output_type"),
       title: optionalString(request.body.title) ?? "",
       status: optionalString(request.body.status) ?? "draft",
-      moduleId: nullableString(request.body.module_id) ?? null,
+      moduleId,
       moduleResourceId: nullableString(request.body.module_resource_id) ?? null,
       filePath: nullableString(request.body.file_path) ?? null,
       htmlContent: nullableString(request.body.html_content) ?? null,
@@ -4093,7 +4368,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       artifactId: nullableString(request.body.artifact_id) ?? null,
       folderId: nullableString(request.body.folder_id) ?? null,
       platform: nullableString(request.body.platform) ?? null,
-      metadata: optionalDict(request.body.metadata) ?? {}
+      metadata
     });
     return { output: outputPayload(output) };
   });
@@ -4103,6 +4378,24 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 400, "request body must be an object");
     }
     const params = request.params as { outputId: string };
+    let patchMetadata: Record<string, unknown> | undefined;
+    if (hasOwn(request.body, "metadata")) {
+      const incoming = optionalDict(request.body.metadata) ?? {};
+      // Preserve origin_type from existing output if not provided in the patch,
+      // so that app updates don't accidentally strip it.
+      const existing = store.getOutput(params.outputId);
+      if (existing && !incoming.origin_type && existing.metadata.origin_type) {
+        incoming.origin_type = existing.metadata.origin_type;
+      }
+      // Also preserve artifact_type and change_type
+      if (existing && !incoming.artifact_type && existing.metadata.artifact_type) {
+        incoming.artifact_type = existing.metadata.artifact_type;
+      }
+      if (existing && !incoming.change_type && existing.metadata.change_type) {
+        incoming.change_type = existing.metadata.change_type;
+      }
+      patchMetadata = incoming;
+    }
     const output = store.updateOutput({
       outputId: params.outputId,
       title: nullableString(request.body.title),
@@ -4110,7 +4403,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       moduleResourceId: nullableString(request.body.module_resource_id),
       filePath: nullableString(request.body.file_path),
       htmlContent: nullableString(request.body.html_content),
-      metadata: hasOwn(request.body, "metadata") ? (optionalDict(request.body.metadata) ?? {}) : undefined,
+      metadata: patchMetadata,
       folderId: nullableString(request.body.folder_id)
     });
     if (!output) {

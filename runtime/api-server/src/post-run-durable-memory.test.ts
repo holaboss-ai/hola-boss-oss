@@ -50,7 +50,6 @@ function seedWorkspace(store: RuntimeStateStore): void {
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main",
   });
 }
 

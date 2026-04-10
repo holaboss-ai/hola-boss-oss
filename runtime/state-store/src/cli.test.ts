@@ -75,8 +75,7 @@ test("handleRequest maps workspace CRUD operations to snake_case payloads", () =
     workspace_id: "workspace-1",
     name: "Workspace 1",
     harness: "pi",
-    status: "provisioning",
-    main_session_id: "session-main"
+    status: "provisioning"
   }) as Record<string, unknown>;
   const listed = handleRequest("list-workspaces", {
     options
@@ -95,7 +94,6 @@ test("handleRequest maps workspace CRUD operations to snake_case payloads", () =
   }) as Record<string, unknown>;
 
   assert.equal(created.id, "workspace-1");
-  assert.equal(created.main_session_id, "session-main");
   assert.equal(listed.length, 1);
   assert.equal(updated.status, "active");
   assert.equal(updated.onboarding_status, "pending");

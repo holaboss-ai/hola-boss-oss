@@ -809,6 +809,67 @@ test("runtime state round trip supports ensure, update, list, and lookup", () =>
   store.close();
 });
 
+test("runtime state migration expands the status check constraint to include paused", () => {
+  const root = makeTempDir("hb-state-store-paused-runtime-state-");
+  const dbPath = path.join(root, "runtime.db");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({ dbPath, workspaceRoot });
+
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.ensureRuntimeState({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    status: "QUEUED",
+    currentInputId: "input-1",
+  });
+  store.close();
+
+  const db = new Database(dbPath);
+  db.exec(`
+    ALTER TABLE session_runtime_state RENAME TO session_runtime_state_current;
+
+    CREATE TABLE session_runtime_state (
+        workspace_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('IDLE', 'BUSY', 'WAITING_USER', 'ERROR', 'QUEUED')),
+        current_input_id TEXT,
+        current_worker_id TEXT,
+        lease_until TEXT,
+        heartbeat_at TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, session_id)
+    );
+
+    INSERT INTO session_runtime_state
+    SELECT * FROM session_runtime_state_current;
+
+    DROP TABLE session_runtime_state_current;
+  `);
+  db.close();
+
+  const reopened = new RuntimeStateStore({ dbPath, workspaceRoot });
+  const updated = reopened.updateRuntimeState({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    status: "PAUSED",
+    currentInputId: null,
+    currentWorkerId: null,
+    leaseUntil: null,
+    heartbeatAt: "2026-01-01T00:00:00.000Z",
+    lastError: null,
+  });
+
+  assert.equal(updated.status, "PAUSED");
+  reopened.close();
+});
+
 test("state store lists expired claimed inputs", () => {
   const root = makeTempDir("hb-state-store-");
   const store = new RuntimeStateStore({

@@ -47,9 +47,11 @@ test("app shell polls runtime notifications and renders the toast stack", async 
 
   assert.match(source, /window\.electronAPI\.workspace\.listNotifications\(\s*null\s*\)/);
   assert.match(source, /<NotificationToastStack[\s\S]*leadingToast=\{/);
-  assert.match(source, /<NotificationToastStack[\s\S]*notifications=\{toastNotifications\}/);
-  assert.match(source, /<NotificationToastStack[\s\S]*onCloseToast=\{\(notificationId\) => \{\s*void handleDismissNotification\(notificationId\);\s*\}\}/);
-  assert.match(source, /<NotificationToastStack[\s\S]*className=\{anchoredToastStackClassName\}/);
+  assert.match(source, /const effectiveToastNotifications = useMemo\(/);
+  assert.match(source, /<NotificationToastStack[\s\S]*notifications=\{effectiveToastNotifications\}/);
+  assert.match(source, /<NotificationToastStack[\s\S]*onCloseToast=\{\(notificationId\) => \{\s*void handleCloseDisplayedNotification\(notificationId\);\s*\}\}/);
+  assert.doesNotMatch(source, /className=\{anchoredToastStackClassName\}/);
+  assert.doesNotMatch(source, /style=\{anchoredToastStackStyle\}/);
   assert.match(source, /const runtimeNotificationById = useMemo\(/);
 });
 
@@ -87,6 +89,17 @@ test("app shell exposes a dev-only app update preview hook", async () => {
   assert.match(source, /buildDevAppUpdatePreviewStatus\(/);
 });
 
+test("app shell exposes a dev-only notification toast preview hook", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /const DEV_NOTIFICATION_TOAST_PREVIEW_ID_PREFIX =\s*"dev-notification-toast-preview:";/);
+  assert.match(source, /function buildDevNotificationToastPreviewNotifications\(/);
+  assert.match(source, /window\.__holabossDevNotificationToastPreview = \{/);
+  assert.match(source, /stack: \(\) => showDevNotificationToastPreview\(\)/);
+  assert.match(source, /clear: \(\) => clearDevNotificationToastPreview\(\)/);
+  assert.match(source, /if \(isDevNotificationToastPreviewId\(notificationId\)\) \{/);
+});
+
 test("app shell uses the integrated title bar path for macOS and Windows", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
@@ -104,7 +117,7 @@ test("app shell uses the integrated title bar path for macOS and Windows", async
   );
 });
 
-test("app shell keeps update toasts inside the safe file pane region instead of suspending the browser", async () => {
+test("app shell no longer reserves a separate safe pane region for update toasts", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(
@@ -113,13 +126,14 @@ test("app shell keeps update toasts inside the safe file pane region instead of 
   );
   assert.match(
     source,
-    /const shouldUseSafeToastAnchor =[\s\S]*!spaceMode \|\| visibleSpacePaneIds\.includes\("files"\)/,
+    /const shouldShowAppUpdateReminder = Boolean\(\s*effectiveAppUpdateStatus &&\s*effectiveAppUpdateStatus\.downloaded,\s*\);/,
   );
-  assert.match(source, /const LEFT_NAVIGATION_RAIL_WIDTH_PX = 60;/);
-  assert.match(source, /const APP_SHELL_SPACE_COLUMN_GAP_PX = 8;/);
-  assert.match(source, /const FIXED_SAFE_TOAST_REGION_WIDTH_PX =[\s\S]*MIN_FILES_PANE_WIDTH;/);
-  assert.match(source, /const anchoredToastStackClassName = shouldUseSafeToastAnchor[\s\S]*absolute bottom-4 left-0/);
-  assert.match(source, /const anchoredToastStackStyle = shouldUseSafeToastAnchor[\s\S]*width: FIXED_SAFE_TOAST_REGION_WIDTH_PX/);
+  assert.doesNotMatch(source, /shouldUseSafeToastAnchor/);
+  assert.doesNotMatch(source, /LEFT_NAVIGATION_RAIL_WIDTH_PX/);
+  assert.doesNotMatch(source, /APP_SHELL_SPACE_COLUMN_GAP_PX/);
+  assert.doesNotMatch(source, /FIXED_SAFE_TOAST_REGION_WIDTH_PX/);
+  assert.doesNotMatch(source, /anchoredToastStackClassName/);
+  assert.doesNotMatch(source, /anchoredToastStackStyle/);
   assert.match(
     source,
     /const shouldSuspendBrowserNativeView =\s*isUtilityPaneResizing \|\|[\s\S]*workspaceSwitcherOpen \|\|[\s\S]*settingsDialogOpen \|\|[\s\S]*createWorkspacePanelOpen \|\|[\s\S]*publishOpen;/,
@@ -130,10 +144,17 @@ test("app shell keeps update toasts inside the safe file pane region instead of 
 test("app shell uses a wider minimum for the file explorer than for the browser pane", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /const MIN_FILES_PANE_WIDTH = 320;/);
-  assert.match(source, /const MIN_BROWSER_PANE_WIDTH = 200;/);
+  assert.match(source, /const MIN_FILES_PANE_WIDTH = 220;/);
+  assert.match(source, /const MIN_BROWSER_PANE_WIDTH = 120;/);
+  assert.match(source, /const MIN_AGENT_CONTENT_WIDTH = 380;/);
   assert.match(source, /const DEFAULT_FILES_PANE_WIDTH = MIN_FILES_PANE_WIDTH;/);
   assert.match(source, /function utilityPaneMinWidth\(paneId: UtilityPaneId\): number \{/);
+  assert.match(
+    source,
+    /pane\.flex\s*\?\s*\{\s*minWidth: `\$\{MIN_AGENT_CONTENT_WIDTH\}px`,\s*\}\s*:\s*\{ width: `\$\{pane\.width\}px` \}/,
+  );
+  assert.match(source, /const syncUtilityPaneWidths = useCallback\(\(\) => \{/);
+  assert.match(source, /new ResizeObserver\(\(\) => \{\s*syncUtilityPaneWidths\(\);\s*\}\)/);
 });
 
 test("app shell passes the app version label into the left rail", async () => {
@@ -151,6 +172,49 @@ test("app shell requests remote task proposal generation without a separate succ
   assert.match(source, /Suggestions are unavailable right now\./);
   assert.doesNotMatch(source, /Remote heartbeat accepted/);
   assert.doesNotMatch(source, /Pending cloud jobs/);
+});
+
+test("app shell tracks unread task proposals and badges the inbox control", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /const TASK_PROPOSAL_SEEN_STORAGE_KEY = "holaboss-task-proposal-seen-v1";/);
+  assert.match(source, /const \[seenTaskProposalIdsByWorkspace, setSeenTaskProposalIdsByWorkspace\] =\s*useState<Record<string, string\[]>>\(loadSeenTaskProposalIdsByWorkspace\);/);
+  assert.match(source, /const unreadTaskProposalCount = useMemo\(\(\) => \{/);
+  assert.match(source, /const markTaskProposalsSeen = useCallback\(/);
+  assert.match(source, /if \(tab === "inbox" && selectedWorkspaceId\) \{\s*markTaskProposalsSeen\(selectedWorkspaceId, taskProposals\);\s*\}/);
+  assert.match(source, /unreadProposalCount=\{unreadTaskProposalCount\}/);
+  assert.match(source, /className="relative inline-flex h-8 w-8 items-center justify-center rounded-\[12px\] border border-border\/45 text-muted-foreground transition-all duration-200 hover:border-primary\/45 hover:text-primary active:scale-95"/);
+  assert.match(source, /unreadTaskProposalCount > 0 \? \(\s*<span className="absolute -right-0\.5 -top-0\.5 size-2\.5 rounded-full border-2 border-card bg-destructive" \/>\s*\) : null/);
+});
+
+test("app shell restores pane visibility without manual files and browser toggles", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /function loadSpaceVisibility\(\): SpaceVisibilityState \{/);
+  assert.match(source, /localStorage\.getItem\(SPACE_VISIBILITY_STORAGE_KEY\)/);
+  assert.match(
+    source,
+    /if \(parsed && typeof parsed === "object" && !Array\.isArray\(parsed\)\) \{\s*return \{\s*agent: true,\s*files: true,\s*browser: true,\s*\};/,
+  );
+  assert.doesNotMatch(source, /const toggleUtilityPaneVisibility = useCallback\(\(paneId: UtilityPaneId\) => \{/);
+  assert.doesNotMatch(source, /className="mr-1\.5 flex w-9 shrink-0 flex-col items-center gap-1\.5 py-1"/);
+  assert.doesNotMatch(source, /aria-label="Toggle files pane"/);
+  assert.doesNotMatch(source, /aria-label="Toggle browser pane"/);
+  assert.match(source, /<FileExplorerPane[\s\S]*focusRequest=\{fileExplorerFocusRequest\}/);
+  assert.doesNotMatch(source, /<FileExplorerPane[\s\S]*onClosePane=/);
+  assert.match(source, /<BrowserPane[\s\S]*layoutSyncKey=\{/);
+  assert.doesNotMatch(source, /<BrowserPane[\s\S]*onClosePane=/);
+  assert.doesNotMatch(source, /inline-flex h-8 items-center gap-2 rounded-full border px-3/);
+  assert.doesNotMatch(source, /spaceDrawerToggleLabel/);
+  assert.doesNotMatch(source, /utilityPaneRenderWidth/);
+});
+
+test("app shell routes agent-originated browser opens into the agent browser space", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /const targetBrowserSpace =\s*payload\.space === "agent" \? "agent" : "user";/);
+  assert.match(source, /\.setActiveWorkspace\(\s*payload\.workspaceId \?\? selectedWorkspaceId \?\? null,\s*targetBrowserSpace,\s*\)/);
+  assert.match(source, /\.setActiveWorkspace\(targetWorkspaceId, "user"\)/);
 });
 
 test("app shell polls proactive status for the selected workspace", async () => {
@@ -173,10 +237,10 @@ test("app shell reloads proactive preference after workspace hydration completes
   assert.match(source, /\}, \[hasHydratedWorkspaceList, selectedWorkspaceId\]\);/);
 });
 
-test("app shell renames the running panel button to sub-sessions", async () => {
+test("app shell renames the running panel button to sessions", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /aria-label="Open sub-sessions panel"/);
+  assert.match(source, /aria-label="Open sessions panel"/);
   assert.doesNotMatch(source, /aria-label="Open running panel"/);
   assert.match(source, /lg:grid-cols-\[60px_minmax\(0,1fr\)_336px\]/);
 });
@@ -195,14 +259,25 @@ test("app shell can route new schedule creation into a prefilled workspace chat"
 
   assert.match(source, /const \[chatComposerPrefillRequest, setChatComposerPrefillRequest\] =\s*useState<ChatComposerPrefillRequest \| null>\(null\);/);
   assert.match(source, /const handleCreateScheduleInChat = useCallback\(\(\) => \{/);
-  assert.match(source, /const mainSessionId = \(selectedWorkspace\?\.main_session_id \|\| ""\)\.trim\(\);/);
   assert.match(source, /setActiveLeftRailItem\("space"\);/);
   assert.match(source, /setSpaceVisibility\(\(previous\) => \(\{\s*\.\.\.previous,\s*agent: true,\s*\}\)\);/);
   assert.match(source, /setAgentView\(\{ type: "chat" \}\);/);
   assert.match(source, /setChatSessionJumpRequest\(null\);/);
-  assert.match(source, /setChatSessionOpenRequest\(\(previous\) =>\s*mainSessionId\s*\?\s*\{\s*sessionId: mainSessionId,\s*requestKey: \(previous\?\.requestKey \?\? 0\) \+ 1,\s*\}\s*:\s*null,\s*\);/);
+  assert.match(source, /setChatSessionOpenRequest\(\(previous\) =>\s*activeChatSessionId\s*\?\s*\{\s*sessionId: activeChatSessionId,\s*requestKey: \(previous\?\.requestKey \?\? 0\) \+ 1,\s*\}\s*:\s*null,\s*\);/);
   assert.match(source, /setChatComposerPrefillRequest\(\(previous\) => \(\{\s*text: "Create a cronjob for ",\s*requestKey: \(previous\?\.requestKey \?\? 0\) \+ 1,\s*\}\)\);/);
   assert.match(source, /composerPrefillRequest=\{chatComposerPrefillRequest\}/);
   assert.match(source, /onComposerPrefillConsumed=\{handleChatComposerPrefillConsumed\}/);
   assert.match(source, /onCreateSchedule=\{handleCreateScheduleInChat\}/);
+});
+
+test("app shell can create and open a new session from the right panel", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /type ChatSessionOpenRequest = \{\s*sessionId: string;\s*requestKey: number;\s*mode\?: "session" \| "draft";\s*parentSessionId\?: string \| null;\s*\};/);
+  assert.match(source, /const handleCreateSession = useCallback\(\(\) => \{/);
+  assert.match(source, /setChatSessionOpenRequest\(\(previous\) => \(\{\s*sessionId: "",\s*mode: "draft",\s*parentSessionId: null,\s*requestKey: \(previous\?\.requestKey \?\? 0\) \+ 1,\s*\}\)\);/);
+  assert.match(source, /setChatFocusRequestKey\(\(current\) => current \+ 1\);/);
+  assert.doesNotMatch(source, /const \[isCreatingSession, setIsCreatingSession\] = useState\(false\);/);
+  assert.doesNotMatch(source, /window\.electronAPI\.workspace\.createAgentSession\(\{/);
+  assert.match(source, /onCreateSession=\{\(\) => void handleCreateSession\(\)\}/);
 });

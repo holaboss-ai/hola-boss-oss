@@ -1,10 +1,10 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { type RuntimeStateStore, type SessionInputRecord } from "@holaboss/runtime-state-store";
+import { type RuntimeStateStore, type SessionInputRecord, utcNowIso } from "@holaboss/runtime-state-store";
 
 import { processClaimedInput } from "./claimed-input-executor.js";
 import type { MemoryServiceLike } from "./memory.js";
-import { buildRunFailedEvent } from "./runner-worker.js";
+import { buildRunCompletedEvent, buildRunFailedEvent } from "./runner-worker.js";
 
 const DEFAULT_CLAIMED_BY = "sandbox-agent-ts-worker";
 const DEFAULT_LEASE_SECONDS = 300;
@@ -16,6 +16,14 @@ export interface QueueWorkerLike {
   start(): Promise<void>;
   wake(): void;
   close(): Promise<void>;
+  pauseSessionRun?(params: {
+    workspaceId: string;
+    sessionId: string;
+  }): Promise<{
+    inputId: string;
+    sessionId: string;
+    status: "PAUSED" | "PAUSING";
+  } | null>;
 }
 
 export interface RuntimeQueueWorkerOptions {
@@ -26,7 +34,7 @@ export interface RuntimeQueueWorkerOptions {
   };
   memoryService?: MemoryServiceLike | null;
   wakeDurableMemoryWorker?: (() => void) | null;
-  executeClaimedInput?: (record: SessionInputRecord) => Promise<void>;
+  executeClaimedInput?: (record: SessionInputRecord, options?: { signal?: AbortSignal }) => Promise<void>;
   claimedBy?: string;
   leaseSeconds?: number;
   pollIntervalMs?: number;
@@ -45,7 +53,7 @@ function queueWorkerMaxConcurrency(): number {
 export class RuntimeQueueWorker implements QueueWorkerLike {
   readonly #store: RuntimeStateStore;
   readonly #logger: RuntimeQueueWorkerOptions["logger"];
-  readonly #executeClaimedInput: (record: SessionInputRecord) => Promise<void>;
+  readonly #executeClaimedInput: (record: SessionInputRecord, options?: { signal?: AbortSignal }) => Promise<void>;
   readonly #claimedBy: string;
   readonly #leaseSeconds: number;
   readonly #pollIntervalMs: number;
@@ -53,6 +61,7 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
   #stopped = false;
   #task: Promise<void> | null = null;
   #wakeResolver: (() => void) | null = null;
+  #activeRuns = new Map<string, { controller: AbortController; record: SessionInputRecord }>();
 
   constructor(options: RuntimeQueueWorkerOptions) {
     this.#store = options.store;
@@ -60,13 +69,14 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
     this.#claimedBy = options.claimedBy ?? DEFAULT_CLAIMED_BY;
     this.#executeClaimedInput =
       options.executeClaimedInput ??
-      ((record) =>
+      ((record, executionOptions) =>
         processClaimedInput({
           store: this.#store,
           record,
           claimedBy: this.#claimedBy,
           memoryService: options.memoryService ?? null,
           wakeDurableMemoryWorker: options.wakeDurableMemoryWorker ?? null,
+          abortSignal: executionOptions?.signal,
         }));
     this.#leaseSeconds = options.leaseSeconds ?? DEFAULT_LEASE_SECONDS;
     this.#pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
@@ -95,6 +105,46 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
     await task;
   }
 
+  async pauseSessionRun(params: { workspaceId: string; sessionId: string }): Promise<{
+    inputId: string;
+    sessionId: string;
+    status: "PAUSED" | "PAUSING";
+  } | null> {
+    const runtimeState = this.#store.getRuntimeState({
+      workspaceId: params.workspaceId,
+      sessionId: params.sessionId,
+    });
+    const inputId = runtimeState?.currentInputId?.trim() || "";
+    if (!inputId) {
+      return null;
+    }
+
+    const record = this.#store.getInput(inputId);
+    if (!record || record.workspaceId !== params.workspaceId || record.sessionId !== params.sessionId) {
+      return null;
+    }
+
+    if (record.status === "QUEUED") {
+      this.#persistPausedQueuedInput(record);
+      return {
+        inputId: record.inputId,
+        sessionId: record.sessionId,
+        status: "PAUSED",
+      };
+    }
+
+    const activeRun = this.#activeRuns.get(record.inputId);
+    if (record.status !== "CLAIMED" || !activeRun) {
+      return null;
+    }
+    activeRun.controller.abort("user_requested_pause");
+    return {
+      inputId: record.inputId,
+      sessionId: record.sessionId,
+      status: "PAUSING",
+    };
+  }
+
   async processAvailableInputsOnce(): Promise<number> {
     const recovered = this.#recoverExpiredClaims();
     const claimed = this.#store.claimInputs({
@@ -108,8 +158,10 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
     }
     await Promise.all(
       claimed.map(async (record) => {
+        const controller = new AbortController();
+        this.#activeRuns.set(record.inputId, { controller, record });
         try {
-          await this.#executeClaimedInput(record);
+          await this.#executeClaimedInput(record, { signal: controller.signal });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           this.#logger?.error?.("TS queue worker failed to process claimed input", {
@@ -133,6 +185,8 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
             heartbeatAt: null,
             lastError: { message }
           });
+        } finally {
+          this.#activeRuns.delete(record.inputId);
         }
       })
     );
@@ -215,5 +269,72 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
       });
     }
     return expired.length;
+  }
+
+  #persistPausedQueuedInput(record: SessionInputRecord): void {
+    const completedAt = utcNowIso();
+    const events = this.#store.listOutputEvents({
+      sessionId: record.sessionId,
+      inputId: record.inputId,
+    });
+    const completed = buildRunCompletedEvent({
+      sessionId: record.sessionId,
+      inputId: record.inputId,
+      sequence: Math.max(0, ...events.map((event) => event.sequence)) + 1,
+      payload: {
+        status: "paused",
+        stop_reason: "paused",
+        message: "Run paused by user request",
+      },
+    });
+    this.#store.appendOutputEvent({
+      workspaceId: record.workspaceId,
+      sessionId: record.sessionId,
+      inputId: record.inputId,
+      sequence: typeof completed.sequence === "number" ? completed.sequence : events.length + 1,
+      eventType: String(completed.event_type),
+      payload: completed.payload as Record<string, unknown>,
+      createdAt: completedAt,
+    });
+    this.#store.updateInput(record.inputId, {
+      status: "PAUSED",
+      claimedBy: null,
+      claimedUntil: null,
+    });
+    this.#store.updateRuntimeState({
+      workspaceId: record.workspaceId,
+      sessionId: record.sessionId,
+      status: "PAUSED",
+      currentInputId: null,
+      currentWorkerId: null,
+      leaseUntil: null,
+      heartbeatAt: null,
+      lastError: null,
+    });
+    this.#store.upsertTurnResult({
+      workspaceId: record.workspaceId,
+      sessionId: record.sessionId,
+      inputId: record.inputId,
+      startedAt: record.createdAt,
+      completedAt,
+      status: "paused",
+      stopReason: "paused",
+      assistantText: "",
+      toolUsageSummary: {
+        total_calls: 0,
+        completed_calls: 0,
+        failed_calls: 0,
+        tool_names: [],
+        tool_ids: [],
+      },
+      permissionDenials: [],
+      promptSectionIds: [],
+      capabilityManifestFingerprint: null,
+      requestSnapshotFingerprint: null,
+      promptCacheProfile: null,
+      compactedSummary: null,
+      compactionBoundaryId: null,
+      tokenUsage: null,
+    });
   }
 }

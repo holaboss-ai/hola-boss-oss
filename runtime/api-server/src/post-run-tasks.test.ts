@@ -33,7 +33,6 @@ function makeContext(): PostRunTaskContext {
     name: "Workspace 1",
     harness: "pi",
     status: "active",
-    mainSessionId: "session-main",
   });
   const record = store.enqueueInput({
     workspaceId: "workspace-1",

@@ -22,6 +22,7 @@ test("scheduled tab toggle updates cronjob enabled state", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /await window\.electronAPI\.workspace\.updateCronjob\(job\.id, \{\s*enabled: !job\.enabled,\s*\}\);/);
+  assert.match(source, /setCronjobs\(\(previous\) =>\s*previous\.map\(\(item\) => \(item\.id === updated\.id \? updated : item\)\),\s*\);/);
   assert.match(source, /aria-label=\{job\.enabled \? "Disable schedule" : "Enable schedule"\}/);
 });
 
@@ -30,8 +31,19 @@ test("scheduled rows expose a run-now action for each automation", async () => {
 
   assert.match(source, /const handleRunNow = async \(job: CronjobRecordPayload\) => \{/);
   assert.match(source, /await window\.electronAPI\.workspace\.runCronjobNow\(job\.id\);/);
+  assert.match(source, /item\.id === response\.cronjob\.id \? response\.cronjob : item/);
   assert.match(source, /Run now/);
   assert.match(source, /<Play size=\{14\} \/>/);
+});
+
+test("post-action refresh preserves the current banner and suppresses transient refresh errors", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /interface RefreshDataOptions \{\s*preserveStatusMessage\?: boolean;\s*suppressErrors\?: boolean;\s*\}/);
+  assert.match(source, /const refreshData = useCallback\(async \(options\?: RefreshDataOptions\) => \{/);
+  assert.match(source, /if \(!preserveStatusMessage\) \{\s*setStatusMessage\(""\);\s*\}/);
+  assert.match(source, /if \(!suppressErrors\) \{\s*setStatusTone\("error"\);\s*setStatusMessage\(normalizeErrorMessage\(error\)\);\s*\}/);
+  assert.match(source, /void refreshData\(\{\s*preserveStatusMessage: true,\s*suppressErrors: true,\s*\}\);/);
 });
 
 test("scheduled rows label whether an automation is a notification or task run", async () => {

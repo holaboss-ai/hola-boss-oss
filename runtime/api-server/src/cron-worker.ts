@@ -101,6 +101,30 @@ function inheritedCronjobModelFromSession(params: {
   return cronjobModelFromSnapshotPayload(snapshot.payload);
 }
 
+function preferredCronjobModelSessionId(params: {
+  store: RuntimeStateStore;
+  workspace: WorkspaceRecord;
+}): string | null {
+  const onboardingSessionId = normalizedString(params.workspace.onboardingSessionId);
+  const sessions = params.store.listSessions({
+    workspaceId: params.workspace.id,
+    includeArchived: false,
+    limit: 200,
+    offset: 0,
+  });
+  const preferred = sessions.find((session) => {
+    const kind = normalizedString(session.kind).toLowerCase();
+    if (session.sessionId === onboardingSessionId) {
+      return false;
+    }
+    return !kind || kind === "workspace_session";
+  });
+  if (preferred) {
+    return preferred.sessionId;
+  }
+  return sessions.find((session) => session.sessionId !== onboardingSessionId)?.sessionId ?? null;
+}
+
 function resolvedCronjobModel(params: {
   store: RuntimeStateStore;
   workspace: WorkspaceRecord;
@@ -114,7 +138,7 @@ function resolvedCronjobModel(params: {
     inheritedCronjobModelFromSession({
       store: params.store,
       workspace: params.workspace,
-      sessionId: params.workspace.mainSessionId,
+      sessionId: preferredCronjobModelSessionId(params),
     }) ||
     inheritedCronjobModelFromSession({
       store: params.store,
@@ -315,13 +339,10 @@ export function executeLocalCronjobDelivery(
   const channel = typeof delivery.channel === "string" ? delivery.channel : null;
   if (channel === "session_run") {
     const sessionId = queueLocalCronjobRun(store, job, now, wakeQueueWorker);
-    const notification = deliverLocalCronjobNotification(store, job, {
-      sessionId,
-    });
     return {
       channel,
       sessionId,
-      notificationId: notification.id,
+      notificationId: null,
     };
   }
   if (channel === "system_notification") {

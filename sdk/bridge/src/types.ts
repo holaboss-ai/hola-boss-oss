@@ -19,6 +19,12 @@ export interface AppOutputPresentationInput {
   path: string
 }
 
+export interface HolabossTurnContext {
+  workspaceId: string
+  sessionId: string
+  inputId?: string | null
+}
+
 export interface WorkspaceOutputPayload {
   id: string
   workspace_id: string
@@ -53,4 +59,31 @@ export interface UpdateAppOutputRequest {
   status?: string | null
   moduleResourceId?: string | null
   metadata?: Record<string, unknown> | null
+}
+
+export interface SessionArtifactPayload {
+  id: string
+  output_id?: string | null
+  session_id: string | null
+  workspace_id: string
+  input_id: string | null
+  artifact_type: string
+  external_id: string
+  platform: string | null
+  title: string | null
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+export interface PublishSessionArtifactRequest {
+  artifactType: string
+  externalId: string
+  title: string
+  moduleId: string
+  moduleResourceId?: string | null
+  platform?: string | null
+  inputId?: string | null
+  metadata?: Record<string, unknown> | null
+  artifactId?: string | null
+  changeType?: string | null
 }
