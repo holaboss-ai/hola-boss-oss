@@ -97,6 +97,9 @@ test("app shell polls runtime notifications and renders the toast stack", async 
   assert.doesNotMatch(source, /className=\{anchoredToastStackClassName\}/);
   assert.doesNotMatch(source, /style=\{anchoredToastStackStyle\}/);
   assert.match(source, /const runtimeNotificationById = useMemo\(/);
+  assert.doesNotMatch(source, /notificationToastTimeoutsRef/);
+  assert.doesNotMatch(source, /notificationToastDurationMs/);
+  assert.doesNotMatch(source, /window\.setTimeout\(\(\) => \{\s*dismissNotificationToast\(item\.id\);/);
 });
 
 test("app shell keeps desktop updates separate from runtime notification state", async () => {

@@ -18,3 +18,22 @@ test("deleting the selected workspace clears selection before the local delete r
   assert.match(source, /setWorkspaceBlockingReasonState\(""\);/);
   assert.match(source, /await window\.electronAPI\.workspace\.deleteWorkspace\(trimmedWorkspaceId\);/);
 });
+
+test("workspace desktop error normalization unwraps Electron IPC errors before mapping", async () => {
+  const source = await readFile(WORKSPACE_DESKTOP_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const ipcMatch = message\.match\(\s*\/\^Error invoking remote method '\[\^'\]\+': Error: \(\.\+\)\$\/s,/,
+  );
+  assert.match(
+    source,
+    /const unwrappedMessage = ipcMatch \? ipcMatch\[1\]\.trim\(\) : message\.trim\(\);/,
+  );
+  assert.match(source, /const normalized = unwrappedMessage\.toLowerCase\(\);/);
+  assert.match(
+    source,
+    /if \(rawNormalized\.includes\("error invoking remote method"\) && !ipcMatch\) \{/,
+  );
+  assert.match(source, /return unwrappedMessage;/);
+});

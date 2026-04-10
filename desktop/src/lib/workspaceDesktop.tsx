@@ -130,7 +130,12 @@ function normalizeWorkspaceHarness(value: string | null | undefined): WorkspaceH
 
 function normalizeErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : "Request failed.";
-  const normalized = message.trim().toLowerCase();
+  const ipcMatch = message.match(
+    /^Error invoking remote method '[^']+': Error: (.+)$/s,
+  );
+  const unwrappedMessage = ipcMatch ? ipcMatch[1].trim() : message.trim();
+  const normalized = unwrappedMessage.toLowerCase();
+  const rawNormalized = message.trim().toLowerCase();
 
   if (normalized.includes("workspace:listworkspaces")) {
     return "Couldn't load workspace state right now. The local runtime may still be starting.";
@@ -140,11 +145,11 @@ function normalizeErrorMessage(error: unknown) {
     return "The local runtime hit an internal error. Try again in a moment.";
   }
 
-  if (normalized.includes("error invoking remote method")) {
+  if (rawNormalized.includes("error invoking remote method") && !ipcMatch) {
     return "The desktop app couldn't complete that request. Try again in a moment.";
   }
 
-  return message;
+  return unwrappedMessage;
 }
 
 function normalizedOnboardingStatus(workspace: WorkspaceRecordPayload | null): string {

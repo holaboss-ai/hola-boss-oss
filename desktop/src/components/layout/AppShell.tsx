@@ -97,8 +97,6 @@ const SPACE_EXPLORER_COLLAPSED_WIDTH = 68;
 const UTILITY_PANE_RESIZER_WIDTH = 16;
 const APP_UPDATE_CHANGELOG_BASE_URL =
   "https://github.com/holaboss-ai/holaboss-ai/releases/tag";
-const DEFAULT_NOTIFICATION_TOAST_DURATION_MS = 7_000;
-const CRITICAL_NOTIFICATION_TOAST_DURATION_MS = 12_000;
 const DEFAULT_PROACTIVE_HEARTBEAT_CRON = "0 9 * * *";
 const MAX_SEEN_TASK_PROPOSAL_IDS_PER_WORKSPACE = 200;
 
@@ -230,14 +228,6 @@ function utilityPaneMinWidth(paneId: UtilityPaneId): number {
   return paneId === "files"
     ? MIN_FILES_PANE_WIDTH
     : MIN_BROWSER_PANE_WIDTH;
-}
-
-function notificationToastDurationMs(
-  notification: RuntimeNotificationRecordPayload,
-): number {
-  return notification.priority === "critical"
-    ? CRITICAL_NOTIFICATION_TOAST_DURATION_MS
-    : DEFAULT_NOTIFICATION_TOAST_DURATION_MS;
 }
 
 function isDevNotificationToastPreviewId(notificationId: string): boolean {
@@ -940,7 +930,6 @@ function AppShellContent() {
   const spaceVisibilityRef = useRef(spaceVisibility);
   const notificationsHydratedRef = useRef(false);
   const seenNotificationIdsRef = useRef(new Set<string>());
-  const notificationToastTimeoutsRef = useRef(new Map<string, number>());
   const lastRestorableSpaceDisplayViewByWorkspaceRef = useRef<
     Record<string, RestorableSpaceDisplayView>
   >({});
@@ -1432,11 +1421,6 @@ function AppShellContent() {
   }, [theme]);
 
   const dismissNotificationToast = useCallback((notificationId: string) => {
-    const timeoutId = notificationToastTimeoutsRef.current.get(notificationId);
-    if (timeoutId !== undefined) {
-      window.clearTimeout(timeoutId);
-      notificationToastTimeoutsRef.current.delete(notificationId);
-    }
     setToastNotifications((current) =>
       current.filter((item) => item.id !== notificationId),
     );
@@ -1473,17 +1457,11 @@ function AppShellContent() {
           }
           return [item, ...current].slice(0, 4);
         });
-        if (!notificationToastTimeoutsRef.current.has(item.id)) {
-          const timeoutId = window.setTimeout(() => {
-            dismissNotificationToast(item.id);
-          }, notificationToastDurationMs(item));
-          notificationToastTimeoutsRef.current.set(item.id, timeoutId);
-        }
       }
     } catch {
       // Notification polling should stay silent when the runtime is restarting.
     }
-  }, [dismissNotificationToast]);
+  }, []);
 
   useEffect(() => {
     const activeNotificationIds = new Set(
@@ -1493,13 +1471,6 @@ function AppShellContent() {
       const next = current.filter((item) => activeNotificationIds.has(item.id));
       return next.length === current.length ? current : next;
     });
-    for (const [notificationId, timeoutId] of notificationToastTimeoutsRef.current.entries()) {
-      if (activeNotificationIds.has(notificationId)) {
-        continue;
-      }
-      window.clearTimeout(timeoutId);
-      notificationToastTimeoutsRef.current.delete(notificationId);
-    }
   }, [notifications]);
 
   const handleActivateNotification = useCallback(
@@ -1625,10 +1596,6 @@ function AppShellContent() {
     }, 3000);
     return () => {
       window.clearInterval(intervalId);
-      for (const timeoutId of notificationToastTimeoutsRef.current.values()) {
-        window.clearTimeout(timeoutId);
-      }
-      notificationToastTimeoutsRef.current.clear();
     };
   }, [refreshNotifications]);
 
