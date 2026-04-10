@@ -5,6 +5,7 @@ import {
   RefreshCw,
   ShieldCheck,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import anthropicLogoMarkup from "@/assets/providers/anthropic.svg?raw";
@@ -2229,72 +2230,84 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     return (
       <section className="grid w-full max-w-3xl gap-4">
         <div className="grid gap-4">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div className="flex min-w-0 items-center gap-4">
-              <div className="grid h-12 w-12 shrink-0 place-items-center rounded-full border border-border/30 bg-muted/70 text-lg font-semibold text-foreground">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-border/30 bg-muted/50 text-sm font-semibold text-foreground">
                 {sessionInitials(session)}
               </div>
               <div className="min-w-0">
-                <div className="truncate text-lg font-semibold text-foreground">
+                <div className="truncate text-sm font-semibold text-foreground">
                   {isSignedIn
-                    ? sessionDisplayName(session) || "Your account"
+                    ? sessionDisplayName(session) || sessionEmail(session) || "Your account"
                     : "Your account"}
                 </div>
-                <div className="mt-1 truncate text-sm text-muted-foreground">
-                  {isSignedIn ? sessionEmail(session) || "Signed in" : "Not connected"}
-                </div>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <div
-                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-medium ${badgeClassName}`}
+                {isSignedIn && sessionDisplayName(session) && sessionEmail(session) ? (
+                  <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                    {sessionEmail(session)}
+                  </div>
+                ) : !isSignedIn ? (
+                  <div className="mt-0.5 text-xs text-muted-foreground">Not connected</div>
+                ) : null}
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <Badge
+                    variant="outline"
+                    className={badgeClassName}
                   >
-                    <ShieldCheck size={12} />
-                    <span>{statusBadgeLabel}</span>
-                  </div>
-                  <div className="inline-flex items-center gap-1.5 rounded-full border border-border/40 bg-muted/40 px-3 py-1 text-[11px] font-medium text-muted-foreground">
-                    <span className={`inline-block h-1.5 w-1.5 rounded-full ${runtimeBindingReady ? "bg-neon-green" : isSignedIn ? "bg-amber-400" : "bg-muted-foreground/50"}`} />
-                    <span>
-                      {runtimeBindingReady
-                        ? "Runtime ready"
+                    <ShieldCheck size={11} />
+                    {statusBadgeLabel}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className={
+                      runtimeBindingReady
+                        ? "border-neon-green/35 bg-neon-green/10 text-neon-green"
                         : isSignedIn
-                          ? "Setting up runtime"
-                          : "Runtime unavailable"}
-                    </span>
-                  </div>
+                          ? "border-amber-300/35 bg-amber-400/10 text-amber-300"
+                          : ""
+                    }
+                  >
+                    <span className={`inline-block h-1.5 w-1.5 rounded-full ${runtimeBindingReady ? "bg-neon-green" : isSignedIn ? "bg-amber-400" : "bg-muted-foreground/50"}`} />
+                    {runtimeBindingReady
+                      ? "Runtime ready"
+                      : isSignedIn
+                        ? "Setting up runtime"
+                        : "Runtime unavailable"}
+                  </Badge>
                 </div>
               </div>
             </div>
 
-            <div className="flex shrink-0 items-center gap-2 self-start md:self-auto">
+            <div className="flex shrink-0 items-center gap-1.5">
               {isSignedIn ? (
                 <>
                   <Button
-                    variant="outline"
-                    size="icon-lg"
+                    variant="ghost"
+                    size="icon-sm"
                     aria-label="Refresh session"
                     onClick={() => void handleRefreshSession()}
                     disabled={sessionState.isPending}
-                    className="h-8 w-8 rounded-lg border-border/45 bg-background text-muted-foreground hover:border-primary/35 hover:text-foreground"
+                    className="text-muted-foreground"
                   >
                     {sessionState.isPending ? (
-                      <Loader2 size={16} className="animate-spin" />
+                      <Loader2 size={14} className="animate-spin" />
                     ) : (
-                      <RefreshCw size={16} />
+                      <RefreshCw size={14} />
                     )}
                   </Button>
                   <Button
-                    variant="destructive"
-                    size="icon-lg"
+                    variant="ghost"
+                    size="icon-sm"
                     aria-label="Sign out"
                     onClick={() => void handleSignOut()}
                     disabled={!isSignedIn}
-                    className="h-8 w-8 rounded-lg border border-destructive/20 bg-destructive/5 text-destructive hover:border-destructive/35 hover:bg-destructive/10"
+                    className="text-muted-foreground hover:text-destructive"
                   >
-                    <LogOut size={16} />
+                    <LogOut size={14} />
                   </Button>
                 </>
               ) : (
                 <Button
-                  className="h-10 rounded-full border border-primary/35 bg-primary px-4 text-primary-foreground hover:opacity-90"
+                  size="sm"
                   onClick={() => void handleStartSignIn()}
                   disabled={isStartingSignIn}
                 >
