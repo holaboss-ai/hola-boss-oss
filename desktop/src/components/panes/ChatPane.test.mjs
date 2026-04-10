@@ -283,6 +283,34 @@ test("chat pane can create a workspace session when none exists yet", async () =
   );
 });
 
+test("chat pane exposes an in-pane session dropdown for switching agent sessions", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /onOpenInbox\?: \(\) => void;/);
+  assert.match(source, /inboxUnreadCount\?: number;/);
+  assert.match(source, /onRequestCreateSession\?: \(\) => void;/);
+  assert.match(source, /onSessionOpenRequestConsumed\?: \(requestKey: number\) => void;/);
+  assert.match(source, /const \[availableSessions, setAvailableSessions\] = useState<ChatSessionOption\[]>\(\s*\[\],\s*\);/);
+  assert.match(source, /const \[localSessionOpenRequest, setLocalSessionOpenRequest\] =\s*useState<ChatPaneSessionOpenRequest \| null>\(null\);/);
+  assert.match(source, /const effectiveSessionOpenRequest =\s*sessionOpenRequest \?\? localSessionOpenRequest;/);
+  assert.match(source, /function sessionStatusIndicator\(statusLabel: string\)/);
+  assert.match(source, /window\.electronAPI\.workspace\.listAgentSessions\(selectedWorkspaceId\)/);
+  assert.match(source, /window\.electronAPI\.workspace\.listRuntimeStates\(selectedWorkspaceId\)/);
+  assert.match(source, /<div className="shrink-0 border-b border-border\/45 px-4 py-2\.5 sm:px-5">[\s\S]*<SessionSelector/);
+  assert.match(source, /<SessionSelector[\s\S]*sessions=\{availableSessions\}[\s\S]*onSelectSession=\{openSessionFromPicker\}[\s\S]*onOpenInbox=\{onOpenInbox\}[\s\S]*inboxUnreadCount=\{inboxUnreadCount\}[\s\S]*onCreateSession=\{requestDraftSessionFromPicker\}/);
+  assert.match(source, /aria-label="Select agent session"/);
+  assert.match(source, /aria-label="Show inbox"/);
+  assert.match(source, /aria-label="Create new session"/);
+  assert.match(source, /placeholder="Search sessions\.\.\."/);
+  assert.match(source, /open\s*\?\s*"rotate-180 group-hover:-translate-y-0\.5 group-hover:scale-125"\s*:\s*"rotate-0 group-hover:translate-y-0\.5 group-hover:scale-125"/);
+  assert.match(source, /filteredSessions\.map\(\(session\) => \{/);
+  assert.match(source, /inboxUnreadCount > 0 \? \(/);
+  assert.match(source, /onOpenInbox\(\);/);
+  assert.match(source, /if \(\(sessionOpenRequest\?\.requestKey \?\? 0\) === requestKey\) \{\s*onSessionOpenRequestConsumed\?\.\(requestKey\);\s*\}/);
+  assert.match(source, /setLocalSessionOpenRequest\(\{\s*sessionId: normalizedSessionId,\s*requestKey: Date\.now\(\),\s*\}\);/);
+  assert.match(source, /setLocalSessionOpenRequest\(\{\s*sessionId: "",\s*mode: "draft",\s*parentSessionId: null,\s*requestKey: Date\.now\(\),\s*\}\);/);
+});
+
 test("chat pane hides restored history until the viewport snaps to the latest message", async () => {
   const source = await readFile(sourcePath, "utf8");
 
@@ -461,7 +489,7 @@ test("chat pane can jump to a requested sub-session run", async () => {
   );
   assert.match(
     source,
-    /const requestMode = sessionOpenRequest\?\.mode \?\? "session";[\s\S]*const requestedParentSessionId =[\s\S]*sessionOpenRequest\?\.parentSessionId\?\.trim\(\) \|\| null;/,
+    /const requestMode = effectiveSessionOpenRequest\?\.mode \?\? "session";[\s\S]*const requestedParentSessionId =[\s\S]*effectiveSessionOpenRequest\?\.parentSessionId\?\.trim\(\) \|\| null;/,
   );
   assert.match(
     source,
