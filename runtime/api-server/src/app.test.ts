@@ -14,6 +14,7 @@ import yazl from "yazl";
 
 import { buildRuntimeApiServer, type BuildRuntimeApiServerOptions } from "./app.js";
 import { appLocalNpmCacheDir, buildAppSetupEnv } from "./app-setup-env.js";
+import { parseInstalledAppRuntime } from "./workspace-apps.js";
 import type { AppLifecycleExecutorLike } from "./app-lifecycle-worker.js";
 import type { MemoryServiceLike } from "./memory.js";
 import type { RuntimeConfigServiceLike } from "./runtime-config.js";
@@ -3927,4 +3928,60 @@ test("POST /apps/install-archive rejects re-install when apps/{id} already exist
 
   await app.close();
   store.close();
+});
+
+test("parseInstalledAppRuntime extracts mcp.tools list", () => {
+  const yamlBody = `
+app_id: "twitter"
+name: "Twitter"
+slug: "twitter"
+
+lifecycle:
+  setup: "true"
+  start: "true"
+  stop: "true"
+
+mcp:
+  enabled: true
+  transport: http-sse
+  port: 3099
+  path: /mcp/sse
+  tools:
+    - create_post
+    - list_posts
+    - publish_post
+`;
+  const parsed = parseInstalledAppRuntime(yamlBody, "twitter", "apps/twitter/app.runtime.yaml");
+  assert.deepEqual(parsed.mcpTools, ["create_post", "list_posts", "publish_post"]);
+});
+
+test("parseInstalledAppRuntime returns empty mcpTools when not declared", () => {
+  const yamlBody = `
+app_id: "twitter"
+name: "Twitter"
+slug: "twitter"
+
+lifecycle:
+  setup: "true"
+
+mcp:
+  enabled: true
+  transport: http-sse
+  port: 3099
+  path: /mcp/sse
+`;
+  const parsed = parseInstalledAppRuntime(yamlBody, "twitter", "apps/twitter/app.runtime.yaml");
+  assert.deepEqual(parsed.mcpTools, []);
+});
+
+test("parseInstalledAppRuntime returns empty mcpTools when mcp block missing", () => {
+  const yamlBody = `
+app_id: "minimal"
+name: "Minimal"
+
+lifecycle:
+  setup: "true"
+`;
+  const parsed = parseInstalledAppRuntime(yamlBody, "minimal", "apps/minimal/app.runtime.yaml");
+  assert.deepEqual(parsed.mcpTools, []);
 });

@@ -23,6 +23,7 @@ export type ParsedInstalledApp = {
     start: string;
     stop: string;
   };
+  mcpTools: string[];
 };
 
 export type ResolvedApplicationRuntime = {
@@ -185,11 +186,36 @@ export function parseInstalledAppRuntime(
   declaredAppId: string,
   configPath: string
 ): ParsedInstalledApp {
-  const resolved = parseResolvedAppRuntime(rawYaml, declaredAppId, configPath);
+  let loaded: unknown;
+  try {
+    loaded = yaml.load(rawYaml);
+  } catch (error) {
+    throw new Error(`invalid YAML: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!isRecord(loaded)) {
+    throw new Error("app.runtime.yaml must be a mapping");
+  }
+  const yamlAppId = String(loaded.app_id ?? "");
+  if (yamlAppId !== declaredAppId) {
+    throw new Error(`app_id in yaml ('${yamlAppId}') does not match declared app_id ('${declaredAppId}')`);
+  }
+  const lifecycle = isRecord(loaded.lifecycle) ? loaded.lifecycle : {};
+
+  const mcpRaw = loaded.mcp;
+  const rawTools = isRecord(mcpRaw) && Array.isArray(mcpRaw.tools) ? mcpRaw.tools : [];
+  const mcpTools = rawTools.filter(
+    (t): t is string => typeof t === "string" && t.trim().length > 0
+  );
+
   return {
-    appId: resolved.appId,
+    appId: declaredAppId,
     configPath,
-    lifecycle: { ...resolved.lifecycle }
+    lifecycle: {
+      setup: typeof lifecycle.setup === "string" ? lifecycle.setup : "",
+      start: typeof lifecycle.start === "string" ? lifecycle.start : "",
+      stop: typeof lifecycle.stop === "string" ? lifecycle.stop : ""
+    },
+    mcpTools
   };
 }
 
