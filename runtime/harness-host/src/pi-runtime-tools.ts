@@ -17,6 +17,27 @@ const RUNTIME_TOOLS_CRONJOBS_PATH = "/api/v1/capabilities/runtime-tools/cronjobs
 const RUNTIME_TOOLS_IMAGE_GENERATE_PATH = "/api/v1/capabilities/runtime-tools/images/generate";
 const DEFAULT_RUNTIME_TOOL_TIMEOUT_MS = 30000;
 const IMAGE_GENERATE_RUNTIME_TOOL_TIMEOUT_MS = 180000;
+const CRONJOB_DELIVERY_CHANNELS = ["system_notification", "session_run"] as const;
+const CRONJOB_DELIVERY_MODES = ["announce", "none"] as const;
+
+function cronjobDeliveryChannelSchema() {
+  return Type.Union(
+    CRONJOB_DELIVERY_CHANNELS.map((value) => Type.Literal(value)),
+    {
+      description:
+        "Delivery channel. Use `session_run` for recurring agent work such as running instructions, tasks, analysis, browsing, or writing. Use `system_notification` only for lightweight reminder/notification messages."
+    }
+  );
+}
+
+function cronjobDeliveryModeSchema() {
+  return Type.Union(
+    CRONJOB_DELIVERY_MODES.map((value) => Type.Literal(value)),
+    {
+      description: "Delivery mode. Allowed values: `announce` or `none`."
+    }
+  );
+}
 
 export interface PiRuntimeToolOptions {
   runtimeApiBaseUrl: string;
@@ -192,13 +213,8 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId) {
           initiated_by: Type.Optional(Type.String({ description: "Actor creating the cronjob." })),
           name: Type.Optional(Type.String({ description: "Optional cronjob name." })),
           enabled: Type.Optional(Type.Boolean({ description: "Whether the cronjob is enabled." })),
-          delivery_channel: Type.Optional(
-            Type.String({
-              description:
-                "Delivery channel. Use `session_run` for recurring agent work such as running instructions, tasks, analysis, browsing, or writing. Use `system_notification` only for lightweight reminder/notification messages."
-            })
-          ),
-          delivery_mode: Type.Optional(Type.String({ description: "Delivery mode." })),
+          delivery_channel: Type.Optional(cronjobDeliveryChannelSchema()),
+          delivery_mode: Type.Optional(cronjobDeliveryModeSchema()),
           delivery_to: Type.Optional(Type.String({ description: "Optional delivery target." })),
           metadata_json: Type.Optional(
             Type.String({
@@ -223,13 +239,8 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId) {
             })
           ),
           enabled: Type.Optional(Type.Boolean({ description: "Whether the cronjob is enabled." })),
-          delivery_channel: Type.Optional(
-            Type.String({
-              description:
-                "Delivery channel. Use `session_run` for recurring agent work such as running instructions, tasks, analysis, browsing, or writing. Use `system_notification` only for lightweight reminder/notification messages."
-            })
-          ),
-          delivery_mode: Type.Optional(Type.String({ description: "Delivery mode." })),
+          delivery_channel: Type.Optional(cronjobDeliveryChannelSchema()),
+          delivery_mode: Type.Optional(cronjobDeliveryModeSchema()),
           delivery_to: Type.Optional(Type.String({ description: "Optional delivery target." })),
           metadata_json: Type.Optional(
             Type.String({
