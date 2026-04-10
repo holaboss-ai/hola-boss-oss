@@ -1,6 +1,8 @@
 import { useEffect, useMemo } from "react";
 import { ExternalLink, LoaderCircle, RotateCw } from "lucide-react";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { AppCatalogCard } from "./AppCatalogCard";
 
 const PROVIDER_DISPLAY: Record<string, string> = {
@@ -47,15 +49,15 @@ export function AppsGallery() {
         <p className="text-sm text-muted-foreground">
           Install apps into your workspace.
         </p>
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={() => void refreshAppCatalog()}
           disabled={isLoadingAppCatalog || anyInstalling}
-          className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
         >
           <RotateCw size={12} />
           Refresh
-        </button>
+        </Button>
       </div>
 
       {workspaceGated ? (
@@ -72,7 +74,7 @@ export function AppsGallery() {
 
       {/* Integration connection prompt */}
       {pendingAppInstall ? (
-        <div className="mt-3 rounded-lg border border-border bg-card p-4">
+        <Card size="sm" className="mt-3 p-4">
           <p className="text-sm font-medium text-foreground">
             Connect {PROVIDER_DISPLAY[pendingAppInstall.provider] ?? pendingAppInstall.provider}
           </p>
@@ -82,11 +84,10 @@ export function AppsGallery() {
             account to work. Connect it first, then the app will be installed automatically.
           </p>
           <div className="mt-3 flex items-center gap-2">
-            <button
-              type="button"
+            <Button
+              size="sm"
               disabled={isConnectingAppIntegration}
               onClick={() => void connectAndInstallApp()}
-              className="inline-flex h-8 items-center gap-2 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
             >
               {isConnectingAppIntegration ? (
                 <>
@@ -99,17 +100,17 @@ export function AppsGallery() {
                   Connect account
                 </>
               )}
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               disabled={isConnectingAppIntegration}
               onClick={clearPendingAppInstall}
-              className="inline-flex h-8 items-center rounded-md px-3 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
               Cancel
-            </button>
+            </Button>
           </div>
-        </div>
+        </Card>
       ) : null}
 
       {isLoadingAppCatalog && appCatalog.length === 0 ? (

@@ -35,6 +35,7 @@ export class ComposioService {
     method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
     endpoint: string;
     body?: unknown;
+    headers?: Record<string, string>;
   }): Promise<ProxyResponse<TData>> {
     const response = await this.fetchImpl(`${this.honoBaseUrl}/api/composio/proxy`, {
       method: "POST",
@@ -48,6 +49,7 @@ export class ComposioService {
         endpoint: params.endpoint,
         method: params.method,
         ...(params.body !== undefined ? { body: params.body } : {}),
+        ...(params.headers ? { headers: params.headers } : {}),
       }),
     });
     if (!response.ok) {

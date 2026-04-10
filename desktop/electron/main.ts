@@ -18,7 +18,6 @@ import {
   nativeImage,
   screen,
   session,
-  net,
   shell,
   type IpcMainInvokeEvent,
   type OpenDialogOptions,
@@ -5602,7 +5601,7 @@ async function requestControlPlaneJson<T>({
   }
 
   const executeRequest = async () => {
-    return net.fetch(url.toString(), {
+    return fetch(url.toString(), {
       method,
       headers: await controlPlaneHeaders(service),
       body: payload === undefined ? undefined : JSON.stringify(payload),

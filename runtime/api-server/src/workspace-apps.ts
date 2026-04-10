@@ -33,6 +33,7 @@ export type ResolvedApplicationRuntime = {
     port: number;
     path: string;
   };
+  mcpTools: string[];
   healthCheck: {
     path: string;
     timeoutS: number;
@@ -241,6 +242,10 @@ export function parseResolvedAppRuntime(
   if (mcp?.port === undefined || mcp.port === null || Number.isNaN(Number(mcp.port))) {
     throw new Error(`mcp.port is required (${configPath})`);
   }
+  const rawMcpTools = mcp && Array.isArray(mcp.tools) ? mcp.tools : [];
+  const mcpTools = rawMcpTools.filter(
+    (t): t is string => typeof t === "string" && t.trim().length > 0
+  );
   const healthchecks = isRecord(loaded.healthchecks) ? loaded.healthchecks : null;
   const preferredHealthcheck =
     (healthchecks && (isRecord(healthchecks.mcp) ? healthchecks.mcp : null)) ||
@@ -259,6 +264,7 @@ export function parseResolvedAppRuntime(
       port: Number(mcp.port),
       path: typeof mcp.path === "string" ? mcp.path : "/mcp"
     },
+    mcpTools,
     healthCheck: {
       path: preferredHealthcheck && typeof preferredHealthcheck.path === "string" ? preferredHealthcheck.path : "/health",
       timeoutS:

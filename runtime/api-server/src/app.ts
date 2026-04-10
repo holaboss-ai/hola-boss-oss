@@ -1591,6 +1591,35 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const autoRestartAttempts = new Map<string, number>();
   let healthMonitorTimer: ReturnType<typeof setInterval> | null = null;
 
+  /**
+   * Ensures this app's MCP tools are registered in workspace.yaml's
+   * `mcp_registry`. Runs idempotently after every app start so apps
+   * installed via legacy paths or stale templates get auto-healed.
+   */
+  function reconcileAppMcpRegistry(
+    workspaceDir: string,
+    appId: string,
+    resolved: { ports: { mcp: number }; resolvedApp: { mcpTools: string[]; mcp: { path: string } } },
+  ): void {
+    if (resolved.resolvedApp.mcpTools.length === 0) {
+      return;
+    }
+    try {
+      writeWorkspaceMcpRegistryEntry(workspaceDir, appId, {
+        mcpEnabled: true,
+        mcpTools: resolved.resolvedApp.mcpTools,
+        mcpPath: resolved.resolvedApp.mcp.path || "/mcp/sse",
+        mcpTimeoutMs: 30000,
+        mcpPort: resolved.ports.mcp,
+      });
+    } catch (error) {
+      app.log.warn(
+        { appId, err: error },
+        "mcp_registry reconcile failed for app",
+      );
+    }
+  }
+
   async function ensureAppRunning(workspaceId: string, appId: string): Promise<void> {
     const taskKey = `${workspaceId}:${appId}`;
     const inFlight = appEnsureRunningTasks.get(taskKey);
@@ -1616,6 +1645,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         })
       ) {
         store.upsertAppBuild({ workspaceId, appId, status: "running" });
+        reconcileAppMcpRegistry(workspaceDir, appId, resolved);
         return;
       }
 
@@ -1653,6 +1683,8 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         appId,
         status: result.status === "started" ? "running" : result.status
       });
+
+      reconcileAppMcpRegistry(workspaceDir, appId, resolved);
     })();
 
     appEnsureRunningTasks.set(taskKey, task);

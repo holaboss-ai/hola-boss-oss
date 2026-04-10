@@ -119,195 +119,181 @@ export function MarketplacePane() {
   }
 
   return (
-    <Tabs defaultValue="templates" className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-muted/50">
-      <TabsList variant="line" className="border-b border-border px-4 pt-2">
-        <TabsTrigger value="templates">Templates</TabsTrigger>
-        <TabsTrigger value="apps">Apps</TabsTrigger>
-      </TabsList>
-      <TabsContent value="templates" className="relative min-h-0 flex-1 overflow-auto p-4">
-        <div className="mx-auto max-w-5xl">
+    <Tabs
+      defaultValue="templates"
+      className="flex h-full min-h-0 p-6 min-w-0 flex-col overflow-hidden bg-muted/50 shadow-xs border border-border rounded-xl"
+    >
+      <div className="max-w-4xl mx-auto w-full">
+        <TabsList>
+          <TabsTrigger value="templates" className="h-9 min-w-40">
+            Templates
+          </TabsTrigger>
+          <TabsTrigger value="apps" className="h-9 min-w-40">
+            Apps
+          </TabsTrigger>
+        </TabsList>
+      </div>
+
+      <TabsContent
+        value="templates"
+        className="min-h-0 flex-1 overflow-auto px-5 py-4"
+      >
+        <div className="mx-auto max-w-4xl">
           {view === "gallery" ? (
-                <MarketplaceGallery
-                  mode="browse"
-                  templates={marketplaceTemplates}
-                  isLoading={isLoadingMarketplaceTemplates}
-                  authenticated={canUseMarketplaceTemplates}
-                  error={marketplaceTemplatesError || undefined}
-                  onSelectKit={handleSelectKit}
-                  onRetry={retryMarketplaceTemplates}
-                  onSignIn={() => void window.electronAPI.auth.requestAuth()}
-                />
-              ) : view === "detail" && detailTemplate ? (
-                <KitDetail
-                  template={detailTemplate}
-                  onBack={() => setView("gallery")}
-                  onSelect={handleUseKit}
-                  selectDisabled={!canUseMarketplaceTemplates}
-                  selectDisabledReason="Sign in required"
-                  onSignIn={() => void window.electronAPI.auth.requestAuth()}
-                />
-              ) : view === "creating" ? (
-                <div className="flex h-full min-h-0 flex-col">
-                  <button
-                    type="button"
-                    onClick={() => setView("detail")}
-                    className="mb-4 self-start text-[12px] text-muted-foreground/76 underline transition-colors hover:text-foreground"
-                  >
-                    &larr; Back to worker details
-                  </button>
+            <MarketplaceGallery
+              mode="browse"
+              templates={marketplaceTemplates}
+              isLoading={isLoadingMarketplaceTemplates}
+              authenticated={canUseMarketplaceTemplates}
+              error={marketplaceTemplatesError || undefined}
+              onSelectKit={handleSelectKit}
+              onRetry={retryMarketplaceTemplates}
+              onSignIn={() => void window.electronAPI.auth.requestAuth()}
+            />
+          ) : view === "detail" && detailTemplate ? (
+            <KitDetail
+              template={detailTemplate}
+              onBack={() => setView("gallery")}
+              onSelect={handleUseKit}
+              selectDisabled={!canUseMarketplaceTemplates}
+              selectDisabledReason="Sign in required"
+              onSignIn={() => void window.electronAPI.auth.requestAuth()}
+            />
+          ) : view === "creating" ? (
+            <div className="flex h-full min-h-0 flex-col">
+              <button
+                type="button"
+                onClick={() => setView("detail")}
+                className="mb-4 self-start text-[12px] text-muted-foreground underline transition-colors hover:text-foreground"
+              >
+                &larr; Back
+              </button>
 
-                  {isCreatingWorkspace ? (
-                    <div className="flex flex-1 items-center justify-center">
-                      <div className="text-center">
-                        <Loader2
-                          size={18}
-                          className="mx-auto animate-spin text-muted-foreground/60"
-                        />
-                        <div className="mt-3 text-[13px] font-medium text-foreground">
-                          Creating workspace...
-                        </div>
-                      </div>
+              {isCreatingWorkspace ? (
+                <div className="flex flex-1 items-center justify-center">
+                  <div className="text-center">
+                    <Loader2
+                      size={16}
+                      className="mx-auto animate-spin text-muted-foreground"
+                    />
+                    <div className="mt-2 text-sm text-muted-foreground">
+                      Creating workspace…
                     </div>
-                  ) : (
-                    <div className="mx-auto w-full max-w-md">
-                      <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/72">
-                        Create workspace
-                      </div>
-                      <div className="mt-1 text-[20px] font-semibold tracking-[-0.03em] text-foreground">
-                        Configure &amp; launch
-                      </div>
-
-                      {detailTemplate ? (
-                        <div className="mt-4 flex items-center gap-3 rounded-[14px] border border-border/35 bg-muted px-3 py-2.5">
-                          <KitEmoji emoji={detailTemplate.emoji} size={28} />
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-[13px] font-medium text-foreground">
-                              {detailTemplate.name}
-                            </div>
-                            <div className="truncate text-[11px] text-muted-foreground/72">
-                              {detailTemplate.apps
-                                .map((a) => a.name)
-                                .join(", ")}
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setView("gallery")}
-                            className="shrink-0 text-[11px] text-muted-foreground/72 underline transition-colors hover:text-foreground"
-                          >
-                            Change
-                          </button>
-                        </div>
-                      ) : null}
-
-                      <div className="mt-4 grid gap-4">
-                        <label className="grid gap-2">
-                          <span className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground/78">
-                            Workspace name
-                          </span>
-                          <input
-                            value={newWorkspaceName}
-                            onChange={(e) =>
-                              setNewWorkspaceName(e.target.value)
-                            }
-                            placeholder="My workspace"
-                            className="theme-control-surface h-12 rounded-[18px] border border-border/45 px-4 text-[14px] text-foreground outline-none placeholder:text-muted-foreground/50"
-                          />
-                        </label>
-                      </div>
-
-                      {workspaceErrorMessage ? (
-                        <div className="mt-3 rounded-[12px] border border-[rgba(255,153,102,0.24)] bg-[rgba(255,153,102,0.06)] px-3 py-2 text-[12px] text-[rgba(255,153,102,0.92)]">
-                          {workspaceErrorMessage}
-                        </div>
-                      ) : null}
-
-                      <button
-                        type="button"
-                        disabled={
-                          !newWorkspaceName.trim() || isResolvingIntegrations
-                        }
-                        onClick={handleCreate}
-                        className="mt-5 w-full rounded-[18px] border border-[rgba(247,90,84,0.38)] bg-[rgba(247,90,84,0.9)] px-6 py-3 text-[14px] font-medium text-white transition-colors hover:bg-[rgba(247,90,84,1)] disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {isResolvingIntegrations
-                          ? "Checking integrations..."
-                          : "Create workspace"}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ) : view === "connect_integrations" && pendingIntegrations ? (
-                <div className="flex h-full min-h-0 flex-col">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      clearPendingIntegrations();
-                      setView("creating");
-                    }}
-                    className="mb-4 self-start text-[12px] text-muted-foreground/76 underline transition-colors hover:text-foreground"
-                  >
-                    &larr; Back
-                  </button>
-                  <div className="mx-auto w-full max-w-md">
-                    <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/72">
-                      Connect integrations
-                    </div>
-                    <div className="mt-1 text-[20px] font-semibold tracking-[-0.03em] text-foreground">
-                      This workspace needs access
-                    </div>
-                    <div className="mt-2 text-[13px] leading-7 text-muted-foreground/84">
-                      Connect the following accounts to continue.
-                    </div>
-                    <div className="mt-4 grid gap-3">
-                      {pendingIntegrations.missing_providers.map((provider) => (
-                        <div
-                          key={provider}
-                          className="flex items-center justify-between rounded-[14px] border border-border/35 bg-muted px-4 py-3"
-                        >
-                          <div className="text-[13px] font-medium text-foreground">
-                            {providerDisplayName(provider)}
-                          </div>
-                          <button
-                            type="button"
-                            disabled={connectingProvider !== null}
-                            onClick={() => void handleConnectProvider(provider)}
-                            className="rounded-[12px] border border-primary/35 bg-primary/8 px-3 py-1.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/14 disabled:opacity-50"
-                          >
-                            {connectingProvider === provider
-                              ? "Connecting..."
-                              : "Connect"}
-                          </button>
-                        </div>
-                      ))}
-                      {pendingIntegrations.connected_providers.map(
-                        (provider) => (
-                          <div
-                            key={provider}
-                            className="flex items-center justify-between rounded-[14px] border border-primary/20 bg-primary/4 px-4 py-3"
-                          >
-                            <div className="text-[13px] font-medium text-foreground">
-                              {providerDisplayName(provider)}
-                            </div>
-                            <span className="text-[11px] text-primary">
-                              Connected
-                            </span>
-                          </div>
-                        ),
-                      )}
-                    </div>
-                    {connectStatus ? (
-                      <div className="mt-3 text-[12px] text-muted-foreground">
-                        {connectStatus}
-                      </div>
-                    ) : null}
                   </div>
                 </div>
-              ) : null}
+              ) : (
+                <div className="mx-auto w-full max-w-sm">
+                  {detailTemplate ? (
+                    <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/50 px-3 py-2.5">
+                      <KitEmoji emoji={detailTemplate.emoji} size={24} />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium text-foreground">
+                          {detailTemplate.name}
+                        </div>
+                        <div className="truncate text-xs text-muted-foreground">
+                          {detailTemplate.apps.map((a) => a.name).join(", ")}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setView("gallery")}
+                        className="shrink-0 text-xs text-muted-foreground underline transition-colors hover:text-foreground"
+                      >
+                        Change
+                      </button>
+                    </div>
+                  ) : null}
+
+                  <label className="mt-4 block">
+                    <span className="text-xs font-medium text-muted-foreground">
+                      Workspace name
+                    </span>
+                    <input
+                      value={newWorkspaceName}
+                      onChange={(e) => setNewWorkspaceName(e.target.value)}
+                      placeholder="My workspace"
+                      className="mt-1.5 h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring"
+                    />
+                  </label>
+
+                  {workspaceErrorMessage ? (
+                    <div className="mt-3 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                      {workspaceErrorMessage}
+                    </div>
+                  ) : null}
+
+                  <button
+                    type="button"
+                    disabled={
+                      !newWorkspaceName.trim() || isResolvingIntegrations
+                    }
+                    onClick={handleCreate}
+                    className="mt-4 w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isResolvingIntegrations
+                      ? "Checking integrations…"
+                      : "Create workspace"}
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : view === "connect_integrations" && pendingIntegrations ? (
+            <div className="flex h-full min-h-0 flex-col">
+              <button
+                type="button"
+                onClick={() => {
+                  clearPendingIntegrations();
+                  setView("creating");
+                }}
+                className="mb-4 self-start text-xs text-muted-foreground underline transition-colors hover:text-foreground"
+              >
+                &larr; Back
+              </button>
+              <div className="mx-auto w-full max-w-sm">
+                <h3 className="text-base font-semibold text-foreground">
+                  Connect accounts
+                </h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  This workspace needs access to the following services.
+                </p>
+                <div className="mt-4 space-y-2">
+                  {pendingIntegrations.missing_providers.map((provider) => (
+                    <div
+                      key={provider}
+                      className="flex items-center justify-between rounded-md border border-border px-3 py-2.5"
+                    >
+                      <span className="text-sm font-medium text-foreground">
+                        {providerDisplayName(provider)}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={connectingProvider !== null}
+                        onClick={() => void handleConnectProvider(provider)}
+                        className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                      >
+                        {connectingProvider === provider
+                          ? "Connecting…"
+                          : "Connect"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                {connectStatus ? (
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    {connectStatus}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </div>
       </TabsContent>
-      <TabsContent value="apps" className="relative min-h-0 flex-1 overflow-auto p-4">
-        <div className="mx-auto max-w-5xl">
+
+      <TabsContent
+        value="apps"
+        className="min-h-0 flex-1 overflow-auto px-5 py-4"
+      >
+        <div className="mx-auto max-w-4xl">
           <AppsGallery />
         </div>
       </TabsContent>

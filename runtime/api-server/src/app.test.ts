@@ -2102,6 +2102,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
       resolvedApp: {
         appId: "app-b",
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+        mcpTools: [],
         healthCheck: { path: "/health", timeoutS: 60, intervalS: 5 },
         envContract: [],
         integrations: undefined,
@@ -2118,6 +2119,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
       resolvedApp: {
         appId: "app-b",
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+        mcpTools: [],
         healthCheck: { path: "/health", timeoutS: 60, intervalS: 5 },
         envContract: [],
         integrations: undefined,
@@ -2134,6 +2136,7 @@ test("app lifecycle routes delegate to the lifecycle executor and uninstall upda
       resolvedApp: {
         appId: "app-b",
         mcp: { transport: "http-sse", port: 4100, path: "/mcp" },
+        mcpTools: [],
         healthCheck: { path: "/health", timeoutS: 60, intervalS: 5 },
         envContract: [],
         integrations: undefined,
@@ -4325,13 +4328,13 @@ test("isAllowedArchiveUrl accepts github releases and rejects others", async () 
   const { isAllowedArchiveUrl } = await import("./app.js");
   assert.equal(
     isAllowedArchiveUrl(
-      "https://github.com/holaboss-ai/holaboss-modules/releases/download/v0.1.0/twitter-module-darwin-arm64.tar.gz",
+      "https://github.com/holaboss-ai/holaboss-apps/releases/download/v0.1.0/twitter-module-darwin-arm64.tar.gz",
     ),
     true,
   );
   assert.equal(isAllowedArchiveUrl("https://evil.test/twitter.tar.gz"), false);
   assert.equal(
-    isAllowedArchiveUrl("http://github.com/holaboss-ai/holaboss-modules/releases/download/x.tar.gz"),
+    isAllowedArchiveUrl("http://github.com/holaboss-ai/holaboss-apps/releases/download/x.tar.gz"),
     false,
   );
   assert.equal(isAllowedArchiveUrl(""), false);
