@@ -302,7 +302,7 @@ test("chat pane exposes an in-pane session dropdown for switching agent sessions
   assert.match(source, /aria-label="Show inbox"/);
   assert.match(source, /aria-label="Create new session"/);
   assert.match(source, /placeholder="Search sessions\.\.\."/);
-  assert.match(source, /open\s*\?\s*"rotate-180 group-hover:-translate-y-0\.5 group-hover:scale-125"\s*:\s*"rotate-0 group-hover:translate-y-0\.5 group-hover:scale-125"/);
+  assert.match(source, /open\s*\?\s*"rotate-180 group-hover:-translate-y-1 group-hover:scale-150"\s*:\s*"rotate-0 group-hover:translate-y-1 group-hover:scale-150"/);
   assert.match(source, /filteredSessions\.map\(\(session\) => \{/);
   assert.match(source, /inboxUnreadCount > 0 \? \(/);
   assert.match(source, /onOpenInbox\(\);/);

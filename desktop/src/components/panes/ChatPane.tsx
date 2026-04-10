@@ -4818,8 +4818,8 @@ function SessionSelector({
                   size={13}
                   className={`shrink-0 text-muted-foreground transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
                     open
-                      ? "rotate-180 group-hover:-translate-y-0.5 group-hover:scale-125"
-                      : "rotate-0 group-hover:translate-y-0.5 group-hover:scale-125"
+                      ? "rotate-180 group-hover:-translate-y-1 group-hover:scale-150"
+                      : "rotate-0 group-hover:translate-y-1 group-hover:scale-150"
                   } motion-reduce:transform-none`}
                 />
               </button>
