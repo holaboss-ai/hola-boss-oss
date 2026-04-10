@@ -6220,6 +6220,9 @@ async function readControlPlaneError(response: Response) {
   }
 }
 
+/** Deduplicates concurrent 401 sign-in prompts — only one popup at a time. */
+let pendingGatewayAuthRetry: Promise<void> | null = null;
+
 async function requestControlPlaneJson<T>({
   service,
   method,
@@ -6289,6 +6292,22 @@ async function requestControlPlaneJson<T>({
     if (retried) {
       response = await executeRequest();
       errorDetail = "";
+    }
+  }
+  // If gateway returned 401 (session expired/missing), prompt sign-in and retry once.
+  if (response.status === 401 && desktopAuthClient) {
+    try {
+      if (!pendingGatewayAuthRetry) {
+        pendingGatewayAuthRetry = requireAuthClient().requestAuth().finally(() => {
+          pendingGatewayAuthRetry = null;
+        });
+      }
+      await pendingGatewayAuthRetry;
+      // Auth completed — retry with fresh cookie
+      response = await executeRequest();
+      errorDetail = "";
+    } catch {
+      // User dismissed sign-in or auth failed — fall through to error
     }
   }
   if (!response.ok) {
