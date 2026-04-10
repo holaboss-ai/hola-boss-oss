@@ -4237,3 +4237,85 @@ mcp:
   }
 });
 
+test("DELETE /apps/:appId removes mcp_registry entry", async () => {
+  const root = makeTempDir("hb-runtime-api-delete-app-mcp-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Test Workspace",
+    harness: "pi",
+    status: "active",
+  });
+  const workspaceDir = store.workspaceDir(workspace.id);
+
+  // Pre-seed workspace.yaml with applications + mcp_registry
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(workspaceDir, "workspace.yaml"),
+    `template_id: test
+name: Test
+applications:
+  - app_id: twitter
+    config_path: apps/twitter/app.runtime.yaml
+    lifecycle:
+      stop: "true"
+mcp_registry:
+  allowlist:
+    tool_ids:
+      - twitter.create_post
+      - linkedin.create_post
+  servers:
+    twitter:
+      type: remote
+      url: http://localhost:13100/mcp/sse
+      enabled: true
+    linkedin:
+      type: remote
+      url: http://localhost:13101/mcp/sse
+      enabled: true
+`,
+  );
+
+  // Create apps/twitter dir with a minimal app.runtime.yaml so the DELETE
+  // handler can stop the app (best-effort) before uninstalling
+  const appDir = path.join(workspaceDir, "apps", "twitter");
+  fs.mkdirSync(appDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(appDir, "app.runtime.yaml"),
+    `app_id: twitter
+name: Twitter
+lifecycle:
+  stop: "true"
+mcp:
+  enabled: false
+  port: 3099
+`,
+  );
+
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const res = await app.inject({
+      method: "DELETE",
+      url: "/api/v1/apps/twitter",
+      payload: { workspace_id: workspace.id },
+    });
+    assert.equal(res.statusCode, 200);
+
+    const yamlBody = fs.readFileSync(
+      path.join(workspaceDir, "workspace.yaml"),
+      "utf8",
+    );
+    assert.doesNotMatch(yamlBody, /twitter\.create_post/);
+    assert.match(yamlBody, /linkedin\.create_post/);
+    assert.match(yamlBody, /linkedin:/);
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+

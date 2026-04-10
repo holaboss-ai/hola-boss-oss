@@ -3709,6 +3709,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
 
     fs.rmSync(path.join(workspaceDir, "apps", appId), { recursive: true, force: true });
     removeWorkspaceApplication(workspaceDir, appId);
+    removeWorkspaceMcpRegistryEntry(workspaceDir, appId);
     releaseWorkspaceAppPorts({ store, workspaceId, appId });
     store.deleteAppBuild({ workspaceId, appId });
     return {
