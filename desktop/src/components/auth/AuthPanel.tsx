@@ -1196,8 +1196,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   ];
 
   const setupLoadingPanel = (
-    <div className="theme-subtle-surface flex flex-col items-center gap-3 rounded-[20px] border border-border/40 px-5 py-8 text-center">
-      <div className="flex size-11 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-primary">
+    <div className="theme-subtle-surface flex flex-col items-center gap-3 rounded-xl border border-border/40 px-4 py-5 text-center">
+      <div className="flex size-8 items-center justify-center rounded-full border border-primary/30 bg-primary/10 text-primary">
         <Loader2 size={18} className="animate-spin" />
       </div>
       <div className="text-base font-medium text-foreground">
@@ -1874,7 +1874,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     return (
       <div
         key={providerId}
-        className={`theme-control-surface overflow-hidden rounded-[14px] border transition ${
+        className={`theme-control-surface overflow-hidden rounded-lg border transition ${
           isExpanded
             ? "border-primary/35 bg-card/96 shadow-[0_0_0_1px_rgb(var(--color-primary)/0.08)]"
             : "border-border/55 bg-card/92 hover:border-border/75"
@@ -1882,7 +1882,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       >
         <div className="flex flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between">
           <div className="flex min-w-0 flex-1 items-start gap-3">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-border/55 bg-background/80 text-foreground">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-border/55 bg-background/80 text-foreground">
               <ProviderBrandIcon providerId={providerId} />
             </span>
             <div className="min-w-0 flex-1">
@@ -1982,10 +1982,10 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
   const runtimeProviderSettings = (
     <div className="mt-3 grid gap-4">
-      <div className="rounded-[18px] border border-border/40 bg-card/80 p-4">
+      <div className="rounded-lg border border-border/40 bg-card/80 p-4">
         <div className="grid gap-3">
         <div className="text-sm font-medium text-foreground">Connected providers</div>
-        <div className="rounded-[14px] border border-border/35 bg-muted/25 p-3">
+        <div className="rounded-lg border border-border/35 bg-muted/25 p-3">
           <div className="text-sm font-medium text-foreground">Background tasks</div>
           <div className="mt-1 text-sm text-muted-foreground">
             Used for memory recall and post-run tasks.
@@ -2088,7 +2088,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             ) : null}
           </div>
         </div>
-        <div className="rounded-[14px] border border-border/35 bg-muted/25 p-3">
+        <div className="rounded-lg border border-border/35 bg-muted/25 p-3">
           <div className="text-sm font-medium text-foreground">Image generation</div>
           <div className="mt-1 text-sm text-muted-foreground">
             Used when the agent generates new images into the workspace.
@@ -2201,7 +2201,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         </div>
       </div>
 
-      <div className="rounded-[18px] border border-border/40 bg-card/80 p-4">
+      <div className="rounded-lg border border-border/40 bg-card/80 p-4">
         <div className="text-sm font-medium text-foreground">Available providers</div>
         <div className="mt-3 grid gap-2">
           {availableProviderIds.length === 0 ? (
@@ -2220,16 +2220,16 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   if (view === "account") {
     if (showsSetupLoadingState) {
       return (
-        <section className="grid w-full max-w-[1080px] gap-5">
+        <section className="grid w-full max-w-3xl gap-4">
           {setupLoadingPanel}
         </section>
       );
     }
 
     return (
-      <section className="grid w-full max-w-[1080px] gap-5">
+      <section className="grid w-full max-w-3xl gap-4">
         <div className="grid gap-4">
-          <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div className="flex min-w-0 items-center gap-4">
               <div className="grid h-16 w-16 shrink-0 place-items-center rounded-full border border-border/30 bg-muted/70 text-2xl font-semibold text-foreground">
                 {sessionInitials(session)}
@@ -2273,7 +2273,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                     aria-label="Refresh session"
                     onClick={() => void handleRefreshSession()}
                     disabled={sessionState.isPending}
-                    className="h-11 w-11 rounded-[16px] border-border/45 bg-background text-muted-foreground hover:border-primary/35 hover:text-foreground"
+                    className="h-8 w-8 rounded-lg border-border/45 bg-background text-muted-foreground hover:border-primary/35 hover:text-foreground"
                   >
                     {sessionState.isPending ? (
                       <Loader2 size={16} className="animate-spin" />
@@ -2287,7 +2287,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                     aria-label="Sign out"
                     onClick={() => void handleSignOut()}
                     disabled={!isSignedIn}
-                    className="h-11 w-11 rounded-[16px] border border-destructive/20 bg-destructive/5 text-destructive hover:border-destructive/35 hover:bg-destructive/10"
+                    className="h-8 w-8 rounded-lg border border-destructive/20 bg-destructive/5 text-destructive hover:border-destructive/35 hover:bg-destructive/10"
                   >
                     <LogOut size={16} />
                   </Button>
@@ -2306,7 +2306,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
           {(authMessage || authError) && (
             <div
-              className={`mt-4 rounded-[20px] border px-4 py-3 text-sm ${
+              className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
                 authError
                   ? "border-rose-400/25 bg-rose-500/8 text-rose-400"
                   : "border-neon-green/25 bg-neon-green/8 text-neon-green"
@@ -2334,7 +2334,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         {showsSetupLoadingState ? setupLoadingPanel : runtimeProviderSettings}
         {!showsSetupLoadingState && (authMessage || authError) && (
           <div
-            className={`mt-3 rounded-[16px] border px-4 py-3 text-sm ${
+            className={`mt-3 rounded-lg border px-4 py-3 text-sm ${
               authError
                 ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
                 : "border-neon-green/35 bg-neon-green/8 text-neon-green"
@@ -2349,7 +2349,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
   if (showsSetupLoadingState) {
     return (
-      <section className="theme-shell w-full max-w-none overflow-hidden rounded-[24px] border border-border/40 text-sm text-foreground shadow-card">
+      <section className="theme-shell w-full max-w-none overflow-hidden rounded-xl border border-border/40 text-sm text-foreground shadow-sm">
         <div className="px-4 py-5">
           {setupLoadingPanel}
         </div>
@@ -2358,13 +2358,13 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   }
 
   return (
-    <section className="theme-shell w-full max-w-none overflow-hidden rounded-[24px] border border-border/40 text-sm text-foreground shadow-card">
+    <section className="theme-shell w-full max-w-none overflow-hidden rounded-xl border border-border/40 text-sm text-foreground shadow-sm">
       {showAccountSection && (
         <>
           <div className="border-b border-panel-border/40 px-4 py-4">
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-start gap-3">
-                <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-primary/30 bg-primary/10 text-lg font-semibold text-primary">
+                <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-primary/30 bg-primary/10 text-sm font-semibold text-primary">
                   {sessionInitials(session)}
                 </div>
                 <div className="min-w-0">
@@ -2385,7 +2385,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               {infoRows.map((row) => (
                 <div
                   key={row.label}
-                  className="theme-subtle-surface flex items-center justify-between gap-3 rounded-[16px] border border-panel-border/35 px-4 py-3"
+                  className="theme-subtle-surface flex items-center justify-between gap-3 rounded-lg border border-panel-border/35 px-4 py-3"
                 >
                   <div className="text-sm text-foreground">{row.label}</div>
                   <div className="max-w-[58%] truncate text-right text-sm text-muted-foreground">{row.value}</div>
@@ -2397,7 +2397,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               {!isSignedIn && (
                 <Button
                   variant="outline"
-                  className="h-10 rounded-[16px] border-primary/40 bg-primary/10 px-4 text-primary hover:bg-primary/16"
+                  className="rounded-lg border-primary/40 bg-primary/10 px-4 text-primary hover:bg-primary/16"
                   onClick={() => void handleStartSignIn()}
                   disabled={isStartingSignIn}
                 >
@@ -2407,7 +2407,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
               <Button
                 variant="outline"
-                className="theme-control-surface h-10 rounded-[16px] border-border/45 px-4 text-foreground hover:border-primary/35"
+                className="theme-control-surface rounded-lg border-border/45 px-4 text-foreground hover:border-primary/35"
                 onClick={() => void handleRefreshSession()}
                 disabled={sessionState.isPending}
               >
@@ -2416,7 +2416,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
               <Button
                 variant="destructive"
-                className="h-10 rounded-[16px] border border-destructive/30 bg-destructive/10 px-4 text-destructive hover:border-destructive/45 hover:bg-destructive/15"
+                className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 text-destructive hover:border-destructive/45 hover:bg-destructive/15"
                 onClick={() => void handleSignOut()}
                 disabled={!isSignedIn}
               >
@@ -2426,7 +2426,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
             {(authMessage || authError) && (
               <div
-                className={`mt-3 rounded-[16px] border px-4 py-3 text-sm ${
+                className={`mt-3 rounded-lg border px-4 py-3 text-sm ${
                   authError
                     ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
                     : "border-neon-green/35 bg-neon-green/8 text-neon-green"
@@ -2444,7 +2444,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           {runtimeProviderSettings}
           {(authMessage || authError) && (
             <div
-              className={`mt-3 rounded-[16px] border px-4 py-3 text-sm ${
+              className={`mt-3 rounded-lg border px-4 py-3 text-sm ${
                 authError
                   ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
                   : "border-neon-green/35 bg-neon-green/8 text-neon-green"
