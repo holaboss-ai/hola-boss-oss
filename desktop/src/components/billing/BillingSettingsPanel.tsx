@@ -21,27 +21,21 @@ function openBillingLink(url: string | null | undefined) {
 }
 
 export function BillingSettingsPanel() {
-  const {
-    overview,
-    usage,
-    links,
-    isLoading,
-    error,
-    refresh,
-  } = useDesktopBilling();
+  const { overview, usage, links, isLoading, error, refresh } =
+    useDesktopBilling();
 
   const showExpirationBanner = Boolean(overview?.expiresAt);
   const usageItems = usage?.items ?? [];
 
   return (
-    <div className="grid max-w-[760px] gap-4">
-
+    <div className="grid max-w-2xl gap-4">
       {showExpirationBanner ? (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-400/25 bg-amber-400/10 px-4 py-3">
           <div className="flex min-w-0 items-center gap-2 text-sm text-amber-200">
             <AlertCircle size={16} className="shrink-0" />
             <span className="truncate">
-              {overview?.planName || "Plan"} expires on {overview?.expiresAt ? formatBillingDate(overview.expiresAt) : ""}
+              {overview?.planName || "Plan"} expires on{" "}
+              {overview?.expiresAt ? formatBillingDate(overview.expiresAt) : ""}
             </span>
           </div>
           <Button
@@ -65,7 +59,9 @@ export function BillingSettingsPanel() {
       />
       <Card className="rounded-xl border-border/40 bg-card/40">
         <CardContent className="grid gap-3">
-          <div className="text-sm font-semibold text-foreground">Usage record</div>
+          <div className="text-sm font-semibold text-foreground">
+            Usage record
+          </div>
 
           <div className="grid grid-cols-[minmax(0,1fr)_140px_120px] gap-3 border-b border-border/40 pb-3 text-sm text-muted-foreground">
             <div>Details</div>
@@ -84,9 +80,15 @@ export function BillingSettingsPanel() {
                   key={item.id}
                   className="grid grid-cols-[minmax(0,1fr)_140px_120px] gap-3 border-b border-border/30 py-4 text-sm last:border-b-0"
                 >
-                  <div className="truncate text-foreground">{item.reason || item.type}</div>
-                  <div className="text-muted-foreground">{formatBillingDate(item.createdAt)}</div>
-                  <div className={`text-right tabular-nums ${item.amount > 0 ? "text-foreground" : "text-muted-foreground"}`}>
+                  <div className="truncate text-foreground">
+                    {item.reason || item.type}
+                  </div>
+                  <div className="text-muted-foreground">
+                    {formatBillingDate(item.createdAt)}
+                  </div>
+                  <div
+                    className={`text-right tabular-nums ${item.amount > 0 ? "text-foreground" : "text-muted-foreground"}`}
+                  >
                     {item.amount > 0 ? "+" : ""}
                     {item.amount.toLocaleString()}
                   </div>
