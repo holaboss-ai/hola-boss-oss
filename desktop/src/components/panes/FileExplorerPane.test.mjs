@@ -36,15 +36,31 @@ test("file explorer polls the current directory to surface live file changes", a
   assert.match(source, /\}, \[currentPath, selectedWorkspaceId\]\);/);
 });
 
-test("file explorer opens folders on double click instead of single click", async () => {
+test("file explorer switches folders to inline tree expansion and keeps explorer-only file opening", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /onClick=\{\(\) => \{\s*setSelectedPath\(entry\.absolutePath\);\s*closeContextMenu\(\);\s*\}\}/);
   assert.match(
     source,
-    /onDoubleClick=\{\(\) => \{\s*if \(entry\.isDirectory\) \{\s*void openPath\(entry\.absolutePath\);\s*return;\s*\}\s*void openFilePreview\(entry\.absolutePath\);\s*\}\}/
+    /type FileExplorerVisibleRow =/,
   );
-  assert.match(source, /double-click to open folder/);
+  assert.match(
+    source,
+    /function buildVisibleExplorerRows\(/,
+  );
+  assert.match(
+    source,
+    /const toggleDirectoryExpansion = useCallback\(\s*async \(entry: LocalFileEntry\) => \{/,
+  );
+  assert.match(
+    source,
+    /onClick=\{\(\) => \{\s*setSelectedPath\(entry\.absolutePath\);\s*closeContextMenu\(\);\s*if \(entry\.isDirectory\) \{\s*void toggleDirectoryExpansion\(entry\);\s*return;\s*\}\s*if \(!previewInPane\) \{\s*void openFileTarget\(entry\.absolutePath\);\s*\}\s*\}\}/,
+  );
+  assert.match(
+    source,
+    /onDoubleClick=\{\(\) => \{\s*if \(!entry\.isDirectory && previewInPane\) \{\s*void openFilePreview\(entry\.absolutePath\);\s*\}\s*\}\}/,
+  );
+  assert.match(source, /click to \$\{isExpanded \? "collapse" : "expand"\} folder/);
+  assert.match(source, /click to open file, drag into chat to attach/);
 });
 
 test("file explorer keeps drag-to-attach without using a grab cursor", async () => {
@@ -59,56 +75,33 @@ test("file explorer keeps drag-to-attach without using a grab cursor", async () 
   assert.doesNotMatch(source, /cursor-grabbing/);
 });
 
-test("file explorer home opens the selected workspace root when available", async () => {
+test("file explorer keeps a minimal tree header without showing the workspace root row", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /const openHomeDirectory = async \(\) => \{/);
-  assert.match(source, /const workspaceRoot = await window\.electronAPI\.workspace\.getWorkspaceRoot\(selectedWorkspaceId\);/);
-  assert.match(source, /await loadDirectory\(workspaceRoot, true\);/);
-  assert.match(source, /await loadDirectory\(null, true\);/);
-  assert.match(source, /onClick=\{\(\) => \{\s*void openHomeDirectory\(\);\s*\}\}/);
-});
-
-test("file explorer uses breadcrumbs and home instead of a separate up button", async () => {
-  const source = await readFile(sourcePath, "utf8");
-
-  assert.match(source, /const \[workspaceRootPath, setWorkspaceRootPath\] = useState<string \| null>\(null\);/);
-  assert.match(
-    source,
-    /const isAtWorkspaceRoot = workspaceRootPath[\s\S]*normalizeComparablePath\(currentPath\) === normalizeComparablePath\(workspaceRootPath\)/
-  );
-  assert.doesNotMatch(source, /label="Up"/);
-  assert.doesNotMatch(source, /ArrowUp/);
-  assert.match(source, /label="Home"[\s\S]*disabled=\{isAtWorkspaceRoot\}/);
-});
-
-test("file explorer renders clickable breadcrumbs scoped to the current path", async () => {
-  const source = await readFile(sourcePath, "utf8");
-
-  assert.match(source, /type FileExplorerBreadcrumb = \{/);
-  assert.match(source, /function buildPathBreadcrumbs\(/);
-  assert.match(
-    source,
-    /const breadcrumbs = useMemo\(\s*\(\) => buildPathBreadcrumbs\(currentPath, workspaceRootPath\),\s*\[currentPath, workspaceRootPath\],\s*\);/,
-  );
-  assert.match(source, /chat-scrollbar-hidden mt-1\.5 flex items-center gap-1 overflow-x-auto/);
-  assert.match(source, /breadcrumbs\.map\(\(breadcrumb\) => \(/);
-  assert.match(source, /<ChevronRight size=\{10\}/);
-  assert.match(
-    source,
-    /onClick=\{\(\) => \{\s*void openPath\(breadcrumb\.absolutePath\);\s*\}\}/,
-  );
+  assert.match(source, /text-\[11px\] font-medium uppercase tracking-\[0\.14em\] text-muted-foreground\/72">\s*Files\s*</);
+  assert.doesNotMatch(source, /const rootFolderLabel = currentPath \? getFolderName\(currentPath\) : "Workspace";/);
+  assert.doesNotMatch(source, /const isRootExpanded = normalizedQuery\.length > 0 \|\| expandedDirectoryPaths\[currentPath\] !== false;/);
+  assert.doesNotMatch(source, /setExpandedDirectoryPaths\(\(current\) => \(\{\s*\.\.\.current,\s*\[currentPath\]: !isRootExpanded,\s*\}\)\);/);
+  assert.doesNotMatch(source, /label="Back"/);
+  assert.doesNotMatch(source, /label="Forward"/);
+  assert.doesNotMatch(source, /label="Home"/);
+  assert.doesNotMatch(source, /buildPathBreadcrumbs/);
+  assert.doesNotMatch(source, /const \[history, setHistory\]/);
 });
 
 test("file explorer accepts one-shot focus requests for artifact files", async () => {
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /export type FileExplorerFocusRequest = \{\s*path: string;\s*requestKey: number;\s*\};/);
-  assert.match(source, /interface FileExplorerPaneProps \{\s*focusRequest\?: FileExplorerFocusRequest \| null;\s*onFocusRequestConsumed\?: \(requestKey: number\) => void;\s*\}/);
+  assert.match(
+    source,
+    /interface FileExplorerPaneProps \{\s*focusRequest\?: FileExplorerFocusRequest \| null;\s*onFocusRequestConsumed\?: \(requestKey: number\) => void;\s*previewInPane\?: boolean;\s*onFileOpen\?: \(path: string\) => void;\s*embedded\?: boolean;\s*\}/,
+  );
   assert.match(source, /const request = focusRequest;\s*if \(lastProcessedFocusRequestKeyRef\.current === request\.requestKey\) \{\s*return;\s*\}/);
   assert.match(source, /const workspaceRoot =\s*workspaceRootPath \?\?\s*\(await window\.electronAPI\.workspace\.getWorkspaceRoot\(selectedWorkspaceId\)\);/);
   assert.match(source, /targetPath = resolveWorkspaceTargetPath\(workspaceRoot, targetPath\);/);
-  assert.match(source, /await openFilePreview\(targetPath, \{ syncDirectory: true \}\);/);
+  assert.match(source, /const revealPathInTree = useCallback\(/);
+  assert.match(source, /await openFileTarget\(targetPath, \{ syncDirectory: true \}\);/);
   assert.match(source, /onFocusRequestConsumed\?\.\(request\.requestKey\);/);
 });
 
@@ -120,7 +113,9 @@ test("file explorer adds a markdown preview mode while keeping text editing inli
   assert.match(source, /type TextPreviewMode = "edit" \| "preview";/);
   assert.match(source, /const \[textPreviewMode, setTextPreviewMode\] = useState<TextPreviewMode>\("edit"\);/);
   assert.match(source, /setTextPreviewMode\(isMarkdownPreviewPayload\(payload\) \? "preview" : "edit"\);/);
-  assert.match(source, /title=\{preview \|\| previewLoading \|\| previewError \? "File" : ""\}/);
+  assert.match(source, /const showInlinePreview = previewInPane && Boolean\(preview \|\| previewLoading \|\| previewError\);/);
+  assert.match(source, /const explorerPane = embedded \? \(\s*content\s*\) : \(/);
+  assert.match(source, /title=\{showInlinePreview \? "File" : ""\}/);
   assert.match(source, /preview\?\.kind === "text" \? \(/);
   assert.match(source, /isMarkdownPreview && textPreviewMode === "preview"/);
   assert.match(source, /<SimpleMarkdown[\s\S]*className="chat-markdown text-sm text-foreground"[\s\S]*onLinkClick=\{openPreviewLink\}[\s\S]*\{previewDraft\}[\s\S]*<\/SimpleMarkdown>/);
@@ -138,6 +133,15 @@ test("file explorer adds a markdown preview mode while keeping text editing inli
     /window\.electronAPI\.fs\.writeTextFile\(\s*preview\.absolutePath,\s*previewDraft,\s*selectedWorkspaceId \?\? null,\s*\)/,
   );
   assert.match(source, /Save/);
+});
+
+test("file explorer preview metadata omits the absolute file path", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.doesNotMatch(
+    source,
+    /\{preview\?\.absolutePath \? <span>\{preview\.absolutePath\}<\/span> : null\}/,
+  );
 });
 
 test("file explorer warns users to save before leaving an unsaved file", async () => {
@@ -191,6 +195,8 @@ test("file explorer exposes right-click rename and delete actions for entries", 
     source,
     /window\.electronAPI\.fs\.renamePath\(\s*renamingEntry\.absolutePath,\s*nextName,\s*selectedWorkspaceId \?\? null,\s*\)/,
   );
+  assert.match(source, /const refreshDirectoryEntries = useCallback\(/);
+  assert.match(source, /const parentPath =\s*getParentFolderPath\(renamingEntry\.absolutePath\) \?\? currentPathRef\.current;/);
   assert.match(
     source,
     /window\.electronAPI\.fs\.deletePath\(\s*entry\.absolutePath,\s*selectedWorkspaceId \?\? null,\s*\)/,
@@ -202,8 +208,14 @@ test("file explorer exposes right-click rename and delete actions for entries", 
 test("file explorer does not expose a pane-level close action", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /interface FileExplorerPaneProps \{\s*focusRequest\?: FileExplorerFocusRequest \| null;\s*onFocusRequestConsumed\?: \(requestKey: number\) => void;\s*\}/);
-  assert.match(source, /export function FileExplorerPane\(\{\s*focusRequest = null,\s*onFocusRequestConsumed,\s*}: FileExplorerPaneProps\)/);
+  assert.match(
+    source,
+    /interface FileExplorerPaneProps \{\s*focusRequest\?: FileExplorerFocusRequest \| null;\s*onFocusRequestConsumed\?: \(requestKey: number\) => void;\s*previewInPane\?: boolean;\s*onFileOpen\?: \(path: string\) => void;\s*embedded\?: boolean;\s*\}/,
+  );
+  assert.match(
+    source,
+    /export function FileExplorerPane\(\{\s*focusRequest = null,\s*onFocusRequestConsumed,\s*previewInPane = true,\s*onFileOpen,\s*embedded = false,\s*}: FileExplorerPaneProps\)/,
+  );
   assert.doesNotMatch(source, /label="Close file explorer"/);
   assert.doesNotMatch(source, /icon=\{<X size=\{1[23]\} \/>/);
 });

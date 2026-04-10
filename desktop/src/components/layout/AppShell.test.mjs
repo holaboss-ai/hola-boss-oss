@@ -4,7 +4,7 @@ import test from "node:test";
 
 const APP_SHELL_PATH = new URL("./AppShell.tsx", import.meta.url);
 
-test("app shell routes file outputs into the file explorer while keeping chat active", async () => {
+test("app shell routes file outputs into the explorer and universal display while keeping chat active", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(
@@ -19,7 +19,13 @@ test("app shell routes file outputs into the file explorer while keeping chat ac
     source,
     /setSpaceVisibility\(\(previous\) => \(\{\s*\.\.\.previous,\s*agent: true,\s*files: true,\s*\}\)\);/
   );
+  assert.match(source, /setSpaceExplorerMode\("files"\);/);
+  assert.match(source, /setSpaceExplorerCollapsed\(false\);/);
   assert.match(source, /setAgentView\(\{ type: "chat" \}\);/);
+  assert.match(
+    source,
+    /setSpaceDisplayView\(\{\s*type: "internal",\s*surface: target\.surface,\s*resourceId: target\.resourceId,\s*\}\);/
+  );
   assert.match(
     source,
     /setFileExplorerFocusRequest\(\{\s*path: target\.resourceId,\s*requestKey: Date\.now\(\),\s*\}\);/
@@ -30,9 +36,47 @@ test("app shell clears a consumed file explorer focus request", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(source, /<FileExplorerPane[\s\S]*focusRequest=\{fileExplorerFocusRequest\}/);
+  assert.match(source, /<FileExplorerPane[\s\S]*previewInPane=\{false\}/);
+  assert.match(
+    source,
+    /onFileOpen=\{\(path\) => \{\s*setSpaceDisplayView\(\{\s*type: "internal",\s*surface: "file",\s*resourceId: path,\s*\}\);/
+  );
   assert.match(
     source,
     /onFocusRequestConsumed=\{\(requestKey\) => \{\s*setFileExplorerFocusRequest\(\(current\) =>\s*current\?\.requestKey === requestKey \? null : current,\s*\);\s*\}\}/
+  );
+});
+
+test("app shell restores the last non-browser display when returning to files mode", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /type RestorableSpaceDisplayView = Exclude<\s*SpaceDisplayView,\s*\{ type: "browser" \} \| \{ type: "empty" \}\s*>;/,
+  );
+  assert.match(
+    source,
+    /const lastRestorableSpaceDisplayViewByWorkspaceRef =\s*useRef<\s*Record<string, RestorableSpaceDisplayView>\s*>\(\{\}\);/,
+  );
+  assert.match(
+    source,
+    /if \(\s*!selectedWorkspaceId \|\|\s*spaceDisplayView\.type === "browser" \|\|\s*spaceDisplayView\.type === "empty"\s*\) \{\s*return;\s*\}\s*lastRestorableSpaceDisplayViewByWorkspaceRef\.current\[selectedWorkspaceId\] =\s*spaceDisplayView;/,
+  );
+  assert.match(
+    source,
+    /const restoreLastSpaceDisplayView = useCallback\(\(\) => \{\s*if \(!selectedWorkspaceId\) \{\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*const lastDisplayView =\s*lastRestorableSpaceDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\];\s*setSpaceDisplayView\(lastDisplayView \?\? \{ type: "browser" \}\);\s*\}, \[selectedWorkspaceId\]\);/,
+  );
+  assert.match(
+    source,
+    /useEffect\(\(\) => \{\s*if \(!selectedWorkspaceId\) \{\s*setSpaceExplorerMode\("browser"\);\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*const nextDisplayView =\s*lastRestorableSpaceDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\];\s*if \(!nextDisplayView\) \{\s*setSpaceExplorerMode\("browser"\);\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*setSpaceDisplayView\(nextDisplayView\);\s*\}, \[selectedWorkspaceId\]\);/,
+  );
+  assert.match(
+    source,
+    /onClick=\{\(\) => \{\s*setSpaceExplorerMode\("files"\);\s*restoreLastSpaceDisplayView\(\);\s*\}\}/,
+  );
+  assert.match(
+    source,
+    /onClick=\{\(\) => \{\s*setSpaceExplorerMode\("files"\);\s*restoreLastSpaceDisplayView\(\);\s*setSpaceExplorerCollapsed\(false\);\s*\}\}/,
   );
 });
 
@@ -64,7 +108,7 @@ test("app shell keeps desktop updates separate from runtime notification state",
   assert.match(source, /void window\.electronAPI\.ui\.openExternalUrl\(changelogUrl\);/);
   assert.doesNotMatch(source, /combinedNotifications/);
   assert.doesNotMatch(source, /syntheticNotificationStates/);
-  assert.match(source, /<BrowserPane[\s\S]*suspendNativeView=\{shouldSuspendBrowserNativeView\}/);
+  assert.match(source, /<SpaceBrowserDisplayPane[\s\S]*suspendNativeView=\{shouldSuspendBrowserNativeView\}/);
 });
 
 test("app shell opens cronjob session-run notifications in the sub-session chat", async () => {
@@ -138,23 +182,49 @@ test("app shell no longer reserves a separate safe pane region for update toasts
     source,
     /const shouldSuspendBrowserNativeView =\s*isUtilityPaneResizing \|\|[\s\S]*workspaceSwitcherOpen \|\|[\s\S]*settingsDialogOpen \|\|[\s\S]*createWorkspacePanelOpen \|\|[\s\S]*publishOpen;/,
   );
-  assert.match(source, /<BrowserPane[\s\S]*suspendNativeView=\{shouldSuspendBrowserNativeView\}/);
+  assert.match(source, /<SpaceBrowserDisplayPane[\s\S]*suspendNativeView=\{shouldSuspendBrowserNativeView\}/);
 });
 
-test("app shell uses a wider minimum for the file explorer than for the browser pane", async () => {
+test("app shell keeps a fixed explorer width and resizes the display against chat in space mode", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(source, /const MIN_FILES_PANE_WIDTH = 220;/);
   assert.match(source, /const MIN_BROWSER_PANE_WIDTH = 120;/);
   assert.match(source, /const MIN_AGENT_CONTENT_WIDTH = 380;/);
   assert.match(source, /const DEFAULT_FILES_PANE_WIDTH = MIN_FILES_PANE_WIDTH;/);
-  assert.match(source, /function utilityPaneMinWidth\(paneId: UtilityPaneId\): number \{/);
+  assert.match(source, /const SPACE_EXPLORER_WIDTH = DEFAULT_FILES_PANE_WIDTH;/);
+  assert.match(source, /const SPACE_AGENT_PANE_WIDTH = 420;/);
+  assert.match(source, /const SPACE_DISPLAY_MIN_WIDTH = 420;/);
+  assert.match(source, /const SPACE_EXPLORER_COLLAPSED_WIDTH = 68;/);
   assert.match(
     source,
-    /pane\.flex\s*\?\s*\{\s*minWidth: `\$\{MIN_AGENT_CONTENT_WIDTH\}px`,\s*\}\s*:\s*\{ width: `\$\{pane\.width\}px` \}/,
+    /const \[spaceAgentPaneWidth, setSpaceAgentPaneWidth\] = useState\(\s*SPACE_AGENT_PANE_WIDTH,\s*\);/,
   );
-  assert.match(source, /const syncUtilityPaneWidths = useCallback\(\(\) => \{/);
-  assert.match(source, /new ResizeObserver\(\(\) => \{\s*syncUtilityPaneWidths\(\);\s*\}\)/);
+  assert.match(source, /const clampSpaceAgentPaneWidth = useCallback\(\(width: number\) => \{/);
+  assert.match(
+    source,
+    /const explorerWidth = spaceExplorerCollapsed\s*\?\s*SPACE_EXPLORER_COLLAPSED_WIDTH\s*:\s*filesPaneWidth;/,
+  );
+  assert.match(
+    source,
+    /hostWidth -\s*explorerWidth -\s*SPACE_DISPLAY_MIN_WIDTH -\s*UTILITY_PANE_RESIZER_WIDTH/,
+  );
+  assert.match(source, /new ResizeObserver\(\(\) => \{\s*syncDisplayWidth\(\);\s*\}\)/);
+});
+
+test("app shell always opens the file explorer at minimum width", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(
+    source,
+    /const \[filesPaneWidth, setFilesPaneWidth\] = useState\(\s*DEFAULT_FILES_PANE_WIDTH,\s*\);/,
+  );
+  assert.match(
+    source,
+    /width: `\$\{showSpaceExplorer \? SPACE_EXPLORER_WIDTH : SPACE_EXPLORER_COLLAPSED_WIDTH\}px`,/,
+  );
+  assert.doesNotMatch(source, /function loadFilesPaneWidth\(\): number \{/);
+  assert.doesNotMatch(source, /holaboss-files-pane-width-v1/);
 });
 
 test("app shell passes the app version label into the left rail", async () => {
@@ -163,6 +233,20 @@ test("app shell passes the app version label into the left rail", async () => {
   assert.match(source, /const appVersionLabel =[\s\S]*effectiveAppUpdateStatus\?\.currentVersion\?\.trim\(\) \|\| "";/);
   assert.match(source, /<LeftNavigationRail[\s\S]*appVersionLabel=\{appVersionLabel\}/);
   assert.doesNotMatch(source, /absolute bottom-3 left-4/);
+});
+
+test("app shell hides the left rail in space mode until the cursor reaches the left edge", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /const \[spaceLeftRailVisible, setSpaceLeftRailVisible\] = useState\(false\);/);
+  assert.match(source, /const shouldOverlayLeftRail = spaceMode;/);
+  assert.match(source, /useEffect\(\(\) => \{\s*if \(spaceMode\) \{\s*setSpaceLeftRailVisible\(false\);\s*\}\s*\}, \[spaceMode\]\);/);
+  assert.match(source, /shouldOverlayLeftRail\s*\?\s*"lg:grid-cols-\[minmax\(0,1fr\)\]"\s*:\s*"lg:grid-cols-\[60px_minmax\(0,1fr\)\]"/);
+  assert.match(source, /style=\{\{ columnGap: shouldOverlayLeftRail \? "0rem" : "0\.5rem" \}\}/);
+  assert.match(source, /className="absolute inset-y-0 left-0 z-30 hidden w-4 lg:block"/);
+  assert.match(source, /onMouseEnter=\{\(\) => setSpaceLeftRailVisible\(true\)\}/);
+  assert.match(source, /spaceLeftRailVisible\s*\?\s*"translate-x-0"\s*:\s*"-translate-x-full"/);
+  assert.match(source, /onMouseLeave=\{\(\) => setSpaceLeftRailVisible\(false\)\}/);
 });
 
 test("app shell requests remote task proposal generation without a separate success banner", async () => {
@@ -181,13 +265,20 @@ test("app shell tracks unread task proposals and badges the inbox control", asyn
   assert.match(source, /const \[seenTaskProposalIdsByWorkspace, setSeenTaskProposalIdsByWorkspace\] =\s*useState<Record<string, string\[]>>\(loadSeenTaskProposalIdsByWorkspace\);/);
   assert.match(source, /const unreadTaskProposalCount = useMemo\(\(\) => \{/);
   assert.match(source, /const markTaskProposalsSeen = useCallback\(/);
+  assert.match(
+    source,
+    /if \(\s*agentView\.type !== "inbox" \|\|\s*!selectedWorkspaceId \|\|\s*taskProposals.length === 0\s*\) \{\s*return;\s*\}\s*markTaskProposalsSeen\(selectedWorkspaceId, taskProposals\);/,
+  );
   assert.match(source, /if \(tab === "inbox" && selectedWorkspaceId\) \{\s*markTaskProposalsSeen\(selectedWorkspaceId, taskProposals\);\s*\}/);
-  assert.match(source, /unreadProposalCount=\{unreadTaskProposalCount\}/);
-  assert.match(source, /className="relative inline-flex h-8 w-8 items-center justify-center rounded-\[12px\] border border-border\/45 text-muted-foreground transition-all duration-200 hover:border-primary\/45 hover:text-primary active:scale-95"/);
-  assert.match(source, /unreadTaskProposalCount > 0 \? \(\s*<span className="absolute -right-0\.5 -top-0\.5 size-2\.5 rounded-full border-2 border-card bg-destructive" \/>\s*\) : null/);
+  assert.match(source, /const handleOpenInboxPane = useCallback\(\(\) => \{/);
+  assert.match(source, /setAgentView\(\{ type: "inbox" \}\);/);
+  assert.match(source, /inboxUnreadCount=\{unreadTaskProposalCount\}/);
+  assert.match(source, /onOpenInbox=\{handleOpenInboxPane\}/);
+  assert.doesNotMatch(source, /unreadProposalCount=\{unreadTaskProposalCount\}/);
+  assert.doesNotMatch(source, /aria-label="Open inbox"/);
 });
 
-test("app shell restores pane visibility without manual files and browser toggles", async () => {
+test("app shell renders a collapsible explorer and universal display in space mode", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(source, /function loadSpaceVisibility\(\): SpaceVisibilityState \{/);
@@ -200,10 +291,23 @@ test("app shell restores pane visibility without manual files and browser toggle
   assert.doesNotMatch(source, /className="mr-1\.5 flex w-9 shrink-0 flex-col items-center gap-1\.5 py-1"/);
   assert.doesNotMatch(source, /aria-label="Toggle files pane"/);
   assert.doesNotMatch(source, /aria-label="Toggle browser pane"/);
+  assert.match(source, /type SpaceExplorerMode = "files" \| "browser";/);
+  assert.match(source, /const \[spaceExplorerMode, setSpaceExplorerMode\] =\s*useState<SpaceExplorerMode>\("files"\);/);
+  assert.match(source, /const \[spaceExplorerCollapsed, setSpaceExplorerCollapsed\] = useState\(false\);/);
+  assert.match(source, /const \[spaceDisplayView, setSpaceDisplayView\] = useState<SpaceDisplayView>\(\{\s*type: "browser",\s*\}\);/);
+  assert.match(
+    source,
+    /<section className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card\/80 shadow-md backdrop-blur-sm">/,
+  );
   assert.match(source, /<FileExplorerPane[\s\S]*focusRequest=\{fileExplorerFocusRequest\}/);
-  assert.doesNotMatch(source, /<FileExplorerPane[\s\S]*onClosePane=/);
-  assert.match(source, /<BrowserPane[\s\S]*layoutSyncKey=\{/);
-  assert.doesNotMatch(source, /<BrowserPane[\s\S]*onClosePane=/);
+  assert.match(source, /<FileExplorerPane[\s\S]*previewInPane=\{false\}/);
+  assert.match(source, /<SpaceBrowserExplorerPane[\s\S]*browserSpace=\{spaceBrowserSpace\}/);
+  assert.match(source, /<SpaceBrowserDisplayPane[\s\S]*layoutSyncKey=\{spaceDisplayLayoutSyncKey\}/);
+  assert.match(source, /<SpaceBrowserDisplayPane[\s\S]*embedded/);
+  assert.match(source, /aria-label="Collapse explorer"/);
+  assert.match(source, /aria-label="Expand explorer"/);
+  assert.match(source, /aria-label="Resize display pane"/);
+  assert.doesNotMatch(source, /aria-label="Resize explorer pane"/);
   assert.doesNotMatch(source, /inline-flex h-8 items-center gap-2 rounded-full border px-3/);
   assert.doesNotMatch(source, /spaceDrawerToggleLabel/);
   assert.doesNotMatch(source, /utilityPaneRenderWidth/);
@@ -222,11 +326,11 @@ test("app shell polls proactive status for the selected workspace", async () => 
 
   assert.match(source, /const \[proactiveStatus, setProactiveStatus\]/);
   assert.match(source, /workspace\.getProactiveStatus\(\s*selectedWorkspace\.id,/);
-  assert.match(source, /proactiveStatus=\{proactiveStatus\}/);
-  assert.match(source, /isLoadingProactiveStatus=\{isLoadingProactiveStatus\}/);
   assert.match(source, /runtimeConfig\?\.authTokenPresent/);
   assert.match(source, /runtimeConfig\?\.modelProxyBaseUrl/);
   assert.match(source, /runtimeStatus\?\.status/);
+  assert.match(source, /<OperationsInboxPane[\s\S]*proactiveStatus=\{proactiveStatus\}/);
+  assert.match(source, /<OperationsInboxPane[\s\S]*isLoadingProactiveStatus=\{isLoadingProactiveStatus\}/);
 });
 
 test("app shell reloads proactive preference after workspace hydration completes", async () => {
@@ -237,21 +341,17 @@ test("app shell reloads proactive preference after workspace hydration completes
   assert.match(source, /\}, \[hasHydratedWorkspaceList, selectedWorkspaceId\]\);/);
 });
 
-test("app shell renames the running panel button to sessions", async () => {
+test("app shell no longer renders a separate right panel in space mode", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /aria-label="Open sessions panel"/);
-  assert.doesNotMatch(source, /aria-label="Open running panel"/);
-  assert.match(source, /lg:grid-cols-\[60px_minmax\(0,1fr\)_336px\]/);
-});
-
-test("app shell keeps the operations drawer collapsed by default on a fresh install", async () => {
-  const source = await readFile(APP_SHELL_PATH, "utf8");
-
-  assert.match(
-    source,
-    /function loadOperationsDrawerOpen\(\): boolean \{[\s\S]*if \(raw === "1" \|\| raw === "true"\) \{\s*return true;\s*\}[\s\S]*if \(raw === "0" \|\| raw === "false"\) \{\s*return false;\s*\}[\s\S]*return false;\s*\}/,
-  );
+  assert.match(source, /const showOperationsDrawer = false;/);
+  assert.match(source, /lg:grid-cols-\[60px_minmax\(0,1fr\)\]/);
+  assert.doesNotMatch(source, /lg:grid-cols-\[60px_minmax\(0,1fr\)_336px\]/);
+  assert.doesNotMatch(source, /<OperationsDrawer(?:\s|>)/);
+  assert.doesNotMatch(source, /aria-label="Open inbox panel"/);
+  assert.doesNotMatch(source, /aria-label="Open sessions panel"/);
+  assert.doesNotMatch(source, /aria-label="Show right panel"/);
+  assert.doesNotMatch(source, /aria-label="Hide right panel"/);
 });
 
 test("app shell can route new schedule creation into a prefilled workspace chat", async () => {
@@ -270,14 +370,20 @@ test("app shell can route new schedule creation into a prefilled workspace chat"
   assert.match(source, /onCreateSchedule=\{handleCreateScheduleInChat\}/);
 });
 
-test("app shell can create and open a new session from the right panel", async () => {
+test("app shell passes new session requests into the chat pane selector", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(source, /type ChatSessionOpenRequest = \{\s*sessionId: string;\s*requestKey: number;\s*mode\?: "session" \| "draft";\s*parentSessionId\?: string \| null;\s*\};/);
   assert.match(source, /const handleCreateSession = useCallback\(\(\) => \{/);
+  assert.match(source, /const handleChatSessionOpenRequestConsumed = useCallback\(\s*\(requestKey: number\) => \{/);
+  assert.match(source, /setChatSessionOpenRequest\(\(current\) =>\s*current\?\.requestKey === requestKey \? null : current,\s*\);/);
   assert.match(source, /setChatSessionOpenRequest\(\(previous\) => \(\{\s*sessionId: "",\s*mode: "draft",\s*parentSessionId: null,\s*requestKey: \(previous\?\.requestKey \?\? 0\) \+ 1,\s*\}\)\);/);
   assert.match(source, /setChatFocusRequestKey\(\(current\) => current \+ 1\);/);
   assert.doesNotMatch(source, /const \[isCreatingSession, setIsCreatingSession\] = useState\(false\);/);
   assert.doesNotMatch(source, /window\.electronAPI\.workspace\.createAgentSession\(\{/);
-  assert.match(source, /onCreateSession=\{\(\) => void handleCreateSession\(\)\}/);
+  assert.match(source, /const handleReturnToChatPane = useCallback\(\(\) => \{/);
+  assert.match(source, /aria-label="Return to chat"/);
+  assert.match(source, /<OperationsInboxPane[\s\S]*proposals=\{taskProposals\}/);
+  assert.match(source, /onRequestCreateSession=\{\(\) => void handleCreateSession\(\)\}/);
+  assert.match(source, /onSessionOpenRequestConsumed=\{handleChatSessionOpenRequestConsumed\}/);
 });

@@ -24,10 +24,12 @@ import {
   Copy,
   FileText,
   Image as ImageIcon,
+  Inbox,
   Lightbulb,
   Loader2,
   Paperclip,
   PencilLine,
+  Plus,
   Search,
   Square,
   Waypoints,
@@ -147,6 +149,15 @@ interface ChatModelOption {
 interface ChatModelOptionGroup {
   label: string;
   options: ChatModelOption[];
+}
+
+interface ChatSessionOption {
+  sessionId: string;
+  title: string;
+  statusLabel: string;
+  updatedAt: string;
+  updatedLabel: string;
+  searchText: string;
 }
 
 interface StreamTelemetryEntry {
@@ -591,6 +602,132 @@ function pendingAttachmentId(seed: string) {
 
 function runtimeStateStatus(value: string | null | undefined): string {
   return (value || "").trim().toUpperCase();
+}
+
+function normalizeSessionTurnStatus(value: string | null | undefined): string {
+  return (value || "").trim().toLowerCase();
+}
+
+function defaultWorkspaceSessionTitle(
+  kind: string | null | undefined,
+  sessionId: string,
+): string {
+  const normalizedKind = (kind || "").trim().toLowerCase();
+  if (normalizedKind === "cronjob") {
+    return "Cronjob run";
+  }
+  if (normalizedKind === "task_proposal") {
+    return "Task proposal run";
+  }
+  return `Session ${sessionId.slice(0, 8)}`;
+}
+
+function chatSessionStatusLabel(
+  runtimeState:
+    | Pick<SessionRuntimeRecordPayload, "status" | "last_turn_status">
+    | null
+    | undefined,
+): string {
+  const status = runtimeStateStatus(runtimeState?.status);
+  if (status === "BUSY") {
+    return "Running";
+  }
+  if (status === "QUEUED") {
+    return "Queued";
+  }
+  if (status === "WAITING_USER") {
+    return "Waiting";
+  }
+  if (status === "PAUSED") {
+    return "Paused";
+  }
+  if (status === "ERROR") {
+    return "Error";
+  }
+
+  const turnStatus = normalizeSessionTurnStatus(runtimeState?.last_turn_status);
+  if (turnStatus === "completed") {
+    return "Completed";
+  }
+  if (turnStatus === "waiting_user") {
+    return "Waiting";
+  }
+  if (turnStatus === "error" || turnStatus === "failed") {
+    return "Error";
+  }
+  return "Idle";
+}
+
+function formatSessionUpdatedLabel(value: string | null | undefined): string {
+  if (!value) {
+    return "Updated recently";
+  }
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) {
+    return "Updated recently";
+  }
+  return timestamp.toLocaleString();
+}
+
+function compareChatSessionOptions(
+  left: ChatSessionOption,
+  right: ChatSessionOption,
+): number {
+  const leftUpdatedAt = Date.parse(left.updatedAt);
+  const rightUpdatedAt = Date.parse(right.updatedAt);
+  if (!Number.isNaN(leftUpdatedAt) || !Number.isNaN(rightUpdatedAt)) {
+    const normalizedLeft = Number.isNaN(leftUpdatedAt) ? 0 : leftUpdatedAt;
+    const normalizedRight = Number.isNaN(rightUpdatedAt) ? 0 : rightUpdatedAt;
+    if (normalizedLeft !== normalizedRight) {
+      return normalizedRight - normalizedLeft;
+    }
+  }
+  return right.updatedAt.localeCompare(left.updatedAt) ||
+    left.title.localeCompare(right.title);
+}
+
+function sessionStatusIndicator(statusLabel: string) {
+  const normalized = statusLabel.trim().toLowerCase();
+  if (normalized === "running") {
+    return {
+      className: "text-primary",
+      icon: <Loader2 size={12} className="animate-spin" />,
+    };
+  }
+  if (normalized === "queued") {
+    return {
+      className: "text-sky-600",
+      icon: <Clock3 size={12} />,
+    };
+  }
+  if (normalized === "waiting") {
+    return {
+      className: "text-amber-600",
+      icon: <Clock3 size={12} />,
+    };
+  }
+  if (normalized === "paused") {
+    return {
+      className: "text-orange-600",
+      icon: <Square size={9} className="fill-current" />,
+    };
+  }
+  if (normalized === "error") {
+    return {
+      className: "text-destructive",
+      icon: <AlertTriangle size={12} />,
+    };
+  }
+  if (normalized === "completed") {
+    return {
+      className: "text-emerald-600",
+      icon: <Check size={12} />,
+    };
+  }
+  return {
+    className: "text-muted-foreground",
+    icon: <Clock3 size={12} />,
+  };
 }
 
 function runtimeStateErrorDetail(value: unknown): string {
@@ -1585,9 +1722,13 @@ interface ChatPaneProps {
   sessionJumpSessionId?: string | null;
   sessionJumpRequestKey?: number;
   sessionOpenRequest?: ChatPaneSessionOpenRequest | null;
+  onSessionOpenRequestConsumed?: (requestKey: number) => void;
   composerPrefillRequest?: ChatPaneComposerPrefillRequest | null;
   onComposerPrefillConsumed?: (requestKey: number) => void;
   onActiveSessionIdChange?: (sessionId: string | null) => void;
+  onOpenInbox?: () => void;
+  inboxUnreadCount?: number;
+  onRequestCreateSession?: () => void;
 }
 
 export function ChatPane({
@@ -1598,9 +1739,13 @@ export function ChatPane({
   sessionJumpSessionId = null,
   sessionJumpRequestKey = 0,
   sessionOpenRequest = null,
+  onSessionOpenRequestConsumed,
   composerPrefillRequest = null,
   onComposerPrefillConsumed,
   onActiveSessionIdChange,
+  onOpenInbox,
+  inboxUnreadCount = 0,
+  onRequestCreateSession,
 }: ChatPaneProps) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const authSessionState = useDesktopAuthSession();
@@ -1676,6 +1821,14 @@ export function ChatPane({
   const [memoryProposalDrafts, setMemoryProposalDrafts] = useState<
     Record<string, string>
   >({});
+  const [availableSessions, setAvailableSessions] = useState<ChatSessionOption[]>(
+    [],
+  );
+  const [isLoadingAvailableSessions, setIsLoadingAvailableSessions] =
+    useState(false);
+  const [availableSessionsError, setAvailableSessionsError] = useState("");
+  const [localSessionOpenRequest, setLocalSessionOpenRequest] =
+    useState<ChatPaneSessionOpenRequest | null>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const messagesContentRef = useRef<HTMLDivElement>(null);
   const chatScrollbarThumbRef = useRef<HTMLDivElement>(null);
@@ -1708,6 +1861,8 @@ export function ChatPane({
   const liveTraceStepsRef = useRef<ChatTraceStep[]>([]);
   const historyViewportGenerationRef = useRef(0);
   const [activeSessionId, setActiveSessionId] = useState("");
+  const effectiveSessionOpenRequest =
+    sessionOpenRequest ?? localSessionOpenRequest;
 
   function appendStreamTelemetry(
     entry: Omit<StreamTelemetryEntry, "id" | "at">,
@@ -2632,11 +2787,12 @@ export function ChatPane({
   ]);
 
   useEffect(() => {
-    const requestedSessionId = (sessionOpenRequest?.sessionId || "").trim();
-    const requestKey = sessionOpenRequest?.requestKey ?? 0;
-    const requestMode = sessionOpenRequest?.mode ?? "session";
+    const requestedSessionId =
+      (effectiveSessionOpenRequest?.sessionId || "").trim();
+    const requestKey = effectiveSessionOpenRequest?.requestKey ?? 0;
+    const requestMode = effectiveSessionOpenRequest?.mode ?? "session";
     const requestedParentSessionId =
-      sessionOpenRequest?.parentSessionId?.trim() || null;
+      effectiveSessionOpenRequest?.parentSessionId?.trim() || null;
     if (
       !selectedWorkspaceId ||
       requestKey <= 0 ||
@@ -2649,6 +2805,9 @@ export function ChatPane({
 
     async function openRequestedSession() {
       lastHandledSessionOpenRequestKeyRef.current = requestKey;
+      if ((sessionOpenRequest?.requestKey ?? 0) === requestKey) {
+        onSessionOpenRequestConsumed?.(requestKey);
+      }
 
       let historyLoaded = false;
       beginHistoryViewportRestore();
@@ -2721,16 +2880,118 @@ export function ChatPane({
       cancelled = true;
     };
   }, [
+    onSessionOpenRequestConsumed,
     selectedWorkspaceId,
+    effectiveSessionOpenRequest?.requestKey,
+    effectiveSessionOpenRequest?.sessionId,
+    effectiveSessionOpenRequest?.mode,
+    effectiveSessionOpenRequest?.parentSessionId,
     sessionOpenRequest?.requestKey,
-    sessionOpenRequest?.sessionId,
-    sessionOpenRequest?.mode,
-    sessionOpenRequest?.parentSessionId,
   ]);
 
   useEffect(() => {
     setTodoPanelExpanded(false);
   }, [activeSessionId]);
+
+  useEffect(() => {
+    if (isOnboardingVariant) {
+      setAvailableSessions([]);
+      setAvailableSessionsError("");
+      setIsLoadingAvailableSessions(false);
+      return;
+    }
+    if (!selectedWorkspaceId) {
+      setAvailableSessions([]);
+      setAvailableSessionsError("");
+      setIsLoadingAvailableSessions(false);
+      return;
+    }
+
+    let cancelled = false;
+    let requestInFlight = false;
+
+    const loadAvailableSessions = async (options?: { showLoading?: boolean }) => {
+      if (requestInFlight) {
+        return;
+      }
+      requestInFlight = true;
+      if (options?.showLoading) {
+        setIsLoadingAvailableSessions(true);
+      }
+
+      try {
+        const [runtimeStates, sessionsResponse] = await Promise.all([
+          window.electronAPI.workspace.listRuntimeStates(selectedWorkspaceId),
+          window.electronAPI.workspace.listAgentSessions(selectedWorkspaceId),
+        ]);
+        if (cancelled) {
+          return;
+        }
+
+        const runtimeStateBySessionId = new Map(
+          runtimeStates.items.map((item) => [item.session_id, item]),
+        );
+        const nextOptions = sessionsResponse.items
+          .map((session) => {
+            const sessionId = session.session_id.trim();
+            if (!sessionId) {
+              return null;
+            }
+            const runtimeState = runtimeStateBySessionId.get(sessionId);
+            const title =
+              session.title?.trim() ||
+              defaultWorkspaceSessionTitle(session.kind, sessionId);
+            const updatedAt =
+              runtimeState?.updated_at?.trim() ||
+              session.updated_at?.trim() ||
+              "";
+            return {
+              sessionId,
+              title,
+              statusLabel: chatSessionStatusLabel(runtimeState),
+              updatedAt,
+              updatedLabel: formatSessionUpdatedLabel(updatedAt),
+              searchText: `${title} ${session.kind || ""} ${sessionId}`.trim(),
+            } satisfies ChatSessionOption;
+          })
+          .filter((item): item is ChatSessionOption => Boolean(item))
+          .sort(compareChatSessionOptions);
+
+        setAvailableSessions(nextOptions);
+        setAvailableSessionsError("");
+      } catch (error) {
+        if (!cancelled) {
+          setAvailableSessionsError(normalizeErrorMessage(error));
+        }
+      } finally {
+        requestInFlight = false;
+        if (!cancelled && options?.showLoading) {
+          setIsLoadingAvailableSessions(false);
+        }
+      }
+    };
+
+    const refreshVisibleSessions = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      void loadAvailableSessions();
+    };
+
+    void loadAvailableSessions({ showLoading: true });
+    const intervalId = window.setInterval(() => {
+      refreshVisibleSessions();
+    }, 4000);
+    window.addEventListener("focus", refreshVisibleSessions);
+    document.addEventListener("visibilitychange", refreshVisibleSessions);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshVisibleSessions);
+      document.removeEventListener("visibilitychange", refreshVisibleSessions);
+    };
+  }, [activeSessionId, isOnboardingVariant, selectedWorkspaceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3666,6 +3927,22 @@ export function ChatPane({
       })),
     [pendingAttachments],
   );
+  const activeSessionOption = useMemo(
+    () =>
+      availableSessions.find((session) => session.sessionId === activeSessionId) ??
+      null,
+    [activeSessionId, availableSessions],
+  );
+  const activeSessionTitle =
+    activeSessionOption?.title ||
+    (activeSessionId
+      ? defaultWorkspaceSessionTitle("workspace_session", activeSessionId)
+      : "New session");
+  const activeSessionDetail = activeSessionOption
+    ? `${activeSessionOption.statusLabel} · ${activeSessionOption.updatedLabel}`
+    : activeSessionId
+      ? "Current session"
+      : "Draft conversation";
   const readinessMessage =
     !selectedWorkspace || isOnboardingVariant || workspaceAppsReady
       ? ""
@@ -3972,6 +4249,30 @@ export function ChatPane({
     };
   }, [hasMessages]);
 
+  const openSessionFromPicker = (sessionId: string) => {
+    const normalizedSessionId = sessionId.trim();
+    if (!normalizedSessionId || normalizedSessionId === activeSessionIdRef.current) {
+      return;
+    }
+    setLocalSessionOpenRequest({
+      sessionId: normalizedSessionId,
+      requestKey: Date.now(),
+    });
+  };
+
+  const requestDraftSessionFromPicker = () => {
+    if (onRequestCreateSession) {
+      onRequestCreateSession();
+      return;
+    }
+    setLocalSessionOpenRequest({
+      sessionId: "",
+      mode: "draft",
+      parentSessionId: null,
+      requestKey: Date.now(),
+    });
+  };
+
   return (
     <PaneCard
       className={
@@ -4007,6 +4308,23 @@ export function ChatPane({
                 </div>
               </div>
             </div>
+          </div>
+        ) : null}
+
+        {!isOnboardingVariant ? (
+          <div className="shrink-0 border-b border-border/45 px-4 py-2.5 sm:px-5">
+            <SessionSelector
+              activeSessionId={activeSessionId}
+              activeTitle={activeSessionTitle}
+              activeDetail={activeSessionDetail}
+              sessions={availableSessions}
+              isLoading={isLoadingAvailableSessions}
+              errorMessage={availableSessionsError}
+              onSelectSession={openSessionFromPicker}
+              onOpenInbox={onOpenInbox}
+              inboxUnreadCount={inboxUnreadCount}
+              onCreateSession={requestDraftSessionFromPicker}
+            />
           </div>
         ) : null}
 
@@ -4420,6 +4738,205 @@ export function ChatPane({
         </div>
       </div>
     </PaneCard>
+  );
+}
+
+interface SessionSelectorProps {
+  activeSessionId: string;
+  activeTitle: string;
+  activeDetail: string;
+  sessions: ChatSessionOption[];
+  isLoading: boolean;
+  errorMessage: string;
+  onSelectSession: (sessionId: string) => void;
+  onOpenInbox?: () => void;
+  inboxUnreadCount: number;
+  onCreateSession: () => void;
+}
+
+function SessionSelector({
+  activeSessionId,
+  activeTitle,
+  activeDetail,
+  sessions,
+  isLoading,
+  errorMessage,
+  onSelectSession,
+  onOpenInbox,
+  inboxUnreadCount,
+  onCreateSession,
+}: SessionSelectorProps) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const activeSession =
+    sessions.find((session) => session.sessionId === activeSessionId) ?? null;
+  const activeIndicator = activeSession
+    ? sessionStatusIndicator(activeSession.statusLabel)
+    : {
+        className: "text-muted-foreground",
+        icon: <PencilLine size={12} />,
+      };
+  const filteredSessions = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return sessions;
+    }
+    return sessions.filter((session) =>
+      session.searchText.toLowerCase().includes(normalizedQuery),
+    );
+  }, [query, sessions]);
+
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <Popover
+        open={open}
+        onOpenChange={(nextOpen) => {
+          setOpen(nextOpen);
+          if (!nextOpen) {
+            setQuery("");
+          }
+        }}
+      >
+        <div className="min-w-0 flex-1">
+          <PopoverTrigger
+            render={
+              <button
+                type="button"
+                className="group flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-xl px-2 py-1.5 text-left transition-colors"
+                aria-label="Select agent session"
+                title={`${activeTitle} · ${activeDetail}`}
+              >
+                <span
+                  className={`grid size-5 shrink-0 place-items-center ${activeIndicator.className}`}
+                >
+                  {activeIndicator.icon}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[15px] font-semibold tracking-[-0.02em] text-foreground">
+                  {activeTitle}
+                </span>
+                <ChevronDown
+                  size={13}
+                  className={`shrink-0 text-muted-foreground transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                    open
+                      ? "rotate-180 group-hover:-translate-y-1 group-hover:scale-150"
+                      : "rotate-0 group-hover:translate-y-1 group-hover:scale-150"
+                  } motion-reduce:transform-none`}
+                />
+              </button>
+            }
+          />
+        </div>
+        <PopoverContent align="start" className="w-[300px] p-0">
+          <div className="border-b border-border/40 p-2">
+            <div className="relative flex items-center rounded-[10px] border border-border/40 bg-muted/35 px-2.5 transition-colors focus-within:border-border/55 focus-within:bg-background/70">
+              <Search
+                size={13}
+                className="shrink-0 text-muted-foreground"
+              />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search sessions..."
+                className="embedded-input h-8 w-full bg-transparent pl-2 text-xs text-foreground outline-none placeholder:text-muted-foreground/60"
+                autoFocus
+              />
+            </div>
+          </div>
+
+          <div className="max-h-[320px] overflow-y-auto p-1.5">
+            {isLoading ? (
+              <div className="px-3 py-3 text-[12px] text-muted-foreground">
+                Loading sessions...
+              </div>
+            ) : errorMessage ? (
+              <div className="px-3 py-3 text-[12px] text-destructive">
+                {errorMessage}
+              </div>
+            ) : filteredSessions.length === 0 ? (
+              <div className="px-3 py-3 text-[12px] text-muted-foreground">
+                {query.trim() ? "No matching sessions." : "No saved sessions yet."}
+              </div>
+            ) : (
+              filteredSessions.map((session) => {
+                const isActive = session.sessionId === activeSessionId;
+                const indicator = sessionStatusIndicator(session.statusLabel);
+                return (
+                  <button
+                    key={session.sessionId}
+                    type="button"
+                    onClick={() => {
+                      onSelectSession(session.sessionId);
+                      setOpen(false);
+                      setQuery("");
+                    }}
+                    className={`flex w-full items-center gap-2 rounded-[12px] px-3 py-2 text-left transition ${
+                      isActive
+                        ? "bg-accent text-accent-foreground"
+                        : "hover:bg-accent/50"
+                    }`}
+                    title={`${session.title} · ${session.statusLabel} · ${session.updatedLabel}`}
+                  >
+                    <span
+                      className={`grid size-4 shrink-0 place-items-center ${indicator.className}`}
+                    >
+                      {indicator.icon}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13px] font-medium text-current">
+                        {session.title}
+                      </div>
+                      <div className="truncate text-[11px] text-muted-foreground">
+                        {session.statusLabel}
+                      </div>
+                    </div>
+                    {isActive ? (
+                      <Check size={13} className="shrink-0 text-primary" />
+                    ) : null}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
+
+      <div className="flex shrink-0 items-center gap-1">
+        {onOpenInbox ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => {
+              setOpen(false);
+              setQuery("");
+              onOpenInbox();
+            }}
+            aria-label="Show inbox"
+            className="relative rounded-lg text-muted-foreground hover:text-foreground"
+          >
+            <Inbox size={15} />
+            {inboxUnreadCount > 0 ? (
+              <span className="absolute right-1.5 top-1.5 size-2 rounded-full border border-card bg-destructive" />
+            ) : null}
+          </Button>
+        ) : null}
+
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => {
+            setOpen(false);
+            setQuery("");
+            onCreateSession();
+          }}
+          aria-label="Create new session"
+          className="rounded-lg text-muted-foreground hover:text-foreground"
+        >
+          <Plus size={15} />
+        </Button>
+      </div>
+    </div>
   );
 }
 

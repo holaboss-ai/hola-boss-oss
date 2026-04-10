@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FileText, FileWarning, Loader2 } from "lucide-react";
+import { FileText, FileWarning, Loader2, Save } from "lucide-react";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
@@ -16,8 +16,12 @@ const MARKDOWN_PREVIEW_EXTENSIONS = new Set([
   ".mdx",
   ".markdown",
 ]);
+type TextPreviewMode = "edit" | "preview";
 
-function resolveWorkspaceTargetPath(workspaceRoot: string, resourceId: string): string {
+function resolveWorkspaceTargetPath(
+  workspaceRoot: string,
+  resourceId: string,
+): string {
   const trimmedRoot = workspaceRoot.trim();
   const trimmedResource = resourceId.trim();
   if (!trimmedRoot) {
@@ -38,14 +42,24 @@ function isMarkdownPreviewPayload(
   if (!preview || preview.kind !== "text") {
     return false;
   }
-  return MARKDOWN_PREVIEW_EXTENSIONS.has(preview.extension.trim().toLowerCase());
+  return MARKDOWN_PREVIEW_EXTENSIONS.has(
+    preview.extension.trim().toLowerCase(),
+  );
 }
 
-export function InternalSurfacePane({ surface, resourceId, htmlContent }: InternalSurfacePaneProps) {
+export function InternalSurfacePane({
+  surface,
+  resourceId,
+  htmlContent,
+}: InternalSurfacePaneProps) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const [preview, setPreview] = useState<FilePreviewPayload | null>(null);
+  const [previewDraft, setPreviewDraft] = useState("");
+  const [textPreviewMode, setTextPreviewMode] =
+    useState<TextPreviewMode>("edit");
   const [activeTableSheetIndex, setActiveTableSheetIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const openPreviewLink = useCallback((url: string) => {
     void window.electronAPI.ui.openExternalUrl(url);
@@ -54,9 +68,12 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
   useEffect(() => {
     if (typeof resourceId !== "string" || !resourceId || (surface !== "document" && surface !== "file")) {
       setPreview(null);
+      setPreviewDraft("");
+      setTextPreviewMode("edit");
       setActiveTableSheetIndex(0);
       setErrorMessage("");
       setIsLoading(false);
+      setIsSaving(false);
       return;
     }
 
@@ -79,13 +96,19 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
         const nextPreview = await window.electronAPI.fs.readFilePreview(targetPath, selectedWorkspaceId ?? null);
         if (!cancelled) {
           setPreview(nextPreview);
+          setPreviewDraft(nextPreview.content ?? "");
+          setTextPreviewMode("edit");
           setActiveTableSheetIndex(0);
+          setIsSaving(false);
         }
       } catch (error) {
         if (!cancelled) {
           setPreview(null);
+          setPreviewDraft("");
+          setTextPreviewMode("edit");
           setActiveTableSheetIndex(0);
           setErrorMessage(error instanceof Error ? error.message : "Failed to load output preview.");
+          setIsSaving(false);
         }
       } finally {
         if (!cancelled) {
@@ -100,6 +123,40 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
     };
   }, [resourceId, selectedWorkspaceId, surface]);
 
+  const isMarkdownPreview = isMarkdownPreviewPayload(preview);
+  const isDirty =
+    preview?.kind === "text" && preview.isEditable
+      ? previewDraft !== (preview.content ?? "")
+      : false;
+
+  const savePreview = useCallback(async () => {
+    if (!preview || preview.kind !== "text" || !preview.isEditable) {
+      return;
+    }
+
+    setIsSaving(true);
+    setErrorMessage("");
+
+    try {
+      const nextPreview = await window.electronAPI.fs.writeTextFile(
+        preview.absolutePath,
+        previewDraft,
+        selectedWorkspaceId ?? null,
+      );
+      setPreview(nextPreview);
+      setPreviewDraft(nextPreview.content ?? "");
+      setTextPreviewMode(
+        isMarkdownPreviewPayload(nextPreview) ? textPreviewMode : "edit",
+      );
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to save file.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  }, [preview, previewDraft, selectedWorkspaceId, textPreviewMode]);
+
   const body = useMemo(() => {
     if (surface === "event") {
       return <EmptyState title="Event detail" detail="This output remains inside Holaboss and does not resolve to a file-backed preview." />;
@@ -109,7 +166,6 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
       if (htmlContent && htmlContent.trim()) {
         return (
           <div className="grid min-h-0 gap-3">
-            {resourceId ? <MetadataRow label="Target" value={resourceId} /> : null}
             <iframe
               title="Output preview"
               sandbox=""
@@ -146,18 +202,61 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
     }
 
     if (preview.kind === "text") {
-      if (isMarkdownPreviewPayload(preview)) {
-        return (
-          <div className="grid min-h-0 gap-3">
-            <MetadataRow label="Path" value={preview.absolutePath} />
-            <MetadataRow label="Modified" value={new Date(preview.modifiedAt).toLocaleString()} />
+      return (
+        <div className="grid min-h-0 gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <MetadataRow
+              label="Modified"
+              value={new Date(preview.modifiedAt).toLocaleString()}
+            />
+            <div className="flex shrink-0 items-center gap-2">
+              {isMarkdownPreview ? (
+                <div className="inline-flex items-center rounded-md border border-border bg-muted/50 p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setTextPreviewMode("preview")}
+                    className={`rounded px-2 py-1 text-xs transition-colors ${
+                      textPreviewMode === "preview"
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    }`}
+                  >
+                    Preview
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTextPreviewMode("edit")}
+                    className={`rounded px-2 py-1 text-xs transition-colors ${
+                      textPreviewMode === "edit"
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    }`}
+                  >
+                    Edit
+                  </button>
+                </div>
+              ) : null}
+              {preview.isEditable ? (
+                <button
+                  type="button"
+                  onClick={() => void savePreview()}
+                  disabled={!isDirty || isSaving}
+                  className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Save size={12} />
+                  {isSaving ? "Saving" : "Save"}
+                </button>
+              ) : null}
+            </div>
+          </div>
+          {isMarkdownPreview && textPreviewMode === "preview" ? (
             <div className="min-h-0 overflow-auto rounded-[18px] border border-border/35 bg-black/10 p-4">
-              {preview.content?.trim() ? (
+              {previewDraft.trim() ? (
                 <SimpleMarkdown
                   className="chat-markdown text-sm text-foreground/90"
                   onLinkClick={openPreviewLink}
                 >
-                  {preview.content}
+                  {previewDraft}
                 </SimpleMarkdown>
               ) : (
                 <div className="grid min-h-[160px] place-items-center text-[12px] text-muted-foreground">
@@ -165,16 +264,19 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
                 </div>
               )}
             </div>
-          </div>
-        );
-      }
-      return (
-        <div className="grid min-h-0 gap-3">
-          <MetadataRow label="Path" value={preview.absolutePath} />
-          <MetadataRow label="Modified" value={new Date(preview.modifiedAt).toLocaleString()} />
-          <pre className="min-h-0 overflow-auto rounded-[18px] border border-border/35 bg-black/20 p-4 text-[12px] leading-6 text-foreground/88">
-            {preview.content || ""}
-          </pre>
+          ) : (
+            <textarea
+              value={previewDraft}
+              onChange={(event) => setPreviewDraft(event.target.value)}
+              readOnly={!preview.isEditable}
+              spellCheck={false}
+              className={`min-h-[60vh] w-full resize-none rounded-[18px] border border-border/35 p-4 font-mono text-[12px] leading-6 text-foreground/88 outline-none transition-colors ${
+                preview.isEditable
+                  ? "embedded-input bg-black/20 focus:border-border/70"
+                  : "cursor-default bg-black/20 opacity-90"
+              }`}
+            />
+          )}
         </div>
       );
     }
@@ -182,7 +284,6 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
     if (preview.kind === "image" && preview.dataUrl) {
       return (
         <div className="grid min-h-0 gap-3">
-          <MetadataRow label="Path" value={preview.absolutePath} />
           <div className="overflow-auto rounded-[18px] border border-border/35 bg-black/20 p-4">
             <img src={preview.dataUrl} alt={preview.name} className="mx-auto max-h-[60vh] max-w-full rounded-[12px]" />
           </div>
@@ -193,7 +294,6 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
     if (preview.kind === "pdf" && preview.dataUrl) {
       return (
         <div className="grid min-h-0 gap-3">
-          <MetadataRow label="Path" value={preview.absolutePath} />
           <iframe title={preview.name} src={preview.dataUrl} className="min-h-[60vh] w-full rounded-[18px] border border-border/35 bg-white" />
         </div>
       );
@@ -204,7 +304,6 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
       if (activeSheet) {
         return (
           <div className="grid min-h-0 gap-3">
-            <MetadataRow label="Path" value={preview.absolutePath} />
             <div className="flex min-h-0 flex-col overflow-hidden rounded-[18px] border border-border/35 bg-black/10">
               {preview.tableSheets.length > 1 ? (
                 <div className="flex items-center gap-1 overflow-x-auto border-b border-border/35 p-2">
@@ -281,7 +380,22 @@ export function InternalSurfacePane({ surface, resourceId, htmlContent }: Intern
         detail={preview.unsupportedReason || "This file type is not yet previewable in the desktop output viewer."}
       />
     );
-  }, [activeTableSheetIndex, errorMessage, htmlContent, isLoading, openPreviewLink, preview, resourceId, surface]);
+  }, [
+    activeTableSheetIndex,
+    errorMessage,
+    htmlContent,
+    isLoading,
+    isDirty,
+    isMarkdownPreview,
+    isSaving,
+    openPreviewLink,
+    preview,
+    previewDraft,
+    resourceId,
+    savePreview,
+    surface,
+    textPreviewMode,
+  ]);
 
   return (
     <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">

@@ -22,6 +22,35 @@ import {
 
 export type OperationsDrawerTab = "inbox" | "running";
 
+export interface OperationsInboxPaneProps {
+  proposals: TaskProposalRecordPayload[];
+  proactiveStatus: ProactiveAgentStatusPayload | null;
+  isLoadingProactiveStatus: boolean;
+  proactiveWorkspaceEnabled: boolean;
+  isLoadingProactiveWorkspaceEnabled: boolean;
+  isUpdatingProactiveWorkspaceEnabled: boolean;
+  proactiveHeartbeatCron: string;
+  isLoadingProactiveHeartbeatConfig: boolean;
+  isUpdatingProactiveHeartbeatConfig: boolean;
+  proactiveTaskProposalsError: string;
+  proactiveHeartbeatError: string;
+  isLoadingProposals: boolean;
+  isTriggeringProposal: boolean;
+  proposalStatusMessage: string;
+  proposalAction: {
+    proposalId: string;
+    action: "accept" | "dismiss";
+  } | null;
+  onTriggerProposal: () => void;
+  onProactiveWorkspaceEnabledChange: (enabled: boolean) => void;
+  onProactiveHeartbeatCronChange: (cron: string) => void;
+  onAcceptProposal: (proposal: TaskProposalRecordPayload) => void;
+  onDismissProposal: (proposal: TaskProposalRecordPayload) => void;
+  hasWorkspace: boolean;
+  selectedWorkspaceId: string | null;
+  selectedWorkspaceName: string | null;
+}
+
 interface OperationsDrawerProps {
   activeTab: OperationsDrawerTab;
   onTabChange: (tab: OperationsDrawerTab) => void;
@@ -102,16 +131,6 @@ export function OperationsDrawer({
   selectedWorkspaceId,
   selectedWorkspaceName,
 }: OperationsDrawerProps) {
-  const {
-    data: authSession,
-    isPending: isAuthPending,
-    requestAuth,
-  } = useDesktopAuthSession();
-  const isSignedIn = Boolean(authSession?.user?.id);
-  const onRequestSignIn = () => {
-    void requestAuth();
-  };
-
   const [runningSessions, setRunningSessions] = useState<RunningSessionEntry[]>(
     [],
   );
@@ -243,10 +262,7 @@ export function OperationsDrawer({
 
       <div className="min-h-0 flex-1 overflow-hidden">
         {activeTab === "inbox" ? (
-          <InboxPanel
-            isSignedIn={isSignedIn}
-            onRequestSignIn={onRequestSignIn}
-            isAuthPending={isAuthPending}
+          <OperationsInboxPane
             proposals={proposals}
             proactiveStatus={proactiveStatus}
             isLoadingProactiveStatus={isLoadingProactiveStatus}
@@ -298,6 +314,75 @@ export function OperationsDrawer({
         ) : null}
       </div>
     </aside>
+  );
+}
+
+export function OperationsInboxPane({
+  proposals,
+  proactiveStatus,
+  isLoadingProactiveStatus,
+  proactiveWorkspaceEnabled,
+  isLoadingProactiveWorkspaceEnabled,
+  isUpdatingProactiveWorkspaceEnabled,
+  proactiveHeartbeatCron,
+  isLoadingProactiveHeartbeatConfig,
+  isUpdatingProactiveHeartbeatConfig,
+  proactiveTaskProposalsError,
+  proactiveHeartbeatError,
+  isLoadingProposals,
+  isTriggeringProposal,
+  proposalStatusMessage,
+  proposalAction,
+  onTriggerProposal,
+  onProactiveWorkspaceEnabledChange,
+  onProactiveHeartbeatCronChange,
+  onAcceptProposal,
+  onDismissProposal,
+  hasWorkspace,
+  selectedWorkspaceId,
+  selectedWorkspaceName,
+}: OperationsInboxPaneProps) {
+  const {
+    data: authSession,
+    isPending: isAuthPending,
+    requestAuth,
+  } = useDesktopAuthSession();
+  const isSignedIn = Boolean(authSession?.user?.id);
+  const onRequestSignIn = () => {
+    void requestAuth();
+  };
+
+  return (
+    <InboxPanel
+      isSignedIn={isSignedIn}
+      onRequestSignIn={onRequestSignIn}
+      isAuthPending={isAuthPending}
+      proposals={proposals}
+      proactiveStatus={proactiveStatus}
+      isLoadingProactiveStatus={isLoadingProactiveStatus}
+      proactiveTaskProposalsError={proactiveTaskProposalsError}
+      proactiveHeartbeatError={proactiveHeartbeatError}
+      isLoadingProposals={isLoadingProposals}
+      proposalStatusMessage={proposalStatusMessage}
+      proposalAction={proposalAction}
+      hasWorkspace={hasWorkspace}
+      selectedWorkspaceId={selectedWorkspaceId}
+      selectedWorkspaceName={selectedWorkspaceName}
+      proactiveWorkspaceEnabled={proactiveWorkspaceEnabled}
+      isLoadingProactiveWorkspaceEnabled={isLoadingProactiveWorkspaceEnabled}
+      isUpdatingProactiveWorkspaceEnabled={
+        isUpdatingProactiveWorkspaceEnabled
+      }
+      proactiveHeartbeatCron={proactiveHeartbeatCron}
+      isLoadingProactiveHeartbeatConfig={isLoadingProactiveHeartbeatConfig}
+      isUpdatingProactiveHeartbeatConfig={isUpdatingProactiveHeartbeatConfig}
+      isTriggeringProposal={isTriggeringProposal}
+      onTriggerProposal={onTriggerProposal}
+      onProactiveWorkspaceEnabledChange={onProactiveWorkspaceEnabledChange}
+      onProactiveHeartbeatCronChange={onProactiveHeartbeatCronChange}
+      onAcceptProposal={onAcceptProposal}
+      onDismissProposal={onDismissProposal}
+    />
   );
 }
 

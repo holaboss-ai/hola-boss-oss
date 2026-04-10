@@ -4,7 +4,7 @@ import {
 } from "@/components/layout/LeftNavigationRail";
 import { NotificationToastStack } from "@/components/layout/NotificationToastStack";
 import {
-    OperationsDrawer,
+    OperationsInboxPane,
     type OperationsDrawerTab,
 } from "@/components/layout/OperationsDrawer";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
@@ -23,6 +23,8 @@ import {
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { MarketplacePane } from "@/components/panes/MarketplacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
+import { SpaceBrowserDisplayPane } from "@/components/panes/SpaceBrowserDisplayPane";
+import { SpaceBrowserExplorerPane } from "@/components/panes/SpaceBrowserExplorerPane";
 import { SkillsPane } from "@/components/panes/SkillsPane";
 import { PublishDialog } from "@/components/publish/PublishDialog";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
@@ -37,12 +39,14 @@ import {
     WorkspaceSelectionProvider,
 } from "@/lib/workspaceSelection";
 import {
+    ArrowLeft,
     CircleCheck,
-    Clock3,
-    Inbox as InboxIcon,
+    Folder,
+    Globe,
+    Inbox,
     Loader2,
-    PanelRightClose,
-    PanelRightOpen,
+    PanelLeftClose,
+    PanelLeftOpen,
     TriangleAlert,
     XCircle,
 } from "lucide-react";
@@ -62,7 +66,6 @@ const DEV_NOTIFICATION_TOAST_PREVIEW_ID_PREFIX =
 const OPERATIONS_DRAWER_OPEN_STORAGE_KEY = "holaboss-operations-drawer-open-v1";
 const OPERATIONS_DRAWER_TAB_STORAGE_KEY = "holaboss-operations-drawer-tab-v1";
 const TASK_PROPOSAL_SEEN_STORAGE_KEY = "holaboss-task-proposal-seen-v1";
-const FILES_PANE_WIDTH_STORAGE_KEY = "holaboss-files-pane-width-v1";
 const BROWSER_PANE_WIDTH_STORAGE_KEY = "holaboss-browser-pane-width-v1";
 const SPACE_VISIBILITY_STORAGE_KEY = "holaboss-space-visibility-v1";
 const THEMES = [
@@ -84,10 +87,13 @@ const THEMES = [
 const MIN_FILES_PANE_WIDTH = 220;
 const MIN_BROWSER_PANE_WIDTH = 120;
 const MAX_UTILITY_PANE_WIDTH = 720;
-const LEGACY_DEFAULT_FILES_PANE_WIDTH = 420;
 const DEFAULT_FILES_PANE_WIDTH = MIN_FILES_PANE_WIDTH;
 const DEFAULT_BROWSER_PANE_WIDTH = 460;
 const MIN_AGENT_CONTENT_WIDTH = 380;
+const SPACE_EXPLORER_WIDTH = DEFAULT_FILES_PANE_WIDTH;
+const SPACE_AGENT_PANE_WIDTH = 420;
+const SPACE_DISPLAY_MIN_WIDTH = 420;
+const SPACE_EXPLORER_COLLAPSED_WIDTH = 68;
 const UTILITY_PANE_RESIZER_WIDTH = 16;
 const APP_UPDATE_CHANGELOG_BASE_URL =
   "https://github.com/holaboss-ai/holaboss-ai/releases/tag";
@@ -99,6 +105,7 @@ const MAX_SEEN_TASK_PROPOSAL_IDS_PER_WORKSPACE = 200;
 type SpaceComponentId = "agent" | "files" | "browser";
 type UtilityPaneId = "files" | "browser";
 type DevAppUpdatePreviewMode = "off" | "downloading" | "ready";
+type SpaceExplorerMode = "files" | "browser";
 
 type SpaceVisibilityState = Record<SpaceComponentId, boolean>;
 
@@ -158,6 +165,7 @@ function isSettingsPaneSection(value: string): value is UiSettingsPaneSection {
 
 type AgentView =
   | { type: "chat" }
+  | { type: "inbox" }
   | {
       type: "app";
       appId: string;
@@ -170,6 +178,27 @@ type AgentView =
       resourceId?: string | null;
       htmlContent?: string | null;
     };
+
+type SpaceDisplayView =
+  | { type: "browser" }
+  | {
+      type: "app";
+      appId: string;
+      resourceId?: string | null;
+      view?: string | null;
+    }
+  | {
+      type: "internal";
+      surface: "document" | "preview" | "file" | "event";
+      resourceId?: string | null;
+      htmlContent?: string | null;
+    }
+  | { type: "empty" };
+
+type RestorableSpaceDisplayView = Exclude<
+  SpaceDisplayView,
+  { type: "browser" } | { type: "empty" }
+>;
 
 type ChatSessionOpenRequest = {
   sessionId: string;
@@ -357,26 +386,6 @@ function loadSpaceVisibility(): SpaceVisibilityState {
     // ignore invalid persisted layout state
   }
   return DEFAULT_SPACE_VISIBILITY;
-}
-
-function loadFilesPaneWidth(): number {
-  try {
-    const raw = localStorage.getItem(FILES_PANE_WIDTH_STORAGE_KEY);
-    const parsed = Number(raw);
-    if (Number.isFinite(parsed)) {
-      if (parsed === LEGACY_DEFAULT_FILES_PANE_WIDTH) {
-        return DEFAULT_FILES_PANE_WIDTH;
-      }
-      return Math.max(
-        MIN_FILES_PANE_WIDTH,
-        Math.min(parsed, MAX_UTILITY_PANE_WIDTH),
-      );
-    }
-  } catch {
-    // ignore
-  }
-
-  return DEFAULT_FILES_PANE_WIDTH;
 }
 
 function loadBrowserPaneWidth(): number {
@@ -834,6 +843,7 @@ function AppShellContent() {
   ] = useState("");
   const [activeLeftRailItem, setActiveLeftRailItem] =
     useState<LeftRailItem>("space");
+  const [spaceLeftRailVisible, setSpaceLeftRailVisible] = useState(false);
   const [agentView, setAgentView] = useState<AgentView>({ type: "chat" });
   const [chatFocusRequestKey, setChatFocusRequestKey] = useState(1);
   const [chatSessionJumpRequest, setChatSessionJumpRequest] = useState<{
@@ -846,13 +856,26 @@ function AppShellContent() {
     useState<ChatComposerPrefillRequest | null>(null);
   const [fileExplorerFocusRequest, setFileExplorerFocusRequest] =
     useState<FileExplorerFocusRequest | null>(null);
+  const [spaceExplorerMode, setSpaceExplorerMode] =
+    useState<SpaceExplorerMode>("files");
+  const [spaceExplorerCollapsed, setSpaceExplorerCollapsed] = useState(false);
+  const [spaceBrowserSpace, setSpaceBrowserSpace] =
+    useState<BrowserSpaceId>("user");
+  const [spaceDisplayView, setSpaceDisplayView] = useState<SpaceDisplayView>({
+    type: "browser",
+  });
+  const [spaceAgentPaneWidth, setSpaceAgentPaneWidth] = useState(
+    SPACE_AGENT_PANE_WIDTH,
+  );
   const [activeChatSessionId, setActiveChatSessionId] = useState<string | null>(
     null,
   );
   const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = useState(false);
   const [spaceVisibility, setSpaceVisibility] =
     useState<SpaceVisibilityState>(loadSpaceVisibility);
-  const [filesPaneWidth, setFilesPaneWidth] = useState(loadFilesPaneWidth);
+  const [filesPaneWidth, setFilesPaneWidth] = useState(
+    DEFAULT_FILES_PANE_WIDTH,
+  );
   const [browserPaneWidth, setBrowserPaneWidth] =
     useState(loadBrowserPaneWidth);
   const [isUtilityPaneResizing, setIsUtilityPaneResizing] = useState(false);
@@ -918,6 +941,13 @@ function AppShellContent() {
   const notificationsHydratedRef = useRef(false);
   const seenNotificationIdsRef = useRef(new Set<string>());
   const notificationToastTimeoutsRef = useRef(new Map<string, number>());
+  const lastRestorableSpaceDisplayViewByWorkspaceRef = useRef<
+    Record<string, RestorableSpaceDisplayView>
+  >({});
+  const spaceDisplayResizeStateRef = useRef<{
+    startWidth: number;
+    startX: number;
+  } | null>(null);
 
   filesPaneWidthRef.current = filesPaneWidth;
   browserPaneWidthRef.current = browserPaneWidth;
@@ -1307,15 +1337,19 @@ function AppShellContent() {
           return;
         }
 
+        const targetBrowserSpace =
+          payload.space === "agent" ? "agent" : "user";
         const openBrowserPane = () => {
           setActiveLeftRailItem("space");
+          setSpaceExplorerMode("browser");
+          setSpaceBrowserSpace(targetBrowserSpace);
+          setSpaceDisplayView({ type: "browser" });
+          setSpaceExplorerCollapsed(false);
           setSpaceVisibility((previous) => ({
             ...previous,
             browser: true,
           }));
         };
-        const targetBrowserSpace =
-          payload.space === "agent" ? "agent" : "user";
 
         const requestedUrl =
           typeof payload.url === "string" ? payload.url.trim() : "";
@@ -1608,8 +1642,12 @@ function AppShellContent() {
     void window.electronAPI.ui.openExternalUrl(url);
   }, []);
 
-  const revealBrowserPane = useCallback(() => {
+  const revealBrowserPane = useCallback((space: BrowserSpaceId = "user") => {
     setActiveLeftRailItem("space");
+    setSpaceExplorerMode("browser");
+    setSpaceBrowserSpace(space);
+    setSpaceDisplayView({ type: "browser" });
+    setSpaceExplorerCollapsed(false);
     setSpaceVisibility((previous) => ({
       ...previous,
       browser: true,
@@ -1623,7 +1661,7 @@ function AppShellContent() {
         return;
       }
 
-      revealBrowserPane();
+      revealBrowserPane("user");
       const targetWorkspaceId =
         workspaceIdOverride !== undefined
           ? workspaceIdOverride
@@ -1687,10 +1725,6 @@ function AppShellContent() {
       JSON.stringify(seenTaskProposalIdsByWorkspace),
     );
   }, [seenTaskProposalIdsByWorkspace]);
-
-  useEffect(() => {
-    localStorage.setItem(FILES_PANE_WIDTH_STORAGE_KEY, String(filesPaneWidth));
-  }, [filesPaneWidth]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -2065,6 +2099,22 @@ function AppShellContent() {
 
   useEffect(() => {
     if (
+      agentView.type !== "inbox" ||
+      !selectedWorkspaceId ||
+      taskProposals.length === 0
+    ) {
+      return;
+    }
+    markTaskProposalsSeen(selectedWorkspaceId, taskProposals);
+  }, [
+    agentView.type,
+    markTaskProposalsSeen,
+    selectedWorkspaceId,
+    taskProposals,
+  ]);
+
+  useEffect(() => {
+    if (
       !operationsDrawerOpen ||
       activeOperationsTab !== "inbox" ||
       !selectedWorkspaceId ||
@@ -2282,11 +2332,82 @@ function AppShellContent() {
     setChatFocusRequestKey((current) => current + 1);
   }, [selectedWorkspaceId]);
 
+  const handleOpenInboxPane = useCallback(() => {
+    setActiveLeftRailItem("space");
+    setSpaceVisibility((previous) => ({
+      ...previous,
+      agent: true,
+    }));
+    setAgentView({ type: "inbox" });
+    if (selectedWorkspaceId && taskProposals.length > 0) {
+      markTaskProposalsSeen(selectedWorkspaceId, taskProposals);
+    }
+  }, [markTaskProposalsSeen, selectedWorkspaceId, taskProposals]);
+
+  const handleReturnToChatPane = useCallback(() => {
+    setAgentView({ type: "chat" });
+    setChatFocusRequestKey((current) => current + 1);
+  }, []);
+
   const handleChatComposerPrefillConsumed = useCallback((requestKey: number) => {
     setChatComposerPrefillRequest((current) =>
       current?.requestKey === requestKey ? null : current,
     );
   }, []);
+
+  const handleChatSessionOpenRequestConsumed = useCallback(
+    (requestKey: number) => {
+      setChatSessionOpenRequest((current) =>
+        current?.requestKey === requestKey ? null : current,
+      );
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (
+      !selectedWorkspaceId ||
+      spaceDisplayView.type === "browser" ||
+      spaceDisplayView.type === "empty"
+    ) {
+      return;
+    }
+    lastRestorableSpaceDisplayViewByWorkspaceRef.current[selectedWorkspaceId] =
+      spaceDisplayView;
+  }, [selectedWorkspaceId, spaceDisplayView]);
+
+  const restoreLastSpaceDisplayView = useCallback(() => {
+    if (!selectedWorkspaceId) {
+      setSpaceDisplayView({ type: "browser" });
+      return;
+    }
+
+    const lastDisplayView =
+      lastRestorableSpaceDisplayViewByWorkspaceRef.current[
+        selectedWorkspaceId
+      ];
+    setSpaceDisplayView(lastDisplayView ?? { type: "browser" });
+  }, [selectedWorkspaceId]);
+
+  useEffect(() => {
+    if (!selectedWorkspaceId) {
+      setSpaceExplorerMode("browser");
+      setSpaceDisplayView({ type: "browser" });
+      return;
+    }
+
+    const nextDisplayView =
+      lastRestorableSpaceDisplayViewByWorkspaceRef.current[
+        selectedWorkspaceId
+      ];
+    if (!nextDisplayView) {
+      setSpaceExplorerMode("browser");
+      setSpaceDisplayView({ type: "browser" });
+      return;
+    }
+
+    setSpaceDisplayView(nextDisplayView);
+  }, [selectedWorkspaceId]);
 
   const handleOpenWorkspaceOutput = useCallback(
     (output: WorkspaceOutputRecordPayload) => {
@@ -2302,21 +2423,21 @@ function AppShellContent() {
         void window.electronAPI.appSurface
           .resolveUrl(selectedWorkspaceId, target.appId, routePath)
           .then((url) => {
-            revealBrowserPane();
+            revealBrowserPane("user");
             void window.electronAPI.browser
               .setActiveWorkspace(selectedWorkspaceId)
               .then(() => window.electronAPI.browser.navigate(url))
               .catch(() => undefined);
           })
           .catch(() => {
-            // Fallback: open in full app view if URL resolution fails
-            setActiveLeftRailItem("app");
-            setAgentView({
+            setActiveLeftRailItem("space");
+            setSpaceDisplayView({
               type: "app",
               appId: target.appId,
               resourceId: target.resourceId,
               view: target.view,
             });
+            setAgentView({ type: "chat" });
           });
         return;
       }
@@ -2327,12 +2448,19 @@ function AppShellContent() {
           target.resourceId?.trim()
         ) {
           setActiveLeftRailItem("space");
+          setSpaceExplorerMode("files");
+          setSpaceExplorerCollapsed(false);
           setSpaceVisibility((previous) => ({
             ...previous,
             agent: true,
             files: true,
           }));
           setAgentView({ type: "chat" });
+          setSpaceDisplayView({
+            type: "internal",
+            surface: target.surface,
+            resourceId: target.resourceId,
+          });
           setFileExplorerFocusRequest({
             path: target.resourceId,
             requestKey: Date.now(),
@@ -2345,7 +2473,8 @@ function AppShellContent() {
           ...previous,
           agent: true,
         }));
-        setAgentView({
+        setAgentView({ type: "chat" });
+        setSpaceDisplayView({
           type: "internal",
           surface: target.surface,
           resourceId: target.resourceId ?? output.id,
@@ -2390,8 +2519,8 @@ function AppShellContent() {
   const flexSpacePaneId = visibleSpacePaneIds.includes("agent")
     ? "agent"
     : (visibleSpacePaneIds[visibleSpacePaneIds.length - 1] ?? null);
-  const showOperationsDrawer =
-    spaceMode && spaceVisibility.agent && operationsDrawerOpen;
+  const showOperationsDrawer = false;
+  const showSpaceExplorer = !spaceExplorerCollapsed;
   const shouldShowAppUpdateReminder = Boolean(
     effectiveAppUpdateStatus &&
       effectiveAppUpdateStatus.downloaded,
@@ -2436,10 +2565,80 @@ function AppShellContent() {
     hasWorkspaces &&
     hasSelectedWorkspace &&
     onboardingModeActive;
+  const shouldOverlayLeftRail = spaceMode;
+
+  useEffect(() => {
+    if (spaceMode) {
+      setSpaceLeftRailVisible(false);
+    }
+  }, [spaceMode]);
 
   const agentContent = useMemo(() => {
     if (!hasSelectedWorkspace) {
       return <EmptyWorkspacePane />;
+    }
+
+    if (agentView.type === "inbox") {
+      return (
+        <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+          <div className="shrink-0 border-b border-border/45 px-4 py-2.5 sm:px-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="inline-flex min-w-0 items-center gap-2 text-[15px] font-semibold tracking-[-0.02em] text-foreground">
+                <Inbox size={14} className="shrink-0 text-muted-foreground" />
+                <span className="truncate">Inbox</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleReturnToChatPane}
+                aria-label="Return to chat"
+                className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-accent hover:text-accent-foreground"
+              >
+                <ArrowLeft size={15} />
+              </button>
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <OperationsInboxPane
+              proposals={taskProposals}
+              proactiveStatus={proactiveStatus}
+              isLoadingProactiveStatus={isLoadingProactiveStatus}
+              proactiveWorkspaceEnabled={proactiveWorkspaceEnabled}
+              isLoadingProactiveWorkspaceEnabled={
+                isLoadingProactiveWorkspaceEnabled
+              }
+              isUpdatingProactiveWorkspaceEnabled={
+                isUpdatingProactiveWorkspaceEnabled
+              }
+              proactiveHeartbeatCron={
+                proactiveHeartbeatConfig?.cron?.trim() ||
+                DEFAULT_PROACTIVE_HEARTBEAT_CRON
+              }
+              isLoadingProactiveHeartbeatConfig={
+                isLoadingProactiveHeartbeatConfig
+              }
+              isUpdatingProactiveHeartbeatConfig={
+                isUpdatingProactiveHeartbeatConfig
+              }
+              proactiveTaskProposalsError={proactiveTaskProposalsError}
+              proactiveHeartbeatError={proactiveHeartbeatError}
+              isLoadingProposals={isLoadingTaskProposals}
+              isTriggeringProposal={isTriggeringTaskProposal}
+              proposalStatusMessage={taskProposalStatusMessage}
+              proposalAction={proposalAction}
+              onTriggerProposal={triggerRemoteTaskProposal}
+              onProactiveWorkspaceEnabledChange={
+                handleProactiveWorkspaceEnabledChange
+              }
+              onProactiveHeartbeatCronChange={handleProactiveHeartbeatCronChange}
+              onAcceptProposal={acceptTaskProposal}
+              onDismissProposal={dismissTaskProposal}
+              hasWorkspace={hasSelectedWorkspace}
+              selectedWorkspaceId={selectedWorkspaceId}
+              selectedWorkspaceName={selectedWorkspace?.name ?? null}
+            />
+          </div>
+        </section>
+      );
     }
 
     if (agentView.type === "chat") {
@@ -2456,9 +2655,13 @@ function AppShellContent() {
           sessionJumpSessionId={chatSessionJumpRequest?.sessionId ?? null}
           sessionJumpRequestKey={chatSessionJumpRequest?.requestKey ?? 0}
           sessionOpenRequest={chatSessionOpenRequest}
+          onSessionOpenRequestConsumed={handleChatSessionOpenRequestConsumed}
           composerPrefillRequest={chatComposerPrefillRequest}
           onComposerPrefillConsumed={handleChatComposerPrefillConsumed}
           onActiveSessionIdChange={setActiveChatSessionId}
+          onOpenInbox={handleOpenInboxPane}
+          inboxUnreadCount={unreadTaskProposalCount}
+          onRequestCreateSession={() => void handleCreateSession()}
         />
       );
     }
@@ -2489,12 +2692,110 @@ function AppShellContent() {
     activeApp,
     activeAppId,
     agentView,
-    chatSessionJumpRequest,
     chatFocusRequestKey,
+    chatSessionJumpRequest,
+    chatSessionOpenRequest,
+    chatComposerPrefillRequest,
+    handleChatComposerPrefillConsumed,
+    handleOpenInboxPane,
+    handleReturnToChatPane,
+    handleCreateSession,
+    handleProactiveHeartbeatCronChange,
+    handleProactiveWorkspaceEnabledChange,
+    handleOpenLinkInAppBrowser,
     handleOpenWorkspaceOutput,
     hasSelectedWorkspace,
-    handleOpenLinkInAppBrowser,
+    isLoadingProactiveHeartbeatConfig,
+    isLoadingProactiveStatus,
+    isLoadingProactiveWorkspaceEnabled,
+    isLoadingTaskProposals,
+    isTriggeringTaskProposal,
+    proposalAction,
+    proactiveHeartbeatConfig?.cron,
+    proactiveHeartbeatError,
+    proactiveStatus,
+    proactiveTaskProposalsError,
+    proactiveWorkspaceEnabled,
+    selectedWorkspace?.name,
+    selectedWorkspaceId,
+    taskProposalStatusMessage,
+    taskProposals,
+    unreadTaskProposalCount,
+    acceptTaskProposal,
+    dismissTaskProposal,
+    isUpdatingProactiveHeartbeatConfig,
+    isUpdatingProactiveWorkspaceEnabled,
     onboardingModeActive,
+    triggerRemoteTaskProposal,
+  ]);
+
+  const spaceDisplayLayoutSyncKey = `${spaceExplorerMode}:${spaceBrowserSpace}:${spaceExplorerCollapsed ? "collapsed" : "open"}:${spaceAgentPaneWidth}:${showOperationsDrawer ? 1 : 0}`;
+  const spaceDisplayContent = useMemo(() => {
+    if (!hasSelectedWorkspace) {
+      return <EmptyWorkspacePane />;
+    }
+
+    if (spaceDisplayView.type === "browser") {
+      return (
+        <SpaceBrowserDisplayPane
+          browserSpace={spaceBrowserSpace}
+          suspendNativeView={shouldSuspendBrowserNativeView}
+          layoutSyncKey={spaceDisplayLayoutSyncKey}
+          embedded
+        />
+      );
+    }
+
+    if (spaceDisplayView.type === "app") {
+      return (
+        <div className="h-full min-h-0 p-3">
+          <AppSurfacePane
+            appId={spaceDisplayView.appId}
+            app={
+              activeAppId === spaceDisplayView.appId
+                ? activeApp
+                : getWorkspaceAppDefinition(spaceDisplayView.appId, installedApps)
+            }
+            resourceId={spaceDisplayView.resourceId}
+            view={spaceDisplayView.view}
+          />
+        </div>
+      );
+    }
+
+    if (spaceDisplayView.type === "internal") {
+      return (
+        <div className="h-full min-h-0 p-3">
+          <InternalSurfacePane
+            surface={spaceDisplayView.surface}
+            resourceId={spaceDisplayView.resourceId}
+            htmlContent={spaceDisplayView.htmlContent}
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div className="h-full min-h-0 p-3">
+        <FocusPlaceholder
+          eyebrow="Display"
+          title="Universal display"
+          description="Select a file from the explorer or switch into browser mode to project tabs and bookmarks here."
+        />
+      </div>
+    );
+  }, [
+    activeApp,
+    activeAppId,
+    hasSelectedWorkspace,
+    installedApps,
+    shouldSuspendBrowserNativeView,
+    showOperationsDrawer,
+    spaceAgentPaneWidth,
+    spaceBrowserSpace,
+    spaceDisplayView,
+    spaceExplorerCollapsed,
+    spaceExplorerMode,
   ]);
 
   const spacePanes = useMemo(
@@ -2538,6 +2839,118 @@ function AppShellContent() {
       visibleSpacePaneIds,
     ],
   );
+
+  const clampSpaceAgentPaneWidth = useCallback((width: number) => {
+    const hostWidth =
+      utilityPaneHostRef.current?.getBoundingClientRect().width ?? 0;
+    const explorerWidth = spaceExplorerCollapsed
+      ? SPACE_EXPLORER_COLLAPSED_WIDTH
+      : filesPaneWidth;
+    const maxWidth =
+      hostWidth > 0
+        ? Math.min(
+            MAX_UTILITY_PANE_WIDTH,
+            Math.max(
+              MIN_AGENT_CONTENT_WIDTH,
+              hostWidth -
+                explorerWidth -
+                SPACE_DISPLAY_MIN_WIDTH -
+                UTILITY_PANE_RESIZER_WIDTH,
+            ),
+          )
+        : MAX_UTILITY_PANE_WIDTH;
+    return Math.max(MIN_AGENT_CONTENT_WIDTH, Math.min(width, maxWidth));
+  }, [filesPaneWidth, spaceExplorerCollapsed]);
+
+  useEffect(() => {
+    if (!spaceMode) {
+      return;
+    }
+
+    const syncDisplayWidth = () => {
+      setSpaceAgentPaneWidth((current) => clampSpaceAgentPaneWidth(current));
+    };
+
+    syncDisplayWidth();
+    window.addEventListener("resize", syncDisplayWidth);
+
+    const host = utilityPaneHostRef.current;
+    const observer =
+      host && typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            syncDisplayWidth();
+          })
+        : null;
+    if (observer && host) {
+      observer.observe(host);
+    }
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", syncDisplayWidth);
+    };
+  }, [clampSpaceAgentPaneWidth, showOperationsDrawer, spaceMode]);
+
+  const startSpaceDisplayResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      spaceDisplayResizeStateRef.current = {
+        startWidth: spaceAgentPaneWidth,
+        startX: event.clientX,
+      };
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // BrowserView resizing falls back to the window listeners below.
+      }
+      void window.electronAPI.browser.setBounds({
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+      });
+      setIsUtilityPaneResizing(true);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      event.preventDefault();
+    },
+    [spaceAgentPaneWidth],
+  );
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const resizeState = spaceDisplayResizeStateRef.current;
+      if (!resizeState) {
+        return;
+      }
+
+      setSpaceAgentPaneWidth(
+        clampSpaceAgentPaneWidth(
+          resizeState.startWidth - (event.clientX - resizeState.startX),
+        ),
+      );
+    };
+
+    const stopResize = () => {
+      if (!spaceDisplayResizeStateRef.current) {
+        return;
+      }
+
+      spaceDisplayResizeStateRef.current = null;
+      setIsUtilityPaneResizing(false);
+      document.body.style.removeProperty("cursor");
+      document.body.style.removeProperty("user-select");
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopResize);
+    window.addEventListener("pointercancel", stopResize);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopResize);
+      window.removeEventListener("pointercancel", stopResize);
+      stopResize();
+    };
+  }, [clampSpaceAgentPaneWidth]);
 
   const startUtilityPaneResize = useCallback(
     (
@@ -2757,20 +3170,48 @@ function AppShellContent() {
         ) : (
           <div
             className={`relative grid h-full min-h-0 gap-y-3 overflow-hidden transition-[grid-template-columns,column-gap] duration-300 ease-in-out ${
-              showOperationsDrawer
-                ? "lg:grid-cols-[60px_minmax(0,1fr)_336px]"
+              shouldOverlayLeftRail
+                ? "lg:grid-cols-[minmax(0,1fr)]"
                 : "lg:grid-cols-[60px_minmax(0,1fr)]"
             }`}
-            style={{ columnGap: "0.5rem" }}
+            style={{ columnGap: shouldOverlayLeftRail ? "0rem" : "0.5rem" }}
           >
-            <LeftNavigationRail
-              activeItem={activeLeftRailItem}
-              onSelectItem={handleLeftRailSelect}
-              installedApps={installedApps}
-              activeAppId={activeAppId}
-              onSelectApp={handleOpenInstalledApp}
-              appVersionLabel={appVersionLabel}
-            />
+            {shouldOverlayLeftRail ? (
+              <>
+                <div
+                  className="absolute inset-y-0 left-0 z-30 hidden w-4 lg:block"
+                  onMouseEnter={() => setSpaceLeftRailVisible(true)}
+                  aria-hidden="true"
+                />
+                <div
+                  className={`absolute inset-y-0 left-0 z-40 hidden transition-transform duration-200 ease-out lg:block ${
+                    spaceLeftRailVisible
+                      ? "translate-x-0"
+                      : "-translate-x-full"
+                  }`}
+                  onMouseEnter={() => setSpaceLeftRailVisible(true)}
+                  onMouseLeave={() => setSpaceLeftRailVisible(false)}
+                >
+                  <LeftNavigationRail
+                    activeItem={activeLeftRailItem}
+                    onSelectItem={handleLeftRailSelect}
+                    installedApps={installedApps}
+                    activeAppId={activeAppId}
+                    onSelectApp={handleOpenInstalledApp}
+                    appVersionLabel={appVersionLabel}
+                  />
+                </div>
+              </>
+            ) : (
+              <LeftNavigationRail
+                activeItem={activeLeftRailItem}
+                onSelectItem={handleLeftRailSelect}
+                installedApps={installedApps}
+                activeAppId={activeAppId}
+                onSelectApp={handleOpenInstalledApp}
+                appVersionLabel={appVersionLabel}
+              />
+            )}
 
             <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
               <div className="min-h-0 flex-1 overflow-hidden">
@@ -2778,66 +3219,172 @@ function AppShellContent() {
                   <div className="relative flex h-full min-h-0 min-w-0 overflow-hidden">
                     <div
                       ref={utilityPaneHostRef}
-                      className="min-h-0 min-w-0 flex-1 overflow-hidden"
+                      className="flex min-h-0 min-w-0 flex-1 items-stretch overflow-hidden"
                     >
-                      {spacePanes.length > 0 ? (
-                        <div className="flex h-full min-h-0 min-w-0 items-stretch overflow-hidden">
-                          {spacePanes.map((pane, index) => {
-                            const nextPane = spacePanes[index + 1] ?? null;
-                            const resizeHandle = nextPane
-                              ? spaceResizeHandleSpec(pane.id, nextPane.id)
-                              : null;
-
-                            return (
-                              <div key={pane.id} className="contents">
-                                <div
-                                  className={`relative min-h-0 min-w-0 overflow-hidden rounded-[var(--radius-xl)] ${pane.flex ? "flex-1" : "shrink-0"}`}
-                                  style={
-                                    pane.flex
-                                      ? {
-                                          minWidth: `${MIN_AGENT_CONTENT_WIDTH}px`,
-                                        }
-                                      : { width: `${pane.width}px` }
-                                  }
-                                >
-                                  {pane.content}
+                      <section className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm">
+                        <div
+                          className="shrink-0 overflow-hidden border-r border-border/45 bg-card/45 transition-[width] duration-200 ease-out"
+                          style={{
+                            width: `${showSpaceExplorer ? SPACE_EXPLORER_WIDTH : SPACE_EXPLORER_COLLAPSED_WIDTH}px`,
+                          }}
+                        >
+                          <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+                            {showSpaceExplorer ? (
+                              <>
+                                <div className="shrink-0 border-b border-border/45 px-3 py-3">
+                                  <div className="flex items-center gap-2">
+                                    <div className="inline-flex min-w-0 flex-1 items-center rounded-md border border-border bg-muted/50 p-0.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setSpaceExplorerMode("files");
+                                          restoreLastSpaceDisplayView();
+                                        }}
+                                        className={`inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded px-3 py-2 text-[12px] font-medium transition ${
+                                          spaceExplorerMode === "files"
+                                            ? "bg-background text-foreground shadow-sm"
+                                            : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                                        }`}
+                                      >
+                                        <Folder size={13} />
+                                        <span>Files</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setSpaceExplorerMode("browser");
+                                          setSpaceDisplayView({ type: "browser" });
+                                        }}
+                                        className={`inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded px-3 py-2 text-[12px] font-medium transition ${
+                                          spaceExplorerMode === "browser"
+                                            ? "bg-background text-foreground shadow-sm"
+                                            : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                                        }`}
+                                      >
+                                        <Globe size={13} />
+                                        <span>Browser</span>
+                                      </button>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => setSpaceExplorerCollapsed(true)}
+                                      aria-label="Collapse explorer"
+                                      className="inline-flex size-9 items-center justify-center rounded-md border border-border bg-card/80 text-muted-foreground transition hover:bg-accent hover:text-accent-foreground"
+                                    >
+                                      <PanelLeftClose size={14} />
+                                    </button>
+                                  </div>
                                 </div>
 
-                                {resizeHandle ? (
-                                  <div
-                                    role="separator"
-                                    aria-label={resizeHandle.label}
-                                    aria-orientation="vertical"
-                                    onPointerDown={(event) =>
-                                      startUtilityPaneResize(
-                                        resizeHandle.leftPaneId,
-                                        resizeHandle.rightPaneId,
-                                        event,
-                                      )
-                                    }
-                                    className="group relative z-10 flex w-4 shrink-0 cursor-col-resize touch-none items-center justify-center"
-                                  >
-                                    <div className="pointer-events-none absolute inset-y-2 left-1/2 w-px -translate-x-1/2 rounded-full bg-border/55 transition-all duration-150 group-hover:w-[2px] group-hover:bg-[rgba(247,90,84,0.5)]" />
-                                    <div className="pointer-events-none absolute left-1/2 top-1/2 h-14 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[rgba(247,90,84,0.08)] opacity-0 transition duration-150 group-hover:opacity-100" />
-                                  </div>
-                                ) : null}
+                                <div className="min-h-0 flex-1 overflow-hidden">
+                                  {spaceExplorerMode === "files" ? (
+                                    <FileExplorerPane
+                                      focusRequest={fileExplorerFocusRequest}
+                                      onFocusRequestConsumed={(requestKey) => {
+                                        setFileExplorerFocusRequest((current) =>
+                                          current?.requestKey === requestKey ? null : current,
+                                        );
+                                      }}
+                                      previewInPane={false}
+                                      embedded
+                                      onFileOpen={(path) => {
+                                        setSpaceDisplayView({
+                                          type: "internal",
+                                          surface: "file",
+                                          resourceId: path,
+                                        });
+                                      }}
+                                    />
+                                  ) : spaceExplorerMode === "browser" ? (
+                                    <SpaceBrowserExplorerPane
+                                      browserSpace={spaceBrowserSpace}
+                                      onBrowserSpaceChange={(space) => {
+                                        setSpaceBrowserSpace(space);
+                                        setSpaceDisplayView({ type: "browser" });
+                                      }}
+                                      onActivateDisplay={() =>
+                                        setSpaceDisplayView({ type: "browser" })
+                                      }
+                                    />
+                                  ) : null}
+                                </div>
+                              </>
+                            ) : (
+                              <div className="flex h-full min-h-0 flex-col items-center gap-2 px-2 py-3">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSpaceExplorerMode("files");
+                                    restoreLastSpaceDisplayView();
+                                    setSpaceExplorerCollapsed(false);
+                                  }}
+                                  aria-label="Open file explorer"
+                                  className={`inline-flex size-11 items-center justify-center rounded-[16px] border transition ${
+                                    spaceExplorerMode === "files"
+                                      ? "border-primary/45 bg-primary/12 text-primary"
+                                      : "border-border bg-card/80 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                                  }`}
+                                >
+                                  <Folder size={16} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSpaceExplorerMode("browser");
+                                    setSpaceDisplayView({ type: "browser" });
+                                    setSpaceExplorerCollapsed(false);
+                                  }}
+                                  aria-label="Open browser explorer"
+                                  className={`inline-flex size-11 items-center justify-center rounded-[16px] border transition ${
+                                    spaceExplorerMode === "browser"
+                                      ? "border-primary/45 bg-primary/12 text-primary"
+                                      : "border-border bg-card/80 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                                  }`}
+                                >
+                                  <Globe size={16} />
+                                </button>
+                                <div className="min-h-0 flex-1" />
+                                <button
+                                  type="button"
+                                  onClick={() => setSpaceExplorerCollapsed(false)}
+                                  aria-label="Expand explorer"
+                                  className="inline-flex size-11 items-center justify-center rounded-[16px] border border-border bg-card/80 text-muted-foreground transition hover:bg-accent hover:text-accent-foreground"
+                                >
+                                  <PanelLeftOpen size={16} />
+                                </button>
                               </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-[var(--radius-xl)] border border-border/45 shadow-lg">
-                          <div className="max-w-[360px] px-6 text-center">
-                            <div className="text-[22px] font-medium tracking-[-0.03em] text-foreground">
-                              Turn on a space surface
-                            </div>
-                            <div className="mt-3 text-[13px] leading-6 text-muted-foreground/78">
-                              Space keeps your files, browser, and agent panes
-                              available together.
-                            </div>
+                            )}
                           </div>
-                        </section>
-                      )}
+                        </div>
+
+                        <div
+                          className="min-h-0 min-w-0 flex-1 overflow-hidden"
+                          style={{ minWidth: `${SPACE_DISPLAY_MIN_WIDTH}px` }}
+                        >
+                          {spaceDisplayContent}
+                        </div>
+                      </section>
+
+                      <div
+                        role="separator"
+                        aria-label="Resize display pane"
+                        aria-orientation="vertical"
+                        onPointerDown={startSpaceDisplayResize}
+                        className="group relative z-10 flex w-4 shrink-0 cursor-col-resize touch-none items-center justify-center"
+                      >
+                        <div className="pointer-events-none absolute inset-y-2 left-1/2 w-px -translate-x-1/2 rounded-full bg-border/55 transition-all duration-150 group-hover:w-[2px] group-hover:bg-[rgba(247,90,84,0.5)]" />
+                        <div className="pointer-events-none absolute left-1/2 top-1/2 h-14 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[rgba(247,90,84,0.08)] opacity-0 transition duration-150 group-hover:opacity-100" />
+                      </div>
+
+                      <div
+                        className="min-h-0 shrink-0 overflow-hidden rounded-[var(--radius-xl)]"
+                        style={{
+                          width: `${spaceAgentPaneWidth}px`,
+                          minWidth: `${MIN_AGENT_CONTENT_WIDTH}px`,
+                        }}
+                      >
+                        {agentContent}
+                      </div>
                     </div>
                   </div>
                 ) : activeLeftRailItem === "app" ? (
@@ -2889,111 +3436,6 @@ function AppShellContent() {
               </div>
             </div>
 
-            {spaceMode && spaceVisibility.agent ? (
-              <div className="pointer-events-none absolute right-0 top-0 z-20 hidden lg:block">
-                <div className="pointer-events-auto inline-flex items-center gap-1 rounded-bl-[16px] rounded-tr-[var(--radius-xl)] border border-border/50 border-r-0 border-t-0 bg-card/94 px-2 py-2 text-muted-foreground shadow-lg backdrop-blur">
-                  {showOperationsDrawer ? (
-                    <button
-                      type="button"
-                      onClick={() => toggleOperationsDrawer()}
-                      aria-label="Hide right panel"
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-primary/45 bg-primary/10 text-primary transition-all duration-200 hover:border-primary/60 hover:bg-primary/14 active:scale-95"
-                    >
-                      <PanelRightClose size={14} />
-                    </button>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => openOperationsDrawerTab("inbox")}
-                        aria-label={
-                          unreadTaskProposalCount > 0
-                            ? `Open inbox panel with ${unreadTaskProposalCount} unread proposal${unreadTaskProposalCount === 1 ? "" : "s"}`
-                            : "Open inbox panel"
-                        }
-                        className="relative inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-border/45 text-muted-foreground transition-all duration-200 hover:border-primary/45 hover:text-primary active:scale-95"
-                      >
-                        <InboxIcon size={13} />
-                        {unreadTaskProposalCount > 0 ? (
-                          <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full border-2 border-card bg-destructive" />
-                        ) : null}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => openOperationsDrawerTab("running")}
-                        aria-label="Open sessions panel"
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-border/45 text-muted-foreground transition-all duration-200 hover:border-primary/45 hover:text-primary active:scale-95"
-                      >
-                        <Clock3 size={13} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => toggleOperationsDrawer()}
-                        aria-label="Show right panel"
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-[12px] border border-border/45 text-muted-foreground transition-all duration-200 hover:border-primary/45 hover:text-primary active:scale-95"
-                      >
-                        <PanelRightOpen size={14} />
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            ) : null}
-
-            {showOperationsDrawer ? (
-              <div className="min-h-0 min-w-0 overflow-hidden transition-all duration-300 ease-out">
-                <OperationsDrawer
-                  activeTab={activeOperationsTab}
-                  onTabChange={openOperationsDrawerTab}
-                  proposals={taskProposals}
-                  unreadProposalCount={unreadTaskProposalCount}
-                  proactiveStatus={proactiveStatus}
-                  isLoadingProactiveStatus={isLoadingProactiveStatus}
-                  proactiveWorkspaceEnabled={proactiveWorkspaceEnabled}
-                  isLoadingProactiveWorkspaceEnabled={
-                    isLoadingProactiveWorkspaceEnabled
-                  }
-                  isUpdatingProactiveWorkspaceEnabled={
-                    isUpdatingProactiveWorkspaceEnabled
-                  }
-                  proactiveHeartbeatCron={
-                    proactiveHeartbeatConfig?.cron ||
-                    DEFAULT_PROACTIVE_HEARTBEAT_CRON
-                  }
-                  isLoadingProactiveHeartbeatConfig={
-                    isLoadingProactiveHeartbeatConfig
-                  }
-                  isUpdatingProactiveHeartbeatConfig={
-                    isUpdatingProactiveHeartbeatConfig
-                  }
-                  proactiveTaskProposalsError={proactiveTaskProposalsError}
-                  proactiveHeartbeatError={proactiveHeartbeatError}
-                  isLoadingProposals={isLoadingTaskProposals}
-                  isTriggeringProposal={isTriggeringTaskProposal}
-                  proposalStatusMessage={taskProposalStatusMessage}
-                  proposalAction={proposalAction}
-                  onTriggerProposal={() => void triggerRemoteTaskProposal()}
-                  onProactiveWorkspaceEnabledChange={(enabled) =>
-                    void handleProactiveWorkspaceEnabledChange(enabled)
-                  }
-                  onProactiveHeartbeatCronChange={(cron) =>
-                    void handleProactiveHeartbeatCronChange(cron)
-                  }
-                  onAcceptProposal={(proposal) =>
-                    void acceptTaskProposal(proposal)
-                  }
-                  onDismissProposal={(proposal) =>
-                    void dismissTaskProposal(proposal)
-                  }
-                  onOpenRunningSession={handleOpenRunningSession}
-                  onCreateSession={() => void handleCreateSession()}
-                  activeRunningSessionId={activeChatSessionId}
-                  hasWorkspace={hasSelectedWorkspace}
-                  selectedWorkspaceId={selectedWorkspaceId}
-                  selectedWorkspaceName={selectedWorkspace?.name || null}
-                />
-              </div>
-            ) : null}
           </div>
         )}
       </div>
