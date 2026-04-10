@@ -74,11 +74,6 @@ export function AppsGallery() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <SourceToggle
-            value={appCatalogSource}
-            onChange={setAppCatalogSource}
-            disabled={isLoadingAppCatalog || anyInstalling}
-          />
           <button
             type="button"
             onClick={() => void refreshAppCatalog()}

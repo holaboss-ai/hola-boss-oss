@@ -26,8 +26,10 @@ export function AppCatalogCard({ entry, state, disabled, onInstall }: AppCatalog
         </div>
       </div>
       {description ? (
-        <p className="mt-3 line-clamp-3 text-[12px] leading-5 text-muted-foreground">{description}</p>
-      ) : null}
+        <p className="mt-3 flex-1 line-clamp-3 text-[12px] leading-5 text-muted-foreground">{description}</p>
+      ) : (
+        <div className="flex-1" />
+      )}
       <div className="mt-4 flex items-center justify-end">
         {state === "installed" ? (
           <button
