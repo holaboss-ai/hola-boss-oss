@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { FileText, FileWarning, Loader2 } from "lucide-react";
+import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
 type InternalSurfaceType = "document" | "preview" | "file" | "event";
@@ -10,10 +11,13 @@ interface InternalSurfacePaneProps {
   htmlContent?: string | null;
 }
 
-function resolveWorkspaceTargetPath(
-  workspaceRoot: string,
-  resourceId: string,
-): string {
+const MARKDOWN_PREVIEW_EXTENSIONS = new Set([
+  ".md",
+  ".mdx",
+  ".markdown",
+]);
+
+function resolveWorkspaceTargetPath(workspaceRoot: string, resourceId: string): string {
   const trimmedRoot = workspaceRoot.trim();
   const trimmedResource = resourceId.trim();
   if (!trimmedRoot) {
@@ -28,23 +32,27 @@ function resolveWorkspaceTargetPath(
   return `${normalizedRoot}${separator}${normalizedResource}`;
 }
 
-export function InternalSurfacePane({
-  surface,
-  resourceId,
-  htmlContent,
-}: InternalSurfacePaneProps) {
+function isMarkdownPreviewPayload(
+  preview: Pick<FilePreviewPayload, "kind" | "extension"> | null | undefined,
+): boolean {
+  if (!preview || preview.kind !== "text") {
+    return false;
+  }
+  return MARKDOWN_PREVIEW_EXTENSIONS.has(preview.extension.trim().toLowerCase());
+}
+
+export function InternalSurfacePane({ surface, resourceId, htmlContent }: InternalSurfacePaneProps) {
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const [preview, setPreview] = useState<FilePreviewPayload | null>(null);
   const [activeTableSheetIndex, setActiveTableSheetIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const openPreviewLink = useCallback((url: string) => {
+    void window.electronAPI.ui.openExternalUrl(url);
+  }, []);
 
   useEffect(() => {
-    if (
-      typeof resourceId !== "string" ||
-      !resourceId ||
-      (surface !== "document" && surface !== "file")
-    ) {
+    if (typeof resourceId !== "string" || !resourceId || (surface !== "document" && surface !== "file")) {
       setPreview(null);
       setActiveTableSheetIndex(0);
       setErrorMessage("");
@@ -62,22 +70,13 @@ export function InternalSurfacePane({
       try {
         let targetPath = targetResource;
         if (selectedWorkspaceId) {
-          const workspaceRoot =
-            await window.electronAPI.workspace.getWorkspaceRoot(
-              selectedWorkspaceId,
-            );
+          const workspaceRoot = await window.electronAPI.workspace.getWorkspaceRoot(selectedWorkspaceId);
           if (cancelled) {
             return;
           }
-          targetPath = resolveWorkspaceTargetPath(
-            workspaceRoot,
-            targetResource,
-          );
+          targetPath = resolveWorkspaceTargetPath(workspaceRoot, targetResource);
         }
-        const nextPreview = await window.electronAPI.fs.readFilePreview(
-          targetPath,
-          selectedWorkspaceId ?? null,
-        );
+        const nextPreview = await window.electronAPI.fs.readFilePreview(targetPath, selectedWorkspaceId ?? null);
         if (!cancelled) {
           setPreview(nextPreview);
           setActiveTableSheetIndex(0);
@@ -86,11 +85,7 @@ export function InternalSurfacePane({
         if (!cancelled) {
           setPreview(null);
           setActiveTableSheetIndex(0);
-          setErrorMessage(
-            error instanceof Error
-              ? error.message
-              : "Failed to load output preview.",
-          );
+          setErrorMessage(error instanceof Error ? error.message : "Failed to load output preview.");
         }
       } finally {
         if (!cancelled) {
@@ -107,21 +102,14 @@ export function InternalSurfacePane({
 
   const body = useMemo(() => {
     if (surface === "event") {
-      return (
-        <EmptyState
-          title="Event detail"
-          detail="This output remains inside Holaboss and does not resolve to a file-backed preview."
-        />
-      );
+      return <EmptyState title="Event detail" detail="This output remains inside Holaboss and does not resolve to a file-backed preview." />;
     }
 
     if (surface === "preview") {
       if (htmlContent && htmlContent.trim()) {
         return (
           <div className="grid min-h-0 gap-3">
-            {resourceId ? (
-              <MetadataRow label="Target" value={resourceId} />
-            ) : null}
+            {resourceId ? <MetadataRow label="Target" value={resourceId} /> : null}
             <iframe
               title="Output preview"
               sandbox=""
@@ -131,21 +119,11 @@ export function InternalSurfacePane({
           </div>
         );
       }
-      return (
-        <EmptyState
-          title="Preview surface"
-          detail="Structured preview rendering is not available for this output."
-        />
-      );
+      return <EmptyState title="Preview surface" detail="Structured preview rendering is not available for this output." />;
     }
 
     if (!resourceId) {
-      return (
-        <EmptyState
-          title="No target"
-          detail="This output does not include a file target yet."
-        />
-      );
+      return <EmptyState title="No target" detail="This output does not include a file target yet." />;
     }
 
     if (isLoading) {
@@ -160,28 +138,40 @@ export function InternalSurfacePane({
     }
 
     if (errorMessage) {
-      return (
-        <EmptyState title="Preview failed" detail={errorMessage} tone="error" />
-      );
+      return <EmptyState title="Preview failed" detail={errorMessage} tone="error" />;
     }
 
     if (!preview) {
-      return (
-        <EmptyState
-          title="No preview"
-          detail="File preview is not available yet."
-        />
-      );
+      return <EmptyState title="No preview" detail="File preview is not available yet." />;
     }
 
     if (preview.kind === "text") {
+      if (isMarkdownPreviewPayload(preview)) {
+        return (
+          <div className="grid min-h-0 gap-3">
+            <MetadataRow label="Path" value={preview.absolutePath} />
+            <MetadataRow label="Modified" value={new Date(preview.modifiedAt).toLocaleString()} />
+            <div className="min-h-0 overflow-auto rounded-[18px] border border-border/35 bg-black/10 p-4">
+              {preview.content?.trim() ? (
+                <SimpleMarkdown
+                  className="chat-markdown text-sm text-foreground/90"
+                  onLinkClick={openPreviewLink}
+                >
+                  {preview.content}
+                </SimpleMarkdown>
+              ) : (
+                <div className="grid min-h-[160px] place-items-center text-[12px] text-muted-foreground">
+                  Nothing to preview yet.
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
       return (
         <div className="grid min-h-0 gap-3">
           <MetadataRow label="Path" value={preview.absolutePath} />
-          <MetadataRow
-            label="Modified"
-            value={new Date(preview.modifiedAt).toLocaleString()}
-          />
+          <MetadataRow label="Modified" value={new Date(preview.modifiedAt).toLocaleString()} />
           <pre className="min-h-0 overflow-auto rounded-[18px] border border-border/35 bg-black/20 p-4 text-[12px] leading-6 text-foreground/88">
             {preview.content || ""}
           </pre>
@@ -194,11 +184,7 @@ export function InternalSurfacePane({
         <div className="grid min-h-0 gap-3">
           <MetadataRow label="Path" value={preview.absolutePath} />
           <div className="overflow-auto rounded-[18px] border border-border/35 bg-black/20 p-4">
-            <img
-              src={preview.dataUrl}
-              alt={preview.name}
-              className="mx-auto max-h-[60vh] max-w-full rounded-[12px]"
-            />
+            <img src={preview.dataUrl} alt={preview.name} className="mx-auto max-h-[60vh] max-w-full rounded-[12px]" />
           </div>
         </div>
       );
@@ -208,24 +194,13 @@ export function InternalSurfacePane({
       return (
         <div className="grid min-h-0 gap-3">
           <MetadataRow label="Path" value={preview.absolutePath} />
-          <iframe
-            title={preview.name}
-            src={preview.dataUrl}
-            className="min-h-[60vh] w-full rounded-[18px] border border-border/35 bg-white"
-          />
+          <iframe title={preview.name} src={preview.dataUrl} className="min-h-[60vh] w-full rounded-[18px] border border-border/35 bg-white" />
         </div>
       );
     }
 
-    if (
-      preview.kind === "table" &&
-      preview.tableSheets &&
-      preview.tableSheets.length > 0
-    ) {
-      const activeSheet =
-        preview.tableSheets[
-          Math.min(activeTableSheetIndex, preview.tableSheets.length - 1)
-        ];
+    if (preview.kind === "table" && preview.tableSheets && preview.tableSheets.length > 0) {
+      const activeSheet = preview.tableSheets[Math.min(activeTableSheetIndex, preview.tableSheets.length - 1)];
       if (activeSheet) {
         return (
           <div className="grid min-h-0 gap-3">
@@ -256,9 +231,7 @@ export function InternalSurfacePane({
                 <table className="w-max min-w-full border-collapse text-[12px]">
                   <thead className="sticky top-0 z-[1] bg-muted">
                     <tr>
-                      <th className="border-b border-r border-border/35 px-2 py-1 text-left text-[11px] text-muted-foreground">
-                        #
-                      </th>
+                      <th className="border-b border-r border-border/35 px-2 py-1 text-left text-[11px] text-muted-foreground">#</th>
                       {activeSheet.columns.map((column, columnIndex) => (
                         <th
                           key={`${column}-${columnIndex}`}
@@ -286,13 +259,8 @@ export function InternalSurfacePane({
                             {rowIndex + 1}
                           </td>
                           {row.map((value, columnIndex) => (
-                            <td
-                              key={`cell-${rowIndex}-${columnIndex}`}
-                              className="max-w-[320px] border-b border-r border-border/35 px-2 py-1"
-                            >
-                              <div className="break-words whitespace-pre-wrap">
-                                {value || "\u00a0"}
-                              </div>
+                            <td key={`cell-${rowIndex}-${columnIndex}`} className="max-w-[320px] border-b border-r border-border/35 px-2 py-1">
+                              <div className="break-words whitespace-pre-wrap">{value || "\u00a0"}</div>
                             </td>
                           ))}
                         </tr>
@@ -310,24 +278,13 @@ export function InternalSurfacePane({
     return (
       <EmptyState
         title="Preview unavailable"
-        detail={
-          preview.unsupportedReason ||
-          "This file type is not yet previewable in the desktop output viewer."
-        }
+        detail={preview.unsupportedReason || "This file type is not yet previewable in the desktop output viewer."}
       />
     );
-  }, [
-    activeTableSheetIndex,
-    errorMessage,
-    htmlContent,
-    isLoading,
-    preview,
-    resourceId,
-    surface,
-  ]);
+  }, [activeTableSheetIndex, errorMessage, htmlContent, isLoading, openPreviewLink, preview, resourceId, surface]);
 
   return (
-    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl shadow-lg">
+    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
       <div className="min-h-0 flex-1 overflow-auto p-5">{body}</div>
     </section>
   );
@@ -336,12 +293,8 @@ export function InternalSurfacePane({
 function MetadataRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[16px] border border-border/35 bg-muted px-3 py-2">
-      <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground/72">
-        {label}
-      </div>
-      <div className="mt-1 break-all text-[12px] text-foreground/86">
-        {value}
-      </div>
+      <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground/72">{label}</div>
+      <div className="mt-1 break-all text-[12px] text-foreground/86">{value}</div>
     </div>
   );
 }
@@ -349,7 +302,7 @@ function MetadataRow({ label, value }: { label: string; value: string }) {
 function EmptyState({
   title,
   detail,
-  tone = "neutral",
+  tone = "neutral"
 }: {
   title: string;
   detail: string;
@@ -365,18 +318,10 @@ function EmptyState({
     >
       <div className="max-w-[520px]">
         <div className="mx-auto grid h-10 w-10 place-items-center rounded-full border border-border/35 text-primary/80">
-          {tone === "error" ? (
-            <FileWarning size={18} />
-          ) : (
-            <FileText size={18} />
-          )}
+          {tone === "error" ? <FileWarning size={18} /> : <FileText size={18} />}
         </div>
-        <div className="mt-3 text-[16px] font-medium text-foreground">
-          {title}
-        </div>
-        <div className="mt-2 text-[12px] leading-6 text-muted-foreground/82">
-          {detail}
-        </div>
+        <div className="mt-3 text-[16px] font-medium text-foreground">{title}</div>
+        <div className="mt-2 text-[12px] leading-6 text-muted-foreground/82">{detail}</div>
       </div>
     </div>
   );

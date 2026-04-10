@@ -158,6 +158,7 @@ test("Pi runtime cronjob tools send instruction separately from description", as
       description: "Say hello every 5 minutes.",
       instruction: "Say hello.",
       delivery_channel: "session_run",
+      delivery_mode: "announce",
     },
     undefined,
     undefined,
@@ -175,10 +176,50 @@ test("Pi runtime cronjob tools send instruction separately from description", as
         cron: "*/5 * * * *",
         description: "Say hello every 5 minutes.",
         instruction: "Say hello.",
-        delivery: { channel: "session_run" },
+        delivery: { channel: "session_run", mode: "announce" },
       }),
     },
   ]);
+});
+
+test("Pi runtime cronjob tools expose only allowed delivery enum values", async () => {
+  const tools = await resolvePiRuntimeToolDefinitions({
+    runtimeApiBaseUrl: "http://127.0.0.1:5060",
+    fetchImpl: async () =>
+      new Response(JSON.stringify({ available: true }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      }),
+  });
+
+  const createTool = tools.find((tool) => tool.name === "holaboss_cronjobs_create");
+  const updateTool = tools.find((tool) => tool.name === "holaboss_cronjobs_update");
+  assert.ok(createTool);
+  assert.ok(updateTool);
+
+  const createDeliveryModeValues =
+    (
+      (createTool.parameters.properties.delivery_mode as { anyOf?: Array<{ const?: string }> } | undefined)?.anyOf ?? []
+    ).map((item) => item.const);
+  const createDeliveryChannelValues =
+    (
+      (createTool.parameters.properties.delivery_channel as { anyOf?: Array<{ const?: string }> } | undefined)
+        ?.anyOf ?? []
+    ).map((item) => item.const);
+  const updateDeliveryModeValues =
+    (
+      (updateTool.parameters.properties.delivery_mode as { anyOf?: Array<{ const?: string }> } | undefined)?.anyOf ?? []
+    ).map((item) => item.const);
+  const updateDeliveryChannelValues =
+    (
+      (updateTool.parameters.properties.delivery_channel as { anyOf?: Array<{ const?: string }> } | undefined)
+        ?.anyOf ?? []
+    ).map((item) => item.const);
+
+  assert.deepEqual(createDeliveryModeValues, ["announce", "none"]);
+  assert.deepEqual(createDeliveryChannelValues, ["system_notification", "session_run"]);
+  assert.deepEqual(updateDeliveryModeValues, ["announce", "none"]);
+  assert.deepEqual(updateDeliveryChannelValues, ["system_notification", "session_run"]);
 });
 
 test("Pi runtime image generation tool forwards prompt and optional output settings", async () => {
