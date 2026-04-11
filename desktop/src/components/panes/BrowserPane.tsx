@@ -21,7 +21,6 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { IconButton } from "@/components/ui/IconButton";
 import { PaneCard } from "@/components/ui/PaneCard";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
@@ -582,28 +581,34 @@ export function BrowserPane({
             <div
               className={`flex min-w-0 ${isCompactPane ? "w-full items-center justify-between gap-1" : "items-center gap-1"}`}
             >
-              <div className="flex min-w-0 items-center gap-1">
-                <IconButton
-                  icon={<ChevronLeft size={13} />}
-                  label="Back"
+              <div className="flex min-w-0 items-center gap-0.5">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Back"
                   onClick={() => void window.electronAPI.browser.back()}
                   disabled={!activeTab.canGoBack}
-                  className="size-7"
-                />
-                <IconButton
-                  icon={<ChevronRight size={13} />}
-                  label="Forward"
+                >
+                  <ChevronLeft size={14} />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Forward"
                   onClick={() => void window.electronAPI.browser.forward()}
                   disabled={!activeTab.canGoForward}
-                  className="size-7"
-                />
-                <IconButton
-                  icon={<RefreshCcw size={13} />}
-                  label="Refresh"
+                >
+                  <ChevronRight size={14} />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Refresh"
                   onClick={() => void window.electronAPI.browser.reload()}
                   disabled={!activeTab.initialized}
-                  className="size-7"
-                />
+                >
+                  <RefreshCcw size={13} />
+                </Button>
                 <Button
                   type="button"
                   variant="outline"

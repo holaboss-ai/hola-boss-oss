@@ -1,13 +1,13 @@
+import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  FormEvent,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
-import { ChevronLeft, ChevronRight, Globe, Loader2, RefreshCcw, Star } from "lucide-react";
+  ChevronLeft,
+  ChevronRight,
+  Globe,
+  Loader2,
+  RefreshCcw,
+  Star,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { IconButton } from "@/components/ui/IconButton";
 import { useWorkspaceBrowser } from "@/components/panes/useWorkspaceBrowser";
 
 const HOME_URL = "https://www.google.com";
@@ -56,9 +56,8 @@ export function SpaceBrowserDisplayPane({
 }: SpaceBrowserDisplayPaneProps) {
   const [inputValue, setInputValue] = useState("");
   const viewportRef = useRef<HTMLDivElement | null>(null);
-  const { activeTab, activeBookmark, isBookmarked } = useWorkspaceBrowser(
-    browserSpace,
-  );
+  const { activeTab, activeBookmark, isBookmarked } =
+    useWorkspaceBrowser(browserSpace);
 
   useEffect(() => {
     setInputValue(activeTab.url || "");
@@ -146,29 +145,35 @@ export function SpaceBrowserDisplayPane({
           : "rounded-xl border border-border bg-card/80 shadow-md backdrop-blur-sm"
       }`}
     >
-      <div className="shrink-0 border-b border-border/45 px-4 py-3">
+      <div className="shrink-0 border-b border-border/45 px-4 py-2">
         <div className="flex items-center gap-1.5">
-          <IconButton
-            icon={<ChevronLeft size={13} />}
-            label="Back"
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Back"
             onClick={() => void window.electronAPI.browser.back()}
             disabled={!activeTab.canGoBack}
-            className="size-8"
-          />
-          <IconButton
-            icon={<ChevronRight size={13} />}
-            label="Forward"
+          >
+            <ChevronLeft size={14} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Forward"
             onClick={() => void window.electronAPI.browser.forward()}
             disabled={!activeTab.canGoForward}
-            className="size-8"
-          />
-          <IconButton
-            icon={<RefreshCcw size={13} />}
-            label="Refresh"
+          >
+            <ChevronRight size={14} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Refresh"
             onClick={() => void window.electronAPI.browser.reload()}
             disabled={!activeTab.initialized}
-            className="size-8"
-          />
+          >
+            <RefreshCcw size={13} />
+          </Button>
 
           <form onSubmit={onSubmit} className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 transition-colors focus-within:border-ring">
@@ -189,9 +194,7 @@ export function SpaceBrowserDisplayPane({
             onClick={onToggleBookmark}
             disabled={!activeTab.url}
             className={`shrink-0 rounded-full ${
-              isBookmarked
-                ? "border-primary/50 bg-primary/10 text-primary"
-                : ""
+              isBookmarked ? "border-primary/50 bg-primary/10 text-primary" : ""
             }`}
             aria-label={isBookmarked ? "Remove bookmark" : "Add bookmark"}
           >
@@ -215,7 +218,9 @@ export function SpaceBrowserDisplayPane({
                   Starting {browserSpace === "agent" ? "agent" : "user"} browser
                 </div>
                 <div className="mt-1.5 text-[12px] leading-6 text-muted-foreground">
-                  Opening the embedded {browserSpace === "agent" ? "agent" : "user"} browser for this workspace.
+                  Opening the embedded{" "}
+                  {browserSpace === "agent" ? "agent" : "user"} browser for this
+                  workspace.
                 </div>
               </div>
             </div>
