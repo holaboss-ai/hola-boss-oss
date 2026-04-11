@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FileText, FileWarning, Loader2, Save } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 
@@ -212,40 +213,37 @@ export function InternalSurfacePane({
             <div className="flex shrink-0 items-center gap-2">
               {isMarkdownPreview ? (
                 <div className="inline-flex items-center rounded-md border border-border bg-muted/50 p-0.5">
-                  <button
+                  <Button
                     type="button"
+                    variant={textPreviewMode === "preview" ? "secondary" : "ghost"}
+                    size="xs"
                     onClick={() => setTextPreviewMode("preview")}
-                    className={`rounded px-2 py-1 text-xs transition-colors ${
-                      textPreviewMode === "preview"
-                        ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                    }`}
+                    className={textPreviewMode === "preview" ? "shadow-sm" : ""}
                   >
                     Preview
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant={textPreviewMode === "edit" ? "secondary" : "ghost"}
+                    size="xs"
                     onClick={() => setTextPreviewMode("edit")}
-                    className={`rounded px-2 py-1 text-xs transition-colors ${
-                      textPreviewMode === "edit"
-                        ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                    }`}
+                    className={textPreviewMode === "edit" ? "shadow-sm" : ""}
                   >
                     Edit
-                  </button>
+                  </Button>
                 </div>
               ) : null}
               {preview.isEditable ? (
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => void savePreview()}
                   disabled={!isDirty || isSaving}
-                  className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <Save size={12} />
                   {isSaving ? "Saving" : "Save"}
-                </button>
+                </Button>
               ) : null}
             </div>
           </div>
@@ -310,18 +308,16 @@ export function InternalSurfacePane({
                   {preview.tableSheets.map((sheet, index) => {
                     const isActive = index === activeTableSheetIndex;
                     return (
-                      <button
+                      <Button
                         key={`${sheet.name}-${sheet.index}`}
                         type="button"
+                        variant={isActive ? "secondary" : "outline"}
+                        size="xs"
                         onClick={() => setActiveTableSheetIndex(index)}
-                        className={`rounded-md border px-2 py-1 text-[11px] transition-colors ${
-                          isActive
-                            ? "border-primary/35 bg-primary/12 text-primary"
-                            : "border-border/40 text-muted-foreground hover:bg-black/10 hover:text-foreground"
-                        }`}
+                        className={isActive ? "border-primary/35 bg-primary/12 text-primary" : ""}
                       >
                         {sheet.name}
-                      </button>
+                      </Button>
                     );
                   })}
                 </div>
