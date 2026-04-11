@@ -1,3 +1,20 @@
+import * as Sentry from "@sentry/node";
+
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  enabled: !!process.env.SENTRY_DSN,
+  release: process.env.HOLABOSS_RUNTIME_VERSION,
+  environment: process.env.SENTRY_ENVIRONMENT ?? "production",
+  beforeSend(event) {
+    if (event.request?.headers) {
+      delete event.request.headers["authorization"];
+      delete event.request.headers["cookie"];
+      delete event.request.headers["x-api-key"];
+    }
+    return event;
+  },
+});
+
 import { buildRuntimeApiServer } from "./app.js";
 
 async function main(): Promise<void> {
