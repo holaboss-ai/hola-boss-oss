@@ -8,7 +8,11 @@ export default defineConfig({
   plugins: [tailwindcss(), react()],
   build: {
     outDir: "out/dist",
-    emptyOutDir: true
+    emptyOutDir: true,
+    sourcemap: "hidden"
+  },
+  define: {
+    "process.env.SENTRY_DSN": JSON.stringify(process.env.SENTRY_DSN ?? "")
   },
   resolve: {
     alias: {
