@@ -5132,6 +5132,13 @@ function emitAuthUserUpdated(user: AuthUserPayload | null) {
   if (authPopupWindow && !authPopupWindow.isDestroyed()) {
     authPopupWindow.webContents.send("auth:userUpdated", user);
   }
+  // Notify 401 retry waiters — auth succeeded via session recovery
+  // (handles callback paths C/D where emitAuthAuthenticated is not called).
+  if (user) {
+    for (const listener of gatewayAuthCallbackListeners) {
+      listener();
+    }
+  }
 }
 
 function emitAuthError(payload: AuthErrorPayload) {
@@ -5141,6 +5148,11 @@ function emitAuthError(payload: AuthErrorPayload) {
   }
   if (authPopupWindow && !authPopupWindow.isDestroyed()) {
     authPopupWindow.webContents.send("auth:error", payload);
+  }
+  // Reject any pending 401 retry waiters so they fail fast instead of
+  // hanging until the 2-minute timeout.
+  for (const listener of gatewayAuthErrorListeners) {
+    listener(payload);
   }
 }
 
@@ -6227,27 +6239,43 @@ async function readControlPlaneError(response: Response) {
 /**
  * Deduplicates concurrent 401 sign-in prompts.
  * Opens the sign-in browser once, then waits for the auth callback
- * (deep link → handleAuthCallbackUrl → emitAuthAuthenticated) before
- * resolving. Callers retry their request after this resolves.
+ * (deep link → handleAuthCallbackUrl → emitAuthAuthenticated or
+ * emitAuthUserUpdated) before resolving. Rejects early on emitAuthError.
+ * Callers retry their request after this resolves.
  */
 let pendingGatewayAuthRetry: Promise<void> | null = null;
 
-/** Listeners notified when emitAuthAuthenticated fires. */
+/** Listeners notified when emitAuthAuthenticated or emitAuthUserUpdated(non-null) fires. */
 const gatewayAuthCallbackListeners = new Set<() => void>();
+
+/** Listeners notified when emitAuthError fires so waiters reject promptly. */
+const gatewayAuthErrorListeners = new Set<(err: AuthErrorPayload) => void>();
 
 function waitForAuthCallback(timeoutMs = 120_000): Promise<void> {
   return new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      gatewayAuthCallbackListeners.delete(successListener);
+      gatewayAuthErrorListeners.delete(errorListener);
+    };
+
     const timer = setTimeout(() => {
-      gatewayAuthCallbackListeners.delete(listener);
+      cleanup();
       reject(new Error("Sign-in timed out."));
     }, timeoutMs);
 
-    const listener = () => {
-      clearTimeout(timer);
-      gatewayAuthCallbackListeners.delete(listener);
+    const successListener = () => {
+      cleanup();
       resolve();
     };
-    gatewayAuthCallbackListeners.add(listener);
+
+    const errorListener = (err: AuthErrorPayload) => {
+      cleanup();
+      reject(new Error(err.message ?? "Sign-in failed."));
+    };
+
+    gatewayAuthCallbackListeners.add(successListener);
+    gatewayAuthErrorListeners.add(errorListener);
   });
 }
 
@@ -6324,8 +6352,9 @@ async function requestControlPlaneJson<T>({
   }
   // If gateway returned 401 (session expired/missing), prompt sign-in and retry once.
   // requestAuth() only opens the browser and resolves immediately — it does NOT
-  // wait for the user to complete sign-in. We must wait for the auth callback
-  // (deep link → handleAuthCallbackUrl → emitAuthAuthenticated) before retrying.
+  // wait for the user to complete sign-in. We wait for the auth callback
+  // (deep link → handleAuthCallbackUrl → emitAuthAuthenticated/emitAuthUserUpdated)
+  // before retrying. On auth failure/dismissal, emitAuthError rejects the wait.
   if (response.status === 401 && desktopAuthClient) {
     try {
       if (!pendingGatewayAuthRetry) {
