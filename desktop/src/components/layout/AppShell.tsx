@@ -27,6 +27,7 @@ import { SpaceBrowserDisplayPane } from "@/components/panes/SpaceBrowserDisplayP
 import { SpaceBrowserExplorerPane } from "@/components/panes/SpaceBrowserExplorerPane";
 import { SkillsPane } from "@/components/panes/SkillsPane";
 import { PublishDialog } from "@/components/publish/PublishDialog";
+import { Button } from "@/components/ui/button";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
 import { DesktopBillingProvider } from "@/lib/billing/useDesktopBilling";
 import { getWorkspaceAppDefinition } from "@/lib/workspaceApps";
@@ -2554,14 +2555,14 @@ function AppShellContent() {
                 <Inbox size={14} className="shrink-0 text-muted-foreground" />
                 <span className="truncate">Inbox</span>
               </div>
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="icon-sm"
                 onClick={handleReturnToChatPane}
                 aria-label="Return to chat"
-                className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-accent hover:text-accent-foreground"
               >
                 <ArrowLeft size={15} />
-              </button>
+              </Button>
             </div>
           </div>
           <div className="min-h-0 flex-1 overflow-hidden">
@@ -3232,14 +3233,14 @@ function AppShellContent() {
                                         <span>Browser</span>
                                       </button>
                                     </div>
-                                    <button
-                                      type="button"
+                                    <Button
+                                      variant="outline"
+                                      size="icon"
                                       onClick={() => setSpaceExplorerCollapsed(true)}
                                       aria-label="Collapse explorer"
-                                      className="inline-flex size-9 items-center justify-center rounded-md border border-border bg-card/80 text-muted-foreground transition hover:bg-accent hover:text-accent-foreground"
                                     >
                                       <PanelLeftClose size={14} />
-                                    </button>
+                                    </Button>
                                   </div>
                                 </div>
 
@@ -3311,14 +3312,14 @@ function AppShellContent() {
                                   <Globe size={16} />
                                 </button>
                                 <div className="min-h-0 flex-1" />
-                                <button
-                                  type="button"
+                                <Button
+                                  variant="outline"
+                                  size="icon-lg"
                                   onClick={() => setSpaceExplorerCollapsed(false)}
                                   aria-label="Expand explorer"
-                                  className="inline-flex size-11 items-center justify-center rounded-[16px] border border-border bg-card/80 text-muted-foreground transition hover:bg-accent hover:text-accent-foreground"
                                 >
                                   <PanelLeftOpen size={16} />
-                                </button>
+                                </Button>
                               </div>
                             )}
                           </div>
