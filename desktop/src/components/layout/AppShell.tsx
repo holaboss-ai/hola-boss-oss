@@ -1,15 +1,15 @@
+import { appShellMainGridClassName } from "@/components/layout/appShellLayout";
 import {
-    LeftNavigationRail,
-    type LeftRailItem,
+  LeftNavigationRail,
+  type LeftRailItem,
 } from "@/components/layout/LeftNavigationRail";
 import { NotificationToastStack } from "@/components/layout/NotificationToastStack";
 import {
-    OperationsInboxPane,
-    type OperationsDrawerTab,
+  OperationsInboxPane,
+  type OperationsDrawerTab,
 } from "@/components/layout/OperationsDrawer";
 import { SettingsDialog } from "@/components/layout/SettingsDialog";
 import { TopTabsBar } from "@/components/layout/TopTabsBar";
-import { appShellMainGridClassName } from "@/components/layout/appShellLayout";
 import { FirstWorkspacePane } from "@/components/onboarding";
 import { AppSurfacePane } from "@/components/panes/AppSurfacePane";
 import { resolveAppSurfacePath } from "@/components/panes/appSurfaceRoute";
@@ -17,15 +17,15 @@ import { AutomationsPane } from "@/components/panes/AutomationsPane";
 import { BrowserPane } from "@/components/panes/BrowserPane";
 import { ChatPane } from "@/components/panes/ChatPane";
 import {
-    FileExplorerPane,
-    type FileExplorerFocusRequest,
+  FileExplorerPane,
+  type FileExplorerFocusRequest,
 } from "@/components/panes/FileExplorerPane";
 import { InternalSurfacePane } from "@/components/panes/InternalSurfacePane";
 import { MarketplacePane } from "@/components/panes/MarketplacePane";
 import { OnboardingPane } from "@/components/panes/OnboardingPane";
+import { SkillsPane } from "@/components/panes/SkillsPane";
 import { SpaceBrowserDisplayPane } from "@/components/panes/SpaceBrowserDisplayPane";
 import { SpaceBrowserExplorerPane } from "@/components/panes/SpaceBrowserExplorerPane";
-import { SkillsPane } from "@/components/panes/SkillsPane";
 import { PublishDialog } from "@/components/publish/PublishDialog";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -33,32 +33,32 @@ import { UpdateReminder } from "@/components/ui/UpdateReminder";
 import { DesktopBillingProvider } from "@/lib/billing/useDesktopBilling";
 import { getWorkspaceAppDefinition } from "@/lib/workspaceApps";
 import {
-    useWorkspaceDesktop,
-    WorkspaceDesktopProvider,
+  useWorkspaceDesktop,
+  WorkspaceDesktopProvider,
 } from "@/lib/workspaceDesktop";
 import {
-    useWorkspaceSelection,
-    WorkspaceSelectionProvider,
+  useWorkspaceSelection,
+  WorkspaceSelectionProvider,
 } from "@/lib/workspaceSelection";
 import {
-    ArrowLeft,
-    CircleCheck,
-    Folder,
-    Globe,
-    Inbox,
-    Loader2,
-    PanelLeftClose,
-    PanelLeftOpen,
-    TriangleAlert,
-    XCircle,
+  ArrowLeft,
+  CircleCheck,
+  Folder,
+  Globe,
+  Inbox,
+  Loader2,
+  PanelLeftClose,
+  PanelLeftOpen,
+  TriangleAlert,
+  XCircle,
 } from "lucide-react";
 import {
-    useCallback,
-    useEffect,
-    useMemo,
-    useRef,
-    useState,
-    type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 
 const THEME_STORAGE_KEY = "holaboss-theme-v1";
@@ -227,9 +227,7 @@ type WorkspaceOutputNavigationTarget =
     };
 
 function utilityPaneMinWidth(paneId: UtilityPaneId): number {
-  return paneId === "files"
-    ? MIN_FILES_PANE_WIDTH
-    : MIN_BROWSER_PANE_WIDTH;
+  return paneId === "files" ? MIN_FILES_PANE_WIDTH : MIN_BROWSER_PANE_WIDTH;
 }
 
 function isDevNotificationToastPreviewId(notificationId: string): boolean {
@@ -249,7 +247,8 @@ function buildDevNotificationToastPreviewNotifications(
       source_type: "dev_preview",
       source_label: "Preview",
       title: "Task proposal ready",
-      message: "This is a collapsed preview stack. Hover it to fan the toasts out.",
+      message:
+        "This is a collapsed preview stack. Hover it to fan the toasts out.",
       level: "info",
       priority: "normal",
       state: "unread",
@@ -266,7 +265,8 @@ function buildDevNotificationToastPreviewNotifications(
       source_type: "dev_preview",
       source_label: "Preview",
       title: "Build completed",
-      message: "A success toast helps show the stacked depth and color treatment.",
+      message:
+        "A success toast helps show the stacked depth and color treatment.",
       level: "success",
       priority: "low",
       state: "unread",
@@ -283,7 +283,8 @@ function buildDevNotificationToastPreviewNotifications(
       source_type: "dev_preview",
       source_label: "Preview",
       title: "Workflow waiting on input",
-      message: "Use this preview hook whenever you want to inspect the stacked toast layout.",
+      message:
+        "Use this preview hook whenever you want to inspect the stacked toast layout.",
       level: "warning",
       priority: "high",
       state: "unread",
@@ -300,7 +301,8 @@ function buildDevNotificationToastPreviewNotifications(
       source_type: "dev_preview",
       source_label: "Preview",
       title: "Run failed",
-      message: "The fourth toast makes the overlap obvious without needing real notification traffic.",
+      message:
+        "The fourth toast makes the overlap obvious without needing real notification traffic.",
       level: "error",
       priority: "critical",
       state: "unread",
@@ -313,9 +315,7 @@ function buildDevNotificationToastPreviewNotifications(
   ];
 }
 
-function appUpdateChangelogUrl(
-  status: AppUpdateStatusPayload,
-): string | null {
+function appUpdateChangelogUrl(status: AppUpdateStatusPayload): string | null {
   const version = status.latestVersion?.trim();
   if (!version) {
     return null;
@@ -741,7 +741,7 @@ function FocusPlaceholder({
   description: string;
 }) {
   return (
-    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
+    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-xl shadow-lg">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(87,255,173,0.08),transparent_45%)]" />
       <div className="relative max-w-[520px] px-8 text-center">
         <div className="text-[10px] uppercase tracking-[0.18em] text-primary/78">
@@ -760,7 +760,7 @@ function FocusPlaceholder({
 
 function WorkspaceStartupErrorPane({ message }: { message: string }) {
   return (
-    <section className="theme-shell relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
+    <section className="theme-shell relative flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden rounded-xl shadow-lg">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(247,90,84,0.12),transparent_32%),radial-gradient(circle_at_bottom,rgba(247,170,126,0.08),transparent_36%)]" />
       <div className="relative w-full max-w-[720px] px-6 py-8">
         <div className="theme-subtle-surface rounded-[30px] border border-[rgba(247,90,84,0.24)] p-6 shadow-lg sm:p-8">
@@ -804,7 +804,8 @@ function WorkspaceOnboardingTakeover({
 }
 
 function AppShellContent() {
-  const { selectedWorkspaceId, setSelectedWorkspaceId } = useWorkspaceSelection();
+  const { selectedWorkspaceId, setSelectedWorkspaceId } =
+    useWorkspaceSelection();
   const {
     runtimeConfig,
     workspaces,
@@ -904,10 +905,14 @@ function AppShellContent() {
     useState("");
   const [proactiveHeartbeatConfig, setProactiveHeartbeatConfig] =
     useState<ProactiveHeartbeatConfigPayload | null>(null);
-  const [isLoadingProactiveHeartbeatConfig, setIsLoadingProactiveHeartbeatConfig] =
-    useState(false);
-  const [isUpdatingProactiveHeartbeatConfig, setIsUpdatingProactiveHeartbeatConfig] =
-    useState(false);
+  const [
+    isLoadingProactiveHeartbeatConfig,
+    setIsLoadingProactiveHeartbeatConfig,
+  ] = useState(false);
+  const [
+    isUpdatingProactiveHeartbeatConfig,
+    setIsUpdatingProactiveHeartbeatConfig,
+  ] = useState(false);
   const [proactiveHeartbeatError, setProactiveHeartbeatError] = useState("");
   const [proactiveStatus, setProactiveStatus] =
     useState<ProactiveAgentStatusPayload | null>(null);
@@ -963,9 +968,9 @@ function AppShellContent() {
     () =>
       Boolean(
         selectedWorkspaceId &&
-          proactiveTaskProposalsEnabled &&
-          (proactiveHeartbeatConfig?.enabled ?? false) &&
-          (currentProactiveHeartbeatWorkspace?.enabled ?? true),
+        proactiveTaskProposalsEnabled &&
+        (proactiveHeartbeatConfig?.enabled ?? false) &&
+        (currentProactiveHeartbeatWorkspace?.enabled ?? true),
       ),
     [
       currentProactiveHeartbeatWorkspace,
@@ -975,8 +980,7 @@ function AppShellContent() {
     ],
   );
   const isLoadingProactiveWorkspaceEnabled =
-    isLoadingProactiveTaskProposalsEnabled ||
-    isLoadingProactiveHeartbeatConfig;
+    isLoadingProactiveTaskProposalsEnabled || isLoadingProactiveHeartbeatConfig;
   const isUpdatingProactiveWorkspaceEnabled =
     isUpdatingProactiveTaskProposalsEnabled ||
     isUpdatingProactiveHeartbeatConfig;
@@ -997,7 +1001,10 @@ function AppShellContent() {
     [devNotificationToastPreview, toastNotifications],
   );
   const runtimeNotificationById = useMemo(
-    () => new Map(notifications.map((notification) => [notification.id, notification])),
+    () =>
+      new Map(
+        notifications.map((notification) => [notification.id, notification]),
+      ),
     [notifications],
   );
   const unreadTaskProposalCount = useMemo(() => {
@@ -1185,10 +1192,7 @@ function AppShellContent() {
       const combinedWidth = Math.min(leftWidth + rightWidth, maxCombinedWidth);
       const nextLeftWidth = Math.max(
         utilityPaneMinWidth(leftPaneId),
-        Math.min(
-          leftWidth,
-          combinedWidth - utilityPaneMinWidth(rightPaneId),
-        ),
+        Math.min(leftWidth, combinedWidth - utilityPaneMinWidth(rightPaneId)),
       );
       return {
         leftWidth: nextLeftWidth,
@@ -1328,8 +1332,7 @@ function AppShellContent() {
           return;
         }
 
-        const targetBrowserSpace =
-          payload.space === "agent" ? "agent" : "user";
+        const targetBrowserSpace = payload.space === "agent" ? "agent" : "user";
         const openBrowserPane = () => {
           setActiveLeftRailItem("space");
           setSpaceExplorerMode("browser");
@@ -1434,7 +1437,8 @@ function AppShellContent() {
     }
 
     try {
-      const response = await window.electronAPI.workspace.listNotifications(null);
+      const response =
+        await window.electronAPI.workspace.listNotifications(null);
       setNotifications(response.items);
 
       if (!notificationsHydratedRef.current) {
@@ -1558,11 +1562,7 @@ function AppShellContent() {
         // Ignore transient notification update failures in the shell.
       }
     },
-    [
-      dismissNotificationToast,
-      runtimeNotificationById,
-      refreshNotifications,
-    ],
+    [dismissNotificationToast, runtimeNotificationById, refreshNotifications],
   );
 
   const handleActivateDisplayedNotification = useCallback(
@@ -1874,12 +1874,11 @@ function AppShellContent() {
     setProactiveHeartbeatError("");
     setIsUpdatingProactiveHeartbeatConfig(true);
     try {
-      const config = await window.electronAPI.workspace.setProactiveHeartbeatConfig(
-        {
+      const config =
+        await window.electronAPI.workspace.setProactiveHeartbeatConfig({
           cron: normalizedCron,
           enabled: proactiveHeartbeatConfig?.enabled ?? false,
-        },
-      );
+        });
       setProactiveHeartbeatConfig(config);
     } catch (error) {
       setProactiveHeartbeatError(normalizeErrorMessage(error));
@@ -2318,11 +2317,14 @@ function AppShellContent() {
     setChatFocusRequestKey((current) => current + 1);
   }, []);
 
-  const handleChatComposerPrefillConsumed = useCallback((requestKey: number) => {
-    setChatComposerPrefillRequest((current) =>
-      current?.requestKey === requestKey ? null : current,
-    );
-  }, []);
+  const handleChatComposerPrefillConsumed = useCallback(
+    (requestKey: number) => {
+      setChatComposerPrefillRequest((current) =>
+        current?.requestKey === requestKey ? null : current,
+      );
+    },
+    [],
+  );
 
   const handleChatSessionOpenRequestConsumed = useCallback(
     (requestKey: number) => {
@@ -2352,9 +2354,7 @@ function AppShellContent() {
     }
 
     const lastDisplayView =
-      lastRestorableSpaceDisplayViewByWorkspaceRef.current[
-        selectedWorkspaceId
-      ];
+      lastRestorableSpaceDisplayViewByWorkspaceRef.current[selectedWorkspaceId];
     setSpaceDisplayView(lastDisplayView ?? { type: "browser" });
   }, [selectedWorkspaceId]);
 
@@ -2366,9 +2366,7 @@ function AppShellContent() {
     }
 
     const nextDisplayView =
-      lastRestorableSpaceDisplayViewByWorkspaceRef.current[
-        selectedWorkspaceId
-      ];
+      lastRestorableSpaceDisplayViewByWorkspaceRef.current[selectedWorkspaceId];
     if (!nextDisplayView) {
       setSpaceExplorerMode("browser");
       setSpaceDisplayView({ type: "browser" });
@@ -2491,8 +2489,7 @@ function AppShellContent() {
   const showOperationsDrawer = false;
   const showSpaceExplorer = !spaceExplorerCollapsed;
   const shouldShowAppUpdateReminder = Boolean(
-    effectiveAppUpdateStatus &&
-      effectiveAppUpdateStatus.downloaded,
+    effectiveAppUpdateStatus && effectiveAppUpdateStatus.downloaded,
   );
   const appVersionLabel =
     effectiveAppUpdateStatus?.currentVersion?.trim() || "";
@@ -2598,7 +2595,9 @@ function AppShellContent() {
               onProactiveWorkspaceEnabledChange={
                 handleProactiveWorkspaceEnabledChange
               }
-              onProactiveHeartbeatCronChange={handleProactiveHeartbeatCronChange}
+              onProactiveHeartbeatCronChange={
+                handleProactiveHeartbeatCronChange
+              }
               onAcceptProposal={acceptTaskProposal}
               onDismissProposal={dismissTaskProposal}
               hasWorkspace={hasSelectedWorkspace}
@@ -2723,7 +2722,10 @@ function AppShellContent() {
             app={
               activeAppId === spaceDisplayView.appId
                 ? activeApp
-                : getWorkspaceAppDefinition(spaceDisplayView.appId, installedApps)
+                : getWorkspaceAppDefinition(
+                    spaceDisplayView.appId,
+                    installedApps,
+                  )
             }
             resourceId={spaceDisplayView.resourceId}
             view={spaceDisplayView.view}
@@ -2809,27 +2811,30 @@ function AppShellContent() {
     ],
   );
 
-  const clampSpaceAgentPaneWidth = useCallback((width: number) => {
-    const hostWidth =
-      utilityPaneHostRef.current?.getBoundingClientRect().width ?? 0;
-    const explorerWidth = spaceExplorerCollapsed
-      ? SPACE_EXPLORER_COLLAPSED_WIDTH
-      : filesPaneWidth;
-    const maxWidth =
-      hostWidth > 0
-        ? Math.min(
-            MAX_UTILITY_PANE_WIDTH,
-            Math.max(
-              MIN_AGENT_CONTENT_WIDTH,
-              hostWidth -
-                explorerWidth -
-                SPACE_DISPLAY_MIN_WIDTH -
-                UTILITY_PANE_RESIZER_WIDTH,
-            ),
-          )
-        : MAX_UTILITY_PANE_WIDTH;
-    return Math.max(MIN_AGENT_CONTENT_WIDTH, Math.min(width, maxWidth));
-  }, [filesPaneWidth, spaceExplorerCollapsed]);
+  const clampSpaceAgentPaneWidth = useCallback(
+    (width: number) => {
+      const hostWidth =
+        utilityPaneHostRef.current?.getBoundingClientRect().width ?? 0;
+      const explorerWidth = spaceExplorerCollapsed
+        ? SPACE_EXPLORER_COLLAPSED_WIDTH
+        : filesPaneWidth;
+      const maxWidth =
+        hostWidth > 0
+          ? Math.min(
+              MAX_UTILITY_PANE_WIDTH,
+              Math.max(
+                MIN_AGENT_CONTENT_WIDTH,
+                hostWidth -
+                  explorerWidth -
+                  SPACE_DISPLAY_MIN_WIDTH -
+                  UTILITY_PANE_RESIZER_WIDTH,
+              ),
+            )
+          : MAX_UTILITY_PANE_WIDTH;
+      return Math.max(MIN_AGENT_CONTENT_WIDTH, Math.min(width, maxWidth));
+    },
+    [filesPaneWidth, spaceExplorerCollapsed],
+  );
 
   useEffect(() => {
     if (!spaceMode) {
@@ -2999,11 +3004,7 @@ function AppShellContent() {
       observer?.disconnect();
       window.removeEventListener("resize", syncUtilityPaneWidths);
     };
-  }, [
-    showOperationsDrawer,
-    syncUtilityPaneWidths,
-    visibleSpacePaneIds.length,
-  ]);
+  }, [showOperationsDrawer, syncUtilityPaneWidths, visibleSpacePaneIds.length]);
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
@@ -3154,9 +3155,7 @@ function AppShellContent() {
                 />
                 <div
                   className={`absolute inset-y-0 left-0 z-40 hidden transition-transform duration-200 ease-out lg:block ${
-                    spaceLeftRailVisible
-                      ? "translate-x-0"
-                      : "-translate-x-full"
+                    spaceLeftRailVisible ? "translate-x-0" : "-translate-x-full"
                   }`}
                   onMouseEnter={() => setSpaceLeftRailVisible(true)}
                   onMouseLeave={() => setSpaceLeftRailVisible(false)}
@@ -3207,7 +3206,9 @@ function AppShellContent() {
                                       const mode = value as SpaceExplorerMode;
                                       setSpaceExplorerMode(mode);
                                       if (mode === "browser") {
-                                        setSpaceDisplayView({ type: "browser" });
+                                        setSpaceDisplayView({
+                                          type: "browser",
+                                        });
                                       } else {
                                         restoreLastSpaceDisplayView();
                                       }
@@ -3215,23 +3216,31 @@ function AppShellContent() {
                                     className="min-w-0 flex-1"
                                   >
                                     <TabsList className="w-full">
-                                      <TabsTrigger value="files" className="min-w-0 flex-1 basis-0 gap-1.5">
-                                        <Folder size={13} />
+                                      <TabsTrigger
+                                        value="files"
+                                        className="min-w-0 flex-1 basis-0 gap-1.5"
+                                      >
+                                        <Folder />
                                         Files
                                       </TabsTrigger>
-                                      <TabsTrigger value="browser" className="min-w-0 flex-1 basis-0 gap-1.5">
-                                        <Globe size={13} />
+                                      <TabsTrigger
+                                        value="browser"
+                                        className="min-w-0 flex-1 basis-0 gap-1.5"
+                                      >
+                                        <Globe />
                                         Browser
                                       </TabsTrigger>
                                     </TabsList>
                                   </Tabs>
                                   <Button
-                                    variant="outline"
-                                    size="icon"
-                                    onClick={() => setSpaceExplorerCollapsed(true)}
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    onClick={() =>
+                                      setSpaceExplorerCollapsed(true)
+                                    }
                                     aria-label="Collapse explorer"
                                   >
-                                    <PanelLeftClose size={14} />
+                                    <PanelLeftClose />
                                   </Button>
                                 </div>
 
@@ -3240,8 +3249,11 @@ function AppShellContent() {
                                     <FileExplorerPane
                                       focusRequest={fileExplorerFocusRequest}
                                       onFocusRequestConsumed={(requestKey) => {
-                                        setFileExplorerFocusRequest((current) =>
-                                          current?.requestKey === requestKey ? null : current,
+                                        setFileExplorerFocusRequest(
+                                          (current) =>
+                                            current?.requestKey === requestKey
+                                              ? null
+                                              : current,
                                         );
                                       }}
                                       previewInPane={false}
@@ -3259,7 +3271,9 @@ function AppShellContent() {
                                       browserSpace={spaceBrowserSpace}
                                       onBrowserSpaceChange={(space) => {
                                         setSpaceBrowserSpace(space);
-                                        setSpaceDisplayView({ type: "browser" });
+                                        setSpaceDisplayView({
+                                          type: "browser",
+                                        });
                                       }}
                                       onActivateDisplay={() =>
                                         setSpaceDisplayView({ type: "browser" })
@@ -3271,7 +3285,11 @@ function AppShellContent() {
                             ) : (
                               <div className="flex h-full min-h-0 flex-col items-center gap-2 px-2 py-3">
                                 <Button
-                                  variant={spaceExplorerMode === "files" ? "outline" : "ghost"}
+                                  variant={
+                                    spaceExplorerMode === "files"
+                                      ? "outline"
+                                      : "ghost"
+                                  }
                                   size="icon"
                                   onClick={() => {
                                     setSpaceExplorerMode("files");
@@ -3279,12 +3297,20 @@ function AppShellContent() {
                                     setSpaceExplorerCollapsed(false);
                                   }}
                                   aria-label="Open file explorer"
-                                  className={spaceExplorerMode === "files" ? "border-primary/40 bg-primary/10 text-primary" : "text-muted-foreground"}
+                                  className={
+                                    spaceExplorerMode === "files"
+                                      ? "border-primary/40 bg-primary/10 text-primary"
+                                      : "text-muted-foreground"
+                                  }
                                 >
-                                  <Folder size={15} />
+                                  <Folder />
                                 </Button>
                                 <Button
-                                  variant={spaceExplorerMode === "browser" ? "outline" : "ghost"}
+                                  variant={
+                                    spaceExplorerMode === "browser"
+                                      ? "outline"
+                                      : "ghost"
+                                  }
                                   size="icon"
                                   onClick={() => {
                                     setSpaceExplorerMode("browser");
@@ -3292,18 +3318,24 @@ function AppShellContent() {
                                     setSpaceExplorerCollapsed(false);
                                   }}
                                   aria-label="Open browser explorer"
-                                  className={spaceExplorerMode === "browser" ? "border-primary/40 bg-primary/10 text-primary" : "text-muted-foreground"}
+                                  className={
+                                    spaceExplorerMode === "browser"
+                                      ? "border-primary/40 bg-primary/10 text-primary"
+                                      : "text-muted-foreground"
+                                  }
                                 >
-                                  <Globe size={15} />
+                                  <Globe />
                                 </Button>
                                 <div className="min-h-0 flex-1" />
                                 <Button
                                   variant="outline"
-                                  size="icon-lg"
-                                  onClick={() => setSpaceExplorerCollapsed(false)}
+                                  size="icon"
+                                  onClick={() =>
+                                    setSpaceExplorerCollapsed(false)
+                                  }
                                   aria-label="Expand explorer"
                                 >
-                                  <PanelLeftOpen size={16} />
+                                  <PanelLeftOpen />
                                 </Button>
                               </div>
                             )}
@@ -3325,12 +3357,12 @@ function AppShellContent() {
                         onPointerDown={startSpaceDisplayResize}
                         className="group relative z-10 flex w-4 shrink-0 cursor-col-resize touch-none items-center justify-center"
                       >
-                        <div className="pointer-events-none absolute inset-y-2 left-1/2 w-px -translate-x-1/2 rounded-full bg-border/55 transition-all duration-150 group-hover:w-[2px] group-hover:bg-[rgba(247,90,84,0.5)]" />
+                        <div className="pointer-events-none absolute inset-y-2 left-1/2 w-px -translate-x-1/2 rounded-full bg-border/55 transition-all duration-150 group-hover:w-0.5 group-hover:bg-[rgba(247,90,84,0.5)]" />
                         <div className="pointer-events-none absolute left-1/2 top-1/2 h-14 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[rgba(247,90,84,0.08)] opacity-0 transition duration-150 group-hover:opacity-100" />
                       </div>
 
                       <div
-                        className="min-h-0 shrink-0 overflow-hidden rounded-[var(--radius-xl)]"
+                        className="min-h-0 shrink-0 overflow-hidden rounded-xl"
                         style={{
                           width: `${spaceAgentPaneWidth}px`,
                           minWidth: `${MIN_AGENT_CONTENT_WIDTH}px`,
@@ -3341,7 +3373,7 @@ function AppShellContent() {
                     </div>
                   </div>
                 ) : activeLeftRailItem === "app" ? (
-                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
+                  <div className="h-full min-h-0 overflow-hidden rounded-xl">
                     {agentView.type === "app" ? (
                       <AppSurfacePane
                         appId={agentView.appId}
@@ -3357,7 +3389,7 @@ function AppShellContent() {
                         view={agentView.view}
                       />
                     ) : (
-                      <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-[var(--radius-xl)] border border-border/45 shadow-lg">
+                      <section className="theme-shell flex h-full min-h-0 items-center justify-center rounded-xl border border-border/45 shadow-lg">
                         <div className="max-w-[360px] px-6 text-center">
                           <div className="text-[22px] font-medium tracking-[-0.03em] text-foreground">
                             Choose an app
@@ -3371,24 +3403,23 @@ function AppShellContent() {
                     )}
                   </div>
                 ) : activeLeftRailItem === "automations" ? (
-                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
+                  <div className="h-full min-h-0 overflow-hidden rounded-xl">
                     <AutomationsPane
                       onOpenRunSession={handleOpenAutomationRunSession}
                       onCreateSchedule={handleCreateScheduleInChat}
                     />
                   </div>
                 ) : activeLeftRailItem === "marketplace" ? (
-                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
+                  <div className="h-full min-h-0 overflow-hidden rounded-xl">
                     <MarketplacePane />
                   </div>
                 ) : (
-                  <div className="h-full min-h-0 overflow-hidden rounded-[var(--radius-xl)]">
+                  <div className="h-full min-h-0 overflow-hidden rounded-xl">
                     <SkillsPane />
                   </div>
                 )}
               </div>
             </div>
-
           </div>
         )}
       </div>

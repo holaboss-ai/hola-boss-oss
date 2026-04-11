@@ -173,8 +173,7 @@ function scheduleDraftFromCron(cron: string): ProactiveScheduleDraft {
     ...fallback,
     anchorMinute:
       minuteValue !== null ? Math.min(Math.max(minuteValue, 0), 59) : 0,
-    anchorHour:
-      hourValue !== null ? Math.min(Math.max(hourValue, 0), 23) : 9,
+    anchorHour: hourValue !== null ? Math.min(Math.max(hourValue, 0), 23) : 9,
   };
 }
 
@@ -240,12 +239,12 @@ function ProactiveScheduleEditor({
   const generatedCron = buildCronFromScheduleDraft(scheduleDraft);
   const canSave = Boolean(
     hasWorkspace &&
-      onProactiveHeartbeatCronChange &&
-      !isLoadingProactiveHeartbeatConfig &&
-      !isUpdatingProactiveHeartbeatConfig &&
-      (scheduleDraft.interval !== currentSchedule.interval ||
-        scheduleDraft.unit !== currentSchedule.unit) &&
-      generatedCron.trim(),
+    onProactiveHeartbeatCronChange &&
+    !isLoadingProactiveHeartbeatConfig &&
+    !isUpdatingProactiveHeartbeatConfig &&
+    (scheduleDraft.interval !== currentSchedule.interval ||
+      scheduleDraft.unit !== currentSchedule.unit) &&
+    generatedCron.trim(),
   );
 
   const handleSave = () => {
@@ -261,13 +260,15 @@ function ProactiveScheduleEditor({
         type="button"
         variant="ghost"
         size="sm"
+        className="w-full justify-between"
         onClick={() => setDrawerOpen((current) => !current)}
         aria-expanded={drawerOpen}
-        className="w-full justify-between gap-2 px-0 text-left hover:bg-transparent"
       >
         <span className="flex items-center gap-2 text-xs text-muted-foreground">
           <span>Schedule</span>
-          <span className="text-foreground/72">{scheduleSummaryLabel(currentSchedule)}</span>
+          <span className="text-foreground/72">
+            {scheduleSummaryLabel(currentSchedule)}
+          </span>
         </span>
         <ChevronDown
           size={14}
@@ -368,7 +369,8 @@ function ProactiveScheduleEditor({
           </div>
           {currentSchedule.customCronDetected ? (
             <div className="mt-2 text-[11px] leading-5 text-muted-foreground/72">
-              Saving here replaces the current custom cron with this simpler cadence.
+              Saving here replaces the current custom cron with this simpler
+              cadence.
             </div>
           ) : null}
         </div>
@@ -443,12 +445,19 @@ export function ProactiveLifecyclePanel({
           <div className="flex shrink-0 items-center gap-1.5">
             {onProactiveWorkspaceEnabledChange ? (
               isUpdatingProactiveWorkspaceEnabled ? (
-                <Loader2 size={12} className="animate-spin text-muted-foreground" />
+                <Loader2
+                  size={12}
+                  className="animate-spin text-muted-foreground"
+                />
               ) : (
                 <Switch
                   checked={proactiveWorkspaceEnabled}
-                  onCheckedChange={(checked) => onProactiveWorkspaceEnabledChange(checked)}
-                  disabled={isUpdatingProactiveWorkspaceEnabled || !hasWorkspace}
+                  onCheckedChange={(checked) =>
+                    onProactiveWorkspaceEnabledChange(checked)
+                  }
+                  disabled={
+                    isUpdatingProactiveWorkspaceEnabled || !hasWorkspace
+                  }
                 />
               )
             ) : null}
@@ -482,7 +491,9 @@ export function ProactiveLifecyclePanel({
           hasWorkspace={hasWorkspace}
           proactiveHeartbeatCron={proactiveHeartbeatCron}
           isLoadingProactiveHeartbeatConfig={isLoadingProactiveHeartbeatConfig}
-          isUpdatingProactiveHeartbeatConfig={isUpdatingProactiveHeartbeatConfig}
+          isUpdatingProactiveHeartbeatConfig={
+            isUpdatingProactiveHeartbeatConfig
+          }
           onProactiveHeartbeatCronChange={onProactiveHeartbeatCronChange}
           compact
         />
@@ -511,12 +522,19 @@ export function ProactiveLifecyclePanel({
             <div className="flex items-center gap-1.5">
               {onProactiveWorkspaceEnabledChange ? (
                 isUpdatingProactiveWorkspaceEnabled ? (
-                  <Loader2 size={12} className="animate-spin text-muted-foreground" />
+                  <Loader2
+                    size={12}
+                    className="animate-spin text-muted-foreground"
+                  />
                 ) : (
                   <Switch
                     checked={proactiveWorkspaceEnabled}
-                    onCheckedChange={(checked) => onProactiveWorkspaceEnabledChange(checked)}
-                    disabled={isUpdatingProactiveWorkspaceEnabled || !hasWorkspace}
+                    onCheckedChange={(checked) =>
+                      onProactiveWorkspaceEnabledChange(checked)
+                    }
+                    disabled={
+                      isUpdatingProactiveWorkspaceEnabled || !hasWorkspace
+                    }
                   />
                 )
               ) : null}
@@ -552,9 +570,7 @@ export function ProactiveLifecyclePanel({
         hasWorkspace={hasWorkspace}
         proactiveHeartbeatCron={proactiveHeartbeatCron}
         isLoadingProactiveHeartbeatConfig={isLoadingProactiveHeartbeatConfig}
-        isUpdatingProactiveHeartbeatConfig={
-          isUpdatingProactiveHeartbeatConfig
-        }
+        isUpdatingProactiveHeartbeatConfig={isUpdatingProactiveHeartbeatConfig}
         onProactiveHeartbeatCronChange={onProactiveHeartbeatCronChange}
       />
     </section>
