@@ -1,4 +1,5 @@
 import { Bot, Globe, Plus, Star, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { useWorkspaceBrowser } from "@/components/panes/useWorkspaceBrowser";
 
 interface SpaceBrowserExplorerPaneProps {
@@ -115,15 +116,16 @@ export function SpaceBrowserExplorerPane({
             <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">
               Tabs
             </div>
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="xs"
               onClick={openNewTab}
-              className="inline-flex items-center gap-1 rounded-md border border-border bg-card/80 px-2 py-1 text-[11px] font-medium text-muted-foreground transition hover:bg-accent hover:text-accent-foreground"
               aria-label="Open new tab"
             >
               <Plus size={12} />
               <span>New Tab</span>
-            </button>
+            </Button>
           </div>
           <div className="space-y-1">
           {browserState.tabs.length === 0 ? (
