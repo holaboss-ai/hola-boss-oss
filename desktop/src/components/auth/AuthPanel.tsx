@@ -42,7 +42,6 @@ const AUTH_BROWSER_SIGN_IN_MESSAGE =
 
 const KNOWN_PROVIDER_ORDER = ["holaboss", "openai_direct", "anthropic_direct", "openrouter_direct", "gemini_direct", "ollama_direct", "minimax_direct"] as const;
 type KnownProviderId = (typeof KNOWN_PROVIDER_ORDER)[number];
-const RECALL_EMBEDDINGS_AUTOMATIC_VALUE = "__automatic__";
 const AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME =
   "auth-settings-control theme-control-surface relative isolate h-9 w-full overflow-hidden rounded-[10px] border border-border/45 bg-muted px-2.5 text-sm text-foreground shadow-none transition-colors hover:border-border/65 focus-visible:border-border/65 focus-visible:ring-0 focus-visible:ring-transparent aria-invalid:border-border/45 aria-invalid:ring-0";
 const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string>> = {
@@ -683,32 +682,6 @@ function deriveConfiguredRecallEmbeddingsDraft(
   };
 }
 
-function automaticRecallEmbeddingsResolution(
-  backgroundTasks: BackgroundTasksDraft,
-  connectedProviderIds: KnownProviderId[],
-  runtimeConfig: RuntimeConfigPayload | null,
-): RecallEmbeddingsDraft {
-  const candidateProviderIds = uniqueValues([
-    backgroundTasks.providerId,
-    ...RECALL_EMBEDDING_PROVIDER_IDS.filter((providerId) => connectedProviderIds.includes(providerId)),
-  ]);
-  for (const providerId of candidateProviderIds) {
-    const normalizedProviderId = recallEmbeddingsProviderDraftId(providerId);
-    const model = recallEmbeddingsDefaultModel(
-      normalizedProviderId,
-      runtimeConfig,
-    );
-    if (!normalizedProviderId || !model) {
-      continue;
-    }
-    return {
-      providerId: normalizedProviderId,
-      model,
-    };
-  }
-  return createDefaultRecallEmbeddingsDraft();
-}
-
 function isImageGenerationProviderId(value: string): value is ImageGenerationDraftProviderId {
   return value === "" || IMAGE_GENERATION_PROVIDER_IDS.includes(value as (typeof IMAGE_GENERATION_PROVIDER_IDS)[number]);
 }
@@ -1347,14 +1320,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     && !connectedRecallEmbeddingProviderIds.includes(recallEmbeddingsDraft.providerId)
       ? [recallEmbeddingsDraft.providerId, ...connectedRecallEmbeddingProviderIds]
       : connectedRecallEmbeddingProviderIds;
-  const automaticRecallEmbeddings = automaticRecallEmbeddingsResolution(
-    backgroundTasksDraft,
-    connectedProviderIds,
-    effectiveRuntimeConfig,
-  );
-  const effectiveRecallEmbeddings = recallEmbeddingsDraft.providerId
-    ? recallEmbeddingsDraft
-    : automaticRecallEmbeddings;
   const connectedImageProviderIds = IMAGE_GENERATION_PROVIDER_IDS.filter((providerId) =>
     connectedProviderIds.includes(providerId),
   );
@@ -1377,8 +1342,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const hasResolvableImageGenerationModel = connectedImageProviderIds.some((providerId) =>
     Boolean(imageGenerationDefaultModel(providerId, effectiveRuntimeConfig).trim()),
   );
-  const hasResolvableRecallEmbeddingsModel = Boolean(
-    automaticRecallEmbeddings.providerId && automaticRecallEmbeddings.model,
+  const hasResolvableRecallEmbeddingsModel = connectedRecallEmbeddingProviderIds.some((providerId) =>
+    Boolean(recallEmbeddingsDefaultModel(providerId, effectiveRuntimeConfig).trim()),
   );
   const advancedSettingsWarnings = [
     !hasResolvableRecallEmbeddingsModel
@@ -1489,6 +1454,25 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     connectedProviderIds,
     hasHydratedProviderDrafts,
     isProviderDraftDirty,
+  ]);
+
+  useEffect(() => {
+    if (!hasHydratedProviderDrafts) {
+      return;
+    }
+    if (
+      isProviderDraftDirty ||
+      recallEmbeddingsDraft.providerId ||
+      connectedRecallEmbeddingProviderIds.length === 0
+    ) {
+      return;
+    }
+    applyRecallEmbeddingsProviderSelection(connectedRecallEmbeddingProviderIds[0] ?? "");
+  }, [
+    connectedRecallEmbeddingProviderIds,
+    hasHydratedProviderDrafts,
+    isProviderDraftDirty,
+    recallEmbeddingsDraft.providerId,
   ]);
 
   useEffect(() => {
@@ -2409,36 +2393,27 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   <div className="rounded-[12px] border border-border/35 bg-muted/20 p-3">
                     <div className="text-sm font-medium text-foreground">Recall embeddings</div>
                     <div className="mt-1 text-sm text-muted-foreground">
-                      Used to preselect memory candidates for recall. Leave this on Automatic to let runtime choose the first embedding-capable provider.
+                      Used to preselect memory candidates for recall.
                     </div>
                     <div className="mt-2 rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
                       Embedding indexing stays off the user input path. Until embeddings have been indexed separately, recall continues to use the staged path.
                     </div>
-                    {recallEmbeddingsDraft.providerId ? null : (
-                      <div className="mt-2 rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-                        {automaticRecallEmbeddings.providerId && automaticRecallEmbeddings.model
-                          ? `Automatic currently resolves to ${recallEmbeddingsProviderLabel(automaticRecallEmbeddings.providerId)} / ${automaticRecallEmbeddings.model}.`
-                          : "Automatic currently has no embedding-capable provider. Recall falls back to slower staged selection."}
-                      </div>
-                    )}
                     <div className="mt-3 grid gap-2">
                       <label className="grid gap-1">
                         <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Provider</span>
                         <Select
-                          value={recallEmbeddingsDraft.providerId || RECALL_EMBEDDINGS_AUTOMATIC_VALUE}
+                          value={recallEmbeddingsDraft.providerId}
                           onValueChange={(value) =>
                             applyRecallEmbeddingsProviderSelection(
-                              value === RECALL_EMBEDDINGS_AUTOMATIC_VALUE
-                                ? ""
-                                : recallEmbeddingsProviderDraftId(value ?? ""),
+                              recallEmbeddingsProviderDraftId(value ?? ""),
                             )
                           }
+                          disabled={recallEmbeddingsProviderOptions.length === 0}
                         >
                           <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value={RECALL_EMBEDDINGS_AUTOMATIC_VALUE}>Automatic</SelectItem>
                             {recallEmbeddingsProviderOptions.map((providerId) => {
                               const isConnected = connectedRecallEmbeddingProviderIds.includes(providerId);
                               const label = isConnected

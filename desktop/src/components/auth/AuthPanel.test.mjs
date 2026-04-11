@@ -44,9 +44,6 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.match(source, /Recall embeddings/);
   assert.match(source, /Advanced settings/);
   assert.match(source, /Used to preselect memory candidates for recall\./);
-  assert.match(source, /Leave this on Automatic to let runtime choose the first embedding-capable provider\./);
-  assert.match(source, /Automatic currently resolves to/);
-  assert.match(source, /Automatic currently has no embedding-capable provider\. Recall falls back to slower staged selection\./);
   assert.match(source, /Embedding indexing stays off the user input path\./);
   assert.match(source, /Until embeddings have been indexed separately, recall continues to use the staged path\./);
   assert.match(source, /Image generation/);
@@ -60,7 +57,6 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.match(source, /applyBackgroundTaskProviderSelection/);
   assert.match(source, /applyRecallEmbeddingsProviderSelection/);
   assert.match(source, /applyImageGenerationProviderSelection/);
-  assert.match(source, /const RECALL_EMBEDDINGS_AUTOMATIC_VALUE = "__automatic__";/);
   assert.match(source, /const AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME =/);
   assert.match(source, /hover:border-border\/65/);
   assert.match(source, /overflow-hidden/);
@@ -83,10 +79,13 @@ test("runtime auth panel keeps model provider settings compact", async () => {
   assert.match(source, /recallEmbeddingsModelOptions\.map\(\(modelId\) => \(/);
   assert.match(source, /imageGenerationUsesManagedModelPicker \? \(/);
   assert.match(source, /imageGenerationModelOptions\.map\(\(modelId\) => \(/);
+  assert.match(source, /if \(\s*isProviderDraftDirty \|\|\s*recallEmbeddingsDraft\.providerId \|\|\s*connectedRecallEmbeddingProviderIds\.length === 0\s*\) \{\s*return;\s*\}/);
+  assert.match(source, /applyRecallEmbeddingsProviderSelection\(connectedRecallEmbeddingProviderIds\[0\] \?\? ""\);/);
   assert.match(source, /Selected provider is not connected\. Background tasks stay disabled until you reconnect it or choose another provider\./);
   assert.match(source, /Selected provider is not connected\. Vector recall stays disabled until you reconnect it or choose another provider\./);
   assert.match(source, /Selected provider is not connected\. Image generation stays disabled until you reconnect it or choose another provider\./);
   assert.doesNotMatch(source, /Background Tasks Model/);
+  assert.doesNotMatch(source, /__automatic__/);
   assert.doesNotMatch(source, /Recall uses:/);
   assert.doesNotMatch(source, /Post-run uses:/);
   assert.doesNotMatch(source, /Runtime overview/);
