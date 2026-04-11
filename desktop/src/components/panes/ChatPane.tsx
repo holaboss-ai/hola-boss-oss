@@ -5618,85 +5618,80 @@ function ArtifactBrowserModal({
   );
 
   return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/45 px-4 py-6 backdrop-blur-[2px]">
-      <div className="bg-background flex h-full max-h-[720px] w-full max-w-[760px] flex-col rounded-[28px] border border-border/50 shadow-2xl">
-        <div className="flex items-center justify-between gap-4 border-b border-border/35 px-5 py-4">
+    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 px-6 py-8 backdrop-blur-[2px]">
+      <div className="flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border/50 bg-background shadow-xl">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/30 px-4 py-3">
           <div>
-            <div className="text-[24px] font-semibold tracking-[-0.03em] text-foreground">
-              All artifacts in this session
+            <div className="text-sm font-semibold text-foreground">
+              Artifacts
             </div>
-            <div className="mt-1 text-[12px] text-muted-foreground">
-              {outputs.length} artifact{outputs.length === 1 ? "" : "s"}
+            <div className="text-xs text-muted-foreground">
+              {outputs.length} item{outputs.length === 1 ? "" : "s"} in this session
             </div>
           </div>
           <Button
             type="button"
-            variant="outline"
-            size="icon"
+            variant="ghost"
+            size="icon-sm"
             onClick={onClose}
-            className="rounded-full"
-            aria-label="Close artifacts browser"
+            aria-label="Close"
           >
-            <X size={16} />
+            <X size={14} />
           </Button>
         </div>
 
-        <div className="flex flex-wrap gap-2 px-5 py-4">
+        <div className="flex shrink-0 flex-wrap gap-1.5 border-b border-border/20 px-4 py-2.5">
           {filterLabels.map((item) => {
             const active = filter === item.id;
             return (
-              <button
+              <Button
                 key={item.id}
-                type="button"
+                variant={active ? "secondary" : "ghost"}
+                size="xs"
                 onClick={() => onFilterChange(item.id)}
-                className={`rounded-full border px-3 py-1.5 text-[12px] transition ${
-                  active
-                    ? "border-foreground bg-foreground text-background"
-                    : "border-border/45 text-muted-foreground hover:border-border/70 hover:text-foreground"
-                }`}
               >
                 {item.label}
-              </button>
+              </Button>
             );
           })}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
           {filteredOutputs.length === 0 ? (
-            <div className="flex h-full items-center justify-center rounded-[24px] border border-dashed border-border/45 text-[13px] text-muted-foreground">
+            <div className="py-10 text-center text-xs text-muted-foreground">
               No artifacts match this filter.
             </div>
           ) : (
-            <div className="grid gap-2">
+            <div className="grid gap-1">
               {filteredOutputs.map((output) => (
-                <button
+                <Button
                   key={output.id}
-                  type="button"
+                  variant="ghost"
                   onClick={() => {
                     onClose();
                     onOpenOutput?.(output);
                   }}
                   disabled={!onOpenOutput}
-                  className="flex items-center gap-3 rounded-[18px] border border-border/35 px-4 py-3 text-left transition hover:border-border/60 hover:bg-muted/45 disabled:cursor-default disabled:hover:border-border/35 disabled:hover:bg-transparent"
+                  className="h-auto w-full justify-start gap-3 px-3 py-2.5 text-left"
                 >
                   <OutputArtifactIcon output={output} />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[14px] font-medium text-foreground">
+                    <div className="truncate text-sm font-medium text-foreground">
                       {output.title || "Untitled artifact"}
                     </div>
-                    <div className="truncate text-[12px] text-muted-foreground">
+                    <div className="truncate text-xs text-muted-foreground">
                       {outputSecondaryLabel(output)}
                     </div>
                   </div>
                   {outputChangeLabel(output) ? (
                     <Badge
                       variant="outline"
-                      className="uppercase tracking-[0.12em]"
+                      className="shrink-0 uppercase tracking-[0.12em]"
                     >
                       {outputChangeLabel(output)}
                     </Badge>
                   ) : null}
-                </button>
+                </Button>
               ))}
             </div>
           )}
