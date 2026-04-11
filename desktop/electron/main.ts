@@ -5118,6 +5118,10 @@ function emitAuthAuthenticated(user: AuthUserPayload) {
   if (authPopupWindow && !authPopupWindow.isDestroyed()) {
     authPopupWindow.webContents.send("auth:authenticated", user);
   }
+  // Notify any pending 401 retry waiters that auth completed.
+  for (const listener of gatewayAuthCallbackListeners) {
+    listener();
+  }
 }
 
 function emitAuthUserUpdated(user: AuthUserPayload | null) {
@@ -6220,8 +6224,32 @@ async function readControlPlaneError(response: Response) {
   }
 }
 
-/** Deduplicates concurrent 401 sign-in prompts — only one popup at a time. */
+/**
+ * Deduplicates concurrent 401 sign-in prompts.
+ * Opens the sign-in browser once, then waits for the auth callback
+ * (deep link → handleAuthCallbackUrl → emitAuthAuthenticated) before
+ * resolving. Callers retry their request after this resolves.
+ */
 let pendingGatewayAuthRetry: Promise<void> | null = null;
+
+/** Listeners notified when emitAuthAuthenticated fires. */
+const gatewayAuthCallbackListeners = new Set<() => void>();
+
+function waitForAuthCallback(timeoutMs = 120_000): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      gatewayAuthCallbackListeners.delete(listener);
+      reject(new Error("Sign-in timed out."));
+    }, timeoutMs);
+
+    const listener = () => {
+      clearTimeout(timer);
+      gatewayAuthCallbackListeners.delete(listener);
+      resolve();
+    };
+    gatewayAuthCallbackListeners.add(listener);
+  });
+}
 
 async function requestControlPlaneJson<T>({
   service,
@@ -6295,15 +6323,20 @@ async function requestControlPlaneJson<T>({
     }
   }
   // If gateway returned 401 (session expired/missing), prompt sign-in and retry once.
+  // requestAuth() only opens the browser and resolves immediately — it does NOT
+  // wait for the user to complete sign-in. We must wait for the auth callback
+  // (deep link → handleAuthCallbackUrl → emitAuthAuthenticated) before retrying.
   if (response.status === 401 && desktopAuthClient) {
     try {
       if (!pendingGatewayAuthRetry) {
-        pendingGatewayAuthRetry = requireAuthClient().requestAuth().finally(() => {
+        const authComplete = waitForAuthCallback();
+        requireAuthClient().requestAuth().catch(() => {});
+        pendingGatewayAuthRetry = authComplete.finally(() => {
           pendingGatewayAuthRetry = null;
         });
       }
       await pendingGatewayAuthRetry;
-      // Auth completed — retry with fresh cookie
+      // Auth callback received — cookie is now fresh, retry
       response = await executeRequest();
       errorDetail = "";
     } catch {
