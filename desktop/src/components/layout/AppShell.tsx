@@ -86,7 +86,7 @@ const THEMES = [
   "bubblegum-dark",
   "bubblegum-light",
 ] as const;
-const MIN_FILES_PANE_WIDTH = 220;
+const MIN_FILES_PANE_WIDTH = 260;
 const MIN_BROWSER_PANE_WIDTH = 120;
 const MAX_UTILITY_PANE_WIDTH = 720;
 const DEFAULT_FILES_PANE_WIDTH = MIN_FILES_PANE_WIDTH;
@@ -3215,11 +3215,11 @@ function AppShellContent() {
                                     className="min-w-0 flex-1"
                                   >
                                     <TabsList className="w-full">
-                                      <TabsTrigger value="files" className="flex-1 gap-1.5">
+                                      <TabsTrigger value="files" className="min-w-0 flex-1 basis-0 gap-1.5">
                                         <Folder size={13} />
                                         Files
                                       </TabsTrigger>
-                                      <TabsTrigger value="browser" className="flex-1 gap-1.5">
+                                      <TabsTrigger value="browser" className="min-w-0 flex-1 basis-0 gap-1.5">
                                         <Globe size={13} />
                                         Browser
                                       </TabsTrigger>
