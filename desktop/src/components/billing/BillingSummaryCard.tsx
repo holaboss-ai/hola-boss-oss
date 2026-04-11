@@ -1,4 +1,6 @@
-import { CircleHelp } from "lucide-react";
+import { CircleHelp, Loader2, RefreshCw } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Popover,
   PopoverContent,
@@ -13,6 +15,7 @@ interface BillingSummaryCardProps {
   links: DesktopBillingLinksPayload | null;
   isLoading?: boolean;
   error?: Error | null;
+  onRefresh?: () => void;
 }
 
 const CREDITS_HELP_ITEMS = [
@@ -55,6 +58,7 @@ export function BillingSummaryCard({
   links,
   isLoading = false,
   error = null,
+  onRefresh,
 }: BillingSummaryCardProps) {
   const hasOverview = Boolean(overview);
   const creditsValue = isLoading
@@ -63,71 +67,87 @@ export function BillingSummaryCard({
       ? (overview?.creditsBalance ?? 0).toLocaleString()
       : "—";
 
+  const timelineLabel = billingTimelineLabel(overview);
+
   return (
-    <section
-      className="rounded-[24px] border border-border/40 px-5 py-5"
-      style={{ backgroundColor: "rgb(243, 243, 244)" }}
-    >
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="text-2xl font-semibold text-foreground">
-            {isLoading ? "Loading..." : overview?.planName || "Holaboss"}
-          </div>
-          <div className="mt-1 text-sm text-muted-foreground">
-            {isLoading ? "Checking hosted billing..." : billingTimelineLabel(overview)}
-          </div>
+    <section className="rounded-xl border border-border/40 px-4 py-4">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-sm font-semibold text-foreground">
+            {isLoading ? "Loading..." : overview?.planName || "Free"}
+          </span>
+          {!isLoading && timelineLabel !== "Billing managed on web" ? (
+            <Badge variant="outline" className="shrink-0 text-muted-foreground">
+              {timelineLabel}
+            </Badge>
+          ) : null}
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            onClick={() => openBillingLink(links?.billingPageUrl)}
-            className="theme-control-surface inline-flex h-10 items-center justify-center rounded-full border border-border/45 px-4 text-sm font-medium text-foreground transition hover:border-primary/35"
-          >
-            Manage on web
-          </button>
-          <button
-            type="button"
-            onClick={() => openBillingLink(links?.addCreditsUrl)}
-            className="inline-flex h-10 items-center justify-center rounded-full border border-primary/35 bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90"
-          >
-            Add credits
-          </button>
+        <div className="flex shrink-0 items-center gap-1">
+          {onRefresh ? (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Refresh billing"
+              onClick={onRefresh}
+              disabled={isLoading}
+            >
+              <RefreshCw size={13} className={isLoading ? "animate-spin" : ""} />
+            </Button>
+          ) : null}
+          {!isLoading ? (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => openBillingLink(links?.billingPageUrl)}
+              >
+                Manage
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => openBillingLink(links?.addCreditsUrl)}
+              >
+                Add credits
+              </Button>
+            </>
+          ) : null}
         </div>
       </div>
 
       {error ? (
-        <div className="mt-4 rounded-[16px] border border-rose-400/35 bg-rose-500/8 px-4 py-3 text-sm text-rose-400">
+        <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
           {error.message}
         </div>
       ) : null}
 
       {!isLoading && !hasOverview && !error ? (
-        <div className="mt-4 rounded-[16px] border border-border/35 bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-          Sign in to view billing.
+        <div className="mt-3 rounded-md border border-border/40 px-3 py-2 text-xs text-muted-foreground">
+          Sign in to view billing details.
         </div>
       ) : null}
 
-      <div className="mt-5 border-t border-dashed border-border/50 pt-5">
-        <div className="grid gap-5">
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3">
-            <div>
-              <div className="text-xl font-semibold tracking-[-0.03em] text-foreground tabular-nums">
-                {creditsValue}
-              </div>
-              <div className="mt-1 flex items-center gap-1 text-sm text-muted-foreground">
-                <span>Credits</span>
-                <Popover>
-                  <PopoverTrigger
-                    render={
-                      <button
-                        type="button"
-                        aria-label="About credits"
-                        className="inline-flex size-5 items-center justify-center rounded-full text-muted-foreground transition hover:bg-accent hover:text-foreground"
-                      />
-                    }
-                  >
-                    <CircleHelp size={14} />
+      <div className="mt-4 border-t border-border/40 pt-4">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+          <div>
+            <div className="text-lg font-semibold tabular-nums text-foreground">
+              {creditsValue}
+            </div>
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <span>Credits</span>
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label="About credits"
+                      className="size-4 rounded-full text-muted-foreground"
+                    />
+                  }
+                >
+                  <CircleHelp size={12} />
                   </PopoverTrigger>
                   <PopoverContent align="start" className="w-80">
                     <PopoverHeader>
@@ -142,36 +162,35 @@ export function BillingSummaryCard({
                 </Popover>
               </div>
             </div>
-            <div className="text-right">
-              <div className="text-xl font-semibold tracking-[-0.03em] text-foreground tabular-nums">
-                {overview?.monthlyCreditsIncluded?.toLocaleString() ?? "—"}
-              </div>
-              <div className="mt-1 text-sm text-muted-foreground">Monthly credits</div>
+          <div className="text-right">
+            <div className="text-lg font-semibold tabular-nums text-foreground">
+              {overview?.monthlyCreditsIncluded?.toLocaleString() ?? "—"}
             </div>
+            <div className="text-xs text-muted-foreground">Monthly</div>
           </div>
+        </div>
 
-          <div className="grid gap-3 text-sm text-muted-foreground">
-            <div className="flex items-center justify-between gap-3">
-              <span>Total allocated</span>
-              <span className="tabular-nums text-foreground">
-                {overview?.totalAllocated?.toLocaleString() ?? "—"}
-              </span>
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <span>Total used</span>
-              <span className="tabular-nums text-foreground">
-                {overview?.totalUsed?.toLocaleString() ?? "—"}
-              </span>
-            </div>
-            {overview?.dailyRefreshCredits ? (
-              <div className="flex items-center justify-between gap-3">
-                <span>Daily refresh</span>
-                <span className="tabular-nums text-foreground">
-                  {overview.dailyRefreshCredits.toLocaleString()}
-                </span>
-              </div>
-            ) : null}
+        <div className="mt-3 grid gap-1.5 border-t border-border/30 pt-3 text-xs text-muted-foreground">
+          <div className="flex items-center justify-between">
+            <span>Total allocated</span>
+            <span className="tabular-nums text-foreground">
+              {overview?.totalAllocated?.toLocaleString() ?? "—"}
+            </span>
           </div>
+          <div className="flex items-center justify-between">
+            <span>Total used</span>
+            <span className="tabular-nums text-foreground">
+              {overview?.totalUsed?.toLocaleString() ?? "—"}
+            </span>
+          </div>
+          {overview?.dailyRefreshCredits ? (
+            <div className="flex items-center justify-between">
+              <span>Daily refresh</span>
+              <span className="tabular-nums text-foreground">
+                {overview.dailyRefreshCredits.toLocaleString()}
+              </span>
+            </div>
+          ) : null}
         </div>
       </div>
     </section>

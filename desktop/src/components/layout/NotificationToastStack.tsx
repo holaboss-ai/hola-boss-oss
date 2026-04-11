@@ -26,13 +26,13 @@ const EXPANDED_TOAST_GAP_PX = 12;
 
 function toastAccentClassName(level: RuntimeNotificationLevel): string {
   if (level === "success") {
-    return "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30";
+    return "bg-success/10 text-success ring-success/30";
   }
   if (level === "warning") {
-    return "bg-amber-400/15 text-amber-200 ring-amber-300/30";
+    return "bg-warning/10 text-warning ring-warning/30";
   }
   if (level === "error") {
-    return "bg-rose-500/15 text-rose-200 ring-rose-400/30";
+    return "bg-destructive/10 text-destructive ring-destructive/30";
   }
   return "bg-sky-500/15 text-sky-200 ring-sky-400/30";
 }

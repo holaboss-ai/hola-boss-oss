@@ -2,6 +2,8 @@ import { AppsGallery } from "@/components/marketplace/AppsGallery";
 import { KitDetail } from "@/components/marketplace/KitDetail";
 import { KitEmoji } from "@/components/marketplace/KitEmoji";
 import { MarketplaceGallery } from "@/components/marketplace/MarketplaceGallery";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { Loader2 } from "lucide-react";
@@ -161,13 +163,15 @@ export function MarketplacePane() {
             />
           ) : view === "creating" ? (
             <div className="flex h-full min-h-0 flex-col">
-              <button
+              <Button
                 type="button"
+                variant="link"
+                size="sm"
                 onClick={() => setView("detail")}
-                className="mb-4 self-start text-[12px] text-muted-foreground underline transition-colors hover:text-foreground"
+                className="mb-4 self-start text-muted-foreground"
               >
                 &larr; Back
-              </button>
+              </Button>
 
               {isCreatingWorkspace ? (
                 <div className="flex flex-1 items-center justify-center">
@@ -194,13 +198,15 @@ export function MarketplacePane() {
                           {detailTemplate.apps.map((a) => a.name).join(", ")}
                         </div>
                       </div>
-                      <button
+                      <Button
                         type="button"
+                        variant="link"
+                        size="xs"
                         onClick={() => setView("gallery")}
-                        className="shrink-0 text-xs text-muted-foreground underline transition-colors hover:text-foreground"
+                        className="shrink-0 text-muted-foreground"
                       >
                         Change
-                      </button>
+                      </Button>
                     </div>
                   ) : null}
 
@@ -208,11 +214,11 @@ export function MarketplacePane() {
                     <span className="text-xs font-medium text-muted-foreground">
                       Workspace name
                     </span>
-                    <input
+                    <Input
                       value={newWorkspaceName}
                       onChange={(e) => setNewWorkspaceName(e.target.value)}
                       placeholder="My workspace"
-                      className="mt-1.5 h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring"
+                      className="mt-1.5 h-9"
                     />
                   </label>
 
@@ -222,33 +228,36 @@ export function MarketplacePane() {
                     </div>
                   ) : null}
 
-                  <button
+                  <Button
                     type="button"
+                    size="lg"
                     disabled={
                       !newWorkspaceName.trim() || isResolvingIntegrations
                     }
                     onClick={handleCreate}
-                    className="mt-4 w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="mt-4 w-full"
                   >
                     {isResolvingIntegrations
                       ? "Checking integrations…"
                       : "Create workspace"}
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>
           ) : view === "connect_integrations" && pendingIntegrations ? (
             <div className="flex h-full min-h-0 flex-col">
-              <button
+              <Button
                 type="button"
+                variant="link"
+                size="sm"
                 onClick={() => {
                   clearPendingIntegrations();
                   setView("creating");
                 }}
-                className="mb-4 self-start text-xs text-muted-foreground underline transition-colors hover:text-foreground"
+                className="mb-4 self-start text-muted-foreground"
               >
                 &larr; Back
-              </button>
+              </Button>
               <div className="mx-auto w-full max-w-sm">
                 <h3 className="text-base font-semibold text-foreground">
                   Connect accounts
@@ -265,16 +274,16 @@ export function MarketplacePane() {
                       <span className="text-sm font-medium text-foreground">
                         {providerDisplayName(provider)}
                       </span>
-                      <button
+                      <Button
                         type="button"
+                        size="sm"
                         disabled={connectingProvider !== null}
                         onClick={() => void handleConnectProvider(provider)}
-                        className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
                       >
                         {connectingProvider === provider
                           ? "Connecting…"
                           : "Connect"}
-                      </button>
+                      </Button>
                     </div>
                   ))}
                 </div>

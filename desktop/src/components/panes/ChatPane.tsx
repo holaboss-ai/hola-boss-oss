@@ -35,6 +35,7 @@ import {
   Waypoints,
   X,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PaneCard } from "@/components/ui/PaneCard";
@@ -262,7 +263,10 @@ function isDeprecatedChatModel(model: string) {
 }
 
 function normalizeRuntimeModelCapability(value: string) {
-  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
   if (!normalized) {
     return "";
   }
@@ -464,7 +468,10 @@ function outputMetadataNumber(
 function outputBrowserFilterForOutput(
   output: WorkspaceOutputRecordPayload,
 ): ArtifactBrowserFilter {
-  if (outputMetadataString(output, "origin_type") === "app" || output.module_id) {
+  if (
+    outputMetadataString(output, "origin_type") === "app" ||
+    output.module_id
+  ) {
     return "apps";
   }
   const category = outputMetadataString(output, "category");
@@ -481,7 +488,10 @@ function outputBrowserFilterForOutput(
 }
 
 function outputKindLabel(output: WorkspaceOutputRecordPayload) {
-  if (outputMetadataString(output, "origin_type") === "app" || output.module_id) {
+  if (
+    outputMetadataString(output, "origin_type") === "app" ||
+    output.module_id
+  ) {
     const artifactType = outputMetadataString(output, "artifact_type");
     if (artifactType) {
       return artifactType.charAt(0).toUpperCase() + artifactType.slice(1);
@@ -682,8 +692,10 @@ function compareChatSessionOptions(
       return normalizedRight - normalizedLeft;
     }
   }
-  return right.updatedAt.localeCompare(left.updatedAt) ||
-    left.title.localeCompare(right.title);
+  return (
+    right.updatedAt.localeCompare(left.updatedAt) ||
+    left.title.localeCompare(right.title)
+  );
 }
 
 function sessionStatusIndicator(statusLabel: string) {
@@ -823,7 +835,10 @@ function summarizeUnknown(value: unknown, maxLength = 140): string {
 function normalizeChatTodoStatus(value: unknown): ChatTodoStatus | null {
   const normalized =
     typeof value === "string"
-      ? value.trim().toLowerCase().replace(/[\s-]+/g, "_")
+      ? value
+          .trim()
+          .toLowerCase()
+          .replace(/[\s-]+/g, "_")
       : "";
   switch (normalized) {
     case "pending":
@@ -848,8 +863,7 @@ function normalizeChatTodoTask(value: unknown): ChatTodoTask | null {
     return null;
   }
   const notes = typeof value.notes === "string" ? value.notes.trim() : "";
-  const details =
-    typeof value.details === "string" ? value.details.trim() : "";
+  const details = typeof value.details === "string" ? value.details.trim() : "";
   return {
     id,
     content,
@@ -1121,7 +1135,9 @@ function runFailedDetail(payload: Record<string, unknown>): string {
   if (!detail) {
     return `${contextLabel} failed.`;
   }
-  return detail.startsWith(contextLabel) ? detail : `${contextLabel}: ${detail}`;
+  return detail.startsWith(contextLabel)
+    ? detail
+    : `${contextLabel}: ${detail}`;
 }
 
 function assistantMetaLabel(
@@ -1523,7 +1539,9 @@ function phaseTraceStepFromEvent(
         kind: "phase",
         title: "Run paused",
         status: "waiting",
-        details: ["The run was paused before completion and can be continued in a later turn."],
+        details: [
+          "The run was paused before completion and can be continued in a later turn.",
+        ],
         order,
       };
     }
@@ -1794,8 +1812,10 @@ export function ChatPane({
   );
   const [isHistoryViewportPending, setIsHistoryViewportPending] =
     useState(false);
-  const [historyViewportRestoreGeneration, setHistoryViewportRestoreGeneration] =
-    useState(0);
+  const [
+    historyViewportRestoreGeneration,
+    setHistoryViewportRestoreGeneration,
+  ] = useState(0);
   const [chatScrollMetrics, setChatScrollMetrics] = useState({
     scrollTop: 0,
     scrollHeight: 0,
@@ -1821,9 +1841,9 @@ export function ChatPane({
   const [memoryProposalDrafts, setMemoryProposalDrafts] = useState<
     Record<string, string>
   >({});
-  const [availableSessions, setAvailableSessions] = useState<ChatSessionOption[]>(
-    [],
-  );
+  const [availableSessions, setAvailableSessions] = useState<
+    ChatSessionOption[]
+  >([]);
   const [isLoadingAvailableSessions, setIsLoadingAvailableSessions] =
     useState(false);
   const [availableSessionsError, setAvailableSessionsError] = useState("");
@@ -1838,9 +1858,7 @@ export function ChatPane({
   const composerIsComposingRef = useRef(false);
   const shouldAutoScrollRef = useRef(true);
   const lastChatScrollTopRef = useRef(0);
-  const chatScrollbarDragStateRef = useRef<ChatScrollbarDragState | null>(
-    null,
-  );
+  const chatScrollbarDragStateRef = useRef<ChatScrollbarDragState | null>(null);
   const chatScrollbarBodyUserSelectRef = useRef<string | null>(null);
   const chatScrollbarBodyCursorRef = useRef<string | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
@@ -2431,8 +2449,7 @@ export function ChatPane({
     }
 
     const railRect = railElement.getBoundingClientRect();
-    const unclampedThumbOffset =
-      clientY - railRect.top - thumbPointerOffset;
+    const unclampedThumbOffset = clientY - railRect.top - thumbPointerOffset;
     const nextThumbOffset = Math.min(
       Math.max(0, unclampedThumbOffset),
       chatScrollbarThumbTravel,
@@ -2543,8 +2560,7 @@ export function ChatPane({
 
     container.scrollTo({
       top: container.scrollHeight,
-      behavior:
-        isResponding || isHistoryViewportPending ? "auto" : "smooth",
+      behavior: isResponding || isHistoryViewportPending ? "auto" : "smooth",
     });
   }, [
     isHistoryViewportPending,
@@ -2787,8 +2803,9 @@ export function ChatPane({
   ]);
 
   useEffect(() => {
-    const requestedSessionId =
-      (effectiveSessionOpenRequest?.sessionId || "").trim();
+    const requestedSessionId = (
+      effectiveSessionOpenRequest?.sessionId || ""
+    ).trim();
     const requestKey = effectiveSessionOpenRequest?.requestKey ?? 0;
     const requestMode = effectiveSessionOpenRequest?.mode ?? "session";
     const requestedParentSessionId =
@@ -2910,7 +2927,9 @@ export function ChatPane({
     let cancelled = false;
     let requestInFlight = false;
 
-    const loadAvailableSessions = async (options?: { showLoading?: boolean }) => {
+    const loadAvailableSessions = async (options?: {
+      showLoading?: boolean;
+    }) => {
       if (requestInFlight) {
         return;
       }
@@ -3889,7 +3908,7 @@ export function ChatPane({
     composerIsComposingRef.current = false;
   };
 
-  const assistantLabel = "Holaboss";
+  const assistantLabel = selectedWorkspace?.name || "Assistant";
   const assistantMode = isOnboardingVariant
     ? "workspace setup"
     : assistantMetaLabel(
@@ -3929,8 +3948,9 @@ export function ChatPane({
   );
   const activeSessionOption = useMemo(
     () =>
-      availableSessions.find((session) => session.sessionId === activeSessionId) ??
-      null,
+      availableSessions.find(
+        (session) => session.sessionId === activeSessionId,
+      ) ?? null,
     [activeSessionId, availableSessions],
   );
   const activeSessionTitle =
@@ -4111,8 +4131,8 @@ export function ChatPane({
     availableChatModelOptions.length > 0
       ? ""
       : hasPendingConfiguredProviderCatalog
-        ? "Holaboss models are finishing setup. Refresh runtime binding or use another provider."
-      : "No models available. Configure a provider to start chatting.";
+        ? "Managed models are finishing setup. Refresh runtime binding or use another provider."
+        : "No models available. Configure a provider to start chatting.";
   const composerBaseDisabledReason =
     baseComposerDisabledReason ||
     (usesHostedManagedCredits && isOutOfCredits
@@ -4142,8 +4162,7 @@ export function ChatPane({
   const textareaPlaceholder = isOnboardingVariant
     ? "Answer the onboarding prompt or share setup details"
     : "Ask anything";
-  const showHistoryRestoreScreen =
-    isLoadingHistory || isHistoryViewportPending;
+  const showHistoryRestoreScreen = isLoadingHistory || isHistoryViewportPending;
   const chatScrollRange = Math.max(
     0,
     chatScrollMetrics.scrollHeight - chatScrollMetrics.clientHeight,
@@ -4251,7 +4270,10 @@ export function ChatPane({
 
   const openSessionFromPicker = (sessionId: string) => {
     const normalizedSessionId = sessionId.trim();
-    if (!normalizedSessionId || normalizedSessionId === activeSessionIdRef.current) {
+    if (
+      !normalizedSessionId ||
+      normalizedSessionId === activeSessionIdRef.current
+    ) {
       return;
     }
     setLocalSessionOpenRequest({
@@ -4342,23 +4364,27 @@ export function ChatPane({
                 </div>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => openExternalUrl(billingLinks?.addCreditsUrl)}
-                  className="inline-flex items-center rounded-full border border-primary/35 bg-primary/10 px-3 py-1.5 text-[12px] font-medium text-primary transition hover:bg-primary/16"
+                  className="rounded-full border-primary/35 bg-primary/10 text-primary hover:bg-primary/16"
                 >
                   Add credits
-                </button>
+                </Button>
                 {showOutOfCreditsWarning ? (
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={() =>
                       openExternalUrl(billingLinks?.billingPageUrl)
                     }
-                    className="inline-flex items-center rounded-full border border-border/60 bg-background px-3 py-1.5 text-[12px] font-medium text-foreground transition hover:border-primary/35 hover:text-primary"
+                    className="rounded-full"
                   >
                     Manage on web
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             </div>
@@ -4379,13 +4405,15 @@ export function ChatPane({
                   <div className="text-[10px] tracking-[0.12em] text-muted-foreground">
                     Stream telemetry ({streamTelemetry.length})
                   </div>
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="xs"
                     onClick={() => setStreamTelemetry([])}
-                    className="rounded border border-border/50 px-2 py-1 text-[10px] text-muted-foreground transition hover:border-primary/35 hover:text-foreground"
+                    className="text-[10px]"
                   >
                     Clear
-                  </button>
+                  </Button>
                 </div>
                 <div className="bg-muted max-h-36 overflow-y-auto rounded border border-border/35 p-2 font-mono text-[10px] text-muted-foreground">
                   {streamTelemetryTail.length === 0 ? (
@@ -4676,9 +4704,7 @@ export function ChatPane({
                     <CurrentTodoPanel
                       todoPlan={currentTodoPlan}
                       expanded={todoPanelExpanded}
-                      onToggle={() =>
-                        setTodoPanelExpanded((value) => !value)
-                      }
+                      onToggle={() => setTodoPanelExpanded((value) => !value)}
                     />
                   ) : null}
                   <Composer
@@ -4800,39 +4826,34 @@ function SessionSelector({
         <div className="min-w-0 flex-1">
           <PopoverTrigger
             render={
-              <button
-                type="button"
-                className="group flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-xl px-2 py-1.5 text-left transition-colors"
+              <Button
+                variant="outline"
+                className="w-full min-w-0 justify-start"
                 aria-label="Select agent session"
                 title={`${activeTitle} · ${activeDetail}`}
-              >
-                <span
-                  className={`grid size-5 shrink-0 place-items-center ${activeIndicator.className}`}
-                >
-                  {activeIndicator.icon}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-[15px] font-semibold tracking-[-0.02em] text-foreground">
-                  {activeTitle}
-                </span>
-                <ChevronDown
-                  size={13}
-                  className={`shrink-0 text-muted-foreground transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                    open
-                      ? "rotate-180 group-hover:-translate-y-1 group-hover:scale-150"
-                      : "rotate-0 group-hover:translate-y-1 group-hover:scale-150"
-                  } motion-reduce:transform-none`}
-                />
-              </button>
+              />
             }
-          />
+          >
+            <span
+              className={`grid size-4 shrink-0 place-items-center ${activeIndicator.className}`}
+            >
+              {activeIndicator.icon}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-xs text-start font-medium text-foreground">
+              {activeTitle}
+            </span>
+            <ChevronDown
+              size={12}
+              className={`shrink-0 text-muted-foreground transition-transform ${
+                open ? "rotate-180" : ""
+              }`}
+            />
+          </PopoverTrigger>
         </div>
         <PopoverContent align="start" className="w-[300px] p-0">
           <div className="border-b border-border/40 p-2">
             <div className="relative flex items-center rounded-[10px] border border-border/40 bg-muted/35 px-2.5 transition-colors focus-within:border-border/55 focus-within:bg-background/70">
-              <Search
-                size={13}
-                className="shrink-0 text-muted-foreground"
-              />
+              <Search size={13} className="shrink-0 text-muted-foreground" />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
@@ -4854,7 +4875,9 @@ function SessionSelector({
               </div>
             ) : filteredSessions.length === 0 ? (
               <div className="px-3 py-3 text-[12px] text-muted-foreground">
-                {query.trim() ? "No matching sessions." : "No saved sessions yet."}
+                {query.trim()
+                  ? "No matching sessions."
+                  : "No saved sessions yet."}
               </div>
             ) : (
               filteredSessions.map((session) => {
@@ -4869,7 +4892,7 @@ function SessionSelector({
                       setOpen(false);
                       setQuery("");
                     }}
-                    className={`flex w-full items-center gap-2 rounded-[12px] px-3 py-2 text-left transition ${
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors ${
                       isActive
                         ? "bg-accent text-accent-foreground"
                         : "hover:bg-accent/50"
@@ -5395,7 +5418,8 @@ function CurrentTodoPanel({
                   <div className="mt-3 space-y-2">
                     {phase.tasks.map((task) => {
                       const isActiveTask = activeEntry?.task.id === task.id;
-                      const hasVisibleDetails = isActiveTask && Boolean(task.details);
+                      const hasVisibleDetails =
+                        isActiveTask && Boolean(task.details);
                       return (
                         <div
                           key={task.id}
@@ -5403,7 +5427,9 @@ function CurrentTodoPanel({
                         >
                           <TodoStatusIcon status={task.status} />
                           <div className="min-w-0 flex-1">
-                            <div className="text-foreground">{task.content}</div>
+                            <div className="text-foreground">
+                              {task.content}
+                            </div>
                             {hasVisibleDetails ? (
                               <div className="mt-1 whitespace-pre-wrap text-[11px] text-muted-foreground">
                                 {task.details}
@@ -5494,29 +5520,33 @@ function AssistantTurnMemoryProposals({
               </div>
 
               <div className="flex shrink-0 items-start gap-2">
-                <div className="rounded-full border border-border/45 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                <Badge variant="outline" className="uppercase">
                   {memoryProposalStateLabel(proposal.state)}
-                </div>
+                </Badge>
                 {isPending ? (
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="icon"
                     onClick={() => onEditProposal(proposal.proposal_id)}
-                    className="grid h-9 w-9 place-items-center rounded-[14px] border border-border/45 text-muted-foreground transition hover:border-border/70 hover:text-foreground"
+                    className="rounded-[14px]"
                     aria-label="Edit memory proposal"
                   >
                     <PencilLine size={14} />
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             </div>
 
             {isPending ? (
               <div className="mt-4 flex flex-wrap gap-2">
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="lg"
                   onClick={() => onDismissProposal(proposal)}
                   disabled={isActing}
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl border border-border/45 px-3 text-sm text-muted-foreground transition hover:border-primary/28 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-2xl"
                 >
                   {isActing && proposalAction?.action === "dismiss" ? (
                     <Loader2 size={12} className="animate-spin" />
@@ -5524,12 +5554,14 @@ function AssistantTurnMemoryProposals({
                     <X size={12} />
                   )}
                   <span>Dismiss</span>
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="outline"
+                  size="lg"
                   onClick={() => onAcceptProposal(proposal)}
                   disabled={isActing}
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl border border-primary/40 bg-primary/10 px-3 text-sm text-primary transition hover:bg-primary/14 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-2xl border-primary/40 bg-primary/10 text-primary hover:bg-primary/14"
                 >
                   {isActing && proposalAction?.action === "accept" ? (
                     <Loader2 size={12} className="animate-spin" />
@@ -5537,7 +5569,7 @@ function AssistantTurnMemoryProposals({
                     <Check size={12} />
                   )}
                   <span>Accept</span>
-                </button>
+                </Button>
               </div>
             ) : null}
           </article>
@@ -5583,80 +5615,78 @@ function ArtifactBrowserModal({
   );
 
   return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/45 px-4 py-6 backdrop-blur-[2px]">
-      <div className="bg-background flex h-full max-h-[720px] w-full max-w-[760px] flex-col rounded-[28px] border border-border/50 shadow-2xl">
-        <div className="flex items-center justify-between gap-4 border-b border-border/35 px-5 py-4">
+    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 px-6 py-8 backdrop-blur-[2px]">
+      <div className="flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border/50 bg-background shadow-xl">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/30 px-4 py-3">
           <div>
-            <div className="text-[24px] font-semibold tracking-[-0.03em] text-foreground">
-              All artifacts in this session
+            <div className="text-sm font-semibold text-foreground">
+              Artifacts
             </div>
-            <div className="mt-1 text-[12px] text-muted-foreground">
-              {outputs.length} artifact{outputs.length === 1 ? "" : "s"}
+            <div className="text-xs text-muted-foreground">
+              {outputs.length} item{outputs.length === 1 ? "" : "s"} in this
+              session
             </div>
           </div>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon-sm"
             onClick={onClose}
-            className="grid h-9 w-9 place-items-center rounded-full border border-border/45 text-muted-foreground transition hover:border-border/70 hover:text-foreground"
-            aria-label="Close artifacts browser"
+            aria-label="Close"
           >
-            <X size={16} />
-          </button>
+            <X size={14} />
+          </Button>
         </div>
 
-        <div className="flex flex-wrap gap-2 px-5 py-4">
+        <div className="flex shrink-0 flex-wrap gap-1.5 border-b border-border/20 px-4 py-2.5">
           {filterLabels.map((item) => {
             const active = filter === item.id;
             return (
-              <button
+              <Button
                 key={item.id}
-                type="button"
+                variant={active ? "secondary" : "ghost"}
+                size="xs"
                 onClick={() => onFilterChange(item.id)}
-                className={`rounded-full border px-3 py-1.5 text-[12px] transition ${
-                  active
-                    ? "border-foreground bg-foreground text-background"
-                    : "border-border/45 text-muted-foreground hover:border-border/70 hover:text-foreground"
-                }`}
               >
                 {item.label}
-              </button>
+              </Button>
             );
           })}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
           {filteredOutputs.length === 0 ? (
-            <div className="flex h-full items-center justify-center rounded-[24px] border border-dashed border-border/45 text-[13px] text-muted-foreground">
+            <div className="py-10 text-center text-xs text-muted-foreground">
               No artifacts match this filter.
             </div>
           ) : (
-            <div className="grid gap-2">
+            <div className="grid gap-1">
               {filteredOutputs.map((output) => (
-                <button
+                <Button
                   key={output.id}
-                  type="button"
+                  variant="ghost"
                   onClick={() => {
                     onClose();
                     onOpenOutput?.(output);
                   }}
                   disabled={!onOpenOutput}
-                  className="flex items-center gap-3 rounded-[18px] border border-border/35 px-4 py-3 text-left transition hover:border-border/60 hover:bg-muted/45 disabled:cursor-default disabled:hover:border-border/35 disabled:hover:bg-transparent"
+                  className="h-auto w-full min-w-0 justify-start gap-3 overflow-hidden px-3 py-2.5 text-left"
                 >
                   <OutputArtifactIcon output={output} />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[14px] font-medium text-foreground">
+                    <div className="truncate text-sm font-medium text-foreground">
                       {output.title || "Untitled artifact"}
                     </div>
-                    <div className="truncate text-[12px] text-muted-foreground">
+                    <div className="truncate text-xs text-muted-foreground">
                       {outputSecondaryLabel(output)}
                     </div>
                   </div>
                   {outputChangeLabel(output) ? (
-                    <div className="rounded-full border border-border/45 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                    <Badge variant="outline" className="shrink-0 uppercase">
                       {outputChangeLabel(output)}
-                    </div>
+                    </Badge>
                   ) : null}
-                </button>
+                </Button>
               ))}
             </div>
           )}
@@ -5748,9 +5778,8 @@ function TraceStepGroup({
   const activeStep =
     [...steps]
       .reverse()
-      .find(
-        (step) => step.status === "running" || step.status === "waiting",
-      ) ?? null;
+      .find((step) => step.status === "running" || step.status === "waiting") ??
+    null;
   const latestStep = steps.length > 0 ? steps[steps.length - 1] : null;
   const summaryStep = activeStep ?? (groupIsLive ? latestStep : null);
   const summarySuffix = groupHasTerminalError
@@ -5781,8 +5810,8 @@ function TraceStepGroup({
             : groupIsLive
               ? `Working through ${stepLabel}...`
               : runningCount > 0
-              ? `Running ${stepLabel}...`
-              : `Used ${stepLabel}`}
+                ? `Running ${stepLabel}...`
+                : `Used ${stepLabel}`}
           {summarySuffix}
         </span>
         <ChevronDown
@@ -6057,7 +6086,7 @@ function ModelCombobox({
             ? "bg-accent text-accent-foreground"
             : optionDisabled
               ? "cursor-not-allowed text-muted-foreground/70"
-            : "text-foreground hover:bg-accent/50"
+              : "text-foreground hover:bg-accent/50"
         }`}
       >
         <span className="truncate">{option.label}</span>
@@ -6179,11 +6208,14 @@ function Composer({
     modelOptions.length === 0 &&
     modelOptionGroups.length === 0;
   const inputDisabled = disabled || isResponding;
-  const visibleModelOptions = modelOptionGroups.flatMap((group) => group.options);
+  const visibleModelOptions = modelOptionGroups.flatMap(
+    (group) => group.options,
+  );
   const selectedModelOptionLabel =
     visibleModelOptions.find((option) => option.value === selectedModel)
       ?.selectedLabel ??
-    visibleModelOptions.find((option) => option.value === selectedModel)?.label ??
+    visibleModelOptions.find((option) => option.value === selectedModel)
+      ?.label ??
     modelOptions.find((option) => option.value === selectedModel)
       ?.selectedLabel ??
     modelOptions.find((option) => option.value === selectedModel)?.label ??
@@ -6310,10 +6342,12 @@ function Composer({
           >
             {noAvailableModels ? (
               <>
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="lg"
                   onClick={onOpenModelProviders}
-                  className="bg-card flex h-9 shrink-0 items-center justify-between gap-2 rounded-[11px] border border-border/28 px-3 text-left text-[12px] font-semibold text-foreground transition hover:border-primary/35 hover:bg-card/92"
+                  className="shrink-0 justify-between rounded-[11px] bg-card text-[12px] font-semibold hover:border-primary/35 hover:bg-card/92"
                   aria-label="Configure model providers"
                 >
                   <span className="flex min-w-0 items-center gap-2">
@@ -6327,7 +6361,7 @@ function Composer({
                     size={14}
                     className="shrink-0 text-muted-foreground"
                   />
-                </button>
+                </Button>
                 <div className="min-w-0 text-[10px] leading-5 text-muted-foreground">
                   Open provider settings to connect a model.
                 </div>
@@ -6381,9 +6415,7 @@ function Composer({
           ) : (
             <Button
               size="icon"
-              disabled={
-                (!input.trim() && attachments.length === 0) || disabled
-              }
+              disabled={(!input.trim() && attachments.length === 0) || disabled}
               render={<button type="submit" />}
               className="rounded-full"
             >
