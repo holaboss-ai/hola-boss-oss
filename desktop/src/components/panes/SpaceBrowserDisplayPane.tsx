@@ -6,6 +6,7 @@ import {
   useState,
 } from "react";
 import { ChevronLeft, ChevronRight, Globe, Loader2, RefreshCcw, Star } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/IconButton";
 import { useWorkspaceBrowser } from "@/components/panes/useWorkspaceBrowser";
 
@@ -181,19 +182,21 @@ export function SpaceBrowserDisplayPane({
             </div>
           </form>
 
-          <button
+          <Button
             type="button"
+            variant={isBookmarked ? "secondary" : "outline"}
+            size="icon"
             onClick={onToggleBookmark}
             disabled={!activeTab.url}
-            className={`grid size-8 shrink-0 place-items-center rounded-full border transition ${
+            className={`shrink-0 rounded-full ${
               isBookmarked
                 ? "border-primary/50 bg-primary/10 text-primary"
-                : "border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                : ""
             }`}
             aria-label={isBookmarked ? "Remove bookmark" : "Add bookmark"}
           >
             <Star size={13} fill={isBookmarked ? "currentColor" : "none"} />
-          </button>
+          </Button>
         </div>
       </div>
 
