@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, FileWarning, Loader2, MoreHorizontal, Search, Sparkles, X } from "lucide-react";
-import { useWorkspaceSelection } from "@/lib/workspaceSelection";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 
 function formatDate(value: string) {
@@ -274,14 +275,15 @@ function SkillDetailDialog({
             </div>
             <div className="mt-0.5 text-xs text-muted-foreground">Skill</div>
           </div>
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="icon"
             onClick={onClose}
             aria-label="Close"
-            className="grid h-8 w-8 place-items-center rounded-lg border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <X size={14} />
-          </button>
+          </Button>
         </div>
 
         {/* Content */}

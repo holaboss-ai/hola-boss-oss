@@ -364,13 +364,14 @@ export function PublishDialog({
               )}
               {success && <span />}
               {!isSubmitting && (
-                <button
-                  type="button"
-                  className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
                   onClick={close}
+                  aria-label="Close"
                 >
                   <X className="size-4" />
-                </button>
+                </Button>
               )}
             </div>
 
@@ -473,9 +474,9 @@ export function PublishDialog({
                         <span className="text-xs text-muted-foreground">
                           {selectedApps.size} of {installedApps.length} selected
                         </span>
-                        <button
-                          type="button"
-                          className="text-xs text-primary hover:underline"
+                        <Button
+                          variant="link"
+                          size="sm"
                           onClick={() => {
                             if (selectedApps.size === installedApps.length) {
                               setSelectedApps(new Set());
@@ -485,11 +486,12 @@ export function PublishDialog({
                               );
                             }
                           }}
+                          className="h-auto p-0 text-xs"
                         >
                           {selectedApps.size === installedApps.length
                             ? "Deselect all"
                             : "Select all"}
-                        </button>
+                        </Button>
                       </div>
                       <div className="space-y-1.5">
                         {installedApps.map((app) => (
@@ -649,8 +651,8 @@ export function PublishDialog({
               {/* Success state */}
               {success && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center px-8">
-                  <div className="mb-5 flex size-20 items-center justify-center rounded-full bg-emerald-50 dark:bg-emerald-950/40">
-                    <Check className="size-10 text-emerald-600 dark:text-emerald-400" />
+                  <div className="mb-5 flex size-20 items-center justify-center rounded-full bg-success/10">
+                    <Check className="size-10 text-success" />
                   </div>
 
                   <h3 className="mb-2 text-xl font-semibold tracking-tight">
@@ -749,13 +751,14 @@ function ReviewCard({
         <p className="truncate text-sm font-medium">{title}</p>
         <p className="truncate text-xs text-muted-foreground">{detail}</p>
       </div>
-      <button
-        type="button"
-        className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
+      <Button
+        variant="ghost"
+        size="icon-xs"
         onClick={onEdit}
+        aria-label={`Edit ${label}`}
       >
         <Pencil className="size-3.5" />
-      </button>
+      </Button>
     </div>
   );
 }

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { ChevronDown, Loader2, Sparkles } from "lucide-react";
 import {
   Select,
@@ -64,7 +66,7 @@ function proactiveStateClasses(state: string): string {
     return "border-indigo-500/25 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300";
   }
   if (state === "analyzing") {
-    return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+    return "border-warning/30 bg-warning/10 text-warning";
   }
   if (state === "error" || state === "unavailable") {
     return "border-destructive/30 bg-destructive/10 text-destructive";
@@ -73,16 +75,6 @@ function proactiveStateClasses(state: string): string {
     return "border-border/45 bg-background/70 text-muted-foreground";
   }
   return "border-border/45 bg-background/70 text-foreground/72";
-}
-
-function proactiveToggleClasses(enabled: boolean): string {
-  return enabled
-    ? "border-border/45 bg-background/90 text-foreground/88 hover:border-primary/35 hover:text-foreground"
-    : "border-border/45 bg-background/90 text-muted-foreground hover:border-primary/35 hover:text-foreground";
-}
-
-function proactiveToggleDotClasses(enabled: boolean): string {
-  return enabled ? "bg-emerald-500" : "bg-amber-500";
 }
 
 type ProactiveScheduleUnit = "minute" | "hour" | "day";
@@ -181,8 +173,7 @@ function scheduleDraftFromCron(cron: string): ProactiveScheduleDraft {
     ...fallback,
     anchorMinute:
       minuteValue !== null ? Math.min(Math.max(minuteValue, 0), 59) : 0,
-    anchorHour:
-      hourValue !== null ? Math.min(Math.max(hourValue, 0), 23) : 9,
+    anchorHour: hourValue !== null ? Math.min(Math.max(hourValue, 0), 23) : 9,
   };
 }
 
@@ -248,12 +239,12 @@ function ProactiveScheduleEditor({
   const generatedCron = buildCronFromScheduleDraft(scheduleDraft);
   const canSave = Boolean(
     hasWorkspace &&
-      onProactiveHeartbeatCronChange &&
-      !isLoadingProactiveHeartbeatConfig &&
-      !isUpdatingProactiveHeartbeatConfig &&
-      (scheduleDraft.interval !== currentSchedule.interval ||
-        scheduleDraft.unit !== currentSchedule.unit) &&
-      generatedCron.trim(),
+    onProactiveHeartbeatCronChange &&
+    !isLoadingProactiveHeartbeatConfig &&
+    !isUpdatingProactiveHeartbeatConfig &&
+    (scheduleDraft.interval !== currentSchedule.interval ||
+      scheduleDraft.unit !== currentSchedule.unit) &&
+    generatedCron.trim(),
   );
 
   const handleSave = () => {
@@ -264,124 +255,108 @@ function ProactiveScheduleEditor({
   };
 
   return (
-    <div className="border-t border-border/40 px-3 py-3">
-      <button
+    <div>
+      <Button
         type="button"
-        aria-expanded={drawerOpen}
+        variant="ghost"
+        size="sm"
+        className="w-full justify-between"
         onClick={() => setDrawerOpen((current) => !current)}
-        className="flex w-full items-center justify-between gap-3 rounded-[16px] px-1 py-1 text-left transition-colors hover:bg-muted/35"
+        aria-expanded={drawerOpen}
       >
-        <div className="min-w-0">
-          <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-            Schedule
-          </div>
-          <div className="mt-1 text-[11px] leading-5 text-muted-foreground/82">
+        <span className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span>Schedule</span>
+          <span className="text-foreground/72">
             {scheduleSummaryLabel(currentSchedule)}
-          </div>
-        </div>
+          </span>
+        </span>
         <ChevronDown
           size={14}
           className={`shrink-0 text-muted-foreground transition-transform ${
             drawerOpen ? "rotate-180" : ""
           }`}
         />
-      </button>
+      </Button>
       {drawerOpen ? (
-        <div className="mt-3 rounded-[18px] border border-border/35 bg-background/55 px-3 py-3">
-          <div className="text-[11px] leading-5 text-muted-foreground/82">
-            Server schedule for this desktop instance.
-          </div>
-          <div className={compact ? "mt-2 grid gap-2" : "mt-2 flex flex-wrap items-center gap-2"}>
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="shrink-0 text-[11px] font-medium text-muted-foreground/88">
-                Every
-              </span>
-              <Input
-                type="number"
-                min={1}
-                max={
-                  scheduleDraft.unit === "minute"
-                    ? 59
-                    : scheduleDraft.unit === "hour"
-                      ? 23
-                      : 31
+        <div className="mt-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="shrink-0 text-xs text-muted-foreground">
+              Every
+            </span>
+            <Input
+              type="number"
+              min={1}
+              max={
+                scheduleDraft.unit === "minute"
+                  ? 59
+                  : scheduleDraft.unit === "hour"
+                    ? 23
+                    : 31
+              }
+              step={1}
+              value={String(scheduleDraft.interval)}
+              onChange={(event) => {
+                const nextValue = Number.parseInt(event.target.value, 10);
+                setScheduleDraft((current) => ({
+                  ...current,
+                  interval: Number.isFinite(nextValue)
+                    ? clampScheduleInterval(nextValue, current.unit)
+                    : 1,
+                }));
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") {
+                  return;
                 }
-                step={1}
-                value={String(scheduleDraft.interval)}
-                onChange={(event) => {
-                  const nextValue = Number.parseInt(event.target.value, 10);
-                  setScheduleDraft((current) => ({
-                    ...current,
-                    interval: Number.isFinite(nextValue)
-                      ? clampScheduleInterval(nextValue, current.unit)
-                      : 1,
-                  }));
-                }}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter") {
-                    return;
-                  }
-                  event.preventDefault();
-                  handleSave();
-                }}
-                inputMode="numeric"
-                disabled={
-                  !hasWorkspace ||
-                  isLoadingProactiveHeartbeatConfig ||
-                  isUpdatingProactiveHeartbeatConfig
+                event.preventDefault();
+                handleSave();
+              }}
+              inputMode="numeric"
+              disabled={
+                !hasWorkspace ||
+                isLoadingProactiveHeartbeatConfig ||
+                isUpdatingProactiveHeartbeatConfig
+              }
+              className="h-7 w-14 text-xs"
+            />
+            <Select
+              value={scheduleDraft.unit}
+              onValueChange={(value) => {
+                if (!value) {
+                  return;
                 }
-                className={`h-8 rounded-full bg-background/90 px-3 text-center text-[11px] ${
-                  compact ? "w-[72px]" : "w-20"
-                }`}
-              />
-              <div className={compact ? "min-w-0 flex-1" : ""}>
-                <Select
-                  value={scheduleDraft.unit}
-                  onValueChange={(value) => {
-                    if (!value) {
-                      return;
-                    }
-                    const nextUnit = value as ProactiveScheduleUnit;
-                    setScheduleDraft((current) => ({
-                      ...current,
-                      unit: nextUnit,
-                      interval: clampScheduleInterval(current.interval, nextUnit),
-                    }));
-                  }}
-                  disabled={
-                    !hasWorkspace ||
-                    isLoadingProactiveHeartbeatConfig ||
-                    isUpdatingProactiveHeartbeatConfig
-                  }
-                >
-                  <SelectTrigger
-                    className={`h-8 rounded-full bg-background/90 px-3 text-[11px] ${
-                      compact ? "w-full min-w-0" : "min-w-[120px]"
-                    }`}
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="minute">
-                      {scheduleUnitLabel("minute", scheduleDraft.interval)}
-                    </SelectItem>
-                    <SelectItem value="hour">
-                      {scheduleUnitLabel("hour", scheduleDraft.interval)}
-                    </SelectItem>
-                    <SelectItem value="day">
-                      {scheduleUnitLabel("day", scheduleDraft.interval)}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+                const nextUnit = value as ProactiveScheduleUnit;
+                setScheduleDraft((current) => ({
+                  ...current,
+                  unit: nextUnit,
+                  interval: clampScheduleInterval(current.interval, nextUnit),
+                }));
+              }}
+              disabled={
+                !hasWorkspace ||
+                isLoadingProactiveHeartbeatConfig ||
+                isUpdatingProactiveHeartbeatConfig
+              }
+            >
+              <SelectTrigger className="h-7 w-24 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="minute">
+                  {scheduleUnitLabel("minute", scheduleDraft.interval)}
+                </SelectItem>
+                <SelectItem value="hour">
+                  {scheduleUnitLabel("hour", scheduleDraft.interval)}
+                </SelectItem>
+                <SelectItem value="day">
+                  {scheduleUnitLabel("day", scheduleDraft.interval)}
+                </SelectItem>
+              </SelectContent>
+            </Select>
             <Button
               type="button"
-              size="sm"
+              size="xs"
               variant="outline"
-              className={`h-8 rounded-full px-3 text-[11px] font-medium ${
-                compact ? "w-full" : ""
-              }`}
               onClick={handleSave}
               disabled={!canSave}
             >
@@ -394,7 +369,8 @@ function ProactiveScheduleEditor({
           </div>
           {currentSchedule.customCronDetected ? (
             <div className="mt-2 text-[11px] leading-5 text-muted-foreground/72">
-              Saving here replaces the current custom cron with this simpler cadence.
+              Saving here replaces the current custom cron with this simpler
+              cadence.
             </div>
           ) : null}
         </div>
@@ -461,50 +437,29 @@ export function ProactiveLifecyclePanel({
 
   if (compact) {
     return (
-      <section className="w-full overflow-hidden rounded-[20px] border border-border/40 bg-card">
-        <div className="flex items-center justify-between gap-3 px-3 py-3">
-          <div
-            className={`inline-flex items-center rounded-full border px-3 py-1 text-[10px] font-medium tracking-[0.14em] ${proactiveStateClasses(
-              state,
-            )}`}
-          >
+      <section className="w-full space-y-1">
+        <div className="flex items-center justify-between gap-2">
+          <Badge variant="outline" className={proactiveStateClasses(state)}>
             {proactiveStateLabel(state)}
-          </div>
+          </Badge>
           <div className="flex shrink-0 items-center gap-1.5">
             {onProactiveWorkspaceEnabledChange ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className={`h-8 rounded-full px-3 text-[11px] font-medium ${proactiveToggleClasses(
-                  proactiveWorkspaceEnabled,
-                )}`}
-                onClick={() =>
-                  !isUpdatingProactiveWorkspaceEnabled &&
-                  onProactiveWorkspaceEnabledChange(
-                    !proactiveWorkspaceEnabled,
-                  )
-                }
-                disabled={
-                  isUpdatingProactiveWorkspaceEnabled ||
-                  !hasWorkspace
-                }
-              >
-                {isUpdatingProactiveWorkspaceEnabled ? (
-                  <Loader2 size={12} className="animate-spin" />
-                ) : (
-                  <span
-                    className={`inline-block size-1.5 rounded-full ${
-                      proactiveToggleDotClasses(
-                        proactiveWorkspaceEnabled,
-                      )
-                    }`}
-                  />
-                )}
-                <span>
-                  {proactiveWorkspaceEnabled ? "Enabled" : "Disabled"}
-                </span>
-              </Button>
+              isUpdatingProactiveWorkspaceEnabled ? (
+                <Loader2
+                  size={12}
+                  className="animate-spin text-muted-foreground"
+                />
+              ) : (
+                <Switch
+                  checked={proactiveWorkspaceEnabled}
+                  onCheckedChange={(checked) =>
+                    onProactiveWorkspaceEnabledChange(checked)
+                  }
+                  disabled={
+                    isUpdatingProactiveWorkspaceEnabled || !hasWorkspace
+                  }
+                />
+              )
             ) : null}
             {onTriggerProposal ? (
               <Tooltip>
@@ -513,11 +468,11 @@ export function ProactiveLifecyclePanel({
                     <Button
                       type="button"
                       size="icon-xs"
-                      variant="outline"
-                      aria-label="Run proactive analysis"
+                      variant="ghost"
+                      aria-label="Run analysis"
                       onClick={onTriggerProposal}
                       disabled={!hasWorkspace || isTriggeringProposal}
-                      className="rounded-full border-border/45 bg-background/90 text-muted-foreground hover:border-primary/35 hover:bg-background hover:text-primary"
+                      className="text-muted-foreground hover:text-primary"
                     />
                   }
                 >
@@ -535,9 +490,7 @@ export function ProactiveLifecyclePanel({
         <ProactiveScheduleEditor
           hasWorkspace={hasWorkspace}
           proactiveHeartbeatCron={proactiveHeartbeatCron}
-          isLoadingProactiveHeartbeatConfig={
-            isLoadingProactiveHeartbeatConfig
-          }
+          isLoadingProactiveHeartbeatConfig={isLoadingProactiveHeartbeatConfig}
           isUpdatingProactiveHeartbeatConfig={
             isUpdatingProactiveHeartbeatConfig
           }
@@ -549,7 +502,7 @@ export function ProactiveLifecyclePanel({
   }
 
   return (
-    <section className="w-full overflow-hidden rounded-[20px] border border-border/40 bg-card shadow-sm">
+    <section className="w-full overflow-hidden rounded-xl border border-border/40 bg-card shadow-sm">
       <div className="px-4 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
@@ -563,45 +516,27 @@ export function ProactiveLifecyclePanel({
             ) : null}
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1.5">
-            <div
-              className={`inline-flex items-center rounded-full border px-3 py-1 text-[10px] font-medium tracking-[0.14em] ${proactiveStateClasses(
-                state,
-              )}`}
-            >
+            <Badge variant="outline" className={proactiveStateClasses(state)}>
               {proactiveStateLabel(state)}
-            </div>
+            </Badge>
             <div className="flex items-center gap-1.5">
               {onProactiveWorkspaceEnabledChange ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className={`h-8 rounded-full px-3 text-[11px] font-medium ${proactiveToggleClasses(
-                    proactiveWorkspaceEnabled,
-                  )}`}
-                  onClick={() =>
-                    !isUpdatingProactiveWorkspaceEnabled &&
-                    onProactiveWorkspaceEnabledChange(
-                      !proactiveWorkspaceEnabled,
-                    )
-                  }
-                  disabled={
-                    isUpdatingProactiveWorkspaceEnabled || !hasWorkspace
-                  }
-                >
-                  {isUpdatingProactiveWorkspaceEnabled ? (
-                    <Loader2 size={12} className="animate-spin" />
-                  ) : (
-                    <span
-                      className={`inline-block size-1.5 rounded-full ${proactiveToggleDotClasses(
-                        proactiveWorkspaceEnabled,
-                      )}`}
-                    />
-                  )}
-                  <span>
-                    {proactiveWorkspaceEnabled ? "Enabled" : "Disabled"}
-                  </span>
-                </Button>
+                isUpdatingProactiveWorkspaceEnabled ? (
+                  <Loader2
+                    size={12}
+                    className="animate-spin text-muted-foreground"
+                  />
+                ) : (
+                  <Switch
+                    checked={proactiveWorkspaceEnabled}
+                    onCheckedChange={(checked) =>
+                      onProactiveWorkspaceEnabledChange(checked)
+                    }
+                    disabled={
+                      isUpdatingProactiveWorkspaceEnabled || !hasWorkspace
+                    }
+                  />
+                )
               ) : null}
               {onTriggerProposal ? (
                 <Tooltip>
@@ -635,9 +570,7 @@ export function ProactiveLifecyclePanel({
         hasWorkspace={hasWorkspace}
         proactiveHeartbeatCron={proactiveHeartbeatCron}
         isLoadingProactiveHeartbeatConfig={isLoadingProactiveHeartbeatConfig}
-        isUpdatingProactiveHeartbeatConfig={
-          isUpdatingProactiveHeartbeatConfig
-        }
+        isUpdatingProactiveHeartbeatConfig={isUpdatingProactiveHeartbeatConfig}
         onProactiveHeartbeatCronChange={onProactiveHeartbeatCronChange}
       />
     </section>

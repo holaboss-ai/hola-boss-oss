@@ -245,7 +245,7 @@ export function OperationsDrawer({
   }, [activeTab, selectedWorkspaceId]);
 
   return (
-    <aside className="theme-shell neon-border relative flex h-full min-h-0 min-w-[296px] max-w-[336px] flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
+    <aside className="theme-shell neon-border relative flex h-full min-h-0 min-w-[296px] max-w-[336px] flex-col overflow-hidden rounded-xl shadow-lg">
       <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border/40 px-3 py-2">
         <div className="flex items-center gap-1.5">
           <DrawerTabButton
@@ -297,9 +297,7 @@ export function OperationsDrawer({
             onProactiveWorkspaceEnabledChange={
               onProactiveWorkspaceEnabledChange
             }
-            onProactiveHeartbeatCronChange={
-              onProactiveHeartbeatCronChange
-            }
+            onProactiveHeartbeatCronChange={onProactiveHeartbeatCronChange}
             onAcceptProposal={onAcceptProposal}
             onDismissProposal={onDismissProposal}
           />
@@ -374,9 +372,7 @@ export function OperationsInboxPane({
       selectedWorkspaceName={selectedWorkspaceName}
       proactiveWorkspaceEnabled={proactiveWorkspaceEnabled}
       isLoadingProactiveWorkspaceEnabled={isLoadingProactiveWorkspaceEnabled}
-      isUpdatingProactiveWorkspaceEnabled={
-        isUpdatingProactiveWorkspaceEnabled
-      }
+      isUpdatingProactiveWorkspaceEnabled={isUpdatingProactiveWorkspaceEnabled}
       proactiveHeartbeatCron={proactiveHeartbeatCron}
       isLoadingProactiveHeartbeatConfig={isLoadingProactiveHeartbeatConfig}
       isUpdatingProactiveHeartbeatConfig={isUpdatingProactiveHeartbeatConfig}
@@ -467,13 +463,11 @@ function runningSessionState(entry: {
   return "IDLE";
 }
 
-function runningSessionStateTimestamp(
-  entry: {
-    status: string;
-    updated_at: string;
-    last_turn_completed_at: string | null;
-  },
-): string {
+function runningSessionStateTimestamp(entry: {
+  status: string;
+  updated_at: string;
+  last_turn_completed_at: string | null;
+}): string {
   if (
     entry.status === "BUSY" ||
     entry.status === "QUEUED" ||
@@ -539,9 +533,11 @@ function compareRunningSessionEntries(
   return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
 }
 
-function runningSessionStatusIndicator(
-  status: string,
-): { className: string; icon: ReactNode; label: string } {
+function runningSessionStatusIndicator(status: string): {
+  className: string;
+  icon: ReactNode;
+  label: string;
+} {
   switch (status) {
     case "RUNNING":
       return {
@@ -557,13 +553,13 @@ function runningSessionStatusIndicator(
       };
     case "WAITING":
       return {
-        className: "text-amber-600",
+        className: "text-warning",
         icon: <Clock size={14} />,
         label: "Waiting for input",
       };
     case "PAUSED":
       return {
-        className: "text-orange-600",
+        className: "text-warning",
         icon: <Pause size={14} />,
         label: "Paused",
       };
@@ -575,7 +571,7 @@ function runningSessionStatusIndicator(
       };
     case "COMPLETED":
       return {
-        className: "text-emerald-600",
+        className: "text-success",
         icon: <Check size={14} />,
         label: "Completed",
       };
@@ -728,9 +724,7 @@ function InboxPanel({
               onProactiveWorkspaceEnabledChange={
                 onProactiveWorkspaceEnabledChange
               }
-              onProactiveHeartbeatCronChange={
-                onProactiveHeartbeatCronChange
-              }
+              onProactiveHeartbeatCronChange={onProactiveHeartbeatCronChange}
               compact
             />
           </div>
@@ -852,15 +846,15 @@ function SignedOutInboxNotice({
   isAuthPending: boolean;
 }) {
   return (
-    <div className="rounded-[22px] border border-amber-500/20 bg-amber-500/10 px-4 py-5">
+    <div className="rounded-[22px] border border-warning/20 bg-warning/10 px-4 py-5">
       <div className="flex flex-col gap-4">
         <div className="space-y-1">
           <div className="text-sm font-semibold text-foreground">
             Sign in to review task proposals
           </div>
           <div className="text-sm leading-6 text-muted-foreground">
-            Sign in to connect this desktop to your Holaboss account and review
-            Inbox proposals.
+            Sign in to connect this desktop to your account and review Inbox
+            proposals.
           </div>
         </div>
         <div>
@@ -966,7 +960,8 @@ function RunningPanel({
                         {session.title}
                       </div>
                       <div className="mt-1 text-xs text-muted-foreground">
-                        {session.stateDetail} {relativeTime(session.stateTimestamp)}
+                        {session.stateDetail}{" "}
+                        {relativeTime(session.stateTimestamp)}
                       </div>
                       {session.lastError ? (
                         <div className="mt-1.5 truncate text-xs text-destructive">

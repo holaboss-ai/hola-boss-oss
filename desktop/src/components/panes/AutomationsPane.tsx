@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Clock3, Loader2, MoreHorizontal, Play, Plus, Trash2 } from "lucide-react";
-import { PaneCard } from "@/components/ui/PaneCard";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { PaneCard } from "@/components/ui/PaneCard";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -378,28 +379,24 @@ export function AutomationsPane({
 
           <div className="theme-subtle-surface mt-5 inline-flex items-center rounded-xl border border-border/45 p-1">
             <div className="inline-flex items-center gap-1">
-              <button
+              <Button
                 type="button"
+                variant={activeTab === "scheduled" ? "secondary" : "ghost"}
+                size="default"
                 onClick={() => setActiveTab("scheduled")}
-                className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-colors ${
-                  activeTab === "scheduled"
-                    ? "bg-card text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
+                className={activeTab === "scheduled" ? "shadow-sm" : ""}
               >
                 Scheduled
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant={activeTab === "completed" ? "secondary" : "ghost"}
+                size="default"
                 onClick={() => setActiveTab("completed")}
-                className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-colors ${
-                  activeTab === "completed"
-                    ? "bg-card text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
+                className={activeTab === "completed" ? "shadow-sm" : ""}
               >
                 Completed
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -444,11 +441,12 @@ export function AutomationsPane({
                               {jobTitle(job)}
                             </div>
                             <div className="mt-1">
-                              <span
-                                className={`inline-flex h-5 items-center rounded-full border px-2 text-[10px] font-medium uppercase tracking-[0.12em] ${jobKindClassName(job)}`}
+                              <Badge
+                                variant="outline"
+                                className={`uppercase tracking-[0.12em] ${jobKindClassName(job)}`}
                               >
                                 {jobKindLabel(job)}
-                              </span>
+                              </Badge>
                             </div>
                           </div>
 
@@ -564,11 +562,12 @@ export function AutomationsPane({
                       </div>
 
                       <div>
-                        <span
-                          className={`inline-flex h-6 items-center rounded-full border px-2 text-[11px] font-medium ${completedStatusClassName(run.status)}`}
+                        <Badge
+                          variant="outline"
+                          className={completedStatusClassName(run.status)}
                         >
                           {completedStatusLabel(run.status)}
-                        </span>
+                        </Badge>
                       </div>
                     </button>
                   ))}

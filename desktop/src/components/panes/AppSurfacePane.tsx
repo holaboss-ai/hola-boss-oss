@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, LoaderCircle, Plug, RefreshCw, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { useWorkspaceDesktop } from "@/lib/workspaceDesktop";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
 import { getWorkspaceAppDefinition, type WorkspaceAppDefinition, type WorkspaceInstalledAppDefinition } from "@/lib/workspaceApps";
@@ -173,15 +174,16 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
             <div className="text-xs leading-5 text-foreground">{error}</div>
           </div>
           <div className="mt-3">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="default"
               onClick={() => void handleRemove()}
               disabled={isRemoving}
-              className="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
             >
               {isRemoving ? <LoaderCircle size={13} className="animate-spin" /> : <Trash2 size={13} />}
               Remove
-            </button>
+            </Button>
           </div>
           {actionError ? (
             <div className="mt-2 rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive">
@@ -262,41 +264,49 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
         {/* Actions pinned to bottom */}
         <div className="border-t border-border p-3">
           <div className="flex flex-col gap-1.5">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="default"
               onClick={() => setReloadKey((k) => k + 1)}
-              className="flex h-8 items-center justify-center gap-2 rounded-md border border-border text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              className="w-full justify-center"
             >
               <RefreshCw size={12} />
               Reload
-            </button>
+            </Button>
             {confirmRemove ? (
               <div className="flex items-center gap-1.5">
-                <button
+                <Button
                   type="button"
+                  variant="destructive"
+                  size="default"
                   onClick={() => void handleRemove()}
                   disabled={isRemoving}
-                  className="flex h-8 flex-1 items-center justify-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 text-xs text-destructive transition-colors hover:bg-destructive/15 disabled:opacity-50"
+                  className="flex-1 justify-center"
                 >
                   {isRemoving ? "Removing..." : "Confirm"}
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="outline"
+                  size="default"
                   onClick={() => setConfirmRemove(false)}
-                  className="flex h-8 flex-1 items-center justify-center rounded-md border border-border text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                  className="flex-1 justify-center"
                 >
                   Cancel
-                </button>
+                </Button>
               </div>
             ) : (
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="default"
                 onClick={() => setConfirmRemove(true)}
-                className="flex h-8 items-center justify-center gap-2 rounded-md border border-border text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                className="w-full justify-center"
               >
                 <Trash2 size={12} />
                 Remove app
-              </button>
+              </Button>
             )}
           </div>
 
@@ -336,14 +346,16 @@ export function AppSurfacePane({ appId, app: providedApp, resourceId, view }: Ap
               <div className="max-w-sm rounded-lg border border-destructive/25 bg-destructive/5 p-4 text-center">
                 <div className="text-sm font-medium text-foreground">App preview unavailable</div>
                 <div className="mt-2 text-xs leading-5 text-muted-foreground">{frameError}</div>
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="default"
                   onClick={() => setReloadKey((k) => k + 1)}
-                  className="mt-3 inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-xs text-foreground transition-colors hover:bg-accent"
+                  className="mt-3"
                 >
                   <RefreshCw size={12} />
                   Retry
-                </button>
+                </Button>
               </div>
             </div>
           ) : null}
