@@ -35,6 +35,7 @@ import {
   Waypoints,
   X,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PaneCard } from "@/components/ui/PaneCard";
@@ -4342,23 +4343,27 @@ export function ChatPane({
                 </div>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => openExternalUrl(billingLinks?.addCreditsUrl)}
-                  className="inline-flex items-center rounded-full border border-primary/35 bg-primary/10 px-3 py-1.5 text-[12px] font-medium text-primary transition hover:bg-primary/16"
+                  className="rounded-full border-primary/35 bg-primary/10 text-primary hover:bg-primary/16"
                 >
                   Add credits
-                </button>
+                </Button>
                 {showOutOfCreditsWarning ? (
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={() =>
                       openExternalUrl(billingLinks?.billingPageUrl)
                     }
-                    className="inline-flex items-center rounded-full border border-border/60 bg-background px-3 py-1.5 text-[12px] font-medium text-foreground transition hover:border-primary/35 hover:text-primary"
+                    className="rounded-full"
                   >
                     Manage on web
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             </div>
@@ -4379,13 +4384,15 @@ export function ChatPane({
                   <div className="text-[10px] tracking-[0.12em] text-muted-foreground">
                     Stream telemetry ({streamTelemetry.length})
                   </div>
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="xs"
                     onClick={() => setStreamTelemetry([])}
-                    className="rounded border border-border/50 px-2 py-1 text-[10px] text-muted-foreground transition hover:border-primary/35 hover:text-foreground"
+                    className="text-[10px]"
                   >
                     Clear
-                  </button>
+                  </Button>
                 </div>
                 <div className="bg-muted max-h-36 overflow-y-auto rounded border border-border/35 p-2 font-mono text-[10px] text-muted-foreground">
                   {streamTelemetryTail.length === 0 ? (
@@ -5494,29 +5501,33 @@ function AssistantTurnMemoryProposals({
               </div>
 
               <div className="flex shrink-0 items-start gap-2">
-                <div className="rounded-full border border-border/45 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                <Badge variant="outline" className="uppercase tracking-[0.14em]">
                   {memoryProposalStateLabel(proposal.state)}
-                </div>
+                </Badge>
                 {isPending ? (
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="icon"
                     onClick={() => onEditProposal(proposal.proposal_id)}
-                    className="grid h-9 w-9 place-items-center rounded-[14px] border border-border/45 text-muted-foreground transition hover:border-border/70 hover:text-foreground"
+                    className="rounded-[14px]"
                     aria-label="Edit memory proposal"
                   >
                     <PencilLine size={14} />
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             </div>
 
             {isPending ? (
               <div className="mt-4 flex flex-wrap gap-2">
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="lg"
                   onClick={() => onDismissProposal(proposal)}
                   disabled={isActing}
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl border border-border/45 px-3 text-sm text-muted-foreground transition hover:border-primary/28 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-2xl"
                 >
                   {isActing && proposalAction?.action === "dismiss" ? (
                     <Loader2 size={12} className="animate-spin" />
@@ -5524,12 +5535,14 @@ function AssistantTurnMemoryProposals({
                     <X size={12} />
                   )}
                   <span>Dismiss</span>
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="outline"
+                  size="lg"
                   onClick={() => onAcceptProposal(proposal)}
                   disabled={isActing}
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl border border-primary/40 bg-primary/10 px-3 text-sm text-primary transition hover:bg-primary/14 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-2xl border-primary/40 bg-primary/10 text-primary hover:bg-primary/14"
                 >
                   {isActing && proposalAction?.action === "accept" ? (
                     <Loader2 size={12} className="animate-spin" />
@@ -5537,7 +5550,7 @@ function AssistantTurnMemoryProposals({
                     <Check size={12} />
                   )}
                   <span>Accept</span>
-                </button>
+                </Button>
               </div>
             ) : null}
           </article>
@@ -5594,14 +5607,16 @@ function ArtifactBrowserModal({
               {outputs.length} artifact{outputs.length === 1 ? "" : "s"}
             </div>
           </div>
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="icon"
             onClick={onClose}
-            className="grid h-9 w-9 place-items-center rounded-full border border-border/45 text-muted-foreground transition hover:border-border/70 hover:text-foreground"
+            className="rounded-full"
             aria-label="Close artifacts browser"
           >
             <X size={16} />
-          </button>
+          </Button>
         </div>
 
         <div className="flex flex-wrap gap-2 px-5 py-4">
@@ -5652,9 +5667,9 @@ function ArtifactBrowserModal({
                     </div>
                   </div>
                   {outputChangeLabel(output) ? (
-                    <div className="rounded-full border border-border/45 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                    <Badge variant="outline" className="uppercase tracking-[0.12em]">
                       {outputChangeLabel(output)}
-                    </div>
+                    </Badge>
                   ) : null}
                 </button>
               ))}
@@ -6310,10 +6325,12 @@ function Composer({
           >
             {noAvailableModels ? (
               <>
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="lg"
                   onClick={onOpenModelProviders}
-                  className="bg-card flex h-9 shrink-0 items-center justify-between gap-2 rounded-[11px] border border-border/28 px-3 text-left text-[12px] font-semibold text-foreground transition hover:border-primary/35 hover:bg-card/92"
+                  className="shrink-0 justify-between rounded-[11px] bg-card text-[12px] font-semibold hover:border-primary/35 hover:bg-card/92"
                   aria-label="Configure model providers"
                 >
                   <span className="flex min-w-0 items-center gap-2">
@@ -6327,7 +6344,7 @@ function Composer({
                     size={14}
                     className="shrink-0 text-muted-foreground"
                   />
-                </button>
+                </Button>
                 <div className="min-w-0 text-[10px] leading-5 text-muted-foreground">
                   Open provider settings to connect a model.
                 </div>
