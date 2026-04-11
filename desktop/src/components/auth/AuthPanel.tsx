@@ -12,6 +12,8 @@ import ollamaLogoMarkup from "@/assets/providers/ollama.svg?raw";
 import openaiLogoMarkup from "@/assets/providers/openai.svg?raw";
 import openrouterLogoMarkup from "@/assets/providers/openrouter.svg?raw";
 import { BillingSummaryCard } from "@/components/billing/BillingSummaryCard";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -1165,11 +1167,11 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
   const badgeClassName =
     statusTone === "error"
-      ? "border-rose-400/35 bg-rose-500/10 text-rose-400"
+      ? "border-destructive/30 bg-destructive/10 text-destructive"
       : statusTone === "ready"
-        ? "border-neon-green/35 bg-neon-green/10 text-neon-green"
+        ? "border-success/30 bg-success/10 text-success"
         : statusTone === "syncing"
-          ? "border-amber-300/35 bg-amber-400/10 text-amber-300"
+          ? "border-warning/30 bg-warning/10 text-warning"
           : "border-border/45 bg-muted/40 text-muted-foreground";
 
   useEffect(() => {
@@ -1199,7 +1201,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         <Loader2 size={18} className="animate-spin" />
       </div>
       <div className="text-base font-medium text-foreground">
-        {isExchangingRuntimeBinding ? "Refreshing desktop connection..." : "Connecting your Holaboss account..."}
+        {isExchangingRuntimeBinding ? "Refreshing desktop connection..." : "Connecting your account..."}
       </div>
       <div className="max-w-[520px] text-sm leading-6 text-muted-foreground">
         Finalizing your desktop session and runtime binding. This should only take a moment.
@@ -1789,8 +1791,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       <div className="grid gap-2">
         <label className="grid gap-1">
           <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Base URL</span>
-          <input
-            className="auth-settings-control theme-control-surface h-9 rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground outline-none transition"
+          <Input
             value={draft.baseUrl}
             onChange={(event) => updateProviderDraft(providerId, { baseUrl: event.target.value })}
             placeholder={template.defaultBaseUrl}
@@ -1799,8 +1800,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         </label>
         <label className="grid gap-1">
           <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">API Key</span>
-          <input
-            className="auth-settings-control theme-control-surface h-9 rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground outline-none transition"
+          <Input
             type="password"
             value={draft.apiKey}
             onChange={(event) => updateProviderDraft(providerId, { apiKey: event.target.value })}
@@ -1819,22 +1819,22 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
           />
         </label>
         <div className="flex flex-wrap gap-2 pt-1">
-          <button
-            type="button"
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => void handleSaveRuntimeSettings(providerId)}
             disabled={isSavingRuntimeConfigDocument}
-            className="theme-control-surface rounded-[10px] border border-primary/30 bg-primary/8 px-3 py-2 text-sm text-foreground transition hover:border-primary/45 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isSavingRuntimeConfigDocument ? "Saving..." : "Save"}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => handleCancelProviderEditing(providerId)}
             disabled={isSavingRuntimeConfigDocument}
-            className="theme-control-surface rounded-[10px] border border-border/45 px-3 py-2 text-sm text-foreground transition hover:border-border/70 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Cancel
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -1899,7 +1899,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   type="button"
                   onClick={() => void handleStartSignIn()}
                   disabled={isStartingSignIn}
-                  className={`${actionButtonClassName} border border-neon-green/40 bg-neon-green/10 text-neon-green hover:bg-neon-green/16`}
+                  className={`${actionButtonClassName} border border-success/30 bg-success/10 text-success hover:bg-success/16`}
                 >
                   {isStartingSignIn ? "Opening..." : "Sign in"}
                 </button>
@@ -1953,7 +1953,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                   setExpandedProviderId(providerId);
                 }}
                 disabled={isSavingRuntimeConfigDocument}
-                className={`${actionButtonClassName} border border-border/55 text-foreground hover:border-neon-green/35 hover:text-neon-green`}
+                className={`${actionButtonClassName} border border-border/55 text-foreground hover:border-success/30 hover:text-success`}
               >
                 Connect
               </button>
@@ -2039,8 +2039,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 </Select>
               ) : (
                 <>
-                  <input
-                    className="auth-settings-control theme-control-surface h-9 rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground outline-none transition"
+                  <Input
                     value={backgroundTasksDraft.model}
                     onChange={(event) => updateBackgroundTasksDraft({ model: event.target.value })}
                     placeholder={backgroundTaskModelPlaceholder(
@@ -2142,8 +2141,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 </Select>
               ) : (
                 <>
-                  <input
-                    className="auth-settings-control theme-control-surface h-9 rounded-[10px] border border-border/45 px-2.5 text-sm text-foreground outline-none transition"
+                  <Input
                     value={imageGenerationDraft.model}
                     onChange={(event) => updateImageGenerationDraft({ model: event.target.value })}
                     placeholder={imageGenerationModelPlaceholder(
@@ -2227,8 +2225,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               <div className="min-w-0">
                 <div className="truncate text-[28px] font-semibold tracking-[-0.04em] text-foreground">
                   {isSignedIn
-                    ? sessionDisplayName(session) || "Holaboss account"
-                    : "Holaboss account"}
+                    ? sessionDisplayName(session) || "Your account"
+                    : "Your account"}
                 </div>
                 <div className="mt-1 truncate text-base text-muted-foreground">
                   {isSignedIn ? sessionEmail(session) || "Signed in" : "Not connected"}
@@ -2257,38 +2255,36 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             <div className="flex shrink-0 items-center gap-2 self-start md:self-auto">
               {isSignedIn ? (
                 <>
-                  <button
-                    type="button"
+                  <Button
+                    variant="outline"
+                    size="icon-lg"
                     aria-label="Refresh session"
                     onClick={() => void handleRefreshSession()}
                     disabled={sessionState.isPending}
-                    className="grid h-11 w-11 place-items-center rounded-[16px] border border-border/45 bg-background text-muted-foreground transition hover:border-primary/35 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {sessionState.isPending ? (
                       <Loader2 size={16} className="animate-spin" />
                     ) : (
                       <RefreshCw size={16} />
                     )}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="icon-lg"
                     aria-label="Sign out"
                     onClick={() => void handleSignOut()}
                     disabled={!isSignedIn}
-                    className="grid h-11 w-11 place-items-center rounded-[16px] border border-destructive/20 bg-destructive/5 text-destructive transition hover:border-destructive/35 hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <LogOut size={16} />
-                  </button>
+                  </Button>
                 </>
               ) : (
-                <button
-                  className="inline-flex h-10 items-center justify-center rounded-full border border-primary/35 bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                  type="button"
+                <Button
                   onClick={() => void handleStartSignIn()}
                   disabled={isStartingSignIn}
                 >
                   {isStartingSignIn ? "Opening sign-in..." : "Sign in"}
-                </button>
+                </Button>
               )}
             </div>
           </div>
@@ -2297,8 +2293,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             <div
               className={`mt-4 rounded-[20px] border px-4 py-3 text-sm ${
                 authError
-                  ? "border-rose-400/25 bg-rose-500/8 text-rose-400"
-                  : "border-neon-green/25 bg-neon-green/8 text-neon-green"
+                  ? "border-destructive/30 bg-destructive/10 text-destructive"
+                  : "border-success/30 bg-success/10 text-success"
               }`}
             >
               {authError || authMessage}
@@ -2326,7 +2322,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             className={`mt-3 rounded-[16px] border px-4 py-3 text-sm ${
               authError
                 ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
-                : "border-neon-green/35 bg-neon-green/8 text-neon-green"
+                : "border-success/30 bg-success/10 text-success"
             }`}
           >
             {authError || authMessage}
@@ -2358,7 +2354,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 </div>
                 <div className="min-w-0">
                   <div className="text-base font-medium text-foreground">
-                    {isSignedIn ? sessionDisplayName(session) || "Holaboss account" : "Holaboss account"}
+                    {isSignedIn ? sessionDisplayName(session) || "Your account" : "Your account"}
                   </div>
                   <div className="mt-0.5 truncate text-sm text-muted-foreground">
                     {isSignedIn ? sessionEmail(session) || "Signed in" : "Not connected"}
@@ -2384,33 +2380,29 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
             <div className="mt-4 flex flex-wrap gap-2">
               {!isSignedIn && (
-                <button
-                  className="inline-flex h-10 items-center justify-center rounded-[16px] border border-primary/40 bg-primary/10 px-4 text-sm text-primary transition hover:bg-primary/16 disabled:cursor-not-allowed disabled:opacity-50"
-                  type="button"
+                <Button
                   onClick={() => void handleStartSignIn()}
                   disabled={isStartingSignIn}
                 >
                   {isStartingSignIn ? "Opening sign-in..." : "Sign in with browser"}
-                </button>
+                </Button>
               )}
 
-              <button
-                className="theme-control-surface inline-flex h-10 items-center justify-center rounded-[16px] border border-border/45 px-4 text-sm text-foreground transition hover:border-primary/35 disabled:cursor-not-allowed disabled:opacity-50"
-                type="button"
+              <Button
+                variant="outline"
                 onClick={() => void handleRefreshSession()}
                 disabled={sessionState.isPending}
               >
                 Refresh session
-              </button>
+              </Button>
 
-              <button
-                className="inline-flex h-10 items-center justify-center rounded-[16px] border border-destructive/30 bg-destructive/10 px-4 text-sm text-destructive transition hover:border-destructive/45 hover:bg-destructive/15 disabled:cursor-not-allowed disabled:opacity-50"
-                type="button"
+              <Button
+                variant="destructive"
                 onClick={() => void handleSignOut()}
                 disabled={!isSignedIn}
               >
                 Sign out
-              </button>
+              </Button>
             </div>
 
             {(authMessage || authError) && (
@@ -2418,7 +2410,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                 className={`mt-3 rounded-[16px] border px-4 py-3 text-sm ${
                   authError
                     ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
-                    : "border-neon-green/35 bg-neon-green/8 text-neon-green"
+                    : "border-success/30 bg-success/10 text-success"
                 }`}
               >
                 {authError || authMessage}
@@ -2436,7 +2428,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               className={`mt-3 rounded-[16px] border px-4 py-3 text-sm ${
                 authError
                   ? "border-rose-400/35 bg-rose-500/8 text-rose-400"
-                  : "border-neon-green/35 bg-neon-green/8 text-neon-green"
+                  : "border-success/30 bg-success/10 text-success"
               }`}
             >
               {authError || authMessage}
