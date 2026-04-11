@@ -384,38 +384,22 @@ export function TopTabsBar({
           <DropdownMenu>
             <DropdownMenuTrigger
               ref={userButtonRef}
-              render={<Button variant="outline" size="icon-lg" />}
+              render={<Button variant="outline" size="icon-lg" className="relative" />}
             >
               <User2 />
+              <span
+                className={`absolute -right-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background ${
+                  runtimeStatus?.status === "running"
+                    ? "bg-success"
+                    : runtimeStatus?.status === "starting"
+                      ? "animate-pulse bg-warning"
+                      : runtimeStatus?.status === "error"
+                        ? "bg-destructive"
+                        : "bg-muted-foreground/40"
+                }`}
+              />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" sideOffset={8} className="w-56">
-              <DropdownMenuGroup>
-                <DropdownMenuLabel className="px-3 py-3">
-                  <div className="flex items-center gap-2.5">
-                    <span
-                      className={`size-2.5 shrink-0 rounded-full ${
-                        runtimeStatus?.status === "running"
-                          ? "bg-success"
-                          : runtimeStatus?.status === "starting"
-                            ? "animate-pulse bg-warning"
-                            : runtimeStatus?.status === "error"
-                              ? "bg-destructive"
-                              : "bg-muted-foreground/50"
-                      }`}
-                    />
-                    <span className="text-sm font-medium text-foreground">
-                      {runtimeStatus?.status === "running"
-                        ? "Runtime active"
-                        : runtimeStatus?.status === "starting"
-                          ? "Runtime starting"
-                          : runtimeStatus?.status === "error"
-                            ? "Runtime error"
-                            : "Runtime offline"}
-                    </span>
-                  </div>
-                </DropdownMenuLabel>
-              </DropdownMenuGroup>
-              <DropdownMenuSeparator />
+            <DropdownMenuContent align="end" sideOffset={8} className="w-52">
               <DropdownMenuGroup>
                 <DropdownMenuItem onClick={() => onOpenAccount?.()}>
                   <User2 />
