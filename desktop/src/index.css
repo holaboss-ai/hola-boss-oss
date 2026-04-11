@@ -130,20 +130,22 @@ body {
 /* ---- Scrollbars ---- */
 
 ::-webkit-scrollbar {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: color-mix(in oklch, var(--background) 90%, transparent);
-  border-radius: 9999px;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: color-mix(in oklch, var(--primary) 28%, transparent);
+  background: color-mix(in oklch, var(--foreground) 15%, transparent);
   border-radius: 9999px;
-  border: 1px solid transparent;
-  background-clip: padding-box;
+  max-height: 120px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklch, var(--foreground) 25%, transparent);
 }
 
 .chat-scrollbar-hidden {
