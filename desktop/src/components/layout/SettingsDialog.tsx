@@ -198,10 +198,10 @@ export function SettingsDialog({
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        className="pointer-events-auto relative z-10 grid h-[min(780px,calc(100vh-32px))] w-[min(1080px,calc(100vw-24px))] min-w-0 overflow-hidden rounded-[28px] border border-border bg-background shadow-lg grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[248px_minmax(0,1fr)] lg:grid-rows-1"
+        className="pointer-events-auto relative z-10 grid h-[min(680px,calc(100vh-32px))] w-[min(880px,calc(100vw-24px))] min-w-0 overflow-hidden rounded-2xl border border-border bg-background shadow-lg grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[220px_minmax(0,1fr)] lg:grid-rows-1"
       >
         <aside className="border-b border-sidebar-border bg-sidebar p-4 text-sidebar-foreground lg:border-b-0 lg:border-r">
-          <nav className="mt-6 grid gap-1.5">
+          <nav className="mt-6 grid gap-1">
             {SETTINGS_SECTIONS.map(({ id, label, icon: Icon }) => {
               const active = id === activeSection;
 
@@ -210,22 +210,14 @@ export function SettingsDialog({
                   key={id}
                   type="button"
                   onClick={() => onSectionChange(id)}
-                  className={`flex items-center gap-3 rounded-lg px-2.5 py-2 text-left transition ${
+                  className={`flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] transition-colors ${
                     active
                       ? "bg-sidebar-accent text-sidebar-accent-foreground"
                       : "text-sidebar-foreground/72 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                   }`}
                 >
-                  <span
-                    className={`grid h-8 w-8 shrink-0 place-items-center rounded-[10px] ${
-                      active
-                        ? "bg-sidebar-primary/12 text-sidebar-primary"
-                        : "text-sidebar-foreground/60"
-                    }`}
-                  >
-                    <Icon className="size-4" />
-                  </span>
-                  <span className="min-w-0 text-sm font-medium">{label}</span>
+                  <Icon className="size-4 shrink-0" />
+                  <span className="min-w-0 font-medium">{label}</span>
                 </button>
               );
             })}
@@ -233,22 +225,22 @@ export function SettingsDialog({
         </aside>
 
         <section className="flex min-h-0 min-w-0 flex-col overflow-hidden">
-          <header className="flex items-center justify-between gap-4 border-b border-border/35 px-6 py-5">
-            <div className="text-xl font-semibold text-foreground">
+          <header className="flex items-center justify-between gap-4 border-b border-border/35 px-6 py-4">
+            <div className="text-base font-semibold text-foreground">
               {titleForSection(activeSection)}
             </div>
 
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="icon"
               onClick={onClose}
               aria-label="Close settings"
-              className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-border/45 text-muted-foreground transition hover:border-primary/35 hover:text-foreground"
             >
               <X size={16} />
-            </button>
+            </Button>
           </header>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 [scrollbar-gutter:stable]">
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 [scrollbar-gutter:stable]">
             {activeSection === "account" ? (
               <div className="w-full">
                 <AuthPanel view="account" />
@@ -294,7 +286,7 @@ export function SettingsDialog({
                           key={themeOption}
                           type="button"
                           onClick={() => onThemeChange(themeOption)}
-                          className={`rounded-[20px] border p-3 text-left transition ${
+                          className={`rounded-xl border p-3 text-left transition-colors ${
                             selected
                               ? "border-primary/45 bg-primary/10 shadow-sm"
                               : "border-border/40 bg-card/80 hover:border-primary/28 hover:bg-accent"
@@ -346,7 +338,7 @@ export function SettingsDialog({
             ) : null}
 
             {activeSection === "about" ? (
-              <div className="grid max-w-[720px] gap-4">
+              <div className="grid max-w-[720px] gap-8">
                 <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
                   <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
                     Links
