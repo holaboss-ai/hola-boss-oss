@@ -438,6 +438,7 @@ interface RuntimeConfigPayload {
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
   defaultBackgroundModel: string | null;
+  defaultEmbeddingModel: string | null;
   defaultImageModel: string | null;
   controlPlaneBaseUrl: string | null;
   catalogVersion: string | null;
@@ -465,6 +466,7 @@ interface RuntimeConfigUpdatePayload {
   modelProxyBaseUrl?: string | null;
   defaultModel?: string | null;
   defaultBackgroundModel?: string | null;
+  defaultEmbeddingModel?: string | null;
   defaultImageModel?: string | null;
   controlPlaneBaseUrl?: string | null;
 }
@@ -596,6 +598,7 @@ let appUpdatePreferences: AppUpdatePreferencesPayload = {};
 let runtimeModelCatalogState: RuntimeModelCatalogPayload = {
   catalogVersion: null,
   defaultBackgroundModel: null,
+  defaultEmbeddingModel: null,
   defaultImageModel: null,
   providerModelGroups: [],
   fetchedAt: null,
@@ -893,6 +896,7 @@ function loadRuntimeModelCatalogCache(): RuntimeModelCatalogPayload {
       return {
         catalogVersion: null,
         defaultBackgroundModel: null,
+        defaultEmbeddingModel: null,
         defaultImageModel: null,
         providerModelGroups: [],
         fetchedAt: null,
@@ -910,6 +914,13 @@ function loadRuntimeModelCatalogCache(): RuntimeModelCatalogPayload {
           runtimeFirstNonEmptyString(
             payload.defaultBackgroundModel as string | undefined,
             payload.default_background_model as string | undefined,
+          ),
+        ) || null,
+      defaultEmbeddingModel:
+        normalizeRuntimeHolabossCatalogDefaultModelId(
+          runtimeFirstNonEmptyString(
+            payload.defaultEmbeddingModel as string | undefined,
+            payload.default_embedding_model as string | undefined,
           ),
         ) || null,
       defaultImageModel:
@@ -933,6 +944,7 @@ function loadRuntimeModelCatalogCache(): RuntimeModelCatalogPayload {
     return {
       catalogVersion: null,
       defaultBackgroundModel: null,
+      defaultEmbeddingModel: null,
       defaultImageModel: null,
       providerModelGroups: [],
       fetchedAt: null,
@@ -1334,6 +1346,7 @@ interface RuntimeBindingExchangePayload {
   model_proxy_base_url: string;
   default_model: string;
   default_background_model?: string;
+  default_embedding_model?: string;
   default_image_model?: string;
   instance_id: string;
   provider: string;
@@ -1344,6 +1357,7 @@ interface RuntimeBindingExchangePayload {
 interface RuntimeModelCatalogResponsePayload {
   catalog_version?: string;
   default_background_model?: string;
+  default_embedding_model?: string;
   default_image_model?: string;
   provider_model_groups?: RuntimeProviderModelGroupPayload[];
 }
@@ -1351,6 +1365,7 @@ interface RuntimeModelCatalogResponsePayload {
 interface RuntimeModelCatalogPayload {
   catalogVersion: string | null;
   defaultBackgroundModel: string | null;
+  defaultEmbeddingModel: string | null;
   defaultImageModel: string | null;
   providerModelGroups: RuntimeProviderModelGroupPayload[];
   fetchedAt: string | null;
@@ -3863,6 +3878,9 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
     const managedDefaultBackgroundModel = normalizeRuntimeHolabossCatalogDefaultModelId(
       update.defaultBackgroundModel,
     );
+    const managedDefaultEmbeddingModel = normalizeRuntimeHolabossCatalogDefaultModelId(
+      update.defaultEmbeddingModel,
+    );
     const managedDefaultImageModel = normalizeRuntimeHolabossCatalogDefaultModelId(
       update.defaultImageModel,
     );
@@ -3912,6 +3930,9 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
     const currentImageGeneration = runtimeConfigObject(
       runtimePayload.image_generation ?? runtimePayload.imageGeneration,
     );
+    const currentRecallEmbeddings = runtimeConfigObject(
+      runtimePayload.recall_embeddings ?? runtimePayload.recallEmbeddings,
+    );
     const currentImageGenerationProviderId = canonicalRuntimeProviderId(
       runtimeFirstNonEmptyString(
         currentImageGeneration.provider as string | undefined,
@@ -3924,7 +3945,20 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
       currentImageGeneration.model_id as string | undefined,
       currentImageGeneration.modelId as string | undefined,
     );
+    const currentRecallEmbeddingsProviderId = canonicalRuntimeProviderId(
+      runtimeFirstNonEmptyString(
+        currentRecallEmbeddings.provider as string | undefined,
+        currentRecallEmbeddings.provider_id as string | undefined,
+        currentRecallEmbeddings.providerId as string | undefined,
+      ),
+    );
+    const currentRecallEmbeddingsModel = runtimeFirstNonEmptyString(
+      currentRecallEmbeddings.model as string | undefined,
+      currentRecallEmbeddings.model_id as string | undefined,
+      currentRecallEmbeddings.modelId as string | undefined,
+    );
     delete runtimePayload.backgroundTasks;
+    delete runtimePayload.recallEmbeddings;
     delete runtimePayload.imageGeneration;
     if (
       managedDefaultBackgroundModel &&
@@ -3941,6 +3975,23 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
       };
     } else if (Object.keys(currentBackgroundTasks).length > 0) {
       runtimePayload.background_tasks = currentBackgroundTasks;
+    }
+    if (
+      managedDefaultEmbeddingModel &&
+      runtimeModelProxyApiKeyFromConfig(next) &&
+      runtimeConfigField(next.model_proxy_base_url) &&
+      (
+        Object.keys(currentRecallEmbeddings).length === 0 ||
+        (isHolabossProviderAlias(currentRecallEmbeddingsProviderId) &&
+          !currentRecallEmbeddingsModel)
+      )
+    ) {
+      runtimePayload.recall_embeddings = {
+        provider: RUNTIME_HOLABOSS_PROVIDER_ID,
+        model: managedDefaultEmbeddingModel,
+      };
+    } else if (Object.keys(currentRecallEmbeddings).length > 0) {
+      runtimePayload.recall_embeddings = currentRecallEmbeddings;
     }
     if (
       managedDefaultImageModel &&
@@ -4607,6 +4658,12 @@ function runtimeModelCatalogPayloadFromResponse(
           payload?.default_background_model as string | undefined,
         ) || "",
       ) || null,
+    defaultEmbeddingModel:
+      normalizeRuntimeHolabossCatalogDefaultModelId(
+        runtimeConfigField(
+          payload?.default_embedding_model as string | undefined,
+        ) || "",
+      ) || null,
     defaultImageModel:
       normalizeRuntimeHolabossCatalogDefaultModelId(
         runtimeConfigField(payload?.default_image_model as string | undefined) ||
@@ -4628,6 +4685,7 @@ async function syncRuntimeModelCatalogFromBinding(
   if (
     payload.catalogVersion ||
     payload.defaultBackgroundModel ||
+    payload.defaultEmbeddingModel ||
     payload.defaultImageModel ||
     payload.providerModelGroups.length > 0
   ) {
@@ -4646,6 +4704,7 @@ async function persistRuntimeModelCatalog(
   await writeJsonFile(runtimeModelCatalogCachePath(), {
     catalogVersion: payload.catalogVersion,
     defaultBackgroundModel: payload.defaultBackgroundModel,
+    defaultEmbeddingModel: payload.defaultEmbeddingModel,
     defaultImageModel: payload.defaultImageModel,
     providerModelGroups: payload.providerModelGroups,
     fetchedAt: payload.fetchedAt,
@@ -4656,6 +4715,7 @@ async function clearRuntimeModelCatalog(): Promise<void> {
   runtimeModelCatalogState = {
     catalogVersion: null,
     defaultBackgroundModel: null,
+    defaultEmbeddingModel: null,
     defaultImageModel: null,
     providerModelGroups: [],
     fetchedAt: null,
@@ -4694,6 +4754,13 @@ function shouldRefreshRuntimeModelCatalog(force = false): boolean {
     return true;
   }
   if (runtimeModelCatalogState.providerModelGroups.length === 0) {
+    return true;
+  }
+  if (
+    !runtimeModelCatalogState.defaultBackgroundModel ||
+    !runtimeModelCatalogState.defaultEmbeddingModel ||
+    !runtimeModelCatalogState.defaultImageModel
+  ) {
     return true;
   }
   return (
@@ -4753,9 +4820,15 @@ async function refreshRuntimeModelCatalogIfNeeded(options?: {
     return runtimeModelCatalogState;
   }
   if (!shouldRefreshRuntimeModelCatalog(Boolean(options?.force))) {
+    if (await syncManagedHolabossDefaultsToRuntimeConfigIfNeeded()) {
+      await emitRuntimeConfig();
+    }
     return runtimeModelCatalogState;
   }
   if (!options?.force && hasRecentRuntimeModelCatalogRefreshFailure()) {
+    if (await syncManagedHolabossDefaultsToRuntimeConfigIfNeeded()) {
+      await emitRuntimeConfig();
+    }
     return runtimeModelCatalogState;
   }
 
@@ -4768,6 +4841,9 @@ async function refreshRuntimeModelCatalogIfNeeded(options?: {
         await fetchDesktopRuntimeModelCatalog(),
       );
       await persistRuntimeModelCatalog(payload);
+      if (await syncManagedHolabossDefaultsToRuntimeConfigIfNeeded(payload)) {
+        await emitRuntimeConfig();
+      }
     });
   } catch (error) {
     lastRuntimeModelCatalogRefreshFailureAtMs = Date.now();
@@ -4777,6 +4853,28 @@ async function refreshRuntimeModelCatalogIfNeeded(options?: {
   }
 
   return runtimeModelCatalogState;
+}
+
+async function syncManagedHolabossDefaultsToRuntimeConfigIfNeeded(
+  managedCatalog: RuntimeModelCatalogPayload = runtimeModelCatalogState,
+): Promise<boolean> {
+  const currentConfig = await readRuntimeConfigFile();
+  const currentDocument = await readRuntimeConfigDocument();
+  if (
+    !runtimeBindingNeedsManagedHolabossDefaultsRefresh(
+      currentConfig,
+      currentDocument,
+    )
+  ) {
+    return false;
+  }
+
+  await writeRuntimeConfigFile({
+    defaultBackgroundModel: managedCatalog.defaultBackgroundModel,
+    defaultEmbeddingModel: managedCatalog.defaultEmbeddingModel,
+    defaultImageModel: managedCatalog.defaultImageModel,
+  });
+  return true;
 }
 
 function runtimeConfigRestartRequired(
@@ -4859,11 +4957,14 @@ async function withRuntimeConfigMutationLock<T>(
 
 async function getRuntimeConfig(): Promise<RuntimeConfigPayload> {
   const configPath = runtimeConfigPath();
-  const loaded = await readRuntimeConfigFile();
-  const document = await readRuntimeConfigDocument();
   const managedCatalog = await refreshRuntimeModelCatalogIfNeeded().catch(
     () => runtimeModelCatalogState,
   );
+  if (await syncManagedHolabossDefaultsToRuntimeConfigIfNeeded(managedCatalog)) {
+    await emitRuntimeConfig();
+  }
+  const loaded = await readRuntimeConfigFile();
+  const document = await readRuntimeConfigDocument();
   return {
     configPath,
     loadedFromFile:
@@ -4874,6 +4975,7 @@ async function getRuntimeConfig(): Promise<RuntimeConfigPayload> {
     modelProxyBaseUrl: loaded.model_proxy_base_url ?? null,
     defaultModel: loaded.default_model ?? null,
     defaultBackgroundModel: managedCatalog.defaultBackgroundModel,
+    defaultEmbeddingModel: managedCatalog.defaultEmbeddingModel,
     defaultImageModel: managedCatalog.defaultImageModel,
     controlPlaneBaseUrl: loaded.control_plane_base_url ?? null,
     catalogVersion: managedCatalog.catalogVersion,
@@ -5582,6 +5684,7 @@ function runtimeBindingNeedsManagedHolabossDefaultsRefresh(
     runtimeModelCatalogState.providerModelGroups.length > 0 &&
     (
       !runtimeModelCatalogState.defaultBackgroundModel ||
+      !runtimeModelCatalogState.defaultEmbeddingModel ||
       !runtimeModelCatalogState.defaultImageModel
     )
   ) {
@@ -5594,6 +5697,9 @@ function runtimeBindingNeedsManagedHolabossDefaultsRefresh(
   );
   const currentImageGeneration = runtimeConfigObject(
     runtimePayload.image_generation ?? runtimePayload.imageGeneration,
+  );
+  const currentRecallEmbeddings = runtimeConfigObject(
+    runtimePayload.recall_embeddings ?? runtimePayload.recallEmbeddings,
   );
   const currentBackgroundProviderId = canonicalRuntimeProviderId(
     runtimeFirstNonEmptyString(
@@ -5619,12 +5725,32 @@ function runtimeBindingNeedsManagedHolabossDefaultsRefresh(
     currentImageGeneration.model_id as string | undefined,
     currentImageGeneration.modelId as string | undefined,
   );
+  const currentRecallEmbeddingsProviderId = canonicalRuntimeProviderId(
+    runtimeFirstNonEmptyString(
+      currentRecallEmbeddings.provider as string | undefined,
+      currentRecallEmbeddings.provider_id as string | undefined,
+      currentRecallEmbeddings.providerId as string | undefined,
+    ),
+  );
+  const currentRecallEmbeddingsModel = runtimeFirstNonEmptyString(
+    currentRecallEmbeddings.model as string | undefined,
+    currentRecallEmbeddings.model_id as string | undefined,
+    currentRecallEmbeddings.modelId as string | undefined,
+  );
 
   return (
-    (isHolabossProviderAlias(currentBackgroundProviderId) &&
-      !currentBackgroundModel) ||
-    (isHolabossProviderAlias(currentImageGenerationProviderId) &&
-      !currentImageGenerationModel)
+    (Boolean(runtimeModelCatalogState.defaultBackgroundModel) &&
+      (Object.keys(currentBackgroundTasks).length === 0 ||
+        (isHolabossProviderAlias(currentBackgroundProviderId) &&
+          !currentBackgroundModel))) ||
+    (Boolean(runtimeModelCatalogState.defaultEmbeddingModel) &&
+      (Object.keys(currentRecallEmbeddings).length === 0 ||
+        (isHolabossProviderAlias(currentRecallEmbeddingsProviderId) &&
+          !currentRecallEmbeddingsModel))) ||
+    (Boolean(runtimeModelCatalogState.defaultImageModel) &&
+      (Object.keys(currentImageGeneration).length === 0 ||
+        (isHolabossProviderAlias(currentImageGenerationProviderId) &&
+          !currentImageGenerationModel)))
   );
 }
 
@@ -5804,6 +5930,7 @@ async function provisionRuntimeBindingForAuthenticatedUser(
         ),
         defaultModel: binding.default_model,
         defaultBackgroundModel: binding.default_background_model ?? null,
+        defaultEmbeddingModel: binding.default_embedding_model ?? null,
         defaultImageModel: binding.default_image_model ?? null,
         controlPlaneBaseUrl: DESKTOP_CONTROL_PLANE_BASE_URL,
       });
@@ -15904,6 +16031,7 @@ app.whenReady().then(async () => {
         ),
         defaultModel: binding.default_model,
         defaultBackgroundModel: binding.default_background_model ?? null,
+        defaultEmbeddingModel: binding.default_embedding_model ?? null,
         defaultImageModel: binding.default_image_model ?? null,
         controlPlaneBaseUrl: DESKTOP_CONTROL_PLANE_BASE_URL,
       });

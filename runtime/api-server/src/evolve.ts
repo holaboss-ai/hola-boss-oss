@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 
-import type { PostRunJobRecord, RuntimeStateStore, TaskProposalRecord } from "@holaboss/runtime-state-store";
+import type {
+  PostRunJobRecord,
+  RuntimeStateStore,
+  TaskProposalRecord,
+} from "@holaboss/runtime-state-store";
 
 import { createBackgroundTaskMemoryModelClient } from "./background-task-model.js";
 import {

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import * as sqliteVec from "sqlite-vec";
 
 const RUNTIME_DB_PATH_ENV = "HOLABOSS_RUNTIME_DB_PATH";
 const WORKSPACE_RUNTIME_DIRNAME = ".holaboss";
@@ -219,6 +220,7 @@ export type MemoryEntryType = "preference" | "identity" | "fact" | "procedure" |
 export type MemoryVerificationPolicy = "none" | "check_before_use" | "must_reconfirm";
 export type MemoryStalenessPolicy = "stable" | "time_sensitive" | "workspace_sensitive";
 export type MemoryEntrySourceType = "session_message" | "assistant_turn" | "turn_result" | "permission_denial" | "manual";
+export type MemoryEmbeddingScopeBucket = "workspace" | "preference" | "identity";
 
 export interface MemoryEntryRecord {
   memoryId: string;
@@ -245,6 +247,30 @@ export interface MemoryEntryRecord {
   supersededAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface MemoryEmbeddingIndexRecord {
+  vecRowid: number;
+  memoryId: string;
+  path: string;
+  workspaceId: string | null;
+  scopeBucket: MemoryEmbeddingScopeBucket;
+  memoryType: string;
+  contentFingerprint: string;
+  embeddingModel: string;
+  embeddingDim: number;
+  indexedAt: string;
+  updatedAt: string;
+}
+
+export interface MemoryVectorSearchResult {
+  vecRowid: number;
+  distance: number;
+  memoryId: string;
+  path: string;
+  workspaceId: string | null;
+  scopeBucket: MemoryEmbeddingScopeBucket;
+  memoryType: string;
 }
 
 export interface OutputFolderRecord {
@@ -628,6 +654,7 @@ export class RuntimeStateStore {
   readonly workspaceRoot: string;
   readonly sandboxAgentHarness: string | null;
   #db: Database.Database | null = null;
+  #vectorIndexSupported = false;
 
   constructor(options: RuntimeStateStoreOptions = {}) {
     this.dbPath = runtimeDbPath(options);
@@ -638,6 +665,12 @@ export class RuntimeStateStore {
   close(): void {
     this.#db?.close();
     this.#db = null;
+    this.#vectorIndexSupported = false;
+  }
+
+  supportsVectorIndex(): boolean {
+    void this.db();
+    return this.#vectorIndexSupported;
   }
 
   workspaceIdentityPath(workspaceId: string): string {
@@ -2476,6 +2509,229 @@ export class RuntimeStateStore {
     }));
   }
 
+  getMemoryEmbeddingIndexByMemoryId(memoryId: string): MemoryEmbeddingIndexRecord | null {
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>("SELECT * FROM memory_embedding_index WHERE memory_id = ? LIMIT 1")
+      .get(memoryId);
+    return row ? this.rowToMemoryEmbeddingIndex(row) : null;
+  }
+
+  getMemoryEmbeddingIndexByPath(pathValue: string): MemoryEmbeddingIndexRecord | null {
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>("SELECT * FROM memory_embedding_index WHERE path = ? LIMIT 1")
+      .get(pathValue);
+    return row ? this.rowToMemoryEmbeddingIndex(row) : null;
+  }
+
+  listMemoryEmbeddingIndexes(params: {
+    memoryIds?: string[];
+    workspaceId?: string | null;
+    scopeBucket?: MemoryEmbeddingScopeBucket | null;
+    embeddingModel?: string | null;
+    limit?: number;
+    offset?: number;
+  } = {}): MemoryEmbeddingIndexRecord[] {
+    let query = `
+      SELECT *
+      FROM memory_embedding_index
+      WHERE 1 = 1
+    `;
+    const values: Array<string | number> = [];
+    if (params.memoryIds && params.memoryIds.length > 0) {
+      query += ` AND memory_id IN (${params.memoryIds.map(() => "?").join(", ")})`;
+      values.push(...params.memoryIds);
+    }
+    if (params.workspaceId !== undefined) {
+      if (params.workspaceId === null) {
+        query += " AND workspace_id IS NULL";
+      } else {
+        query += " AND workspace_id = ?";
+        values.push(params.workspaceId);
+      }
+    }
+    if (params.scopeBucket !== undefined) {
+      if (params.scopeBucket === null) {
+        query += " AND scope_bucket IS NULL";
+      } else {
+        query += " AND scope_bucket = ?";
+        values.push(params.scopeBucket);
+      }
+    }
+    if (params.embeddingModel !== undefined) {
+      if (params.embeddingModel === null) {
+        query += " AND embedding_model IS NULL";
+      } else {
+        query += " AND embedding_model = ?";
+        values.push(params.embeddingModel);
+      }
+    }
+    query += `
+      ORDER BY vec_rowid ASC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 5000, params.offset ?? 0);
+    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToMemoryEmbeddingIndex(row));
+  }
+
+  upsertMemoryEmbeddingIndex(params: {
+    memoryId: string;
+    path: string;
+    workspaceId: string | null;
+    scopeBucket: MemoryEmbeddingScopeBucket;
+    memoryType: string;
+    contentFingerprint: string;
+    embeddingModel: string;
+    embeddingDim: number;
+    indexedAt?: string;
+    updatedAt?: string;
+  }): MemoryEmbeddingIndexRecord {
+    const existing =
+      this.getMemoryEmbeddingIndexByMemoryId(params.memoryId) ??
+      this.getMemoryEmbeddingIndexByPath(params.path);
+    const now = params.updatedAt ?? utcNowIso();
+    const indexedAt = existing?.indexedAt ?? params.indexedAt ?? now;
+    if (existing && existing.memoryId !== params.memoryId) {
+      this.deleteMemoryEmbeddingIndex(existing.memoryId);
+    }
+    this.db()
+      .prepare(`
+        INSERT INTO memory_embedding_index (
+            vec_rowid,
+            memory_id,
+            path,
+            workspace_id,
+            scope_bucket,
+            memory_type,
+            content_fingerprint,
+            embedding_model,
+            embedding_dim,
+            indexed_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(memory_id) DO UPDATE SET
+            path = excluded.path,
+            workspace_id = excluded.workspace_id,
+            scope_bucket = excluded.scope_bucket,
+            memory_type = excluded.memory_type,
+            content_fingerprint = excluded.content_fingerprint,
+            embedding_model = excluded.embedding_model,
+            embedding_dim = excluded.embedding_dim,
+            indexed_at = excluded.indexed_at,
+            updated_at = excluded.updated_at
+      `)
+      .run(
+        existing?.vecRowid ?? null,
+        params.memoryId,
+        params.path,
+        params.workspaceId,
+        params.scopeBucket,
+        params.memoryType,
+        params.contentFingerprint,
+        params.embeddingModel,
+        params.embeddingDim,
+        indexedAt,
+        now,
+      );
+    const record = this.getMemoryEmbeddingIndexByMemoryId(params.memoryId);
+    if (!record) {
+      throw new Error("memory embedding index row not found after upsert");
+    }
+    return record;
+  }
+
+  deleteMemoryEmbeddingIndex(memoryId: string): void {
+    const existing = this.getMemoryEmbeddingIndexByMemoryId(memoryId);
+    if (!existing) {
+      return;
+    }
+    if (this.#vectorIndexSupported) {
+      this.db().prepare("DELETE FROM memory_recall_vec WHERE vec_rowid = ?").run(existing.vecRowid);
+    }
+    this.db().prepare("DELETE FROM memory_embedding_index WHERE memory_id = ?").run(memoryId);
+  }
+
+  replaceMemoryRecallVector(params: {
+    vecRowid: number;
+    embedding: Float32Array;
+    scopeBucket: MemoryEmbeddingScopeBucket;
+    workspaceId: string | null;
+    memoryType: string;
+  }): void {
+    if (!this.#vectorIndexSupported) {
+      return;
+    }
+    this.db().prepare("DELETE FROM memory_recall_vec WHERE vec_rowid = ?").run(params.vecRowid);
+    this.db()
+      .prepare(`
+        INSERT INTO memory_recall_vec (vec_rowid, embedding, scope_bucket, workspace_id, memory_type)
+        VALUES (CAST(? AS INTEGER), ?, ?, ?, ?)
+      `)
+      .run(
+        params.vecRowid,
+        params.embedding,
+        params.scopeBucket,
+        params.workspaceId ?? "",
+        params.memoryType,
+      );
+  }
+
+  searchWorkspaceMemoryRecallVectors(params: {
+    workspaceId: string;
+    embedding: Float32Array;
+    limit: number;
+    memoryTypes?: string[];
+  }): MemoryVectorSearchResult[] {
+    if (!this.#vectorIndexSupported) {
+      return [];
+    }
+    const normalizedLimit = Math.max(1, Math.trunc(params.limit));
+    let query = `
+      SELECT vec_rowid, distance
+      FROM memory_recall_vec
+      WHERE embedding MATCH ?
+        AND k = ?
+        AND scope_bucket = 'workspace'
+        AND workspace_id = ?
+    `;
+    const values: Array<string | number | Float32Array | null> = [params.embedding, normalizedLimit, params.workspaceId];
+    if (params.memoryTypes && params.memoryTypes.length > 0) {
+      query += ` AND memory_type IN (${params.memoryTypes.map(() => "?").join(", ")})`;
+      values.push(...params.memoryTypes);
+    }
+    const rows = this.db().prepare(query).all(...values) as Array<{ vec_rowid: number; distance: number }>;
+    return this.vectorResultsForRows(rows);
+  }
+
+  searchUserMemoryRecallVectors(params: {
+    embedding: Float32Array;
+    limit: number;
+    scopeBuckets?: Array<Extract<MemoryEmbeddingScopeBucket, "preference" | "identity">>;
+    memoryTypes?: string[];
+  }): MemoryVectorSearchResult[] {
+    if (!this.#vectorIndexSupported) {
+      return [];
+    }
+    const normalizedLimit = Math.max(1, Math.trunc(params.limit));
+    const scopeBuckets = (params.scopeBuckets && params.scopeBuckets.length > 0)
+      ? params.scopeBuckets
+      : ["preference", "identity"];
+    let query = `
+      SELECT vec_rowid, distance
+      FROM memory_recall_vec
+      WHERE embedding MATCH ?
+        AND k = ?
+        AND scope_bucket IN (${scopeBuckets.map(() => "?").join(", ")})
+    `;
+    const values: Array<string | number | Float32Array | null> = [params.embedding, normalizedLimit, ...scopeBuckets];
+    if (params.memoryTypes && params.memoryTypes.length > 0) {
+      query += ` AND memory_type IN (${params.memoryTypes.map(() => "?").join(", ")})`;
+      values.push(...params.memoryTypes);
+    }
+    const rows = this.db().prepare(query).all(...values) as Array<{ vec_rowid: number; distance: number }>;
+    return this.vectorResultsForRows(rows);
+  }
+
   upsertTurnRequestSnapshot(params: {
     workspaceId: string;
     sessionId: string;
@@ -3850,6 +4106,7 @@ export class RuntimeStateStore {
     const db = new Database(this.dbPath);
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
+    this.#vectorIndexSupported = this.tryLoadVectorExtension(db);
     this.ensureRuntimeDbSchema(db);
     this.#db = db;
     return db;
@@ -3859,11 +4116,63 @@ export class RuntimeStateStore {
     void this.db();
   }
 
+  private tryLoadVectorExtension(db: Database.Database): boolean {
+    try {
+      sqliteVec.load(db as unknown as { loadExtension(file: string, entrypoint?: string | undefined): void });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private ensureMemoryEmbeddingIndexSchema(db: Database.Database): void {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS memory_embedding_index (
+          vec_rowid INTEGER PRIMARY KEY,
+          memory_id TEXT NOT NULL UNIQUE,
+          path TEXT NOT NULL UNIQUE,
+          workspace_id TEXT,
+          scope_bucket TEXT NOT NULL,
+          memory_type TEXT NOT NULL,
+          content_fingerprint TEXT NOT NULL,
+          embedding_model TEXT NOT NULL,
+          embedding_dim INTEGER NOT NULL,
+          indexed_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_memory_embedding_index_workspace_scope
+          ON memory_embedding_index (workspace_id, scope_bucket, memory_type);
+
+      CREATE INDEX IF NOT EXISTS idx_memory_embedding_index_scope_type
+          ON memory_embedding_index (scope_bucket, memory_type);
+    `);
+    if (!this.#vectorIndexSupported) {
+      return;
+    }
+    const existingColumns = db
+      .prepare("SELECT name FROM pragma_table_info('memory_recall_vec')")
+      .all() as Array<{ name: string }>;
+    if (existingColumns.length > 0 && !existingColumns.some((column) => column.name === "vec_rowid")) {
+      db.exec("DROP TABLE IF EXISTS memory_recall_vec;");
+    }
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS memory_recall_vec USING vec0(
+          vec_rowid INTEGER PRIMARY KEY,
+          embedding float[1536],
+          scope_bucket TEXT,
+          workspace_id TEXT,
+          memory_type TEXT
+      );
+    `);
+  }
+
   private ensureRuntimeDbSchema(db: Database.Database): void {
     this.ensureWorkspacesTableSchema(db);
     this.ensureTaskProposalsTableSchema(db);
     this.ensureEvolveSkillCandidatesTableSchema(db);
     this.ensureMemoryUpdateProposalsTableSchema(db);
+    this.ensureMemoryEmbeddingIndexSchema(db);
     this.ensureTurnArtifactsSchema(db);
     this.ensureOutputsTableSchema(db);
     this.migrateSandboxRunTokensTable(db);
@@ -5448,6 +5757,61 @@ export class RuntimeStateStore {
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     };
+  }
+
+  private rowToMemoryEmbeddingIndex(row: Record<string, unknown>): MemoryEmbeddingIndexRecord {
+    return {
+      vecRowid: Number(row.vec_rowid),
+      memoryId: String(row.memory_id),
+      path: String(row.path),
+      workspaceId: row.workspace_id == null ? null : String(row.workspace_id),
+      scopeBucket: String(row.scope_bucket) as MemoryEmbeddingScopeBucket,
+      memoryType: String(row.memory_type),
+      contentFingerprint: String(row.content_fingerprint),
+      embeddingModel: String(row.embedding_model),
+      embeddingDim: Number(row.embedding_dim),
+      indexedAt: String(row.indexed_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private vectorResultsForRows(rows: Array<{ vec_rowid: number; distance: number }>): MemoryVectorSearchResult[] {
+    if (rows.length === 0) {
+      return [];
+    }
+    const rowIds = rows.map((row) => Number(row.vec_rowid)).filter((value) => Number.isFinite(value));
+    if (rowIds.length === 0) {
+      return [];
+    }
+    const mappingRows = this.db()
+      .prepare(`
+        SELECT *
+        FROM memory_embedding_index
+        WHERE vec_rowid IN (${rowIds.map(() => "?").join(", ")})
+      `)
+      .all(...rowIds) as Array<Record<string, unknown>>;
+    const byRowId = new Map<number, MemoryEmbeddingIndexRecord>();
+    for (const row of mappingRows) {
+      const record = this.rowToMemoryEmbeddingIndex(row);
+      byRowId.set(record.vecRowid, record);
+    }
+    const results: MemoryVectorSearchResult[] = [];
+    for (const row of rows) {
+      const mapping = byRowId.get(Number(row.vec_rowid));
+      if (!mapping) {
+        continue;
+      }
+      results.push({
+        vecRowid: mapping.vecRowid,
+        distance: Number(row.distance),
+        memoryId: mapping.memoryId,
+        path: mapping.path,
+        workspaceId: mapping.workspaceId,
+        scopeBucket: mapping.scopeBucket,
+        memoryType: mapping.memoryType,
+      });
+    }
+    return results;
   }
 
   private rowToIntegrationConnection(row: Record<string, unknown>): IntegrationConnectionRecord {

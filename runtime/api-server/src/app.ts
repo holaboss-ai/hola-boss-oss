@@ -53,6 +53,10 @@ import {
   tsBridgeWorkerEnabled
 } from "./bridge-worker.js";
 import {
+  type RecallEmbeddingBackfillWorkerLike,
+  RuntimeRecallEmbeddingBackfillWorker,
+} from "./recall-embedding-backfill-worker.js";
+import {
   AppLifecycleExecutorError,
   appBuildHasCompletedSetup,
   isAppHealthy,
@@ -142,6 +146,7 @@ export interface BuildRuntimeApiServerOptions {
   durableMemoryWorker?: DurableMemoryWorkerLike | null;
   cronWorker?: CronWorkerLike | null;
   bridgeWorker?: BridgeWorkerLike | null;
+  recallEmbeddingBackfillWorker?: RecallEmbeddingBackfillWorkerLike | null;
   appLifecycleExecutor?: AppLifecycleExecutorLike;
   memoryService?: MemoryServiceLike;
   runtimeConfigService?: RuntimeConfigServiceLike;
@@ -217,6 +222,22 @@ function resolveBridgeWorker(
     );
     return null;
   }
+}
+
+function resolveRecallEmbeddingBackfillWorker(
+  options: BuildRuntimeApiServerOptions,
+  app: FastifyInstance,
+  store: RuntimeStateStore,
+  memoryService: MemoryServiceLike,
+): RecallEmbeddingBackfillWorkerLike | null {
+  if (options.recallEmbeddingBackfillWorker !== undefined) {
+    return options.recallEmbeddingBackfillWorker;
+  }
+  return new RuntimeRecallEmbeddingBackfillWorker({
+    store,
+    logger: app.log,
+    memoryService,
+  });
 }
 
 type StringMap = Record<string, unknown>;
@@ -1704,6 +1725,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const queueWorker = resolveQueueWorker(options, app, store, memoryService, durableMemoryWorker);
   const cronWorker = resolveCronWorker(options, app, store, queueWorker);
   const bridgeWorker = resolveBridgeWorker(options, app, store, memoryService);
+  const recallEmbeddingBackfillWorker = resolveRecallEmbeddingBackfillWorker(options, app, store, memoryService);
 
   // ---------------------------------------------------------------------------
   // App liveness: ensure enabled apps are running + health monitoring
@@ -2107,6 +2129,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       clearInterval(healthMonitorTimer);
       healthMonitorTimer = null;
     }
+    await recallEmbeddingBackfillWorker?.close();
     await bridgeWorker?.close();
     await cronWorker?.close();
     await queueWorker?.close();
@@ -2121,6 +2144,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     await queueWorker?.start();
     await cronWorker?.start();
     await bridgeWorker?.start();
+    await recallEmbeddingBackfillWorker?.start();
     if (options.enableAppHealthMonitor !== false) {
       startHealthMonitor();
     }

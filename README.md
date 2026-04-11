@@ -138,6 +138,8 @@ npm run desktop:prepare-runtime
 
 At its core, Holaboss is built to support long-horizon agent operation. The design target is not isolated task execution, but role-holding work that has to persist across many runs inside the same workspace. In that setting, the agent has to preserve objectives, operating policy, reusable procedures, recent execution state, blockers, and durable user context without letting prompt cost grow without bound. Continuity therefore does not live only inside an ever-growing transcript. The runtime externalizes it into explicit runtime artifacts, bounded durable memory, and a structured workspace contract so the system can keep context over time while controlling token growth, preserving inspectability, and keeping workspaces portable across the Holaboss ecosystem.
 
+For proactive flows specifically, proposal ideation currently lives in the hosted Holaboss control plane, while proposal persistence, accepted proposal execution, and memory continuity stay local to the OSS runtime.
+
 ### Long-Horizon Design At A Glance
 
 The architectural distinction is between a run-centric agent and a workspace-centric system that can keep holding the same work over time. Holaboss supports that by separating state by authority instead of mixing everything into chat history:
@@ -151,7 +153,7 @@ The architectural distinction is between a run-centric agent and a workspace-cen
 | Execution surface | Implied from prompt text | Projected per run as a capability manifest before the harness sees it |
 | Portability | Usually a chat export or opaque backend state | A structured workspace package with a stable filesystem contract |
 
-That split is deliberate. Long-horizon support depends on keeping different kinds of context in the right system surfaces instead of mixing them together. `workspace.yaml` stays machine-readable as the runtime plan, while `AGENTS.md` stays the root human-authored instruction surface. The runtime compiler rejects inline prompt bodies in `workspace.yaml` and expects workspace instructions to come from `AGENTS.md`, which prevents the workspace plan from turning into an unstructured prompt blob.
+That split is deliberate. Long-horizon support depends on keeping different kinds of context in the right system surfaces instead of mixing them together. `workspace.yaml` stays machine-readable as the runtime plan, while `AGENTS.md` stays the preferred human-authored instruction surface when a workspace needs authored prompt policy. The runtime compiler rejects inline prompt bodies in `workspace.yaml` and loads workspace instructions from `AGENTS.md` when present, which prevents the workspace plan from turning into an unstructured prompt blob.
 
 Memory access is also intentionally scoped. The memory service only allows paths under:
 
@@ -217,7 +219,7 @@ The long-horizon claim depends on concrete mechanisms, not just stored history:
 | Stable vs volatile prompt separation | `prompt_cache_profile` with `cacheable_section_ids`, `volatile_section_ids`, `cacheable_fingerprint`, `volatile_fingerprint` | Lets stable runtime and workspace instructions stay reusable while only run-volatile context changes |
 | Durable compaction handoff | compaction boundaries | Stores compact summaries, restoration order, preserved turn ids, restored memory paths, and request snapshot fingerprints |
 | Session continuity snapshot | `memory/workspace/<workspace-id>/runtime/session-memory/` | Provides a compact operational summary of recent state, user requests, progress, and errors |
-| Bounded durable recall | manifest-based recall from durable markdown memory only | Caps manifest size, clips snippets, excludes `/runtime/` files, and selects only a small relevant subset |
+| Bounded durable recall | staged recall over durable markdown memory, durable indexes, and optional vector candidate narrowing | Caps candidate sets, clips snippets, excludes `/runtime/` files, and selects only a small relevant subset |
 | Per-run visibility | prompt ids, capability fingerprint, request snapshot fingerprint, token usage | Makes long-horizon cost and continuity inspectable instead of hidden inside raw transcript logs |
 
 Compaction boundaries are central to that design. A boundary is more than a summary. It records:
@@ -242,9 +244,9 @@ Before a run reaches the harness, the runtime decides what the harness is allowe
 | cache behavior | `prompt_cache_profile` |
 | visible and callable capabilities | capability manifest plus reduced tool map |
 | workspace versioning boundary | `workspace_config_checksum` |
-| run-specific scope | session kind, browser/runtime tools, workspace skills, MCP tool visibility, and workspace commands |
+| run-specific scope | session kind, browser/runtime tools, workspace skills, current MCP tool visibility, and workspace command references |
 
-Capability visibility is therefore decided per run rather than inferred implicitly from workspace contents. The runtime determines which tools, skills, MCP surfaces, and workspace commands are visible, permitted, and executable for that run, and the harness receives only that projected surface. In the PI harness, workspace-root path checks keep resolved paths inside the workspace by default, which makes long-horizon execution safer and more reproducible.
+Capability visibility is therefore decided per run rather than inferred implicitly from workspace contents. The runtime determines which tools, skills, and current MCP tool surfaces are visible and callable for that run, and which workspace command references are attached as non-callable metadata. The harness receives only that projected surface. In the PI harness, workspace-root path checks keep resolved paths inside the workspace by default, which makes long-horizon execution safer and more reproducible.
 
 ### The Workspace Hierarchy Is Part Of The Optimization Story
 
@@ -360,13 +362,14 @@ Holaboss workspaces live under the runtime sandbox root. In the desktop app, tha
       MEMORY.md
       *.md
     identity/
+      MEMORY.md
       *.md
 ```
 
 - `workspace.yaml` is the root runtime plan for the workspace. It defines the single active agent, skill enablement/order, MCP registry, and any installed workspace apps.
-- `AGENTS.md` is the root prompt file. Workspace instructions are expected there rather than inline in `workspace.yaml`.
+- `AGENTS.md` is the recommended root prompt file when a workspace needs authored instructions. Workspace prompt policy belongs there rather than inline in `workspace.yaml`.
 - each new workspace is initialized as a local git repository after its scaffold or template is materialized. That repository is intended for agent-owned local version control checkpoints rather than remote sync.
-- `skills/` is the fixed workspace-local skill directory. Workspace skills are always discovered from `<workspace-root>/skills`, and each skill directory must contain `SKILL.md`.
+- `skills/` is the fixed workspace-local skill directory. Workspace-local skills are discovered from `<workspace-root>/skills`, each skill directory must contain `SKILL.md`, and the runtime merges that local skill set with embedded skills when it builds the per-run skill surface.
 - `apps/` contains workspace-local apps. Each installed app lives under `apps/<app-id>/` and must provide `app.runtime.yaml`.
 - `<workspace-id>/.holaboss/` stores runtime-managed workspace state such as the identity marker, persisted harness session mapping, staged input attachments, and Pi harness state.
 - `workspace/.holaboss/` is separate from the per-workspace `.holaboss/` directory. It stores shared workspace-root state for MCP sidecars and their logs.
@@ -388,8 +391,8 @@ Holaboss treats durable memory as a navigable filesystem surface rather than as 
 | user-scoped durable namespace | `memory/preference/` and `memory/identity/` |
 | directories | memory classes such as `facts/`, `procedures/`, `blockers/`, and `reference/` |
 | file | the canonical markdown body for one durable memory entry |
-| file metadata | frontmatter fields such as scope, memory type, summary, tags, freshness, and verification hints |
-| directory listing | `MEMORY.md` indexes plus the bounded recall manifest built at query time |
+| file metadata | markdown body plus optional frontmatter for title, summary, scope, type, and tags; freshness and verification stay governed in the runtime catalog |
+| directory listing | `MEMORY.md` indexes plus staged recall candidates built at query time |
 | runtime scratch area | `memory/workspace/<workspace-id>/runtime/`, allowed for runtime projections but intentionally excluded from durable recall |
 
 This matters because it makes memory inspectable, portable, and path-addressable. Durable workspace knowledge is not trapped inside a database-only retrieval layer. It lives in readable markdown files that can be indexed, packaged, diffed, and moved with the workspace, while the runtime still keeps governance, freshness, and recall selection explicit.
@@ -415,10 +418,11 @@ memory/
     MEMORY.md
     *.md
   identity/
+    MEMORY.md
     *.md
 ```
 
-The recall path follows that structure. At query time, the runtime scans durable markdown memory files, reads frontmatter and compact summaries, builds a bounded manifest, and selects only a small relevant subset. In other words, the filesystem layout is not just storage convenience; it is part of how Holaboss keeps long-horizon memory legible and token-efficient.
+The recall path follows that structure. At query time, the runtime reads durable-memory indexes, selects candidate leaf memories, and opens only a small relevant subset. When recall embeddings are configured and indexed, recall can first narrow candidate paths through a derived vector index before reading leaf files. Markdown leaves remain the canonical durable-memory content. In other words, the filesystem layout is not just storage convenience; it is part of how Holaboss keeps long-horizon memory legible and token-efficient.
 
 #### Memory Layers
 
@@ -505,7 +509,7 @@ The immediate continuity phase currently performs:
 2. Reload recent turn results and session messages for the same session.
 3. Build runtime projection files such as:
    - `runtime/session-state`
-   - `runtime/blocker-state`
+   - `runtime/blockers`
    - `runtime/latest-turn`
    - `runtime/recent-turns`
    - `runtime/session-memory`
@@ -604,7 +608,7 @@ Durable recall is governed separately from storage:
 - stale references are penalized more aggressively than stable or workspace-sensitive memories
 - recalled durable memory is injected as context, not merged into the base system prompt
 
-Recall selection is staged and model-driven at query time. The runtime reads the durable-memory indexes, selects candidate leaf memories, reads only those leaf files, and then finalizes a small recalled subset for prompt injection. Recalled entries include a compact selection trace and optional excerpt snippets for debugging and operator visibility. Retrieval stays separate from storage so alternate indexes can be added later without changing canonical markdown memory files or the `memory_entries` governance catalog.
+Recall selection is staged and model-driven at query time. The runtime reads the durable-memory indexes, and when recall embeddings are available it can first narrow candidate paths through a derived vector index. It then reads only those candidate leaf files and finalizes a small recalled subset for prompt injection. Recalled entries include a compact selection trace and optional excerpt snippets for debugging and operator visibility. Markdown leaves remain the canonical content source, while vector rows stay derived recall acceleration only. Retrieval stays separate from storage so the runtime can combine file indexes, catalog metadata, and derived vector indexes without changing canonical markdown memory files or the `memory_entries` governance catalog.
 
 #### What Lives Where
 
@@ -663,6 +667,7 @@ If you only want the open-source local workflow, you can ignore those services a
 
 - hosted sign-in flows
 - authenticated marketplace template materialization
+- remote proactive proposal ideation and control-plane features
 - auth-backed product features
 - backend-connected Holaboss services
 
@@ -760,8 +765,10 @@ Holaboss already provides model configuration in the desktop app.
 - Open `Settings` -> `Model Providers`.
 - Connect a provider such as OpenAI, Anthropic, OpenRouter, Gemini, or Ollama.
 - Enter your API key and use the built-in provider defaults or edit the model list for that provider.
-- Use the dedicated `Background tasks` panel to choose one connected provider and model for memory recall and evolve tasks.
+- Use the dedicated `Background tasks` panel to choose one connected provider and model for recall selection/finalization and evolve tasks.
+- Use the dedicated `Recall embeddings` panel to leave vector-assisted recall on `Automatic` or choose an explicit embedding-capable provider and model for candidate preselection.
 - When the first provider is connected, the desktop app automatically seeds background tasks to that provider and its built-in default background model. For `ollama_direct`, the provider can be selected but you must choose a model explicitly before background LLM tasks are enabled.
+- If no embedding-capable provider is configured for recall embeddings, recall falls back to the staged durable-index path without vector candidate narrowing.
 - Changes autosave to `runtime-config.json`, and the chat model picker will use the configured provider models.
 
 ### Customization Mode
@@ -810,9 +817,13 @@ You can override that path with:
 - `providers.<id>.api_key`
   - direct provider credential for that configured provider
 - `runtime.background_tasks.provider`
-  - configured provider for durable memory recall and evolve tasks; for example `openai_direct` or `anthropic_direct`
+  - configured provider for recall selection/finalization and evolve tasks; for example `openai_direct` or `anthropic_direct`
 - `runtime.background_tasks.model`
   - model id used for that background provider, for example `gpt-5.4-mini` or `claude-sonnet-4-6`
+- `runtime.recall_embeddings.provider`
+  - optional embedding-capable provider used for vector-assisted recall candidate narrowing; leave unset to let runtime resolve it automatically
+- `runtime.recall_embeddings.model`
+  - optional embedding model id used for recall embeddings, for example `text-embedding-3-small`
 - `sandbox_id`
   - sandbox identifier propagated into runtime execution context and proxy headers
 - `runtime.default_provider`
@@ -833,6 +844,15 @@ When you choose a provider in the desktop `Background tasks` panel, the app seed
 - `gemini_direct`: `gemini-2.5-flash`
 - `minimax_direct`: `MiniMax-M2.7`
 - `ollama_direct`: no default; choose a model explicitly
+
+### Recall Embedding Defaults
+
+When `Recall embeddings` is left on `Automatic`, runtime chooses the first configured provider that has a built-in embedding default. If you configure it explicitly, current built-in embedding defaults are:
+
+- `openai_direct`: `text-embedding-3-small`
+- `openrouter_direct`: `openai/text-embedding-3-small`
+
+Other providers currently need an explicit compatible embedding model selection before vector-assisted recall is enabled.
 
 ### Model String Format
 

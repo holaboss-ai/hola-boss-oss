@@ -179,6 +179,7 @@ declare global {
     modelProxyBaseUrl: string | null;
     defaultModel: string | null;
     defaultBackgroundModel: string | null;
+    defaultEmbeddingModel: string | null;
     defaultImageModel: string | null;
     controlPlaneBaseUrl: string | null;
     catalogVersion: string | null;
@@ -206,6 +207,7 @@ declare global {
     modelProxyBaseUrl?: string | null;
     defaultModel?: string | null;
     defaultBackgroundModel?: string | null;
+    defaultEmbeddingModel?: string | null;
     defaultImageModel?: string | null;
     controlPlaneBaseUrl?: string | null;
   }

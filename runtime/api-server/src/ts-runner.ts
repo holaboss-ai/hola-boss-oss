@@ -77,6 +77,7 @@ import {
 } from "./turn-result-summary.js";
 import { createBackgroundTaskMemoryModelClient } from "./background-task-model.js";
 import { recalledMemoryContextFromManifest } from "./memory-recall-manifest.js";
+import { createRecallEmbeddingModelClient } from "./recall-embedding-model.js";
 import { pendingUserMemoryContextFromProposals } from "./user-memory-proposals.js";
 import { NATIVE_WEB_SEARCH_TOOL_IDS } from "../../harnesses/src/native-web-search-tools.js";
 
@@ -630,9 +631,17 @@ async function loadRecalledMemoryContext(params: {
       workspaceRoot: params.workspaceRoot,
       workspaceId: params.workspaceId,
       entries,
+      store,
       maxEntries: 5,
       modelClient: selectorModelClientFromRequest({
         request: params.request,
+        workspaceId: params.workspaceId,
+        sessionId: params.sessionId,
+        inputId: params.inputId,
+      }),
+      embeddingClient: createRecallEmbeddingModelClient({
+        selectedModel: params.request.model,
+        defaultProviderId: defaultProviderId(),
         workspaceId: params.workspaceId,
         sessionId: params.sessionId,
         inputId: params.inputId,

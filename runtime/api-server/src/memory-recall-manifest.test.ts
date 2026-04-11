@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, test } from "node:test";
 
-import type { MemoryEntryRecord } from "@holaboss/runtime-state-store";
+import { RuntimeStateStore, type MemoryEntryRecord } from "@holaboss/runtime-state-store";
 
 import { recalledMemoryContextFromManifest } from "./memory-recall-manifest.js";
 
@@ -75,7 +75,7 @@ function installMockResponses(responses: Array<Record<string, unknown>>): void {
   }) as typeof fetch;
 }
 
-test("recalledMemoryContextFromManifest uses staged LLM recall with one expansion pass", async () => {
+test("recalledMemoryContextFromManifest uses two-stage LLM recall with one expansion pass", async () => {
   const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-memory-recall-manifest-"));
   const workspaceRoot = path.join(sandboxRoot, "workspace");
 
@@ -136,8 +136,6 @@ test("recalledMemoryContextFromManifest uses staged LLM recall with one expansio
       scopes: ["workspace", "preference"],
       memory_types: ["blocker", "preference"],
       reason: "Need deployment blocker context and response preference.",
-    },
-    {
       primary_paths: ["workspace/workspace-1/knowledge/blockers/deploy.md"],
       reserve_paths: ["preference/response-style.md"],
       reason_by_path: {
@@ -230,6 +228,172 @@ test("recalledMemoryContextFromManifest uses staged LLM recall with one expansio
   assert.match(String(result.selection_trace?.[0]?.reasons?.join(" ") ?? ""), /candidate:/);
   assert.match(String(result.selection_trace?.[0]?.reasons?.join(" ") ?? ""), /final:/);
   assert.equal(result.selection_trace?.length, 2);
+});
+
+test("recalledMemoryContextFromManifest uses vector candidates plus one finalization call when embeddings are complete", async () => {
+  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hb-memory-recall-manifest-vector-"));
+  const workspaceRoot = path.join(sandboxRoot, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(sandboxRoot, "runtime.db"),
+    workspaceRoot,
+  });
+  assert.equal(store.supportsVectorIndex(), true);
+
+  writeMemoryFile(
+    workspaceRoot,
+    "workspace/workspace-1/knowledge/blockers/deploy.md",
+    "# Deploy permission blocker\n\nDeploy calls may be denied by workspace policy. Confirm before running deploy.\n"
+  );
+  writeMemoryFile(
+    workspaceRoot,
+    "preference/response-style.md",
+    "# User response style\n\nUser prefers concise responses.\n"
+  );
+
+  const entries = [
+    makeMemoryEntry({
+      memoryId: "workspace-blocker:deploy",
+      scope: "workspace",
+      memoryType: "blocker",
+      path: "workspace/workspace-1/knowledge/blockers/deploy.md",
+      title: "Deploy permission blocker",
+      summary: "Deploy calls may be denied by workspace policy.",
+      tags: ["deploy", "permission"],
+      verificationPolicy: "check_before_use",
+      updatedAt: "2026-04-10T00:00:00.000Z",
+    }),
+    makeMemoryEntry({
+      memoryId: "user-preference:response-style",
+      workspaceId: null,
+      scope: "user",
+      memoryType: "preference",
+      path: "preference/response-style.md",
+      title: "User response style",
+      summary: "User prefers concise responses.",
+      tags: ["concise"],
+      verificationPolicy: "none",
+      stalenessPolicy: "stable",
+      staleAfterSeconds: null,
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    }),
+  ];
+
+  const workspaceVector = new Float32Array(1536).fill(0);
+  workspaceVector[0] = 1;
+  const preferenceVector = new Float32Array(1536).fill(0);
+  preferenceVector[0] = 0.95;
+  preferenceVector[1] = 0.05;
+
+  const workspaceIndex = store.upsertMemoryEmbeddingIndex({
+    memoryId: entries[0].memoryId,
+    path: entries[0].path,
+    workspaceId: entries[0].workspaceId,
+    scopeBucket: "workspace",
+    memoryType: entries[0].memoryType,
+    contentFingerprint: "a".repeat(64),
+    embeddingModel: "text-embedding-3-small",
+    embeddingDim: 1536,
+  });
+  store.replaceMemoryRecallVector({
+    vecRowid: workspaceIndex.vecRowid,
+    embedding: workspaceVector,
+    scopeBucket: "workspace",
+    workspaceId: entries[0].workspaceId,
+    memoryType: entries[0].memoryType,
+  });
+  const preferenceIndex = store.upsertMemoryEmbeddingIndex({
+    memoryId: entries[1].memoryId,
+    path: entries[1].path,
+    workspaceId: entries[1].workspaceId,
+    scopeBucket: "preference",
+    memoryType: entries[1].memoryType,
+    contentFingerprint: "b".repeat(64),
+    embeddingModel: "text-embedding-3-small",
+    embeddingDim: 1536,
+  });
+  store.replaceMemoryRecallVector({
+    vecRowid: preferenceIndex.vecRowid,
+    embedding: preferenceVector,
+    scopeBucket: "preference",
+    workspaceId: entries[1].workspaceId,
+    memoryType: entries[1].memoryType,
+  });
+
+  const requests: Array<{ url: string; body: Record<string, unknown> | null }> = [];
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+    requests.push({ url, body });
+    if (url.endsWith("/embeddings")) {
+      return new Response(
+        JSON.stringify({
+          data: [{ embedding: [...workspaceVector] }],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                status: "sufficient",
+                final_paths: [
+                  "workspace/workspace-1/knowledge/blockers/deploy.md",
+                  "preference/response-style.md",
+                ],
+                expansion_paths: [],
+                reason_by_path: {
+                  "workspace/workspace-1/knowledge/blockers/deploy.md": "Contains the deploy blocker.",
+                  "preference/response-style.md": "Contains the user's preferred response style.",
+                },
+              }),
+            },
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }
+    );
+  }) as typeof fetch;
+
+  const result = await recalledMemoryContextFromManifest({
+    query: "Please deploy after fixing permissions.",
+    workspaceRoot,
+    workspaceId: "workspace-1",
+    entries,
+    store,
+    maxEntries: 5,
+    nowIso: "2026-04-15T00:00:00.000Z",
+    modelClient: {
+      baseUrl: "http://127.0.0.1:4999/openai/v1",
+      apiKey: "test-token",
+      modelId: "openai/gpt-5.4-mini",
+    },
+    embeddingClient: {
+      baseUrl: "http://127.0.0.1:4999/openai/v1",
+      apiKey: "test-token",
+      modelId: "text-embedding-3-small",
+      apiStyle: "openai_compatible",
+    },
+  });
+
+  assert.ok(result);
+  assert.deepEqual(result.entries?.map((entry) => entry.path), [
+    "workspace/workspace-1/knowledge/blockers/deploy.md",
+    "preference/response-style.md",
+  ]);
+  assert.equal(requests.filter((request) => request.url.endsWith("/embeddings")).length, 1);
+  assert.equal(requests.filter((request) => request.url.endsWith("/chat/completions")).length, 1);
+  assert.match(String(result.selection_trace?.[0]?.reasons?.join(" ") ?? ""), /plan:vector_candidate_retrieval/);
+
+  store.close();
 });
 
 test("recalledMemoryContextFromManifest returns null without a model client and does not fall back", async () => {

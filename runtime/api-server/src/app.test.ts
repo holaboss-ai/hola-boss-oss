@@ -61,6 +61,7 @@ function buildTestRuntimeApiServer(options: BuildRuntimeApiServerOptions) {
     durableMemoryWorker: null,
     cronWorker: null,
     bridgeWorker: null,
+    recallEmbeddingBackfillWorker: null,
     enableAppHealthMonitor: false,
     startAppsOnReady: false,
     ...options,
@@ -3846,6 +3847,46 @@ test("pause route delegates to the configured queue worker", async () => {
   });
 
   await app.close();
+  store.close();
+});
+
+test("runtime api server starts and closes the recall embedding backfill worker", async () => {
+  const root = makeTempDir("hb-runtime-api-recall-embedding-worker-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace"),
+  });
+  let started = 0;
+  let closed = 0;
+  let woke = 0;
+  const app = buildRuntimeApiServer({
+    store,
+    queueWorker: null,
+    durableMemoryWorker: null,
+    cronWorker: null,
+    bridgeWorker: null,
+    recallEmbeddingBackfillWorker: {
+      async start() {
+        started += 1;
+      },
+      wake() {
+        woke += 1;
+      },
+      async close() {
+        closed += 1;
+      },
+    },
+    enableAppHealthMonitor: false,
+    startAppsOnReady: false,
+  });
+
+  await app.ready();
+  assert.equal(started, 1);
+  assert.equal(woke, 0);
+
+  await app.close();
+  assert.equal(closed, 1);
+
   store.close();
 });
 

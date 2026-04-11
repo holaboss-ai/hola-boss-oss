@@ -1400,8 +1400,6 @@ test("runTsRunnerCli derives recalled durable memory from indexed memory entries
       scopes: ["workspace", "preference"],
       memory_types: ["blocker", "preference"],
       reason: "Need durable recall for deployment blockers and user delivery preferences.",
-    },
-    {
       primary_paths: [
         "preference/response-style.md",
         "workspace/workspace-1/knowledge/blockers/deploy.md",
@@ -1587,8 +1585,6 @@ test("runTsRunnerCli uses the provider background tasks model for recall selecti
         rewritten_query: "deployment steps",
         scopes: ["workspace"],
         memory_types: ["procedure"],
-      },
-      {
         primary_paths: ["workspace/workspace-1/knowledge/procedures/deploy.md"],
         reserve_paths: [],
       },
@@ -1612,7 +1608,7 @@ test("runTsRunnerCli uses the provider background tasks model for recall selecti
   );
 
   assert.equal(exitCode, 0);
-  assert.equal(recallRequests.length, 3);
+  assert.equal(recallRequests.length, 2);
   assert.equal(recallRequests[0]?.model, "gpt-5.3-codex");
 });
 
@@ -1825,8 +1821,6 @@ test("runTsRunnerCli recalls workspace memory from scoped entries even with many
       scopes: ["workspace"],
       memory_types: ["blocker"],
       reason: "Need the workspace-specific blocker before answering.",
-    },
-    {
       primary_paths: ["workspace/workspace-1/knowledge/blockers/deploy.md"],
       reserve_paths: [],
       reason_by_path: {

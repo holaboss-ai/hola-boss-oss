@@ -171,6 +171,7 @@ interface RuntimeConfigPayload {
   modelProxyBaseUrl: string | null;
   defaultModel: string | null;
   defaultBackgroundModel: string | null;
+  defaultEmbeddingModel: string | null;
   defaultImageModel: string | null;
   controlPlaneBaseUrl: string | null;
   catalogVersion: string | null;
@@ -198,6 +199,7 @@ interface RuntimeConfigUpdatePayload {
   modelProxyBaseUrl?: string | null;
   defaultModel?: string | null;
   defaultBackgroundModel?: string | null;
+  defaultEmbeddingModel?: string | null;
   defaultImageModel?: string | null;
   controlPlaneBaseUrl?: string | null;
 }

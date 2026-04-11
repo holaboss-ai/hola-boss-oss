@@ -50,3 +50,37 @@ test("desktop runtime consumes the authoritative model catalog from exchange and
   assert.match(source, /async function syncRuntimeModelCatalogFromBinding\(/);
   assert.match(source, /await syncRuntimeModelCatalogFromBinding\(binding\);/);
 });
+
+test("desktop runtime refreshes stale managed catalogs immediately when a default is missing", async () => {
+  const source = await readFile(mainSourcePath, "utf8");
+  const refreshFunction =
+    source.match(
+      /function shouldRefreshRuntimeModelCatalog\(force = false\): boolean \{[\s\S]*?\n}\n\nfunction hasRecentRuntimeModelCatalogRefreshFailure/,
+    )?.[0] ?? "";
+
+  assert.match(
+    refreshFunction,
+    /if \(\s*!runtimeModelCatalogState\.defaultBackgroundModel \|\|\s*!runtimeModelCatalogState\.defaultEmbeddingModel \|\|\s*!runtimeModelCatalogState\.defaultImageModel\s*\) \{\s*return true;\s*\}/,
+  );
+});
+
+test("desktop runtime backfills managed Holaboss defaults into runtime config after catalog refresh", async () => {
+  const source = await readFile(mainSourcePath, "utf8");
+
+  assert.match(
+    source,
+    /async function syncManagedHolabossDefaultsToRuntimeConfigIfNeeded\([\s\S]*await writeRuntimeConfigFile\(\{\s*defaultBackgroundModel: managedCatalog\.defaultBackgroundModel,\s*defaultEmbeddingModel: managedCatalog\.defaultEmbeddingModel,\s*defaultImageModel: managedCatalog\.defaultImageModel,\s*\}\);[\s\S]*return true;/,
+  );
+  assert.match(
+    source,
+    /await persistRuntimeModelCatalog\(payload\);\s*if \(await syncManagedHolabossDefaultsToRuntimeConfigIfNeeded\(payload\)\) \{\s*await emitRuntimeConfig\(\);\s*\}/,
+  );
+  assert.match(
+    source,
+    /if \(!shouldRefreshRuntimeModelCatalog\(Boolean\(options\?\.force\)\)\) \{\s*if \(await syncManagedHolabossDefaultsToRuntimeConfigIfNeeded\(\)\) \{\s*await emitRuntimeConfig\(\);\s*\}\s*return runtimeModelCatalogState;\s*\}/,
+  );
+  assert.match(
+    source,
+    /const managedCatalog = await refreshRuntimeModelCatalogIfNeeded\(\)\.catch\([\s\S]*if \(await syncManagedHolabossDefaultsToRuntimeConfigIfNeeded\(managedCatalog\)\) \{\s*await emitRuntimeConfig\(\);\s*\}\s*const loaded = await readRuntimeConfigFile\(\);\s*const document = await readRuntimeConfigDocument\(\);/,
+  );
+});

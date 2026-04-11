@@ -1219,6 +1219,83 @@ test("memory entries round trip and filter by workspace or scope", () => {
   store.close();
 });
 
+test("memory embedding index supports vector replacement, search, and delete", () => {
+  const root = makeTempDir("hb-state-store-vec-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+
+  assert.equal(store.supportsVectorIndex(), true);
+
+  const workspaceVector = new Float32Array(1536).fill(0);
+  workspaceVector[0] = 1;
+  const preferenceVector = new Float32Array(1536).fill(0);
+  preferenceVector[1] = 1;
+
+  const workspaceIndex = store.upsertMemoryEmbeddingIndex({
+    memoryId: "workspace-fact:workspace-1:deploy",
+    path: "workspace/workspace-1/knowledge/facts/deploy.md",
+    workspaceId: "workspace-1",
+    scopeBucket: "workspace",
+    memoryType: "fact",
+    contentFingerprint: "a".repeat(64),
+    embeddingModel: "text-embedding-3-small",
+    embeddingDim: 1536,
+  });
+  store.replaceMemoryRecallVector({
+    vecRowid: workspaceIndex.vecRowid,
+    embedding: workspaceVector,
+    scopeBucket: "workspace",
+    workspaceId: "workspace-1",
+    memoryType: "fact",
+  });
+
+  const preferenceIndex = store.upsertMemoryEmbeddingIndex({
+    memoryId: "user-preference:style",
+    path: "preference/response-style.md",
+    workspaceId: null,
+    scopeBucket: "preference",
+    memoryType: "preference",
+    contentFingerprint: "b".repeat(64),
+    embeddingModel: "text-embedding-3-small",
+    embeddingDim: 1536,
+  });
+  store.replaceMemoryRecallVector({
+    vecRowid: preferenceIndex.vecRowid,
+    embedding: preferenceVector,
+    scopeBucket: "preference",
+    workspaceId: null,
+    memoryType: "preference",
+  });
+
+  const workspaceResults = store.searchWorkspaceMemoryRecallVectors({
+    workspaceId: "workspace-1",
+    embedding: workspaceVector,
+    limit: 5,
+  });
+  const userResults = store.searchUserMemoryRecallVectors({
+    embedding: preferenceVector,
+    limit: 5,
+  });
+
+  assert.equal(workspaceResults[0]?.path, "workspace/workspace-1/knowledge/facts/deploy.md");
+  assert.equal(userResults[0]?.path, "preference/response-style.md");
+
+  store.deleteMemoryEmbeddingIndex("workspace-fact:workspace-1:deploy");
+
+  assert.equal(store.getMemoryEmbeddingIndexByMemoryId("workspace-fact:workspace-1:deploy"), null);
+  assert.equal(
+    store.searchWorkspaceMemoryRecallVectors({
+      workspaceId: "workspace-1",
+      embedding: workspaceVector,
+      limit: 5,
+    }).length,
+    0
+  );
+  store.close();
+});
+
 test("app build status round trip supports upsert, lookup, and delete", () => {
   const root = makeTempDir("hb-state-store-");
   const store = new RuntimeStateStore({
