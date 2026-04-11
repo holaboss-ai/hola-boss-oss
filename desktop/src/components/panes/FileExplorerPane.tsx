@@ -21,6 +21,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
+import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/IconButton";
 import { PaneCard } from "@/components/ui/PaneCard";
 import {
@@ -1854,14 +1855,15 @@ export function FileExplorerPane({
       actions={
         showInlinePreview ? (
           <>
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={closePreview}
-              className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
             >
               <ArrowLeft size={12} />
               Files
-            </button>
+            </Button>
             <IconButton
               icon={<Star size={12} className={activeBookmark ? "fill-current" : ""} />}
               label={activeBookmark ? "Remove bookmark" : "Add bookmark"}
@@ -1871,40 +1873,37 @@ export function FileExplorerPane({
             />
             {isMarkdownPreview ? (
               <div className="inline-flex items-center rounded-md border border-border bg-muted/50 p-0.5">
-                <button
+                <Button
                   type="button"
+                  variant={textPreviewMode === "preview" ? "secondary" : "ghost"}
+                  size="xs"
                   onClick={() => setTextPreviewMode("preview")}
-                  className={`rounded px-2 py-1 text-xs transition-colors ${
-                    textPreviewMode === "preview"
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                  }`}
+                  className={textPreviewMode === "preview" ? "shadow-sm" : ""}
                 >
                   Preview
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant={textPreviewMode === "edit" ? "secondary" : "ghost"}
+                  size="xs"
                   onClick={() => setTextPreviewMode("edit")}
-                  className={`rounded px-2 py-1 text-xs transition-colors ${
-                    textPreviewMode === "edit"
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                  }`}
+                  className={textPreviewMode === "edit" ? "shadow-sm" : ""}
                 >
                   Edit
-                </button>
+                </Button>
               </div>
             ) : null}
             {preview?.isEditable ? (
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="sm"
                 onClick={() => void savePreview()}
                 disabled={!isDirty || saving}
-                className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Save size={12} />
                 {saving ? "Saving" : "Save"}
-              </button>
+              </Button>
             ) : null}
           </>
         ) : undefined
@@ -1924,37 +1923,43 @@ export function FileExplorerPane({
               style={contextMenuPosition}
               className="fixed z-[80] rounded-xl border border-border/70 bg-popover/92 p-1.5 text-popover-foreground shadow-xl ring-1 ring-foreground/10 backdrop-blur-xl"
             >
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="default"
                 onClick={() => {
                   void openEntryFromContextMenu(contextMenu.entry);
                 }}
-                className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                className="w-full justify-start"
               >
                 {contextMenu.entry.isDirectory
                   ? expandedDirectoryPaths[contextMenu.entry.absolutePath]
                     ? "Collapse folder"
                     : "Expand folder"
                   : "Open file"}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="ghost"
+                size="default"
                 onClick={() => {
                   void renameEntryFromContextMenu(contextMenu.entry);
                 }}
-                className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                className="w-full justify-start"
               >
                 Rename…
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="ghost"
+                size="default"
                 onClick={() => {
                   void deleteEntryFromContextMenu(contextMenu.entry);
                 }}
-                className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm text-destructive transition-colors hover:bg-destructive/10 hover:text-destructive"
+                className="w-full justify-start text-destructive hover:bg-destructive/10 hover:text-destructive"
               >
                 Delete…
-              </button>
+              </Button>
             </div>,
             document.body,
           )
