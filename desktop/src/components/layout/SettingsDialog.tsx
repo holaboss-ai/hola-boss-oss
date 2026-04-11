@@ -382,6 +382,7 @@ export function SettingsDialog({
                     <Button
                       type="button"
                       variant="outline"
+                      size="sm"
                       onClick={() => void handleExportDiagnosticsBundle()}
                       disabled={diagnosticsExportState.status === "exporting"}
                     >
@@ -392,9 +393,6 @@ export function SettingsDialog({
                       )}
                       Export Diagnostics Bundle
                     </Button>
-                    <span className="text-xs text-muted-foreground/80">
-                      Saved to Downloads as a zip file.
-                    </span>
                   </div>
                   {diagnosticsExportState.message ? (
                     <div

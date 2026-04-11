@@ -5,6 +5,7 @@ import {
   RefreshCw,
   ShieldCheck,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import anthropicLogoMarkup from "@/assets/providers/anthropic.svg?raw";
 import geminiLogoMarkup from "@/assets/providers/gemini.svg?raw";
 import minimaxLogoMarkup from "@/assets/providers/minimax.svg?raw";
@@ -1840,7 +1841,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     );
   }
 
-  function renderProviderCard(providerId: KnownProviderId) {
+  function renderProviderRow(providerId: KnownProviderId, isLast: boolean) {
     const template = KNOWN_PROVIDER_TEMPLATES[providerId];
     const isHolabossProvider = providerId === "holaboss";
     const isConnected = providerConnected(providerId);
@@ -1849,120 +1850,95 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     const hasPendingConnection = !isConnected && draftEnabled;
     const isExpandable = isHolabossProvider ? isConnected : draftEnabled || isConnected;
     const isExpanded = isExpandable && expandedProviderId === providerId;
-    const statusText = isHolabossProvider
-      ? runtimeBindingReady
-        ? "Managed and ready on this desktop."
-        : isSignedIn
-          ? "Signed in. Refresh runtime binding to finish setup."
-          : "Sign in to enable the managed provider."
-      : isDisconnecting
-        ? "Disconnecting now."
-        : hasPendingConnection
-          ? "Enter an API key and save to connect."
-          : isConnected
-            ? "Connected. Expand to edit settings."
-            : "Not connected.";
-    const actionButtonClassName =
-      "inline-flex h-9 min-w-[128px] shrink-0 items-center justify-center rounded-[10px] px-3 text-sm transition disabled:cursor-not-allowed disabled:opacity-50";
-    const actionBadgeClassName =
-      "inline-flex h-9 min-w-[128px] shrink-0 items-center justify-center rounded-full border px-3 text-xs uppercase tracking-[0.14em]";
 
     return (
       <div
         key={providerId}
-        className={`theme-control-surface overflow-hidden rounded-[14px] border transition ${
-          isExpanded
-            ? "border-primary/35 bg-card/96 shadow-[0_0_0_1px_rgb(var(--color-primary)/0.08)]"
-            : "border-border/55 bg-card/92 hover:border-border/75"
-        }`}
+        className={isLast ? "" : "border-b border-border/30"}
       >
-        <div className="flex flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex min-w-0 flex-1 items-start gap-3">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-border/55 bg-background/80 text-foreground">
-              <ProviderBrandIcon providerId={providerId} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold text-foreground">{template.label}</div>
-              <div className="mt-1 text-sm leading-6 text-foreground/82">{template.description}</div>
-              <div className="mt-1 text-sm leading-6 text-muted-foreground/95">{statusText}</div>
-            </div>
+        <div className="flex items-center gap-3 py-3">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-border/55 bg-background/80 text-foreground">
+            <ProviderBrandIcon providerId={providerId} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-foreground">{template.label}</div>
           </div>
 
-          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 md:flex-col md:items-end md:justify-center">
+          <div className="flex shrink-0 items-center gap-2">
             {isHolabossProvider ? (
               isConnected ? (
-                <div className={`${actionBadgeClassName} border-primary/30 bg-primary/10 text-primary`}>
+                <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
                   Enabled
-                </div>
+                </Badge>
               ) : (
-                <button
-                  type="button"
+                <Button
+                  variant="outline"
+                  size="sm"
                   onClick={() => void handleStartSignIn()}
                   disabled={isStartingSignIn}
-                  className={`${actionButtonClassName} border border-success/30 bg-success/10 text-success hover:bg-success/16`}
                 >
                   {isStartingSignIn ? "Opening..." : "Sign in"}
-                </button>
+                </Button>
               )
             ) : isConnected ? (
               <>
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
                   disabled={isSavingRuntimeConfigDocument}
-                  className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-primary/35`}
                 >
                   {isExpanded ? "Hide" : "Edit"}
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={() => void handleDisconnectRuntimeProvider(providerId)}
                   disabled={isSavingRuntimeConfigDocument}
-                  className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-destructive/40 hover:text-destructive`}
                 >
                   {isDisconnecting ? "Disconnecting..." : "Disconnect"}
-                </button>
+                </Button>
               </>
             ) : hasPendingConnection ? (
               <>
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setExpandedProviderId((current) => (current === providerId ? null : providerId))}
                   disabled={isSavingRuntimeConfigDocument}
-                  className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-primary/35`}
                 >
                   {isExpanded ? "Hide" : "Edit"}
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={() => {
                     updateProviderDraft(providerId, { enabled: false });
                     setExpandedProviderId((current) => (current === providerId ? null : current));
                   }}
                   disabled={isSavingRuntimeConfigDocument}
-                  className={`${actionButtonClassName} border border-border/45 text-foreground hover:border-destructive/40 hover:text-destructive`}
                 >
                   Cancel
-                </button>
+                </Button>
               </>
             ) : (
-              <button
-                type="button"
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => {
                   updateProviderDraft(providerId, { enabled: true });
                   setExpandedProviderId(providerId);
                 }}
                 disabled={isSavingRuntimeConfigDocument}
-                className={`${actionButtonClassName} border border-border/55 text-foreground hover:border-success/30 hover:text-success`}
               >
                 Connect
-              </button>
+              </Button>
             )}
           </div>
         </div>
 
         {isExpanded && isExpandable && (
-          <div className="border-t border-border/35 px-4 pb-4 pt-3">
+          <div className="pb-3 pl-11">
             {renderProviderDrawerContent(providerId)}
           </div>
         )}
@@ -1970,12 +1946,21 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     );
   }
 
+  const allProviderIds = [...connectedProviderIds, ...availableProviderIds];
+
   const runtimeProviderSettings = (
     <div className="mt-3 grid gap-4">
-      <div className="rounded-[18px] border border-border/40 bg-card/80 p-4">
-        <div className="grid gap-3">
-        <div className="text-sm font-medium text-foreground">Connected providers</div>
-        <div className="rounded-[14px] border border-border/35 bg-muted/25 p-3">
+      <div>
+        {allProviderIds.map((providerId, index) =>
+          renderProviderRow(providerId, index === allProviderIds.length - 1)
+        )}
+      </div>
+
+      <div className="mt-5 border-t border-border/30 pt-5">
+        <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
+          Task Configuration
+        </div>
+        <div className="mt-4 rounded-[14px] border border-border/35 bg-muted/25 p-3">
           <div className="text-sm font-medium text-foreground">Background tasks</div>
           <div className="mt-1 text-sm text-muted-foreground">
             Used for memory recall and post-run tasks.
@@ -2077,7 +2062,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             ) : null}
           </div>
         </div>
-        <div className="rounded-[14px] border border-border/35 bg-muted/25 p-3">
+        <div className="mt-3 rounded-[14px] border border-border/35 bg-muted/25 p-3">
           <div className="text-sm font-medium text-foreground">Image generation</div>
           <div className="mt-1 text-sm text-muted-foreground">
             Used when the agent generates new images into the workspace.
@@ -2179,27 +2164,6 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             ) : null}
           </div>
         </div>
-        {connectedProviderIds.length === 0 ? (
-          <div className="rounded-[12px] border border-border/35 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-            No connected providers.
-          </div>
-        ) : (
-          connectedProviderIds.map((providerId) => renderProviderCard(providerId))
-        )}
-        </div>
-      </div>
-
-      <div className="rounded-[18px] border border-border/40 bg-card/80 p-4">
-        <div className="text-sm font-medium text-foreground">Available providers</div>
-        <div className="mt-3 grid gap-2">
-          {availableProviderIds.length === 0 ? (
-            <div className="rounded-[12px] border border-border/35 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-              All providers are connected.
-            </div>
-          ) : (
-            availableProviderIds.map((providerId) => renderProviderCard(providerId))
-          )}
-        </div>
       </div>
 
     </div>
@@ -2218,28 +2182,32 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       <section className="grid w-full max-w-[1080px] gap-5">
         <div className="grid gap-4">
           <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
-            <div className="flex min-w-0 items-center gap-4">
-              <div className="grid h-16 w-16 shrink-0 place-items-center rounded-full border border-border/30 bg-muted/70 text-2xl font-semibold text-foreground">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-border/30 bg-muted/70 text-sm font-semibold text-foreground">
                 {sessionInitials(session)}
               </div>
               <div className="min-w-0">
-                <div className="truncate text-[28px] font-semibold tracking-[-0.04em] text-foreground">
+                <div className="truncate text-sm font-semibold text-foreground">
                   {isSignedIn
                     ? sessionDisplayName(session) || "Your account"
                     : "Your account"}
                 </div>
-                <div className="mt-1 truncate text-base text-muted-foreground">
-                  {isSignedIn ? sessionEmail(session) || "Signed in" : "Not connected"}
-                </div>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <div
-                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-medium ${badgeClassName}`}
-                  >
+                {isSignedIn && sessionEmail(session) ? (
+                  <div className="truncate text-sm text-muted-foreground">
+                    {sessionEmail(session)}
+                  </div>
+                ) : !isSignedIn ? (
+                  <div className="truncate text-sm text-muted-foreground">
+                    Not connected
+                  </div>
+                ) : null}
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" className={badgeClassName}>
                     <ShieldCheck size={12} />
                     <span>{statusBadgeLabel}</span>
-                  </div>
-                  <div className="inline-flex items-center gap-1.5 rounded-full border border-border/40 bg-muted/40 px-3 py-1 text-[11px] font-medium text-muted-foreground">
-                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary/70" />
+                  </Badge>
+                  <Badge variant="outline" className="border-border/40 bg-muted/40 text-muted-foreground">
+                    <span className={`inline-block h-1.5 w-1.5 rounded-full ${runtimeBindingReady ? "bg-success" : isSignedIn ? "bg-warning" : "bg-muted-foreground"}`} />
                     <span>
                       {runtimeBindingReady
                         ? "Runtime ready on this desktop"
@@ -2247,7 +2215,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
                           ? "Runtime setup in progress"
                           : "Runtime unavailable"}
                     </span>
-                  </div>
+                  </Badge>
                 </div>
               </div>
             </div>
@@ -2256,30 +2224,31 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
               {isSignedIn ? (
                 <>
                   <Button
-                    variant="outline"
-                    size="icon-lg"
+                    variant="ghost"
+                    size="icon-sm"
                     aria-label="Refresh session"
                     onClick={() => void handleRefreshSession()}
                     disabled={sessionState.isPending}
                   >
                     {sessionState.isPending ? (
-                      <Loader2 size={16} className="animate-spin" />
+                      <Loader2 size={14} className="animate-spin" />
                     ) : (
-                      <RefreshCw size={16} />
+                      <RefreshCw size={14} />
                     )}
                   </Button>
                   <Button
-                    variant="destructive"
-                    size="icon-lg"
+                    variant="ghost"
+                    size="icon-sm"
                     aria-label="Sign out"
                     onClick={() => void handleSignOut()}
                     disabled={!isSignedIn}
                   >
-                    <LogOut size={16} />
+                    <LogOut size={14} />
                   </Button>
                 </>
               ) : (
                 <Button
+                  size="sm"
                   onClick={() => void handleStartSignIn()}
                   disabled={isStartingSignIn}
                 >
