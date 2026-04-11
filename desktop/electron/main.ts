@@ -1,3 +1,11 @@
+import * as Sentry from "@sentry/electron/main";
+
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  enabled: !!process.env.SENTRY_DSN,
+  environment: process.env.HOLABOSS_INTERNAL_DEV ? "development" : "production",
+});
+
 import { electronClient } from "@better-auth/electron/client";
 import { storage as electronAuthStorage } from "@better-auth/electron/storage";
 import { createAuthClient } from "better-auth/client";
