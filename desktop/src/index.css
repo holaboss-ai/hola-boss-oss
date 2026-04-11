@@ -33,6 +33,8 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -56,9 +58,11 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* Fallback radius — themes override everything else via [data-theme] */
+/* Fallback radius and semantic status colors — themes can override */
 :root {
   --radius: 0.675rem;
+  --success: oklch(0.72 0.19 145);
+  --warning: oklch(0.82 0.17 83);
 }
 
 @layer base {
