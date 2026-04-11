@@ -10,6 +10,7 @@ import path from "node:path";
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import * as tar from "tar";
 import yauzl from "yauzl";
+import * as Sentry from "@sentry/node";
 
 import {
   type AgentSessionRecord,
@@ -1703,6 +1704,17 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const cronWorker = resolveCronWorker(options, app, store, queueWorker);
   const bridgeWorker = resolveBridgeWorker(options, app, store, memoryService);
 
+  app.setErrorHandler((error, request, reply) => {
+    Sentry.captureException(error, {
+      extra: {
+        method: request.method,
+        url: request.url,
+      },
+    });
+    app.log.error(error);
+    reply.status(500).send({ error: "Internal Server Error" });
+  });
+
   // ---------------------------------------------------------------------------
   // App liveness: ensure enabled apps are running + health monitoring
   // ---------------------------------------------------------------------------
@@ -1785,7 +1797,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         });
         const afterSetup = store.getAppBuild({ workspaceId, appId });
         if (afterSetup?.status === "failed") {
-          throw new Error(afterSetup.error ?? "setup failed");
+          const setupError = new Error(afterSetup.error ?? "setup failed");
+          Sentry.captureException(setupError, {
+            extra: { workspaceId, appId },
+          });
+          throw setupError;
         }
       }
 
@@ -2087,6 +2103,9 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
           });
         } else if (attempts === MAX_AUTO_RESTART_ATTEMPTS + 1) {
           app.log.error({ workspaceId: ws.id, appId, attempts: attempts - 1 }, "health monitor: max restart attempts exceeded");
+          Sentry.captureException(new Error(`App ${appId} crashed and failed to recover after ${MAX_AUTO_RESTART_ATTEMPTS} attempts`), {
+            extra: { workspaceId: ws.id, appId, attempts: attempts - 1 },
+          });
           store.upsertAppBuild({
             workspaceId: ws.id,
             appId,
