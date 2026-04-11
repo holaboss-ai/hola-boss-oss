@@ -263,7 +263,10 @@ function isDeprecatedChatModel(model: string) {
 }
 
 function normalizeRuntimeModelCapability(value: string) {
-  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
   if (!normalized) {
     return "";
   }
@@ -465,7 +468,10 @@ function outputMetadataNumber(
 function outputBrowserFilterForOutput(
   output: WorkspaceOutputRecordPayload,
 ): ArtifactBrowserFilter {
-  if (outputMetadataString(output, "origin_type") === "app" || output.module_id) {
+  if (
+    outputMetadataString(output, "origin_type") === "app" ||
+    output.module_id
+  ) {
     return "apps";
   }
   const category = outputMetadataString(output, "category");
@@ -482,7 +488,10 @@ function outputBrowserFilterForOutput(
 }
 
 function outputKindLabel(output: WorkspaceOutputRecordPayload) {
-  if (outputMetadataString(output, "origin_type") === "app" || output.module_id) {
+  if (
+    outputMetadataString(output, "origin_type") === "app" ||
+    output.module_id
+  ) {
     const artifactType = outputMetadataString(output, "artifact_type");
     if (artifactType) {
       return artifactType.charAt(0).toUpperCase() + artifactType.slice(1);
@@ -683,8 +692,10 @@ function compareChatSessionOptions(
       return normalizedRight - normalizedLeft;
     }
   }
-  return right.updatedAt.localeCompare(left.updatedAt) ||
-    left.title.localeCompare(right.title);
+  return (
+    right.updatedAt.localeCompare(left.updatedAt) ||
+    left.title.localeCompare(right.title)
+  );
 }
 
 function sessionStatusIndicator(statusLabel: string) {
@@ -824,7 +835,10 @@ function summarizeUnknown(value: unknown, maxLength = 140): string {
 function normalizeChatTodoStatus(value: unknown): ChatTodoStatus | null {
   const normalized =
     typeof value === "string"
-      ? value.trim().toLowerCase().replace(/[\s-]+/g, "_")
+      ? value
+          .trim()
+          .toLowerCase()
+          .replace(/[\s-]+/g, "_")
       : "";
   switch (normalized) {
     case "pending":
@@ -849,8 +863,7 @@ function normalizeChatTodoTask(value: unknown): ChatTodoTask | null {
     return null;
   }
   const notes = typeof value.notes === "string" ? value.notes.trim() : "";
-  const details =
-    typeof value.details === "string" ? value.details.trim() : "";
+  const details = typeof value.details === "string" ? value.details.trim() : "";
   return {
     id,
     content,
@@ -1122,7 +1135,9 @@ function runFailedDetail(payload: Record<string, unknown>): string {
   if (!detail) {
     return `${contextLabel} failed.`;
   }
-  return detail.startsWith(contextLabel) ? detail : `${contextLabel}: ${detail}`;
+  return detail.startsWith(contextLabel)
+    ? detail
+    : `${contextLabel}: ${detail}`;
 }
 
 function assistantMetaLabel(
@@ -1524,7 +1539,9 @@ function phaseTraceStepFromEvent(
         kind: "phase",
         title: "Run paused",
         status: "waiting",
-        details: ["The run was paused before completion and can be continued in a later turn."],
+        details: [
+          "The run was paused before completion and can be continued in a later turn.",
+        ],
         order,
       };
     }
@@ -1795,8 +1812,10 @@ export function ChatPane({
   );
   const [isHistoryViewportPending, setIsHistoryViewportPending] =
     useState(false);
-  const [historyViewportRestoreGeneration, setHistoryViewportRestoreGeneration] =
-    useState(0);
+  const [
+    historyViewportRestoreGeneration,
+    setHistoryViewportRestoreGeneration,
+  ] = useState(0);
   const [chatScrollMetrics, setChatScrollMetrics] = useState({
     scrollTop: 0,
     scrollHeight: 0,
@@ -1822,9 +1841,9 @@ export function ChatPane({
   const [memoryProposalDrafts, setMemoryProposalDrafts] = useState<
     Record<string, string>
   >({});
-  const [availableSessions, setAvailableSessions] = useState<ChatSessionOption[]>(
-    [],
-  );
+  const [availableSessions, setAvailableSessions] = useState<
+    ChatSessionOption[]
+  >([]);
   const [isLoadingAvailableSessions, setIsLoadingAvailableSessions] =
     useState(false);
   const [availableSessionsError, setAvailableSessionsError] = useState("");
@@ -1839,9 +1858,7 @@ export function ChatPane({
   const composerIsComposingRef = useRef(false);
   const shouldAutoScrollRef = useRef(true);
   const lastChatScrollTopRef = useRef(0);
-  const chatScrollbarDragStateRef = useRef<ChatScrollbarDragState | null>(
-    null,
-  );
+  const chatScrollbarDragStateRef = useRef<ChatScrollbarDragState | null>(null);
   const chatScrollbarBodyUserSelectRef = useRef<string | null>(null);
   const chatScrollbarBodyCursorRef = useRef<string | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
@@ -2432,8 +2449,7 @@ export function ChatPane({
     }
 
     const railRect = railElement.getBoundingClientRect();
-    const unclampedThumbOffset =
-      clientY - railRect.top - thumbPointerOffset;
+    const unclampedThumbOffset = clientY - railRect.top - thumbPointerOffset;
     const nextThumbOffset = Math.min(
       Math.max(0, unclampedThumbOffset),
       chatScrollbarThumbTravel,
@@ -2544,8 +2560,7 @@ export function ChatPane({
 
     container.scrollTo({
       top: container.scrollHeight,
-      behavior:
-        isResponding || isHistoryViewportPending ? "auto" : "smooth",
+      behavior: isResponding || isHistoryViewportPending ? "auto" : "smooth",
     });
   }, [
     isHistoryViewportPending,
@@ -2788,8 +2803,9 @@ export function ChatPane({
   ]);
 
   useEffect(() => {
-    const requestedSessionId =
-      (effectiveSessionOpenRequest?.sessionId || "").trim();
+    const requestedSessionId = (
+      effectiveSessionOpenRequest?.sessionId || ""
+    ).trim();
     const requestKey = effectiveSessionOpenRequest?.requestKey ?? 0;
     const requestMode = effectiveSessionOpenRequest?.mode ?? "session";
     const requestedParentSessionId =
@@ -2911,7 +2927,9 @@ export function ChatPane({
     let cancelled = false;
     let requestInFlight = false;
 
-    const loadAvailableSessions = async (options?: { showLoading?: boolean }) => {
+    const loadAvailableSessions = async (options?: {
+      showLoading?: boolean;
+    }) => {
       if (requestInFlight) {
         return;
       }
@@ -3930,8 +3948,9 @@ export function ChatPane({
   );
   const activeSessionOption = useMemo(
     () =>
-      availableSessions.find((session) => session.sessionId === activeSessionId) ??
-      null,
+      availableSessions.find(
+        (session) => session.sessionId === activeSessionId,
+      ) ?? null,
     [activeSessionId, availableSessions],
   );
   const activeSessionTitle =
@@ -4113,7 +4132,7 @@ export function ChatPane({
       ? ""
       : hasPendingConfiguredProviderCatalog
         ? "Managed models are finishing setup. Refresh runtime binding or use another provider."
-      : "No models available. Configure a provider to start chatting.";
+        : "No models available. Configure a provider to start chatting.";
   const composerBaseDisabledReason =
     baseComposerDisabledReason ||
     (usesHostedManagedCredits && isOutOfCredits
@@ -4143,8 +4162,7 @@ export function ChatPane({
   const textareaPlaceholder = isOnboardingVariant
     ? "Answer the onboarding prompt or share setup details"
     : "Ask anything";
-  const showHistoryRestoreScreen =
-    isLoadingHistory || isHistoryViewportPending;
+  const showHistoryRestoreScreen = isLoadingHistory || isHistoryViewportPending;
   const chatScrollRange = Math.max(
     0,
     chatScrollMetrics.scrollHeight - chatScrollMetrics.clientHeight,
@@ -4252,7 +4270,10 @@ export function ChatPane({
 
   const openSessionFromPicker = (sessionId: string) => {
     const normalizedSessionId = sessionId.trim();
-    if (!normalizedSessionId || normalizedSessionId === activeSessionIdRef.current) {
+    if (
+      !normalizedSessionId ||
+      normalizedSessionId === activeSessionIdRef.current
+    ) {
       return;
     }
     setLocalSessionOpenRequest({
@@ -4683,9 +4704,7 @@ export function ChatPane({
                     <CurrentTodoPanel
                       todoPlan={currentTodoPlan}
                       expanded={todoPanelExpanded}
-                      onToggle={() =>
-                        setTodoPanelExpanded((value) => !value)
-                      }
+                      onToggle={() => setTodoPanelExpanded((value) => !value)}
                     />
                   ) : null}
                   <Composer
@@ -4807,39 +4826,34 @@ function SessionSelector({
         <div className="min-w-0 flex-1">
           <PopoverTrigger
             render={
-              <button
-                type="button"
-                className="group flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-xl px-2 py-1.5 text-left transition-colors"
+              <Button
+                variant="outline"
+                className="w-full min-w-0 justify-start"
                 aria-label="Select agent session"
                 title={`${activeTitle} · ${activeDetail}`}
-              >
-                <span
-                  className={`grid size-5 shrink-0 place-items-center ${activeIndicator.className}`}
-                >
-                  {activeIndicator.icon}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-[15px] font-semibold tracking-[-0.02em] text-foreground">
-                  {activeTitle}
-                </span>
-                <ChevronDown
-                  size={13}
-                  className={`shrink-0 text-muted-foreground transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                    open
-                      ? "rotate-180 group-hover:-translate-y-1 group-hover:scale-150"
-                      : "rotate-0 group-hover:translate-y-1 group-hover:scale-150"
-                  } motion-reduce:transform-none`}
-                />
-              </button>
+              />
             }
-          />
+          >
+            <span
+              className={`grid size-4 shrink-0 place-items-center ${activeIndicator.className}`}
+            >
+              {activeIndicator.icon}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-xs text-start font-medium text-foreground">
+              {activeTitle}
+            </span>
+            <ChevronDown
+              size={12}
+              className={`shrink-0 text-muted-foreground transition-transform ${
+                open ? "rotate-180" : ""
+              }`}
+            />
+          </PopoverTrigger>
         </div>
         <PopoverContent align="start" className="w-[300px] p-0">
           <div className="border-b border-border/40 p-2">
             <div className="relative flex items-center rounded-[10px] border border-border/40 bg-muted/35 px-2.5 transition-colors focus-within:border-border/55 focus-within:bg-background/70">
-              <Search
-                size={13}
-                className="shrink-0 text-muted-foreground"
-              />
+              <Search size={13} className="shrink-0 text-muted-foreground" />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
@@ -4861,7 +4875,9 @@ function SessionSelector({
               </div>
             ) : filteredSessions.length === 0 ? (
               <div className="px-3 py-3 text-[12px] text-muted-foreground">
-                {query.trim() ? "No matching sessions." : "No saved sessions yet."}
+                {query.trim()
+                  ? "No matching sessions."
+                  : "No saved sessions yet."}
               </div>
             ) : (
               filteredSessions.map((session) => {
@@ -4876,7 +4892,7 @@ function SessionSelector({
                       setOpen(false);
                       setQuery("");
                     }}
-                    className={`flex w-full items-center gap-2 rounded-[12px] px-3 py-2 text-left transition ${
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors ${
                       isActive
                         ? "bg-accent text-accent-foreground"
                         : "hover:bg-accent/50"
@@ -5402,7 +5418,8 @@ function CurrentTodoPanel({
                   <div className="mt-3 space-y-2">
                     {phase.tasks.map((task) => {
                       const isActiveTask = activeEntry?.task.id === task.id;
-                      const hasVisibleDetails = isActiveTask && Boolean(task.details);
+                      const hasVisibleDetails =
+                        isActiveTask && Boolean(task.details);
                       return (
                         <div
                           key={task.id}
@@ -5410,7 +5427,9 @@ function CurrentTodoPanel({
                         >
                           <TodoStatusIcon status={task.status} />
                           <div className="min-w-0 flex-1">
-                            <div className="text-foreground">{task.content}</div>
+                            <div className="text-foreground">
+                              {task.content}
+                            </div>
                             {hasVisibleDetails ? (
                               <div className="mt-1 whitespace-pre-wrap text-[11px] text-muted-foreground">
                                 {task.details}
@@ -5501,7 +5520,10 @@ function AssistantTurnMemoryProposals({
               </div>
 
               <div className="flex shrink-0 items-start gap-2">
-                <Badge variant="outline" className="uppercase tracking-[0.14em]">
+                <Badge
+                  variant="outline"
+                  className="uppercase tracking-[0.14em]"
+                >
                   {memoryProposalStateLabel(proposal.state)}
                 </Badge>
                 {isPending ? (
@@ -5667,7 +5689,10 @@ function ArtifactBrowserModal({
                     </div>
                   </div>
                   {outputChangeLabel(output) ? (
-                    <Badge variant="outline" className="uppercase tracking-[0.12em]">
+                    <Badge
+                      variant="outline"
+                      className="uppercase tracking-[0.12em]"
+                    >
                       {outputChangeLabel(output)}
                     </Badge>
                   ) : null}
@@ -5763,9 +5788,8 @@ function TraceStepGroup({
   const activeStep =
     [...steps]
       .reverse()
-      .find(
-        (step) => step.status === "running" || step.status === "waiting",
-      ) ?? null;
+      .find((step) => step.status === "running" || step.status === "waiting") ??
+    null;
   const latestStep = steps.length > 0 ? steps[steps.length - 1] : null;
   const summaryStep = activeStep ?? (groupIsLive ? latestStep : null);
   const summarySuffix = groupHasTerminalError
@@ -5796,8 +5820,8 @@ function TraceStepGroup({
             : groupIsLive
               ? `Working through ${stepLabel}...`
               : runningCount > 0
-              ? `Running ${stepLabel}...`
-              : `Used ${stepLabel}`}
+                ? `Running ${stepLabel}...`
+                : `Used ${stepLabel}`}
           {summarySuffix}
         </span>
         <ChevronDown
@@ -6072,7 +6096,7 @@ function ModelCombobox({
             ? "bg-accent text-accent-foreground"
             : optionDisabled
               ? "cursor-not-allowed text-muted-foreground/70"
-            : "text-foreground hover:bg-accent/50"
+              : "text-foreground hover:bg-accent/50"
         }`}
       >
         <span className="truncate">{option.label}</span>
@@ -6194,11 +6218,14 @@ function Composer({
     modelOptions.length === 0 &&
     modelOptionGroups.length === 0;
   const inputDisabled = disabled || isResponding;
-  const visibleModelOptions = modelOptionGroups.flatMap((group) => group.options);
+  const visibleModelOptions = modelOptionGroups.flatMap(
+    (group) => group.options,
+  );
   const selectedModelOptionLabel =
     visibleModelOptions.find((option) => option.value === selectedModel)
       ?.selectedLabel ??
-    visibleModelOptions.find((option) => option.value === selectedModel)?.label ??
+    visibleModelOptions.find((option) => option.value === selectedModel)
+      ?.label ??
     modelOptions.find((option) => option.value === selectedModel)
       ?.selectedLabel ??
     modelOptions.find((option) => option.value === selectedModel)?.label ??
@@ -6398,9 +6425,7 @@ function Composer({
           ) : (
             <Button
               size="icon"
-              disabled={
-                (!input.trim() && attachments.length === 0) || disabled
-              }
+              disabled={(!input.trim() && attachments.length === 0) || disabled}
               render={<button type="submit" />}
               className="rounded-full"
             >
