@@ -553,13 +553,13 @@ function runningSessionStatusIndicator(
       };
     case "WAITING":
       return {
-        className: "text-amber-600",
+        className: "text-warning",
         icon: <Clock size={14} />,
         label: "Waiting for input",
       };
     case "PAUSED":
       return {
-        className: "text-orange-600",
+        className: "text-warning",
         icon: <Pause size={14} />,
         label: "Paused",
       };
@@ -571,7 +571,7 @@ function runningSessionStatusIndicator(
       };
     case "COMPLETED":
       return {
-        className: "text-emerald-600",
+        className: "text-success",
         icon: <Check size={14} />,
         label: "Completed",
       };
@@ -840,14 +840,14 @@ function SignedOutInboxNotice({
   isAuthPending: boolean;
 }) {
   return (
-    <div className="rounded-[22px] border border-amber-500/20 bg-amber-500/10 px-4 py-5">
+    <div className="rounded-[22px] border border-warning/20 bg-warning/10 px-4 py-5">
       <div className="flex flex-col gap-4">
         <div className="space-y-1">
           <div className="text-sm font-semibold text-foreground">
             Sign in to review task proposals
           </div>
           <div className="text-sm leading-6 text-muted-foreground">
-            Sign in to connect this desktop to your Holaboss account and review
+            Sign in to connect this desktop to your account and review
             Inbox proposals.
           </div>
         </div>
