@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -434,15 +435,11 @@ export function ProactiveLifecyclePanel({
 
   if (compact) {
     return (
-      <section className="w-full overflow-hidden rounded-[20px] border border-border/40 bg-card">
-        <div className="flex items-center justify-between gap-3 px-3 py-3">
-          <div
-            className={`inline-flex items-center rounded-full border px-3 py-1 text-[10px] font-medium tracking-[0.14em] ${proactiveStateClasses(
-              state,
-            )}`}
-          >
+      <section className="w-full space-y-1">
+        <div className="flex items-center justify-between gap-2">
+          <Badge variant="outline" className={proactiveStateClasses(state)}>
             {proactiveStateLabel(state)}
-          </div>
+          </Badge>
           <div className="flex shrink-0 items-center gap-1.5">
             {onProactiveWorkspaceEnabledChange ? (
               isUpdatingProactiveWorkspaceEnabled ? (
@@ -462,11 +459,11 @@ export function ProactiveLifecyclePanel({
                     <Button
                       type="button"
                       size="icon-xs"
-                      variant="outline"
-                      aria-label="Run proactive analysis"
+                      variant="ghost"
+                      aria-label="Run analysis"
                       onClick={onTriggerProposal}
                       disabled={!hasWorkspace || isTriggeringProposal}
-                      className="rounded-full border-border/45 bg-background/90 text-muted-foreground hover:border-primary/35 hover:bg-background hover:text-primary"
+                      className="text-muted-foreground hover:text-primary"
                     />
                   }
                 >
@@ -484,12 +481,8 @@ export function ProactiveLifecyclePanel({
         <ProactiveScheduleEditor
           hasWorkspace={hasWorkspace}
           proactiveHeartbeatCron={proactiveHeartbeatCron}
-          isLoadingProactiveHeartbeatConfig={
-            isLoadingProactiveHeartbeatConfig
-          }
-          isUpdatingProactiveHeartbeatConfig={
-            isUpdatingProactiveHeartbeatConfig
-          }
+          isLoadingProactiveHeartbeatConfig={isLoadingProactiveHeartbeatConfig}
+          isUpdatingProactiveHeartbeatConfig={isUpdatingProactiveHeartbeatConfig}
           onProactiveHeartbeatCronChange={onProactiveHeartbeatCronChange}
           compact
         />
@@ -498,7 +491,7 @@ export function ProactiveLifecyclePanel({
   }
 
   return (
-    <section className="w-full overflow-hidden rounded-[20px] border border-border/40 bg-card shadow-sm">
+    <section className="w-full overflow-hidden rounded-xl border border-border/40 bg-card shadow-sm">
       <div className="px-4 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
@@ -512,13 +505,9 @@ export function ProactiveLifecyclePanel({
             ) : null}
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1.5">
-            <div
-              className={`inline-flex items-center rounded-full border px-3 py-1 text-[10px] font-medium tracking-[0.14em] ${proactiveStateClasses(
-                state,
-              )}`}
-            >
+            <Badge variant="outline" className={proactiveStateClasses(state)}>
               {proactiveStateLabel(state)}
-            </div>
+            </Badge>
             <div className="flex items-center gap-1.5">
               {onProactiveWorkspaceEnabledChange ? (
                 isUpdatingProactiveWorkspaceEnabled ? (
