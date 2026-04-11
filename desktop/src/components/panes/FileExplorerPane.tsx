@@ -14,6 +14,7 @@ import {
   FileText,
   FileVideoCamera,
   Folder,
+  Loader2,
   Save,
   Search,
   Shield,
@@ -21,6 +22,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PaneCard } from "@/components/ui/PaneCard";
 import {
@@ -1495,73 +1497,106 @@ export function FileExplorerPane({
     };
   }, [contextMenu]);
 
+  const previewFileName = preview?.name || selectedEntry?.name || "Untitled";
+  const previewFileIcon = selectedEntry
+    ? getExplorerIconDescriptor(previewFileName, selectedEntry.isDirectory)
+    : getExplorerIconDescriptor(previewFileName, false);
+  const PreviewFileIcon = previewFileIcon.Icon;
+
   const content = showInlinePreview ? (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-border px-4 py-2.5">
-        <div className="truncate text-sm font-semibold text-foreground">
-          {preview?.name || selectedEntry?.name || "Preview"}
-          {isDirty ? (
-            <span className="ml-2 text-xs text-primary">unsaved</span>
-          ) : null}
-        </div>
-        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
-          {preview?.size != null ? (
-            <span>{formatFileSize(preview.size)}</span>
-          ) : null}
-          {preview?.modifiedAt ? (
-            <span>{formatModified(preview.modifiedAt)}</span>
-          ) : null}
+    <div className="flex h-full min-h-0 flex-col bg-background">
+      {/* File identity header */}
+      <div className="flex shrink-0 items-center gap-3 border-b border-border/30 px-4 py-2.5">
+        <span className={`grid size-7 shrink-0 place-items-center rounded-lg border border-border/40 bg-muted/30 ${previewFileIcon.className}`}>
+          <PreviewFileIcon size={14} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-[13px] font-medium text-foreground">
+              {previewFileName}
+            </span>
+            {isDirty ? (
+              <Badge variant="outline" className="border-warning/30 bg-warning/10 text-warning">
+                Unsaved
+              </Badge>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            {selectedPath ? (
+              <span className="truncate">{selectedPath.split("/").slice(-2, -1)[0] || ""}/</span>
+            ) : null}
+            {preview?.size != null ? (
+              <span className="shrink-0">{formatFileSize(preview.size)}</span>
+            ) : null}
+            {preview?.modifiedAt ? (
+              <>
+                <span className="shrink-0 text-border">·</span>
+                <span className="shrink-0">{formatModified(preview.modifiedAt)}</span>
+              </>
+            ) : null}
+          </div>
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden p-2.5">
+      {/* Content area */}
+      <div className="min-h-0 flex-1 overflow-hidden">
         {previewLoading ? (
-          <div className="grid h-full place-items-center rounded-lg border border-border bg-muted text-sm text-muted-foreground">
-            Loading file...
+          <div className="grid h-full place-items-center">
+            <div className="text-center">
+              <Loader2 size={16} className="mx-auto animate-spin text-muted-foreground" />
+              <div className="mt-2 text-xs text-muted-foreground">Loading file...</div>
+            </div>
           </div>
         ) : previewError ? (
-          <div className="grid h-full place-items-center rounded-lg border border-destructive/30 bg-destructive/5 px-4 text-center text-sm text-destructive">
-            {previewError}
+          <div className="grid h-full place-items-center px-6 text-center">
+            <div>
+              <div className="text-sm font-medium text-destructive">Cannot preview</div>
+              <div className="mt-1 text-xs text-muted-foreground">{previewError}</div>
+            </div>
           </div>
         ) : preview?.kind === "text" ? (
           isMarkdownPreview && textPreviewMode === "preview" ? (
-            <div className="h-full overflow-auto rounded-lg border border-border bg-muted/55 p-4">
-              {previewDraft.trim() ? (
-                <SimpleMarkdown
-                  className="chat-markdown text-sm text-foreground"
-                  onLinkClick={openPreviewLink}
-                >
-                  {previewDraft}
-                </SimpleMarkdown>
-              ) : (
-                <div className="grid h-full min-h-[120px] place-items-center text-sm text-muted-foreground">
-                  Nothing to preview yet.
-                </div>
-              )}
+            <div className="h-full overflow-auto">
+              <div className="mx-auto max-w-2xl px-6 py-6">
+                {previewDraft.trim() ? (
+                  <SimpleMarkdown
+                    className="chat-markdown text-sm leading-7 text-foreground"
+                    onLinkClick={openPreviewLink}
+                  >
+                    {previewDraft}
+                  </SimpleMarkdown>
+                ) : (
+                  <div className="py-12 text-center text-xs text-muted-foreground">
+                    Empty file — switch to Edit to add content.
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
-            <textarea
-              value={previewDraft}
-              onChange={(event) => setPreviewDraft(event.target.value)}
-              readOnly={!preview.isEditable}
-              spellCheck={false}
-              className={`h-full w-full resize-none rounded-lg border border-border bg-muted p-4 font-mono text-xs leading-6 text-foreground outline-none transition-colors ${
-                preview.isEditable
-                  ? "embedded-input focus:border-border/70"
-                  : "cursor-default opacity-90"
-              }`}
-            />
+            <div className="h-full overflow-auto bg-muted/20">
+              <textarea
+                value={previewDraft}
+                onChange={(event) => setPreviewDraft(event.target.value)}
+                readOnly={!preview.isEditable}
+                spellCheck={false}
+                className={`h-full min-h-full w-full resize-none border-0 bg-transparent px-6 py-5 font-mono text-[13px] leading-6 text-foreground outline-none ${
+                  preview.isEditable
+                    ? ""
+                    : "cursor-default opacity-80"
+                }`}
+              />
+            </div>
           )
         ) : preview?.kind === "image" && preview.dataUrl ? (
-          <div className="flex h-full items-center justify-center overflow-auto rounded-lg border border-border bg-muted p-3">
+          <div className="flex h-full items-center justify-center overflow-auto bg-muted/20 p-6">
             <img
               src={preview.dataUrl}
               alt={preview.name}
-              className="max-h-full max-w-full rounded-md object-contain"
+              className="max-h-full max-w-full rounded-lg object-contain shadow-sm"
             />
           </div>
         ) : preview?.kind === "pdf" && preview.dataUrl ? (
-          <div className="h-full overflow-hidden rounded-lg border border-border bg-white">
+          <div className="h-full overflow-hidden">
             <iframe
               src={preview.dataUrl}
               title={preview.name}
