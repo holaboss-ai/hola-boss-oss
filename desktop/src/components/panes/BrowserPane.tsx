@@ -19,6 +19,7 @@ import {
   Star,
   X,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/IconButton";
 import { PaneCard } from "@/components/ui/PaneCard";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
@@ -561,14 +562,16 @@ export function BrowserPane({
               );
             })}
 
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="icon-sm"
               onClick={onNewTab}
-              className="bg-muted grid size-7 shrink-0 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
+              className="shrink-0 rounded-full"
               aria-label="New tab"
             >
               <Plus size={12} />
-            </button>
+            </Button>
           </div>
 
           <div
@@ -599,10 +602,12 @@ export function BrowserPane({
                   disabled={!activeTab.initialized}
                   className="size-7"
                 />
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => onSelectBrowserSpace(alternateBrowserSpace)}
-                  className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-border/45 bg-background/80 px-2.5 text-[11px] font-medium text-muted-foreground transition hover:border-primary/28 hover:text-foreground"
+                  className="shrink-0 rounded-full bg-background/80 text-[11px]"
                   aria-label={`Switch to ${alternateBrowserLabel} browser`}
                   title={`Switch to ${alternateBrowserLabel} browser`}
                 >
@@ -615,19 +620,18 @@ export function BrowserPane({
                     }
                   />
                   {!isNarrowPane ? <span>{visibleBrowserLabel}</span> : null}
-                </button>
+                </Button>
               </div>
 
               <div
                 className={`relative flex shrink-0 items-center gap-1 ${isCompactPane ? "" : "ml-auto"}`}
               >
-                <button
+                <Button
                   ref={moreButtonRef}
                   type="button"
-                  className={[
-                    "bg-muted relative grid size-7 place-items-center rounded-md border transition-colors",
-                    "border-border/60 text-muted-foreground hover:border-primary/45 hover:text-primary",
-                  ].join(" ")}
+                  variant="outline"
+                  size="icon-sm"
+                  className="relative"
                   aria-label="More browser options"
                   title="More"
                   onClick={() => {
@@ -645,7 +649,7 @@ export function BrowserPane({
                       {activeDownloadCount}
                     </span>
                   ) : null}
-                </button>
+                </Button>
               </div>
             </div>
 
