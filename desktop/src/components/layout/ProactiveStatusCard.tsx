@@ -256,14 +256,14 @@ function ProactiveScheduleEditor({
   };
 
   return (
-    <div className="px-3 py-2">
+    <div>
       <Button
         type="button"
         variant="ghost"
         size="sm"
         onClick={() => setDrawerOpen((current) => !current)}
         aria-expanded={drawerOpen}
-        className="w-full justify-between gap-2 text-left"
+        className="w-full justify-between gap-2 px-0 text-left hover:bg-transparent"
       >
         <span className="flex items-center gap-2 text-xs text-muted-foreground">
           <span>Schedule</span>
