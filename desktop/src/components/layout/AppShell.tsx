@@ -28,6 +28,7 @@ import { SpaceBrowserExplorerPane } from "@/components/panes/SpaceBrowserExplore
 import { SkillsPane } from "@/components/panes/SkillsPane";
 import { PublishDialog } from "@/components/publish/PublishDialog";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { UpdateReminder } from "@/components/ui/UpdateReminder";
 import { DesktopBillingProvider } from "@/lib/billing/useDesktopBilling";
 import { getWorkspaceAppDefinition } from "@/lib/workspaceApps";
@@ -3199,49 +3200,39 @@ function AppShellContent() {
                           <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
                             {showSpaceExplorer ? (
                               <>
-                                <div className="shrink-0 border-b border-border/45 px-3 py-3">
-                                  <div className="flex items-center gap-2">
-                                    <div className="inline-flex min-w-0 flex-1 items-center rounded-md border border-border bg-muted/50 p-0.5">
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setSpaceExplorerMode("files");
-                                          restoreLastSpaceDisplayView();
-                                        }}
-                                        className={`inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded px-3 py-2 text-[12px] font-medium transition ${
-                                          spaceExplorerMode === "files"
-                                            ? "bg-background text-foreground shadow-sm"
-                                            : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                                        }`}
-                                      >
+                                <div className="flex shrink-0 items-center gap-2 border-b border-border/45 px-3 py-2.5">
+                                  <Tabs
+                                    value={spaceExplorerMode}
+                                    onValueChange={(value) => {
+                                      const mode = value as SpaceExplorerMode;
+                                      setSpaceExplorerMode(mode);
+                                      if (mode === "browser") {
+                                        setSpaceDisplayView({ type: "browser" });
+                                      } else {
+                                        restoreLastSpaceDisplayView();
+                                      }
+                                    }}
+                                    className="min-w-0 flex-1"
+                                  >
+                                    <TabsList className="w-full">
+                                      <TabsTrigger value="files" className="flex-1 gap-1.5">
                                         <Folder size={13} />
-                                        <span>Files</span>
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setSpaceExplorerMode("browser");
-                                          setSpaceDisplayView({ type: "browser" });
-                                        }}
-                                        className={`inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded px-3 py-2 text-[12px] font-medium transition ${
-                                          spaceExplorerMode === "browser"
-                                            ? "bg-background text-foreground shadow-sm"
-                                            : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                                        }`}
-                                      >
+                                        Files
+                                      </TabsTrigger>
+                                      <TabsTrigger value="browser" className="flex-1 gap-1.5">
                                         <Globe size={13} />
-                                        <span>Browser</span>
-                                      </button>
-                                    </div>
-                                    <Button
-                                      variant="outline"
-                                      size="icon"
-                                      onClick={() => setSpaceExplorerCollapsed(true)}
-                                      aria-label="Collapse explorer"
-                                    >
-                                      <PanelLeftClose size={14} />
-                                    </Button>
-                                  </div>
+                                        Browser
+                                      </TabsTrigger>
+                                    </TabsList>
+                                  </Tabs>
+                                  <Button
+                                    variant="outline"
+                                    size="icon"
+                                    onClick={() => setSpaceExplorerCollapsed(true)}
+                                    aria-label="Collapse explorer"
+                                  >
+                                    <PanelLeftClose size={14} />
+                                  </Button>
                                 </div>
 
                                 <div className="min-h-0 flex-1 overflow-hidden">
@@ -3279,38 +3270,32 @@ function AppShellContent() {
                               </>
                             ) : (
                               <div className="flex h-full min-h-0 flex-col items-center gap-2 px-2 py-3">
-                                <button
-                                  type="button"
+                                <Button
+                                  variant={spaceExplorerMode === "files" ? "outline" : "ghost"}
+                                  size="icon"
                                   onClick={() => {
                                     setSpaceExplorerMode("files");
                                     restoreLastSpaceDisplayView();
                                     setSpaceExplorerCollapsed(false);
                                   }}
                                   aria-label="Open file explorer"
-                                  className={`inline-flex size-11 items-center justify-center rounded-[16px] border transition ${
-                                    spaceExplorerMode === "files"
-                                      ? "border-primary/45 bg-primary/12 text-primary"
-                                      : "border-border bg-card/80 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                                  }`}
+                                  className={spaceExplorerMode === "files" ? "border-primary/40 bg-primary/10 text-primary" : "text-muted-foreground"}
                                 >
-                                  <Folder size={16} />
-                                </button>
-                                <button
-                                  type="button"
+                                  <Folder size={15} />
+                                </Button>
+                                <Button
+                                  variant={spaceExplorerMode === "browser" ? "outline" : "ghost"}
+                                  size="icon"
                                   onClick={() => {
                                     setSpaceExplorerMode("browser");
                                     setSpaceDisplayView({ type: "browser" });
                                     setSpaceExplorerCollapsed(false);
                                   }}
                                   aria-label="Open browser explorer"
-                                  className={`inline-flex size-11 items-center justify-center rounded-[16px] border transition ${
-                                    spaceExplorerMode === "browser"
-                                      ? "border-primary/45 bg-primary/12 text-primary"
-                                      : "border-border bg-card/80 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                                  }`}
+                                  className={spaceExplorerMode === "browser" ? "border-primary/40 bg-primary/10 text-primary" : "text-muted-foreground"}
                                 >
-                                  <Globe size={16} />
-                                </button>
+                                  <Globe size={15} />
+                                </Button>
                                 <div className="min-h-0 flex-1" />
                                 <Button
                                   variant="outline"
