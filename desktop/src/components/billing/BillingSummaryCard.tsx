@@ -1,4 +1,6 @@
-import { CircleHelp } from "lucide-react";
+import { CircleHelp, Loader2, RefreshCw } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Popover,
   PopoverContent,
@@ -13,6 +15,7 @@ interface BillingSummaryCardProps {
   links: DesktopBillingLinksPayload | null;
   isLoading?: boolean;
   error?: Error | null;
+  onRefresh?: () => void;
 }
 
 const CREDITS_HELP_ITEMS = [
@@ -55,6 +58,7 @@ export function BillingSummaryCard({
   links,
   isLoading = false,
   error = null,
+  onRefresh,
 }: BillingSummaryCardProps) {
   const hasOverview = Boolean(overview);
   const creditsValue = isLoading
@@ -63,41 +67,59 @@ export function BillingSummaryCard({
       ? (overview?.creditsBalance ?? 0).toLocaleString()
       : "—";
 
+  const timelineLabel = billingTimelineLabel(overview);
+
   return (
-    <section
-      className="rounded-[24px] border border-border/40 px-5 py-5"
-      style={{ backgroundColor: "rgb(243, 243, 244)" }}
-    >
+    <section className="rounded-[24px] border border-border/40 bg-card/80 px-5 py-5">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <div className="text-2xl font-semibold text-foreground">
-            {isLoading ? "Loading..." : overview?.planName || "Holaboss"}
+          <div className="flex items-center gap-2.5">
+            <span className="text-2xl font-semibold text-foreground">
+              {isLoading ? "Loading..." : overview?.planName || "Free"}
+            </span>
+            {!isLoading && timelineLabel !== "Billing managed on web" ? (
+              <Badge variant="secondary">{timelineLabel}</Badge>
+            ) : null}
           </div>
           <div className="mt-1 text-sm text-muted-foreground">
-            {isLoading ? "Checking hosted billing..." : billingTimelineLabel(overview)}
+            {isLoading ? "Checking hosted billing..." : "Billing managed on web"}
           </div>
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
+          {onRefresh ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Refresh billing"
+              onClick={onRefresh}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <RefreshCw size={16} />
+              )}
+            </Button>
+          ) : null}
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => openBillingLink(links?.billingPageUrl)}
-            className="theme-control-surface inline-flex h-10 items-center justify-center rounded-full border border-border/45 px-4 text-sm font-medium text-foreground transition hover:border-primary/35"
           >
             Manage on web
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            size="sm"
             onClick={() => openBillingLink(links?.addCreditsUrl)}
-            className="inline-flex h-10 items-center justify-center rounded-full border border-primary/35 bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90"
           >
             Add credits
-          </button>
+          </Button>
         </div>
       </div>
 
       {error ? (
-        <div className="mt-4 rounded-[16px] border border-rose-400/35 bg-rose-500/8 px-4 py-3 text-sm text-rose-400">
+        <div className="mt-4 rounded-[16px] border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
           {error.message}
         </div>
       ) : null}
