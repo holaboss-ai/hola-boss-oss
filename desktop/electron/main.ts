@@ -29,7 +29,15 @@ import {
 } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  type FSWatcher,
+  watch,
+  writeFileSync,
+} from "node:fs";
 import fs from "node:fs/promises";
 import {
   createServer,
@@ -208,6 +216,7 @@ interface FilePreviewTableSheetPayload {
   totalRows: number;
   totalColumns: number;
   truncated: boolean;
+  hasHeaderRow: boolean;
 }
 
 interface FilePreviewPayload {
@@ -234,6 +243,17 @@ interface FileBookmarkPayload {
 }
 
 interface FileSystemMutationPayload {
+  absolutePath: string;
+}
+
+type FileSystemCreateKind = "file" | "directory";
+
+interface FilePreviewWatchSubscriptionPayload {
+  subscriptionId: string;
+  absolutePath: string;
+}
+
+interface FilePreviewChangePayload {
   absolutePath: string;
 }
 
@@ -543,6 +563,13 @@ let appSurfaceBounds: BrowserBoundsPayload = {
 };
 let activeAppSurfaceId: string | null = null;
 let fileBookmarks: FileBookmarkPayload[] = [];
+const filePreviewWatchSubscriptions = new Map<
+  string,
+  {
+    absolutePath: string;
+    watcher: FSWatcher;
+  }
+>();
 let runtimeProcess: ChildProcessWithoutNullStreams | null = null;
 let pendingAuthUser: AuthUserPayload | null = null;
 let pendingAuthError: AuthErrorPayload | null = null;
@@ -11758,7 +11785,145 @@ function tablePreviewSheetFromRows(
     totalRows: allRows.length,
     totalColumns,
     truncated,
+    hasHeaderRow,
   };
+}
+
+function normalizeWritableTableString(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value);
+}
+
+function normalizeWritableTableSheets(
+  value: unknown,
+): FilePreviewTableSheetPayload[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((sheet, sheetIndex) => {
+      if (!sheet || typeof sheet !== "object") {
+        return null;
+      }
+
+      const candidate = sheet as Partial<FilePreviewTableSheetPayload>;
+      const columns = Array.isArray(candidate.columns)
+        ? candidate.columns.map((column) => normalizeWritableTableString(column))
+        : [];
+      const rows = Array.isArray(candidate.rows)
+        ? candidate.rows.map((row) =>
+            Array.isArray(row)
+              ? row.map((cell) => normalizeWritableTableString(cell))
+              : [],
+          )
+        : [];
+      const normalizedName =
+        typeof candidate.name === "string" && candidate.name.trim()
+          ? candidate.name.trim()
+          : `Sheet ${sheetIndex + 1}`;
+
+      return {
+        name: normalizedName,
+        index:
+          typeof candidate.index === "number" && Number.isFinite(candidate.index)
+            ? candidate.index
+            : sheetIndex,
+        columns,
+        rows,
+        totalRows:
+          typeof candidate.totalRows === "number" &&
+          Number.isFinite(candidate.totalRows)
+            ? candidate.totalRows
+            : rows.length,
+        totalColumns:
+          typeof candidate.totalColumns === "number" &&
+          Number.isFinite(candidate.totalColumns)
+            ? candidate.totalColumns
+            : columns.length,
+        truncated: Boolean(candidate.truncated),
+        hasHeaderRow: candidate.hasHeaderRow !== false,
+      } satisfies FilePreviewTableSheetPayload;
+    })
+    .filter(
+      (sheet): sheet is FilePreviewTableSheetPayload => sheet !== null,
+    );
+}
+
+function sourceRowsFromTablePreviewSheet(
+  sheet: FilePreviewTableSheetPayload,
+): string[][] {
+  const visibleColumnCount = Math.max(sheet.columns.length, 1);
+  const sourceRows = sheet.hasHeaderRow ? [sheet.columns, ...sheet.rows] : sheet.rows;
+  return sourceRows.map((row) =>
+    Array.from(
+      { length: visibleColumnCount },
+      (_unused, columnIndex) => row[columnIndex] ?? "",
+    ),
+  );
+}
+
+function applyPreviewSheetEditsToWorksheet(
+  worksheet: ExcelJS.Worksheet,
+  sheet: FilePreviewTableSheetPayload,
+) {
+  const sourceRows = sourceRowsFromTablePreviewSheet(sheet);
+  for (const [rowIndex, row] of sourceRows.entries()) {
+    const worksheetRow = worksheet.getRow(rowIndex + 1);
+    for (const [columnIndex, value] of row.entries()) {
+      worksheetRow.getCell(columnIndex + 1).value = value;
+    }
+    worksheetRow.commit();
+  }
+}
+
+async function writeCsvTablePreview(
+  absolutePath: string,
+  sheet: FilePreviewTableSheetPayload,
+): Promise<void> {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet(sheet.name || "Sheet 1");
+  const sourceRows = sourceRowsFromTablePreviewSheet(sheet);
+  if (sourceRows.length > 0) {
+    worksheet.addRows(sourceRows);
+  }
+  const outputBuffer = await workbook.csv.writeBuffer({
+    sheetName: worksheet.name,
+    formatterOptions: {
+      delimiter: ",",
+      quote: '"',
+      escape: '"',
+      rowDelimiter: "\r\n",
+    },
+  });
+  await fs.writeFile(absolutePath, Buffer.from(outputBuffer as ArrayBuffer));
+}
+
+async function writeWorkbookTablePreview(
+  absolutePath: string,
+  buffer: Buffer,
+  tableSheets: FilePreviewTableSheetPayload[],
+): Promise<void> {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(
+    buffer as unknown as Parameters<ExcelJS.Workbook["xlsx"]["load"]>[0],
+  );
+
+  for (const sheet of tableSheets) {
+    const worksheet = workbook.worksheets[sheet.index];
+    if (!worksheet) {
+      continue;
+    }
+    applyPreviewSheetEditsToWorksheet(worksheet, sheet);
+  }
+
+  const outputBuffer = await workbook.xlsx.writeBuffer();
+  await fs.writeFile(absolutePath, Buffer.from(outputBuffer as ArrayBuffer));
 }
 
 async function buildWorkbookPreviewSheets(
@@ -11891,7 +12056,9 @@ async function readFilePreview(
       return {
         ...basePayload,
         kind: "table",
-        isEditable: false,
+        isEditable:
+          extension !== ".xls" &&
+          tableSheets.every((sheet) => !sheet.truncated),
         tableSheets,
       };
     } catch {
@@ -11963,6 +12130,89 @@ async function writeTextFile(
   );
   await fs.writeFile(absolutePath, content, "utf-8");
   return readFilePreview(absolutePath, workspaceId);
+}
+
+async function writeTableFile(
+  targetPath: string,
+  tableSheets: unknown,
+  workspaceId?: string | null,
+): Promise<FilePreviewPayload> {
+  const { absolutePath } = await resolveWorkspaceScopedExplorerPath(
+    targetPath,
+    workspaceId,
+  );
+  const stat = await fs.stat(absolutePath);
+  if (stat.isDirectory()) {
+    throw new Error("Target path is a directory.");
+  }
+
+  const { extension, kind } = getFilePreviewKind(absolutePath);
+  if (kind !== "table") {
+    throw new Error("Target file is not a spreadsheet preview.");
+  }
+  if (extension === ".xls") {
+    throw new Error("Legacy .xls files are preview-only in the inline editor.");
+  }
+
+  const normalizedTableSheets = normalizeWritableTableSheets(tableSheets);
+  if (normalizedTableSheets.length === 0) {
+    throw new Error("Spreadsheet preview did not include any editable sheet data.");
+  }
+  if (normalizedTableSheets.some((sheet) => sheet.truncated)) {
+    throw new Error("Spreadsheet is too large to edit inline.");
+  }
+
+  if (extension === ".csv") {
+    await writeCsvTablePreview(absolutePath, normalizedTableSheets[0]);
+    return readFilePreview(absolutePath, workspaceId);
+  }
+
+  const buffer = await fs.readFile(absolutePath);
+  await writeWorkbookTablePreview(absolutePath, buffer, normalizedTableSheets);
+  return readFilePreview(absolutePath, workspaceId);
+}
+
+async function watchFilePreviewPath(
+  targetPath: string,
+  workspaceId?: string | null,
+): Promise<FilePreviewWatchSubscriptionPayload> {
+  const { absolutePath } = await resolveWorkspaceScopedExplorerPath(
+    targetPath,
+    workspaceId,
+  );
+  const watchedDirectoryPath = path.dirname(absolutePath);
+  const watchedFileName = path.basename(absolutePath);
+  const subscriptionId = `file-preview-watch:${randomUUID()}`;
+  const watcher = watch(
+    watchedDirectoryPath,
+    { persistent: false },
+    (_eventType, filename) => {
+      const normalizedFilename =
+        typeof filename === "string"
+          ? filename
+          : filename == null
+            ? ""
+            : String(filename);
+      if (normalizedFilename && normalizedFilename !== watchedFileName) {
+        return;
+      }
+      emitFilePreviewChanged({ absolutePath });
+    },
+  );
+
+  filePreviewWatchSubscriptions.set(subscriptionId, {
+    absolutePath,
+    watcher,
+  });
+  watcher.on("error", () => {
+    closeFilePreviewWatchSubscription(subscriptionId);
+    emitFilePreviewChanged({ absolutePath });
+  });
+
+  return {
+    subscriptionId,
+    absolutePath,
+  };
 }
 
 function isPathWithinRoot(rootPath: string, targetPath: string): boolean {
@@ -12040,6 +12290,114 @@ async function resolveWorkspaceScopedExplorerPath(
   };
 }
 
+async function ensureExplorerPathDoesNotExist(
+  targetPath: string,
+): Promise<void> {
+  if (await fileExists(targetPath)) {
+    const targetName = path.basename(targetPath) || targetPath;
+    throw new Error(`A file or folder named "${targetName}" already exists.`);
+  }
+}
+
+async function rewriteExplorerBookmarksAfterPathChange(
+  previousAbsolutePath: string,
+  nextAbsolutePath: string,
+): Promise<void> {
+  let didRewriteBookmarks = false;
+  const nextBookmarks = fileBookmarks.map((bookmark) => {
+    if (!isSameOrDescendantPath(previousAbsolutePath, bookmark.targetPath)) {
+      return bookmark;
+    }
+
+    const relativePath = path.relative(previousAbsolutePath, bookmark.targetPath);
+    const rewrittenTargetPath = relativePath
+      ? path.join(nextAbsolutePath, relativePath)
+      : nextAbsolutePath;
+    const rewrittenLabel =
+      relativePath === "" &&
+      shouldAutoRenameBookmarkLabel(bookmark, previousAbsolutePath)
+        ? path.basename(nextAbsolutePath)
+        : bookmark.label === bookmark.targetPath
+          ? rewrittenTargetPath
+          : bookmark.label;
+
+    if (
+      rewrittenTargetPath === bookmark.targetPath &&
+      rewrittenLabel === bookmark.label
+    ) {
+      return bookmark;
+    }
+
+    didRewriteBookmarks = true;
+    return {
+      ...bookmark,
+      targetPath: rewrittenTargetPath,
+      label: rewrittenLabel,
+    };
+  });
+
+  if (didRewriteBookmarks) {
+    await persistUpdatedFileBookmarks(nextBookmarks);
+  }
+}
+
+function numberedExplorerCreateName(baseName: string, attempt: number): string {
+  if (attempt <= 1) {
+    return baseName;
+  }
+  const extension = path.extname(baseName);
+  const stem = extension ? baseName.slice(0, -extension.length) : baseName;
+  return `${stem} ${attempt}${extension}`;
+}
+
+async function nextAvailableExplorerCreatePath(
+  parentPath: string,
+  baseName: string,
+): Promise<string> {
+  for (let attempt = 1; attempt < 10_000; attempt += 1) {
+    const candidatePath = path.join(
+      parentPath,
+      numberedExplorerCreateName(baseName, attempt),
+    );
+    if (!(await fileExists(candidatePath))) {
+      return candidatePath;
+    }
+  }
+
+  throw new Error(`Failed to choose an available name for "${baseName}".`);
+}
+
+async function createExplorerPath(
+  parentPath: string | null | undefined,
+  kind: FileSystemCreateKind,
+  workspaceId?: string | null,
+): Promise<FileSystemMutationPayload> {
+  const { absolutePath: parentAbsolutePath, workspaceRoot } =
+    await resolveWorkspaceScopedExplorerPath(parentPath, workspaceId);
+  const parentStat = await fs.stat(parentAbsolutePath);
+  if (!parentStat.isDirectory()) {
+    throw new Error("Target path is not a directory.");
+  }
+
+  const nextAbsolutePath = await nextAvailableExplorerCreatePath(
+    parentAbsolutePath,
+    kind === "directory" ? "New Folder" : "Untitled.txt",
+  );
+  if (workspaceRoot && !isPathWithinRoot(workspaceRoot, nextAbsolutePath)) {
+    throw new Error("Created path escapes workspace root.");
+  }
+
+  if (kind === "directory") {
+    await fs.mkdir(nextAbsolutePath);
+  } else {
+    await fs.writeFile(nextAbsolutePath, "", { flag: "wx" });
+  }
+
+  return {
+    absolutePath: nextAbsolutePath,
+  };
+}
+
 async function renameExplorerPath(
   targetPath: string,
   nextName: string,
@@ -12081,61 +12439,64 @@ async function renameExplorerPath(
   ) {
     throw new Error("Renamed path escapes workspace root.");
   }
-
-  let targetExists = false;
-  try {
-    await fs.access(nextAbsolutePath);
-    targetExists = true;
-  } catch (cause) {
-    const code = cause && typeof cause === "object" && "code" in cause
-      ? String((cause as { code?: unknown }).code ?? "")
-      : "";
-    if (code !== "ENOENT") {
-      throw cause;
-    }
-  }
-
-  if (targetExists) {
-    throw new Error(`A file or folder named "${trimmedName}" already exists.`);
-  }
+  await ensureExplorerPathDoesNotExist(nextAbsolutePath);
 
   await fs.rename(absolutePath, nextAbsolutePath);
+  await rewriteExplorerBookmarksAfterPathChange(absolutePath, nextAbsolutePath);
 
-  let didRewriteBookmarks = false;
-  const nextBookmarks = fileBookmarks.map((bookmark) => {
-    if (!isSameOrDescendantPath(absolutePath, bookmark.targetPath)) {
-      return bookmark;
-    }
+  return {
+    absolutePath: nextAbsolutePath,
+  };
+}
 
-    const relativePath = path.relative(absolutePath, bookmark.targetPath);
-    const rewrittenTargetPath = relativePath
-      ? path.join(nextAbsolutePath, relativePath)
-      : nextAbsolutePath;
-    const rewrittenLabel =
-      relativePath === "" && shouldAutoRenameBookmarkLabel(bookmark, absolutePath)
-        ? path.basename(nextAbsolutePath)
-        : bookmark.label === bookmark.targetPath
-          ? rewrittenTargetPath
-          : bookmark.label;
+async function moveExplorerPath(
+  sourcePath: string,
+  destinationDirectoryPath: string,
+  workspaceId?: string | null,
+): Promise<FileSystemMutationPayload> {
+  const { absolutePath: sourceAbsolutePath, workspaceRoot } =
+    await resolveWorkspaceScopedExplorerPath(sourcePath, workspaceId);
+  const { absolutePath: destinationAbsolutePath } =
+    await resolveWorkspaceScopedExplorerPath(destinationDirectoryPath, workspaceId);
 
-    if (
-      rewrittenTargetPath === bookmark.targetPath &&
-      rewrittenLabel === bookmark.label
-    ) {
-      return bookmark;
-    }
-
-    didRewriteBookmarks = true;
-    return {
-      ...bookmark,
-      targetPath: rewrittenTargetPath,
-      label: rewrittenLabel,
-    };
-  });
-
-  if (didRewriteBookmarks) {
-    await persistUpdatedFileBookmarks(nextBookmarks);
+  if (
+    workspaceRoot &&
+    path.normalize(sourceAbsolutePath) === path.normalize(workspaceRoot)
+  ) {
+    throw new Error("Workspace root cannot be moved.");
   }
+
+  const sourceStat = await fs.stat(sourceAbsolutePath);
+  const destinationStat = await fs.stat(destinationAbsolutePath);
+  if (!destinationStat.isDirectory()) {
+    throw new Error("Destination is not a directory.");
+  }
+  if (
+    sourceStat.isDirectory() &&
+    isSameOrDescendantPath(sourceAbsolutePath, destinationAbsolutePath)
+  ) {
+    throw new Error("Cannot move a folder into itself.");
+  }
+
+  const nextAbsolutePath = path.join(
+    destinationAbsolutePath,
+    path.basename(sourceAbsolutePath),
+  );
+  if (path.normalize(nextAbsolutePath) === path.normalize(sourceAbsolutePath)) {
+    return {
+      absolutePath: sourceAbsolutePath,
+    };
+  }
+  if (workspaceRoot && !isPathWithinRoot(workspaceRoot, nextAbsolutePath)) {
+    throw new Error("Moved path escapes workspace root.");
+  }
+
+  await ensureExplorerPathDoesNotExist(nextAbsolutePath);
+  await fs.rename(sourceAbsolutePath, nextAbsolutePath);
+  await rewriteExplorerBookmarksAfterPathChange(
+    sourceAbsolutePath,
+    nextAbsolutePath,
+  );
 
   return {
     absolutePath: nextAbsolutePath,
@@ -12239,6 +12600,35 @@ function emitFileBookmarksState() {
   }
 
   mainWindow.webContents.send("fs:bookmarks", fileBookmarks);
+}
+
+function emitFilePreviewChanged(payload: FilePreviewChangePayload) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  mainWindow.webContents.send("fs:fileChanged", payload);
+}
+
+function closeFilePreviewWatchSubscription(subscriptionId: string) {
+  const subscription = filePreviewWatchSubscriptions.get(subscriptionId);
+  if (!subscription) {
+    return;
+  }
+  filePreviewWatchSubscriptions.delete(subscriptionId);
+  try {
+    subscription.watcher.close();
+  } catch {
+    // Ignore watcher shutdown errors during cleanup.
+  }
+}
+
+function closeAllFilePreviewWatchSubscriptions() {
+  for (const subscriptionId of Array.from(
+    filePreviewWatchSubscriptions.keys(),
+  )) {
+    closeFilePreviewWatchSubscription(subscriptionId);
+  }
 }
 
 function emitAddressSuggestionsState() {
@@ -15077,6 +15467,7 @@ function createMainWindow() {
     activeBrowserSpaceId = "user";
     attachedBrowserTabView = null;
     attachedAppSurfaceView = null;
+    closeAllFilePreviewWatchSubscriptions();
     mainWindow = null;
   });
 }
@@ -15166,6 +15557,39 @@ app.whenReady().then(async () => {
     ) => writeTextFile(targetPath, content, workspaceId),
   );
   handleTrustedIpc(
+    "fs:writeTableFile",
+    ["main"],
+    async (
+      _event,
+      targetPath: string,
+      tableSheets: FilePreviewTableSheetPayload[],
+      workspaceId?: string | null,
+    ) => writeTableFile(targetPath, tableSheets, workspaceId),
+  );
+  handleTrustedIpc(
+    "fs:watchFile",
+    ["main"],
+    async (_event, targetPath: string, workspaceId?: string | null) =>
+      watchFilePreviewPath(targetPath, workspaceId),
+  );
+  handleTrustedIpc(
+    "fs:unwatchFile",
+    ["main"],
+    async (_event, subscriptionId: string) => {
+      closeFilePreviewWatchSubscription(subscriptionId);
+    },
+  );
+  handleTrustedIpc(
+    "fs:createPath",
+    ["main"],
+    async (
+      _event,
+      parentPath: string | null | undefined,
+      kind: FileSystemCreateKind,
+      workspaceId?: string | null,
+    ) => createExplorerPath(parentPath, kind, workspaceId),
+  );
+  handleTrustedIpc(
     "fs:renamePath",
     ["main"],
     async (
@@ -15174,6 +15598,16 @@ app.whenReady().then(async () => {
       nextName: string,
       workspaceId?: string | null,
     ) => renameExplorerPath(targetPath, nextName, workspaceId),
+  );
+  handleTrustedIpc(
+    "fs:movePath",
+    ["main"],
+    async (
+      _event,
+      sourcePath: string,
+      destinationDirectoryPath: string,
+      workspaceId?: string | null,
+    ) => moveExplorerPath(sourcePath, destinationDirectoryPath, workspaceId),
   );
   handleTrustedIpc(
     "fs:deletePath",

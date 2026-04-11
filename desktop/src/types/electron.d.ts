@@ -25,6 +25,7 @@ declare global {
     totalRows: number;
     totalColumns: number;
     truncated: boolean;
+    hasHeaderRow: boolean;
   }
 
   interface FilePreviewPayload {
@@ -51,6 +52,17 @@ declare global {
   }
 
   interface FileSystemMutationPayload {
+    absolutePath: string;
+  }
+
+  type FileSystemCreateKind = "file" | "directory";
+
+  interface FilePreviewWatchSubscriptionPayload {
+    subscriptionId: string;
+    absolutePath: string;
+  }
+
+  interface FilePreviewChangePayload {
     absolutePath: string;
   }
 
@@ -1182,11 +1194,25 @@ declare global {
       listDirectory: (targetPath?: string | null, workspaceId?: string | null) => Promise<LocalDirectoryResponse>;
       readFilePreview: (targetPath: string, workspaceId?: string | null) => Promise<FilePreviewPayload>;
       writeTextFile: (targetPath: string, content: string, workspaceId?: string | null) => Promise<FilePreviewPayload>;
+      writeTableFile: (targetPath: string, tableSheets: FilePreviewTableSheetPayload[], workspaceId?: string | null) => Promise<FilePreviewPayload>;
+      watchFile: (targetPath: string, workspaceId?: string | null) => Promise<FilePreviewWatchSubscriptionPayload>;
+      unwatchFile: (subscriptionId: string) => Promise<void>;
+      createPath: (
+        parentPath: string | null | undefined,
+        kind: FileSystemCreateKind,
+        workspaceId?: string | null,
+      ) => Promise<FileSystemMutationPayload>;
       renamePath: (targetPath: string, nextName: string, workspaceId?: string | null) => Promise<FileSystemMutationPayload>;
+      movePath: (
+        sourcePath: string,
+        destinationDirectoryPath: string,
+        workspaceId?: string | null,
+      ) => Promise<FileSystemMutationPayload>;
       deletePath: (targetPath: string, workspaceId?: string | null) => Promise<{ deleted: boolean }>;
       getBookmarks: (workspaceId?: string | null) => Promise<FileBookmarkPayload[]>;
       addBookmark: (targetPath: string, label?: string, workspaceId?: string | null) => Promise<FileBookmarkPayload[]>;
       removeBookmark: (bookmarkId: string) => Promise<FileBookmarkPayload[]>;
+      onFileChange: (listener: (payload: FilePreviewChangePayload) => void) => () => void;
       onBookmarksChange: (listener: (bookmarks: FileBookmarkPayload[]) => void) => () => void;
     };
     diagnostics: {

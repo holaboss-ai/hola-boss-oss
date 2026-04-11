@@ -1,5 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileText, FileWarning, Loader2, Save } from "lucide-react";
+import {
+  areTablePreviewSheetsEqual,
+  cloneTablePreviewSheets,
+  SpreadsheetEditor,
+} from "@/components/panes/SpreadsheetEditor";
 import { Button } from "@/components/ui/button";
 import { SimpleMarkdown } from "@/components/marketplace/SimpleMarkdown";
 import { useWorkspaceSelection } from "@/lib/workspaceSelection";
@@ -13,25 +18,8 @@ interface InternalSurfacePaneProps {
 }
 
 const MARKDOWN_PREVIEW_EXTENSIONS = new Set([".md", ".mdx", ".markdown"]);
+const HTML_PREVIEW_EXTENSIONS = new Set([".html", ".htm"]);
 type TextPreviewMode = "edit" | "preview";
-
-function resolveWorkspaceTargetPath(
-  workspaceRoot: string,
-  resourceId: string,
-): string {
-  const trimmedRoot = workspaceRoot.trim();
-  const trimmedResource = resourceId.trim();
-  if (!trimmedRoot) {
-    return trimmedResource;
-  }
-  if (/^(?:[a-zA-Z]:[\\/]|\/)/.test(trimmedResource)) {
-    return trimmedResource;
-  }
-  const separator = trimmedRoot.includes("\\") ? "\\" : "/";
-  const normalizedRoot = trimmedRoot.replace(/[\\/]+$/, "");
-  const normalizedResource = trimmedResource.replace(/^[\\/]+/, "");
-  return `${normalizedRoot}${separator}${normalizedResource}`;
-}
 
 function isMarkdownPreviewPayload(
   preview: Pick<FilePreviewPayload, "kind" | "extension"> | null | undefined,
@@ -44,6 +32,15 @@ function isMarkdownPreviewPayload(
   );
 }
 
+function isHtmlPreviewPayload(
+  preview: Pick<FilePreviewPayload, "kind" | "extension"> | null | undefined,
+): boolean {
+  if (!preview || preview.kind !== "text") {
+    return false;
+  }
+  return HTML_PREVIEW_EXTENSIONS.has(preview.extension.trim().toLowerCase());
+}
+
 export function InternalSurfacePane({
   surface,
   resourceId,
@@ -52,15 +49,78 @@ export function InternalSurfacePane({
   const { selectedWorkspaceId } = useWorkspaceSelection();
   const [preview, setPreview] = useState<FilePreviewPayload | null>(null);
   const [previewDraft, setPreviewDraft] = useState("");
+  const [tablePreviewDraft, setTablePreviewDraft] = useState<
+    FilePreviewTableSheetPayload[]
+  >([]);
   const [textPreviewMode, setTextPreviewMode] =
     useState<TextPreviewMode>("edit");
   const [activeTableSheetIndex, setActiveTableSheetIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const isDirtyRef = useRef(false);
+  const isSavingRef = useRef(false);
+  const pendingExternalRefreshPathRef = useRef<string | null>(null);
   const openPreviewLink = useCallback((url: string) => {
     void window.electronAPI.ui.openExternalUrl(url);
   }, []);
+
+  const loadPreviewFromDisk = useCallback(
+    async (
+      targetPath: string,
+      options?: {
+        preserveViewState?: boolean;
+        showLoading?: boolean;
+      },
+    ) => {
+      const preserveViewState = options?.preserveViewState ?? false;
+      const showLoading = options?.showLoading ?? true;
+      if (showLoading) {
+        setIsLoading(true);
+      }
+      setErrorMessage("");
+      try {
+        const nextPreview = await window.electronAPI.fs.readFilePreview(
+          targetPath,
+          selectedWorkspaceId ?? null,
+        );
+        setPreview(nextPreview);
+        setPreviewDraft(nextPreview.content ?? "");
+        setTablePreviewDraft(cloneTablePreviewSheets(nextPreview.tableSheets));
+        setTextPreviewMode((currentMode) =>
+          preserveViewState &&
+          (isMarkdownPreviewPayload(nextPreview) ||
+            isHtmlPreviewPayload(nextPreview))
+            ? currentMode
+            : isMarkdownPreviewPayload(nextPreview) ||
+                isHtmlPreviewPayload(nextPreview)
+              ? "preview"
+              : "edit",
+        );
+        if (!preserveViewState) {
+          setActiveTableSheetIndex(0);
+        }
+        setIsSaving(false);
+      } catch (error) {
+        setPreview(null);
+        setPreviewDraft("");
+        setTablePreviewDraft([]);
+        setTextPreviewMode("edit");
+        setActiveTableSheetIndex(0);
+        setErrorMessage(
+          error instanceof Error
+            ? error.message
+            : "Failed to load output preview.",
+        );
+        setIsSaving(false);
+      } finally {
+        if (showLoading) {
+          setIsLoading(false);
+        }
+      }
+    },
+    [selectedWorkspaceId],
+  );
 
   useEffect(() => {
     if (
@@ -70,81 +130,108 @@ export function InternalSurfacePane({
     ) {
       setPreview(null);
       setPreviewDraft("");
+      setTablePreviewDraft([]);
       setTextPreviewMode("edit");
       setActiveTableSheetIndex(0);
       setErrorMessage("");
       setIsLoading(false);
       setIsSaving(false);
+      pendingExternalRefreshPathRef.current = null;
       return;
     }
 
-    const targetResource: string = resourceId;
-
-    let cancelled = false;
-
-    async function loadPreview() {
-      setIsLoading(true);
-      setErrorMessage("");
-      try {
-        let targetPath = targetResource;
-        if (selectedWorkspaceId) {
-          const workspaceRoot =
-            await window.electronAPI.workspace.getWorkspaceRoot(
-              selectedWorkspaceId,
-            );
-          if (cancelled) {
-            return;
-          }
-          targetPath = resolveWorkspaceTargetPath(
-            workspaceRoot,
-            targetResource,
-          );
-        }
-        const nextPreview = await window.electronAPI.fs.readFilePreview(
-          targetPath,
-          selectedWorkspaceId ?? null,
-        );
-        if (!cancelled) {
-          setPreview(nextPreview);
-          setPreviewDraft(nextPreview.content ?? "");
-          setTextPreviewMode("edit");
-          setActiveTableSheetIndex(0);
-          setIsSaving(false);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setPreview(null);
-          setPreviewDraft("");
-          setTextPreviewMode("edit");
-          setActiveTableSheetIndex(0);
-          setErrorMessage(
-            error instanceof Error
-              ? error.message
-              : "Failed to load output preview.",
-          );
-          setIsSaving(false);
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
-      }
-    }
-
-    void loadPreview();
+    pendingExternalRefreshPathRef.current = null;
+    void loadPreviewFromDisk(resourceId, { showLoading: true });
     return () => {
-      cancelled = true;
+      pendingExternalRefreshPathRef.current = null;
     };
-  }, [resourceId, selectedWorkspaceId, surface]);
+  }, [loadPreviewFromDisk, resourceId, surface]);
 
   const isMarkdownPreview = isMarkdownPreviewPayload(preview);
+  const isHtmlPreview = isHtmlPreviewPayload(preview);
+  const supportsRenderedTextPreview = isMarkdownPreview || isHtmlPreview;
   const isDirty =
     preview?.kind === "text" && preview.isEditable
       ? previewDraft !== (preview.content ?? "")
-      : false;
+      : preview?.kind === "table" && preview.isEditable
+        ? !areTablePreviewSheetsEqual(tablePreviewDraft, preview.tableSheets)
+        : false;
+
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
+
+  useEffect(() => {
+    isSavingRef.current = isSaving;
+  }, [isSaving]);
+
+  useEffect(() => {
+    const watchedPath = preview?.absolutePath?.trim() || "";
+    if (
+      !watchedPath ||
+      (surface !== "document" && surface !== "file")
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    let subscriptionId = "";
+    const unsubscribe = window.electronAPI.fs.onFileChange((payload) => {
+      const changedPath = payload.absolutePath.trim();
+      if (cancelled || changedPath !== watchedPath) {
+        return;
+      }
+      if (isSavingRef.current) {
+        return;
+      }
+      if (isDirtyRef.current) {
+        pendingExternalRefreshPathRef.current = changedPath;
+        return;
+      }
+      pendingExternalRefreshPathRef.current = null;
+      void loadPreviewFromDisk(changedPath, {
+        preserveViewState: true,
+        showLoading: false,
+      });
+    });
+
+    void window.electronAPI.fs
+      .watchFile(watchedPath, selectedWorkspaceId ?? null)
+      .then((subscription) => {
+        if (cancelled) {
+          void window.electronAPI.fs.unwatchFile(subscription.subscriptionId);
+          return;
+        }
+        subscriptionId = subscription.subscriptionId;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      if (subscriptionId) {
+        void window.electronAPI.fs.unwatchFile(subscriptionId);
+      }
+    };
+  }, [loadPreviewFromDisk, preview?.absolutePath, selectedWorkspaceId, surface]);
+
+  useEffect(() => {
+    if (isDirty || isSaving) {
+      return;
+    }
+    const pendingPath = pendingExternalRefreshPathRef.current;
+    if (!pendingPath) {
+      return;
+    }
+    pendingExternalRefreshPathRef.current = null;
+    void loadPreviewFromDisk(pendingPath, {
+      preserveViewState: true,
+      showLoading: false,
+    });
+  }, [isDirty, isSaving, loadPreviewFromDisk]);
 
   const savePreview = useCallback(async () => {
-    if (!preview || preview.kind !== "text" || !preview.isEditable) {
+    if (!preview || !preview.isEditable) {
       return;
     }
 
@@ -152,15 +239,25 @@ export function InternalSurfacePane({
     setErrorMessage("");
 
     try {
-      const nextPreview = await window.electronAPI.fs.writeTextFile(
-        preview.absolutePath,
-        previewDraft,
-        selectedWorkspaceId ?? null,
-      );
+      const nextPreview =
+        preview.kind === "table"
+          ? await window.electronAPI.fs.writeTableFile(
+              preview.absolutePath,
+              tablePreviewDraft,
+              selectedWorkspaceId ?? null,
+            )
+          : await window.electronAPI.fs.writeTextFile(
+              preview.absolutePath,
+              previewDraft,
+              selectedWorkspaceId ?? null,
+            );
       setPreview(nextPreview);
       setPreviewDraft(nextPreview.content ?? "");
+      setTablePreviewDraft(cloneTablePreviewSheets(nextPreview.tableSheets));
       setTextPreviewMode(
-        isMarkdownPreviewPayload(nextPreview) ? textPreviewMode : "edit",
+        isMarkdownPreviewPayload(nextPreview) || isHtmlPreviewPayload(nextPreview)
+          ? textPreviewMode
+          : "edit",
       );
     } catch (error) {
       setErrorMessage(
@@ -169,7 +266,13 @@ export function InternalSurfacePane({
     } finally {
       setIsSaving(false);
     }
-  }, [preview, previewDraft, selectedWorkspaceId, textPreviewMode]);
+  }, [
+    preview,
+    previewDraft,
+    selectedWorkspaceId,
+    tablePreviewDraft,
+    textPreviewMode,
+  ]);
 
   const body = useMemo(() => {
     if (surface === "event") {
@@ -251,7 +354,7 @@ export function InternalSurfacePane({
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              {isMarkdownPreview ? (
+              {supportsRenderedTextPreview ? (
                 <div className="inline-flex items-center rounded-md border border-border bg-muted/50 p-0.5">
                   <Button
                     type="button"
@@ -305,6 +408,23 @@ export function InternalSurfacePane({
                   </div>
                 )}
               </div>
+            ) : isHtmlPreview && textPreviewMode === "preview" ? (
+              previewDraft.trim() ? (
+                <div className="h-full overflow-hidden bg-muted/20 p-4">
+                  <iframe
+                    title={preview.name}
+                    sandbox=""
+                    srcDoc={previewDraft}
+                    className="h-full w-full rounded-lg border border-border bg-white"
+                  />
+                </div>
+              ) : (
+                <div className="grid h-full place-items-center px-6 text-center">
+                  <div className="text-xs text-muted-foreground">
+                    Empty file — switch to Edit to add markup.
+                  </div>
+                </div>
+              )
             ) : (
               <textarea
                 value={previewDraft}
@@ -349,80 +469,25 @@ export function InternalSurfacePane({
       preview.tableSheets.length > 0
     ) {
       const activeSheet =
-        preview.tableSheets[
-          Math.min(activeTableSheetIndex, preview.tableSheets.length - 1)
+        tablePreviewDraft[
+          Math.min(activeTableSheetIndex, tablePreviewDraft.length - 1)
         ];
       if (activeSheet) {
         return (
-          <div className="flex h-full min-h-0 flex-col overflow-hidden">
-            {preview.tableSheets.length > 1 ? (
-              <div className="flex items-center gap-1 overflow-x-auto border-b border-border/30 px-3 py-2">
-                {preview.tableSheets.map((sheet, index) => {
-                  const isActive = index === activeTableSheetIndex;
-                  return (
-                    <Button
-                      key={`${sheet.name}-${sheet.index}`}
-                      type="button"
-                      variant={isActive ? "secondary" : "ghost"}
-                      size="xs"
-                      onClick={() => setActiveTableSheetIndex(index)}
-                    >
-                      {sheet.name}
-                    </Button>
-                  );
-                })}
-              </div>
-            ) : null}
-            <div className="min-h-0 flex-1 overflow-auto">
-              <table className="w-max min-w-full border-collapse text-xs">
-                <thead className="sticky top-0 z-[1] bg-muted">
-                  <tr>
-                    <th className="border-b border-r border-border/30 px-2.5 py-1.5 text-left text-[11px] font-medium text-muted-foreground">
-                      #
-                    </th>
-                    {activeSheet.columns.map((column, columnIndex) => (
-                      <th
-                        key={`${column}-${columnIndex}`}
-                        className="border-b border-r border-border/30 px-2.5 py-1.5 text-left text-[11px] font-medium text-muted-foreground"
-                      >
-                        {column}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {activeSheet.rows.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={activeSheet.columns.length + 1}
-                        className="px-3 py-6 text-center text-xs text-muted-foreground"
-                      >
-                        No rows in this sheet.
-                      </td>
-                    </tr>
-                  ) : (
-                    activeSheet.rows.map((row, rowIndex) => (
-                      <tr key={`row-${rowIndex}`} className="hover:bg-muted/30">
-                        <td className="border-b border-r border-border/20 px-2.5 py-1.5 text-[11px] text-muted-foreground">
-                          {rowIndex + 1}
-                        </td>
-                        {row.map((value, columnIndex) => (
-                          <td
-                            key={`cell-${rowIndex}-${columnIndex}`}
-                            className="max-w-[320px] border-b border-r border-border/20 px-2.5 py-1.5"
-                          >
-                            <div className="break-words whitespace-pre-wrap">
-                              {value || "\u00a0"}
-                            </div>
-                          </td>
-                        ))}
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <SpreadsheetEditor
+            sheets={tablePreviewDraft}
+            activeSheetIndex={activeTableSheetIndex}
+            onActiveSheetIndexChange={setActiveTableSheetIndex}
+            editable={preview.isEditable}
+            readOnlyReason={
+              activeSheet.truncated
+                ? "Trimmed previews are read-only"
+                : preview.extension === ".xls"
+                  ? "Legacy .xls files are read-only"
+                  : null
+            }
+            onChange={setTablePreviewDraft}
+          />
         );
       }
     }
@@ -440,6 +505,7 @@ export function InternalSurfacePane({
     activeTableSheetIndex,
     errorMessage,
     htmlContent,
+    isHtmlPreview,
     isLoading,
     isDirty,
     isMarkdownPreview,
@@ -450,6 +516,8 @@ export function InternalSurfacePane({
     resourceId,
     savePreview,
     surface,
+    supportsRenderedTextPreview,
+    tablePreviewDraft,
     textPreviewMode,
   ]);
 

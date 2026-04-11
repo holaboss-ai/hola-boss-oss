@@ -68,9 +68,9 @@ test("file explorer keeps drag-to-attach without using a grab cursor", async () 
 
   assert.match(source, /const rowClassName = `group mb-0\.5 w-full rounded-md px-2 py-1\.5 text-left transition-colors/);
   assert.match(source, /\$\{isRenaming \? "cursor-default" : "cursor-pointer"\}/);
-  assert.match(source, /className="w-full cursor-pointer text-left"/);
+  assert.match(source, /className="w-full min-w-0 cursor-pointer text-left"/);
   assert.match(source, /draggable=\{!entry\.isDirectory\}/);
-  assert.match(source, /event\.dataTransfer\.effectAllowed = "copy";/);
+  assert.match(source, /event\.dataTransfer\.effectAllowed = "copyMove";/);
   assert.doesNotMatch(source, /cursor-grab/);
   assert.doesNotMatch(source, /cursor-grabbing/);
 });
@@ -78,7 +78,11 @@ test("file explorer keeps drag-to-attach without using a grab cursor", async () 
 test("file explorer keeps a minimal tree header without showing the workspace root row", async () => {
   const source = await readFile(sourcePath, "utf8");
 
-  assert.match(source, /text-\[11px\] font-medium uppercase tracking-\[0\.14em\] text-muted-foreground\/72">\s*Files\s*</);
+  assert.match(
+    source,
+    /<div className="flex items-center gap-2">[\s\S]*<div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-border bg-muted\/50 px-2\.5 py-1\.5 text-xs transition-colors focus-within:border-ring">[\s\S]*placeholder="Search files"[\s\S]*<\/div>[\s\S]*aria-label="Create new item"[\s\S]*aria-label=\{activeBookmark \? "Remove bookmark" : "Add bookmark"\}/,
+  );
+  assert.doesNotMatch(source, /text-\[11px\] font-medium uppercase tracking-\[0\.14em\] text-muted-foreground\/72">\s*Files\s*</);
   assert.doesNotMatch(source, /const rootFolderLabel = currentPath \? getFolderName\(currentPath\) : "Workspace";/);
   assert.doesNotMatch(source, /const isRootExpanded = normalizedQuery\.length > 0 \|\| expandedDirectoryPaths\[currentPath\] !== false;/);
   assert.doesNotMatch(source, /setExpandedDirectoryPaths\(\(current\) => \(\{\s*\.\.\.current,\s*\[currentPath\]: !isRootExpanded,\s*\}\)\);/);
@@ -110,17 +114,28 @@ test("file explorer adds a markdown preview mode while keeping text editing inli
 
   assert.match(source, /import \{ SimpleMarkdown \} from "@\/components\/marketplace\/SimpleMarkdown";/);
   assert.match(source, /const MARKDOWN_PREVIEW_EXTENSIONS = new Set\(\[\s*"\.md",\s*"\.mdx",\s*"\.markdown"\s*\]\);/);
+  assert.match(source, /const HTML_PREVIEW_EXTENSIONS = new Set\(\[\s*"\.html",\s*"\.htm"\s*\]\);/);
   assert.match(source, /type TextPreviewMode = "edit" \| "preview";/);
-  assert.match(source, /const \[textPreviewMode, setTextPreviewMode\] = useState<TextPreviewMode>\("edit"\);/);
-  assert.match(source, /setTextPreviewMode\(isMarkdownPreviewPayload\(payload\) \? "preview" : "edit"\);/);
-  assert.match(source, /const showInlinePreview = previewInPane && Boolean\(preview \|\| previewLoading \|\| previewError\);/);
+  assert.match(
+    source,
+    /const \[textPreviewMode, setTextPreviewMode\]\s*=\s*useState<TextPreviewMode>\("edit"\);/,
+  );
+  assert.match(source, /function isHtmlPreviewPayload\(/);
+  assert.match(
+    source,
+    /const prefersRenderedTextPreview =\s*isMarkdownPreviewPayload\(payload\) \|\| isHtmlPreviewPayload\(payload\);\s*setTextPreviewMode\(prefersRenderedTextPreview \? "preview" : "edit"\);/,
+  );
+  assert.match(
+    source,
+    /const showInlinePreview =\s*previewInPane && Boolean\(preview \|\| previewLoading \|\| previewError\);/,
+  );
   assert.match(source, /const explorerPane = embedded \? \(\s*content\s*\) : \(/);
   assert.match(source, /title=\{showInlinePreview \? "File" : ""\}/);
   assert.match(source, /preview\?\.kind === "text" \? \(/);
   assert.match(source, /isMarkdownPreview && textPreviewMode === "preview"/);
-  assert.match(source, /<SimpleMarkdown[\s\S]*className="chat-markdown text-sm text-foreground"[\s\S]*onLinkClick=\{openPreviewLink\}[\s\S]*\{previewDraft\}[\s\S]*<\/SimpleMarkdown>/);
+  assert.match(source, /<SimpleMarkdown[\s\S]*className="chat-markdown text-sm leading-7 text-foreground"[\s\S]*onLinkClick=\{openPreviewLink\}[\s\S]*\{previewDraft\}[\s\S]*<\/SimpleMarkdown>/);
+  assert.match(source, /const supportsRenderedTextPreview = isMarkdownPreview \|\| isHtmlPreview;/);
   assert.match(source, /readOnly=\{!preview\.isEditable\}/);
-  assert.match(source, /embedded-input focus:border-border\/70/);
   assert.match(source, />\s*Preview\s*<\/button>/);
   assert.match(source, />\s*Edit\s*<\/button>/);
   assert.match(source, /window\.electronAPI\.ui\.openExternalUrl\(url\)/);
@@ -133,6 +148,35 @@ test("file explorer adds a markdown preview mode while keeping text editing inli
     /window\.electronAPI\.fs\.writeTextFile\(\s*preview\.absolutePath,\s*previewDraft,\s*selectedWorkspaceId \?\? null,\s*\)/,
   );
   assert.match(source, /Save/);
+});
+
+test("file explorer renders html files inside a sandboxed iframe preview", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /const isHtmlPreview = isHtmlPreviewPayload\(preview\);/);
+  assert.match(source, /isHtmlPreview && textPreviewMode === "preview"/);
+  assert.match(source, /<iframe[\s\S]*title=\{preview\.name\}[\s\S]*sandbox=""[\s\S]*srcDoc=\{previewDraft\}[\s\S]*className="h-full w-full rounded-lg border border-border bg-white"/);
+  assert.match(source, /Empty file — switch to Edit to add markup\./);
+});
+
+test("file explorer renders editable spreadsheet previews", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /import \{[\s\S]*SpreadsheetEditor,[\s\S]*\} from "@\/components\/panes\/SpreadsheetEditor";/);
+  assert.match(
+    source,
+    /const \[tablePreviewDraft, setTablePreviewDraft\] = useState<[\s\S]*FilePreviewTableSheetPayload\[\][\s\S]*>\(\[\]\);/,
+  );
+  assert.match(
+    source,
+    /preview\?\.kind === "table" && preview\.isEditable[\s\S]*!areTablePreviewSheetsEqual\(tablePreviewDraft, preview\.tableSheets\)/,
+  );
+  assert.match(source, /setTablePreviewDraft\(cloneTablePreviewSheets\(payload\.tableSheets\)\);/);
+  assert.match(source, /window\.electronAPI\.fs\.writeTableFile\(\s*preview\.absolutePath,\s*tablePreviewDraft,\s*selectedWorkspaceId \?\? null,\s*\)/);
+  assert.match(
+    source,
+    /<SpreadsheetEditor[\s\S]*sheets=\{previewTableSheets\}[\s\S]*editable=\{preview\.isEditable\}[\s\S]*onChange=\{setTablePreviewDraft\}/,
+  );
 });
 
 test("file explorer preview metadata omits the absolute file path", async () => {
@@ -172,15 +216,27 @@ test("file explorer exposes right-click rename and delete actions for entries", 
   const source = await readFile(sourcePath, "utf8");
 
   assert.match(source, /type FileExplorerContextMenuState = \{/);
-  assert.match(source, /const \[contextMenu, setContextMenu\] = useState<FileExplorerContextMenuState \| null>\(null\);/);
-  assert.match(source, /const \[renamingPath, setRenamingPath\] = useState<string \| null>\(null\);/);
-  assert.match(source, /const \[renameDraft, setRenameDraft\] = useState\(""\);/);
-  assert.match(source, /const paneRect = containerRef\.current\?\.getBoundingClientRect\(\);/);
   assert.match(
     source,
-    /onContextMenu=\{\(event\) => \{\s*event\.preventDefault\(\);\s*const paneRect = containerRef\.current\?\.getBoundingClientRect\(\);\s*if \(!paneRect\) \{\s*return;\s*\}\s*setSelectedPath\(entry\.absolutePath\);\s*setContextMenu\(\{\s*entry,\s*x: event\.clientX,\s*y: event\.clientY,[\s\S]*paneBounds:/,
+    /const \[contextMenu, setContextMenu\]\s*=\s*useState<FileExplorerContextMenuState \| null>\(null\);/,
   );
-  assert.match(source, /const menuWidth = Math\.min\(196, Math\.max\(160, contextMenu\.paneBounds\.width - 16\)\);/);
+  assert.match(source, /const \[renamingPath, setRenamingPath\] = useState<string \| null>\(null\);/);
+  assert.match(source, /const \[renameDraft, setRenameDraft\] = useState\(""\);/);
+  assert.match(source, /const openEntryContextMenu = useCallback\(/);
+  assert.match(
+    source,
+    /onContextMenu=\{\(event\) => \{\s*event\.preventDefault\(\);\s*if \(isRenaming\) \{\s*return;\s*\}\s*openEntryContextMenu\(entry,\s*\{\s*x: event\.clientX,\s*y: event\.clientY,\s*\}\);\s*\}\}/,
+  );
+  assert.match(source, /aria-label=\{`More actions for \$\{entry\.name\}`\}/);
+  assert.match(
+    source,
+    /openEntryContextMenu\(entry,\s*\{\s*anchorRect:\s*event\.currentTarget\.getBoundingClientRect\(\),\s*\}\);/,
+  );
+  assert.match(source, /group-hover:pointer-events-auto group-hover:opacity-100/);
+  assert.match(
+    source,
+    /const menuWidth = Math\.min\(\s*196,\s*Math\.max\(160, contextMenu\.paneBounds\.width - 16\),\s*\);/,
+  );
   assert.match(source, /contextMenu\.paneBounds\.right - menuWidth - 8/);
   assert.match(source, /contextMenu\.paneBounds\.bottom - menuHeight - 8/);
   assert.match(source, /setRenamingPath\(entry\.absolutePath\);/);
@@ -196,13 +252,66 @@ test("file explorer exposes right-click rename and delete actions for entries", 
     /window\.electronAPI\.fs\.renamePath\(\s*renamingEntry\.absolutePath,\s*nextName,\s*selectedWorkspaceId \?\? null,\s*\)/,
   );
   assert.match(source, /const refreshDirectoryEntries = useCallback\(/);
-  assert.match(source, /const parentPath =\s*getParentFolderPath\(renamingEntry\.absolutePath\) \?\? currentPathRef\.current;/);
+  assert.match(
+    source,
+    /const parentPath =\s*getParentFolderPath\(renamingEntry\.absolutePath\)\s*\?\?\s*currentPathRef\.current;/,
+  );
   assert.match(
     source,
     /window\.electronAPI\.fs\.deletePath\(\s*entry\.absolutePath,\s*selectedWorkspaceId \?\? null,\s*\)/,
   );
   assert.match(source, /Rename…/);
   assert.match(source, /Delete…/);
+});
+
+test("file explorer can create new files and folders at the selected directory target", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const creationTargetDirectoryPath = selectedEntry\?\.isDirectory[\s\S]*getParentFolderPath\(selectedEntry\.absolutePath\) \?\? currentPath[\s\S]*: currentPath;/,
+  );
+  assert.match(source, /aria-label="Create new item"/);
+  assert.match(source, /<DropdownMenuContent align="end" sideOffset=\{6\} className="w-40">/);
+  assert.match(
+    source,
+    /window\.electronAPI\.fs\.createPath\(\s*normalizedTargetDirectoryPath,\s*kind,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
+  assert.match(source, /setRenamingPath\(payload\.absolutePath\);/);
+  assert.match(source, /setRenameDraft\(getFolderName\(payload\.absolutePath\)\);/);
+  assert.match(source, /New file/);
+  assert.match(source, /New folder/);
+});
+
+test("file explorer can move dragged files into folder rows", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const \[draggedEntryPath, setDraggedEntryPath\] = useState<string \| null>\(null\);/,
+  );
+  assert.match(
+    source,
+    /const \[directoryDropTargetPath, setDirectoryDropTargetPath\] = useState<[\s\S]*string \| null[\s\S]*>\(null\);/,
+  );
+  assert.match(source, /const canDropDraggedEntryIntoDirectory = useCallback\(/);
+  assert.match(source, /event\.dataTransfer\.dropEffect = "move";/);
+  assert.match(
+    source,
+    /void moveEntryToDirectory\(\s*draggedEntryPath,\s*entry\.absolutePath,\s*\);/,
+  );
+  assert.match(
+    source,
+    /window\.electronAPI\.fs\.movePath\(\s*normalizedSourcePath,\s*normalizedDestinationDirectoryPath,\s*selectedWorkspaceId \?\? null,\s*\)/,
+  );
+  assert.match(
+    source,
+    /setExpandedDirectoryPaths\(\(current\) => \(\{\s*\.\.\.current,\s*\[normalizedDestinationDirectoryPath\]: true,\s*\}\)\);/,
+  );
+  assert.match(
+    source,
+    /await Promise\.all\(\s*refreshTargets\.map\(\(targetPath\) => refreshDirectoryEntries\(targetPath\)\),\s*\);/,
+  );
 });
 
 test("file explorer does not expose a pane-level close action", async () => {

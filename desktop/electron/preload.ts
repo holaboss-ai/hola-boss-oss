@@ -24,6 +24,7 @@ interface FilePreviewTableSheetPayload {
   totalRows: number;
   totalColumns: number;
   truncated: boolean;
+  hasHeaderRow: boolean;
 }
 
 interface FilePreviewPayload {
@@ -921,8 +922,30 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("fs:readFilePreview", targetPath, workspaceId) as Promise<FilePreviewPayload>,
     writeTextFile: (targetPath: string, content: string, workspaceId?: string | null) =>
       ipcRenderer.invoke("fs:writeTextFile", targetPath, content, workspaceId) as Promise<FilePreviewPayload>,
+    writeTableFile: (
+      targetPath: string,
+      tableSheets: FilePreviewTableSheetPayload[],
+      workspaceId?: string | null,
+    ) =>
+      ipcRenderer.invoke("fs:writeTableFile", targetPath, tableSheets, workspaceId) as Promise<FilePreviewPayload>,
+    watchFile: (targetPath: string, workspaceId?: string | null) =>
+      ipcRenderer.invoke("fs:watchFile", targetPath, workspaceId) as Promise<FilePreviewWatchSubscriptionPayload>,
+    unwatchFile: (subscriptionId: string) =>
+      ipcRenderer.invoke("fs:unwatchFile", subscriptionId) as Promise<void>,
+    createPath: (
+      parentPath: string | null | undefined,
+      kind: "file" | "directory",
+      workspaceId?: string | null,
+    ) =>
+      ipcRenderer.invoke("fs:createPath", parentPath, kind, workspaceId) as Promise<FileSystemMutationPayload>,
     renamePath: (targetPath: string, nextName: string, workspaceId?: string | null) =>
       ipcRenderer.invoke("fs:renamePath", targetPath, nextName, workspaceId) as Promise<FileSystemMutationPayload>,
+    movePath: (
+      sourcePath: string,
+      destinationDirectoryPath: string,
+      workspaceId?: string | null,
+    ) =>
+      ipcRenderer.invoke("fs:movePath", sourcePath, destinationDirectoryPath, workspaceId) as Promise<FileSystemMutationPayload>,
     deletePath: (targetPath: string, workspaceId?: string | null) =>
       ipcRenderer.invoke("fs:deletePath", targetPath, workspaceId) as Promise<{ deleted: boolean }>,
     getBookmarks: (workspaceId?: string | null) =>
@@ -931,6 +954,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("fs:addBookmark", targetPath, label, workspaceId) as Promise<FileBookmarkPayload[]>,
     removeBookmark: (bookmarkId: string) =>
       ipcRenderer.invoke("fs:removeBookmark", bookmarkId) as Promise<FileBookmarkPayload[]>,
+    onFileChange: (listener: (payload: FilePreviewChangePayload) => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, payload: FilePreviewChangePayload) => listener(payload);
+      ipcRenderer.on("fs:fileChanged", wrapped);
+      return () => ipcRenderer.removeListener("fs:fileChanged", wrapped);
+    },
     onBookmarksChange: (listener: (bookmarks: FileBookmarkPayload[]) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, bookmarks: FileBookmarkPayload[]) => listener(bookmarks);
       ipcRenderer.on("fs:bookmarks", wrapped);

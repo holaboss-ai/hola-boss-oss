@@ -60,19 +60,39 @@ test("app shell restores the last non-browser display when returning to files mo
   );
   assert.match(
     source,
+    /const syncFileExplorerFocusWithDisplayView = useCallback\(\s*\(displayView: SpaceDisplayView \| null\) => \{/,
+  );
+  assert.match(
+    source,
+    /if \(displayView\?\.type !== "internal"\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /\(displayView\.surface === "document" \|\| displayView\.surface === "file"\)\s*&&\s*displayView\.resourceId\?\.trim\(\)/,
+  );
+  assert.match(
+    source,
+    /setFileExplorerFocusRequest\(\{\s*path: displayView\.resourceId,\s*requestKey: Date\.now\(\),\s*\}\);/,
+  );
+  assert.match(
+    source,
+    /\},\s*\[\]\s*\);/,
+  );
+  assert.match(
+    source,
     /if \(\s*!selectedWorkspaceId \|\|\s*spaceDisplayView\.type === "browser" \|\|\s*spaceDisplayView\.type === "empty"\s*\) \{\s*return;\s*\}\s*lastRestorableSpaceDisplayViewByWorkspaceRef\.current\[selectedWorkspaceId\] =\s*spaceDisplayView;/,
   );
   assert.match(
     source,
-    /const restoreLastSpaceDisplayView = useCallback\(\(\) => \{\s*if \(!selectedWorkspaceId\) \{\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*const lastDisplayView =\s*lastRestorableSpaceDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\];\s*setSpaceDisplayView\(lastDisplayView \?\? \{ type: "browser" \}\);\s*\}, \[selectedWorkspaceId\]\);/,
+    /const restoreLastSpaceDisplayView = useCallback\(\(\) => \{\s*if \(!selectedWorkspaceId\) \{\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*const lastDisplayView =\s*lastRestorableSpaceDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\];\s*const nextDisplayView = lastDisplayView \?\? \{ type: "browser" \};\s*setSpaceDisplayView\(nextDisplayView\);\s*syncFileExplorerFocusWithDisplayView\(nextDisplayView\);\s*\}, \[selectedWorkspaceId, syncFileExplorerFocusWithDisplayView\]\);/,
   );
   assert.match(
     source,
-    /useEffect\(\(\) => \{\s*if \(!selectedWorkspaceId\) \{\s*setSpaceExplorerMode\("browser"\);\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*const nextDisplayView =\s*lastRestorableSpaceDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\];\s*if \(!nextDisplayView\) \{\s*setSpaceExplorerMode\("browser"\);\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*setSpaceDisplayView\(nextDisplayView\);\s*\}, \[selectedWorkspaceId\]\);/,
+    /useEffect\(\(\) => \{\s*if \(!selectedWorkspaceId\) \{\s*setSpaceExplorerMode\("browser"\);\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*const nextDisplayView =\s*lastRestorableSpaceDisplayViewByWorkspaceRef\.current\[\s*selectedWorkspaceId\s*\];\s*if \(!nextDisplayView\) \{\s*setSpaceExplorerMode\("browser"\);\s*setSpaceDisplayView\(\{ type: "browser" \}\);\s*return;\s*\}\s*setSpaceDisplayView\(nextDisplayView\);\s*syncFileExplorerFocusWithDisplayView\(nextDisplayView\);\s*\}, \[selectedWorkspaceId, syncFileExplorerFocusWithDisplayView\]\);/,
   );
   assert.match(
     source,
-    /onClick=\{\(\) => \{\s*setSpaceExplorerMode\("files"\);\s*restoreLastSpaceDisplayView\(\);\s*\}\}/,
+    /onValueChange=\{\(value\) => \{\s*const mode = value as SpaceExplorerMode;\s*setSpaceExplorerMode\(mode\);\s*if \(mode === "browser"\) \{\s*setSpaceDisplayView\(\{\s*type: "browser",\s*\}\);\s*\} else \{\s*restoreLastSpaceDisplayView\(\);\s*\}\s*\}\}/,
   );
   assert.match(
     source,
@@ -361,13 +381,17 @@ test("app shell can route new schedule creation into a prefilled workspace chat"
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(source, /const \[chatComposerPrefillRequest, setChatComposerPrefillRequest\] =\s*useState<ChatComposerPrefillRequest \| null>\(null\);/);
+  assert.match(source, /const chatSessionOpenRequestKeyRef = useRef\(0\);/);
+  assert.match(source, /const chatComposerPrefillRequestKeyRef = useRef\(0\);/);
+  assert.match(source, /const nextChatSessionOpenRequestKey = useCallback\(\(\) => \{\s*chatSessionOpenRequestKeyRef\.current \+= 1;\s*return chatSessionOpenRequestKeyRef\.current;\s*\}, \[\]\);/);
+  assert.match(source, /const nextChatComposerPrefillRequestKey = useCallback\(\(\) => \{\s*chatComposerPrefillRequestKeyRef\.current \+= 1;\s*return chatComposerPrefillRequestKeyRef\.current;\s*\}, \[\]\);/);
   assert.match(source, /const handleCreateScheduleInChat = useCallback\(\(\) => \{/);
   assert.match(source, /setActiveLeftRailItem\("space"\);/);
   assert.match(source, /setSpaceVisibility\(\(previous\) => \(\{\s*\.\.\.previous,\s*agent: true,\s*\}\)\);/);
   assert.match(source, /setAgentView\(\{ type: "chat" \}\);/);
   assert.match(source, /setChatSessionJumpRequest\(null\);/);
-  assert.match(source, /setChatSessionOpenRequest\(\(previous\) =>\s*activeChatSessionId\s*\?\s*\{\s*sessionId: activeChatSessionId,\s*requestKey: \(previous\?\.requestKey \?\? 0\) \+ 1,\s*\}\s*:\s*null,\s*\);/);
-  assert.match(source, /setChatComposerPrefillRequest\(\(previous\) => \(\{\s*text: "Create a cronjob for ",\s*requestKey: \(previous\?\.requestKey \?\? 0\) \+ 1,\s*\}\)\);/);
+  assert.match(source, /setChatSessionOpenRequest\(\s*activeChatSessionId\s*\?\s*\{\s*sessionId: activeChatSessionId,\s*requestKey: nextChatSessionOpenRequestKey\(\),\s*\}\s*:\s*null,\s*\);/);
+  assert.match(source, /setChatComposerPrefillRequest\(\{\s*text: "Create a cronjob for ",\s*requestKey: nextChatComposerPrefillRequestKey\(\),\s*\}\);/);
   assert.match(source, /composerPrefillRequest=\{chatComposerPrefillRequest\}/);
   assert.match(source, /onComposerPrefillConsumed=\{handleChatComposerPrefillConsumed\}/);
   assert.match(source, /onCreateSchedule=\{handleCreateScheduleInChat\}/);
@@ -380,7 +404,7 @@ test("app shell passes new session requests into the chat pane selector", async 
   assert.match(source, /const handleCreateSession = useCallback\(\(\) => \{/);
   assert.match(source, /const handleChatSessionOpenRequestConsumed = useCallback\(\s*\(requestKey: number\) => \{/);
   assert.match(source, /setChatSessionOpenRequest\(\(current\) =>\s*current\?\.requestKey === requestKey \? null : current,\s*\);/);
-  assert.match(source, /setChatSessionOpenRequest\(\(previous\) => \(\{\s*sessionId: "",\s*mode: "draft",\s*parentSessionId: null,\s*requestKey: \(previous\?\.requestKey \?\? 0\) \+ 1,\s*\}\)\);/);
+  assert.match(source, /setChatSessionOpenRequest\(\{\s*sessionId: "",\s*mode: "draft",\s*parentSessionId: null,\s*requestKey: nextChatSessionOpenRequestKey\(\),\s*\}\);/);
   assert.match(source, /setChatFocusRequestKey\(\(current\) => current \+ 1\);/);
   assert.doesNotMatch(source, /const \[isCreatingSession, setIsCreatingSession\] = useState\(false\);/);
   assert.doesNotMatch(source, /window\.electronAPI\.workspace\.createAgentSession\(\{/);
@@ -389,4 +413,13 @@ test("app shell passes new session requests into the chat pane selector", async 
   assert.match(source, /<OperationsInboxPane[\s\S]*proposals=\{taskProposals\}/);
   assert.match(source, /onRequestCreateSession=\{\(\) => void handleCreateSession\(\)\}/);
   assert.match(source, /onSessionOpenRequestConsumed=\{handleChatSessionOpenRequestConsumed\}/);
+});
+
+test("app shell keeps session-open request keys monotonic after requests are consumed", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /const chatSessionOpenRequestKeyRef = useRef\(0\);/);
+  assert.match(source, /const nextChatSessionOpenRequestKey = useCallback\(\(\) => \{\s*chatSessionOpenRequestKeyRef\.current \+= 1;\s*return chatSessionOpenRequestKeyRef\.current;\s*\}, \[\]\);/);
+  assert.match(source, /setChatSessionOpenRequest\(\{\s*sessionId: normalizedSessionId,\s*mode: "session",\s*requestKey: nextChatSessionOpenRequestKey\(\),\s*\}\);/);
+  assert.doesNotMatch(source, /setChatSessionOpenRequest\(\(previous\) => \(\{\s*sessionId: normalizedSessionId,\s*mode: "session",\s*requestKey: \(previous\?\.requestKey \?\? 0\) \+ 1,\s*\}\)\);/);
 });
