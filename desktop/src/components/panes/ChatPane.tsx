@@ -5520,10 +5520,7 @@ function AssistantTurnMemoryProposals({
               </div>
 
               <div className="flex shrink-0 items-start gap-2">
-                <Badge
-                  variant="outline"
-                  className="uppercase tracking-[0.14em]"
-                >
+                <Badge variant="outline" className="uppercase">
                   {memoryProposalStateLabel(proposal.state)}
                 </Badge>
                 {isPending ? (
@@ -5626,7 +5623,8 @@ function ArtifactBrowserModal({
               Artifacts
             </div>
             <div className="text-xs text-muted-foreground">
-              {outputs.length} item{outputs.length === 1 ? "" : "s"} in this session
+              {outputs.length} item{outputs.length === 1 ? "" : "s"} in this
+              session
             </div>
           </div>
           <Button
@@ -5672,7 +5670,7 @@ function ArtifactBrowserModal({
                     onOpenOutput?.(output);
                   }}
                   disabled={!onOpenOutput}
-                  className="h-auto w-full justify-start gap-3 px-3 py-2.5 text-left"
+                  className="h-auto w-full min-w-0 justify-start gap-3 overflow-hidden px-3 py-2.5 text-left"
                 >
                   <OutputArtifactIcon output={output} />
                   <div className="min-w-0 flex-1">
@@ -5684,10 +5682,7 @@ function ArtifactBrowserModal({
                     </div>
                   </div>
                   {outputChangeLabel(output) ? (
-                    <Badge
-                      variant="outline"
-                      className="shrink-0 uppercase tracking-[0.12em]"
-                    >
+                    <Badge variant="outline" className="shrink-0 uppercase">
                       {outputChangeLabel(output)}
                     </Badge>
                   ) : null}
