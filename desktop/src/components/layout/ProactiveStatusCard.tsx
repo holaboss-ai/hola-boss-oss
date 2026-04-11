@@ -64,7 +64,7 @@ function proactiveStateClasses(state: string): string {
     return "border-indigo-500/25 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300";
   }
   if (state === "analyzing") {
-    return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+    return "border-warning/30 bg-warning/10 text-warning";
   }
   if (state === "error" || state === "unavailable") {
     return "border-destructive/30 bg-destructive/10 text-destructive";
@@ -82,7 +82,7 @@ function proactiveToggleClasses(enabled: boolean): string {
 }
 
 function proactiveToggleDotClasses(enabled: boolean): string {
-  return enabled ? "bg-emerald-500" : "bg-amber-500";
+  return enabled ? "bg-success" : "bg-warning";
 }
 
 type ProactiveScheduleUnit = "minute" | "hour" | "day";
