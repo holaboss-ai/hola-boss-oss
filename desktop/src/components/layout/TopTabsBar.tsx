@@ -395,9 +395,9 @@ export function TopTabsBar({
                     <span
                       className={`size-2.5 shrink-0 rounded-full ${
                         runtimeStatus?.status === "running"
-                          ? "bg-emerald-500"
+                          ? "bg-success"
                           : runtimeStatus?.status === "starting"
-                            ? "animate-pulse bg-amber-400"
+                            ? "animate-pulse bg-warning"
                             : runtimeStatus?.status === "error"
                               ? "bg-destructive"
                               : "bg-muted-foreground/50"

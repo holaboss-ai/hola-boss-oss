@@ -3890,7 +3890,7 @@ export function ChatPane({
     composerIsComposingRef.current = false;
   };
 
-  const assistantLabel = "Holaboss";
+  const assistantLabel = selectedWorkspace?.name || "Assistant";
   const assistantMode = isOnboardingVariant
     ? "workspace setup"
     : assistantMetaLabel(
@@ -4112,7 +4112,7 @@ export function ChatPane({
     availableChatModelOptions.length > 0
       ? ""
       : hasPendingConfiguredProviderCatalog
-        ? "Holaboss models are finishing setup. Refresh runtime binding or use another provider."
+        ? "Managed models are finishing setup. Refresh runtime binding or use another provider."
       : "No models available. Configure a provider to start chatting.";
   const composerBaseDisabledReason =
     baseComposerDisabledReason ||
