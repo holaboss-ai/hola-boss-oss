@@ -19,6 +19,7 @@ import {
   Star,
   X,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/IconButton";
 import { PaneCard } from "@/components/ui/PaneCard";
@@ -526,7 +527,7 @@ export function BrowserPane({
                 <div
                   key={tab.id}
                   className={[
-                    "group flex min-w-0 max-w-[200px] items-center gap-1.5 rounded-full border px-2.5 py-1 transition-colors",
+                    "group flex min-w-0 max-w-[200px] items-center gap-1.5 rounded-lg border px-2.5 py-1 transition-colors",
                     isActive
                       ? "border-primary/50 bg-primary/12 text-primary"
                       : "bg-muted border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground",
@@ -542,7 +543,7 @@ export function BrowserPane({
                   >
                     <Globe size={12} className="shrink-0" />
                     {!isNarrowPane ? (
-                      <span className="truncate text-[10px] font-semibold tracking-wide">
+                      <span className="truncate text-xs font-semibold tracking-wide">
                         {tab.title || "New Tab"}
                       </span>
                     ) : null}
@@ -550,14 +551,15 @@ export function BrowserPane({
                       <Loader2 size={11} className="shrink-0 animate-spin" />
                     ) : null}
                   </button>
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
                     onClick={() => onCloseTab(tab.id)}
-                    className="grid size-4.5 shrink-0 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-current"
+                    className="size-4.5 shrink-0 text-muted-foreground"
                     aria-label={`Close ${tab.title || "tab"}`}
                   >
                     <X size={11} />
-                  </button>
+                  </Button>
                 </div>
               );
             })}
@@ -567,7 +569,7 @@ export function BrowserPane({
               variant="outline"
               size="icon-sm"
               onClick={onNewTab}
-              className="shrink-0 rounded-full"
+              className="shrink-0"
               aria-label="New tab"
             >
               <Plus size={12} />
@@ -607,7 +609,7 @@ export function BrowserPane({
                   variant="outline"
                   size="sm"
                   onClick={() => onSelectBrowserSpace(alternateBrowserSpace)}
-                  className="shrink-0 rounded-full bg-background/80 text-[11px]"
+                  className="shrink-0 bg-background/80 text-xs"
                   aria-label={`Switch to ${alternateBrowserLabel} browser`}
                   title={`Switch to ${alternateBrowserLabel} browser`}
                 >
@@ -645,9 +647,9 @@ export function BrowserPane({
                 >
                   <MoreHorizontal size={14} />
                   {activeDownloadCount > 0 ? (
-                    <span className="absolute -right-1 -top-1 min-w-[16px] rounded-full border border-primary/55 bg-primary/90 px-1 text-[9px] font-bold leading-4 text-black">
+                    <Badge className="absolute -right-1 -top-1 h-4 min-w-4 px-1 text-xs font-bold leading-none">
                       {activeDownloadCount}
-                    </span>
+                    </Badge>
                   ) : null}
                 </Button>
               </div>
@@ -675,21 +677,21 @@ export function BrowserPane({
                       window.setTimeout(() => setAddressFocused(false), 120)
                     }
                     onKeyDown={onAddressKeyDown}
-                    className="embedded-input w-full min-w-0 bg-transparent text-[11px] text-foreground outline-none placeholder:text-muted-foreground"
+                    className="embedded-input w-full min-w-0 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
                     placeholder={
                       isNarrowPane ? "Search" : "Enter URL or search"
                     }
                   />
                   {!isNarrowPane ? (
-                    <button
-                      type="button"
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
                       onClick={onToggleBookmark}
-                      className={[
-                        "grid size-6 shrink-0 place-items-center rounded-full border transition-colors",
+                      className={
                         isBookmarked
                           ? "border-primary/60 bg-primary/18 text-primary"
-                          : "border-transparent bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-                      ].join(" ")}
+                          : "text-muted-foreground"
+                      }
                       aria-label={
                         isBookmarked ? "Remove bookmark" : "Add bookmark"
                       }
@@ -702,7 +704,7 @@ export function BrowserPane({
                         size={13}
                         fill={isBookmarked ? "currentColor" : "none"}
                       />
-                    </button>
+                    </Button>
                   ) : null}
                 </div>
               </div>
@@ -712,11 +714,12 @@ export function BrowserPane({
           {showBookmarkStrip ? (
             <div className="flex min-h-6 items-center gap-0.5 overflow-x-auto px-1.5 py-0.5">
               {bookmarks.slice(0, 12).map((bookmark) => (
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="xs"
                   key={bookmark.id}
                   onClick={() => navigateTo(bookmark.url)}
-                  className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground/80"
+                  className="shrink-0 px-1.5 py-0.5 text-xs font-medium text-muted-foreground"
                 >
                   <span className="flex items-center gap-1.5">
                     {bookmark.faviconUrl ? (
@@ -734,7 +737,7 @@ export function BrowserPane({
                       {bookmark.title}
                     </span>
                   </span>
-                </button>
+                </Button>
               ))}
             </div>
           ) : null}
@@ -766,7 +769,7 @@ export function BrowserPane({
 
             {activeTab.initialized && activeTab.loading ? (
               <div className="pointer-events-none absolute inset-x-3 top-3 z-10">
-                <div className="inline-flex items-center gap-2 rounded-full border border-border/50 bg-card px-3 py-1.5 text-[11px] text-muted-foreground shadow-lg backdrop-blur">
+                <div className="inline-flex items-center gap-2 rounded-lg border border-border/50 bg-card px-3 py-1.5 text-xs text-muted-foreground shadow-lg backdrop-blur">
                   <Loader2
                     size={12}
                     className="animate-spin text-primary"
