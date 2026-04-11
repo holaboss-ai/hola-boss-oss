@@ -155,6 +155,7 @@ jobs:
           CSC_KEY_PASSWORD: ${{ env.WINDOWS_CERTIFICATE_PASSWORD }}
           WIN_CSC_LINK: ${{ env.WINDOWS_CERTIFICATE }}
           WIN_CSC_KEY_PASSWORD: ${{ env.WINDOWS_CERTIFICATE_PASSWORD }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: |
           if (-not $env:WINDOWS_CERTIFICATE -or -not $env:WINDOWS_CERTIFICATE_PASSWORD) {
             throw "Windows desktop release requires WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD so the public installer is code-signed."
@@ -182,6 +183,19 @@ jobs:
           Copy-Item -LiteralPath $installerPath -Destination $stablePath -Force
           Add-Content -Path $env:GITHUB_OUTPUT -Value "generated_installer_path=$installerPath"
           Add-Content -Path $env:GITHUB_OUTPUT -Value "installer_path=$stablePath"
+
+      - name: Upload Sentry source maps
+        if: ${{ secrets.SENTRY_AUTH_TOKEN != '' }}
+        working-directory: desktop
+        shell: bash
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: holaboss-desktop
+        run: |
+          npx @sentry/cli releases files "${{ env.RELEASE_TAG }}" \
+            upload-sourcemaps out/dist out/dist-electron \
+            --url-prefix "~/"
 
       - name: Validate Windows auto-update artifacts
         shell: pwsh
