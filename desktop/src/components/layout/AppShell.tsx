@@ -527,6 +527,16 @@ function buildDevAppUpdatePreviewStatus(
   };
 }
 
+function compactAppVersionLabel(version: string): string {
+  const trimmed = version.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const releaseMatch = trimmed.match(/^\d{4}\.(\d+\.\d+)$/);
+  return releaseMatch ? releaseMatch[1] : trimmed;
+}
+
 function spaceComponentLabel(componentId: SpaceComponentId) {
   if (componentId === "agent") {
     return "Agent";
@@ -2530,7 +2540,7 @@ function AppShellContent() {
     effectiveAppUpdateStatus && effectiveAppUpdateStatus.downloaded,
   );
   const appVersionLabel =
-    effectiveAppUpdateStatus?.currentVersion?.trim() || "";
+    compactAppVersionLabel(effectiveAppUpdateStatus?.currentVersion || "");
   const shouldSuspendBrowserNativeView =
     isUtilityPaneResizing ||
     workspaceSwitcherOpen ||

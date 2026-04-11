@@ -253,7 +253,9 @@ test("app shell always opens the file explorer at minimum width", async () => {
 test("app shell passes the app version label into the left rail", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
-  assert.match(source, /const appVersionLabel =[\s\S]*effectiveAppUpdateStatus\?\.currentVersion\?\.trim\(\) \|\| "";/);
+  assert.match(source, /function compactAppVersionLabel\(version: string\): string \{/);
+  assert.match(source, /const releaseMatch = trimmed\.match\(\/\^\\d\{4\}\\\.\(\\d\+\\\.\\d\+\)\$\/\);/);
+  assert.match(source, /const appVersionLabel =[\s\S]*compactAppVersionLabel\(effectiveAppUpdateStatus\?\.currentVersion \|\| ""\);/);
   assert.match(source, /<LeftNavigationRail[\s\S]*appVersionLabel=\{appVersionLabel\}/);
   assert.doesNotMatch(source, /absolute bottom-3 left-4/);
 });
