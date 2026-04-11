@@ -10,6 +10,7 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useDesktopAuthSession } from "@/lib/auth/authClient";
 
@@ -35,22 +36,22 @@ const STATUS_CONFIG: Record<
   { label: string; icon: typeof Clock; badgeClass: string }
 > = {
   pending_review: {
-    label: "Pending Review",
+    label: "Pending",
     icon: Clock,
     badgeClass:
-      "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+      "border-warning/30 bg-warning/10 text-warning",
   },
   published: {
     label: "Published",
     icon: CheckCircle2,
     badgeClass:
-      "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+      "border-success/30 bg-success/10 text-success",
   },
   rejected: {
     label: "Rejected",
     icon: XCircle,
     badgeClass:
-      "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400",
+      "border-destructive/30 bg-destructive/10 text-destructive",
   },
 };
 
@@ -61,6 +62,14 @@ function formatDate(dateString: string): string {
     month: "short",
     day: "numeric",
   });
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** i;
+  return `${value < 10 && i > 0 ? value.toFixed(1) : Math.round(value)} ${units[i]}`;
 }
 
 function categoryFromManifest(
@@ -174,7 +183,7 @@ export function SubmissionsPanel() {
               Your template submissions are only available after you sign in.
             </p>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              Connect this desktop app to your Holaboss account to review and
+              Connect this desktop app to your account to review and
               manage marketplace submissions.
             </p>
           </div>
@@ -206,7 +215,14 @@ export function SubmissionsPanel() {
   }
 
   return (
-    <div className="grid max-w-[920px] gap-3">
+    <div className="max-w-[920px]">
+      <div className="grid grid-cols-[minmax(0,1fr)_100px_80px_110px_40px] items-center gap-3 border-b border-border/40 px-4 pb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        <span>Template</span>
+        <span>Status</span>
+        <span>Size</span>
+        <span>Date</span>
+        <span />
+      </div>
       {submissions.map((submission) => {
         const config = STATUS_CONFIG[submission.status] ?? {
           label: submission.status,
@@ -215,60 +231,47 @@ export function SubmissionsPanel() {
             "border-border/40 bg-muted/50 text-muted-foreground",
         };
         const StatusIcon = config.icon;
-        const category = categoryFromManifest(submission.manifest);
 
         return (
-          <div
-            key={submission.id}
-            className="rounded-[18px] border border-border/40 bg-card/80 px-5 py-4"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2.5">
-                  <span className="truncate text-sm font-medium text-foreground">
-                    {submission.template_name}
-                  </span>
-                  {category ? (
-                    <span className="shrink-0 rounded-full border border-border/35 px-2 py-0.5 text-xs text-muted-foreground">
-                      {category}
-                    </span>
-                  ) : null}
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Submitted {formatDate(submission.created_at)}
-                </p>
-              </div>
-
-              <div className="flex shrink-0 items-center gap-2">
-                <span
-                  className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${config.badgeClass}`}
-                >
-                  <StatusIcon className="size-3" />
-                  {config.label}
-                </span>
+          <div key={submission.id}>
+            <div className="grid grid-cols-[minmax(0,1fr)_100px_80px_110px_40px] items-center gap-3 border-b border-border/30 px-4 py-3 text-sm">
+              <span className="truncate font-medium text-foreground">
+                {submission.template_name}
+              </span>
+              <Badge variant="outline" className={`w-fit gap-1 ${config.badgeClass}`}>
+                <StatusIcon className="size-3" />
+                {config.label}
+              </Badge>
+              <span className="tabular-nums text-muted-foreground">
+                {formatBytes(submission.archive_size_bytes)}
+              </span>
+              <span className="text-muted-foreground">
+                {formatDate(submission.created_at)}
+              </span>
+              <span>
                 {submission.status !== "published" ? (
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
                     disabled={deletingId === submission.id}
                     onClick={() => void handleDelete(submission)}
-                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                    className="text-muted-foreground hover:text-destructive"
                   >
                     {deletingId === submission.id ? (
                       <Loader2 className="size-3.5 animate-spin" />
                     ) : (
                       <Trash2 className="size-3.5" />
                     )}
-                  </button>
+                  </Button>
                 ) : null}
-              </div>
+              </span>
             </div>
-
             {submission.status === "rejected" && submission.review_notes ? (
-              <div className="mt-3 rounded-[12px] border border-red-500/15 bg-red-500/5 px-3.5 py-2.5">
-                <p className="text-xs font-medium text-red-600 dark:text-red-400">
+              <div className="mx-4 my-2 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2">
+                <p className="text-xs font-medium text-destructive">
                   Review feedback
                 </p>
-                <p className="mt-1 text-xs leading-relaxed text-red-600/80 dark:text-red-400/80">
+                <p className="mt-1 text-xs leading-relaxed text-destructive/80">
                   {submission.review_notes}
                 </p>
               </div>
