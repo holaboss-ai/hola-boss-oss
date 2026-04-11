@@ -12,11 +12,7 @@ interface InternalSurfacePaneProps {
   htmlContent?: string | null;
 }
 
-const MARKDOWN_PREVIEW_EXTENSIONS = new Set([
-  ".md",
-  ".mdx",
-  ".markdown",
-]);
+const MARKDOWN_PREVIEW_EXTENSIONS = new Set([".md", ".mdx", ".markdown"]);
 type TextPreviewMode = "edit" | "preview";
 
 function resolveWorkspaceTargetPath(
@@ -67,7 +63,11 @@ export function InternalSurfacePane({
   }, []);
 
   useEffect(() => {
-    if (typeof resourceId !== "string" || !resourceId || (surface !== "document" && surface !== "file")) {
+    if (
+      typeof resourceId !== "string" ||
+      !resourceId ||
+      (surface !== "document" && surface !== "file")
+    ) {
       setPreview(null);
       setPreviewDraft("");
       setTextPreviewMode("edit");
@@ -88,13 +88,22 @@ export function InternalSurfacePane({
       try {
         let targetPath = targetResource;
         if (selectedWorkspaceId) {
-          const workspaceRoot = await window.electronAPI.workspace.getWorkspaceRoot(selectedWorkspaceId);
+          const workspaceRoot =
+            await window.electronAPI.workspace.getWorkspaceRoot(
+              selectedWorkspaceId,
+            );
           if (cancelled) {
             return;
           }
-          targetPath = resolveWorkspaceTargetPath(workspaceRoot, targetResource);
+          targetPath = resolveWorkspaceTargetPath(
+            workspaceRoot,
+            targetResource,
+          );
         }
-        const nextPreview = await window.electronAPI.fs.readFilePreview(targetPath, selectedWorkspaceId ?? null);
+        const nextPreview = await window.electronAPI.fs.readFilePreview(
+          targetPath,
+          selectedWorkspaceId ?? null,
+        );
         if (!cancelled) {
           setPreview(nextPreview);
           setPreviewDraft(nextPreview.content ?? "");
@@ -108,7 +117,11 @@ export function InternalSurfacePane({
           setPreviewDraft("");
           setTextPreviewMode("edit");
           setActiveTableSheetIndex(0);
-          setErrorMessage(error instanceof Error ? error.message : "Failed to load output preview.");
+          setErrorMessage(
+            error instanceof Error
+              ? error.message
+              : "Failed to load output preview.",
+          );
           setIsSaving(false);
         }
       } finally {
@@ -160,7 +173,12 @@ export function InternalSurfacePane({
 
   const body = useMemo(() => {
     if (surface === "event") {
-      return <EmptyState title="Event detail" detail="This output remains inside Holaboss and does not resolve to a file-backed preview." />;
+      return (
+        <EmptyState
+          title="Event detail"
+          detail="This output remains inside Holaboss and does not resolve to a file-backed preview."
+        />
+      );
     }
 
     if (surface === "preview") {
@@ -176,11 +194,21 @@ export function InternalSurfacePane({
           </div>
         );
       }
-      return <EmptyState title="Preview surface" detail="Structured preview rendering is not available for this output." />;
+      return (
+        <EmptyState
+          title="Preview surface"
+          detail="Structured preview rendering is not available for this output."
+        />
+      );
     }
 
     if (!resourceId) {
-      return <EmptyState title="No target" detail="This output does not include a file target yet." />;
+      return (
+        <EmptyState
+          title="No target"
+          detail="This output does not include a file target yet."
+        />
+      );
     }
 
     if (isLoading) {
@@ -195,21 +223,33 @@ export function InternalSurfacePane({
     }
 
     if (errorMessage) {
-      return <EmptyState title="Preview failed" detail={errorMessage} tone="error" />;
+      return (
+        <EmptyState title="Preview failed" detail={errorMessage} tone="error" />
+      );
     }
 
     if (!preview) {
-      return <EmptyState title="No preview" detail="File preview is not available yet." />;
+      return (
+        <EmptyState
+          title="No preview"
+          detail="File preview is not available yet."
+        />
+      );
     }
 
     if (preview.kind === "text") {
       return (
-        <div className="grid min-h-0 gap-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <MetadataRow
-              label="Modified"
-              value={new Date(preview.modifiedAt).toLocaleString()}
-            />
+        <div className="flex h-full min-h-0 flex-col">
+          {/* Toolbar */}
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/30 px-4 py-2">
+            <div className="min-w-0">
+              <div className="text-[13px] font-medium text-foreground">{preview.name}</div>
+              <div className="text-[11px] text-muted-foreground">
+                {new Date(preview.modifiedAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                {preview.size != null ? ` · ${formatPreviewSize(preview.size)}` : ""}
+                {isDirty ? " · Unsaved changes" : ""}
+              </div>
+            </div>
             <div className="flex shrink-0 items-center gap-2">
               {isMarkdownPreview ? (
                 <div className="inline-flex items-center rounded-md border border-border bg-muted/50 p-0.5">
@@ -247,123 +287,140 @@ export function InternalSurfacePane({
               ) : null}
             </div>
           </div>
-          {isMarkdownPreview && textPreviewMode === "preview" ? (
-            <div className="min-h-0 overflow-auto rounded-[18px] border border-border/35 bg-black/10 p-4">
-              {previewDraft.trim() ? (
-                <SimpleMarkdown
-                  className="chat-markdown text-sm text-foreground/90"
-                  onLinkClick={openPreviewLink}
-                >
-                  {previewDraft}
-                </SimpleMarkdown>
-              ) : (
-                <div className="grid min-h-[160px] place-items-center text-[12px] text-muted-foreground">
-                  Nothing to preview yet.
-                </div>
-              )}
-            </div>
-          ) : (
-            <textarea
-              value={previewDraft}
-              onChange={(event) => setPreviewDraft(event.target.value)}
-              readOnly={!preview.isEditable}
-              spellCheck={false}
-              className={`min-h-[60vh] w-full resize-none rounded-[18px] border border-border/35 p-4 font-mono text-[12px] leading-6 text-foreground/88 outline-none transition-colors ${
-                preview.isEditable
-                  ? "embedded-input bg-black/20 focus:border-border/70"
-                  : "cursor-default bg-black/20 opacity-90"
-              }`}
-            />
-          )}
+
+          {/* Content */}
+          <div className="min-h-0 flex-1 overflow-auto">
+            {isMarkdownPreview && textPreviewMode === "preview" ? (
+              <div className="mx-auto max-w-2xl px-6 py-6">
+                {previewDraft.trim() ? (
+                  <SimpleMarkdown
+                    className="chat-markdown text-sm leading-7 text-foreground"
+                    onLinkClick={openPreviewLink}
+                  >
+                    {previewDraft}
+                  </SimpleMarkdown>
+                ) : (
+                  <div className="py-12 text-center text-xs text-muted-foreground">
+                    Empty file — switch to Edit to add content.
+                  </div>
+                )}
+              </div>
+            ) : (
+              <textarea
+                value={previewDraft}
+                onChange={(event) => setPreviewDraft(event.target.value)}
+                readOnly={!preview.isEditable}
+                spellCheck={false}
+                className={`h-full min-h-full w-full resize-none border-0 bg-transparent px-6 py-5 font-mono text-[13px] leading-6 text-foreground outline-none ${
+                  preview.isEditable ? "" : "cursor-default opacity-80"
+                }`}
+              />
+            )}
+          </div>
         </div>
       );
     }
 
     if (preview.kind === "image" && preview.dataUrl) {
       return (
-        <div className="grid min-h-0 gap-3">
-          <div className="overflow-auto rounded-[18px] border border-border/35 bg-black/20 p-4">
-            <img src={preview.dataUrl} alt={preview.name} className="mx-auto max-h-[60vh] max-w-full rounded-[12px]" />
-          </div>
+        <div className="flex h-full items-center justify-center overflow-auto bg-muted/20 p-6">
+          <img
+            src={preview.dataUrl}
+            alt={preview.name}
+            className="max-h-full max-w-full rounded-lg object-contain shadow-sm"
+          />
         </div>
       );
     }
 
     if (preview.kind === "pdf" && preview.dataUrl) {
       return (
-        <div className="grid min-h-0 gap-3">
-          <iframe title={preview.name} src={preview.dataUrl} className="min-h-[60vh] w-full rounded-[18px] border border-border/35 bg-white" />
-        </div>
+        <iframe
+          title={preview.name}
+          src={preview.dataUrl}
+          className="h-full w-full border-0"
+        />
       );
     }
 
-    if (preview.kind === "table" && preview.tableSheets && preview.tableSheets.length > 0) {
-      const activeSheet = preview.tableSheets[Math.min(activeTableSheetIndex, preview.tableSheets.length - 1)];
+    if (
+      preview.kind === "table" &&
+      preview.tableSheets &&
+      preview.tableSheets.length > 0
+    ) {
+      const activeSheet =
+        preview.tableSheets[
+          Math.min(activeTableSheetIndex, preview.tableSheets.length - 1)
+        ];
       if (activeSheet) {
         return (
-          <div className="grid min-h-0 gap-3">
-            <div className="flex min-h-0 flex-col overflow-hidden rounded-[18px] border border-border/35 bg-black/10">
-              {preview.tableSheets.length > 1 ? (
-                <div className="flex items-center gap-1 overflow-x-auto border-b border-border/35 p-2">
-                  {preview.tableSheets.map((sheet, index) => {
-                    const isActive = index === activeTableSheetIndex;
-                    return (
-                      <Button
-                        key={`${sheet.name}-${sheet.index}`}
-                        type="button"
-                        variant={isActive ? "secondary" : "outline"}
-                        size="xs"
-                        onClick={() => setActiveTableSheetIndex(index)}
-                        className={isActive ? "border-primary/35 bg-primary/12 text-primary" : ""}
-                      >
-                        {sheet.name}
-                      </Button>
-                    );
-                  })}
-                </div>
-              ) : null}
-              <div className="min-h-0 overflow-auto">
-                <table className="w-max min-w-full border-collapse text-[12px]">
-                  <thead className="sticky top-0 z-[1] bg-muted">
-                    <tr>
-                      <th className="border-b border-r border-border/35 px-2 py-1 text-left text-[11px] text-muted-foreground">#</th>
-                      {activeSheet.columns.map((column, columnIndex) => (
-                        <th
-                          key={`${column}-${columnIndex}`}
-                          className="border-b border-r border-border/35 px-2 py-1 text-left text-[11px] text-muted-foreground"
-                        >
-                          {column}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeSheet.rows.length === 0 ? (
-                      <tr>
-                        <td
-                          colSpan={activeSheet.columns.length + 1}
-                          className="px-3 py-4 text-center text-[12px] text-muted-foreground"
-                        >
-                          No rows in this sheet.
-                        </td>
-                      </tr>
-                    ) : (
-                      activeSheet.rows.map((row, rowIndex) => (
-                        <tr key={`row-${rowIndex}`}>
-                          <td className="border-b border-r border-border/35 px-2 py-1 text-[11px] text-muted-foreground">
-                            {rowIndex + 1}
-                          </td>
-                          {row.map((value, columnIndex) => (
-                            <td key={`cell-${rowIndex}-${columnIndex}`} className="max-w-[320px] border-b border-r border-border/35 px-2 py-1">
-                              <div className="break-words whitespace-pre-wrap">{value || "\u00a0"}</div>
-                            </td>
-                          ))}
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+          <div className="flex h-full min-h-0 flex-col overflow-hidden">
+            {preview.tableSheets.length > 1 ? (
+              <div className="flex items-center gap-1 overflow-x-auto border-b border-border/30 px-3 py-2">
+                {preview.tableSheets.map((sheet, index) => {
+                  const isActive = index === activeTableSheetIndex;
+                  return (
+                    <Button
+                      key={`${sheet.name}-${sheet.index}`}
+                      type="button"
+                      variant={isActive ? "secondary" : "ghost"}
+                      size="xs"
+                      onClick={() => setActiveTableSheetIndex(index)}
+                    >
+                      {sheet.name}
+                    </Button>
+                  );
+                })}
               </div>
+            ) : null}
+            <div className="min-h-0 flex-1 overflow-auto">
+              <table className="w-max min-w-full border-collapse text-xs">
+                <thead className="sticky top-0 z-[1] bg-muted">
+                  <tr>
+                    <th className="border-b border-r border-border/30 px-2.5 py-1.5 text-left text-[11px] font-medium text-muted-foreground">
+                      #
+                    </th>
+                    {activeSheet.columns.map((column, columnIndex) => (
+                      <th
+                        key={`${column}-${columnIndex}`}
+                        className="border-b border-r border-border/30 px-2.5 py-1.5 text-left text-[11px] font-medium text-muted-foreground"
+                      >
+                        {column}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {activeSheet.rows.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={activeSheet.columns.length + 1}
+                        className="px-3 py-6 text-center text-xs text-muted-foreground"
+                      >
+                        No rows in this sheet.
+                      </td>
+                    </tr>
+                  ) : (
+                    activeSheet.rows.map((row, rowIndex) => (
+                      <tr key={`row-${rowIndex}`} className="hover:bg-muted/30">
+                        <td className="border-b border-r border-border/20 px-2.5 py-1.5 text-[11px] text-muted-foreground">
+                          {rowIndex + 1}
+                        </td>
+                        {row.map((value, columnIndex) => (
+                          <td
+                            key={`cell-${rowIndex}-${columnIndex}`}
+                            className="max-w-[320px] border-b border-r border-border/20 px-2.5 py-1.5"
+                          >
+                            <div className="break-words whitespace-pre-wrap">
+                              {value || "\u00a0"}
+                            </div>
+                          </td>
+                        ))}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         );
@@ -373,7 +430,10 @@ export function InternalSurfacePane({
     return (
       <EmptyState
         title="Preview unavailable"
-        detail={preview.unsupportedReason || "This file type is not yet previewable in the desktop output viewer."}
+        detail={
+          preview.unsupportedReason ||
+          "This file type is not yet previewable."
+        }
       />
     );
   }, [
@@ -394,17 +454,27 @@ export function InternalSurfacePane({
   ]);
 
   return (
-    <section className="theme-shell soft-vignette neon-border relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[var(--radius-xl)] shadow-lg">
-      <div className="min-h-0 flex-1 overflow-auto p-5">{body}</div>
+    <section className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border/40 bg-background">
+      <div className="min-h-0 flex-1 overflow-auto">{body}</div>
     </section>
   );
 }
 
+function formatPreviewSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function MetadataRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[16px] border border-border/35 bg-muted px-3 py-2">
-      <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground/72">{label}</div>
-      <div className="mt-1 break-all text-[12px] text-foreground/86">{value}</div>
+    <div className="rounded-lg border border-border/30 bg-muted/50 px-3 py-1.5">
+      <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-0.5 break-all text-xs text-foreground">
+        {value}
+      </div>
     </div>
   );
 }
@@ -412,7 +482,7 @@ function MetadataRow({ label, value }: { label: string; value: string }) {
 function EmptyState({
   title,
   detail,
-  tone = "neutral"
+  tone = "neutral",
 }: {
   title: string;
   detail: string;
@@ -428,10 +498,18 @@ function EmptyState({
     >
       <div className="max-w-[520px]">
         <div className="mx-auto grid h-10 w-10 place-items-center rounded-full border border-border/35 text-primary/80">
-          {tone === "error" ? <FileWarning size={18} /> : <FileText size={18} />}
+          {tone === "error" ? (
+            <FileWarning size={18} />
+          ) : (
+            <FileText size={18} />
+          )}
         </div>
-        <div className="mt-3 text-[16px] font-medium text-foreground">{title}</div>
-        <div className="mt-2 text-[12px] leading-6 text-muted-foreground/82">{detail}</div>
+        <div className="mt-3 text-[16px] font-medium text-foreground">
+          {title}
+        </div>
+        <div className="mt-2 text-[12px] leading-6 text-muted-foreground/82">
+          {detail}
+        </div>
       </div>
     </div>
   );
