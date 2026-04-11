@@ -18,6 +18,7 @@ import { AuthPanel } from "@/components/auth/AuthPanel";
 import { BillingSettingsPanel } from "@/components/billing/BillingSettingsPanel";
 import { IntegrationsPane } from "@/components/panes/IntegrationsPane";
 import { SubmissionsPanel } from "@/components/settings/SubmissionsPanel";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 const THEME_SWATCHES: Record<string, [string, string, string]> = {
@@ -266,13 +267,13 @@ export function SettingsDialog({
             ) : null}
 
             {activeSection === "settings" ? (
-              <div className="grid gap-6">
-                <section className="theme-subtle-surface rounded-[24px] border border-border/40 p-5">
-                  <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
+              <div className="grid gap-5">
+                <section>
+                  <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
                     Appearance
                   </div>
 
-                  <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {themes.map((themeOption) => {
                       const selected = themeOption === theme;
                       const swatches = THEME_SWATCHES[themeOption] ?? [
@@ -282,54 +283,51 @@ export function SettingsDialog({
                       ];
 
                       return (
-                        <button
+                        <Button
                           key={themeOption}
-                          type="button"
+                          variant="ghost"
                           onClick={() => onThemeChange(themeOption)}
-                          className={`rounded-xl border p-3 text-left transition-colors ${
+                          className={`h-auto flex-col items-stretch rounded-xl border p-2.5 text-left ${
                             selected
-                              ? "border-primary/45 bg-primary/10 shadow-sm"
-                              : "border-border/40 bg-card/80 hover:border-primary/28 hover:bg-accent"
+                              ? "border-primary/40 bg-primary/6"
+                              : "border-border/40 hover:border-border hover:bg-accent"
                           }`}
                         >
-                          <div className="rounded-[16px] border border-border/30 bg-card/80 p-3">
-                            <div className="grid grid-cols-[1.2fr_0.9fr] gap-2">
+                          <div className="grid grid-cols-[1.2fr_0.9fr] gap-2">
+                            <div
+                              className="h-14 rounded-lg border border-white/10"
+                              style={{
+                                background: `linear-gradient(160deg, ${swatches[0]}, ${swatches[2]})`,
+                              }}
+                            />
+                            <div className="grid gap-2">
                               <div
-                                className="h-16 rounded-[14px] border border-white/10"
+                                className="h-6 rounded-md border border-white/10"
+                                style={{ background: swatches[1] }}
+                              />
+                              <div
+                                className="h-6 rounded-md border border-white/10"
                                 style={{
-                                  background: `linear-gradient(160deg, ${swatches[0]}, ${swatches[2]})`,
+                                  background: `color-mix(in srgb, ${swatches[1]} 42%, ${swatches[0]} 58%)`,
                                 }}
                               />
-                              <div className="grid gap-2">
-                                <div
-                                  className="h-7 rounded-[10px] border border-white/10"
-                                  style={{ background: swatches[1] }}
-                                />
-                                <div
-                                  className="h-7 rounded-[10px] border border-white/10"
-                                  style={{
-                                    background: `color-mix(in srgb, ${swatches[1]} 42%, ${swatches[0]} 58%)`,
-                                  }}
-                                />
-                              </div>
                             </div>
                           </div>
 
-                          <div className="mt-3 flex items-center justify-between gap-3">
-                            <span className="text-sm font-medium text-foreground">
+                          <div className="mt-2.5 flex items-center justify-between gap-2">
+                            <span className="text-[13px] font-medium text-foreground">
                               {prettifyThemeLabel(themeOption)}
                             </span>
-                            <span
-                              className={`rounded-full border px-2.5 py-1 text-xs uppercase tracking-[0.14em] ${
-                                selected
-                                  ? "border-primary/40 bg-primary/12 text-primary"
-                                  : "border-border/35 text-muted-foreground/68"
-                              }`}
-                            >
-                              {selected ? "Active" : "Preview"}
-                            </span>
+                            {selected ? (
+                              <Badge
+                                variant="outline"
+                                className="border-primary/40 bg-primary/10 text-primary"
+                              >
+                                Active
+                              </Badge>
+                            ) : null}
                           </div>
-                        </button>
+                        </Button>
                       );
                     })}
                   </div>
