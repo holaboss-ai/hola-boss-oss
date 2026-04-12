@@ -54,7 +54,6 @@ Holaboss enables you to build AI workspaces that go beyond one-off task executio
   - [Prerequisites](#prerequisites)
   - [One-Line Agent Setup](#one-line-agent-setup)
   - [Quick install](#quick-install)
-  - [Quick start](#quick-start)
 - [Documentation](#documentation)
 - [OSS Release Notes](#oss-release-notes)
 
@@ -96,49 +95,7 @@ If you want the installer to continue directly into the desktop dev environment 
 curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh | bash -s -- --launch
 ```
 
-### Quick start
-
-This is the baseline installation flow for local desktop development.
-
-Install the desktop dependencies:
-
-```bash
-npm run desktop:install
-```
-
-Copy the desktop env template and fill in the required values:
-
-```bash
-cp desktop/.env.example desktop/.env
-```
-
-If you want to verify the desktop code before launching the app, run:
-
-```bash
-npm run desktop:typecheck
-```
-
-Run the desktop app in development:
-
-```bash
-npm run desktop:dev
-```
-
-`npm run desktop:dev` already runs the desktop `predev` hook for you. That hook validates the dev environment, rebuilds native modules, and ensures a staged runtime bundle exists under `desktop/out/runtime-<platform>`. If the bundle is missing or older than your local runtime sources, it automatically runs `npm run desktop:prepare-runtime:local`.
-
-If you want to stage the local runtime bundle from this repo explicitly ahead of time, you can still run:
-
-```bash
-npm run desktop:prepare-runtime:local
-```
-
-If you want to stage the latest released runtime bundle for your current host platform instead of rebuilding from local runtime sources:
-
-```bash
-npm run desktop:prepare-runtime
-```
-
-`desktop:prepare-runtime` pulls the latest published runtime bundle for the current platform from GitHub Releases and stages it into `desktop/out/runtime-<platform>`. `desktop:prepare-runtime:local` builds the runtime from your local source checkout and then stages that local bundle into the same location.
+For the detailed manual path, use the repo-local [INSTALL.md](INSTALL.md) runbook or the public [Getting Started docs](https://www.holaboss.ai/docs/getting-started).
 
 ## Documentation
 
