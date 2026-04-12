@@ -1,4 +1,4 @@
-# holaOS - AI Workspace Desktop for Business
+# holaOS - The Agent Envionrment Built for Long Horizon Work
 
 <p align="center">
   <img src="desktop/public/logo.svg" alt="Holaboss logo" width="132" />
@@ -70,24 +70,10 @@ Quick Start is the shortest path to a working local Holaboss Desktop environment
 
 The installer bootstraps `git`, Node.js `22`, and `npm` if they are missing. On Linux it may use `sudo` to install `git`.
 
-If you are using the manual path instead, you can verify the usual prerequisites with:
-
-```bash
-git --version
-node --version
-npm --version
-```
-
 
 ### One-Line Install
 
 For a fresh-machine bootstrap on macOS, Linux, or WSL, use the repository installer:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh | bash
-```
-
-If you want it to continue directly into the desktop dev environment after verification:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh | bash -s -- --launch
@@ -105,6 +91,14 @@ That installer:
 - only runs `npm run desktop:dev` when you pass `--launch`
 
 ## Manual Install
+
+You really shouldn't need this as the one line install is doing the exact same thing. But oh well it's here in case you need it. If you are using the manual path instead, you can verify the usual prerequisites with:
+
+```bash
+git --version
+node --version
+npm --version
+```
 
 ### One-Line Agent Setup
 
