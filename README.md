@@ -19,7 +19,7 @@
   <a href="https://www.holaboss.ai/?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_nav_website">Website</a> ·
   <a href="https://www.holaboss.ai/docs?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_nav_docs">Docs</a> ·
   <a href="https://www.holaboss.ai/signin?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_nav_signin">Sign in</a> ·
-  <a href="#getting-started">Getting Started</a>
+  <a href="#quick-start">Quick Start</a>
 </p>
 
 Holaboss enables you to build AI workspaces that go beyond one-off task execution. Each workspace packages instructions, tools, apps, memory, and runtime state for sustained long-horizon operation. You can manage multiple workspaces in parallel, and because workspaces and workspace templates are portable, they can be packaged, shared, resumed, and reused across the Holaboss ecosystem.
@@ -50,7 +50,7 @@ Holaboss enables you to build AI workspaces that go beyond one-off task executio
 
 ## Table of Contents
 
-- [Getting Started](#getting-started)
+- [Quick Start](#quick-start)
   - [What you need](#what-you-need)
   - [One-Line Install](#one-line-install)
   - [Manual Install](#manual-install)
@@ -58,7 +58,7 @@ Holaboss enables you to build AI workspaces that go beyond one-off task executio
 - [Documentation](#documentation)
 - [OSS Release Notes](#oss-release-notes)
 
-## Getting Started
+## Quick Start
 
 Quick Start is the shortest path to a working local Holaboss Desktop environment powered by `holaOS`. Use the one-line repository installer on a fresh machine, or follow the manual path if you want to control each setup step yourself.
 
