@@ -51,35 +51,35 @@ Holaboss enables you to build AI workspaces that go beyond one-off task executio
 ## Table of Contents
 
 - [Getting Started](#getting-started)
-  - [Prerequisites](#prerequisites)
+  - [What you need](#what-you-need)
+  - [One-Line Install](#one-line-install)
+  - [Manual Install](#manual-install)
   - [One-Line Agent Setup](#one-line-agent-setup)
-  - [Quick install](#quick-install)
 - [Documentation](#documentation)
 - [OSS Release Notes](#oss-release-notes)
 
 ## Getting Started
 
-### Prerequisites
+Quick Start is the shortest path to a working local Holaboss Desktop environment powered by `holaOS`. Use the one-line repository installer on a fresh machine, or follow the manual path if you want to control each setup step yourself.
 
-- Node.js 22+
-- npm
+### What you need
 
-### One-Line Agent Setup
+- `git`
+- `node` version `22` or newer
 
-If you use Codex, Claude Code, Cursor, Windsurf, or another coding agent, you can hand it the setup instructions in one sentence:
-
-```text
-Clone the Holaboss repo from https://github.com/holaboss-ai/holaboss-ai.git if needed, or use the current checkout if it is already open, then follow INSTALL.md exactly to bootstrap local desktop development. If the environment cannot open Electron, stop after verification and tell me the next manual step.
-```
-
-That prompt is meant for coding agents. It stays self-contained by naming the repo and clone URL, while leaving the actual installation details in the repo-local `INSTALL.md` runbook.
-
-### Quick install
-
-For a fresh-machine bootstrap on macOS, Linux, or WSL, you can let the repository clone and verify itself:
+You can verify that quickly with:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh | bash
+git --version
+node --version
+```
+
+### One-Line Install
+
+For a fresh-machine bootstrap on macOS, Linux, or WSL, use the repository installer and continue directly into the desktop dev environment after verification:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh | bash -s -- --launch
 ```
 
 That installer:
@@ -88,14 +88,67 @@ That installer:
 - creates `desktop/.env` from `desktop/.env.example` if needed
 - runs `npm run desktop:install`
 - runs `npm run desktop:typecheck`
+- runs `npm run desktop:dev`
 
-If you want the installer to continue directly into the desktop dev environment after verification:
+### Manual Install
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh | bash -s -- --launch
+#### One-Line Agent Setup
+
+If you use Codex, Claude Code, Cursor, Windsurf, or another coding agent, you can hand it the setup instructions in one sentence:
+
+```text
+Clone the Holaboss repo from https://github.com/holaboss-ai/holaboss-ai.git if needed, or use the current checkout if it is already open, then follow INSTALL.md exactly to bootstrap local desktop development. If the environment cannot open Electron, stop after verification and tell me the next manual step.
 ```
 
-For the detailed manual path, use the repo-local [INSTALL.md](INSTALL.md) runbook or the public [Getting Started docs](https://www.holaboss.ai/docs/getting-started).
+That handoff keeps the installation flow self-contained while leaving the detailed bootstrap steps in the repo-local [INSTALL.md](INSTALL.md) runbook.
+
+This is the baseline installation flow for local desktop development.
+
+1. Install the desktop dependencies from the repository root:
+
+```bash
+npm run desktop:install
+```
+
+2. Create your local environment file:
+
+```bash
+cp desktop/.env.example desktop/.env
+```
+
+If you are following the repo exactly, keep the file close to the template and only change the values that your provider or machine needs.
+
+3. If you want a quick validation pass before launching Electron, run:
+
+```bash
+npm run desktop:typecheck
+```
+
+4. Start the desktop app in development mode:
+
+```bash
+npm run desktop:dev
+```
+
+The `predev` hook will validate the environment, rebuild native modules, and make sure a staged runtime bundle exists.
+
+If you want to stage the runtime before opening the desktop app, there are two common paths:
+
+Build from local runtime:
+
+```bash
+npm run desktop:prepare-runtime:local
+```
+
+Fetch the latest published runtime:
+
+```bash
+npm run desktop:prepare-runtime
+```
+
+Use the local path when you are actively changing runtime code. Use the published bundle when you want to verify the desktop against a known release artifact.
+
+Use `One-Line Install` when you want the fastest path to a working local desktop environment. Use `Manual Install` when you need to inspect or control each setup step yourself.
 
 ## Documentation
 
@@ -103,10 +156,12 @@ All deeper technical and product documentation lives at **[holaboss.ai/docs](htt
 
 | Section | What's Covered |
 | --- | --- |
-| [holaOS Overview](https://www.holaboss.ai/docs/holaos/overview) | The technical foundation underneath Holaboss Desktop |
+| [Overview](https://www.holaboss.ai/docs/) | The merged entry page for the environment-engineering thesis and system model |
 | [Environment Engineering](https://www.holaboss.ai/docs/holaos/environment-engineering) | The core thesis behind holaOS and why the environment defines the system |
-| [Getting Started](https://www.holaboss.ai/docs/getting-started) | Technical onboarding and the docs entry path |
-| [Desktop Quickstart](https://www.holaboss.ai/docs/desktop/quickstart) | Local desktop setup, runtime staging, and running the operator shell |
+| [Quick Start](https://www.holaboss.ai/docs/getting-started) | The fastest path to a working local desktop environment |
+| [Learning Path](https://www.holaboss.ai/docs/learning-path) | The technical path through the docs after setup |
+| [Concepts](https://www.holaboss.ai/docs/concepts) | Core system vocabulary for workspaces, runtime, memory, and outputs |
+| [Workspace Experience](https://www.holaboss.ai/docs/desktop/workspace-experience) | The desktop workspace surface built on top of holaOS |
 | [Workspace Model](https://www.holaboss.ai/docs/runtime/workspace-model) | Workspace contract, runtime-owned state, and filesystem layout |
 | [Memory and Continuity](https://www.holaboss.ai/docs/runtime/memory-and-continuity) | Durable memory, recall, continuity writeback, and evolve |
 | [Build Your First App](https://www.holaboss.ai/docs/app-development/first-app) | Building workspace apps on top of holaOS |
