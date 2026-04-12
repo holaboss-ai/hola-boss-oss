@@ -182,11 +182,9 @@ All deeper technical and product documentation lives at **[holaboss.ai/docs](htt
 | [Model Configuration](https://www.holaboss.ai/docs/desktop/model-configuration) | Providers, defaults, config precedence, and runtime model selection |
 | [Independent Deploy](https://www.holaboss.ai/docs/runtime/independent-deploy) | Running the portable runtime without the desktop app |
 | [Technical Details](https://www.holaboss.ai/docs/reference/technical-details) | Repo layout, common commands, and development notes |
-| [Desktop Packaging](https://www.holaboss.ai/docs/desktop/packaging) | macOS DMG build, signing, notarization, and validation |
 | [Reference](https://www.holaboss.ai/docs/reference/environment-variables) | Environment variables, workspace files, and supporting reference material |
 
 ## OSS Release Notes
 
 - License: MIT. See [LICENSE](LICENSE).
 - Security issues: report privately to `admin@holaboss.ai`. See [SECURITY.md](SECURITY.md).
-- macOS packaging and notarization flows are documented in [Desktop Packaging](https://www.holaboss.ai/docs/desktop/packaging).
