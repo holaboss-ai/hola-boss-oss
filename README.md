@@ -52,8 +52,8 @@ Holaboss enables you to build AI workspaces that go beyond one-off task executio
 
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
-  - [Quick install](#quick-install)
   - [One-Line Agent Setup](#one-line-agent-setup)
+  - [Quick install](#quick-install)
   - [Quick start](#quick-start)
 - [Documentation](#documentation)
 - [OSS Release Notes](#oss-release-notes)
@@ -64,6 +64,16 @@ Holaboss enables you to build AI workspaces that go beyond one-off task executio
 
 - Node.js 22+
 - npm
+
+### One-Line Agent Setup
+
+If you use Codex, Claude Code, Cursor, Windsurf, or another coding agent, you can hand it the setup instructions in one sentence:
+
+```text
+Clone the Holaboss repo from https://github.com/holaboss-ai/holaboss-ai.git if needed, or use the current checkout if it is already open, then follow INSTALL.md exactly to bootstrap local desktop development. If the environment cannot open Electron, stop after verification and tell me the next manual step.
+```
+
+That prompt is meant for coding agents. It stays self-contained by naming the repo and clone URL, while leaving the actual installation details in the repo-local `INSTALL.md` runbook.
 
 ### Quick install
 
@@ -85,16 +95,6 @@ If you want the installer to continue directly into the desktop dev environment 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh | bash -s -- --launch
 ```
-
-### One-Line Agent Setup
-
-If you use Codex, Claude Code, Cursor, Windsurf, or another coding agent, you can hand it the setup instructions in one sentence:
-
-```text
-Clone the Holaboss repo from https://github.com/holaboss-ai/holaboss-ai.git if needed, or use the current checkout if it is already open, then follow INSTALL.md exactly to bootstrap local desktop development. If the environment cannot open Electron, stop after verification and tell me the next manual step.
-```
-
-That prompt is meant for coding agents. It stays self-contained by naming the repo and clone URL, while leaving the actual installation details in the repo-local `INSTALL.md` runbook.
 
 ### Quick start
 
