@@ -1,4 +1,4 @@
-# Holaboss - AI Workspace Desktop for Business
+# holaOS - AI Workspace Desktop for Business
 
 <p align="center">
   <img src="desktop/public/logo.svg" alt="Holaboss logo" width="132" />
@@ -22,7 +22,7 @@
   <a href="#quick-start">Quick Start</a>
 </p>
 
-Holaboss enables you to build AI workspaces that go beyond one-off task execution. Each workspace packages instructions, tools, apps, memory, and runtime state for sustained long-horizon operation. You can manage multiple workspaces in parallel, and because workspaces and workspace templates are portable, they can be packaged, shared, resumed, and reused across the Holaboss ecosystem.
+holaOS enables you to build AI workspaces that go beyond one-off task execution. Each workspace packages instructions, tools, apps, memory, and runtime state for sustained long-horizon operation. You can manage multiple workspaces in parallel, and because workspaces and workspace templates are portable, they can be packaged, shared, resumed, and reused across the Holaboss ecosystem.
 
 
 
@@ -51,10 +51,10 @@ Holaboss enables you to build AI workspaces that go beyond one-off task executio
 ## Table of Contents
 
 - [Quick Start](#quick-start)
-  - [What you need](#what-you-need)
-  - [One-Line Install](#one-line-install)
-  - [Manual Install](#manual-install)
-  - [One-Line Agent Setup](#one-line-agent-setup)
+    - [What you need](#what-you-need)
+    - [One-Line Install](#one-line-install)
+- [Manual Install](#manual-install)
+    - [One-Line Agent Setup](#one-line-agent-setup)
 - [Documentation](#documentation)
 - [OSS Release Notes](#oss-release-notes)
 
@@ -74,6 +74,7 @@ git --version
 node --version
 ```
 
+
 ### One-Line Install
 
 For a fresh-machine bootstrap on macOS, Linux, or WSL, use the repository installer and continue directly into the desktop dev environment after verification:
@@ -90,9 +91,9 @@ That installer:
 - runs `npm run desktop:typecheck`
 - runs `npm run desktop:dev`
 
-### Manual Install
+## Manual Install
 
-#### One-Line Agent Setup
+### One-Line Agent Setup
 
 If you use Codex, Claude Code, Cursor, Windsurf, or another coding agent, you can hand it the setup instructions in one sentence:
 
@@ -158,9 +159,9 @@ All deeper technical and product documentation lives at **[holaboss.ai/docs](htt
 | --- | --- |
 | [Overview](https://www.holaboss.ai/docs/) | The merged entry page for the environment-engineering thesis and system model |
 | [Environment Engineering](https://www.holaboss.ai/docs/holaos/environment-engineering) | The core thesis behind holaOS and why the environment defines the system |
-| [Quick Start](https://www.holaboss.ai/docs/getting-started) | The fastest path to a working local desktop environment |
-| [Learning Path](https://www.holaboss.ai/docs/learning-path) | The technical path through the docs after setup |
-| [Concepts](https://www.holaboss.ai/docs/concepts) | Core system vocabulary for workspaces, runtime, memory, and outputs |
+| [Quick Start](https://www.holaboss.ai/docs/getting-started/) | The fastest path to a working local desktop environment |
+| [Learning Path](https://www.holaboss.ai/docs/getting-started/learning-path) | The technical path through the docs after setup |
+| [Concepts](https://www.holaboss.ai/docs/holaos/concepts) | Core system vocabulary for workspaces, runtime, memory, and outputs |
 | [Workspace Experience](https://www.holaboss.ai/docs/desktop/workspace-experience) | The desktop workspace surface built on top of holaOS |
 | [Workspace Model](https://www.holaboss.ai/docs/runtime/workspace-model) | Workspace contract, runtime-owned state, and filesystem layout |
 | [Memory and Continuity](https://www.holaboss.ai/docs/runtime/memory-and-continuity) | Durable memory, recall, continuity writeback, and evolve |
