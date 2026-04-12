@@ -4,7 +4,7 @@
   <img src="desktop/public/logo.svg" alt="Holaboss logo" width="132" />
 </p>
 
-<p align="center"><strong>Build, run, and package AI workspaces and workspace templates with a desktop app and portable runtime.</strong></p>
+<p align="center"><strong>The agent environment for long-horizon work, continuity, and self-evolution.</strong></p>
 
 <p align="center">
   <a href="https://github.com/holaboss-ai/holaboss-ai/actions/workflows/oss-ci.yml"><img src="https://github.com/holaboss-ai/holaboss-ai/actions/workflows/oss-ci.yml/badge.svg" alt="OSS CI" /></a>
@@ -22,7 +22,7 @@
   <a href="#quick-start">Quick Start</a>
 </p>
 
-holaOS enables you to build AI workspaces that go beyond one-off task execution. Each workspace packages instructions, tools, apps, memory, and runtime state for sustained long-horizon operation. You can manage multiple workspaces in parallel, and because workspaces and workspace templates are portable, they can be packaged, shared, resumed, and reused across the Holaboss ecosystem.
+holaOS is the agent environment for long-horizon work. It gives agents a structured operating system made of runtime, memory, tools, apps, and durable state so they can work continuously, evolve over time, and stay inspectable across runs instead of resetting back to one-off task execution.
 
 
 
