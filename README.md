@@ -1,4 +1,4 @@
-# holaOS - The Agent Envionrment Built for Long Horizon Work
+# holaOS - The Agent Envionrment Built for Long-Horizon Work and Self-Evolution
 
 <p align="center">
   <img src="desktop/public/logo.svg" alt="Holaboss logo" width="132" />
