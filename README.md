@@ -64,20 +64,30 @@ Quick Start is the shortest path to a working local Holaboss Desktop environment
 
 ### What you need
 
-- `git`
-- `node` version `22` or newer
+- `curl`
+- `bash`
+- macOS, Linux, or WSL
 
-You can verify that quickly with:
+The installer bootstraps `git`, Node.js `22`, and `npm` if they are missing. On Linux it may use `sudo` to install `git`.
+
+If you are using the manual path instead, you can verify the usual prerequisites with:
 
 ```bash
 git --version
 node --version
+npm --version
 ```
 
 
 ### One-Line Install
 
-For a fresh-machine bootstrap on macOS, Linux, or WSL, use the repository installer and continue directly into the desktop dev environment after verification:
+For a fresh-machine bootstrap on macOS, Linux, or WSL, use the repository installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh | bash
+```
+
+If you want it to continue directly into the desktop dev environment after verification:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh | bash -s -- --launch
@@ -85,11 +95,14 @@ curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/script
 
 That installer:
 
+- installs `git` if it is missing
+- installs Node.js `22` plus `npm` if they are missing
 - clones the repository into `~/holaboss-ai` by default
 - creates `desktop/.env` from `desktop/.env.example` if needed
 - runs `npm run desktop:install`
+- runs `npm run desktop:prepare-runtime:local`
 - runs `npm run desktop:typecheck`
-- runs `npm run desktop:dev`
+- only runs `npm run desktop:dev` when you pass `--launch`
 
 ## Manual Install
 
@@ -98,7 +111,7 @@ That installer:
 If you use Codex, Claude Code, Cursor, Windsurf, or another coding agent, you can hand it the setup instructions in one sentence:
 
 ```text
-Clone the Holaboss repo from https://github.com/holaboss-ai/holaboss-ai.git if needed, or use the current checkout if it is already open, then follow INSTALL.md exactly to bootstrap local desktop development. If the environment cannot open Electron, stop after verification and tell me the next manual step.
+Run the Holaboss install script from https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh. It should install git and Node.js 22/npm if they are missing, clone or update the repo into ~/holaboss-ai unless I specify another --dir, run desktop:install, create desktop/.env from desktop/.env.example if needed, run desktop:prepare-runtime:local and desktop:typecheck, and only run desktop:dev if I ask for --launch. If Electron cannot open, stop after verification and tell me the next manual step.
 ```
 
 That handoff keeps the installation flow self-contained while leaving the detailed bootstrap steps in the repo-local [INSTALL.md](INSTALL.md) runbook.
@@ -119,13 +132,19 @@ cp desktop/.env.example desktop/.env
 
 If you are following the repo exactly, keep the file close to the template and only change the values that your provider or machine needs.
 
-3. If you want a quick validation pass before launching Electron, run:
+3. Prepare the local runtime bundle:
+
+```bash
+npm run desktop:prepare-runtime:local
+```
+
+4. If you want a quick validation pass before launching Electron, run:
 
 ```bash
 npm run desktop:typecheck
 ```
 
-4. Start the desktop app in development mode:
+5. Start the desktop app in development mode:
 
 ```bash
 npm run desktop:dev
