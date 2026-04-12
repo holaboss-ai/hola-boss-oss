@@ -24,16 +24,6 @@
 
 holaOS is the agent environment for long-horizon work. It gives agents a structured operating system made of runtime, memory, tools, apps, and durable state so they can work continuously, evolve over time, and stay inspectable across runs instead of resetting back to one-off task execution.
 
-
-
-## Marketplace Experience
-
-<p align="center">
-  <a href="https://www.holaboss.ai/?utm_source=github&utm_medium=oss&utm_campaign=hola_boss_oss&utm_content=readme_marketplace_image">
-    <img src="docs/images/marketplace.png" alt="Holaboss marketplace screenshot" width="1280" />
-  </a>
-</p>
-
 ## Desktop Workspace
 
 <p align="center">
