@@ -14,6 +14,40 @@ Use this repository URL:
 https://github.com/holaboss-ai/holaboss-ai.git
 ```
 
+## Quick Installer
+
+For a fresh machine bootstrap, the repo also ships a thin installer wrapper:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh | bash
+```
+
+By default, that script:
+
+- clones the repo into `~/holaboss-ai`
+- creates `desktop/.env` from `desktop/.env.example` if needed
+- runs `npm run desktop:install`
+- runs `npm run desktop:typecheck`
+- stops before launching Electron
+
+If you want the installer to continue directly into the desktop dev environment after verification, use:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh | bash -s -- --launch
+```
+
+Optional installer flags:
+
+- `--dir <path>` to choose a different checkout directory
+- `--ref <git-ref>` to install from a branch or tag other than `main`
+- `--launch` to continue into `npm run desktop:dev`
+
+If you are already inside a local checkout and want to reuse the same wrapper directly, run:
+
+```bash
+bash scripts/install.sh --dir "$PWD"
+```
+
 ## Prerequisites
 
 Before running any project commands, ensure the machine has:
@@ -134,7 +168,13 @@ Important:
 
 ## Minimal Command Sequence
 
-For a standard fresh setup, the expected command sequence is:
+If you want the one-command installer path, use:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/holaboss-ai/holaboss-ai/main/scripts/install.sh | bash
+```
+
+For the equivalent manual fresh setup, the expected command sequence is:
 
 ```bash
 git clone https://github.com/holaboss-ai/holaboss-ai.git
