@@ -119,7 +119,8 @@ const RUNTIME_LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string
   },
   gemini_direct: {
     "gemini-3.1-pro-preview": "gemini-2.5-pro",
-    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite",
+    "gemini-2.5-flash-lite": "gemini-2.5-flash",
+    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash",
   },
 };
 
@@ -802,6 +803,7 @@ const RUNTIME_BINDING_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 const RUNTIME_BINDING_REFRESH_FAILURE_BACKOFF_MS = 60 * 1000;
 const RUNTIME_MODEL_CATALOG_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 const RUNTIME_MODEL_CATALOG_REFRESH_FAILURE_BACKOFF_MS = 60 * 1000;
+const RUNTIME_MODEL_CATALOG_FETCH_TIMEOUT_MS = 8_000;
 
 type TrustedIpcSenderScope = "main" | "auth-popup";
 
@@ -2533,6 +2535,7 @@ let lastRuntimeBindingRefreshFailureUserId = "";
 let runtimeBindingRefreshPromise: Promise<void> | null = null;
 let runtimeConfigMutationPromise: Promise<void> | null = null;
 let runtimeLifecycleChain: Promise<void> = Promise.resolve();
+let runtimeStartupInFlight = false;
 let startupAuthSyncPromise: Promise<void> | null = null;
 
 function appendSessionStreamDebug(
@@ -4818,17 +4821,33 @@ async function fetchDesktopRuntimeModelCatalog(): Promise<RuntimeModelCatalogRes
 
   const catalogUrl = `${controlPlaneBaseUrl}${DESKTOP_RUNTIME_MODEL_CATALOG_PATH}`;
   let response: Response;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, RUNTIME_MODEL_CATALOG_FETCH_TIMEOUT_MS);
+  timeout.unref();
   try {
     response = await fetch(catalogUrl, {
       method: "GET",
       headers: {
         Cookie: cookieHeader,
       },
+      signal: controller.signal,
     });
   } catch (error) {
+    const detail =
+      controller.signal.aborted &&
+      error instanceof Error &&
+      error.name === "AbortError"
+        ? `timed out after ${RUNTIME_MODEL_CATALOG_FETCH_TIMEOUT_MS}ms`
+        : error instanceof Error
+          ? error.message
+          : String(error);
     throw new Error(
-      `Runtime model catalog request failed for ${catalogUrl}: ${error instanceof Error ? error.message : String(error)}`,
+      `Runtime model catalog request failed for ${catalogUrl}: ${detail}`,
     );
+  } finally {
+    clearTimeout(timeout);
   }
 
   if (!response.ok) {
@@ -4885,6 +4904,42 @@ async function refreshRuntimeModelCatalogIfNeeded(options?: {
   }
 
   return runtimeModelCatalogState;
+}
+
+async function getRuntimeConfigSnapshot(
+  managedCatalog: RuntimeModelCatalogPayload = runtimeModelCatalogState,
+): Promise<RuntimeConfigPayload> {
+  const configPath = runtimeConfigPath();
+  const loaded = await readRuntimeConfigFile();
+  const document = await readRuntimeConfigDocument();
+  return {
+    configPath,
+    loadedFromFile:
+      Object.keys(document).length > 0 || Object.keys(loaded).length > 0,
+    authTokenPresent: Boolean(runtimeModelProxyApiKeyFromConfig(loaded)),
+    userId: loaded.user_id ?? null,
+    sandboxId: loaded.sandbox_id ?? null,
+    modelProxyBaseUrl: loaded.model_proxy_base_url ?? null,
+    defaultModel: loaded.default_model ?? null,
+    defaultBackgroundModel: managedCatalog.defaultBackgroundModel,
+    defaultEmbeddingModel: managedCatalog.defaultEmbeddingModel,
+    defaultImageModel: managedCatalog.defaultImageModel,
+    controlPlaneBaseUrl: loaded.control_plane_base_url ?? null,
+    catalogVersion: managedCatalog.catalogVersion,
+    providerModelGroups: runtimeProviderModelGroups(
+      document,
+      loaded,
+      managedCatalog.providerModelGroups,
+    ),
+  };
+}
+
+function refreshRuntimeModelCatalogInBackground(): void {
+  void refreshRuntimeModelCatalogIfNeeded()
+    .then(async () => {
+      await emitRuntimeConfig();
+    })
+    .catch(() => undefined);
 }
 
 async function syncManagedHolabossDefaultsToRuntimeConfigIfNeeded(
@@ -4988,35 +5043,16 @@ async function withRuntimeConfigMutationLock<T>(
 }
 
 async function getRuntimeConfig(): Promise<RuntimeConfigPayload> {
-  const configPath = runtimeConfigPath();
-  const managedCatalog = await refreshRuntimeModelCatalogIfNeeded().catch(
-    () => runtimeModelCatalogState,
-  );
+  refreshRuntimeModelCatalogInBackground();
+  return getRuntimeConfigSnapshot(runtimeModelCatalogState);
+}
+
+async function getRuntimeConfigWithoutCatalogRefresh(): Promise<RuntimeConfigPayload> {
+  const managedCatalog = runtimeModelCatalogState;
   if (await syncManagedHolabossDefaultsToRuntimeConfigIfNeeded(managedCatalog)) {
-    await emitRuntimeConfig();
+    return getRuntimeConfigSnapshot(runtimeModelCatalogState);
   }
-  const loaded = await readRuntimeConfigFile();
-  const document = await readRuntimeConfigDocument();
-  return {
-    configPath,
-    loadedFromFile:
-      Object.keys(document).length > 0 || Object.keys(loaded).length > 0,
-    authTokenPresent: Boolean(runtimeModelProxyApiKeyFromConfig(loaded)),
-    userId: loaded.user_id ?? null,
-    sandboxId: loaded.sandbox_id ?? null,
-    modelProxyBaseUrl: loaded.model_proxy_base_url ?? null,
-    defaultModel: loaded.default_model ?? null,
-    defaultBackgroundModel: managedCatalog.defaultBackgroundModel,
-    defaultEmbeddingModel: managedCatalog.defaultEmbeddingModel,
-    defaultImageModel: managedCatalog.defaultImageModel,
-    controlPlaneBaseUrl: loaded.control_plane_base_url ?? null,
-    catalogVersion: managedCatalog.catalogVersion,
-    providerModelGroups: runtimeProviderModelGroups(
-      document,
-      loaded,
-      managedCatalog.providerModelGroups,
-    ),
-  };
+  return getRuntimeConfigSnapshot(managedCatalog);
 }
 
 async function getRuntimeConfigDocumentText(): Promise<string> {
@@ -10948,7 +10984,7 @@ async function closeSessionOutputStream(
   sessionOutputStreams.delete(streamId);
 }
 
-function emitRuntimeState() {
+function emitRuntimeState(force = false) {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
   }
@@ -10966,7 +11002,7 @@ function emitRuntimeState() {
     desktopBrowserUrl: runtimeStatus.desktopBrowserUrl,
     lastError: runtimeStatus.lastError,
   });
-  if (nextSignature === lastRuntimeStateSignature) {
+  if (!force && nextSignature === lastRuntimeStateSignature) {
     return;
   }
   lastRuntimeStateSignature = nextSignature;
@@ -10979,7 +11015,7 @@ function emitRuntimeState() {
 }
 
 async function emitRuntimeConfig(config?: RuntimeConfigPayload) {
-  const payload = config ?? (await getRuntimeConfig());
+  const payload = config ?? (await getRuntimeConfigWithoutCatalogRefresh());
   const nextSignature = JSON.stringify(payload);
   if (nextSignature === lastRuntimeConfigSignature) {
     return;
@@ -11188,6 +11224,24 @@ async function isRuntimeHealthy(url: string) {
   });
 }
 
+function runtimeUnavailableStatus(hasBundle: boolean): RuntimeStatus {
+  if (runtimeStartupInFlight && hasBundle) {
+    return "starting";
+  }
+  if (runtimeProcess) {
+    const currentStatus = runtimeStatus.status;
+    if (
+      currentStatus === "error" ||
+      currentStatus === "missing" ||
+      currentStatus === "stopped"
+    ) {
+      return "starting";
+    }
+    return currentStatus;
+  }
+  return hasBundle ? "stopped" : "missing";
+}
+
 async function refreshRuntimeStatus() {
   const { runtimeRoot, validationError } = await resolveRuntimeRoot();
   const executablePath = runtimeRoot
@@ -11199,6 +11253,7 @@ async function refreshRuntimeStatus() {
     process.env.HOLABOSS_RUNTIME_WORKFLOW_BACKEND || "remote_api";
   const url = `http://127.0.0.1:${RUNTIME_API_PORT}`;
   const healthy = await isRuntimeHealthy(url);
+  const hasBundle = Boolean(runtimeRoot && executablePath);
 
   if (healthy) {
     persistRuntimeProcessState({
@@ -11224,20 +11279,18 @@ async function refreshRuntimeStatus() {
 
   runtimeStatus = withDesktopBrowserStatus({
     ...runtimeStatus,
-    available: Boolean(runtimeRoot && executablePath),
+    available: hasBundle,
     runtimeRoot,
     sandboxRoot,
     executablePath,
     url,
     harness,
-    status: runtimeProcess
-      ? runtimeStatus.status
-      : runtimeRoot && executablePath
-        ? "stopped"
-        : "missing",
+    status: runtimeUnavailableStatus(hasBundle),
     lastError:
-      runtimeRoot && executablePath
-        ? runtimeStatus.lastError
+      hasBundle
+        ? runtimeStartupInFlight
+          ? ""
+          : runtimeStatus.lastError
         : validationError ||
           `Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package ${RUNTIME_BUNDLE_DIR} into app resources.`,
   });
@@ -11329,220 +11382,228 @@ async function stopEmbeddedRuntime() {
 
 async function startEmbeddedRuntime() {
   return withRuntimeLifecycleLock(async () => {
-    if (runtimeProcess) {
-      return refreshRuntimeStatus();
-    }
-
-    const { runtimeRoot, validationError } = await resolveRuntimeRoot();
-    const executablePath = runtimeRoot
-      ? await resolveRuntimeExecutablePath(runtimeRoot)
-      : null;
-    const sandboxRoot = runtimeSandboxRoot();
-    const harness = process.env.HOLABOSS_RUNTIME_HARNESS || "pi";
-    const workflowBackend =
-      process.env.HOLABOSS_RUNTIME_WORKFLOW_BACKEND || "remote_api";
-    const url = `http://127.0.0.1:${RUNTIME_API_PORT}`;
-
-    // A previous Electron process can leave the embedded runtime alive across
-    // an app restart or upgrade. Reuse that healthy process without emitting a
-    // synthetic "starting" state that would bounce the renderer back into
-    // workspace activation.
-    if (await isRuntimeHealthy(url)) {
-      return refreshRuntimeStatus();
-    }
-
-    runtimeStatus = withDesktopBrowserStatus({
-      ...runtimeStatus,
-      status: runtimeRoot && executablePath ? "starting" : "missing",
-      available: Boolean(runtimeRoot && executablePath),
-      runtimeRoot,
-      sandboxRoot,
-      executablePath,
-      url,
-      pid: null,
-      harness,
-      lastError:
-        runtimeRoot && executablePath
-          ? ""
-          : validationError ||
-            `Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package ${RUNTIME_BUNDLE_DIR} into app resources.`,
-    });
-    emitRuntimeState();
-
-    if (!runtimeRoot || !executablePath) {
-      persistRuntimeProcessState({
-        pid: null,
-        status: "missing",
-        lastError: runtimeStatus.lastError,
-      });
-      return runtimeStatus;
-    }
-
-    const startupConfigError = embeddedRuntimeStartupConfigError();
-    if (startupConfigError) {
-      runtimeStatus = withDesktopBrowserStatus({
-        ...runtimeStatus,
-        status: "error",
-        pid: null,
-        lastError: startupConfigError,
-      });
-      persistRuntimeProcessState({
-        pid: null,
-        status: "error",
-        lastError: startupConfigError,
-      });
-      appendRuntimeEventLog({
-        category: "runtime",
-        event: "embedded_runtime.config_error",
-        outcome: "error",
-        detail: startupConfigError,
-      });
-      void appendRuntimeLog(`[embedded-runtime] ${startupConfigError}\n`);
-      emitRuntimeState();
-      return runtimeStatus;
-    }
-
-    await fs.mkdir(sandboxRoot, { recursive: true });
-    await bootstrapRuntimeDatabase();
-
-    if (await isRuntimeHealthy(url)) {
-      return refreshRuntimeStatus();
-    }
-
-    const launchSpec = await resolveRuntimeLaunchSpec(runtimeRoot, executablePath);
-    if (!launchSpec) {
-      const launchError = `Runtime bundle is incomplete. Missing ${runtimeBundleNodeRelativePaths(CURRENT_RUNTIME_PLATFORM).join(" or ")} under ${runtimeRoot}. Rebuild or restage ${RUNTIME_BUNDLE_DIR}.`;
-      runtimeStatus = withDesktopBrowserStatus({
-        ...runtimeStatus,
-        status: "error",
-        pid: null,
-        lastError: launchError,
-      });
-      persistRuntimeProcessState({
-        pid: null,
-        status: "error",
-        lastError: launchError,
-      });
-      appendRuntimeEventLog({
-        category: "runtime",
-        event: "embedded_runtime.launch_error",
-        outcome: "error",
-        detail: launchError,
-      });
-      void appendRuntimeLog(`[embedded-runtime] ${launchError}\n`);
-      emitRuntimeState();
-      return runtimeStatus;
-    }
-
-    const child = spawn(launchSpec.command, launchSpec.args, {
-      cwd: runtimeRoot,
-      env: {
-        ...process.env,
-        HB_SANDBOX_ROOT: sandboxRoot,
-        SANDBOX_AGENT_BIND_HOST: "127.0.0.1",
-        SANDBOX_AGENT_BIND_PORT: String(RUNTIME_API_PORT),
-        HOLABOSS_EMBEDDED_RUNTIME: "1",
-        SANDBOX_AGENT_HARNESS: harness,
-        HOLABOSS_RUNTIME_WORKFLOW_BACKEND: workflowBackend,
-        HOLABOSS_RUNTIME_DB_PATH: runtimeDatabasePath(),
-        PROACTIVE_ENABLE_REMOTE_BRIDGE: "1",
-        PROACTIVE_BRIDGE_BASE_URL: proactiveBaseUrl(),
-        PYTHONDONTWRITEBYTECODE: "1",
-        HOLABOSS_AUTH_BASE_URL: AUTH_BASE_URL,
-        HOLABOSS_AUTH_COOKIE: authCookieHeader() ?? "",
-      },
-      stdio: "pipe",
-      windowsHide: process.platform === "win32",
-    });
-
-    runtimeProcess = child;
-    persistRuntimeProcessState({
-      pid: child.pid ?? null,
-      status: "starting",
-      lastStartedAt: utcNowIso(),
-      lastError: "",
-    });
-    appendRuntimeEventLog({
-      category: "runtime",
-      event: "embedded_runtime.start",
-      outcome: "start",
-      detail: `pid=${child.pid ?? "null"}`,
-    });
-    runtimeStatus = withDesktopBrowserStatus({
-      ...runtimeStatus,
-      status: "starting",
-      pid: child.pid ?? null,
-    });
-    emitRuntimeState();
-
-    child.stdout.on("data", (chunk) => {
-      void appendRuntimeLog(String(chunk));
-    });
-    child.stderr.on("data", (chunk) => {
-      void appendRuntimeLog(String(chunk));
-    });
-
-    child.once("exit", (code, signal) => {
-      if (runtimeProcess === child) {
-        runtimeProcess = null;
+    runtimeStartupInFlight = true;
+    try {
+      if (runtimeProcess) {
+        return refreshRuntimeStatus();
       }
 
-      void (async () => {
-        if (await isRuntimeHealthy(url)) {
-          await refreshRuntimeStatus();
-          return;
-        }
+      const { runtimeRoot, validationError } = await resolveRuntimeRoot();
+      const executablePath = runtimeRoot
+        ? await resolveRuntimeExecutablePath(runtimeRoot)
+        : null;
+      const sandboxRoot = runtimeSandboxRoot();
+      const harness = process.env.HOLABOSS_RUNTIME_HARNESS || "pi";
+      const workflowBackend =
+        process.env.HOLABOSS_RUNTIME_WORKFLOW_BACKEND || "remote_api";
+      const url = `http://127.0.0.1:${RUNTIME_API_PORT}`;
 
+      // A previous Electron process can leave the embedded runtime alive across
+      // an app restart or upgrade. Reuse that healthy process without emitting a
+      // synthetic "starting" state that would bounce the renderer back into
+      // workspace activation.
+      if (await isRuntimeHealthy(url)) {
+        return refreshRuntimeStatus();
+      }
+
+      runtimeStatus = withDesktopBrowserStatus({
+        ...runtimeStatus,
+        status: runtimeRoot && executablePath ? "starting" : "missing",
+        available: Boolean(runtimeRoot && executablePath),
+        runtimeRoot,
+        sandboxRoot,
+        executablePath,
+        url,
+        pid: null,
+        harness,
+        lastError:
+          runtimeRoot && executablePath
+            ? ""
+            : validationError ||
+              `Runtime bundle not found. Set HOLABOSS_RUNTIME_ROOT or package ${RUNTIME_BUNDLE_DIR} into app resources.`,
+      });
+      emitRuntimeState();
+
+      if (!runtimeRoot || !executablePath) {
+        persistRuntimeProcessState({
+          pid: null,
+          status: "missing",
+          lastError: runtimeStatus.lastError,
+        });
+        return runtimeStatus;
+      }
+
+      const startupConfigError = embeddedRuntimeStartupConfigError();
+      if (startupConfigError) {
         runtimeStatus = withDesktopBrowserStatus({
           ...runtimeStatus,
-          status: code === 0 ? "stopped" : "error",
+          status: "error",
           pid: null,
-          lastError:
-            code === 0
-              ? ""
-              : `Runtime exited unexpectedly (code=${code ?? "null"}, signal=${signal ?? "null"}).`,
+          lastError: startupConfigError,
         });
         persistRuntimeProcessState({
           pid: null,
-          status: code === 0 ? "stopped" : "error",
-          lastStoppedAt: utcNowIso(),
+          status: "error",
+          lastError: startupConfigError,
+        });
+        appendRuntimeEventLog({
+          category: "runtime",
+          event: "embedded_runtime.config_error",
+          outcome: "error",
+          detail: startupConfigError,
+        });
+        void appendRuntimeLog(`[embedded-runtime] ${startupConfigError}\n`);
+        emitRuntimeState();
+        return runtimeStatus;
+      }
+
+      await fs.mkdir(sandboxRoot, { recursive: true });
+      await bootstrapRuntimeDatabase();
+
+      if (await isRuntimeHealthy(url)) {
+        return refreshRuntimeStatus();
+      }
+
+      const launchSpec = await resolveRuntimeLaunchSpec(
+        runtimeRoot,
+        executablePath,
+      );
+      if (!launchSpec) {
+        const launchError = `Runtime bundle is incomplete. Missing ${runtimeBundleNodeRelativePaths(CURRENT_RUNTIME_PLATFORM).join(" or ")} under ${runtimeRoot}. Rebuild or restage ${RUNTIME_BUNDLE_DIR}.`;
+        runtimeStatus = withDesktopBrowserStatus({
+          ...runtimeStatus,
+          status: "error",
+          pid: null,
+          lastError: launchError,
+        });
+        persistRuntimeProcessState({
+          pid: null,
+          status: "error",
+          lastError: launchError,
+        });
+        appendRuntimeEventLog({
+          category: "runtime",
+          event: "embedded_runtime.launch_error",
+          outcome: "error",
+          detail: launchError,
+        });
+        void appendRuntimeLog(`[embedded-runtime] ${launchError}\n`);
+        emitRuntimeState();
+        return runtimeStatus;
+      }
+
+      const child = spawn(launchSpec.command, launchSpec.args, {
+        cwd: runtimeRoot,
+        env: {
+          ...process.env,
+          HB_SANDBOX_ROOT: sandboxRoot,
+          SANDBOX_AGENT_BIND_HOST: "127.0.0.1",
+          SANDBOX_AGENT_BIND_PORT: String(RUNTIME_API_PORT),
+          HOLABOSS_EMBEDDED_RUNTIME: "1",
+          SANDBOX_AGENT_HARNESS: harness,
+          HOLABOSS_RUNTIME_WORKFLOW_BACKEND: workflowBackend,
+          HOLABOSS_RUNTIME_DB_PATH: runtimeDatabasePath(),
+          PROACTIVE_ENABLE_REMOTE_BRIDGE: "1",
+          PROACTIVE_BRIDGE_BASE_URL: proactiveBaseUrl(),
+          PYTHONDONTWRITEBYTECODE: "1",
+          HOLABOSS_AUTH_BASE_URL: AUTH_BASE_URL,
+          HOLABOSS_AUTH_COOKIE: authCookieHeader() ?? "",
+        },
+        stdio: "pipe",
+        windowsHide: process.platform === "win32",
+      });
+
+      runtimeProcess = child;
+      persistRuntimeProcessState({
+        pid: child.pid ?? null,
+        status: "starting",
+        lastStartedAt: utcNowIso(),
+        lastError: "",
+      });
+      appendRuntimeEventLog({
+        category: "runtime",
+        event: "embedded_runtime.start",
+        outcome: "start",
+        detail: `pid=${child.pid ?? "null"}`,
+      });
+      runtimeStatus = withDesktopBrowserStatus({
+        ...runtimeStatus,
+        status: "starting",
+        pid: child.pid ?? null,
+      });
+      emitRuntimeState();
+
+      child.stdout.on("data", (chunk) => {
+        void appendRuntimeLog(String(chunk));
+      });
+      child.stderr.on("data", (chunk) => {
+        void appendRuntimeLog(String(chunk));
+      });
+
+      child.once("exit", (code, signal) => {
+        if (runtimeProcess === child) {
+          runtimeProcess = null;
+        }
+
+        void (async () => {
+          if (await isRuntimeHealthy(url)) {
+            await refreshRuntimeStatus();
+            return;
+          }
+
+          runtimeStatus = withDesktopBrowserStatus({
+            ...runtimeStatus,
+            status: code === 0 ? "stopped" : "error",
+            pid: null,
+            lastError:
+              code === 0
+                ? ""
+                : `Runtime exited unexpectedly (code=${code ?? "null"}, signal=${signal ?? "null"}).`,
+          });
+          persistRuntimeProcessState({
+            pid: null,
+            status: code === 0 ? "stopped" : "error",
+            lastStoppedAt: utcNowIso(),
+            lastError: runtimeStatus.lastError,
+          });
+          appendRuntimeEventLog({
+            category: "runtime",
+            event: "embedded_runtime.exit",
+            outcome: code === 0 ? "success" : "error",
+            detail: `code=${code ?? "null"} signal=${signal ?? "null"}`,
+          });
+          emitRuntimeState();
+        })();
+      });
+
+      const healthy = await waitForRuntimeHealth(url);
+      if (healthy) {
+        runtimeStatus = await refreshRuntimeStatus();
+      } else {
+        runtimeStatus = withDesktopBrowserStatus({
+          ...runtimeStatus,
+          status: "error",
+          pid: child.pid ?? null,
+          lastError:
+            "Runtime process started but did not pass health checks. Check runtime.log in the Electron userData directory.",
+        });
+        persistRuntimeProcessState({
+          pid: child.pid ?? null,
+          status: "error",
           lastError: runtimeStatus.lastError,
         });
         appendRuntimeEventLog({
           category: "runtime",
-          event: "embedded_runtime.exit",
-          outcome: code === 0 ? "success" : "error",
-          detail: `code=${code ?? "null"} signal=${signal ?? "null"}`,
+          event: "embedded_runtime.healthcheck",
+          outcome: "error",
+          detail: runtimeStatus.lastError,
         });
-        emitRuntimeState();
-      })();
-    });
-
-    const healthy = await waitForRuntimeHealth(url);
-    if (healthy) {
-      runtimeStatus = await refreshRuntimeStatus();
-    } else {
-      runtimeStatus = withDesktopBrowserStatus({
-        ...runtimeStatus,
-        status: "error",
-        pid: child.pid ?? null,
-        lastError:
-          "Runtime process started but did not pass health checks. Check runtime.log in the Electron userData directory.",
-      });
-      persistRuntimeProcessState({
-        pid: child.pid ?? null,
-        status: "error",
-        lastError: runtimeStatus.lastError,
-      });
-      appendRuntimeEventLog({
-        category: "runtime",
-        event: "embedded_runtime.healthcheck",
-        outcome: "error",
-        detail: runtimeStatus.lastError,
-      });
+      }
+      emitRuntimeState();
+      return runtimeStatus;
+    } finally {
+      runtimeStartupInFlight = false;
     }
-    emitRuntimeState();
-    return runtimeStatus;
   });
 }
 
@@ -15748,6 +15809,7 @@ function createMainWindow() {
     win.webContents.setZoomFactor(1);
     win.webContents.setZoomLevel(0);
     emitBrowserState();
+    emitRuntimeState(true);
     emitPendingAuthState();
     emitAppUpdateState();
     emitWindowStateChanged(win);

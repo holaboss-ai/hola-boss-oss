@@ -37,3 +37,46 @@ test("workspace desktop error normalization unwraps Electron IPC errors before m
   );
   assert.match(source, /return unwrappedMessage;/);
 });
+
+test("workspace desktop rechecks runtime status while bootstrap is waiting for startup", async () => {
+  const source = await readFile(WORKSPACE_DESKTOP_PATH, "utf8");
+
+  assert.match(source, /const BOOTSTRAP_IPC_TIMEOUT_MS = 8_000;/);
+  assert.match(
+    source,
+    /function withBootstrapTimeout<T>\(promise: Promise<T>, label: string\): Promise<T> \{/,
+  );
+  assert.match(
+    source,
+    /reject\(new Error\(`Timed out loading \$\{label\}\.`\)\);/,
+  );
+  assert.match(
+    source,
+    /const \[runtimeConfigResult, runtimeStatusResult, clientConfigResult\] = await Promise\.allSettled\(\[\s*withBootstrapTimeout\(window\.electronAPI\.runtime\.getConfig\(\), "runtime configuration"\),\s*withBootstrapTimeout\(window\.electronAPI\.runtime\.getStatus\(\), "runtime status"\),\s*withBootstrapTimeout\(window\.electronAPI\.workspace\.getClientConfig\(\), "desktop client configuration"\)\s*\]\);/,
+  );
+  assert.match(
+    source,
+    /if \(bootstrapErrors\.length > 0\) \{\s*setWorkspaceErrorMessage\(bootstrapErrors\[0\]\);\s*\}/,
+  );
+  assert.match(
+    source,
+    /const unsubscribe = window\.electronAPI\.runtime\.onStateChange\(\(status\) => \{/,
+  );
+  assert.match(
+    source,
+    /void window\.electronAPI\.runtime\.getStatus\(\)\.then\(\(status\) => \{/,
+  );
+  assert.match(
+    source,
+    /if \(\s*hasHydratedWorkspaceList \|\|\s*isLoadingBootstrap \|\|\s*runtimeStatus\?\.status !== "starting"\s*\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /const refreshStartingRuntimeStatus = \(\) => \{\s*void window\.electronAPI\.runtime[\s\S]*?\.getStatus\(\)[\s\S]*?setRuntimeStatus\(status\);[\s\S]*?\}\s*;\s*\}/,
+  );
+  assert.match(
+    source,
+    /const timer = window\.setInterval\(refreshStartingRuntimeStatus, 1000\);/,
+  );
+  assert.match(source, /window\.clearInterval\(timer\);/);
+});

@@ -25,14 +25,15 @@ const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string
   },
   gemini_direct: {
     "gemini-3.1-pro-preview": "gemini-2.5-pro",
-    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite",
+    "gemini-2.5-flash-lite": "gemini-2.5-flash",
+    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash",
   },
 };
 const BACKGROUND_TASK_MODEL_DEFAULTS: Record<string, string | null> = {
-  [HOLABOSS_PROVIDER_ID]: "gpt-5.4-mini",
-  openai_direct: "gpt-5.4-mini",
+  [HOLABOSS_PROVIDER_ID]: "gpt-5.4",
+  openai_direct: "gpt-5.4",
   anthropic_direct: "claude-sonnet-4-6",
-  openrouter_direct: "openai/gpt-5.4-mini",
+  openrouter_direct: "openai/gpt-5.4",
   gemini_direct: "gemini-2.5-flash",
   ollama_direct: null,
   minimax_direct: "MiniMax-M2.7",

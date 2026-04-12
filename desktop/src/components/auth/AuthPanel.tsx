@@ -50,7 +50,8 @@ const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string
   },
   gemini_direct: {
     "gemini-3.1-pro-preview": "gemini-2.5-pro",
-    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite"
+    "gemini-2.5-flash-lite": "gemini-2.5-flash",
+    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash"
   }
 };
 
@@ -156,8 +157,8 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     description: "Direct OpenAI-compatible endpoint with your own API key.",
     kind: "openai_compatible",
     defaultBaseUrl: "https://api.openai.com/v1",
-    defaultModels: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"],
-    defaultBackgroundModel: "gpt-5.4-mini",
+    defaultModels: ["gpt-5.4", "gpt-5.3-codex"],
+    defaultBackgroundModel: "gpt-5.4",
     defaultImageModel: "gpt-image-1.5",
     imageModelSuggestions: ["gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini", "chatgpt-image-latest"],
     apiKeyPlaceholder: "sk-your-openai-key"
@@ -180,8 +181,8 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     description: "OpenRouter endpoint for provider-aggregated model access.",
     kind: "openrouter",
     defaultBaseUrl: "https://openrouter.ai/api/v1",
-    defaultModels: ["openai/gpt-5.4", "openai/gpt-5.4-mini", "anthropic/claude-sonnet-4-6"],
-    defaultBackgroundModel: "openai/gpt-5.4-mini",
+    defaultModels: ["openai/gpt-5.4", "anthropic/claude-sonnet-4-6"],
+    defaultBackgroundModel: "openai/gpt-5.4",
     defaultImageModel: "google/gemini-3.1-flash-image-preview",
     imageModelSuggestions: ["google/gemini-3.1-flash-image-preview"],
     apiKeyPlaceholder: "sk-or-your-openrouter-key"
@@ -192,7 +193,7 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
     description: "Google Gemini OpenAI-compatible endpoint with your own API key.",
     kind: "openai_compatible",
     defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-    defaultModels: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
+    defaultModels: ["gemini-2.5-pro", "gemini-2.5-flash"],
     defaultBackgroundModel: "gemini-2.5-flash",
     defaultImageModel: "gemini-3.1-flash-image-preview",
     imageModelSuggestions: ["gemini-3.1-flash-image-preview", "gemini-2.5-flash-image"],

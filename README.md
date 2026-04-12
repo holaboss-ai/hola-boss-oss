@@ -89,17 +89,19 @@ All deeper technical and product documentation lives at **[holaboss.ai/docs](htt
 | Section | What's Covered |
 | --- | --- |
 | [Overview](https://www.holaboss.ai/docs/) | The merged entry page for the environment-engineering thesis and system model |
-| [Environment Engineering](https://www.holaboss.ai/docs/holaos/environment-engineering) | The core thesis behind holaOS and why the environment defines the system |
 | [Quick Start](https://www.holaboss.ai/docs/getting-started/) | The fastest path to a working local desktop environment |
 | [Learning Path](https://www.holaboss.ai/docs/getting-started/learning-path) | The technical path through the docs after setup |
+| [Environment Engineering](https://www.holaboss.ai/docs/holaos/environment-engineering) | The core thesis behind holaOS and why the environment defines the system |
 | [Concepts](https://www.holaboss.ai/docs/holaos/concepts) | Core system vocabulary for workspaces, runtime, memory, and outputs |
 | [Workspace Model](https://www.holaboss.ai/docs/holaos/workspace-model) | Workspace contract, authored surfaces, and runtime-owned state |
 | [Memory and Continuity](https://www.holaboss.ai/docs/holaos/memory-and-continuity) | Durable memory, continuity artifacts, and long-horizon resume behavior |
-| [Build Your First App](https://www.holaboss.ai/docs/app-development/applications/first-app) | Building workspace apps on top of holaOS |
+| [Start Developing](https://www.holaboss.ai/docs/build-on-holaos/start-developing/) | The local developer path for desktop and runtime validation |
+| [Contributing](https://www.holaboss.ai/docs/build-on-holaos/start-developing/contributing) | The contributor workflow, validation expectations, and review guidance |
 | [Runtime APIs](https://www.holaboss.ai/docs/build-on-holaos/runtime-apis) | The runtime operational surface for workspaces, runs, and app lifecycle |
 | [Independent Deploy](https://www.holaboss.ai/docs/build-on-holaos/independent-deploy) | Running the portable runtime without the desktop app |
-| [Start Developing](https://www.holaboss.ai/docs/build-on-holaos/start-developing/) | The local developer path for desktop and runtime validation |
-| [Troubleshooting](https://www.holaboss.ai/docs/build-on-holaos/developer-guide/troubleshooting) | The common local runtime and desktop failure modes |
+| [Agent Harness](https://www.holaboss.ai/docs/app-development/agent-harness) | The stable harness boundary inside the runtime and how executors fit into it |
+| [Build Your First App](https://www.holaboss.ai/docs/app-development/applications/first-app) | Building workspace apps on top of holaOS |
+| [Troubleshooting](https://www.holaboss.ai/docs/build-on-holaos/troubleshooting) | The common local runtime and desktop failure modes |
 | [Workspace Experience](https://www.holaboss.ai/docs/desktop/workspace-experience) | The desktop workspace surface built on top of holaOS |
 | [Model Configuration](https://www.holaboss.ai/docs/desktop/model-configuration) | Providers, defaults, config precedence, and runtime model selection |
 | [Reference](https://www.holaboss.ai/docs/reference/environment-variables) | Environment variables and supporting reference material |

@@ -302,8 +302,14 @@ test("direct Anthropic, OpenRouter, and Gemini defaults advertise current provid
   const geminiTemplate =
     providerTemplatesBlock.match(/gemini_direct:\s*\{[\s\S]*?apiKeyPlaceholder: "AIza\.\.\.your-gemini-api-key"[\s\S]*?\n\s*}/)?.[0] ?? "";
 
+  assert.match(
+    openaiTemplate,
+    /defaultModels: \["gpt-5\.4", "gpt-5\.3-codex"\]/,
+  );
+  assert.match(openaiTemplate, /defaultBackgroundModel: "gpt-5\.4"/);
   assert.match(openaiTemplate, /defaultImageModel: "gpt-image-1\.5"/);
   assert.match(openaiTemplate, /imageModelSuggestions: \["gpt-image-1\.5", "gpt-image-1", "gpt-image-1-mini", "chatgpt-image-latest"\]/);
+  assert.doesNotMatch(openaiTemplate, /gpt-5\.4-mini/);
 
   assert.match(
     anthropicTemplate,
@@ -315,18 +321,20 @@ test("direct Anthropic, OpenRouter, and Gemini defaults advertise current provid
 
   assert.match(
     openrouterTemplate,
-    /defaultModels: \["openai\/gpt-5\.4", "openai\/gpt-5\.4-mini", "anthropic\/claude-sonnet-4-6"\]/,
+    /defaultModels: \["openai\/gpt-5\.4", "anthropic\/claude-sonnet-4-6"\]/,
   );
+  assert.match(openrouterTemplate, /defaultBackgroundModel: "openai\/gpt-5\.4"/);
   assert.match(openrouterTemplate, /defaultImageModel: "google\/gemini-3\.1-flash-image-preview"/);
   assert.match(
     openrouterTemplate,
     /imageModelSuggestions: \["google\/gemini-3\.1-flash-image-preview"\]/,
   );
   assert.doesNotMatch(openrouterTemplate, /claude-sonnet-4-5/);
+  assert.doesNotMatch(openrouterTemplate, /gpt-5\.4-mini/);
 
   assert.match(
     geminiTemplate,
-    /defaultModels: \["gemini-2\.5-pro", "gemini-2\.5-flash", "gemini-2\.5-flash-lite"\]/,
+    /defaultModels: \["gemini-2\.5-pro", "gemini-2\.5-flash"\]/,
   );
   assert.match(geminiTemplate, /defaultImageModel: "gemini-3\.1-flash-image-preview"/);
   assert.match(
@@ -337,5 +345,6 @@ test("direct Anthropic, OpenRouter, and Gemini defaults advertise current provid
   assert.match(source, /backgroundTaskDefaultModel\(providerId, runtimeConfig\)/);
   assert.match(source, /imageGenerationDefaultModel\(providerId, runtimeConfig\)/);
   assert.doesNotMatch(geminiTemplate, /gemini-3\.1-pro-preview/);
+  assert.doesNotMatch(geminiTemplate, /gemini-2\.5-flash-lite/);
   assert.doesNotMatch(geminiTemplate, /gemini-3\.1-flash-lite-preview/);
 });

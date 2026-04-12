@@ -146,7 +146,8 @@ const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string
   },
   gemini_direct: {
     "gemini-3.1-pro-preview": "gemini-2.5-pro",
-    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite"
+    "gemini-2.5-flash-lite": "gemini-2.5-flash",
+    "gemini-3.1-flash-lite-preview": "gemini-2.5-flash"
   }
 };
 

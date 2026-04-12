@@ -663,6 +663,38 @@ function WorkspaceBootstrapPane() {
   );
 }
 
+function runtimeStartupBlockedMessage(
+  runtimeStatus: RuntimeStatusPayload | null,
+  fallbackMessage = "",
+) {
+  const normalizedFallback = fallbackMessage.trim();
+  if (!runtimeStatus) {
+    return normalizedFallback;
+  }
+
+  const runtimeError = runtimeStatus.lastError.trim();
+  if (runtimeStatus.status === "error") {
+    return (
+      runtimeError || normalizedFallback || "Embedded runtime failed to start."
+    );
+  }
+  if (runtimeStatus.status === "missing") {
+    return (
+      runtimeError ||
+      normalizedFallback ||
+      "Embedded runtime bundle is missing from this desktop install."
+    );
+  }
+  if (runtimeStatus.status === "stopped") {
+    return (
+      runtimeError ||
+      normalizedFallback ||
+      "Embedded runtime is not running. Restart the app to try again."
+    );
+  }
+  return "";
+}
+
 function WorkspaceInitializingGate({
   apps,
 }: {
@@ -779,11 +811,11 @@ function WorkspaceStartupErrorPane({ message }: { message: string }) {
             <span>Desktop startup blocked</span>
           </div>
           <div className="mt-6 text-[30px] font-semibold tracking-[-0.04em] text-foreground">
-            The local runtime failed to start
+            The local runtime is unavailable
           </div>
           <div className="mt-3 text-[14px] leading-7 text-muted-foreground/84">
             The desktop shell cannot finish restoring workspaces until the
-            embedded runtime comes online.
+            embedded runtime is available again.
           </div>
           <div className="mt-6 rounded-[20px] border border-[rgba(247,90,84,0.22)] bg-[rgba(247,90,84,0.06)] px-4 py-4 text-[13px] leading-7 text-foreground">
             {message}
@@ -2547,21 +2579,19 @@ function AppShellContent() {
     settingsDialogOpen ||
     createWorkspacePanelOpen ||
     publishOpen;
+  const runtimeStartupBlockedDetail = runtimeStartupBlockedMessage(
+    runtimeStatus,
+    workspaceBlockingReason || workspaceErrorMessage,
+  );
   const bootstrapErrorMessage =
-    !hasHydratedWorkspaceList && runtimeStatus?.status === "error"
-      ? runtimeStatus.lastError.trim() ||
-        workspaceErrorMessage ||
-        "Embedded runtime failed to start."
+    !hasHydratedWorkspaceList
+      ? runtimeStartupBlockedMessage(runtimeStatus, workspaceErrorMessage)
       : "";
   const hydratedRuntimeErrorMessage =
     hasHydratedWorkspaceList &&
-    hasSelectedWorkspace &&
-    runtimeStatus?.status === "error" &&
-    !workspaceAppsReady
-      ? runtimeStatus.lastError.trim() ||
-        workspaceBlockingReason ||
-        workspaceErrorMessage ||
-        "Embedded runtime failed to start."
+    runtimeStartupBlockedDetail &&
+    (!hasWorkspaces || !workspaceAppsReady)
+      ? runtimeStartupBlockedDetail
       : "";
   const desktopPlatform = window.electronAPI?.platform ?? null;
   const hasIntegratedTitleBar =
@@ -3179,10 +3209,10 @@ function AppShellContent() {
           ) : (
             <WorkspaceBootstrapPane />
           )
-        ) : !hasWorkspaces ? (
-          <FirstWorkspacePane />
         ) : hydratedRuntimeErrorMessage ? (
           <WorkspaceStartupErrorPane message={hydratedRuntimeErrorMessage} />
+        ) : !hasWorkspaces ? (
+          <FirstWorkspacePane />
         ) : showOnboardingTakeover ? (
           <WorkspaceOnboardingTakeover focusRequestKey={chatFocusRequestKey} />
         ) : (
