@@ -170,6 +170,7 @@ function toTaskProposalRecord(record: ReturnType<RuntimeStateStore["listTaskProp
     task_name: record.taskName,
     task_prompt: record.taskPrompt,
     task_generation_rationale: record.taskGenerationRationale,
+    proposal_source: record.proposalSource,
     source_event_ids: record.sourceEventIds,
     created_at: record.createdAt,
     state: record.state,
@@ -696,6 +697,7 @@ export function handleRequest(operation: string, envelope: RequestEnvelope): Jso
             taskName: String(envelope.task_name),
             taskPrompt: String(envelope.task_prompt),
             taskGenerationRationale: String(envelope.task_generation_rationale),
+            proposalSource: typeof envelope.proposal_source === "string" ? envelope.proposal_source : undefined,
             sourceEventIds: Array.isArray(envelope.source_event_ids)
               ? envelope.source_event_ids.filter((item): item is string => typeof item === "string")
               : [],

@@ -73,7 +73,15 @@ test("desktop runtime config writes Holaboss binding fields back into canonical 
   );
   assert.match(
     writeRuntimeConfigSection,
+    /const managedDefaultEmbeddingModel = normalizeRuntimeHolabossCatalogDefaultModelId\(\s*update\.defaultEmbeddingModel,\s*\);/,
+  );
+  assert.match(
+    writeRuntimeConfigSection,
     /const currentImageGeneration = runtimeConfigObject\(\s*runtimePayload\.image_generation \?\? runtimePayload\.imageGeneration,\s*\);/,
+  );
+  assert.match(
+    writeRuntimeConfigSection,
+    /const currentRecallEmbeddings = runtimeConfigObject\(\s*runtimePayload\.recall_embeddings \?\? runtimePayload\.recallEmbeddings,\s*\);/,
   );
   assert.match(
     writeRuntimeConfigSection,
@@ -82,6 +90,10 @@ test("desktop runtime config writes Holaboss binding fields back into canonical 
   assert.match(
     writeRuntimeConfigSection,
     /runtimePayload\.background_tasks = \{\s*provider: RUNTIME_HOLABOSS_PROVIDER_ID,\s*model: managedDefaultBackgroundModel,\s*\};/,
+  );
+  assert.match(
+    writeRuntimeConfigSection,
+    /runtimePayload\.recall_embeddings = \{\s*provider: RUNTIME_HOLABOSS_PROVIDER_ID,\s*model: managedDefaultEmbeddingModel,\s*\};/,
   );
   assert.match(
     writeRuntimeConfigSection,
@@ -98,5 +110,26 @@ test("desktop runtime config writes Holaboss binding fields back into canonical 
   assert.match(
     writeRuntimeConfigSection,
     /runtime: runtimePayload,/,
+  );
+});
+
+test("desktop runtime treats missing managed Holaboss default sections as stale and backfills them", async () => {
+  const source = await readFile(mainSourcePath, "utf8");
+  const refreshCheckSection =
+    source.match(
+      /function runtimeBindingNeedsManagedHolabossDefaultsRefresh\([\s\S]*?\n}\n\nfunction configuredProviderIdForRuntimeModelToken/,
+    )?.[0] ?? "";
+
+  assert.match(
+    refreshCheckSection,
+    /Boolean\(runtimeModelCatalogState\.defaultEmbeddingModel\) &&\s*\(Object\.keys\(currentRecallEmbeddings\)\.length === 0 \|\|/,
+  );
+  assert.match(
+    refreshCheckSection,
+    /Boolean\(runtimeModelCatalogState\.defaultBackgroundModel\) &&\s*\(Object\.keys\(currentBackgroundTasks\)\.length === 0 \|\|/,
+  );
+  assert.match(
+    refreshCheckSection,
+    /Boolean\(runtimeModelCatalogState\.defaultImageModel\) &&\s*\(Object\.keys\(currentImageGeneration\)\.length === 0 \|\|/,
   );
 });

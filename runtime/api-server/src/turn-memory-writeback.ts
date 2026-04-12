@@ -1709,6 +1709,7 @@ function loadTurnWritebackContext(store: RuntimeStateStore, turnResult: TurnResu
     completedTurnCount: store.countTurnResults({
       workspaceId: updatedTurnResult.workspaceId,
       sessionId: updatedTurnResult.sessionId,
+      status: "completed",
     }),
   };
 }

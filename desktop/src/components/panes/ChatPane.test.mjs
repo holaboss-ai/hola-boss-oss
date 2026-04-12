@@ -306,9 +306,35 @@ test("chat pane exposes an in-pane session dropdown for switching agent sessions
   assert.match(source, /filteredSessions\.map\(\(session\) => \{/);
   assert.match(source, /inboxUnreadCount > 0 \? \(/);
   assert.match(source, /onOpenInbox\(\);/);
-  assert.match(source, /if \(\(sessionOpenRequest\?\.requestKey \?\? 0\) === requestKey\) \{\s*onSessionOpenRequestConsumed\?\.\(requestKey\);\s*\}/);
+  assert.match(source, /onSessionOpenRequestConsumed\?\.\(requestKey\);/);
   assert.match(source, /setLocalSessionOpenRequest\(\{\s*sessionId: normalizedSessionId,\s*requestKey: Date\.now\(\),\s*\}\);/);
   assert.match(source, /setLocalSessionOpenRequest\(\{\s*sessionId: "",\s*mode: "draft",\s*parentSessionId: null,\s*requestKey: Date\.now\(\),\s*\}\);/);
+});
+
+test("chat pane keeps local picker session requests from overriding a newer shell session request", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /const isExternalSessionOpenRequest = sessionOpenRequest !== null;/);
+  assert.match(source, /const lastHandledExternalSessionOpenRequestKeyRef = useRef\(0\);/);
+  assert.match(source, /const lastHandledLocalSessionOpenRequestKeyRef = useRef\(0\);/);
+  assert.match(
+    source,
+    /const lastHandledSessionOpenRequestKeyRef = isExternalSessionOpenRequest\s*\?\s*lastHandledExternalSessionOpenRequestKeyRef\s*:\s*lastHandledLocalSessionOpenRequestKeyRef;/,
+  );
+  assert.match(
+    source,
+    /if \(!cancelled && !historyLoaded\) \{\s*cancelHistoryViewportRestore\(\);\s*\}\s*if \(!cancelled\) \{\s*setIsLoadingHistory\(false\);\s*\}\s*if \(isExternalSessionOpenRequest\) \{\s*onSessionOpenRequestConsumed\?\.\(requestKey\);\s*\} else \{\s*setLocalSessionOpenRequest\(\(current\) =>\s*current\?\.requestKey === requestKey \? null : current,\s*\);\s*\}/,
+  );
+});
+
+test("chat pane clears session-open requests only after the history restore flow settles", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(source, /let historyLoaded = false;\s*beginHistoryViewportRestore\(\);\s*setIsLoadingHistory\(true\);/);
+  assert.match(
+    source,
+    /finally \{\s*if \(!cancelled && !historyLoaded\) \{\s*cancelHistoryViewportRestore\(\);\s*\}\s*if \(!cancelled\) \{\s*setIsLoadingHistory\(false\);\s*\}\s*if \(isExternalSessionOpenRequest\) \{\s*onSessionOpenRequestConsumed\?\.\(requestKey\);\s*\} else \{\s*setLocalSessionOpenRequest\(\(current\) =>\s*current\?\.requestKey === requestKey \? null : current,\s*\);\s*\}\s*\}/,
+  );
 });
 
 test("chat pane hides restored history until the viewport snaps to the latest message", async () => {
@@ -481,11 +507,16 @@ test("chat pane can jump to a requested sub-session run", async () => {
   assert.match(source, /sessionJumpSessionId = null/);
   assert.match(source, /sessionJumpRequestKey = 0/);
   assert.match(source, /const lastHandledSessionJumpRequestKeyRef = useRef\(0\);/);
-  assert.match(source, /const lastHandledSessionOpenRequestKeyRef = useRef\(0\);/);
+  assert.match(source, /const lastHandledExternalSessionOpenRequestKeyRef = useRef\(0\);/);
+  assert.match(source, /const lastHandledLocalSessionOpenRequestKeyRef = useRef\(0\);/);
   assert.match(source, /const draftParentSessionIdRef = useRef<string \| null>\(null\);/);
   assert.match(
     source,
     /const hasSessionJumpRequest =[\s\S]*sessionJumpRequestKey > 0[\s\S]*sessionJumpRequestKey !== lastHandledSessionJumpRequestKeyRef\.current/,
+  );
+  assert.match(
+    source,
+    /const lastHandledSessionOpenRequestKeyRef = isExternalSessionOpenRequest\s*\?\s*lastHandledExternalSessionOpenRequestKeyRef\s*:\s*lastHandledLocalSessionOpenRequestKeyRef;/,
   );
   assert.match(
     source,

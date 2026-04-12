@@ -527,6 +527,16 @@ function buildDevAppUpdatePreviewStatus(
   };
 }
 
+function compactAppVersionLabel(version: string): string {
+  const trimmed = version.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const releaseMatch = trimmed.match(/^\d{4}\.(\d+\.\d+)$/);
+  return releaseMatch ? releaseMatch[1] : trimmed;
+}
+
 function spaceComponentLabel(componentId: SpaceComponentId) {
   if (componentId === "agent") {
     return "Agent";
@@ -897,6 +907,9 @@ function AppShellContent() {
     hasLoadedProactiveTaskProposalsPreference,
     setHasLoadedProactiveTaskProposalsPreference,
   ] = useState(false);
+  // Keep request keys monotonic even after the request object is consumed.
+  const chatSessionOpenRequestKeyRef = useRef(0);
+  const chatComposerPrefillRequestKeyRef = useRef(0);
   const [
     isUpdatingProactiveTaskProposalsEnabled,
     setIsUpdatingProactiveTaskProposalsEnabled,
@@ -2256,6 +2269,16 @@ function AppShellContent() {
     setChatFocusRequestKey((current) => current + 1);
   }, []);
 
+  const nextChatSessionOpenRequestKey = useCallback(() => {
+    chatSessionOpenRequestKeyRef.current += 1;
+    return chatSessionOpenRequestKeyRef.current;
+  }, []);
+
+  const nextChatComposerPrefillRequestKey = useCallback(() => {
+    chatComposerPrefillRequestKeyRef.current += 1;
+    return chatComposerPrefillRequestKeyRef.current;
+  }, []);
+
   const handleCreateScheduleInChat = useCallback(() => {
     setActiveLeftRailItem("space");
     setSpaceVisibility((previous) => ({
@@ -2264,20 +2287,24 @@ function AppShellContent() {
     }));
     setAgentView({ type: "chat" });
     setChatSessionJumpRequest(null);
-    setChatSessionOpenRequest((previous) =>
+    setChatSessionOpenRequest(
       activeChatSessionId
         ? {
             sessionId: activeChatSessionId,
-            requestKey: (previous?.requestKey ?? 0) + 1,
+            requestKey: nextChatSessionOpenRequestKey(),
           }
         : null,
     );
-    setChatComposerPrefillRequest((previous) => ({
+    setChatComposerPrefillRequest({
       text: "Create a cronjob for ",
-      requestKey: (previous?.requestKey ?? 0) + 1,
-    }));
+      requestKey: nextChatComposerPrefillRequestKey(),
+    });
     setChatFocusRequestKey((current) => current + 1);
-  }, [activeChatSessionId]);
+  }, [
+    activeChatSessionId,
+    nextChatComposerPrefillRequestKey,
+    nextChatSessionOpenRequestKey,
+  ]);
 
   const handleCreateSession = useCallback(() => {
     if (!selectedWorkspaceId) {
@@ -2291,14 +2318,14 @@ function AppShellContent() {
     }));
     setAgentView({ type: "chat" });
     setChatSessionJumpRequest(null);
-    setChatSessionOpenRequest((previous) => ({
+    setChatSessionOpenRequest({
       sessionId: "",
       mode: "draft",
       parentSessionId: null,
-      requestKey: (previous?.requestKey ?? 0) + 1,
-    }));
+      requestKey: nextChatSessionOpenRequestKey(),
+    });
     setChatFocusRequestKey((current) => current + 1);
-  }, [selectedWorkspaceId]);
+  }, [nextChatSessionOpenRequestKey, selectedWorkspaceId]);
 
   const handleOpenInboxPane = useCallback(() => {
     setActiveLeftRailItem("space");
@@ -2335,6 +2362,24 @@ function AppShellContent() {
     [],
   );
 
+  const syncFileExplorerFocusWithDisplayView = useCallback(
+    (displayView: SpaceDisplayView | null) => {
+      if (displayView?.type !== "internal") {
+        return;
+      }
+      if (
+        (displayView.surface === "document" || displayView.surface === "file") &&
+        displayView.resourceId?.trim()
+      ) {
+        setFileExplorerFocusRequest({
+          path: displayView.resourceId,
+          requestKey: Date.now(),
+        });
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     if (
       !selectedWorkspaceId ||
@@ -2355,8 +2400,10 @@ function AppShellContent() {
 
     const lastDisplayView =
       lastRestorableSpaceDisplayViewByWorkspaceRef.current[selectedWorkspaceId];
-    setSpaceDisplayView(lastDisplayView ?? { type: "browser" });
-  }, [selectedWorkspaceId]);
+    const nextDisplayView = lastDisplayView ?? { type: "browser" };
+    setSpaceDisplayView(nextDisplayView);
+    syncFileExplorerFocusWithDisplayView(nextDisplayView);
+  }, [selectedWorkspaceId, syncFileExplorerFocusWithDisplayView]);
 
   useEffect(() => {
     if (!selectedWorkspaceId) {
@@ -2374,7 +2421,8 @@ function AppShellContent() {
     }
 
     setSpaceDisplayView(nextDisplayView);
-  }, [selectedWorkspaceId]);
+    syncFileExplorerFocusWithDisplayView(nextDisplayView);
+  }, [selectedWorkspaceId, syncFileExplorerFocusWithDisplayView]);
 
   const handleOpenWorkspaceOutput = useCallback(
     (output: WorkspaceOutputRecordPayload) => {
@@ -2464,11 +2512,11 @@ function AppShellContent() {
       agent: true,
     }));
     setAgentView({ type: "chat" });
-    setChatSessionOpenRequest((previous) => ({
+    setChatSessionOpenRequest({
       sessionId: normalizedSessionId,
       mode: "session",
-      requestKey: (previous?.requestKey ?? 0) + 1,
-    }));
+      requestKey: nextChatSessionOpenRequestKey(),
+    });
   };
 
   const spaceMode = activeLeftRailItem === "space";
@@ -2492,7 +2540,7 @@ function AppShellContent() {
     effectiveAppUpdateStatus && effectiveAppUpdateStatus.downloaded,
   );
   const appVersionLabel =
-    effectiveAppUpdateStatus?.currentVersion?.trim() || "";
+    compactAppVersionLabel(effectiveAppUpdateStatus?.currentVersion || "");
   const shouldSuspendBrowserNativeView =
     isUtilityPaneResizing ||
     workspaceSwitcherOpen ||

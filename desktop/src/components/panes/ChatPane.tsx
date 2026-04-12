@@ -1870,7 +1870,8 @@ export function ChatPane({
   const isOnboardingVariant = variant === "onboarding";
   const pendingFocusRequestKeyRef = useRef<number | null>(focusRequestKey);
   const lastHandledSessionJumpRequestKeyRef = useRef(0);
-  const lastHandledSessionOpenRequestKeyRef = useRef(0);
+  const lastHandledExternalSessionOpenRequestKeyRef = useRef(0);
+  const lastHandledLocalSessionOpenRequestKeyRef = useRef(0);
   const lastHandledComposerPrefillRequestKeyRef = useRef(0);
   const draftParentSessionIdRef = useRef<string | null>(null);
   const liveAssistantTextRef = useRef("");
@@ -1881,6 +1882,7 @@ export function ChatPane({
   const [activeSessionId, setActiveSessionId] = useState("");
   const effectiveSessionOpenRequest =
     sessionOpenRequest ?? localSessionOpenRequest;
+  const isExternalSessionOpenRequest = sessionOpenRequest !== null;
 
   function appendStreamTelemetry(
     entry: Omit<StreamTelemetryEntry, "id" | "at">,
@@ -2711,7 +2713,8 @@ export function ChatPane({
       setActiveSession(null);
       pendingInputIdRef.current = null;
       lastHandledSessionJumpRequestKeyRef.current = 0;
-      lastHandledSessionOpenRequestKeyRef.current = 0;
+      lastHandledExternalSessionOpenRequestKeyRef.current = 0;
+      lastHandledLocalSessionOpenRequestKeyRef.current = 0;
       draftParentSessionIdRef.current = null;
       return;
     }
@@ -2810,6 +2813,9 @@ export function ChatPane({
     const requestMode = effectiveSessionOpenRequest?.mode ?? "session";
     const requestedParentSessionId =
       effectiveSessionOpenRequest?.parentSessionId?.trim() || null;
+    const lastHandledSessionOpenRequestKeyRef = isExternalSessionOpenRequest
+      ? lastHandledExternalSessionOpenRequestKeyRef
+      : lastHandledLocalSessionOpenRequestKeyRef;
     if (
       !selectedWorkspaceId ||
       requestKey <= 0 ||
@@ -2822,9 +2828,6 @@ export function ChatPane({
 
     async function openRequestedSession() {
       lastHandledSessionOpenRequestKeyRef.current = requestKey;
-      if ((sessionOpenRequest?.requestKey ?? 0) === requestKey) {
-        onSessionOpenRequestConsumed?.(requestKey);
-      }
 
       let historyLoaded = false;
       beginHistoryViewportRestore();
@@ -2883,11 +2886,18 @@ export function ChatPane({
           setChatErrorMessage(normalizeErrorMessage(error));
         }
       } finally {
+        if (!cancelled && !historyLoaded) {
+          cancelHistoryViewportRestore();
+        }
         if (!cancelled) {
-          if (!historyLoaded) {
-            cancelHistoryViewportRestore();
-          }
           setIsLoadingHistory(false);
+        }
+        if (isExternalSessionOpenRequest) {
+          onSessionOpenRequestConsumed?.(requestKey);
+        } else {
+          setLocalSessionOpenRequest((current) =>
+            current?.requestKey === requestKey ? null : current,
+          );
         }
       }
     }
@@ -2898,6 +2908,7 @@ export function ChatPane({
     };
   }, [
     onSessionOpenRequestConsumed,
+    isExternalSessionOpenRequest,
     selectedWorkspaceId,
     effectiveSessionOpenRequest?.requestKey,
     effectiveSessionOpenRequest?.sessionId,

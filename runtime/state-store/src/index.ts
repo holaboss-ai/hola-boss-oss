@@ -14,10 +14,16 @@ export {
   type CompactionBoundaryType,
   type CompactionBoundaryRecord,
   type CreateWorkspaceParams,
+  type EvolveSkillCandidateKind,
+  type EvolveSkillCandidateRecord,
+  type EvolveSkillCandidateState,
   type MemoryEntryScope,
   type MemoryEntryRecord,
+  type MemoryEmbeddingIndexRecord,
+  type MemoryEmbeddingScopeBucket,
   type MemoryEntrySourceType,
   type MemoryEntryType,
+  type MemoryVectorSearchResult,
   type MemoryUpdateProposalKind,
   type MemoryUpdateProposalRecord,
   type MemoryUpdateProposalState,
@@ -41,5 +47,6 @@ export {
   type TurnRequestSnapshotRecord,
   type TurnResultRecord,
   type TaskProposalRecord,
+  type TaskProposalSource,
   type WorkspaceRecord
 } from "./store.js";

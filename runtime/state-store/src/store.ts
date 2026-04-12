@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import * as sqliteVec from "sqlite-vec";
 
 const RUNTIME_DB_PATH_ENV = "HOLABOSS_RUNTIME_DB_PATH";
 const WORKSPACE_RUNTIME_DIRNAME = ".holaboss";
@@ -219,6 +220,7 @@ export type MemoryEntryType = "preference" | "identity" | "fact" | "procedure" |
 export type MemoryVerificationPolicy = "none" | "check_before_use" | "must_reconfirm";
 export type MemoryStalenessPolicy = "stable" | "time_sensitive" | "workspace_sensitive";
 export type MemoryEntrySourceType = "session_message" | "assistant_turn" | "turn_result" | "permission_denial" | "manual";
+export type MemoryEmbeddingScopeBucket = "workspace" | "preference" | "identity";
 
 export interface MemoryEntryRecord {
   memoryId: string;
@@ -245,6 +247,30 @@ export interface MemoryEntryRecord {
   supersededAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface MemoryEmbeddingIndexRecord {
+  vecRowid: number;
+  memoryId: string;
+  path: string;
+  workspaceId: string | null;
+  scopeBucket: MemoryEmbeddingScopeBucket;
+  memoryType: string;
+  contentFingerprint: string;
+  embeddingModel: string;
+  embeddingDim: number;
+  indexedAt: string;
+  updatedAt: string;
+}
+
+export interface MemoryVectorSearchResult {
+  vecRowid: number;
+  distance: number;
+  memoryId: string;
+  path: string;
+  workspaceId: string | null;
+  scopeBucket: MemoryEmbeddingScopeBucket;
+  memoryType: string;
 }
 
 export interface OutputFolderRecord {
@@ -384,12 +410,42 @@ export interface TaskProposalRecord {
   taskName: string;
   taskPrompt: string;
   taskGenerationRationale: string;
+  proposalSource: TaskProposalSource;
   sourceEventIds: string[];
   createdAt: string;
   state: string;
   acceptedSessionId: string | null;
   acceptedInputId: string | null;
   acceptedAt: string | null;
+}
+
+export type TaskProposalSource = "proactive" | "evolve";
+
+export type EvolveSkillCandidateKind = "skill_create" | "skill_patch";
+export type EvolveSkillCandidateState = "draft" | "proposed" | "dismissed" | "accepted" | "promoted" | "discarded";
+
+export interface EvolveSkillCandidateRecord {
+  candidateId: string;
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+  taskProposalId: string | null;
+  kind: EvolveSkillCandidateKind;
+  status: EvolveSkillCandidateState;
+  title: string;
+  summary: string;
+  slug: string;
+  skillPath: string;
+  contentFingerprint: string;
+  confidence: number | null;
+  evaluationNotes: string | null;
+  sourceTurnInputIds: string[];
+  createdAt: string;
+  updatedAt: string;
+  proposedAt: string | null;
+  dismissedAt: string | null;
+  acceptedAt: string | null;
+  promotedAt: string | null;
 }
 
 export type MemoryUpdateProposalKind = "preference" | "identity" | "profile";
@@ -505,6 +561,22 @@ type MemoryUpdateProposalUpdateFields = Partial<{
   dismissedAt: string | null;
 }>;
 
+type EvolveSkillCandidateUpdateFields = Partial<{
+  taskProposalId: string | null;
+  status: EvolveSkillCandidateState;
+  title: string;
+  summary: string;
+  slug: string;
+  skillPath: string;
+  contentFingerprint: string;
+  confidence: number | null;
+  evaluationNotes: string | null;
+  proposedAt: string | null;
+  dismissedAt: string | null;
+  acceptedAt: string | null;
+  promotedAt: string | null;
+}>;
+
 type WorkspaceRow = {
   id: string;
   workspace_path: string;
@@ -522,6 +594,42 @@ type WorkspaceRow = {
   updated_at: string | null;
   deleted_at_utc: string | null;
 };
+
+const TASK_PROPOSAL_SOURCES = new Set<TaskProposalSource>(["proactive", "evolve"]);
+const EVOLVE_SKILL_CANDIDATE_KINDS = new Set<EvolveSkillCandidateKind>(["skill_create", "skill_patch"]);
+const EVOLVE_SKILL_CANDIDATE_STATES = new Set<EvolveSkillCandidateState>([
+  "draft",
+  "proposed",
+  "dismissed",
+  "accepted",
+  "promoted",
+  "discarded",
+]);
+
+function normalizeTaskProposalSource(value: string | null | undefined): TaskProposalSource {
+  if (!value) {
+    return "proactive";
+  }
+  return TASK_PROPOSAL_SOURCES.has(value as TaskProposalSource) ? (value as TaskProposalSource) : "proactive";
+}
+
+function normalizeEvolveSkillCandidateKind(value: string | null | undefined): EvolveSkillCandidateKind {
+  if (!value) {
+    return "skill_create";
+  }
+  return EVOLVE_SKILL_CANDIDATE_KINDS.has(value as EvolveSkillCandidateKind)
+    ? (value as EvolveSkillCandidateKind)
+    : "skill_create";
+}
+
+function normalizeEvolveSkillCandidateState(value: string | null | undefined): EvolveSkillCandidateState {
+  if (!value) {
+    return "draft";
+  }
+  return EVOLVE_SKILL_CANDIDATE_STATES.has(value as EvolveSkillCandidateState)
+    ? (value as EvolveSkillCandidateState)
+    : "draft";
+}
 
 export function utcNowIso(): string {
   return new Date().toISOString();
@@ -546,6 +654,7 @@ export class RuntimeStateStore {
   readonly workspaceRoot: string;
   readonly sandboxAgentHarness: string | null;
   #db: Database.Database | null = null;
+  #vectorIndexSupported = false;
 
   constructor(options: RuntimeStateStoreOptions = {}) {
     this.dbPath = runtimeDbPath(options);
@@ -556,6 +665,12 @@ export class RuntimeStateStore {
   close(): void {
     this.#db?.close();
     this.#db = null;
+    this.#vectorIndexSupported = false;
+  }
+
+  supportsVectorIndex(): boolean {
+    void this.db();
+    return this.#vectorIndexSupported;
   }
 
   workspaceIdentityPath(workspaceId: string): string {
@@ -931,6 +1046,57 @@ export class RuntimeStateStore {
       return null;
     }
     return this.getMemoryUpdateProposal(params.proposalId);
+  }
+
+  updateEvolveSkillCandidate(params: {
+    candidateId: string;
+    fields: EvolveSkillCandidateUpdateFields;
+  }): EvolveSkillCandidateRecord | null {
+    const entries = Object.entries(params.fields);
+    if (entries.length === 0) {
+      return this.getEvolveSkillCandidate(params.candidateId);
+    }
+
+    const columnMap: Record<keyof EvolveSkillCandidateUpdateFields, string> = {
+      taskProposalId: "task_proposal_id",
+      status: "status",
+      title: "title",
+      summary: "summary",
+      slug: "slug",
+      skillPath: "skill_path",
+      contentFingerprint: "content_fingerprint",
+      confidence: "confidence",
+      evaluationNotes: "evaluation_notes",
+      proposedAt: "proposed_at",
+      dismissedAt: "dismissed_at",
+      acceptedAt: "accepted_at",
+      promotedAt: "promoted_at",
+    };
+
+    const assignments: string[] = [];
+    const values: Array<string | number | null> = [];
+    for (const [key, value] of entries) {
+      const column = columnMap[key as keyof EvolveSkillCandidateUpdateFields];
+      if (!column) {
+        throw new Error(`unsupported evolve skill candidate field: ${key}`);
+      }
+      assignments.push(`${column} = ?`);
+      if (key === "confidence") {
+        values.push(typeof value === "number" && Number.isFinite(value) ? value : null);
+      } else {
+        values.push(value == null ? null : String(value));
+      }
+    }
+    assignments.push("updated_at = ?");
+    values.push(utcNowIso(), params.candidateId);
+
+    const result = this.db()
+      .prepare(`UPDATE evolve_skill_candidates SET ${assignments.join(", ")} WHERE candidate_id = ?`)
+      .run(...values);
+    if (result.changes <= 0) {
+      return null;
+    }
+    return this.getEvolveSkillCandidate(params.candidateId);
   }
 
   upsertBinding(params: {
@@ -2005,7 +2171,7 @@ export class RuntimeStateStore {
     return row ? this.rowToTurnResult(row) : null;
   }
 
-  countTurnResults(params: { sessionId: string; workspaceId?: string; inputId?: string }): number {
+  countTurnResults(params: { sessionId: string; workspaceId?: string; inputId?: string; status?: string }): number {
     let query = `
       SELECT COUNT(*) AS total
       FROM turn_results
@@ -2020,6 +2186,10 @@ export class RuntimeStateStore {
       query += " AND input_id = ?";
       values.push(params.inputId);
     }
+    if (params.status) {
+      query += " AND status = ?";
+      values.push(params.status);
+    }
     const row = this.db().prepare(query).get(...values) as { total: number } | undefined;
     return Number(row?.total ?? 0);
   }
@@ -2028,6 +2198,7 @@ export class RuntimeStateStore {
     sessionId: string;
     workspaceId?: string;
     inputId?: string;
+    status?: string;
     limit?: number;
     offset?: number;
   }): TurnResultRecord[] {
@@ -2044,6 +2215,10 @@ export class RuntimeStateStore {
     if (params.inputId) {
       query += " AND input_id = ?";
       values.push(params.inputId);
+    }
+    if (params.status) {
+      query += " AND status = ?";
+      values.push(params.status);
     }
     query += `
       ORDER BY datetime(COALESCE(completed_at, started_at)) DESC, created_at DESC, input_id DESC
@@ -2332,6 +2507,229 @@ export class RuntimeStateStore {
       workspaceId: row.workspace_id,
       count: Number(row.total),
     }));
+  }
+
+  getMemoryEmbeddingIndexByMemoryId(memoryId: string): MemoryEmbeddingIndexRecord | null {
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>("SELECT * FROM memory_embedding_index WHERE memory_id = ? LIMIT 1")
+      .get(memoryId);
+    return row ? this.rowToMemoryEmbeddingIndex(row) : null;
+  }
+
+  getMemoryEmbeddingIndexByPath(pathValue: string): MemoryEmbeddingIndexRecord | null {
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>("SELECT * FROM memory_embedding_index WHERE path = ? LIMIT 1")
+      .get(pathValue);
+    return row ? this.rowToMemoryEmbeddingIndex(row) : null;
+  }
+
+  listMemoryEmbeddingIndexes(params: {
+    memoryIds?: string[];
+    workspaceId?: string | null;
+    scopeBucket?: MemoryEmbeddingScopeBucket | null;
+    embeddingModel?: string | null;
+    limit?: number;
+    offset?: number;
+  } = {}): MemoryEmbeddingIndexRecord[] {
+    let query = `
+      SELECT *
+      FROM memory_embedding_index
+      WHERE 1 = 1
+    `;
+    const values: Array<string | number> = [];
+    if (params.memoryIds && params.memoryIds.length > 0) {
+      query += ` AND memory_id IN (${params.memoryIds.map(() => "?").join(", ")})`;
+      values.push(...params.memoryIds);
+    }
+    if (params.workspaceId !== undefined) {
+      if (params.workspaceId === null) {
+        query += " AND workspace_id IS NULL";
+      } else {
+        query += " AND workspace_id = ?";
+        values.push(params.workspaceId);
+      }
+    }
+    if (params.scopeBucket !== undefined) {
+      if (params.scopeBucket === null) {
+        query += " AND scope_bucket IS NULL";
+      } else {
+        query += " AND scope_bucket = ?";
+        values.push(params.scopeBucket);
+      }
+    }
+    if (params.embeddingModel !== undefined) {
+      if (params.embeddingModel === null) {
+        query += " AND embedding_model IS NULL";
+      } else {
+        query += " AND embedding_model = ?";
+        values.push(params.embeddingModel);
+      }
+    }
+    query += `
+      ORDER BY vec_rowid ASC
+      LIMIT ? OFFSET ?
+    `;
+    values.push(params.limit ?? 5000, params.offset ?? 0);
+    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToMemoryEmbeddingIndex(row));
+  }
+
+  upsertMemoryEmbeddingIndex(params: {
+    memoryId: string;
+    path: string;
+    workspaceId: string | null;
+    scopeBucket: MemoryEmbeddingScopeBucket;
+    memoryType: string;
+    contentFingerprint: string;
+    embeddingModel: string;
+    embeddingDim: number;
+    indexedAt?: string;
+    updatedAt?: string;
+  }): MemoryEmbeddingIndexRecord {
+    const existing =
+      this.getMemoryEmbeddingIndexByMemoryId(params.memoryId) ??
+      this.getMemoryEmbeddingIndexByPath(params.path);
+    const now = params.updatedAt ?? utcNowIso();
+    const indexedAt = existing?.indexedAt ?? params.indexedAt ?? now;
+    if (existing && existing.memoryId !== params.memoryId) {
+      this.deleteMemoryEmbeddingIndex(existing.memoryId);
+    }
+    this.db()
+      .prepare(`
+        INSERT INTO memory_embedding_index (
+            vec_rowid,
+            memory_id,
+            path,
+            workspace_id,
+            scope_bucket,
+            memory_type,
+            content_fingerprint,
+            embedding_model,
+            embedding_dim,
+            indexed_at,
+            updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(memory_id) DO UPDATE SET
+            path = excluded.path,
+            workspace_id = excluded.workspace_id,
+            scope_bucket = excluded.scope_bucket,
+            memory_type = excluded.memory_type,
+            content_fingerprint = excluded.content_fingerprint,
+            embedding_model = excluded.embedding_model,
+            embedding_dim = excluded.embedding_dim,
+            indexed_at = excluded.indexed_at,
+            updated_at = excluded.updated_at
+      `)
+      .run(
+        existing?.vecRowid ?? null,
+        params.memoryId,
+        params.path,
+        params.workspaceId,
+        params.scopeBucket,
+        params.memoryType,
+        params.contentFingerprint,
+        params.embeddingModel,
+        params.embeddingDim,
+        indexedAt,
+        now,
+      );
+    const record = this.getMemoryEmbeddingIndexByMemoryId(params.memoryId);
+    if (!record) {
+      throw new Error("memory embedding index row not found after upsert");
+    }
+    return record;
+  }
+
+  deleteMemoryEmbeddingIndex(memoryId: string): void {
+    const existing = this.getMemoryEmbeddingIndexByMemoryId(memoryId);
+    if (!existing) {
+      return;
+    }
+    if (this.#vectorIndexSupported) {
+      this.db().prepare("DELETE FROM memory_recall_vec WHERE vec_rowid = ?").run(existing.vecRowid);
+    }
+    this.db().prepare("DELETE FROM memory_embedding_index WHERE memory_id = ?").run(memoryId);
+  }
+
+  replaceMemoryRecallVector(params: {
+    vecRowid: number;
+    embedding: Float32Array;
+    scopeBucket: MemoryEmbeddingScopeBucket;
+    workspaceId: string | null;
+    memoryType: string;
+  }): void {
+    if (!this.#vectorIndexSupported) {
+      return;
+    }
+    this.db().prepare("DELETE FROM memory_recall_vec WHERE vec_rowid = ?").run(params.vecRowid);
+    this.db()
+      .prepare(`
+        INSERT INTO memory_recall_vec (vec_rowid, embedding, scope_bucket, workspace_id, memory_type)
+        VALUES (CAST(? AS INTEGER), ?, ?, ?, ?)
+      `)
+      .run(
+        params.vecRowid,
+        params.embedding,
+        params.scopeBucket,
+        params.workspaceId ?? "",
+        params.memoryType,
+      );
+  }
+
+  searchWorkspaceMemoryRecallVectors(params: {
+    workspaceId: string;
+    embedding: Float32Array;
+    limit: number;
+    memoryTypes?: string[];
+  }): MemoryVectorSearchResult[] {
+    if (!this.#vectorIndexSupported) {
+      return [];
+    }
+    const normalizedLimit = Math.max(1, Math.trunc(params.limit));
+    let query = `
+      SELECT vec_rowid, distance
+      FROM memory_recall_vec
+      WHERE embedding MATCH ?
+        AND k = ?
+        AND scope_bucket = 'workspace'
+        AND workspace_id = ?
+    `;
+    const values: Array<string | number | Float32Array | null> = [params.embedding, normalizedLimit, params.workspaceId];
+    if (params.memoryTypes && params.memoryTypes.length > 0) {
+      query += ` AND memory_type IN (${params.memoryTypes.map(() => "?").join(", ")})`;
+      values.push(...params.memoryTypes);
+    }
+    const rows = this.db().prepare(query).all(...values) as Array<{ vec_rowid: number; distance: number }>;
+    return this.vectorResultsForRows(rows);
+  }
+
+  searchUserMemoryRecallVectors(params: {
+    embedding: Float32Array;
+    limit: number;
+    scopeBuckets?: Array<Extract<MemoryEmbeddingScopeBucket, "preference" | "identity">>;
+    memoryTypes?: string[];
+  }): MemoryVectorSearchResult[] {
+    if (!this.#vectorIndexSupported) {
+      return [];
+    }
+    const normalizedLimit = Math.max(1, Math.trunc(params.limit));
+    const scopeBuckets = (params.scopeBuckets && params.scopeBuckets.length > 0)
+      ? params.scopeBuckets
+      : ["preference", "identity"];
+    let query = `
+      SELECT vec_rowid, distance
+      FROM memory_recall_vec
+      WHERE embedding MATCH ?
+        AND k = ?
+        AND scope_bucket IN (${scopeBuckets.map(() => "?").join(", ")})
+    `;
+    const values: Array<string | number | Float32Array | null> = [params.embedding, normalizedLimit, ...scopeBuckets];
+    if (params.memoryTypes && params.memoryTypes.length > 0) {
+      query += ` AND memory_type IN (${params.memoryTypes.map(() => "?").join(", ")})`;
+      values.push(...params.memoryTypes);
+    }
+    const rows = this.db().prepare(query).all(...values) as Array<{ vec_rowid: number; distance: number }>;
+    return this.vectorResultsForRows(rows);
   }
 
   upsertTurnRequestSnapshot(params: {
@@ -3363,10 +3761,12 @@ export class RuntimeStateStore {
     taskName: string;
     taskPrompt: string;
     taskGenerationRationale: string;
+    proposalSource?: TaskProposalSource | string;
     sourceEventIds?: string[];
     createdAt: string;
     state?: string;
   }): TaskProposalRecord {
+    const proposalSource = normalizeTaskProposalSource(params.proposalSource);
     this.db()
       .prepare(`
         INSERT INTO task_proposals (
@@ -3375,13 +3775,14 @@ export class RuntimeStateStore {
             task_name,
             task_prompt,
             task_generation_rationale,
+            proposal_source,
             source_event_ids,
             created_at,
             state,
             accepted_session_id,
             accepted_input_id,
             accepted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
       `)
       .run(
         params.proposalId,
@@ -3389,6 +3790,7 @@ export class RuntimeStateStore {
         params.taskName,
         params.taskPrompt,
         params.taskGenerationRationale,
+        proposalSource,
         JSON.stringify(params.sourceEventIds ?? []),
         params.createdAt,
         params.state ?? "not_reviewed"
@@ -3438,6 +3840,145 @@ export class RuntimeStateStore {
         state: params.state
       }
     });
+  }
+
+  createEvolveSkillCandidate(params: {
+    candidateId: string;
+    workspaceId: string;
+    sessionId: string;
+    inputId: string;
+    kind: EvolveSkillCandidateKind;
+    status?: EvolveSkillCandidateState;
+    taskProposalId?: string | null;
+    title: string;
+    summary: string;
+    slug: string;
+    skillPath: string;
+    contentFingerprint: string;
+    confidence?: number | null;
+    evaluationNotes?: string | null;
+    sourceTurnInputIds?: string[];
+    createdAt?: string;
+    updatedAt?: string;
+    proposedAt?: string | null;
+    dismissedAt?: string | null;
+    acceptedAt?: string | null;
+    promotedAt?: string | null;
+  }): EvolveSkillCandidateRecord {
+    this.ensureSession(
+      {
+        workspaceId: params.workspaceId,
+        sessionId: params.sessionId,
+      },
+      { touchExisting: false }
+    );
+    const createdAt = params.createdAt ?? utcNowIso();
+    const updatedAt = params.updatedAt ?? createdAt;
+    this.db()
+      .prepare(`
+        INSERT INTO evolve_skill_candidates (
+            candidate_id,
+            workspace_id,
+            session_id,
+            input_id,
+            task_proposal_id,
+            kind,
+            status,
+            title,
+            summary,
+            slug,
+            skill_path,
+            content_fingerprint,
+            confidence,
+            evaluation_notes,
+            source_turn_input_ids,
+            created_at,
+            updated_at,
+            proposed_at,
+            dismissed_at,
+            accepted_at,
+            promoted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        params.candidateId,
+        params.workspaceId,
+        params.sessionId,
+        params.inputId,
+        this.normalizedNullableText(params.taskProposalId),
+        params.kind,
+        params.status ?? "draft",
+        params.title,
+        params.summary,
+        params.slug,
+        params.skillPath,
+        params.contentFingerprint,
+        typeof params.confidence === "number" && Number.isFinite(params.confidence) ? params.confidence : null,
+        this.normalizedNullableText(params.evaluationNotes),
+        JSON.stringify(params.sourceTurnInputIds ?? []),
+        createdAt,
+        updatedAt,
+        this.normalizedNullableText(params.proposedAt),
+        this.normalizedNullableText(params.dismissedAt),
+        this.normalizedNullableText(params.acceptedAt),
+        this.normalizedNullableText(params.promotedAt)
+      );
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>("SELECT * FROM evolve_skill_candidates WHERE candidate_id = ? LIMIT 1")
+      .get(params.candidateId);
+    if (!row) {
+      throw new Error("evolve skill candidate row not found after insert");
+    }
+    return this.rowToEvolveSkillCandidate(row);
+  }
+
+  getEvolveSkillCandidate(candidateId: string): EvolveSkillCandidateRecord | null {
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>("SELECT * FROM evolve_skill_candidates WHERE candidate_id = ? LIMIT 1")
+      .get(candidateId);
+    return row ? this.rowToEvolveSkillCandidate(row) : null;
+  }
+
+  getEvolveSkillCandidateByTaskProposalId(proposalId: string): EvolveSkillCandidateRecord | null {
+    const row = this.db()
+      .prepare<[string], Record<string, unknown>>(
+        "SELECT * FROM evolve_skill_candidates WHERE task_proposal_id = ? ORDER BY datetime(created_at) DESC, candidate_id DESC LIMIT 1"
+      )
+      .get(proposalId);
+    return row ? this.rowToEvolveSkillCandidate(row) : null;
+  }
+
+  listEvolveSkillCandidates(params: {
+    workspaceId: string;
+    sessionId?: string | null;
+    inputId?: string | null;
+    kind?: EvolveSkillCandidateKind | null;
+    status?: EvolveSkillCandidateState | null;
+    limit?: number;
+    offset?: number;
+  }): EvolveSkillCandidateRecord[] {
+    let query = "SELECT * FROM evolve_skill_candidates WHERE workspace_id = ?";
+    const values: Array<string | number> = [params.workspaceId];
+    if (params.sessionId) {
+      query += " AND session_id = ?";
+      values.push(params.sessionId);
+    }
+    if (params.inputId) {
+      query += " AND input_id = ?";
+      values.push(params.inputId);
+    }
+    if (params.kind) {
+      query += " AND kind = ?";
+      values.push(params.kind);
+    }
+    if (params.status) {
+      query += " AND status = ?";
+      values.push(params.status);
+    }
+    query += " ORDER BY datetime(created_at) DESC, candidate_id DESC LIMIT ? OFFSET ?";
+    values.push(params.limit ?? 200, params.offset ?? 0);
+    const rows = this.db().prepare(query).all(...values) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToEvolveSkillCandidate(row));
   }
 
   createMemoryUpdateProposal(params: {
@@ -3565,6 +4106,7 @@ export class RuntimeStateStore {
     const db = new Database(this.dbPath);
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
+    this.#vectorIndexSupported = this.tryLoadVectorExtension(db);
     this.ensureRuntimeDbSchema(db);
     this.#db = db;
     return db;
@@ -3574,10 +4116,63 @@ export class RuntimeStateStore {
     void this.db();
   }
 
+  private tryLoadVectorExtension(db: Database.Database): boolean {
+    try {
+      sqliteVec.load(db as unknown as { loadExtension(file: string, entrypoint?: string | undefined): void });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private ensureMemoryEmbeddingIndexSchema(db: Database.Database): void {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS memory_embedding_index (
+          vec_rowid INTEGER PRIMARY KEY,
+          memory_id TEXT NOT NULL UNIQUE,
+          path TEXT NOT NULL UNIQUE,
+          workspace_id TEXT,
+          scope_bucket TEXT NOT NULL,
+          memory_type TEXT NOT NULL,
+          content_fingerprint TEXT NOT NULL,
+          embedding_model TEXT NOT NULL,
+          embedding_dim INTEGER NOT NULL,
+          indexed_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_memory_embedding_index_workspace_scope
+          ON memory_embedding_index (workspace_id, scope_bucket, memory_type);
+
+      CREATE INDEX IF NOT EXISTS idx_memory_embedding_index_scope_type
+          ON memory_embedding_index (scope_bucket, memory_type);
+    `);
+    if (!this.#vectorIndexSupported) {
+      return;
+    }
+    const existingColumns = db
+      .prepare("SELECT name FROM pragma_table_info('memory_recall_vec')")
+      .all() as Array<{ name: string }>;
+    if (existingColumns.length > 0 && !existingColumns.some((column) => column.name === "vec_rowid")) {
+      db.exec("DROP TABLE IF EXISTS memory_recall_vec;");
+    }
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS memory_recall_vec USING vec0(
+          vec_rowid INTEGER PRIMARY KEY,
+          embedding float[1536],
+          scope_bucket TEXT,
+          workspace_id TEXT,
+          memory_type TEXT
+      );
+    `);
+  }
+
   private ensureRuntimeDbSchema(db: Database.Database): void {
     this.ensureWorkspacesTableSchema(db);
     this.ensureTaskProposalsTableSchema(db);
+    this.ensureEvolveSkillCandidatesTableSchema(db);
     this.ensureMemoryUpdateProposalsTableSchema(db);
+    this.ensureMemoryEmbeddingIndexSchema(db);
     this.ensureTurnArtifactsSchema(db);
     this.ensureOutputsTableSchema(db);
     this.migrateSandboxRunTokensTable(db);
@@ -3886,6 +4481,7 @@ export class RuntimeStateStore {
           task_name TEXT NOT NULL,
           task_prompt TEXT NOT NULL,
           task_generation_rationale TEXT NOT NULL,
+          proposal_source TEXT NOT NULL DEFAULT 'proactive',
           source_event_ids TEXT NOT NULL DEFAULT '[]',
           created_at TEXT NOT NULL,
           state TEXT NOT NULL DEFAULT 'not_reviewed',
@@ -3899,6 +4495,39 @@ export class RuntimeStateStore {
 
       CREATE INDEX IF NOT EXISTS idx_task_proposals_workspace_state_created
           ON task_proposals (workspace_id, state, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS evolve_skill_candidates (
+          candidate_id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          input_id TEXT NOT NULL,
+          task_proposal_id TEXT,
+          kind TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'draft',
+          title TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          slug TEXT NOT NULL,
+          skill_path TEXT NOT NULL,
+          content_fingerprint TEXT NOT NULL,
+          confidence REAL,
+          evaluation_notes TEXT,
+          source_turn_input_ids TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          proposed_at TEXT,
+          dismissed_at TEXT,
+          accepted_at TEXT,
+          promoted_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_evolve_skill_candidates_workspace_created
+          ON evolve_skill_candidates (workspace_id, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_evolve_skill_candidates_workspace_status_created
+          ON evolve_skill_candidates (workspace_id, status, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_evolve_skill_candidates_task_proposal
+          ON evolve_skill_candidates (task_proposal_id);
 
       CREATE TABLE IF NOT EXISTS memory_update_proposals (
           proposal_id TEXT PRIMARY KEY,
@@ -4334,6 +4963,77 @@ export class RuntimeStateStore {
     }
     if (!columns.has("accepted_at")) {
       db.exec("ALTER TABLE task_proposals ADD COLUMN accepted_at TEXT;");
+    }
+    if (!columns.has("proposal_source")) {
+      db.exec("ALTER TABLE task_proposals ADD COLUMN proposal_source TEXT NOT NULL DEFAULT 'proactive';");
+    }
+    db.exec("UPDATE task_proposals SET proposal_source = 'proactive' WHERE trim(coalesce(proposal_source, '')) = '';");
+  }
+
+  private ensureEvolveSkillCandidatesTableSchema(db: Database.Database): void {
+    const tableNames = new Set<string>(
+      (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(
+        (row) => row.name
+      )
+    );
+    if (!tableNames.has("evolve_skill_candidates")) {
+      return;
+    }
+
+    const columns = new Set<string>(
+      (db.prepare("PRAGMA table_info(evolve_skill_candidates)").all() as Array<{ name: string }>).map((row) => row.name)
+    );
+
+    if (!columns.has("task_proposal_id")) {
+      db.exec("ALTER TABLE evolve_skill_candidates ADD COLUMN task_proposal_id TEXT;");
+    }
+    if (!columns.has("kind")) {
+      db.exec("ALTER TABLE evolve_skill_candidates ADD COLUMN kind TEXT NOT NULL DEFAULT 'skill_create';");
+    }
+    if (!columns.has("status")) {
+      db.exec("ALTER TABLE evolve_skill_candidates ADD COLUMN status TEXT NOT NULL DEFAULT 'draft';");
+    }
+    if (!columns.has("title")) {
+      db.exec("ALTER TABLE evolve_skill_candidates ADD COLUMN title TEXT NOT NULL DEFAULT '';");
+    }
+    if (!columns.has("summary")) {
+      db.exec("ALTER TABLE evolve_skill_candidates ADD COLUMN summary TEXT NOT NULL DEFAULT '';");
+    }
+    if (!columns.has("slug")) {
+      db.exec("ALTER TABLE evolve_skill_candidates ADD COLUMN slug TEXT NOT NULL DEFAULT '';");
+    }
+    if (!columns.has("skill_path")) {
+      db.exec("ALTER TABLE evolve_skill_candidates ADD COLUMN skill_path TEXT NOT NULL DEFAULT '';");
+    }
+    if (!columns.has("content_fingerprint")) {
+      db.exec("ALTER TABLE evolve_skill_candidates ADD COLUMN content_fingerprint TEXT NOT NULL DEFAULT '';");
+    }
+    if (!columns.has("confidence")) {
+      db.exec("ALTER TABLE evolve_skill_candidates ADD COLUMN confidence REAL;");
+    }
+    if (!columns.has("evaluation_notes")) {
+      db.exec("ALTER TABLE evolve_skill_candidates ADD COLUMN evaluation_notes TEXT;");
+    }
+    if (!columns.has("source_turn_input_ids")) {
+      db.exec("ALTER TABLE evolve_skill_candidates ADD COLUMN source_turn_input_ids TEXT NOT NULL DEFAULT '[]';");
+    }
+    if (!columns.has("created_at")) {
+      db.exec("ALTER TABLE evolve_skill_candidates ADD COLUMN created_at TEXT NOT NULL DEFAULT '';");
+    }
+    if (!columns.has("updated_at")) {
+      db.exec("ALTER TABLE evolve_skill_candidates ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';");
+    }
+    if (!columns.has("proposed_at")) {
+      db.exec("ALTER TABLE evolve_skill_candidates ADD COLUMN proposed_at TEXT;");
+    }
+    if (!columns.has("dismissed_at")) {
+      db.exec("ALTER TABLE evolve_skill_candidates ADD COLUMN dismissed_at TEXT;");
+    }
+    if (!columns.has("accepted_at")) {
+      db.exec("ALTER TABLE evolve_skill_candidates ADD COLUMN accepted_at TEXT;");
+    }
+    if (!columns.has("promoted_at")) {
+      db.exec("ALTER TABLE evolve_skill_candidates ADD COLUMN promoted_at TEXT;");
     }
   }
 
@@ -5059,6 +5759,61 @@ export class RuntimeStateStore {
     };
   }
 
+  private rowToMemoryEmbeddingIndex(row: Record<string, unknown>): MemoryEmbeddingIndexRecord {
+    return {
+      vecRowid: Number(row.vec_rowid),
+      memoryId: String(row.memory_id),
+      path: String(row.path),
+      workspaceId: row.workspace_id == null ? null : String(row.workspace_id),
+      scopeBucket: String(row.scope_bucket) as MemoryEmbeddingScopeBucket,
+      memoryType: String(row.memory_type),
+      contentFingerprint: String(row.content_fingerprint),
+      embeddingModel: String(row.embedding_model),
+      embeddingDim: Number(row.embedding_dim),
+      indexedAt: String(row.indexed_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private vectorResultsForRows(rows: Array<{ vec_rowid: number; distance: number }>): MemoryVectorSearchResult[] {
+    if (rows.length === 0) {
+      return [];
+    }
+    const rowIds = rows.map((row) => Number(row.vec_rowid)).filter((value) => Number.isFinite(value));
+    if (rowIds.length === 0) {
+      return [];
+    }
+    const mappingRows = this.db()
+      .prepare(`
+        SELECT *
+        FROM memory_embedding_index
+        WHERE vec_rowid IN (${rowIds.map(() => "?").join(", ")})
+      `)
+      .all(...rowIds) as Array<Record<string, unknown>>;
+    const byRowId = new Map<number, MemoryEmbeddingIndexRecord>();
+    for (const row of mappingRows) {
+      const record = this.rowToMemoryEmbeddingIndex(row);
+      byRowId.set(record.vecRowid, record);
+    }
+    const results: MemoryVectorSearchResult[] = [];
+    for (const row of rows) {
+      const mapping = byRowId.get(Number(row.vec_rowid));
+      if (!mapping) {
+        continue;
+      }
+      results.push({
+        vecRowid: mapping.vecRowid,
+        distance: Number(row.distance),
+        memoryId: mapping.memoryId,
+        path: mapping.path,
+        workspaceId: mapping.workspaceId,
+        scopeBucket: mapping.scopeBucket,
+        memoryType: mapping.memoryType,
+      });
+    }
+    return results;
+  }
+
   private rowToIntegrationConnection(row: Record<string, unknown>): IntegrationConnectionRecord {
     return {
       connectionId: String(row.connection_id),
@@ -5236,12 +5991,49 @@ export class RuntimeStateStore {
       taskName: String(row.task_name),
       taskPrompt: String(row.task_prompt),
       taskGenerationRationale: String(row.task_generation_rationale),
+      proposalSource: normalizeTaskProposalSource(row.proposal_source == null ? null : String(row.proposal_source)),
       sourceEventIds,
       createdAt: String(row.created_at),
       state: String(row.state),
       acceptedSessionId: row.accepted_session_id == null ? null : String(row.accepted_session_id),
       acceptedInputId: row.accepted_input_id == null ? null : String(row.accepted_input_id),
       acceptedAt: row.accepted_at == null ? null : String(row.accepted_at)
+    };
+  }
+
+  private rowToEvolveSkillCandidate(row: Record<string, unknown>): EvolveSkillCandidateRecord {
+    const sourceTurnInputIds = this.parseJsonList(row.source_turn_input_ids).filter(
+      (item): item is string => typeof item === "string"
+    );
+    return {
+      candidateId: String(row.candidate_id),
+      workspaceId: String(row.workspace_id),
+      sessionId: String(row.session_id),
+      inputId: String(row.input_id),
+      taskProposalId: row.task_proposal_id == null ? null : String(row.task_proposal_id),
+      kind: normalizeEvolveSkillCandidateKind(row.kind == null ? null : String(row.kind)),
+      status: normalizeEvolveSkillCandidateState(row.status == null ? null : String(row.status)),
+      title: String(row.title),
+      summary: String(row.summary),
+      slug: String(row.slug),
+      skillPath: String(row.skill_path),
+      contentFingerprint: String(row.content_fingerprint),
+      confidence:
+        typeof row.confidence === "number" && Number.isFinite(row.confidence)
+          ? row.confidence
+          : row.confidence == null
+            ? null
+            : Number.isFinite(Number(row.confidence))
+              ? Number(row.confidence)
+              : null,
+      evaluationNotes: row.evaluation_notes == null ? null : String(row.evaluation_notes),
+      sourceTurnInputIds,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      proposedAt: row.proposed_at == null ? null : String(row.proposed_at),
+      dismissedAt: row.dismissed_at == null ? null : String(row.dismissed_at),
+      acceptedAt: row.accepted_at == null ? null : String(row.accepted_at),
+      promotedAt: row.promoted_at == null ? null : String(row.promoted_at),
     };
   }
 

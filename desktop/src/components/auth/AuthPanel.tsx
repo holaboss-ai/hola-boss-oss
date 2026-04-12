@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
+  ChevronDown,
   Loader2,
   LogOut,
   RefreshCw,
@@ -53,13 +54,15 @@ const LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string
   }
 };
 
-type RuntimeCatalogModelCapability = "chat" | "image_generation";
+type RuntimeCatalogModelCapability = "chat" | "image_generation" | "embedding";
 const RUNTIME_MODEL_CAPABILITY_ALIASES: Record<string, RuntimeCatalogModelCapability> = {
   chat: "chat",
   text: "chat",
   completion: "chat",
   completions: "chat",
   responses: "chat",
+  embedding: "embedding",
+  embeddings: "embedding",
   image: "image_generation",
   images: "image_generation",
   image_generation: "image_generation",
@@ -95,6 +98,23 @@ interface BackgroundTasksDraft {
   model: string;
 }
 
+const RECALL_EMBEDDING_PROVIDER_IDS = [
+  "holaboss",
+  "openai_direct",
+  "openrouter_direct",
+  "gemini_direct",
+  "ollama_direct",
+  "minimax_direct",
+] as const;
+
+type RecallEmbeddingsDraftProviderId =
+  (typeof RECALL_EMBEDDING_PROVIDER_IDS)[number] | "";
+
+interface RecallEmbeddingsDraft {
+  providerId: RecallEmbeddingsDraftProviderId;
+  model: string;
+}
+
 const IMAGE_GENERATION_PROVIDER_IDS = [
   "holaboss",
   "openai_direct",
@@ -113,6 +133,7 @@ interface ImageGenerationDraft {
 interface ProviderSettingsSnapshot {
   drafts: ProviderDraftMap;
   backgroundTasks: BackgroundTasksDraft;
+  recallEmbeddings: RecallEmbeddingsDraft;
   imageGeneration: ImageGenerationDraft;
 }
 
@@ -203,6 +224,24 @@ const KNOWN_PROVIDER_TEMPLATES: Record<KnownProviderId, KnownProviderTemplate> =
   }
 };
 
+const RECALL_EMBEDDING_MODEL_DEFAULTS: Record<Exclude<RecallEmbeddingsDraftProviderId, "">, string | null> = {
+  holaboss: "text-embedding-3-small",
+  openai_direct: "text-embedding-3-small",
+  openrouter_direct: "openai/text-embedding-3-small",
+  gemini_direct: null,
+  ollama_direct: null,
+  minimax_direct: null,
+};
+
+const RECALL_EMBEDDING_MODEL_SUGGESTIONS: Record<Exclude<RecallEmbeddingsDraftProviderId, "">, string[]> = {
+  holaboss: ["text-embedding-3-small"],
+  openai_direct: ["text-embedding-3-small", "text-embedding-3-large"],
+  openrouter_direct: ["openai/text-embedding-3-small", "openai/text-embedding-3-large"],
+  gemini_direct: [],
+  ollama_direct: [],
+  minimax_direct: [],
+};
+
 function isKnownProviderId(value: string): value is KnownProviderId {
   return KNOWN_PROVIDER_ORDER.includes(value as KnownProviderId);
 }
@@ -255,6 +294,13 @@ function createDefaultProviderDrafts(): ProviderDraftMap {
 }
 
 function createDefaultBackgroundTasksDraft(): BackgroundTasksDraft {
+  return {
+    providerId: "",
+    model: "",
+  };
+}
+
+function createDefaultRecallEmbeddingsDraft(): RecallEmbeddingsDraft {
   return {
     providerId: "",
     model: "",
@@ -517,6 +563,125 @@ function backgroundTaskModelSuggestions(
   ]);
 }
 
+function isRecallEmbeddingProviderId(value: string): value is RecallEmbeddingsDraftProviderId {
+  return value === "" || RECALL_EMBEDDING_PROVIDER_IDS.includes(value as (typeof RECALL_EMBEDDING_PROVIDER_IDS)[number]);
+}
+
+function recallEmbeddingsProviderDraftId(value: string): RecallEmbeddingsDraftProviderId {
+  const normalized = value.trim();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized === "holaboss_model_proxy" || normalized === "holaboss") {
+    return "holaboss";
+  }
+  return isRecallEmbeddingProviderId(normalized) ? normalized : "";
+}
+
+function recallEmbeddingsProviderStorageId(providerId: RecallEmbeddingsDraftProviderId): string {
+  if (!providerId) {
+    return "";
+  }
+  return runtimeProviderStorageId(providerId);
+}
+
+function configuredRecallEmbeddingsModelId(
+  providerId: RecallEmbeddingsDraftProviderId,
+  value: string,
+): string {
+  return normalizeConfiguredProviderModelId(providerId, value.trim());
+}
+
+function recallEmbeddingsDefaultModel(
+  providerId: RecallEmbeddingsDraftProviderId,
+  runtimeConfig: RuntimeConfigPayload | null,
+): string {
+  if (!providerId) {
+    return "";
+  }
+  if (providerId === "holaboss") {
+    return (
+      runtimeConfig?.defaultEmbeddingModel ??
+      RECALL_EMBEDDING_MODEL_DEFAULTS[providerId] ??
+      ""
+    );
+  }
+  return RECALL_EMBEDDING_MODEL_DEFAULTS[providerId] ?? "";
+}
+
+function recallEmbeddingsModelPlaceholder(
+  providerId: RecallEmbeddingsDraftProviderId,
+  runtimeConfig: RuntimeConfigPayload | null,
+): string {
+  const fallbackModel = recallEmbeddingsDefaultModel(providerId, runtimeConfig);
+  return fallbackModel ? `Default: ${fallbackModel}` : "Select a model";
+}
+
+function recallEmbeddingsProviderLabel(providerId: RecallEmbeddingsDraftProviderId): string {
+  if (!providerId) {
+    return "";
+  }
+  return KNOWN_PROVIDER_TEMPLATES[providerId].label;
+}
+
+function recallEmbeddingsModelSuggestions(
+  providerId: RecallEmbeddingsDraftProviderId,
+  runtimeConfig: RuntimeConfigPayload | null,
+): string[] {
+  if (!providerId) {
+    return [];
+  }
+  const managedCatalogEmbeddingModels =
+    providerId === "holaboss"
+      ? configuredRuntimeProviderModelIds(runtimeConfig, providerId, "embedding")
+      : [];
+  if (providerId === "holaboss") {
+    const defaultModel = recallEmbeddingsDefaultModel(providerId, runtimeConfig);
+    return uniqueValues([
+      ...managedCatalogEmbeddingModels,
+      ...(managedCatalogEmbeddingModels.length === 0 && defaultModel ? [defaultModel] : []),
+      ...RECALL_EMBEDDING_MODEL_SUGGESTIONS[providerId],
+    ]);
+  }
+  return uniqueValues([
+    ...(RECALL_EMBEDDING_MODEL_DEFAULTS[providerId]
+      ? [RECALL_EMBEDDING_MODEL_DEFAULTS[providerId] as string]
+      : []),
+    ...RECALL_EMBEDDING_MODEL_SUGGESTIONS[providerId],
+  ]);
+}
+
+function deriveConfiguredRecallEmbeddingsDraft(
+  document: Record<string, unknown>,
+  runtimeConfig: RuntimeConfigPayload | null,
+): RecallEmbeddingsDraft {
+  const runtimePayload = asRecord(document.runtime);
+  const recallEmbeddingsPayload = asRecord(
+    runtimePayload.recall_embeddings ?? runtimePayload.recallEmbeddings,
+  );
+  const providerId = recallEmbeddingsProviderDraftId(
+    firstNonEmptyString(
+      recallEmbeddingsPayload.provider as string | undefined,
+      recallEmbeddingsPayload.provider_id as string | undefined,
+      recallEmbeddingsPayload.providerId as string | undefined,
+    ),
+  );
+  return {
+    providerId,
+    model: providerId
+      ? configuredRecallEmbeddingsModelId(
+          providerId,
+          firstNonEmptyString(
+            recallEmbeddingsPayload.model as string | undefined,
+            recallEmbeddingsPayload.model_id as string | undefined,
+            recallEmbeddingsPayload.modelId as string | undefined,
+            recallEmbeddingsDefaultModel(providerId, runtimeConfig),
+          ),
+        )
+      : "",
+  };
+}
+
 function isImageGenerationProviderId(value: string): value is ImageGenerationDraftProviderId {
   return value === "" || IMAGE_GENERATION_PROVIDER_IDS.includes(value as (typeof IMAGE_GENERATION_PROVIDER_IDS)[number]);
 }
@@ -751,6 +916,7 @@ function deriveProviderDraftsFromDocument(
   drafts: ProviderDraftMap;
   sandboxId: string;
   backgroundTasks: BackgroundTasksDraft;
+  recallEmbeddings: RecallEmbeddingsDraft;
   imageGeneration: ImageGenerationDraft;
 } {
   const runtimePayload = asRecord(document.runtime);
@@ -841,6 +1007,10 @@ function deriveProviderDraftsFromDocument(
   const backgroundTasks = configuredBackgroundTasks.providerId
     ? configuredBackgroundTasks
     : deriveLegacyBackgroundTasksDraft(document);
+  const recallEmbeddings = deriveConfiguredRecallEmbeddingsDraft(
+    document,
+    runtimeConfig,
+  );
   const configuredImageGeneration = deriveConfiguredImageGenerationDraft(
     document,
     runtimeConfig,
@@ -853,6 +1023,7 @@ function deriveProviderDraftsFromDocument(
     drafts,
     sandboxId: firstNonEmptyString(runtimePayload.sandbox_id as string | undefined, runtimeConfig?.sandboxId ?? ""),
     backgroundTasks,
+    recallEmbeddings,
     imageGeneration,
   };
 }
@@ -927,9 +1098,13 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   const [backgroundTasksDraft, setBackgroundTasksDraft] = useState<BackgroundTasksDraft>(() =>
     createDefaultBackgroundTasksDraft(),
   );
+  const [recallEmbeddingsDraft, setRecallEmbeddingsDraft] = useState<RecallEmbeddingsDraft>(() =>
+    createDefaultRecallEmbeddingsDraft(),
+  );
   const [imageGenerationDraft, setImageGenerationDraft] = useState<ImageGenerationDraft>(() =>
     createDefaultImageGenerationDraft(),
   );
+  const [showAdvancedRuntimeSettings, setShowAdvancedRuntimeSettings] = useState(false);
   const [expandedProviderId, setExpandedProviderId] = useState<KnownProviderId | null>(null);
   const [sandboxId, setSandboxId] = useState("");
   const [authError, setAuthError] = useState("");
@@ -1029,6 +1204,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     }
     setProviderDrafts(derived.drafts);
     setBackgroundTasksDraft(derived.backgroundTasks);
+    setRecallEmbeddingsDraft(derived.recallEmbeddings);
     setImageGenerationDraft(derived.imageGeneration);
     setHydratedRuntimeConfigDocument(runtimeConfigDocument);
   }, [effectiveRuntimeConfig, isProviderDraftDirty, runtimeConfigDocument]);
@@ -1125,6 +1301,25 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     backgroundTasksDraft.model.trim(),
     ...backgroundProviderSuggestions,
   ]);
+  const connectedRecallEmbeddingProviderIds = RECALL_EMBEDDING_PROVIDER_IDS.filter((providerId) =>
+    connectedProviderIds.includes(providerId),
+  );
+  const recallEmbeddingsProviderConnected =
+    recallEmbeddingsDraft.providerId !== "" &&
+    connectedRecallEmbeddingProviderIds.includes(recallEmbeddingsDraft.providerId);
+  const recallEmbeddingsProviderSuggestions = recallEmbeddingsModelSuggestions(
+    recallEmbeddingsDraft.providerId,
+    effectiveRuntimeConfig,
+  );
+  const recallEmbeddingsUsesManagedModelPicker = recallEmbeddingsDraft.providerId === "holaboss";
+  const recallEmbeddingsModelOptions = uniqueValues([
+    recallEmbeddingsDraft.model.trim(),
+    ...recallEmbeddingsProviderSuggestions,
+  ]);
+  const recallEmbeddingsProviderOptions = recallEmbeddingsDraft.providerId
+    && !connectedRecallEmbeddingProviderIds.includes(recallEmbeddingsDraft.providerId)
+      ? [recallEmbeddingsDraft.providerId, ...connectedRecallEmbeddingProviderIds]
+      : connectedRecallEmbeddingProviderIds;
   const connectedImageProviderIds = IMAGE_GENERATION_PROVIDER_IDS.filter((providerId) =>
     connectedProviderIds.includes(providerId),
   );
@@ -1144,6 +1339,42 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     && !connectedImageProviderIds.includes(imageGenerationDraft.providerId)
       ? [imageGenerationDraft.providerId, ...connectedImageProviderIds]
       : connectedImageProviderIds;
+  const hasResolvableImageGenerationModel = connectedImageProviderIds.some((providerId) =>
+    Boolean(imageGenerationDefaultModel(providerId, effectiveRuntimeConfig).trim()),
+  );
+  const hasResolvableRecallEmbeddingsModel = connectedRecallEmbeddingProviderIds.some((providerId) =>
+    Boolean(recallEmbeddingsDefaultModel(providerId, effectiveRuntimeConfig).trim()),
+  );
+  const advancedSettingsWarnings = [
+    !hasResolvableRecallEmbeddingsModel
+      ? "No embedding model can be resolved from the currently connected providers. Recall will stay on the slower staged path until you connect an embedding-capable provider or set one manually in Advanced settings."
+      : "",
+    !hasResolvableImageGenerationModel
+      ? "No image generation model can be resolved from the currently connected providers. Image generation will stay disabled until you connect a provider with an image model or set one manually in Advanced settings."
+      : "",
+  ].filter(Boolean);
+
+  useEffect(() => {
+    if (isSignedIn || isProviderDraftDirty) {
+      return;
+    }
+
+    if (backgroundTasksDraft.providerId === "holaboss") {
+      setBackgroundTasksDraft({ providerId: "", model: "" });
+    }
+    if (recallEmbeddingsDraft.providerId === "holaboss") {
+      setRecallEmbeddingsDraft({ providerId: "", model: "" });
+    }
+    if (imageGenerationDraft.providerId === "holaboss") {
+      setImageGenerationDraft({ providerId: "", model: "" });
+    }
+  }, [
+    backgroundTasksDraft.providerId,
+    imageGenerationDraft.providerId,
+    isProviderDraftDirty,
+    isSignedIn,
+    recallEmbeddingsDraft.providerId,
+  ]);
 
   const showAccountSection = view !== "runtime";
   const showRuntimeSection = view !== "account";
@@ -1229,6 +1460,25 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     if (!hasHydratedProviderDrafts) {
       return;
     }
+    if (
+      isProviderDraftDirty ||
+      recallEmbeddingsDraft.providerId ||
+      connectedRecallEmbeddingProviderIds.length === 0
+    ) {
+      return;
+    }
+    applyRecallEmbeddingsProviderSelection(connectedRecallEmbeddingProviderIds[0] ?? "");
+  }, [
+    connectedRecallEmbeddingProviderIds,
+    hasHydratedProviderDrafts,
+    isProviderDraftDirty,
+    recallEmbeddingsDraft.providerId,
+  ]);
+
+  useEffect(() => {
+    if (!hasHydratedProviderDrafts) {
+      return;
+    }
     if (isProviderDraftDirty || imageGenerationDraft.providerId || connectedImageProviderIds.length === 0) {
       return;
     }
@@ -1302,6 +1552,21 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     });
   }
 
+  function updateRecallEmbeddingsDraft(update: Partial<RecallEmbeddingsDraft>) {
+    setRecallEmbeddingsDraft((current) => ({
+      ...current,
+      ...update,
+    }));
+    markProviderSettingsDirty();
+  }
+
+  function applyRecallEmbeddingsProviderSelection(providerId: RecallEmbeddingsDraftProviderId) {
+    updateRecallEmbeddingsDraft({
+      providerId,
+      model: recallEmbeddingsDefaultModel(providerId, effectiveRuntimeConfig),
+    });
+  }
+
   function updateImageGenerationDraft(update: Partial<ImageGenerationDraft>) {
     setImageGenerationDraft((current) => ({
       ...current,
@@ -1328,6 +1593,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     return {
       drafts: derived.drafts,
       backgroundTasks: derived.backgroundTasks,
+      recallEmbeddings: derived.recallEmbeddings,
       imageGeneration: derived.imageGeneration,
     };
   }
@@ -1345,6 +1611,8 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       JSON.stringify(snapshot.drafts) !== JSON.stringify(persisted.drafts) ||
       JSON.stringify(snapshot.backgroundTasks) !==
         JSON.stringify(persisted.backgroundTasks) ||
+      JSON.stringify(snapshot.recallEmbeddings) !==
+        JSON.stringify(persisted.recallEmbeddings) ||
       JSON.stringify(snapshot.imageGeneration) !==
         JSON.stringify(persisted.imageGeneration)
     );
@@ -1383,6 +1651,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       providerSettingsSnapshotIsDirty({
         drafts: nextDrafts,
         backgroundTasks: backgroundTasksDraft,
+        recallEmbeddings: recallEmbeddingsDraft,
         imageGeneration: imageGenerationDraft,
       }),
     );
@@ -1391,6 +1660,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
   async function persistRuntimeProviderSettings(
     draftsSnapshot: ProviderDraftMap,
     backgroundTasksSnapshot: BackgroundTasksDraft,
+    recallEmbeddingsSnapshot: RecallEmbeddingsDraft,
     imageGenerationSnapshot: ImageGenerationDraft,
   ): Promise<
     | {
@@ -1540,6 +1810,14 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       const normalizedBackgroundModel = enabledBackgroundProviderId
         ? configuredBackgroundModelId(enabledBackgroundProviderId, backgroundTasksSnapshot.model)
         : "";
+      const enabledRecallEmbeddingsProviderId =
+        recallEmbeddingsSnapshot.providerId && enabledProviderSet.has(recallEmbeddingsSnapshot.providerId)
+          ? recallEmbeddingsSnapshot.providerId
+          : "";
+      const normalizedRecallEmbeddingsProviderId = recallEmbeddingsProviderStorageId(enabledRecallEmbeddingsProviderId);
+      const normalizedRecallEmbeddingsModel = enabledRecallEmbeddingsProviderId
+        ? configuredRecallEmbeddingsModelId(enabledRecallEmbeddingsProviderId, recallEmbeddingsSnapshot.model)
+        : "";
       const enabledImageGenerationProviderId =
         imageGenerationSnapshot.providerId && enabledProviderSet.has(imageGenerationSnapshot.providerId)
           ? imageGenerationSnapshot.providerId
@@ -1553,6 +1831,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
         sandbox_id: resolvedSandboxId
       };
       delete nextRuntime.backgroundTasks;
+      delete nextRuntime.recallEmbeddings;
       delete nextRuntime.imageGeneration;
       if (normalizedBackgroundProviderId) {
         nextRuntime.background_tasks = {
@@ -1562,6 +1841,15 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       } else {
         delete nextRuntime.background_tasks;
         delete nextRuntime.backgroundTasks;
+      }
+      if (normalizedRecallEmbeddingsProviderId) {
+        nextRuntime.recall_embeddings = {
+          provider: normalizedRecallEmbeddingsProviderId,
+          model: normalizedRecallEmbeddingsModel || null,
+        };
+      } else {
+        delete nextRuntime.recall_embeddings;
+        delete nextRuntime.recallEmbeddings;
       }
       if (normalizedImageGenerationProviderId) {
         nextRuntime.image_generation = {
@@ -1611,6 +1899,9 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     const backgroundTasksToSave = providerId
       ? persisted.backgroundTasks
       : backgroundTasksDraft;
+    const recallEmbeddingsToSave = providerId
+      ? persisted.recallEmbeddings
+      : recallEmbeddingsDraft;
     const imageGenerationToSave = providerId
       ? persisted.imageGeneration
       : imageGenerationDraft;
@@ -1635,6 +1926,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     const result = await persistRuntimeProviderSettings(
       draftsToSave,
       backgroundTasksToSave,
+      recallEmbeddingsToSave,
       imageGenerationToSave,
     );
     if (!result) {
@@ -1648,11 +1940,13 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
             [providerId]: draftsToSave[providerId],
           },
           backgroundTasks: backgroundTasksDraft,
+          recallEmbeddings: recallEmbeddingsDraft,
           imageGeneration: imageGenerationDraft,
         }
       : {
           drafts: providerDrafts,
           backgroundTasks: backgroundTasksDraft,
+          recallEmbeddings: recallEmbeddingsDraft,
           imageGeneration: imageGenerationDraft,
         };
     const hasRemainingUnsavedChanges = providerSettingsSnapshotIsDirty(
@@ -1693,6 +1987,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
     const result = await persistRuntimeProviderSettings(
       draftsToSave,
       persistedBeforeDisconnect.backgroundTasks,
+      persistedBeforeDisconnect.recallEmbeddings,
       persistedBeforeDisconnect.imageGeneration,
     );
     setDisconnectingProviderId(null);
@@ -1716,9 +2011,14 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
       JSON.stringify(imageGenerationDraft) === JSON.stringify(persistedBeforeDisconnect.imageGeneration)
         ? persistedAfterDisconnect.imageGeneration
         : imageGenerationDraft;
+    const nextRecallEmbeddingsDraft =
+      JSON.stringify(recallEmbeddingsDraft) === JSON.stringify(persistedBeforeDisconnect.recallEmbeddings)
+        ? persistedAfterDisconnect.recallEmbeddings
+        : recallEmbeddingsDraft;
     const nextSnapshot: ProviderSettingsSnapshot = {
       drafts: nextProviderDrafts,
       backgroundTasks: nextBackgroundTasksDraft,
+      recallEmbeddings: nextRecallEmbeddingsDraft,
       imageGeneration: nextImageGenerationDraft,
     };
     const hasRemainingUnsavedChanges = providerSettingsSnapshotIsDirty(
@@ -1729,6 +2029,7 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
     setProviderDrafts(nextProviderDrafts);
     setBackgroundTasksDraft(nextBackgroundTasksDraft);
+    setRecallEmbeddingsDraft(nextRecallEmbeddingsDraft);
     setImageGenerationDraft(nextImageGenerationDraft);
     setExpandedProviderId((current) => (current === providerId ? null : current));
     setIsProviderDraftDirty(hasRemainingUnsavedChanges);
@@ -1950,222 +2251,359 @@ export function AuthPanel({ view = "full" }: AuthPanelProps) {
 
   const runtimeProviderSettings = (
     <div className="mt-3 grid gap-4">
-      <div>
-        {allProviderIds.map((providerId, index) =>
-          renderProviderRow(providerId, index === allProviderIds.length - 1)
-        )}
+      {advancedSettingsWarnings.length > 0 ? (
+        <div className="rounded-[18px] border border-amber-400/35 bg-amber-500/8 px-4 py-3 text-sm text-amber-200">
+          <div className="font-medium text-amber-100">Provider model resolution needs attention</div>
+          <div className="mt-2 grid gap-2">
+            {advancedSettingsWarnings.map((warning) => (
+              <div key={warning}>{warning}</div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="rounded-[18px] border border-border/40 bg-card/80 p-4">
+        <div className="grid gap-3">
+          <div className="text-sm font-medium text-foreground">Connected providers</div>
+          <div>
+            {allProviderIds.map((providerId, index) =>
+              renderProviderRow(providerId, index === allProviderIds.length - 1)
+            )}
+          </div>
+
+          <div className="rounded-[14px] border border-border/35 bg-muted/30">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
+              onClick={() => setShowAdvancedRuntimeSettings((current) => !current)}
+            >
+              <div className="text-sm font-medium text-foreground">Advanced settings</div>
+              <ChevronDown
+                size={16}
+                className={`shrink-0 text-muted-foreground transition-transform ${showAdvancedRuntimeSettings ? "rotate-180" : ""}`}
+              />
+            </button>
+
+            {showAdvancedRuntimeSettings ? (
+              <div className="border-t border-border/35 px-3 py-3">
+                <div className="grid gap-4">
+                  <div className="rounded-[12px] border border-border/35 bg-muted/20 p-3">
+                    <div className="text-sm font-medium text-foreground">Background tasks</div>
+                    <div className="mt-1 text-sm text-muted-foreground">
+                      Used for memory recall and evolve tasks.
+                    </div>
+                    <div className="mt-3 grid gap-2">
+                      <label className="grid gap-1">
+                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Provider</span>
+                        <Select
+                          value={backgroundTasksDraft.providerId}
+                          onValueChange={(value) =>
+                            applyBackgroundTaskProviderSelection(
+                              backgroundTaskProviderDraftId(value ?? ""),
+                            )
+                          }
+                          disabled={backgroundProviderOptions.length === 0}
+                        >
+                          <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {backgroundProviderOptions.map((providerId) => {
+                              const isConnected = connectedProviderIds.includes(providerId);
+                              const label = isConnected
+                                ? backgroundTaskProviderLabel(providerId)
+                                : `${backgroundTaskProviderLabel(providerId)} (not connected)`;
+                              return (
+                                <SelectItem key={providerId} value={providerId}>
+                                  {label}
+                                </SelectItem>
+                              );
+                            })}
+                          </SelectContent>
+                        </Select>
+                      </label>
+
+                      <label className="grid gap-1">
+                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Model</span>
+                        {backgroundTaskUsesManagedModelPicker ? (
+                          <Select
+                            value={backgroundTasksDraft.model || undefined}
+                            onValueChange={(value) =>
+                              updateBackgroundTasksDraft({ model: value ?? "" })
+                            }
+                            disabled={!backgroundTasksDraft.providerId}
+                          >
+                            <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
+                              <SelectValue
+                                placeholder={backgroundTaskModelPlaceholder(
+                                  backgroundTasksDraft.providerId,
+                                  effectiveRuntimeConfig,
+                                )}
+                              />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {backgroundTaskModelOptions.map((modelId) => (
+                                <SelectItem key={modelId} value={modelId}>
+                                  {modelId}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <>
+                            <Input
+                              value={backgroundTasksDraft.model}
+                              onChange={(event) => updateBackgroundTasksDraft({ model: event.target.value })}
+                              placeholder={backgroundTaskModelPlaceholder(
+                                backgroundTasksDraft.providerId,
+                                effectiveRuntimeConfig,
+                              )}
+                              spellCheck={false}
+                              list={
+                                backgroundTasksDraft.providerId
+                                  ? `background-task-models-${backgroundTasksDraft.providerId}`
+                                  : undefined
+                              }
+                              disabled={!backgroundTasksDraft.providerId}
+                            />
+                            {backgroundTasksDraft.providerId ? (
+                              <datalist id={`background-task-models-${backgroundTasksDraft.providerId}`}>
+                                {backgroundProviderSuggestions.map((modelId) => (
+                                  <option key={modelId} value={modelId} />
+                                ))}
+                              </datalist>
+                            ) : null}
+                          </>
+                        )}
+                      </label>
+
+                      {backgroundTasksDraft.providerId && !backgroundProviderConnected ? (
+                        <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                          Selected provider is not connected. Background tasks stay disabled until you reconnect it or choose another provider.
+                        </div>
+                      ) : null}
+                      {backgroundTasksDraft.providerId && !backgroundTasksDraft.model.trim() ? (
+                        <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                          Select a model to enable background tasks.
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="rounded-[12px] border border-border/35 bg-muted/20 p-3">
+                    <div className="text-sm font-medium text-foreground">Recall embeddings</div>
+                    <div className="mt-1 text-sm text-muted-foreground">
+                      Used to preselect memory candidates for recall.
+                    </div>
+                    <div className="mt-2 rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                      Embedding indexing stays off the user input path. Until embeddings have been indexed separately, recall continues to use the staged path.
+                    </div>
+                    <div className="mt-3 grid gap-2">
+                      <label className="grid gap-1">
+                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Provider</span>
+                        <Select
+                          value={recallEmbeddingsDraft.providerId}
+                          onValueChange={(value) =>
+                            applyRecallEmbeddingsProviderSelection(
+                              recallEmbeddingsProviderDraftId(value ?? ""),
+                            )
+                          }
+                          disabled={recallEmbeddingsProviderOptions.length === 0}
+                        >
+                          <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {recallEmbeddingsProviderOptions.map((providerId) => {
+                              const isConnected = connectedRecallEmbeddingProviderIds.includes(providerId);
+                              const label = isConnected
+                                ? recallEmbeddingsProviderLabel(providerId)
+                                : `${recallEmbeddingsProviderLabel(providerId)} (not connected)`;
+                              return (
+                                <SelectItem key={providerId} value={providerId}>
+                                  {label}
+                                </SelectItem>
+                              );
+                            })}
+                          </SelectContent>
+                        </Select>
+                      </label>
+
+                      <label className="grid gap-1">
+                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Model</span>
+                        {recallEmbeddingsUsesManagedModelPicker ? (
+                          <Select
+                            value={recallEmbeddingsDraft.model || undefined}
+                            onValueChange={(value) =>
+                              updateRecallEmbeddingsDraft({ model: value ?? "" })
+                            }
+                            disabled={!recallEmbeddingsDraft.providerId}
+                          >
+                            <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
+                              <SelectValue
+                                placeholder={recallEmbeddingsModelPlaceholder(
+                                  recallEmbeddingsDraft.providerId,
+                                  effectiveRuntimeConfig,
+                                )}
+                              />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {recallEmbeddingsModelOptions.map((modelId) => (
+                                <SelectItem key={modelId} value={modelId}>
+                                  {modelId}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <>
+                            <Input
+                              value={recallEmbeddingsDraft.model}
+                              onChange={(event) => updateRecallEmbeddingsDraft({ model: event.target.value })}
+                              placeholder={recallEmbeddingsModelPlaceholder(
+                                recallEmbeddingsDraft.providerId,
+                                effectiveRuntimeConfig,
+                              )}
+                              spellCheck={false}
+                              list={
+                                recallEmbeddingsDraft.providerId
+                                  ? `recall-embedding-models-${recallEmbeddingsDraft.providerId}`
+                                  : undefined
+                              }
+                              disabled={!recallEmbeddingsDraft.providerId}
+                            />
+                            {recallEmbeddingsDraft.providerId ? (
+                              <datalist id={`recall-embedding-models-${recallEmbeddingsDraft.providerId}`}>
+                                {recallEmbeddingsModelOptions.map((modelId) => (
+                                  <option key={modelId} value={modelId} />
+                                ))}
+                              </datalist>
+                            ) : null}
+                          </>
+                        )}
+                      </label>
+
+                      {recallEmbeddingsDraft.providerId && !recallEmbeddingsProviderConnected ? (
+                        <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                          Selected provider is not connected. Vector recall stays disabled until you reconnect it or choose another provider.
+                        </div>
+                      ) : null}
+                      {recallEmbeddingsDraft.providerId && !recallEmbeddingsDraft.model.trim() ? (
+                        <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                          Select a model to enable vector recall.
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="rounded-[12px] border border-border/35 bg-muted/20 p-3">
+                    <div className="text-sm font-medium text-foreground">Image generation</div>
+                    <div className="mt-1 text-sm text-muted-foreground">
+                      Used when the agent generates new images into the workspace.
+                    </div>
+                    <div className="mt-3 grid gap-2">
+                      <label className="grid gap-1">
+                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Provider</span>
+                        <Select
+                          value={imageGenerationDraft.providerId}
+                          onValueChange={(value) =>
+                            applyImageGenerationProviderSelection(
+                              imageGenerationProviderDraftId(value ?? ""),
+                            )
+                          }
+                          disabled={imageGenerationProviderOptions.length === 0}
+                        >
+                          <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {imageGenerationProviderOptions.map((providerId) => {
+                              const isConnected = connectedImageProviderIds.includes(providerId);
+                              const label = isConnected
+                                ? imageGenerationProviderLabel(providerId)
+                                : `${imageGenerationProviderLabel(providerId)} (not connected)`;
+                              return (
+                                <SelectItem key={providerId} value={providerId}>
+                                  {label}
+                                </SelectItem>
+                              );
+                            })}
+                          </SelectContent>
+                        </Select>
+                      </label>
+
+                      <label className="grid gap-1">
+                        <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Model</span>
+                        {imageGenerationUsesManagedModelPicker ? (
+                          <Select
+                            value={imageGenerationDraft.model || undefined}
+                            onValueChange={(value) =>
+                              updateImageGenerationDraft({ model: value ?? "" })
+                            }
+                            disabled={!imageGenerationDraft.providerId}
+                          >
+                            <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
+                              <SelectValue
+                                placeholder={imageGenerationModelPlaceholder(
+                                  imageGenerationDraft.providerId,
+                                  effectiveRuntimeConfig,
+                                )}
+                              />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {imageGenerationModelOptions.map((modelId) => (
+                                <SelectItem key={modelId} value={modelId}>
+                                  {modelId}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <>
+                            <Input
+                              value={imageGenerationDraft.model}
+                              onChange={(event) => updateImageGenerationDraft({ model: event.target.value })}
+                              placeholder={imageGenerationModelPlaceholder(
+                                imageGenerationDraft.providerId,
+                                effectiveRuntimeConfig,
+                              )}
+                              spellCheck={false}
+                              list={
+                                imageGenerationDraft.providerId
+                                  ? `image-generation-models-${imageGenerationDraft.providerId}`
+                                  : undefined
+                              }
+                              disabled={!imageGenerationDraft.providerId}
+                            />
+                            {imageGenerationDraft.providerId ? (
+                              <datalist id={`image-generation-models-${imageGenerationDraft.providerId}`}>
+                                {imageGenerationProviderSuggestions.map((modelId) => (
+                                  <option key={modelId} value={modelId} />
+                                ))}
+                              </datalist>
+                            ) : null}
+                          </>
+                        )}
+                      </label>
+
+                      {imageGenerationDraft.providerId && !imageGenerationProviderConnected ? (
+                        <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                          Selected provider is not connected. Image generation stays disabled until you reconnect it or choose another provider.
+                        </div>
+                      ) : null}
+                      {imageGenerationDraft.providerId && !imageGenerationDraft.model.trim() ? (
+                        <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                          Select a model to enable image generation.
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
       </div>
-
-      <div className="mt-5 border-t border-border/30 pt-5">
-        <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">
-          Task Configuration
-        </div>
-        <div className="mt-4 rounded-[14px] border border-border/35 bg-muted/25 p-3">
-          <div className="text-sm font-medium text-foreground">Background tasks</div>
-          <div className="mt-1 text-sm text-muted-foreground">
-            Used for memory recall and post-run tasks.
-          </div>
-          <div className="mt-3 grid gap-2">
-            <label className="grid gap-1">
-              <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Provider</span>
-              <Select
-                value={backgroundTasksDraft.providerId}
-                onValueChange={(value) =>
-                  applyBackgroundTaskProviderSelection(
-                    backgroundTaskProviderDraftId(value ?? ""),
-                  )
-                }
-                disabled={backgroundProviderOptions.length === 0}
-              >
-                <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {backgroundProviderOptions.map((providerId) => {
-                    const isConnected = connectedProviderIds.includes(providerId);
-                    const label = isConnected
-                      ? backgroundTaskProviderLabel(providerId)
-                      : `${backgroundTaskProviderLabel(providerId)} (not connected)`;
-                    return (
-                      <SelectItem key={providerId} value={providerId}>
-                        {label}
-                      </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
-            </label>
-
-            <label className="grid gap-1">
-              <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Model</span>
-              {backgroundTaskUsesManagedModelPicker ? (
-                <Select
-                  value={backgroundTasksDraft.model || undefined}
-                  onValueChange={(value) =>
-                    updateBackgroundTasksDraft({ model: value ?? "" })
-                  }
-                  disabled={!backgroundTasksDraft.providerId}
-                >
-                  <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
-                    <SelectValue
-                      placeholder={backgroundTaskModelPlaceholder(
-                        backgroundTasksDraft.providerId,
-                        effectiveRuntimeConfig,
-                      )}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {backgroundTaskModelOptions.map((modelId) => (
-                      <SelectItem key={modelId} value={modelId}>
-                        {modelId}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <>
-                  <Input
-                    value={backgroundTasksDraft.model}
-                    onChange={(event) => updateBackgroundTasksDraft({ model: event.target.value })}
-                    placeholder={backgroundTaskModelPlaceholder(
-                      backgroundTasksDraft.providerId,
-                      effectiveRuntimeConfig,
-                    )}
-                    spellCheck={false}
-                    list={
-                      backgroundTasksDraft.providerId
-                        ? `background-task-models-${backgroundTasksDraft.providerId}`
-                        : undefined
-                    }
-                    disabled={!backgroundTasksDraft.providerId}
-                  />
-                  {backgroundTasksDraft.providerId ? (
-                    <datalist id={`background-task-models-${backgroundTasksDraft.providerId}`}>
-                      {backgroundProviderSuggestions.map((modelId) => (
-                        <option key={modelId} value={modelId} />
-                      ))}
-                    </datalist>
-                  ) : null}
-                </>
-              )}
-            </label>
-
-            {backgroundTasksDraft.providerId && !backgroundProviderConnected ? (
-              <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-                Selected provider is not connected. Background tasks stay disabled until you reconnect it or choose another provider.
-              </div>
-            ) : null}
-            {backgroundTasksDraft.providerId && !backgroundTasksDraft.model.trim() ? (
-              <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-                Select a model to enable background tasks.
-              </div>
-            ) : null}
-          </div>
-        </div>
-        <div className="mt-3 rounded-[14px] border border-border/35 bg-muted/25 p-3">
-          <div className="text-sm font-medium text-foreground">Image generation</div>
-          <div className="mt-1 text-sm text-muted-foreground">
-            Used when the agent generates new images into the workspace.
-          </div>
-          <div className="mt-3 grid gap-2">
-            <label className="grid gap-1">
-              <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Provider</span>
-              <Select
-                value={imageGenerationDraft.providerId}
-                onValueChange={(value) =>
-                  applyImageGenerationProviderSelection(
-                    imageGenerationProviderDraftId(value ?? ""),
-                  )
-                }
-                disabled={imageGenerationProviderOptions.length === 0}
-              >
-                <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {imageGenerationProviderOptions.map((providerId) => {
-                    const isConnected = connectedImageProviderIds.includes(providerId);
-                    const label = isConnected
-                      ? imageGenerationProviderLabel(providerId)
-                      : `${imageGenerationProviderLabel(providerId)} (not connected)`;
-                    return (
-                      <SelectItem key={providerId} value={providerId}>
-                        {label}
-                      </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
-            </label>
-
-            <label className="grid gap-1">
-              <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Model</span>
-              {imageGenerationUsesManagedModelPicker ? (
-                <Select
-                  value={imageGenerationDraft.model || undefined}
-                  onValueChange={(value) =>
-                    updateImageGenerationDraft({ model: value ?? "" })
-                  }
-                  disabled={!imageGenerationDraft.providerId}
-                >
-                  <SelectTrigger className={AUTH_PANEL_SELECT_TRIGGER_CLASS_NAME}>
-                    <SelectValue
-                      placeholder={imageGenerationModelPlaceholder(
-                        imageGenerationDraft.providerId,
-                        effectiveRuntimeConfig,
-                      )}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {imageGenerationModelOptions.map((modelId) => (
-                      <SelectItem key={modelId} value={modelId}>
-                        {modelId}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <>
-                  <Input
-                    value={imageGenerationDraft.model}
-                    onChange={(event) => updateImageGenerationDraft({ model: event.target.value })}
-                    placeholder={imageGenerationModelPlaceholder(
-                      imageGenerationDraft.providerId,
-                      effectiveRuntimeConfig,
-                    )}
-                    spellCheck={false}
-                    list={
-                      imageGenerationDraft.providerId
-                        ? `image-generation-models-${imageGenerationDraft.providerId}`
-                        : undefined
-                    }
-                    disabled={!imageGenerationDraft.providerId}
-                  />
-                  {imageGenerationDraft.providerId ? (
-                    <datalist id={`image-generation-models-${imageGenerationDraft.providerId}`}>
-                      {imageGenerationProviderSuggestions.map((modelId) => (
-                        <option key={modelId} value={modelId} />
-                      ))}
-                    </datalist>
-                  ) : null}
-                </>
-              )}
-            </label>
-
-            {imageGenerationDraft.providerId && !imageGenerationProviderConnected ? (
-              <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-                Selected provider is not connected. Image generation stays disabled until you reconnect it or choose another provider.
-              </div>
-            ) : null}
-            {imageGenerationDraft.providerId && !imageGenerationDraft.model.trim() ? (
-              <div className="rounded-[12px] border border-border/35 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-                Select a model to enable image generation.
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
     </div>
   );
 

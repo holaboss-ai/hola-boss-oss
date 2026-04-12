@@ -14,6 +14,11 @@ export interface MemoryModelJsonQuery {
   timeoutMs?: number;
 }
 
+export interface MemoryModelEmbeddingQuery {
+  input: string;
+  timeoutMs?: number;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -238,6 +243,72 @@ export async function queryMemoryModelJson(
     const payload = await response.json().catch(() => null);
     const text = apiStyle === "anthropic_native" ? anthropicCompletionContent(payload) : completionContent(payload);
     return parseJsonObjectCandidate(text);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function queryMemoryModelEmbedding(
+  config: MemoryModelClientConfig,
+  query: MemoryModelEmbeddingQuery
+): Promise<Float32Array | null> {
+  const baseUrl = config.baseUrl.trim().replace(/\/+$/, "");
+  const modelId = normalizeOpenAiModelId(config.modelId);
+  const apiStyle =
+    config.apiStyle === "openai_compatible"
+      ? "openai_compatible"
+      : config.apiStyle === "anthropic_native"
+        ? "anthropic_native"
+        : looksLikeOpenAiCompatBaseUrl(baseUrl)
+          ? "openai_compatible"
+          : looksLikeAnthropicBaseUrl(baseUrl)
+            ? "anthropic_native"
+            : null;
+  if (!baseUrl || !modelId || apiStyle !== "openai_compatible") {
+    return null;
+  }
+  const normalizedInput = query.input.trim();
+  if (!normalizedInput) {
+    return null;
+  }
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(config.defaultHeaders ?? {}),
+  };
+  if (!hasExplicitAuthHeader(headers) && config.apiKey.trim()) {
+    headers.Authorization = `Bearer ${config.apiKey.trim()}`;
+  }
+  const controller = new AbortController();
+  const timeoutMs = Math.max(1000, Math.min(query.timeoutMs ?? 7000, 20000));
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${baseUrl}/embeddings`, {
+      method: "POST",
+      headers,
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: modelId,
+        input: normalizedInput,
+        encoding_format: "float",
+      }),
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const payload = await response.json().catch(() => null);
+    if (!isRecord(payload) || !Array.isArray(payload.data) || payload.data.length === 0 || !isRecord(payload.data[0])) {
+      return null;
+    }
+    const embedding = Array.isArray(payload.data[0].embedding) ? payload.data[0].embedding : [];
+    const values = embedding
+      .map((value) => (typeof value === "number" ? value : Number(value)))
+      .filter((value) => Number.isFinite(value));
+    if (values.length === 0) {
+      return null;
+    }
+    return new Float32Array(values);
   } catch {
     return null;
   } finally {

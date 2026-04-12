@@ -39,8 +39,8 @@ import {
 } from "./queue-worker.js";
 import {
   type DurableMemoryWorkerLike,
-  RuntimePostRunDurableMemoryWorker,
-} from "./post-run-durable-memory-worker.js";
+  RuntimeEvolveWorker,
+} from "./evolve-worker.js";
 import {
   type CronWorkerLike,
   executeLocalCronjobDelivery,
@@ -52,6 +52,10 @@ import {
   RuntimeRemoteBridgeWorker,
   tsBridgeWorkerEnabled
 } from "./bridge-worker.js";
+import {
+  type RecallEmbeddingBackfillWorkerLike,
+  RuntimeRecallEmbeddingBackfillWorker,
+} from "./recall-embedding-backfill-worker.js";
 import {
   AppLifecycleExecutorError,
   appBuildHasCompletedSetup,
@@ -126,6 +130,7 @@ import {
   persistDurableMemoryCandidate,
   refreshMemoryIndexes,
 } from "./turn-memory-writeback.js";
+import { promotedWorkspaceSkillPath } from "./evolve-skill-review.js";
 import { captureWorkspaceContext } from "./proactive-context.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 50;
@@ -141,6 +146,7 @@ export interface BuildRuntimeApiServerOptions {
   durableMemoryWorker?: DurableMemoryWorkerLike | null;
   cronWorker?: CronWorkerLike | null;
   bridgeWorker?: BridgeWorkerLike | null;
+  recallEmbeddingBackfillWorker?: RecallEmbeddingBackfillWorkerLike | null;
   appLifecycleExecutor?: AppLifecycleExecutorLike;
   memoryService?: MemoryServiceLike;
   runtimeConfigService?: RuntimeConfigServiceLike;
@@ -177,7 +183,7 @@ function resolveDurableMemoryWorker(
   if (options.durableMemoryWorker !== undefined) {
     return options.durableMemoryWorker;
   }
-  return new RuntimePostRunDurableMemoryWorker({ store, logger: app.log, memoryService });
+  return new RuntimeEvolveWorker({ store, logger: app.log, memoryService });
 }
 
 function resolveCronWorker(
@@ -216,6 +222,22 @@ function resolveBridgeWorker(
     );
     return null;
   }
+}
+
+function resolveRecallEmbeddingBackfillWorker(
+  options: BuildRuntimeApiServerOptions,
+  app: FastifyInstance,
+  store: RuntimeStateStore,
+  memoryService: MemoryServiceLike,
+): RecallEmbeddingBackfillWorkerLike | null {
+  if (options.recallEmbeddingBackfillWorker !== undefined) {
+    return options.recallEmbeddingBackfillWorker;
+  }
+  return new RuntimeRecallEmbeddingBackfillWorker({
+    store,
+    logger: app.log,
+    memoryService,
+  });
 }
 
 type StringMap = Record<string, unknown>;
@@ -772,6 +794,7 @@ function taskProposalPayload(record: TaskProposalRecord): Record<string, unknown
     task_name: record.taskName,
     task_prompt: record.taskPrompt,
     task_generation_rationale: record.taskGenerationRationale,
+    proposal_source: record.proposalSource,
     source_event_ids: record.sourceEventIds,
     created_at: record.createdAt,
     state: record.state,
@@ -1702,6 +1725,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const queueWorker = resolveQueueWorker(options, app, store, memoryService, durableMemoryWorker);
   const cronWorker = resolveCronWorker(options, app, store, queueWorker);
   const bridgeWorker = resolveBridgeWorker(options, app, store, memoryService);
+  const recallEmbeddingBackfillWorker = resolveRecallEmbeddingBackfillWorker(options, app, store, memoryService);
 
   // ---------------------------------------------------------------------------
   // App liveness: ensure enabled apps are running + health monitoring
@@ -2105,6 +2129,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       clearInterval(healthMonitorTimer);
       healthMonitorTimer = null;
     }
+    await recallEmbeddingBackfillWorker?.close();
     await bridgeWorker?.close();
     await cronWorker?.close();
     await queueWorker?.close();
@@ -2119,6 +2144,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     await queueWorker?.start();
     await cronWorker?.start();
     await bridgeWorker?.start();
+    await recallEmbeddingBackfillWorker?.start();
     if (options.enableAppHealthMonitor !== false) {
       startHealthMonitor();
     }
@@ -5048,6 +5074,7 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       taskName: requiredString(request.body.task_name, "task_name"),
       taskPrompt: requiredString(request.body.task_prompt, "task_prompt"),
       taskGenerationRationale: requiredString(request.body.task_generation_rationale, "task_generation_rationale"),
+      proposalSource: optionalString(request.body.proposal_source) ?? "proactive",
       sourceEventIds: optionalStringList(request.body.source_event_ids),
       createdAt: requiredString(request.body.created_at, "created_at"),
       state: optionalString(request.body.state) ?? "not_reviewed"
@@ -5095,6 +5122,21 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
       return sendError(reply, 409, "session_id is already in use");
     }
 
+    const evolveCandidate =
+      proposal.proposalSource === "evolve" ? store.getEvolveSkillCandidateByTaskProposalId(proposal.proposalId) : null;
+    let evolveCandidateMarkdown: string | null = null;
+    if (evolveCandidate) {
+      try {
+        const draft = await memoryService.get({
+          workspace_id: proposal.workspaceId,
+          path: evolveCandidate.skillPath,
+        });
+        evolveCandidateMarkdown = typeof draft.text === "string" ? draft.text : null;
+      } catch {
+        evolveCandidateMarkdown = null;
+      }
+    }
+
     const session = store.ensureSession({
       workspaceId: proposal.workspaceId,
       sessionId,
@@ -5130,7 +5172,21 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         context: {
           source: "task_proposal",
           proposal_id: proposal.proposalId,
-          parent_session_id: parentSessionId
+          proposal_source: proposal.proposalSource,
+          parent_session_id: parentSessionId,
+          evolve_candidate: evolveCandidate
+            ? {
+                candidate_id: evolveCandidate.candidateId,
+                kind: evolveCandidate.kind,
+                title: evolveCandidate.title,
+                summary: evolveCandidate.summary,
+                slug: evolveCandidate.slug,
+                skill_path: evolveCandidate.skillPath,
+                target_skill_path: promotedWorkspaceSkillPath(evolveCandidate.slug),
+                skill_markdown: typeof evolveCandidateMarkdown === "string" ? evolveCandidateMarkdown : null,
+                task_proposal_id: evolveCandidate.taskProposalId,
+              }
+            : null,
         }
       }
     });
@@ -5163,6 +5219,15 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         acceptedAt: utcNowIso()
       }
     });
+    if (evolveCandidate) {
+      store.updateEvolveSkillCandidate({
+        candidateId: evolveCandidate.candidateId,
+        fields: {
+          status: "accepted",
+          acceptedAt: updatedProposal?.acceptedAt ?? utcNowIso(),
+        }
+      });
+    }
     queueWorker?.wake();
 
     return reply.send({
@@ -5196,6 +5261,18 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
     });
     if (!proposal) {
       return sendError(reply, 404, "Task proposal not found");
+    }
+    if (proposal.proposalSource === "evolve" && proposal.state === "dismissed") {
+      const candidate = store.getEvolveSkillCandidateByTaskProposalId(proposal.proposalId);
+      if (candidate) {
+        store.updateEvolveSkillCandidate({
+          candidateId: candidate.candidateId,
+          fields: {
+            status: "dismissed",
+            dismissedAt: utcNowIso(),
+          }
+        });
+      }
     }
     return { proposal: taskProposalPayload(proposal) };
   });

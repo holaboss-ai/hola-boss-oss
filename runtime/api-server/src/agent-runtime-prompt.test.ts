@@ -294,6 +294,46 @@ test("composeBaseAgentPrompt includes pending user memory context when provided"
   assert.match(prompt.contextMessages.join("\n\n"), /File delivery preference: Do not compress or zip multiple files; deliver them individually\./);
 });
 
+test("composeBaseAgentPrompt includes accepted evolve candidate context when provided", () => {
+  const prompt = composeBaseAgentPrompt("", {
+    defaultTools: ["read"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "task_proposal",
+    sessionMode: "code",
+    evolveCandidateContext: {
+      candidate_id: "evolve-skill-input-10",
+      kind: "skill_create",
+      title: "Release verification skill",
+      summary: "Reusable release verification workflow.",
+      slug: "release-verification",
+      skill_path: "workspace/workspace-1/evolve/skills/evolve-skill-input-10/SKILL.md",
+      target_skill_path: "skills/release-verification/SKILL.md",
+      skill_markdown: [
+        "---",
+        "name: release-verification",
+        "description: Reusable release verification workflow.",
+        "---",
+        "# Release verification skill",
+      ].join("\n"),
+      task_proposal_id: "evolve-proposal-1",
+    },
+  });
+
+  assert.ok(prompt.promptSections.some((section) => section.id === "evolve_candidate_context"));
+  assert.equal(
+    prompt.promptSections.find((section) => section.id === "evolve_candidate_context")?.channel,
+    "context_message"
+  );
+  assert.match(prompt.contextMessages.join("\n\n"), /Accepted evolve candidate:/);
+  assert.match(prompt.contextMessages.join("\n\n"), /background evolve phase/i);
+  assert.match(prompt.contextMessages.join("\n\n"), /Candidate id: `evolve-skill-input-10`\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Draft skill artifact: `workspace\/workspace-1\/evolve\/skills\/evolve-skill-input-10\/SKILL\.md`\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /Target live workspace skill path: `skills\/release-verification\/SKILL\.md`\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /name: release-verification/);
+});
+
 test("composeBaseAgentPrompt includes session resume context only when provided", () => {
   const prompt = composeBaseAgentPrompt("", {
     defaultTools: ["read"],
