@@ -1397,6 +1397,7 @@ declare global {
       back: () => Promise<BrowserTabListPayload>;
       forward: () => Promise<BrowserTabListPayload>;
       reload: () => Promise<BrowserTabListPayload>;
+      stopLoading: () => Promise<BrowserTabListPayload>;
       newTab: (targetUrl?: string) => Promise<BrowserTabListPayload>;
       setActiveTab: (tabId: string) => Promise<BrowserTabListPayload>;
       closeTab: (tabId: string) => Promise<BrowserTabListPayload>;

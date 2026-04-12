@@ -1279,6 +1279,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     back: () => ipcRenderer.invoke("browser:back") as Promise<BrowserTabListPayload>,
     forward: () => ipcRenderer.invoke("browser:forward") as Promise<BrowserTabListPayload>,
     reload: () => ipcRenderer.invoke("browser:reload") as Promise<BrowserTabListPayload>,
+    stopLoading: () => ipcRenderer.invoke("browser:stopLoading") as Promise<BrowserTabListPayload>,
     newTab: (targetUrl?: string) => ipcRenderer.invoke("browser:newTab", targetUrl) as Promise<BrowserTabListPayload>,
     setActiveTab: (tabId: string) => ipcRenderer.invoke("browser:setActiveTab", tabId) as Promise<BrowserTabListPayload>,
     closeTab: (tabId: string) => ipcRenderer.invoke("browser:closeTab", tabId) as Promise<BrowserTabListPayload>,

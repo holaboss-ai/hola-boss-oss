@@ -7,14 +7,50 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const mainSourcePath = path.join(__dirname, "main.ts");
 
-test("desktop browser blocks popup windows and promotes tab/new-window dispositions into tabs", async () => {
+test("desktop browser keeps auth-style popup windows while promoting ordinary new-window requests into tabs", async () => {
   const source = await readFile(mainSourcePath, "utf8");
 
+  assert.match(source, /function normalizeBrowserPopupFrameName\(frameName\?: string \| null\): string \{/);
+  assert.match(
+    source,
+    /function isBrowserPopupWindowRequest\(\s*frameName\?: string \| null,\s*features\?: string \| null,\s*\): boolean \{/,
+  );
+  assert.match(
+    source,
+    /if \(normalizeBrowserPopupFrameName\(frameName\)\) \{\s*return true;\s*\}/,
+  );
+  assert.match(
+    source,
+    /normalizedFeatures\.includes\("popup"\)[\s\S]*normalizedFeatures\.includes\("width="\)[\s\S]*normalizedFeatures\.includes\("height="\)/,
+  );
   assert.match(
     source,
     /const shouldOpenAsTab =\s*disposition === "foreground-tab" \|\|\s*disposition === "background-tab" \|\|\s*disposition === "new-window";/,
   );
-  assert.doesNotMatch(source, /view\.webContents\.on\("did-create-window"/);
+  assert.match(
+    source,
+    /view\.webContents\.setWindowOpenHandler\(\s*\(\{ url, disposition, frameName, features \}\) => \{/,
+  );
+  assert.match(
+    source,
+    /if \(isBrowserPopupWindowRequest\(frameName, features\)\) \{\s*return \{\s*action: "allow",[\s\S]*overrideBrowserWindowOptions: \{[\s\S]*parent: mainWindow \?\? undefined,[\s\S]*width: 520,[\s\S]*height: 760,/,
+  );
+  assert.match(
+    source,
+    /handleBrowserWindowOpenAsTab\(\s*workspaceId,\s*normalizedUrl,\s*disposition,\s*frameName,\s*browserSpace,\s*\);/,
+  );
+  assert.match(
+    source,
+    /const existingPopupTab = Array\.from\(tabSpace\.tabs\.entries\(\)\)\.find\([\s\S]*tab\.popupFrameName === normalizedFrameName[\s\S]*tab\.state\.url === normalizedUrl[\s\S]*now - tab\.popupOpenedAtMs <= DUPLICATE_BROWSER_POPUP_TAB_WINDOW_MS/,
+  );
+  assert.match(
+    source,
+    /const DUPLICATE_BROWSER_POPUP_TAB_WINDOW_MS = 2_000;/,
+  );
+  assert.match(
+    source,
+    /if \(existingPopupTab\) \{[\s\S]*focusBrowserTabInSpace\(workspaceId, tabSpace, existingTabId, space\);[\s\S]*return;\s*\}/,
+  );
 });
 
 test("desktop browser service exposes explicit tab creation endpoint", async () => {

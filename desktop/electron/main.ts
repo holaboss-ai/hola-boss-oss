@@ -71,6 +71,7 @@ const AUTH_POPUP_WIDTH = 380;
 const AUTH_POPUP_HEIGHT = 460;
 const AUTH_POPUP_CLOSE_DELAY_MS = 260;
 const AUTH_POPUP_MARGIN_PX = 8;
+const DUPLICATE_BROWSER_POPUP_TAB_WINDOW_MS = 2_000;
 const OVERFLOW_POPUP_WIDTH = 220;
 const OVERFLOW_POPUP_HEIGHT = 132;
 const ADDRESS_SUGGESTIONS_POPUP_MIN_HEIGHT = 88;
@@ -295,6 +296,8 @@ interface BrowserTabListPayload {
 interface BrowserTabRecord {
   view: BrowserView;
   state: BrowserStatePayload;
+  popupFrameName?: string;
+  popupOpenedAtMs?: number;
 }
 
 interface BrowserTabSpaceState {
@@ -3471,6 +3474,32 @@ function serializeBrowserEvalResult(value: unknown): unknown {
   }
 }
 
+function isAbortedBrowserLoadError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const candidate = error as {
+    code?: unknown;
+    errno?: unknown;
+    message?: unknown;
+  };
+  return (
+    candidate.code === "ERR_ABORTED" ||
+    candidate.errno === -3 ||
+    (typeof candidate.message === "string" &&
+      candidate.message.includes("ERR_ABORTED"))
+  );
+}
+
+function isAbortedBrowserLoadFailure(
+  errorCode: number,
+  errorDescription: string,
+): boolean {
+  return (
+    errorCode === -3 || errorDescription.trim().toUpperCase() === "ERR_ABORTED"
+  );
+}
+
 async function navigateActiveBrowserTab(
   workspaceId: string,
   targetUrl: string,
@@ -3486,6 +3515,9 @@ async function navigateActiveBrowserTab(
     activeTab.state = { ...activeTab.state, error: "" };
     await activeTab.view.webContents.loadURL(targetUrl);
   } catch (error) {
+    if (isAbortedBrowserLoadError(error)) {
+      return browserWorkspaceSnapshot(workspaceId, space);
+    }
     activeTab.state = {
       ...activeTab.state,
       loading: false,
@@ -13726,10 +13758,48 @@ function syncBrowserState(
   void persistBrowserWorkspace(workspaceId);
 }
 
+function normalizeBrowserPopupFrameName(frameName?: string | null): string {
+  const normalized = typeof frameName === "string" ? frameName.trim() : "";
+  return normalized && normalized !== "_blank" ? normalized : "";
+}
+
+function isBrowserPopupWindowRequest(
+  frameName?: string | null,
+  features?: string | null,
+): boolean {
+  if (normalizeBrowserPopupFrameName(frameName)) {
+    return true;
+  }
+  const normalizedFeatures =
+    typeof features === "string" ? features.trim().toLowerCase() : "";
+  return (
+    normalizedFeatures.includes("popup") ||
+    normalizedFeatures.includes("width=") ||
+    normalizedFeatures.includes("height=") ||
+    normalizedFeatures.includes("left=") ||
+    normalizedFeatures.includes("top=")
+  );
+}
+
+function focusBrowserTabInSpace(
+  workspaceId: string,
+  tabSpace: BrowserTabSpaceState,
+  tabId: string,
+  space: BrowserSpaceId,
+) {
+  tabSpace.activeTabId = tabId;
+  if (workspaceId === activeBrowserWorkspaceId && space === activeBrowserSpaceId) {
+    updateAttachedBrowserView();
+  }
+  emitBrowserState(workspaceId, space);
+  void persistBrowserWorkspace(workspaceId);
+}
+
 function handleBrowserWindowOpenAsTab(
   workspaceId: string,
   targetUrl: string,
   disposition: string,
+  frameName: string,
   space: BrowserSpaceId,
 ) {
   const normalizedUrl = targetUrl.trim();
@@ -13747,25 +13817,62 @@ function handleBrowserWindowOpenAsTab(
     return;
   }
 
-  const nextTabId = createBrowserTab(workspaceId, {
-    url: normalizedUrl,
-    browserSpace: space,
-  });
-  if (!nextTabId) {
-    return;
-  }
-
   const workspace = browserWorkspaceFromMap(workspaceId);
   const tabSpace = browserTabSpaceState(workspace, space);
   if (!workspace || !tabSpace) {
     return;
   }
 
-  if (disposition !== "background-tab") {
-    tabSpace.activeTabId = nextTabId;
-    if (workspaceId === activeBrowserWorkspaceId && space === activeBrowserSpaceId) {
-      updateAttachedBrowserView();
+  const normalizedFrameName = normalizeBrowserPopupFrameName(frameName);
+  const now = Date.now();
+  const existingPopupTab = Array.from(tabSpace.tabs.entries()).find(
+    ([, tab]) =>
+      (normalizedFrameName && tab.popupFrameName === normalizedFrameName) ||
+      (!normalizedFrameName &&
+        tab.state.url === normalizedUrl &&
+        typeof tab.popupOpenedAtMs === "number" &&
+        now - tab.popupOpenedAtMs <= DUPLICATE_BROWSER_POPUP_TAB_WINDOW_MS),
+  );
+
+  if (existingPopupTab) {
+    const [existingTabId, existingTab] = existingPopupTab;
+    existingTab.popupFrameName =
+      normalizedFrameName || existingTab.popupFrameName;
+    existingTab.popupOpenedAtMs = now;
+    if (existingTab.state.url !== normalizedUrl) {
+      existingTab.state = { ...existingTab.state, error: "" };
+      void existingTab.view.webContents.loadURL(normalizedUrl).catch((error) => {
+        if (isAbortedBrowserLoadError(error)) {
+          return;
+        }
+        existingTab.state = {
+          ...existingTab.state,
+          loading: false,
+          error: error instanceof Error ? error.message : "Failed to load URL.",
+        };
+        emitBrowserState(workspaceId, space);
+        void persistBrowserWorkspace(workspaceId);
+      });
     }
+    if (disposition !== "background-tab") {
+      focusBrowserTabInSpace(workspaceId, tabSpace, existingTabId, space);
+    }
+    return;
+  }
+
+  const nextTabId = createBrowserTab(workspaceId, {
+    url: normalizedUrl,
+    browserSpace: space,
+    popupFrameName: normalizedFrameName,
+    popupOpenedAtMs: now,
+  });
+  if (!nextTabId) {
+    return;
+  }
+
+  if (disposition !== "background-tab") {
+    focusBrowserTabInSpace(workspaceId, tabSpace, nextTabId, space);
+    return;
   }
 
   emitBrowserState(workspaceId, space);
@@ -13861,6 +13968,7 @@ function showBrowserViewContextMenu(params: {
             workspaceId,
             linkUrl,
             "foreground-tab",
+            "",
             space,
           ),
       },
@@ -13889,6 +13997,7 @@ function showBrowserViewContextMenu(params: {
             workspaceId,
             imageUrl,
             "foreground-tab",
+            "",
             space,
           ),
       },
@@ -13981,6 +14090,8 @@ function createBrowserTab(
     url?: string;
     title?: string;
     faviconUrl?: string;
+    popupFrameName?: string;
+    popupOpenedAtMs?: number;
     skipInitialHistoryRecord?: boolean;
   } = {},
 ) {
@@ -14013,7 +14124,13 @@ function createBrowserTab(
     faviconUrl: options.faviconUrl,
     initialized: !hasInitialUrl,
   });
-  tabSpace.tabs.set(tabId, { view, state });
+  tabSpace.tabs.set(tabId, {
+    view,
+    state,
+    popupFrameName: options.popupFrameName?.trim() || undefined,
+    popupOpenedAtMs:
+      typeof options.popupOpenedAtMs === "number" ? options.popupOpenedAtMs : undefined,
+  });
 
   view.setBounds(browserBounds);
   view.setAutoResize({
@@ -14022,7 +14139,8 @@ function createBrowserTab(
     horizontal: false,
     vertical: false,
   });
-  view.webContents.setWindowOpenHandler(({ url, disposition }) => {
+  view.webContents.setWindowOpenHandler(
+    ({ url, disposition, frameName, features }) => {
     const normalizedUrl = url.trim();
     if (!normalizedUrl) {
       return { action: "deny" };
@@ -14038,6 +14156,24 @@ function createBrowserTab(
       return { action: "deny" };
     }
 
+    if (isBrowserPopupWindowRequest(frameName, features)) {
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: {
+          parent: mainWindow ?? undefined,
+          autoHideMenuBar: true,
+          backgroundColor: "#050907",
+          width: 520,
+          height: 760,
+          minWidth: 420,
+          minHeight: 620,
+          webPreferences: {
+            preload: path.join(__dirname, "browserPopupPreload.cjs"),
+          },
+        },
+      };
+    }
+
     const shouldOpenAsTab =
       disposition === "foreground-tab" ||
       disposition === "background-tab" ||
@@ -14047,11 +14183,13 @@ function createBrowserTab(
         workspaceId,
         normalizedUrl,
         disposition,
+        frameName,
         browserSpace,
       );
     }
     return { action: "deny" };
-  });
+    },
+  );
   view.webContents.setZoomFactor(1);
   view.webContents.setVisualZoomLevelLimits(1, 1).catch(() => undefined);
 
@@ -14140,7 +14278,10 @@ function createBrowserTab(
   view.webContents.on(
     "did-fail-load",
     (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      if (!isMainFrame) {
+      if (
+        !isMainFrame ||
+        isAbortedBrowserLoadFailure(errorCode, errorDescription)
+      ) {
         return;
       }
       const currentTab = browserTabSpaceState(
@@ -14163,6 +14304,9 @@ function createBrowserTab(
 
   if (hasInitialUrl) {
     void view.webContents.loadURL(initialUrl).catch((error) => {
+      if (isAbortedBrowserLoadError(error)) {
+        return;
+      }
       const currentTab = browserTabSpaceState(
         browserWorkspaceFromMap(workspaceId),
         browserSpace,
@@ -16748,6 +16892,14 @@ app.whenReady().then(async () => {
     getActiveBrowserTab(undefined, activeBrowserSpaceId)?.view.webContents.reload();
     return browserWorkspaceSnapshot(undefined, activeBrowserSpaceId);
   });
+  ipcMain.handle("browser:stopLoading", async () => {
+    await ensureBrowserWorkspace(undefined, activeBrowserSpaceId);
+    const activeTab = getActiveBrowserTab(undefined, activeBrowserSpaceId);
+    if (activeTab?.view.webContents.isLoadingMainFrame()) {
+      activeTab.view.webContents.stop();
+    }
+    return browserWorkspaceSnapshot(undefined, activeBrowserSpaceId);
+  });
   ipcMain.handle("browser:newTab", async (_event, targetUrl?: string) => {
     const workspace = await ensureBrowserWorkspace(
       undefined,
@@ -16915,6 +17067,9 @@ app.whenReady().then(async () => {
         activeTab.state = { ...activeTab.state, error: "" };
         await activeTab.view.webContents.loadURL(targetUrl);
       } catch (error) {
+        if (isAbortedBrowserLoadError(error)) {
+          return browserWorkspaceSnapshot(workspace.workspaceId, activeBrowserSpaceId);
+        }
         activeTab.state = {
           ...activeTab.state,
           loading: false,

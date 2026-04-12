@@ -117,6 +117,7 @@ export function BrowserPane({
   );
   const isCompactPane = paneWidth > 0 && paneWidth <= 320;
   const isNarrowPane = paneWidth > 0 && paneWidth <= 240;
+  const isActiveTabBusy = activeTab.loading || !activeTab.initialized;
   const showBookmarkStrip = bookmarks.length > 0 && !isCompactPane;
   const visibleBrowserSpace = browserState.space || DEFAULT_BROWSER_SPACE;
   const alternateBrowserSpace =
@@ -312,6 +313,11 @@ export function BrowserPane({
     const nextUrl = normalizeUrl(rawInput);
     setInputValue(nextUrl);
     void window.electronAPI.browser.navigate(nextUrl);
+  };
+
+  const selectAddressInput = () => {
+    addressInputRef.current?.focus();
+    addressInputRef.current?.select();
   };
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -546,9 +552,6 @@ export function BrowserPane({
                         {tab.title || "New Tab"}
                       </span>
                     ) : null}
-                    {tab.loading ? (
-                      <Loader2 size={11} className="shrink-0 animate-spin" />
-                    ) : null}
                   </button>
                   <Button
                     variant="ghost"
@@ -603,11 +606,22 @@ export function BrowserPane({
                 <Button
                   variant="ghost"
                   size="icon-sm"
-                  aria-label="Refresh"
-                  onClick={() => void window.electronAPI.browser.reload()}
-                  disabled={!activeTab.initialized}
+                  aria-label={activeTab.loading ? "Stop loading" : "Refresh"}
+                  onClick={() =>
+                    void (
+                      activeTab.loading
+                        ? window.electronAPI.browser.stopLoading()
+                        : window.electronAPI.browser.reload()
+                    )
+                  }
+                  disabled={!activeTab.initialized && !activeTab.loading}
+                  title={activeTab.loading ? "Stop loading" : "Refresh"}
                 >
-                  <RefreshCcw size={13} />
+                  {activeTab.loading ? (
+                    <X size={13} />
+                  ) : (
+                    <RefreshCcw size={13} />
+                  )}
                 </Button>
                 <Button
                   type="button"
@@ -667,9 +681,25 @@ export function BrowserPane({
               <div
                 ref={addressFieldRef}
                 className="relative flex min-w-0 flex-1"
+                onClick={(event) => {
+                  if (
+                    event.target instanceof HTMLElement &&
+                    event.target.closest("button")
+                  ) {
+                    return;
+                  }
+                  selectAddressInput();
+                }}
               >
                 <div className="border border-border bg-muted/50 transition-colors focus-within:border-ring flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2.5 py-1.5">
-                  <Globe size={12} className="shrink-0 text-primary/85" />
+                  {isActiveTabBusy ? (
+                    <Loader2
+                      size={12}
+                      className="shrink-0 animate-spin text-primary/85"
+                    />
+                  ) : (
+                    <Globe size={12} className="shrink-0 text-primary/85" />
+                  )}
                   <input
                     ref={addressInputRef}
                     value={inputValue}
@@ -678,6 +708,7 @@ export function BrowserPane({
                       event.currentTarget.select();
                       setAddressFocused(true);
                     }}
+                    onClick={(event) => event.currentTarget.select()}
                     onBlur={() =>
                       window.setTimeout(() => setAddressFocused(false), 120)
                     }
@@ -756,30 +787,12 @@ export function BrowserPane({
             {!activeTab.initialized ? (
               <div className="absolute inset-0 grid place-items-center bg-card p-6 text-center">
                 <div className="pointer-events-none w-full max-w-[320px] rounded-[24px] border border-border/55 bg-card px-5 py-5 shadow-xl backdrop-blur">
-                  <div className="mx-auto flex size-12 items-center justify-center rounded-[18px] border border-primary/25 bg-primary/8 text-primary">
-                    <Loader2 size={18} className="animate-spin" />
-                  </div>
                   <div className="mt-4 text-[15px] font-medium tracking-[-0.02em] text-foreground">
                     Starting {visibleBrowserSpace === "agent" ? "agent" : "user"} browser
                   </div>
                   <div className="mt-1.5 text-[12px] leading-6 text-muted-foreground">
                     Opening the embedded {visibleBrowserSpace === "agent" ? "agent" : "user"} browser for this workspace.
                   </div>
-                  <div className="bg-muted mt-4 overflow-hidden rounded-full border border-border/40 p-1">
-                    <div className="h-1.5 rounded-full bg-primary/60 animate-pulse" />
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            {activeTab.initialized && activeTab.loading ? (
-              <div className="pointer-events-none absolute inset-x-3 top-3 z-10">
-                <div className="inline-flex items-center gap-2 rounded-lg border border-border/50 bg-card px-3 py-1.5 text-xs text-muted-foreground shadow-lg backdrop-blur">
-                  <Loader2
-                    size={12}
-                    className="animate-spin text-primary"
-                  />
-                  <span>Loading page</span>
                 </div>
               </div>
             ) : null}
