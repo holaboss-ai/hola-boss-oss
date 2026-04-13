@@ -1,16 +1,17 @@
+import "dotenv/config";
 import * as Sentry from "@sentry/electron/main";
+
+console.log("[Sentry Debug] DSN:", process.env.SENTRY_DSN || "<empty>");
 
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
   enabled: !!process.env.SENTRY_DSN,
-  environment: process.env.HOLABOSS_INTERNAL_DEV ? "development" : "production",
 });
 
 import { electronClient } from "@better-auth/electron/client";
 import { storage as electronAuthStorage } from "@better-auth/electron/storage";
 import { createAuthClient } from "better-auth/client";
 import Database from "better-sqlite3";
-import "dotenv/config";
 import {
   autoUpdater,
   type ProgressInfo,
@@ -61,6 +62,17 @@ import { URL } from "node:url";
 import ExcelJS from "exceljs";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+import {
+  createMarketplaceSubmission as sdkCreateMarketplaceSubmission,
+  deleteMarketplaceSubmission as sdkDeleteMarketplaceSubmission,
+  finalizeMarketplaceSubmission as sdkFinalizeMarketplaceSubmission,
+  generateMarketplaceTemplateContent as sdkGenerateMarketplaceTemplateContent,
+  listMarketplaceAppTemplates as sdkListMarketplaceAppTemplates,
+  listMarketplaceSubmissions as sdkListMarketplaceSubmissions,
+  listMarketplaceTemplates as sdkListMarketplaceTemplates,
+  materializeMarketplaceTemplate as sdkMaterializeMarketplaceTemplate,
+} from "@holaboss/app-sdk/core";
+import { buildAppSdkClient } from "./appSdkClient.js";
 import { ensureWorkspaceGitRepo } from "./workspace-git.js";
 
 const APP_DISPLAY_NAME = "Holaboss";
@@ -120,7 +132,10 @@ const RUNTIME_DEPRECATED_MODEL_IDS = new Set([
   "gpt-5.1-codex-mini",
   "gpt-5.1-codex-max",
 ]);
-const RUNTIME_LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<string, Record<string, string>> = {
+const RUNTIME_LEGACY_DIRECT_PROVIDER_MODEL_ALIASES: Record<
+  string,
+  Record<string, string>
+> = {
   anthropic_direct: {
     "claude-sonnet-4-5": "claude-sonnet-4-6",
   },
@@ -644,13 +659,19 @@ function runtimePlatformFromProcessPlatform(
 }
 
 function runtimeBundleDirName(
-  runtimePlatform: "macos" | "linux" | "windows" = runtimePlatformFromProcessPlatform(),
+  runtimePlatform:
+    | "macos"
+    | "linux"
+    | "windows" = runtimePlatformFromProcessPlatform(),
 ): string {
   return `runtime-${runtimePlatform}`;
 }
 
 function runtimeBundleExecutableRelativePaths(
-  runtimePlatform: "macos" | "linux" | "windows" = runtimePlatformFromProcessPlatform(),
+  runtimePlatform:
+    | "macos"
+    | "linux"
+    | "windows" = runtimePlatformFromProcessPlatform(),
 ): string[] {
   const base = path.join("bin", "sandbox-runtime");
   return runtimePlatform === "windows"
@@ -659,7 +680,10 @@ function runtimeBundleExecutableRelativePaths(
 }
 
 function runtimeBundleNodeRelativePaths(
-  runtimePlatform: "macos" | "linux" | "windows" = runtimePlatformFromProcessPlatform(),
+  runtimePlatform:
+    | "macos"
+    | "linux"
+    | "windows" = runtimePlatformFromProcessPlatform(),
 ): string[] {
   const base = path.join("node-runtime", "node_modules", ".bin", "node");
   const packagedBin =
@@ -667,17 +691,15 @@ function runtimeBundleNodeRelativePaths(
       ? path.join("node-runtime", "bin", "node.exe")
       : path.join("node-runtime", "node_modules", "node", "bin", "node");
   return runtimePlatform === "windows"
-    ? [
-        packagedBin,
-        `${base}.exe`,
-        `${base}.cmd`,
-        base,
-      ]
+    ? [packagedBin, `${base}.exe`, `${base}.cmd`, base]
     : [packagedBin, base];
 }
 
 function runtimeBundleNpmRelativePaths(
-  runtimePlatform: "macos" | "linux" | "windows" = runtimePlatformFromProcessPlatform(),
+  runtimePlatform:
+    | "macos"
+    | "linux"
+    | "windows" = runtimePlatformFromProcessPlatform(),
 ): string[] {
   const base = path.join("node-runtime", "node_modules", ".bin", "npm");
   return runtimePlatform === "windows"
@@ -687,12 +709,18 @@ function runtimeBundleNpmRelativePaths(
         `${base}.cmd`,
         base,
         path.join("node-runtime", "node_modules", "npm", "bin", "npm-cli.js"),
-    ]
-    : [base, path.join("node-runtime", "node_modules", "npm", "bin", "npm-cli.js")];
+      ]
+    : [
+        base,
+        path.join("node-runtime", "node_modules", "npm", "bin", "npm-cli.js"),
+      ];
 }
 
 function runtimeBundlePythonRelativePaths(
-  runtimePlatform: "macos" | "linux" | "windows" = runtimePlatformFromProcessPlatform(),
+  runtimePlatform:
+    | "macos"
+    | "linux"
+    | "windows" = runtimePlatformFromProcessPlatform(),
 ): string[] {
   const base = path.join("python-runtime", "bin", "python");
   return runtimePlatform === "windows"
@@ -1167,9 +1195,7 @@ function configureAutoUpdater() {
       dismissedVersion: dismissedAppUpdateVersion(),
       lastCheckedAt: nextAppUpdateTimestamp(),
       error:
-        error instanceof Error
-          ? error.message
-          : "Failed to check for updates.",
+        error instanceof Error ? error.message : "Failed to check for updates.",
     };
     emitAppUpdateState();
   });
@@ -2619,7 +2645,9 @@ function setRequestHeaderValue(
   return headers;
 }
 
-function configureBrowserWorkspaceSession(session: Session): BrowserSessionIdentity {
+function configureBrowserWorkspaceSession(
+  session: Session,
+): BrowserSessionIdentity {
   const browserIdentity = browserNativeIdentity(session);
   session.setUserAgent(
     browserIdentity.userAgent,
@@ -3318,7 +3346,9 @@ async function readRuntimeConfigDocument(): Promise<Record<string, unknown>> {
   }
 }
 
-async function writeRuntimeConfigTextAtomically(nextText: string): Promise<void> {
+async function writeRuntimeConfigTextAtomically(
+  nextText: string,
+): Promise<void> {
   const configPath = runtimeConfigPath();
   await fs.mkdir(path.dirname(configPath), { recursive: true });
   const tempPath = `${configPath}.${process.pid}.${Date.now()}.tmp`;
@@ -3579,7 +3609,10 @@ async function handleDesktopBrowserServiceRequest(
           ? payload.url.trim()
           : HOME_URL;
       const background = payload.background === true;
-      const workspace = await ensureBrowserWorkspace(targetWorkspaceId, "agent");
+      const workspace = await ensureBrowserWorkspace(
+        targetWorkspaceId,
+        "agent",
+      );
       const tabSpace = browserTabSpaceState(workspace, "agent");
       if (!workspace) {
         writeBrowserServiceJson(response, 409, {
@@ -3837,8 +3870,12 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
     const currentDocument = await readRuntimeConfigDocument();
     const runtimePayload = runtimeConfigObject(currentDocument.runtime);
     const providersPayload = runtimeConfigObject(currentDocument.providers);
-    const integrationsPayload = runtimeConfigObject(currentDocument.integrations);
-    const holabossIntegration = runtimeConfigObject(integrationsPayload.holaboss);
+    const integrationsPayload = runtimeConfigObject(
+      currentDocument.integrations,
+    );
+    const holabossIntegration = runtimeConfigObject(
+      integrationsPayload.holaboss,
+    );
     const holabossProvider = runtimeConfigObject(
       providersPayload[RUNTIME_HOLABOSS_PROVIDER_ID],
     );
@@ -3867,12 +3904,12 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
     }
 
     const modelProxyApiKey = runtimeModelProxyApiKeyFromConfig(next);
-    const managedDefaultBackgroundModel = normalizeRuntimeHolabossCatalogDefaultModelId(
-      update.defaultBackgroundModel,
-    );
-    const managedDefaultImageModel = normalizeRuntimeHolabossCatalogDefaultModelId(
-      update.defaultImageModel,
-    );
+    const managedDefaultBackgroundModel =
+      normalizeRuntimeHolabossCatalogDefaultModelId(
+        update.defaultBackgroundModel,
+      );
+    const managedDefaultImageModel =
+      normalizeRuntimeHolabossCatalogDefaultModelId(update.defaultImageModel);
     if (modelProxyApiKey) {
       next.auth_token = modelProxyApiKey;
       next.model_proxy_api_key = modelProxyApiKey;
@@ -3937,10 +3974,9 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
       managedDefaultBackgroundModel &&
       runtimeModelProxyApiKeyFromConfig(next) &&
       runtimeConfigField(next.model_proxy_base_url) &&
-      (
-        Object.keys(currentBackgroundTasks).length === 0 ||
-        (isHolabossProviderAlias(currentBackgroundProviderId) && !currentBackgroundModel)
-      )
+      (Object.keys(currentBackgroundTasks).length === 0 ||
+        (isHolabossProviderAlias(currentBackgroundProviderId) &&
+          !currentBackgroundModel))
     ) {
       runtimePayload.background_tasks = {
         provider: RUNTIME_HOLABOSS_PROVIDER_ID,
@@ -3953,10 +3989,9 @@ async function writeRuntimeConfigFile(update: RuntimeConfigUpdatePayload) {
       managedDefaultImageModel &&
       runtimeModelProxyApiKeyFromConfig(next) &&
       runtimeConfigField(next.model_proxy_base_url) &&
-      (
-        Object.keys(currentImageGeneration).length === 0 ||
-        (isHolabossProviderAlias(currentImageGenerationProviderId) && !currentImageGenerationModel)
-      )
+      (Object.keys(currentImageGeneration).length === 0 ||
+        (isHolabossProviderAlias(currentImageGenerationProviderId) &&
+          !currentImageGenerationModel))
     ) {
       runtimePayload.image_generation = {
         provider: RUNTIME_HOLABOSS_PROVIDER_ID,
@@ -4236,7 +4271,10 @@ const RUNTIME_MODEL_CAPABILITY_ALIASES: Record<string, string> = {
 };
 
 function normalizeRuntimeModelCapability(value: string): string {
-  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
   if (!normalized) {
     return "";
   }
@@ -4328,7 +4366,9 @@ function normalizeRuntimeProviderModelGroups(
       ),
     });
 
-    const models = Array.isArray(groupPayload.models) ? groupPayload.models : [];
+    const models = Array.isArray(groupPayload.models)
+      ? groupPayload.models
+      : [];
     for (const rawModel of models) {
       const modelPayload = runtimeConfigObject(rawModel);
       const modelId = normalizeRuntimeProviderModelId(
@@ -4481,9 +4521,7 @@ function runtimeProviderModelGroups(
         : {}),
     });
   };
-  const mergeManagedCatalog = (
-    groups: RuntimeProviderModelGroupPayload[],
-  ) => {
+  const mergeManagedCatalog = (groups: RuntimeProviderModelGroupPayload[]) => {
     for (const group of groups) {
       const providerId = canonicalRuntimeProviderId(group.providerId);
       if (!providerId) {
@@ -4616,8 +4654,9 @@ function runtimeModelCatalogPayloadFromResponse(
       ) || null,
     defaultImageModel:
       normalizeRuntimeHolabossCatalogDefaultModelId(
-        runtimeConfigField(payload?.default_image_model as string | undefined) ||
-          "",
+        runtimeConfigField(
+          payload?.default_image_model as string | undefined,
+        ) || "",
       ) || null,
     providerModelGroups: normalizeRuntimeProviderModelGroups(
       Array.isArray(payload?.provider_model_groups)
@@ -4641,7 +4680,9 @@ async function syncRuntimeModelCatalogFromBinding(
     await persistRuntimeModelCatalog(payload);
     return;
   }
-  await refreshRuntimeModelCatalogIfNeeded({ force: true }).catch(() => undefined);
+  await refreshRuntimeModelCatalogIfNeeded({ force: true }).catch(
+    () => undefined,
+  );
 }
 
 async function persistRuntimeModelCatalog(
@@ -5313,6 +5354,30 @@ function requireAuthClient() {
   return desktopAuthClient;
 }
 
+let marketplaceAppSdkClientCache: ReturnType<typeof buildAppSdkClient> | null =
+  null;
+
+function getMarketplaceAppSdkClient() {
+  if (marketplaceAppSdkClientCache) {
+    return marketplaceAppSdkClientCache;
+  }
+  if (!AUTH_BASE_URL) {
+    throw new Error(
+      "Remote backend is not configured. Set HOLABOSS_AUTH_BASE_URL outside the public repo.",
+    );
+  }
+  marketplaceAppSdkClientCache = buildAppSdkClient({
+    baseURL: `${AUTH_BASE_URL.replace(/\/+$/, "")}/api/marketplace`,
+    getCookie: authCookieHeader,
+    // Intentionally do NOT clear the persisted cookie on 401 — the marketplace
+    // BFF may 401 for reasons unrelated to cookie validity (e.g. session
+    // middleware not attaching to OpenAPIHono sub-routes). Clearing the cookie
+    // would destroy a valid session shared with `billingFetch`, which would
+    // then fail too. Treat cookie lifecycle as owned by the auth flow itself.
+  });
+  return marketplaceAppSdkClientCache;
+}
+
 function requireControlPlaneBaseUrl() {
   if (!DESKTOP_CONTROL_PLANE_BASE_URL) {
     throw new Error(
@@ -5587,10 +5652,8 @@ function runtimeBindingNeedsManagedHolabossDefaultsRefresh(
   }
   if (
     runtimeModelCatalogState.providerModelGroups.length > 0 &&
-    (
-      !runtimeModelCatalogState.defaultBackgroundModel ||
-      !runtimeModelCatalogState.defaultImageModel
-    )
+    (!runtimeModelCatalogState.defaultBackgroundModel ||
+      !runtimeModelCatalogState.defaultImageModel)
   ) {
     return true;
   }
@@ -6191,13 +6254,21 @@ async function controlPlaneHeaders(
   _service: "projects" | "marketplace" | "proactive",
   extraHeaders?: Record<string, string>,
 ): Promise<Record<string, string>> {
-  // All services route through the Hono gateway which adds the API key.
-  // No Cookie header — it triggers CORS preflight in Electron's fetch.
-  // User identity is passed via holaboss_user_id in request params/body.
-  return {
+  // All services route through the Hono gateway, which now enforces
+  // `c.get("user")` on every non-public path (see apps/server/src/api/gateway.ts).
+  // We must forward the Better-Auth session cookie so the gateway can resolve
+  // a user. The old comment here claimed Cookie triggers CORS preflight, but
+  // that is only true for renderer-process (browser) fetch — Electron's
+  // main-process fetch is Node's undici, which does not preflight at all.
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...extraHeaders,
   };
+  const cookieHeader = authCookieHeader();
+  if (cookieHeader) {
+    headers.Cookie = cookieHeader;
+  }
+  return headers;
 }
 
 function proactiveBaseUrl() {
@@ -6369,14 +6440,15 @@ async function ingestWorkspaceHeartbeat(params: {
   });
 
   try {
-    const bundledContext = await requestRuntimeJson<ProactiveContextCaptureResponsePayload>({
-      method: "POST",
-      path: "/api/v1/proactive/context/capture",
-      payload: {
-        workspace_id: workspaceId,
-      },
-      retryTransientErrors: true,
-    });
+    const bundledContext =
+      await requestRuntimeJson<ProactiveContextCaptureResponsePayload>({
+        method: "POST",
+        path: "/api/v1/proactive/context/capture",
+        payload: {
+          workspace_id: workspaceId,
+        },
+        retryTransientErrors: true,
+      });
     const results = await requestControlPlaneJson<
       ProactiveIngestItemResultPayload[]
     >({
@@ -6535,30 +6607,15 @@ async function parseLocalTemplateMetadata(
 }
 
 async function listMarketplaceTemplates(): Promise<TemplateListResponsePayload> {
-  // Try unauthenticated fetch first — the templates endpoint is public.
-  const baseUrl = marketplaceBaseUrl();
-  try {
-    const res = await fetch(`${baseUrl}/api/v1/marketplace/templates`, {
-      method: "GET",
-      headers: { "Content-Type": "application/json" },
-    });
-    if (res.ok) {
-      return (await res.json()) as TemplateListResponsePayload;
-    }
-  } catch {
-    // Fall through to authenticated path.
-  }
-
-  // Fallback: authenticated path (e.g. if public access is disabled).
-  await ensureRuntimeBindingReadyForWorkspaceFlow("marketplace_templates", {
-    allowProvisionWhenUnmanaged: true,
-    waitForStartupSync: true,
-  });
-  return requestControlPlaneJson<TemplateListResponsePayload>({
-    service: "marketplace",
-    method: "GET",
-    path: "/api/v1/marketplace/templates",
-  });
+  // Uses @holaboss/app-sdk against Hono's native /api/marketplace/templates
+  // route. The endpoint is publicly readable, so the Cookie header is
+  // forwarded when a session exists but the call still works anonymously.
+  const client = getMarketplaceAppSdkClient();
+  const data = await sdkListMarketplaceTemplates({ client });
+  return {
+    templates: data.templates as TemplateMetadataPayload[],
+    spotlight: (data.spotlight ?? []) as SpotlightItemPayload[],
+  };
 }
 
 interface AppTemplateListResponsePayload {
@@ -6566,27 +6623,14 @@ interface AppTemplateListResponsePayload {
 }
 
 async function listAppTemplatesViaControlPlane(): Promise<AppTemplateListResponsePayload> {
-  const baseUrl = marketplaceBaseUrl();
-  try {
-    const res = await fetch(`${baseUrl}/api/v1/marketplace/app-templates`, {
-      method: "GET",
-      headers: { "Content-Type": "application/json" },
-    });
-    if (res.ok) {
-      return (await res.json()) as AppTemplateListResponsePayload;
-    }
-  } catch {
-    // Fall through to authenticated path.
-  }
-  await ensureRuntimeBindingReadyForWorkspaceFlow("marketplace_app_templates", {
-    allowProvisionWhenUnmanaged: true,
-    waitForStartupSync: true,
-  });
-  return requestControlPlaneJson<AppTemplateListResponsePayload>({
-    service: "marketplace",
-    method: "GET",
-    path: "/api/v1/marketplace/app-templates",
-  });
+  // Uses @holaboss/app-sdk against Hono's /api/marketplace/app-templates
+  // route. Publicly readable, so the Cookie header is forwarded when a
+  // session exists but the call still works anonymously.
+  const client = getMarketplaceAppSdkClient();
+  const data = await sdkListMarketplaceAppTemplates({ client });
+  return {
+    templates: data.templates as AppTemplateMetadataPayload[],
+  };
 }
 
 async function downloadAppArchive(url: string, appId: string): Promise<string> {
@@ -6871,9 +6915,7 @@ async function getProactiveStatus(
       lifecycleState = proposalCount > 0 ? "analyzing" : "idle";
       lifecycleSummary = proposalCount > 0 ? "Analyzing." : "Idle.";
       lifecycleDetail =
-        proposalCount > 0
-          ? "Looking for useful suggestions."
-          : bridge.detail;
+        proposalCount > 0 ? "Looking for useful suggestions." : bridge.detail;
     } else {
       lifecycleState = "unavailable";
       lifecycleSummary = "Unavailable.";
@@ -6979,15 +7021,16 @@ async function listNotifications(
     includeDismissed,
   );
   try {
-    const response = await requestRuntimeJson<RuntimeNotificationListResponsePayload>({
-      method: "GET",
-      path: "/api/v1/notifications",
-      params: {
-        workspace_id: workspaceId ?? undefined,
-        include_dismissed: includeDismissed,
-        limit: 50,
-      },
-    });
+    const response =
+      await requestRuntimeJson<RuntimeNotificationListResponsePayload>({
+        method: "GET",
+        path: "/api/v1/notifications",
+        params: {
+          workspace_id: workspaceId ?? undefined,
+          include_dismissed: includeDismissed,
+          limit: 50,
+        },
+      });
     runtimeNotificationListCache.set(cacheKey, response);
     return response;
   } catch (error) {
@@ -7521,7 +7564,10 @@ async function getProactiveTaskProposalPreference(): Promise<ProactiveTaskPropos
     if (!isExpectedUnavailable) {
       throw error;
     }
-    if (message.includes("Service not found") || message.includes("fetch failed")) {
+    if (
+      message.includes("Service not found") ||
+      message.includes("fetch failed")
+    ) {
       console.warn("[proactive] preference fetch unavailable:", message);
     }
     const runtimeConfig = await readRuntimeConfigFile();
@@ -7595,9 +7641,10 @@ async function listLocalProactiveHeartbeatWorkspaces(): Promise<
     .filter((workspace) => Boolean(workspace.workspace_id));
 }
 
-async function syncCurrentProactiveHeartbeatWorkspaces(
-  scope: { holabossUserId: string; sandboxId: string },
-): Promise<ProactiveHeartbeatConfigPayload> {
+async function syncCurrentProactiveHeartbeatWorkspaces(scope: {
+  holabossUserId: string;
+  sandboxId: string;
+}): Promise<ProactiveHeartbeatConfigPayload> {
   try {
     const workspaces = await listLocalProactiveHeartbeatWorkspaces();
     const response =
@@ -7615,7 +7662,10 @@ async function syncCurrentProactiveHeartbeatWorkspaces(
     return normalizeProactiveHeartbeatConfig(response);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("Service not found") || message.includes("fetch failed")) {
+    if (
+      message.includes("Service not found") ||
+      message.includes("fetch failed")
+    ) {
       throw new Error(
         "Proactive service is not reachable. Check your network or backend configuration.",
       );
@@ -7678,7 +7728,10 @@ async function setProactiveHeartbeatConfig(
     return normalizeProactiveHeartbeatConfig(response);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("Service not found") || message.includes("fetch failed")) {
+    if (
+      message.includes("Service not found") ||
+      message.includes("fetch failed")
+    ) {
       throw new Error(
         "Proactive service is not reachable. Check your network or backend configuration.",
       );
@@ -7713,7 +7766,10 @@ async function setProactiveHeartbeatWorkspaceEnabled(
     return normalizeProactiveHeartbeatConfig(response);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("Service not found") || message.includes("fetch failed")) {
+    if (
+      message.includes("Service not found") ||
+      message.includes("fetch failed")
+    ) {
       throw new Error(
         "Proactive service is not reachable. Check your network or backend configuration.",
       );
@@ -7846,7 +7902,10 @@ function resolveLocalModulesRoot() {
   return null;
 }
 
-function resolveLocalArchiveTarget(): "darwin-arm64" | "linux-x64" | "win32-x64" {
+function resolveLocalArchiveTarget():
+  | "darwin-arm64"
+  | "linux-x64"
+  | "win32-x64" {
   const { platform, arch } = process;
   if (platform === "darwin" && arch === "arm64") return "darwin-arm64";
   if (platform === "linux" && arch === "x64") return "linux-x64";
@@ -8378,19 +8437,9 @@ async function materializeMarketplaceTemplate(payload: {
   template_ref?: string | null;
   template_commit?: string | null;
 }): Promise<MaterializeTemplateResponsePayload> {
-  await ensureRuntimeBindingReadyForWorkspaceFlow(
-    "marketplace_template_materialize",
-    {
-      allowProvisionWhenUnmanaged: true,
-      waitForStartupSync: true,
-    },
-  );
-  return requestControlPlaneJson<MaterializeTemplateResponsePayload>({
-    service: "marketplace",
-    method: "POST",
-    path: "/api/v1/marketplace/templates/materialize",
-    payload,
-  });
+  const client = getMarketplaceAppSdkClient();
+  const data = await sdkMaterializeMarketplaceTemplate(payload, { client });
+  return data as MaterializeTemplateResponsePayload;
 }
 
 async function pickTemplateFolder(): Promise<TemplateFolderSelectionPayload> {
@@ -9126,13 +9175,16 @@ async function listWorkspacesViaRuntime(): Promise<WorkspaceListResponsePayload>
   });
 }
 
-const STATIC_APP_CATALOG: Record<string, {
-  name: string;
-  description: string | null;
-  icon: string | null;
-  category: string | null;
-  tags: string[];
-}> = {
+const STATIC_APP_CATALOG: Record<
+  string,
+  {
+    name: string;
+    description: string | null;
+    icon: string | null;
+    category: string | null;
+    tags: string[];
+  }
+> = {
   twitter: {
     name: "Twitter / X",
     description: "Short-form post drafting and thread editing.",
@@ -9220,7 +9272,10 @@ async function syncAppCatalog(params: {
         description: tmpl.description ?? meta.description,
         icon: tmpl.icon ?? meta.icon,
         category: tmpl.category ?? meta.category,
-        tags: Array.isArray(tmpl.tags) && tmpl.tags.length > 0 ? tmpl.tags : meta.tags,
+        tags:
+          Array.isArray(tmpl.tags) && tmpl.tags.length > 0
+            ? tmpl.tags
+            : meta.tags,
         version: tmpl.version ?? null,
         archive_url: matching.url,
         archive_path: null,
@@ -9263,14 +9318,18 @@ async function installAppFromCatalog(params: {
   const listing = await listAppCatalog({ source: params.source });
   const entry = listing.entries.find((e) => e.app_id === params.appId);
   if (!entry) {
-    throw new Error(`App '${params.appId}' not found in ${params.source} catalog`);
+    throw new Error(
+      `App '${params.appId}' not found in ${params.source} catalog`,
+    );
   }
 
   let archivePath: string;
   let cleanupTempFile = false;
   if (params.source === "marketplace") {
     if (!entry.archive_url) {
-      throw new Error(`Catalog entry for '${params.appId}' is missing archive_url`);
+      throw new Error(
+        `Catalog entry for '${params.appId}' is missing archive_url`,
+      );
     }
     mainWindow?.webContents.send("app-install-progress", {
       appId: params.appId,
@@ -9282,7 +9341,9 @@ async function installAppFromCatalog(params: {
     cleanupTempFile = true;
   } else {
     if (!entry.archive_path) {
-      throw new Error(`Catalog entry for '${params.appId}' is missing archive_path`);
+      throw new Error(
+        `Catalog entry for '${params.appId}' is missing archive_path`,
+      );
     }
     archivePath = entry.archive_path;
   }
@@ -11167,7 +11228,10 @@ async function startEmbeddedRuntime() {
       return refreshRuntimeStatus();
     }
 
-    const launchSpec = await resolveRuntimeLaunchSpec(runtimeRoot, executablePath);
+    const launchSpec = await resolveRuntimeLaunchSpec(
+      runtimeRoot,
+      executablePath,
+    );
     if (!launchSpec) {
       const launchError = `Runtime bundle is incomplete. Missing ${runtimeBundleNodeRelativePaths(CURRENT_RUNTIME_PLATFORM).join(" or ")} under ${runtimeRoot}. Rebuild or restage ${RUNTIME_BUNDLE_DIR}.`;
       runtimeStatus = withDesktopBrowserStatus({
@@ -11821,7 +11885,9 @@ function normalizeWritableTableSheets(
 
       const candidate = sheet as Partial<FilePreviewTableSheetPayload>;
       const columns = Array.isArray(candidate.columns)
-        ? candidate.columns.map((column) => normalizeWritableTableString(column))
+        ? candidate.columns.map((column) =>
+            normalizeWritableTableString(column),
+          )
         : [];
       const rows = Array.isArray(candidate.rows)
         ? candidate.rows.map((row) =>
@@ -11838,7 +11904,8 @@ function normalizeWritableTableSheets(
       return {
         name: normalizedName,
         index:
-          typeof candidate.index === "number" && Number.isFinite(candidate.index)
+          typeof candidate.index === "number" &&
+          Number.isFinite(candidate.index)
             ? candidate.index
             : sheetIndex,
         columns,
@@ -11857,16 +11924,16 @@ function normalizeWritableTableSheets(
         hasHeaderRow: candidate.hasHeaderRow !== false,
       } satisfies FilePreviewTableSheetPayload;
     })
-    .filter(
-      (sheet): sheet is FilePreviewTableSheetPayload => sheet !== null,
-    );
+    .filter((sheet): sheet is FilePreviewTableSheetPayload => sheet !== null);
 }
 
 function sourceRowsFromTablePreviewSheet(
   sheet: FilePreviewTableSheetPayload,
 ): string[][] {
   const visibleColumnCount = Math.max(sheet.columns.length, 1);
-  const sourceRows = sheet.hasHeaderRow ? [sheet.columns, ...sheet.rows] : sheet.rows;
+  const sourceRows = sheet.hasHeaderRow
+    ? [sheet.columns, ...sheet.rows]
+    : sheet.rows;
   return sourceRows.map((row) =>
     Array.from(
       { length: visibleColumnCount },
@@ -11956,14 +12023,17 @@ async function buildCsvPreviewSheets(
   buffer: Buffer,
 ): Promise<FilePreviewTableSheetPayload[]> {
   const workbook = new ExcelJS.Workbook();
-  const worksheet = await workbook.csv.read(Readable.from([buffer.toString("utf8")]), {
-    parserOptions: {
-      delimiter: ",",
-      quote: '"',
-      escape: '"',
-      trim: false,
+  const worksheet = await workbook.csv.read(
+    Readable.from([buffer.toString("utf8")]),
+    {
+      parserOptions: {
+        delimiter: ",",
+        quote: '"',
+        escape: '"',
+        trim: false,
+      },
     },
-  });
+  );
 
   return [
     tablePreviewSheetFromRows(
@@ -12163,7 +12233,9 @@ async function writeTableFile(
 
   const normalizedTableSheets = normalizeWritableTableSheets(tableSheets);
   if (normalizedTableSheets.length === 0) {
-    throw new Error("Spreadsheet preview did not include any editable sheet data.");
+    throw new Error(
+      "Spreadsheet preview did not include any editable sheet data.",
+    );
   }
   if (normalizedTableSheets.some((sheet) => sheet.truncated)) {
     throw new Error("Spreadsheet is too large to edit inline.");
@@ -12316,7 +12388,10 @@ async function rewriteExplorerBookmarksAfterPathChange(
       return bookmark;
     }
 
-    const relativePath = path.relative(previousAbsolutePath, bookmark.targetPath);
+    const relativePath = path.relative(
+      previousAbsolutePath,
+      bookmark.targetPath,
+    );
     const rewrittenTargetPath = relativePath
       ? path.join(nextAbsolutePath, relativePath)
       : nextAbsolutePath;
@@ -12423,10 +12498,8 @@ async function renameExplorerPath(
     throw new Error("Name must not contain path separators.");
   }
 
-  const { absolutePath, workspaceRoot } = await resolveWorkspaceScopedExplorerPath(
-    targetPath,
-    workspaceId,
-  );
+  const { absolutePath, workspaceRoot } =
+    await resolveWorkspaceScopedExplorerPath(targetPath, workspaceId);
 
   if (
     workspaceRoot &&
@@ -12440,10 +12513,7 @@ async function renameExplorerPath(
     return { absolutePath };
   }
 
-  if (
-    workspaceRoot &&
-    !isPathWithinRoot(workspaceRoot, nextAbsolutePath)
-  ) {
+  if (workspaceRoot && !isPathWithinRoot(workspaceRoot, nextAbsolutePath)) {
     throw new Error("Renamed path escapes workspace root.");
   }
   await ensureExplorerPathDoesNotExist(nextAbsolutePath);
@@ -12464,7 +12534,10 @@ async function moveExplorerPath(
   const { absolutePath: sourceAbsolutePath, workspaceRoot } =
     await resolveWorkspaceScopedExplorerPath(sourcePath, workspaceId);
   const { absolutePath: destinationAbsolutePath } =
-    await resolveWorkspaceScopedExplorerPath(destinationDirectoryPath, workspaceId);
+    await resolveWorkspaceScopedExplorerPath(
+      destinationDirectoryPath,
+      workspaceId,
+    );
 
   if (
     workspaceRoot &&
@@ -12514,10 +12587,8 @@ async function deleteExplorerPath(
   targetPath: string,
   workspaceId?: string | null,
 ): Promise<{ deleted: boolean }> {
-  const { absolutePath, workspaceRoot } = await resolveWorkspaceScopedExplorerPath(
-    targetPath,
-    workspaceId,
-  );
+  const { absolutePath, workspaceRoot } =
+    await resolveWorkspaceScopedExplorerPath(targetPath, workspaceId);
 
   if (
     workspaceRoot &&
@@ -13334,9 +13405,7 @@ function getActiveBrowserTab(
   return tabSpace.tabs.get(tabSpace.activeTabId) ?? null;
 }
 
-function reserveMainWindowClosedListenerBudget(
-  additionalClosedListeners = 0,
-) {
+function reserveMainWindowClosedListenerBudget(additionalClosedListeners = 0) {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
   }
@@ -13489,7 +13558,11 @@ function updateAttachedBrowserView() {
     mainWindow.setBrowserView(activeTab.view);
     attachedBrowserTabView = activeTab.view;
   }
-  applyBoundsToTab(activeBrowserWorkspaceId, activeTab.state.id, activeBrowserSpaceId);
+  applyBoundsToTab(
+    activeBrowserWorkspaceId,
+    activeTab.state.id,
+    activeBrowserSpaceId,
+  );
 }
 
 function syncBrowserState(
@@ -13553,7 +13626,10 @@ function handleBrowserWindowOpenAsTab(
 
   if (disposition !== "background-tab") {
     tabSpace.activeTabId = nextTabId;
-    if (workspaceId === activeBrowserWorkspaceId && space === activeBrowserSpaceId) {
+    if (
+      workspaceId === activeBrowserWorkspaceId &&
+      space === activeBrowserSpaceId
+    ) {
       updateAttachedBrowserView();
     }
   }
@@ -13622,7 +13698,10 @@ function consumeBrowserDownloadOverride(
   if (overrideIndex < 0) {
     return null;
   }
-  const [override] = workspace.pendingDownloadOverrides.splice(overrideIndex, 1);
+  const [override] = workspace.pendingDownloadOverrides.splice(
+    overrideIndex,
+    1,
+  );
   return override ?? null;
 }
 
@@ -14140,12 +14219,11 @@ async function ensureBrowserWorkspace(
       typeof persistedSpaces[persistedSpace] === "object"
         ? persistedSpaces[persistedSpace]
         : null;
-    const persistedTabs =
-      Array.isArray(storedSpace?.tabs)
-        ? storedSpace.tabs
-        : persistedSpace === "user" && Array.isArray(persisted.tabs)
-          ? persisted.tabs
-          : [];
+    const persistedTabs = Array.isArray(storedSpace?.tabs)
+      ? storedSpace.tabs
+      : persistedSpace === "user" && Array.isArray(persisted.tabs)
+        ? persisted.tabs
+        : [];
     for (const persistedTab of persistedTabs) {
       if (!persistedTab || typeof persistedTab !== "object") {
         continue;
@@ -14212,7 +14290,10 @@ async function setActiveBrowserWorkspace(
   return browserWorkspaceSnapshot(normalizedWorkspaceId, browserSpace);
 }
 
-async function setActiveBrowserTab(tabId: string, space?: BrowserSpaceId | null) {
+async function setActiveBrowserTab(
+  tabId: string,
+  space?: BrowserSpaceId | null,
+) {
   const browserSpace = browserSpaceId(space);
   const workspace = await ensureBrowserWorkspace(undefined, browserSpace);
   const tabSpace = browserTabSpaceState(workspace, browserSpace);
@@ -15350,7 +15431,7 @@ function createMainWindow() {
         ? {
             frame: false,
           }
-      : {};
+        : {};
 
   const appIcon = nativeImage.createFromPath(
     app.isPackaged
@@ -16063,11 +16144,8 @@ app.whenReady().then(async () => {
   handleTrustedIpc(
     "workspace:listNotifications",
     ["main"],
-    async (
-      _event,
-      workspaceId?: string | null,
-      includeDismissed?: boolean,
-    ) => listNotifications(workspaceId, includeDismissed),
+    async (_event, workspaceId?: string | null, includeDismissed?: boolean) =>
+      listNotifications(workspaceId, includeDismissed),
   );
   handleTrustedIpc(
     "workspace:updateNotification",
@@ -16360,16 +16438,9 @@ app.whenReady().then(async () => {
       },
     ) => {
       const holabossUserId = await controlPlaneWorkspaceUserId();
-      return requestControlPlaneJson<{
-        submission_id: string;
-        template_id: string;
-        upload_url: string;
-        upload_expires_at: string;
-      }>({
-        service: "marketplace",
-        method: "POST",
-        path: "/api/v1/marketplace/submissions/create",
-        payload: {
+      const client = getMarketplaceAppSdkClient();
+      return await sdkCreateMarketplaceSubmission(
+        {
           workspace_id: payload.workspaceId,
           name: payload.name,
           description: payload.description,
@@ -16380,7 +16451,8 @@ app.whenReady().then(async () => {
           readme_md: payload.readmeMd,
           holaboss_user_id: holabossUserId,
         },
-      });
+        { client },
+      );
     },
   );
   handleTrustedIpc(
@@ -16417,18 +16489,12 @@ app.whenReady().then(async () => {
     ["main"],
     async (_event, submissionId: string) => {
       const holabossUserId = await controlPlaneWorkspaceUserId();
-      return requestControlPlaneJson<{
-        submission_id: string;
-        status: string;
-        template_name: string;
-      }>({
-        service: "marketplace",
-        method: "POST",
-        path: `/api/v1/marketplace/submissions/${encodeURIComponent(submissionId)}/finalize`,
-        payload: {
-          holaboss_user_id: holabossUserId,
-        },
-      });
+      const client = getMarketplaceAppSdkClient();
+      return await sdkFinalizeMarketplaceSubmission(
+        submissionId,
+        { holaboss_user_id: holabossUserId },
+        { client },
+      );
     },
   );
   handleTrustedIpc(
@@ -16445,11 +16511,9 @@ app.whenReady().then(async () => {
         apps: string[];
       },
     ) => {
-      return requestControlPlaneJson<{ content: string }>({
-        service: "marketplace",
-        method: "POST",
-        path: "/api/v1/marketplace/generate-template-content",
-        payload: {
+      const client = getMarketplaceAppSdkClient();
+      return await sdkGenerateMarketplaceTemplateContent(
+        {
           content_type: params.contentType,
           name: params.name,
           description: params.description,
@@ -16457,33 +16521,37 @@ app.whenReady().then(async () => {
           tags: params.tags,
           apps: params.apps,
         },
-      });
+        { client },
+      );
     },
   );
   handleTrustedIpc("workspace:listSubmissions", ["main"], async () => {
     const authorId = await controlPlaneWorkspaceUserId();
-    return requestControlPlaneJson<SubmissionListResponsePayload>({
-      service: "marketplace",
-      method: "GET",
-      path: "/api/v1/marketplace/submissions",
-      params: {
-        author_id: authorId,
-      },
-    });
+    if (!authorId) {
+      throw new Error("Not authenticated — sign in first.");
+    }
+    const client = getMarketplaceAppSdkClient();
+    const data = await sdkListMarketplaceSubmissions(
+      { author_id: authorId },
+      { client },
+    );
+    return data as SubmissionListResponsePayload;
   });
   handleTrustedIpc(
     "workspace:deleteSubmission",
     ["main"],
     async (_event: unknown, params: { submissionId: string }) => {
       const authorId = await controlPlaneWorkspaceUserId();
-      return requestControlPlaneJson<{ deleted: boolean }>({
-        service: "marketplace",
-        method: "DELETE",
-        path: `/api/v1/marketplace/submissions/${params.submissionId}`,
-        params: {
-          author_id: authorId,
-        },
-      });
+      if (!authorId) {
+        throw new Error("Not authenticated — sign in first.");
+      }
+      const client = getMarketplaceAppSdkClient();
+      const data = await sdkDeleteMarketplaceSubmission(
+        params.submissionId,
+        { author_id: authorId },
+        { client },
+      );
+      return data as { deleted: boolean };
     },
   );
   handleTrustedIpc("diagnostics:exportBundle", ["main"], async () =>
@@ -16491,7 +16559,11 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle(
     "browser:setActiveWorkspace",
-    async (_event, workspaceId?: string | null, space?: BrowserSpaceId | null) => {
+    async (
+      _event,
+      workspaceId?: string | null,
+      space?: BrowserSpaceId | null,
+    ) => {
       return setActiveBrowserWorkspace(workspaceId, space);
     },
   );
@@ -16534,7 +16606,10 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("browser:reload", async () => {
     await ensureBrowserWorkspace(undefined, activeBrowserSpaceId);
-    getActiveBrowserTab(undefined, activeBrowserSpaceId)?.view.webContents.reload();
+    getActiveBrowserTab(
+      undefined,
+      activeBrowserSpaceId,
+    )?.view.webContents.reload();
     return browserWorkspaceSnapshot(undefined, activeBrowserSpaceId);
   });
   ipcMain.handle("browser:newTab", async (_event, targetUrl?: string) => {
@@ -16556,7 +16631,10 @@ app.whenReady().then(async () => {
       emitBrowserState(workspace.workspaceId, activeBrowserSpaceId);
       await persistBrowserWorkspace(workspace.workspaceId);
     }
-    return browserWorkspaceSnapshot(workspace.workspaceId, activeBrowserSpaceId);
+    return browserWorkspaceSnapshot(
+      workspace.workspaceId,
+      activeBrowserSpaceId,
+    );
   });
   ipcMain.handle("browser:setActiveTab", async (_event, tabId: string) => {
     await ensureBrowserWorkspace(undefined, activeBrowserSpaceId);
@@ -16712,7 +16790,10 @@ app.whenReady().then(async () => {
         emitBrowserState(workspace.workspaceId, activeBrowserSpaceId);
       }
 
-      return browserWorkspaceSnapshot(workspace.workspaceId, activeBrowserSpaceId);
+      return browserWorkspaceSnapshot(
+        workspace.workspaceId,
+        activeBrowserSpaceId,
+      );
     },
   );
   ipcMain.handle(
