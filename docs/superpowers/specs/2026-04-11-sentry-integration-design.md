@@ -2,7 +2,7 @@
 
 ## Overview
 
-Integrate Sentry error tracking into the hola-boss-oss project across two components: the Electron desktop app and the runtime API server. No performance tracing — error tracking only.
+Integrate Sentry error tracking into the holaOS project across two components: the Electron desktop app and the runtime API server. No performance tracing — error tracking only.
 
 ## Architecture
 

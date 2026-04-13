@@ -22,7 +22,7 @@
 
 ### In scope
 - `hola-boss-apps`: each module's `app.runtime.yaml` declares `mcp.tools` statically
-- Runtime (`hola-boss-oss/runtime/api-server`): `install-archive` accepts `archive_url`; post-extract, MCP registry entries are written to `workspace.yaml` from the parsed `mcp.tools` list
+- Runtime (`holaOS/runtime/api-server`): `install-archive` accepts `archive_url`; post-extract, MCP registry entries are written to `workspace.yaml` from the parsed `mcp.tools` list
 - Backend (`holaboss/backend`): `AppTemplateMetadata` simplified to store `archive_url_template` directly; `app_archive_version.py` deleted; `_materialize_template_with_apps` no longer bundles app source; `_provision_workspace` calls `install-archive` per app
 - Delete the now-unused `APP_ARCHIVE_VERSION` env var path and its tests
 
@@ -46,7 +46,7 @@
 - Modify: `github/app.runtime.yaml`
 - Modify: `_template/app.runtime.yaml`
 
-### `hola-boss-oss/runtime/api-server`
+### `holaOS/runtime/api-server`
 - Modify: `src/app.ts` — extend `install-archive` route; add `downloadArchiveToTemp`; add `isAllowedArchiveUrl`; extend `parseInstalledAppRuntime` signature
 - Create helper file OR inline in `src/app.ts`: `writeWorkspaceMcpRegistryEntry` / `removeWorkspaceMcpRegistryEntry` in `src/workspace-apps.ts`
 - Modify: `src/workspace-apps.ts` — add MCP registry writer/remover
@@ -749,7 +749,7 @@ Import `parseInstalledAppRuntime` at the top of the test file if not already imp
 - [ ] **Step 3: Run — expect failure**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server
 npm test 2>&1 | tail -20
 ```
 
@@ -800,7 +800,7 @@ Expected: new tests pass; all pre-existing tests still pass.
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add runtime/api-server/src/workspace-apps.ts runtime/api-server/src/app.test.ts
 git commit -m "feat(runtime): parse mcp.tools from app.runtime.yaml"
 ```
@@ -886,7 +886,7 @@ mcp_registry:
 - [ ] **Step 2: Run — expect failure**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server
 npm test 2>&1 | tail -20
 ```
 
@@ -990,7 +990,7 @@ Expected: both new tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add runtime/api-server/src/workspace-apps.ts runtime/api-server/src/app.test.ts
 git commit -m "feat(runtime): add MCP registry writer/remover in workspace-apps"
 ```
@@ -1119,7 +1119,7 @@ Expected: passes.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add runtime/api-server/src/app.ts runtime/api-server/src/app.test.ts
 git commit -m "feat(runtime): wire mcp_registry writer into install-archive flow"
 ```
@@ -1204,7 +1204,7 @@ Expected: passes.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add runtime/api-server/src/app.ts runtime/api-server/src/app.test.ts
 git commit -m "feat(runtime): clean mcp_registry on app uninstall"
 ```
@@ -1472,7 +1472,7 @@ Expected: all 4 new tests pass, all pre-existing pass.
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add runtime/api-server/src/app.ts runtime/api-server/src/app.test.ts
 git commit -m "feat(runtime): install-archive accepts archive_url for remote fetch"
 ```
@@ -1482,7 +1482,7 @@ git commit -m "feat(runtime): install-archive accepts archive_url for remote fet
 - [ ] **Step 1: Full runtime test run**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 npm run runtime:test
 ```
 
@@ -1897,7 +1897,7 @@ cd /Users/joshua/holaboss-ai/holaboss/hola-boss-apps
 
 export HOLABOSS_APP_ARCHIVE_DIR="$(realpath dist)"
 
-cd ../hola-boss-oss
+cd ../holaOS
 npm run desktop:prepare-runtime:local
 npm run desktop:dev
 ```
@@ -1993,7 +1993,7 @@ Phases are designed to be independently revertable:
 |---|---|---|---|---|
 | 0: mcp.tools decl | `hola-boss-apps` | 7 | 1 | 8 |
 | 1: backend simplify | `backend` | 4 + 2 deletions | 5 | 5 |
-| 2: runtime | `hola-boss-oss` | 3 | 5 | 6 |
+| 2: runtime | `holaOS` | 3 | 5 | 6 |
 | 3: backend refactor | `backend` | 5 | 5 | 5 |
 | 4: validation | — | — | 0 | 6 |
 | **Total** | 3 repos | ~19 files | 16 | 30 |

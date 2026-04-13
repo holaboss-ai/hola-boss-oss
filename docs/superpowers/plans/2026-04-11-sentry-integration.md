@@ -20,13 +20,13 @@
 - [ ] **Step 1: Install the package**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop && npm install @sentry/electron
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/desktop && npm install @sentry/electron
 ```
 
 - [ ] **Step 2: Verify it installed**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop && node -e "require.resolve('@sentry/electron')" && echo "OK"
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/desktop && node -e "require.resolve('@sentry/electron')" && echo "OK"
 ```
 
 Expected: prints the resolved path and `OK`
@@ -34,7 +34,7 @@ Expected: prints the resolved path and `OK`
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss && git add desktop/package.json desktop/package-lock.json && git commit -m "feat: add @sentry/electron dependency"
+cd /Users/joshua/holaboss-ai/holaboss/holaOS && git add desktop/package.json desktop/package-lock.json && git commit -m "feat: add @sentry/electron dependency"
 ```
 
 ---
@@ -70,7 +70,7 @@ Note: `@sentry/electron/main` must be the very first import. It automatically ca
 - [ ] **Step 2: Verify desktop builds**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop && npx tsup --config tsup.config.ts
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/desktop && npx tsup --config tsup.config.ts
 ```
 
 Expected: builds successfully with no errors, output in `out/dist-electron/main.cjs`
@@ -78,7 +78,7 @@ Expected: builds successfully with no errors, output in `out/dist-electron/main.
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss && git add desktop/electron/main.ts && git commit -m "feat: initialize Sentry in Electron main process"
+cd /Users/joshua/holaboss-ai/holaboss/holaOS && git add desktop/electron/main.ts && git commit -m "feat: initialize Sentry in Electron main process"
 ```
 
 ---
@@ -148,7 +148,7 @@ With:
 - [ ] **Step 3: Verify renderer builds**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop && npx vite build
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/desktop && npx vite build
 ```
 
 Expected: builds successfully, output in `out/dist/`
@@ -156,7 +156,7 @@ Expected: builds successfully, output in `out/dist/`
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss && git add desktop/src/main.tsx desktop/src/components/ui/ErrorBoundary.tsx && git commit -m "feat: initialize Sentry in renderer and enhance ErrorBoundary"
+cd /Users/joshua/holaboss-ai/holaboss/holaOS && git add desktop/src/main.tsx desktop/src/components/ui/ErrorBoundary.tsx && git commit -m "feat: initialize Sentry in renderer and enhance ErrorBoundary"
 ```
 
 ---
@@ -317,7 +317,7 @@ Append:
 - [ ] **Step 4: Verify both builds work**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop && npx tsup --config tsup.config.ts && npx vite build
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/desktop && npx tsup --config tsup.config.ts && npx vite build
 ```
 
 Expected: both build successfully. Vite output should include `.map` files in `out/dist/`.
@@ -325,7 +325,7 @@ Expected: both build successfully. Vite output should include `.map` files in `o
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss && git add desktop/vite.config.ts desktop/tsup.config.ts desktop/.env.example && git commit -m "feat: configure desktop build for Sentry DSN injection and source maps"
+cd /Users/joshua/holaboss-ai/holaboss/holaOS && git add desktop/vite.config.ts desktop/tsup.config.ts desktop/.env.example && git commit -m "feat: configure desktop build for Sentry DSN injection and source maps"
 ```
 
 ---
@@ -338,13 +338,13 @@ cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss && git add desktop/vite.conf
 - [ ] **Step 1: Install the package**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server && npm install @sentry/node
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server && npm install @sentry/node
 ```
 
 - [ ] **Step 2: Verify it installed**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server && node -e "import('@sentry/node').then(() => console.log('OK'))"
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server && node -e "import('@sentry/node').then(() => console.log('OK'))"
 ```
 
 Expected: prints `OK`
@@ -352,7 +352,7 @@ Expected: prints `OK`
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss && git add runtime/api-server/package.json runtime/api-server/package-lock.json && git commit -m "feat: add @sentry/node dependency to runtime API server"
+cd /Users/joshua/holaboss-ai/holaboss/holaOS && git add runtime/api-server/package.json runtime/api-server/package-lock.json && git commit -m "feat: add @sentry/node dependency to runtime API server"
 ```
 
 ---
@@ -436,7 +436,7 @@ await main();
 - [ ] **Step 2: Verify build**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server && npx tsup --config tsup.config.ts
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server && npx tsup --config tsup.config.ts
 ```
 
 Expected: builds successfully
@@ -444,7 +444,7 @@ Expected: builds successfully
 - [ ] **Step 3: Verify tests still pass**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server && node --import tsx --test src/index.test.ts 2>/dev/null; echo "exit: $?"
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server && node --import tsx --test src/index.test.ts 2>/dev/null; echo "exit: $?"
 ```
 
 If there's no `index.test.ts`, just verify the build output is valid:
@@ -456,7 +456,7 @@ node -e "import('./dist/index.mjs')" 2>&1 | head -5
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss && git add runtime/api-server/src/index.ts && git commit -m "feat: initialize Sentry in runtime API server"
+cd /Users/joshua/holaboss-ai/holaboss/holaOS && git add runtime/api-server/src/index.ts && git commit -m "feat: initialize Sentry in runtime API server"
 ```
 
 ---
@@ -535,7 +535,7 @@ Replace with:
 - [ ] **Step 5: Verify build**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server && npx tsup --config tsup.config.ts
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server && npx tsup --config tsup.config.ts
 ```
 
 Expected: builds successfully
@@ -543,7 +543,7 @@ Expected: builds successfully
 - [ ] **Step 6: Run existing tests**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server && node --import tsx --test src/app.test.ts
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server && node --import tsx --test src/app.test.ts
 ```
 
 Expected: all existing tests pass (Sentry is a no-op without DSN)
@@ -551,7 +551,7 @@ Expected: all existing tests pass (Sentry is a no-op without DSN)
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss && git add runtime/api-server/src/app.ts && git commit -m "feat: add Sentry error handler and captureException at critical failure points"
+cd /Users/joshua/holaboss-ai/holaboss/holaOS && git add runtime/api-server/src/app.ts && git commit -m "feat: add Sentry error handler and captureException at critical failure points"
 ```
 
 ---
@@ -616,7 +616,7 @@ Note: Windows step uses `shell: bash` explicitly since the default is `pwsh`.
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss && git add .github/workflows/release-macos-desktop.yml .github/workflows/release-windows-desktop.yml && git commit -m "feat: add Sentry source map upload to desktop release workflows"
+cd /Users/joshua/holaboss-ai/holaboss/holaOS && git add .github/workflows/release-macos-desktop.yml .github/workflows/release-windows-desktop.yml && git commit -m "feat: add Sentry source map upload to desktop release workflows"
 ```
 
 ---
@@ -665,7 +665,7 @@ In the same file, in the `publish-linux-runtime` job, after the "Build Linux run
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss && git add .github/workflows/publish-runtime-bundles.yml && git commit -m "feat: add Sentry source map upload to runtime release workflow"
+cd /Users/joshua/holaboss-ai/holaboss/holaOS && git add .github/workflows/publish-runtime-bundles.yml && git commit -m "feat: add Sentry source map upload to runtime release workflow"
 ```
 
 ---
@@ -677,7 +677,7 @@ cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss && git add .github/workflows
 - [ ] **Step 1: Run desktop typecheck**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop && npx tsc --noEmit
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/desktop && npx tsc --noEmit
 ```
 
 Expected: no type errors
@@ -685,7 +685,7 @@ Expected: no type errors
 - [ ] **Step 2: Run desktop full build**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop && npm run build
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/desktop && npm run build
 ```
 
 Expected: builds successfully (both renderer and electron)
@@ -693,7 +693,7 @@ Expected: builds successfully (both renderer and electron)
 - [ ] **Step 3: Run runtime typecheck**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server && npx tsc --noEmit
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server && npx tsc --noEmit
 ```
 
 Expected: no type errors
@@ -701,7 +701,7 @@ Expected: no type errors
 - [ ] **Step 4: Run runtime build**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server && npx tsup --config tsup.config.ts
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server && npx tsup --config tsup.config.ts
 ```
 
 Expected: builds successfully
@@ -709,7 +709,7 @@ Expected: builds successfully
 - [ ] **Step 5: Run runtime tests**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server && node --import tsx --test src/**/*.test.ts
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server && node --import tsx --test src/**/*.test.ts
 ```
 
 Expected: all tests pass

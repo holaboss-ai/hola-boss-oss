@@ -626,16 +626,16 @@ git commit -m "chore: mark /publish endpoint as deprecated"
 ### Task 6: Add `archiver` dependency + packaging utility
 
 **Files:**
-- Modify: `hola-boss-oss/desktop/package.json`
-- Create: `hola-boss-oss/desktop/electron/workspace-packager.ts`
+- Modify: `holaOS/desktop/package.json`
+- Create: `holaOS/desktop/electron/workspace-packager.ts`
 
 - [ ] **Step 1: Install archiver**
 
-Run: `cd hola-boss-oss/desktop && npm install archiver && npm install -D @types/archiver`
+Run: `cd holaOS/desktop && npm install archiver && npm install -D @types/archiver`
 
 - [ ] **Step 2: Create the workspace packager module**
 
-Create `hola-boss-oss/desktop/electron/workspace-packager.ts`:
+Create `holaOS/desktop/electron/workspace-packager.ts`:
 
 ```typescript
 import fs from "node:fs";
@@ -777,7 +777,7 @@ export async function uploadToPresignedUrl(url: string, data: Buffer): Promise<v
 - [ ] **Step 3: Commit**
 
 ```bash
-cd hola-boss-oss
+cd holaOS
 git add desktop/package.json desktop/package-lock.json desktop/electron/workspace-packager.ts
 git commit -m "feat(desktop): add workspace packager for publish flow"
 ```
@@ -787,9 +787,9 @@ git commit -m "feat(desktop): add workspace packager for publish flow"
 ### Task 7: Desktop IPC handlers + preload + types
 
 **Files:**
-- Modify: `hola-boss-oss/desktop/src/types/electron.d.ts`
-- Modify: `hola-boss-oss/desktop/electron/preload.ts`
-- Modify: `hola-boss-oss/desktop/electron/main.ts`
+- Modify: `holaOS/desktop/src/types/electron.d.ts`
+- Modify: `holaOS/desktop/electron/preload.ts`
+- Modify: `holaOS/desktop/electron/main.ts`
 
 - [ ] **Step 1: Add types to `electron.d.ts`**
 
@@ -839,7 +839,7 @@ Add to the `workspace` section of `ElectronAPI`:
 
 - [ ] **Step 2: Add preload bindings**
 
-In `hola-boss-oss/desktop/electron/preload.ts`, add to the `workspace` object:
+In `holaOS/desktop/electron/preload.ts`, add to the `workspace` object:
 
 ```typescript
     createSubmission: (payload: CreateSubmissionPayload) =>
@@ -941,13 +941,13 @@ Add near the other workspace IPC registrations (~line 11890):
 
 - [ ] **Step 4: Run typecheck**
 
-Run: `cd hola-boss-oss && npm --prefix desktop run typecheck`
+Run: `cd holaOS && npm --prefix desktop run typecheck`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd hola-boss-oss
+cd holaOS
 git add desktop/src/types/electron.d.ts desktop/electron/preload.ts desktop/electron/main.ts
 git commit -m "feat(desktop): add publish IPC handlers for three-step submission flow"
 ```
@@ -957,13 +957,13 @@ git commit -m "feat(desktop): add publish IPC handlers for three-step submission
 ### Task 8: Desktop PublishDialog UI component
 
 **Files:**
-- Create: `hola-boss-oss/desktop/src/components/publish/PublishDialog.tsx`
+- Create: `holaOS/desktop/src/components/publish/PublishDialog.tsx`
 
 This is a 4-step wizard dialog matching the web's publish flow, using the desktop's established dialog pattern (custom overlay, Base UI components, lucide-react icons, Tailwind + cva).
 
 - [ ] **Step 1: Create the PublishDialog component**
 
-Create `hola-boss-oss/desktop/src/components/publish/PublishDialog.tsx`. The component follows the `SettingsDialog` overlay pattern:
+Create `holaOS/desktop/src/components/publish/PublishDialog.tsx`. The component follows the `SettingsDialog` overlay pattern:
 
 - 4 steps: Template Info → Apps → Onboarding → Review & Publish
 - Left sidebar with step navigation (matching web's stepper)
@@ -987,13 +987,13 @@ Full implementation should follow the web dialog structure step-for-step, replac
 
 - [ ] **Step 2: Run typecheck**
 
-Run: `cd hola-boss-oss && npm --prefix desktop run typecheck`
+Run: `cd holaOS && npm --prefix desktop run typecheck`
 Expected: PASS
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd hola-boss-oss
+cd holaOS
 git add desktop/src/components/publish/PublishDialog.tsx
 git commit -m "feat(desktop): add PublishDialog UI component"
 ```
@@ -1003,8 +1003,8 @@ git commit -m "feat(desktop): add PublishDialog UI component"
 ### Task 9: Wire up publish trigger in desktop
 
 **Files:**
-- Modify: `hola-boss-oss/desktop/src/components/layout/AppShell.tsx`
-- Modify: `hola-boss-oss/desktop/src/components/layout/TopTabsBar.tsx`
+- Modify: `holaOS/desktop/src/components/layout/AppShell.tsx`
+- Modify: `holaOS/desktop/src/components/layout/TopTabsBar.tsx`
 
 - [ ] **Step 1: Add publish state to AppShell**
 
@@ -1045,13 +1045,13 @@ In `TopTabsBar.tsx`, add a publish button in the workspace dropdown menu (near t
 
 - [ ] **Step 3: Run typecheck**
 
-Run: `cd hola-boss-oss && npm --prefix desktop run typecheck`
+Run: `cd holaOS && npm --prefix desktop run typecheck`
 Expected: PASS
 
 - [ ] **Step 4: Commit**
 
 ```bash
-cd hola-boss-oss
+cd holaOS
 git add desktop/src/components/layout/AppShell.tsx desktop/src/components/layout/TopTabsBar.tsx desktop/src/components/publish/PublishDialog.tsx
 git commit -m "feat(desktop): wire publish dialog trigger in workspace menu"
 ```

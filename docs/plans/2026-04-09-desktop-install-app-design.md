@@ -2,7 +2,7 @@
 
 **Status:** Design approved, pending implementation plan
 **Date:** 2026-04-09
-**Scope:** `hola-boss-oss/desktop/`, `hola-boss-oss/runtime/`, `holaboss/backend/src/api/v1/marketplace/`
+**Scope:** `holaOS/desktop/`, `holaOS/runtime/`, `holaboss/backend/src/api/v1/marketplace/`
 
 ## Summary
 
@@ -569,7 +569,7 @@ The desktop has light test coverage (mainly `*.test.mjs` for a few components). 
 1. **Backend first.** Extend `AppTemplateMetadata`, add version resolution, update the route, land tests. This is backward-compatible: existing clients that ignore the new fields continue to work.
 2. **Runtime second.** Add `app_catalog` table + state-store methods + three new routes + `tar` dep. Land tests. Still backward-compatible with the desktop — the new endpoints are additive.
 3. **Desktop third.** Add the IPC handlers, context methods, `AppsGallery`, and the Marketplace sub-tab. End-to-end validation on a desktop dev build with a locally-built tarball in `hola-boss-apps/dist/`, then against a real published release.
-4. **Docs.** Update `hola-boss-oss/desktop/CLAUDE.md` and `hola-boss-apps/docs/publishing.md` with the install flow from the client's perspective.
+4. **Docs.** Update `holaOS/desktop/CLAUDE.md` and `hola-boss-apps/docs/publishing.md` with the install flow from the client's perspective.
 
 Each stage can be merged and deployed independently — a desktop without the new feature still works against a newer backend, and a desktop with the feature still works against an older backend (the `archives` array is empty → marketplace source is empty → user falls back to local source).
 
@@ -584,8 +584,8 @@ Each stage can be merged and deployed independently — a desktop without the ne
 ## References
 
 - `hola-boss-apps/docs/publishing.md` — archive format, naming, targets, versioning
-- `hola-boss-oss/runtime/api-server/src/app.ts` — existing `/api/v1/apps/install` (files[] path), referenced patterns: `appendWorkspaceApplication`, `ensureAppRunning`, `parseInstalledAppRuntime`, `sanitizeAppId`
-- `hola-boss-oss/runtime/state-store/src/store.ts` — existing `app_builds` / `app_ports` patterns to mirror
-- `hola-boss-oss/desktop/src/lib/workspaceDesktop.tsx` — `removeInstalledApp` as the shape to mirror for `installAppFromCatalog`
-- `hola-boss-oss/desktop/src/components/panes/MarketplacePane.tsx` — the surface the sub-tab is added to
+- `holaOS/runtime/api-server/src/app.ts` — existing `/api/v1/apps/install` (files[] path), referenced patterns: `appendWorkspaceApplication`, `ensureAppRunning`, `parseInstalledAppRuntime`, `sanitizeAppId`
+- `holaOS/runtime/state-store/src/store.ts` — existing `app_builds` / `app_ports` patterns to mirror
+- `holaOS/desktop/src/lib/workspaceDesktop.tsx` — `removeInstalledApp` as the shape to mirror for `installAppFromCatalog`
+- `holaOS/desktop/src/components/panes/MarketplacePane.tsx` — the surface the sub-tab is added to
 - `backend/src/api/v1/marketplace/templates.py` — `AppTemplateMetadata`, `_default_app_templates`

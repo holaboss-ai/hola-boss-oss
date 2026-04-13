@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Add read-only hosted billing visibility to `hola-boss-oss/desktop`, including a top-bar credits badge, an account-level plan and credits summary, low-balance warnings in chat, and web-only billing actions.
+**Goal:** Add read-only hosted billing visibility to `holaOS/desktop`, including a top-bar credits badge, an account-level plan and credits summary, low-balance warnings in chat, and web-only billing actions.
 
 **Architecture:** Keep all hosted billing and quota reads inside Electron main so Better Auth cookies and environment-specific URLs stay in the trusted process. Expose a small desktop-focused billing IPC surface to the renderer, then build a single renderer hook and two UI components (`CreditsPill`, `BillingSummaryCard`) that consume that normalized shape. Billing mutations and management remain web-only: desktop may open billing URLs in the browser, but never performs Stripe or subscription management locally.
 
@@ -11,15 +11,15 @@
 ### Task 1: Add Desktop Billing IPC In Electron Main
 
 **Files:**
-- Modify: `hola-boss-oss/desktop/electron/main.ts`
-- Modify: `hola-boss-oss/desktop/electron/preload.ts`
-- Modify: `hola-boss-oss/desktop/src/types/electron.d.ts`
-- Test: `hola-boss-oss/desktop/electron/settings-pane-routing.test.mjs`
-- Create: `hola-boss-oss/desktop/electron/billing-ipc.test.mjs`
+- Modify: `holaOS/desktop/electron/main.ts`
+- Modify: `holaOS/desktop/electron/preload.ts`
+- Modify: `holaOS/desktop/src/types/electron.d.ts`
+- Test: `holaOS/desktop/electron/settings-pane-routing.test.mjs`
+- Create: `holaOS/desktop/electron/billing-ipc.test.mjs`
 
 **Step 1: Write the failing test**
 
-Add a new test file `hola-boss-oss/desktop/electron/billing-ipc.test.mjs` that checks the source of `main.ts` for:
+Add a new test file `holaOS/desktop/electron/billing-ipc.test.mjs` that checks the source of `main.ts` for:
 - registered handlers for `billing:getOverview`, `billing:getUsage`, and `billing:getLinks`
 - a helper that performs authenticated hosted fetches using Better Auth cookie headers
 - a web-only link policy for add-credits, billing portal, and usage routes
@@ -49,7 +49,7 @@ Expected: FAIL because the new handlers and helpers do not exist yet.
 
 **Step 3: Write minimal implementation**
 
-In `hola-boss-oss/desktop/electron/main.ts`:
+In `holaOS/desktop/electron/main.ts`:
 - add a `billingFetch<T>()` helper similar to `composioFetch<T>()`
 - authenticate hosted requests with `authCookieHeader()`
 - normalize a desktop-specific overview payload
@@ -59,12 +59,12 @@ In `hola-boss-oss/desktop/electron/main.ts`:
   - `billing:getUsage`
   - `billing:getLinks`
 
-In `hola-boss-oss/desktop/electron/preload.ts`:
+In `holaOS/desktop/electron/preload.ts`:
 - expose `window.electronAPI.billing.getOverview()`
 - expose `window.electronAPI.billing.getUsage()`
 - expose `window.electronAPI.billing.getLinks()`
 
-In `hola-boss-oss/desktop/src/types/electron.d.ts`:
+In `holaOS/desktop/src/types/electron.d.ts`:
 - add payload types for overview, usage, and links
 - extend the `ElectronAPI` type with the new `billing` namespace
 
@@ -96,19 +96,19 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git -C hola-boss-oss add desktop/electron/main.ts desktop/electron/preload.ts desktop/src/types/electron.d.ts desktop/electron/billing-ipc.test.mjs
-git -C hola-boss-oss commit -m "feat: add desktop billing ipc bridge"
+git -C holaOS add desktop/electron/main.ts desktop/electron/preload.ts desktop/src/types/electron.d.ts desktop/electron/billing-ipc.test.mjs
+git -C holaOS commit -m "feat: add desktop billing ipc bridge"
 ```
 
 ### Task 2: Add A Shared Renderer Billing Hook
 
 **Files:**
-- Create: `hola-boss-oss/desktop/src/lib/billing/useDesktopBilling.ts`
-- Test: `hola-boss-oss/desktop/src/lib/billing/useDesktopBilling.test.mjs`
+- Create: `holaOS/desktop/src/lib/billing/useDesktopBilling.ts`
+- Test: `holaOS/desktop/src/lib/billing/useDesktopBilling.test.mjs`
 
 **Step 1: Write the failing test**
 
-Create `hola-boss-oss/desktop/src/lib/billing/useDesktopBilling.test.mjs` to assert the hook source:
+Create `holaOS/desktop/src/lib/billing/useDesktopBilling.test.mjs` to assert the hook source:
 - calls `window.electronAPI.billing.getOverview`
 - calls `window.electronAPI.billing.getUsage`
 - derives `isOutOfCredits` from `creditsBalance <= 0`
@@ -122,7 +122,7 @@ Expected: FAIL because the hook file does not exist yet.
 
 **Step 3: Write minimal implementation**
 
-Create `hola-boss-oss/desktop/src/lib/billing/useDesktopBilling.ts`:
+Create `holaOS/desktop/src/lib/billing/useDesktopBilling.ts`:
 - fetch overview and usage on mount
 - expose `isLoading`, `error`, `overview`, `usage`, `links`, and `refresh`
 - derive:
@@ -156,21 +156,21 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git -C hola-boss-oss add desktop/src/lib/billing/useDesktopBilling.ts desktop/src/lib/billing/useDesktopBilling.test.mjs
-git -C hola-boss-oss commit -m "feat: add desktop billing renderer hook"
+git -C holaOS add desktop/src/lib/billing/useDesktopBilling.ts desktop/src/lib/billing/useDesktopBilling.test.mjs
+git -C holaOS commit -m "feat: add desktop billing renderer hook"
 ```
 
 ### Task 3: Add The Top-Bar Credits Pill
 
 **Files:**
-- Create: `hola-boss-oss/desktop/src/components/billing/CreditsPill.tsx`
-- Modify: `hola-boss-oss/desktop/src/components/layout/TopTabsBar.tsx`
-- Modify: `hola-boss-oss/desktop/src/components/layout/AppShell.tsx`
-- Test: `hola-boss-oss/desktop/src/components/layout/TopTabsBar.test.mjs`
+- Create: `holaOS/desktop/src/components/billing/CreditsPill.tsx`
+- Modify: `holaOS/desktop/src/components/layout/TopTabsBar.tsx`
+- Modify: `holaOS/desktop/src/components/layout/AppShell.tsx`
+- Test: `holaOS/desktop/src/components/layout/TopTabsBar.test.mjs`
 
 **Step 1: Write the failing test**
 
-Create `hola-boss-oss/desktop/src/components/layout/TopTabsBar.test.mjs` to assert:
+Create `holaOS/desktop/src/components/layout/TopTabsBar.test.mjs` to assert:
 - `TopTabsBar.tsx` renders a credits pill before the account trigger
 - the credits pill is hidden when the user is not in managed billing mode
 - clicking the pill routes to account settings
@@ -183,7 +183,7 @@ Expected: FAIL because the badge and account routing do not exist yet.
 
 **Step 3: Write minimal implementation**
 
-Create `hola-boss-oss/desktop/src/components/billing/CreditsPill.tsx`:
+Create `holaOS/desktop/src/components/billing/CreditsPill.tsx`:
 - render a rounded capsule with a sparkles-style icon and balance number
 - support states: `loading`, `normal`, `low`, `empty`
 - accept `onClick`
@@ -206,21 +206,21 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git -C hola-boss-oss add desktop/src/components/billing/CreditsPill.tsx desktop/src/components/layout/TopTabsBar.tsx desktop/src/components/layout/AppShell.tsx desktop/src/components/layout/TopTabsBar.test.mjs
-git -C hola-boss-oss commit -m "feat: add desktop credits pill to top bar"
+git -C holaOS add desktop/src/components/billing/CreditsPill.tsx desktop/src/components/layout/TopTabsBar.tsx desktop/src/components/layout/AppShell.tsx desktop/src/components/layout/TopTabsBar.test.mjs
+git -C holaOS commit -m "feat: add desktop credits pill to top bar"
 ```
 
 ### Task 4: Add A Read-Only Account Billing Summary Card
 
 **Files:**
-- Create: `hola-boss-oss/desktop/src/components/billing/BillingSummaryCard.tsx`
-- Modify: `hola-boss-oss/desktop/src/components/auth/AuthPanel.tsx`
-- Modify: `hola-boss-oss/desktop/src/components/layout/SettingsDialog.tsx`
-- Test: `hola-boss-oss/desktop/src/components/layout/SettingsDialog.test.mjs`
+- Create: `holaOS/desktop/src/components/billing/BillingSummaryCard.tsx`
+- Modify: `holaOS/desktop/src/components/auth/AuthPanel.tsx`
+- Modify: `holaOS/desktop/src/components/layout/SettingsDialog.tsx`
+- Test: `holaOS/desktop/src/components/layout/SettingsDialog.test.mjs`
 
 **Step 1: Write the failing test**
 
-Extend `hola-boss-oss/desktop/src/components/layout/SettingsDialog.test.mjs` so it asserts:
+Extend `holaOS/desktop/src/components/layout/SettingsDialog.test.mjs` so it asserts:
 - account section still renders `AuthPanel`
 - `AuthPanel` includes a billing summary card
 - billing summary includes web-only actions such as `Add credits`, `Manage on web`, and `View usage`
@@ -233,7 +233,7 @@ Expected: FAIL because the billing summary card and CTAs do not exist.
 
 **Step 3: Write minimal implementation**
 
-Create `hola-boss-oss/desktop/src/components/billing/BillingSummaryCard.tsx`:
+Create `holaOS/desktop/src/components/billing/BillingSummaryCard.tsx`:
 - show plan name and renewal or expiry line
 - show main credits number
 - show monthly credits included and used
@@ -262,19 +262,19 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git -C hola-boss-oss add desktop/src/components/billing/BillingSummaryCard.tsx desktop/src/components/auth/AuthPanel.tsx desktop/src/components/layout/SettingsDialog.tsx desktop/src/components/layout/SettingsDialog.test.mjs
-git -C hola-boss-oss commit -m "feat: add read-only desktop billing summary"
+git -C holaOS add desktop/src/components/billing/BillingSummaryCard.tsx desktop/src/components/auth/AuthPanel.tsx desktop/src/components/layout/SettingsDialog.tsx desktop/src/components/layout/SettingsDialog.test.mjs
+git -C holaOS commit -m "feat: add read-only desktop billing summary"
 ```
 
 ### Task 5: Add Low-Balance Warning And Out-Of-Credits Guard In Chat
 
 **Files:**
-- Modify: `hola-boss-oss/desktop/src/components/panes/ChatPane.tsx`
-- Test: `hola-boss-oss/desktop/src/components/panes/ChatPane.test.mjs`
+- Modify: `holaOS/desktop/src/components/panes/ChatPane.tsx`
+- Test: `holaOS/desktop/src/components/panes/ChatPane.test.mjs`
 
 **Step 1: Write the failing test**
 
-Extend `hola-boss-oss/desktop/src/components/panes/ChatPane.test.mjs` so it asserts source contains:
+Extend `holaOS/desktop/src/components/panes/ChatPane.test.mjs` so it asserts source contains:
 - low-balance warning copy for managed usage
 - out-of-credits guard copy
 - web-only CTA labels such as `Add credits` and `Manage on web`
@@ -309,14 +309,14 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git -C hola-boss-oss add desktop/src/components/panes/ChatPane.tsx desktop/src/components/panes/ChatPane.test.mjs
-git -C hola-boss-oss commit -m "feat: add desktop low-credit chat guardrails"
+git -C holaOS add desktop/src/components/panes/ChatPane.tsx desktop/src/components/panes/ChatPane.test.mjs
+git -C holaOS commit -m "feat: add desktop low-credit chat guardrails"
 ```
 
 ### Task 6: End-To-End Verification
 
 **Files:**
-- Modify: `hola-boss-oss/docs/plans/2026-04-02-desktop-billing-credits-implementation-plan.md`
+- Modify: `holaOS/docs/plans/2026-04-02-desktop-billing-credits-implementation-plan.md`
 
 **Step 1: Run desktop source tests**
 
@@ -328,7 +328,7 @@ Expected: PASS
 
 Run: `npm run typecheck`
 
-Workdir: `hola-boss-oss/desktop`
+Workdir: `holaOS/desktop`
 
 Expected: PASS
 
@@ -336,7 +336,7 @@ Expected: PASS
 
 Run: `npm run build`
 
-Workdir: `hola-boss-oss/desktop`
+Workdir: `holaOS/desktop`
 
 Expected: PASS
 
@@ -354,6 +354,6 @@ Verify:
 **Step 5: Commit**
 
 ```bash
-git -C hola-boss-oss add desktop/src/components/billing desktop/src/components/layout desktop/src/components/auth desktop/src/components/panes desktop/src/lib/billing desktop/electron desktop/src/types/electron.d.ts docs/plans/2026-04-02-desktop-billing-credits-implementation-plan.md
-git -C hola-boss-oss commit -m "feat: add read-only desktop billing visibility"
+git -C holaOS add desktop/src/components/billing desktop/src/components/layout desktop/src/components/auth desktop/src/components/panes desktop/src/lib/billing desktop/electron desktop/src/types/electron.d.ts docs/plans/2026-04-02-desktop-billing-credits-implementation-plan.md
+git -C holaOS commit -m "feat: add read-only desktop billing visibility"
 ```

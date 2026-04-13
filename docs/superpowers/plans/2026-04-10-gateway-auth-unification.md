@@ -54,7 +54,7 @@ These also benefit from the auth change but are not in scope for Desktop-side mo
 |------|--------|----------------|
 | `frontend/apps/server/src/api/gateway.ts` | Modify | Add session resolution middleware, public path allowlist, inject `X-Holaboss-User-Id` header |
 | `frontend/apps/server/src/index.ts` | Modify | Remove the gateway skip in auth middleware (lines 83-88) |
-| `hola-boss-oss/desktop/electron/main.ts` | Modify | Send cookie in `controlPlaneHeaders()`, remove manual `holaboss_user_id` from request bodies |
+| `holaOS/desktop/electron/main.ts` | Modify | Send cookie in `controlPlaneHeaders()`, remove manual `holaboss_user_id` from request bodies |
 
 **Not in scope (Phase 2):** Backend Python services reading `X-Holaboss-User-Id` header instead of body params. For now, the Desktop still sends `holaboss_user_id` in bodies as a fallback while the Backend is migrated.
 
@@ -217,7 +217,7 @@ X-Holaboss-User-Id header with the verified user ID before proxying."
 ### Task 2: Desktop — Send cookie in gateway requests
 
 **Files:**
-- Modify: `hola-boss-oss/desktop/electron/main.ts`
+- Modify: `holaOS/desktop/electron/main.ts`
 
 - [ ] **Step 1: Update controlPlaneHeaders to include auth cookie**
 
@@ -251,7 +251,7 @@ Check that `authCookieHeader()` is defined and accessible from the `controlPlane
 - [ ] **Step 3: Commit**
 
 ```bash
-git add hola-boss-oss/desktop/electron/main.ts
+git add holaOS/desktop/electron/main.ts
 git commit -m "feat(desktop): send Better Auth cookie in gateway requests
 
 controlPlaneHeaders now includes the session cookie so the Hono
@@ -264,7 +264,7 @@ on holaboss_user_id in request bodies."
 ### Task 3: Desktop — Remove manual holaboss_user_id from marketplace requests
 
 **Files:**
-- Modify: `hola-boss-oss/desktop/electron/main.ts`
+- Modify: `holaOS/desktop/electron/main.ts`
 
 Now that the gateway injects `X-Holaboss-User-Id`, the Desktop no longer needs to pass `holaboss_user_id` in request bodies. However, the Backend still reads it from bodies (migration is Phase 2), so we keep the field for backward compatibility but source it from the gateway header on the Backend side.
 
@@ -285,7 +285,7 @@ Add a comment in `controlPlaneHeaders`:
 - [ ] **Step 2: Commit**
 
 ```bash
-git add hola-boss-oss/desktop/electron/main.ts
+git add holaOS/desktop/electron/main.ts
 git commit -m "docs(desktop): note phase-2 migration for holaboss_user_id removal"
 ```
 
@@ -380,7 +380,7 @@ git commit -m "test: verify gateway auth flow end-to-end"
 ### Task 6: Desktop — Prompt sign-in on gateway 401
 
 **Files:**
-- Modify: `hola-boss-oss/desktop/electron/main.ts`
+- Modify: `holaOS/desktop/electron/main.ts`
 
 When `requestControlPlaneJson` gets a 401 from the gateway, it means the session cookie is missing or expired. Instead of throwing a generic error, we should:
 1. Open the auth sign-in popup
@@ -455,7 +455,7 @@ This way, if 3 requests all get 401, only one sign-in popup opens. All three wai
 - [ ] **Step 3: Commit**
 
 ```bash
-git add hola-boss-oss/desktop/electron/main.ts
+git add holaOS/desktop/electron/main.ts
 git commit -m "feat(desktop): prompt sign-in and retry on gateway 401
 
 When a gateway request returns 401 (session expired or missing),
