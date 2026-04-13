@@ -2471,26 +2471,36 @@ function AppShellContent() {
     nextChatSessionOpenRequestKey,
   ]);
 
-  const handleCreateSession = useCallback(() => {
-    if (!selectedWorkspaceId) {
-      return;
-    }
+  const handleCreateSession = useCallback(
+    (request?: {
+      sessionId: string;
+      mode?: "session" | "draft";
+      parentSessionId?: string | null;
+      requestKey: number;
+    }) => {
+      if (!selectedWorkspaceId) {
+        return;
+      }
 
-    setActiveLeftRailItem("space");
-    setSpaceVisibility((previous) => ({
-      ...previous,
-      agent: true,
-    }));
-    setAgentView({ type: "chat" });
-    setChatSessionJumpRequest(null);
-    setChatSessionOpenRequest({
-      sessionId: "",
-      mode: "draft",
-      parentSessionId: null,
-      requestKey: nextChatSessionOpenRequestKey(),
-    });
-    setChatFocusRequestKey((current) => current + 1);
-  }, [nextChatSessionOpenRequestKey, selectedWorkspaceId]);
+      setActiveLeftRailItem("space");
+      setSpaceVisibility((previous) => ({
+        ...previous,
+        agent: true,
+      }));
+      setAgentView({ type: "chat" });
+      setChatSessionJumpRequest(null);
+      setChatSessionOpenRequest(
+        request ?? {
+          sessionId: "",
+          mode: "draft",
+          parentSessionId: null,
+          requestKey: nextChatSessionOpenRequestKey(),
+        },
+      );
+      setChatFocusRequestKey((current) => current + 1);
+    },
+    [nextChatSessionOpenRequestKey, selectedWorkspaceId],
+  );
 
   const handleOpenInboxPane = useCallback(() => {
     setActiveLeftRailItem("space");
@@ -2887,7 +2897,7 @@ function AppShellContent() {
           onActiveSessionIdChange={setActiveChatSessionId}
           onOpenInbox={handleOpenInboxPane}
           inboxUnreadCount={unreadTaskProposalCount}
-          onRequestCreateSession={() => void handleCreateSession()}
+          onRequestCreateSession={(request) => void handleCreateSession(request)}
         />
       );
     }

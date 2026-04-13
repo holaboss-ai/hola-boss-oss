@@ -23,6 +23,16 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
+function deferred<T>() {
+  let resolve: (value: T | PromiseLike<T>) => void = () => undefined;
+  let reject: (reason?: unknown) => void = () => undefined;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 test("runtime queue worker claims queued inputs and executes them in claim order", async () => {
   const root = makeTempDir("hb-runtime-queue-worker-");
   const store = new RuntimeStateStore({
@@ -119,6 +129,75 @@ test("runtime queue worker executes different sessions concurrently while preser
   assert.equal(processed, 2);
   assert.equal(maxActive, 2);
   assert.deepEqual(seenSessions.sort(), ["session-a", "session-b"]);
+  await worker.close();
+  store.close();
+});
+
+test("runtime queue worker claims later queued work from another session while one session is already active", async () => {
+  const root = makeTempDir("hb-runtime-queue-worker-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-a",
+    priority: 5,
+    payload: { text: "a-1" }
+  });
+  const sessionASecond = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-a",
+    priority: 4,
+    payload: { text: "a-2" }
+  });
+
+  const release = deferred<void>();
+  const aStarted = deferred<void>();
+  const bStarted = deferred<void>();
+  const seenSessions: string[] = [];
+  const worker = new RuntimeQueueWorker({
+    store,
+    maxConcurrency: 2,
+    executeClaimedInput: async (record) => {
+      seenSessions.push(record.sessionId);
+      if (record.sessionId === "session-a") {
+        aStarted.resolve();
+      }
+      if (record.sessionId === "session-b") {
+        bStarted.resolve();
+      }
+      await release.promise;
+    }
+  });
+
+  const firstProcessed = await worker.processAvailableInputsOnce();
+  assert.equal(firstProcessed, 1);
+  await aStarted.promise;
+
+  const sessionBFirst = store.enqueueInput({
+    workspaceId: "workspace-1",
+    sessionId: "session-b",
+    priority: 3,
+    payload: { text: "b-1" }
+  });
+
+  const secondProcessed = await worker.processAvailableInputsOnce();
+  assert.equal(secondProcessed, 1);
+  await bStarted.promise;
+
+  assert.deepEqual(seenSessions.sort(), ["session-a", "session-b"]);
+  assert.equal(store.getInput(sessionASecond.inputId)?.status, "QUEUED");
+  assert.equal(store.getInput(sessionBFirst.inputId)?.status, "CLAIMED");
+
+  release.resolve();
+  await worker.close();
   store.close();
 });
 

@@ -288,11 +288,23 @@ test("chat pane exposes an in-pane session dropdown for switching agent sessions
 
   assert.match(source, /onOpenInbox\?: \(\) => void;/);
   assert.match(source, /inboxUnreadCount\?: number;/);
-  assert.match(source, /onRequestCreateSession\?: \(\) => void;/);
+  assert.match(
+    source,
+    /onRequestCreateSession\?: \(request: ChatPaneSessionOpenRequest\) => void;/,
+  );
   assert.match(source, /onSessionOpenRequestConsumed\?: \(requestKey: number\) => void;/);
   assert.match(source, /const \[availableSessions, setAvailableSessions\] = useState<ChatSessionOption\[]>\(\s*\[\],\s*\);/);
   assert.match(source, /const \[localSessionOpenRequest, setLocalSessionOpenRequest\] =\s*useState<ChatPaneSessionOpenRequest \| null>\(null\);/);
+  assert.match(
+    source,
+    /const localSessionOpenRequestRef =\s*useRef<ChatPaneSessionOpenRequest \| null>\(null\);/,
+  );
   assert.match(source, /const effectiveSessionOpenRequest =\s*sessionOpenRequest \?\? localSessionOpenRequest;/);
+  assert.match(
+    source,
+    /localSessionOpenRequestRef\.current = localSessionOpenRequest;/,
+  );
+  assert.match(source, /function setLocalSessionOpenRequestState\(/);
   assert.match(source, /function sessionStatusIndicator\(statusLabel: string\)/);
   assert.match(source, /window\.electronAPI\.workspace\.listAgentSessions\(selectedWorkspaceId\)/);
   assert.match(source, /window\.electronAPI\.workspace\.listRuntimeStates\(selectedWorkspaceId\)/);
@@ -307,8 +319,11 @@ test("chat pane exposes an in-pane session dropdown for switching agent sessions
   assert.match(source, /inboxUnreadCount > 0 \? \(/);
   assert.match(source, /onOpenInbox\(\);/);
   assert.match(source, /onSessionOpenRequestConsumed\?\.\(requestKey\);/);
-  assert.match(source, /setLocalSessionOpenRequest\(\{\s*sessionId: normalizedSessionId,\s*requestKey: Date\.now\(\),\s*\}\);/);
-  assert.match(source, /setLocalSessionOpenRequest\(\{\s*sessionId: "",\s*mode: "draft",\s*parentSessionId: null,\s*requestKey: Date\.now\(\),\s*\}\);/);
+  assert.match(source, /setLocalSessionOpenRequestState\(\{\s*sessionId: normalizedSessionId,\s*requestKey: Date\.now\(\),\s*\}\);/);
+  assert.match(
+    source,
+    /const draftRequest: ChatPaneSessionOpenRequest = \{\s*sessionId: "",\s*mode: "draft",\s*parentSessionId: null,\s*requestKey: Date\.now\(\),\s*\};\s*setLocalSessionOpenRequestState\(draftRequest\);\s*onRequestCreateSession\?\.\(draftRequest\);/,
+  );
 });
 
 test("chat pane keeps local picker session requests from overriding a newer shell session request", async () => {
@@ -323,7 +338,46 @@ test("chat pane keeps local picker session requests from overriding a newer shel
   );
   assert.match(
     source,
-    /if \(!cancelled && !historyLoaded\) \{\s*cancelHistoryViewportRestore\(\);\s*\}\s*if \(!cancelled\) \{\s*setIsLoadingHistory\(false\);\s*\}\s*if \(isExternalSessionOpenRequest\) \{\s*onSessionOpenRequestConsumed\?\.\(requestKey\);\s*\} else \{\s*setLocalSessionOpenRequest\(\(current\) =>\s*current\?\.requestKey === requestKey \? null : current,\s*\);\s*\}/,
+    /if \(!cancelled\) \{\s*if \(!historyLoaded\) \{\s*cancelHistoryViewportRestore\(\);\s*\}\s*setIsLoadingHistory\(false\);\s*consumeSessionOpenRequest\(requestKey\);\s*\}/,
+  );
+});
+
+test("chat pane routes immediate sends through the newer pending session request instead of the previously active session", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const consumedSessionOpenRequestKeysRef = useRef<Set<number>>\(new Set\(\)\);/,
+  );
+  assert.match(source, /function consumeSessionOpenRequest\(requestKey: number\)/);
+  assert.match(source, /function pendingSessionTargetForSend\(\): PendingSessionTarget \| null/);
+  assert.match(
+    source,
+    /const currentSessionOpenRequest =\s*sessionOpenRequest \?\? localSessionOpenRequestRef\.current;/,
+  );
+  assert.match(
+    source,
+    /const pendingSessionTarget = pendingSessionTargetForSend\(\);[\s\S]*let targetSessionId =[\s\S]*pendingSessionTarget\?\.mode === "session"[\s\S]*activeSessionIdRef\.current;/,
+  );
+  assert.match(
+    source,
+    /if \(pendingSessionTarget\) \{\s*consumeSessionOpenRequest\(pendingSessionTarget\.requestKey\);\s*clearSessionView\(\);[\s\S]*setActiveSession\(pendingSessionTarget\.sessionId\);[\s\S]*draftParentSessionIdRef\.current = pendingSessionTarget\.parentSessionId;\s*setActiveSession\(null\);/,
+  );
+  assert.match(
+    source,
+    /if \(!targetSessionId && selectedWorkspace\) \{\s*targetSessionId = await createWorkspaceSession\(\s*selectedWorkspace\.id,\s*pendingSessionTarget\?\.mode === "draft"\s*\?\s*pendingSessionTarget\.parentSessionId\s*:\s*draftParentSessionIdRef\.current,\s*\);/,
+  );
+  assert.match(
+    source,
+    /if \(isSessionOpenRequestConsumed\(requestKey\)\) \{\s*consumeSessionOpenRequest\(requestKey\);\s*return;\s*\}\s*if \(requestKey === lastHandledSessionOpenRequestKeyRef\.current\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /if \(cancelled \|\| isSessionOpenRequestConsumed\(requestKey\)\) \{\s*historyLoaded = true;\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /if \(isSessionOpenRequestConsumed\(requestKey\)\) \{\s*consumeSessionOpenRequest\(requestKey\);\s*return;\s*\}/,
   );
 });
 
