@@ -94,12 +94,12 @@ All deeper technical and product documentation lives at **[holaboss.ai/docs](htt
 | [Environment Engineering](https://www.holaboss.ai/docs/holaos/environment-engineering) | The core thesis behind holaOS and why the environment defines the system |
 | [Concepts](https://www.holaboss.ai/docs/holaos/concepts) | Core system vocabulary for workspaces, runtime, memory, and outputs |
 | [Workspace Model](https://www.holaboss.ai/docs/holaos/workspace-model) | Workspace contract, authored surfaces, and runtime-owned state |
-| [Memory and Continuity](https://www.holaboss.ai/docs/holaos/memory-and-continuity) | Durable memory, continuity artifacts, and long-horizon resume behavior |
+| [Memory and Continuity](https://www.holaboss.ai/docs/holaos/memory-and-continuity/) | Durable memory, continuity artifacts, and long-horizon resume behavior |
 | [Start Developing](https://www.holaboss.ai/docs/build-on-holaos/start-developing/) | The local developer path for desktop and runtime validation |
 | [Contributing](https://www.holaboss.ai/docs/build-on-holaos/start-developing/contributing) | The contributor workflow, validation expectations, and review guidance |
 | [Runtime APIs](https://www.holaboss.ai/docs/build-on-holaos/runtime-apis) | The runtime operational surface for workspaces, runs, and app lifecycle |
 | [Independent Deploy](https://www.holaboss.ai/docs/build-on-holaos/independent-deploy) | Running the portable runtime without the desktop app |
-| [Agent Harness](https://www.holaboss.ai/docs/app-development/agent-harness) | The stable harness boundary inside the runtime and how executors fit into it |
+| [Agent Harness](https://www.holaboss.ai/docs/holaos/agent-harness/) | The stable harness boundary inside the runtime and how executors fit into it |
 | [Build Your First App](https://www.holaboss.ai/docs/app-development/applications/first-app) | Building workspace apps on top of holaOS |
 | [Troubleshooting](https://www.holaboss.ai/docs/build-on-holaos/troubleshooting) | The common local runtime and desktop failure modes |
 | [Workspace Experience](https://www.holaboss.ai/docs/desktop/workspace-experience) | The desktop workspace surface built on top of holaOS |
