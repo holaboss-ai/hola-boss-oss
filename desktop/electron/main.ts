@@ -6490,8 +6490,12 @@ function proactiveBaseUrl() {
     : DEFAULT_PROACTIVE_URL.replace(/\/+$/, "");
 }
 
+function runtimeProactiveBridgeBaseUrl() {
+  return DEFAULT_PROACTIVE_URL.replace(/\/+$/, "");
+}
+
 function embeddedRuntimeStartupConfigError() {
-  if (proactiveBaseUrl()) {
+  if (runtimeProactiveBridgeBaseUrl()) {
     return "";
   }
   return (
@@ -11565,7 +11569,7 @@ async function startEmbeddedRuntime() {
           HOLABOSS_RUNTIME_WORKFLOW_BACKEND: workflowBackend,
           HOLABOSS_RUNTIME_DB_PATH: runtimeDatabasePath(),
           PROACTIVE_ENABLE_REMOTE_BRIDGE: "1",
-          PROACTIVE_BRIDGE_BASE_URL: proactiveBaseUrl(),
+          PROACTIVE_BRIDGE_BASE_URL: runtimeProactiveBridgeBaseUrl(),
           PYTHONDONTWRITEBYTECODE: "1",
           HOLABOSS_AUTH_BASE_URL: AUTH_BASE_URL,
           HOLABOSS_AUTH_COOKIE: authCookieHeader() ?? "",
@@ -15834,7 +15838,7 @@ function createMainWindow() {
     process.platform === "darwin"
       ? {
           titleBarStyle: "hiddenInset" as const,
-          trafficLightPosition: { x: 14, y: 30 },
+          trafficLightPosition: { x: 14, y: 23 },
         }
       : process.platform === "win32"
         ? {

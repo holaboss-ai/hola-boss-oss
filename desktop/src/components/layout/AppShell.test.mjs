@@ -396,6 +396,15 @@ test("app shell reloads proactive preference after workspace hydration completes
   assert.match(source, /\}, \[hasHydratedWorkspaceList, selectedWorkspaceId\]\);/);
 });
 
+test("app shell keeps polling task proposals even when proactive auth preferences are unavailable", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /workspace\.listTaskProposals\(\s*selectedWorkspace\.id,/);
+  assert.doesNotMatch(source, /if \(!hasLoadedProactiveTaskProposalsPreference\) \{\s*setIsLoadingTaskProposals\(false\);\s*return;\s*\}/);
+  assert.doesNotMatch(source, /if \(!proactiveTaskProposalsEnabled\) \{\s*setIsLoadingTaskProposals\(false\);\s*return;\s*\}/);
+  assert.match(source, /\}, \[selectedWorkspace, selectedWorkspaceId\]\);/);
+});
+
 test("app shell no longer renders a separate right panel in space mode", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 

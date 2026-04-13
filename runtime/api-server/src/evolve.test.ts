@@ -175,7 +175,7 @@ test("createEvolveTaskProposal tags task proposals with the evolve source", () =
 test("skill review only proposes candidates on the configured completed-turn cadence", async () => {
   const { store } = makeRuntimeState("hb-evolve-skill-cadence-");
   seedWorkspace(store);
-  for (let index = 1; index <= 4; index += 1) {
+  for (let index = 1; index <= 2; index += 1) {
     store.upsertTurnResult({
       workspaceId: "workspace-1",
       sessionId: "session-main",
@@ -190,7 +190,7 @@ test("skill review only proposes candidates on the configured completed-turn cad
   const turnResult = store.upsertTurnResult({
     workspaceId: "workspace-1",
     sessionId: "session-main",
-    inputId: "input-5",
+    inputId: "input-3",
     startedAt: "2026-04-10T12:00:00.000Z",
     completedAt: "2026-04-10T12:00:05.000Z",
     status: "completed",
@@ -203,7 +203,7 @@ test("skill review only proposes candidates on the configured completed-turn cad
     sessionId: "session-main",
     role: "user",
     text: "Document the reusable release verification workflow.",
-    messageId: "user-5",
+    messageId: "user-3",
     createdAt: "2026-04-10T12:00:00.000Z",
   });
 
@@ -275,7 +275,7 @@ test("skill review can target an existing workspace skill as a patch candidate",
     ].join("\n"),
     "utf8"
   );
-  for (let index = 1; index <= 4; index += 1) {
+  for (let index = 1; index <= 2; index += 1) {
     store.upsertTurnResult({
       workspaceId: "workspace-1",
       sessionId: "session-main",
@@ -290,7 +290,7 @@ test("skill review can target an existing workspace skill as a patch candidate",
   const turnResult = store.upsertTurnResult({
     workspaceId: "workspace-1",
     sessionId: "session-main",
-    inputId: "input-patch-5",
+    inputId: "input-patch-3",
     startedAt: "2026-04-10T12:10:00.000Z",
     completedAt: "2026-04-10T12:10:05.000Z",
     status: "completed",
@@ -303,7 +303,7 @@ test("skill review can target an existing workspace skill as a patch candidate",
     sessionId: "session-main",
     role: "user",
     text: "Update the release verification skill to include the new build check.",
-    messageId: "user-patch-5",
+    messageId: "user-patch-3",
     createdAt: "2026-04-10T12:10:00.000Z",
   });
 

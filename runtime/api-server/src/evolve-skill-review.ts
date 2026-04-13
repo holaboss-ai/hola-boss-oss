@@ -15,7 +15,7 @@ import { queryMemoryModelJson } from "./memory-model-client.js";
 import type { MemoryServiceLike } from "./memory.js";
 import { resolveWorkspaceSkills } from "./workspace-skills.js";
 
-const SKILL_REVIEW_INTERVAL_TURNS = 5;
+const SKILL_REVIEW_INTERVAL_TURNS = 3;
 const RECENT_SKILL_REVIEW_TURN_LIMIT = 5;
 const RECENT_SKILL_REVIEW_USER_MESSAGES_LIMIT = 4;
 const EXISTING_WORKSPACE_SKILL_PROMPT_LIMIT = 6;

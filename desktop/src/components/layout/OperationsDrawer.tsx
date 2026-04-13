@@ -692,7 +692,7 @@ function InboxPanel({
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-        {isSignedIn && proposalStatusMessage ? (
+        {proposalStatusMessage ? (
           <div className="mb-3 rounded-[18px] border border-border/45 bg-muted/35 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
             {proposalStatusMessage}
           </div>
@@ -728,13 +728,13 @@ function InboxPanel({
               compact
             />
           </div>
-        ) : null}
-        {!isSignedIn ? (
+        ) : (
           <SignedOutInboxNotice
             onRequestSignIn={onRequestSignIn}
             isAuthPending={isAuthPending}
           />
-        ) : !hasWorkspace ? (
+        )}
+        {!hasWorkspace ? (
           <EmptyNotice
             icon={<FolderOpen size={24} strokeWidth={1.5} />}
             message="Select a workspace to review proposals."
@@ -846,32 +846,31 @@ function SignedOutInboxNotice({
   isAuthPending: boolean;
 }) {
   return (
-    <div className="rounded-[22px] border border-warning/20 bg-warning/10 px-4 py-5">
-      <div className="flex flex-col gap-4">
-        <div className="space-y-1">
-          <div className="text-sm font-semibold text-foreground">
-            Sign in to review task proposals
+    <div className="rounded-[18px] border border-warning/20 bg-warning/10 px-3 py-2.5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold text-foreground">
+            Backend proposals require sign-in
           </div>
-          <div className="text-sm leading-6 text-muted-foreground">
-            Sign in to connect this desktop to your account and review Inbox
-            proposals.
+          <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
+            Sign in for synced proactive controls. Evolve proposals still show
+            here.
           </div>
         </div>
-        <div>
-          <Button
-            type="button"
-            size="sm"
-            onClick={onRequestSignIn}
-            disabled={isAuthPending}
-          >
-            {isAuthPending ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <LogIn size={14} />
-            )}
-            <span>Sign in</span>
-          </Button>
-        </div>
+        <Button
+          type="button"
+          size="xs"
+          onClick={onRequestSignIn}
+          disabled={isAuthPending}
+          className="shrink-0"
+        >
+          {isAuthPending ? (
+            <Loader2 size={12} className="animate-spin" />
+          ) : (
+            <LogIn size={12} />
+          )}
+          <span>Sign in</span>
+        </Button>
       </div>
     </div>
   );

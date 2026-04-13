@@ -247,20 +247,20 @@ export function TopTabsBar({
 
   const headerClassName = integratedTitleBar
     ? isWindowsIntegratedTitleBar
-      ? "window-drag relative h-[60px] px-2 pt-1.5 sm:px-3"
-      : "window-drag relative h-[60px] px-2 sm:px-3"
-    : "rounded-xl border border-border bg-card/80 px-2.5 py-2 shadow-md backdrop-blur-sm sm:px-4";
+      ? "window-drag relative h-[42px] px-2 pt-0.5 sm:px-3"
+      : "window-drag relative h-[42px] px-2 sm:px-3"
+    : "rounded-xl border border-border bg-card/80 px-2.5 py-0.5 shadow-md backdrop-blur-sm sm:px-4";
   const headerGridClassName = isWindowsIntegratedTitleBar
-    ? "relative z-10 grid min-w-0 grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-2 lg:h-full lg:grid-cols-[60px_minmax(276px,476px)_minmax(0,1fr)_auto]"
-    : `relative z-10 grid min-w-0 items-center gap-2 sm:gap-3 lg:h-full lg:grid-cols-[minmax(320px,520px)_minmax(0,1fr)_auto] ${
+    ? "relative z-10 grid min-w-0 grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-1 lg:h-full lg:grid-cols-[42px_minmax(220px,400px)_minmax(0,1fr)_auto]"
+    : `relative z-10 grid min-w-0 items-center gap-1 sm:gap-1.5 lg:h-full lg:grid-cols-[minmax(260px,440px)_minmax(0,1fr)_auto] ${
         isMacIntegratedTitleBar ? "pl-20" : ""
       }`;
 
   const windowControlButtonClassName =
-    "window-no-drag flex h-7 w-7 items-center justify-center rounded-[9px] border border-transparent text-muted-foreground/72 transition-colors duration-150 hover:bg-foreground/6 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
+    "window-no-drag flex h-5 w-5 items-center justify-center rounded-[7px] border border-transparent text-muted-foreground/72 transition-colors duration-150 hover:bg-foreground/6 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
   const workspaceSwitcherContainerClassName = `${integratedTitleBar ? "window-no-drag " : ""}relative min-w-55 max-w-full`;
   const workspaceSwitcherButtonClassName =
-    "w-full justify-start gap-2.5 px-3";
+    "h-7 w-full justify-start gap-1.5 px-2 rounded-lg text-xs";
 
   return (
     <header
@@ -273,15 +273,15 @@ export function TopTabsBar({
             <img
               src={holabossLogoUrl}
               alt="Holaboss"
-              className="size-9 shrink-0 rounded-lg border border-border overflow-hidden"
+              className="size-7 shrink-0 rounded-[9px] border border-border overflow-hidden"
             />
           </div>
         ) : (
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 items-center gap-1.5">
             <img
               src={holabossLogoUrl}
               alt="Holaboss"
-              className="size-9 shrink-0 rounded-lg border border-border overflow-hidden"
+              className="size-7 shrink-0 rounded-[9px] border border-border overflow-hidden"
             />
             <div
               ref={workspaceSwitcherRef}
@@ -290,7 +290,7 @@ export function TopTabsBar({
               <Button
                 ref={workspaceSwitcherButtonRef}
                 variant={workspaceSwitcherOpen ? "secondary" : "outline"}
-                size="lg"
+                size="default"
                 onClick={() => {
                   setWorkspaceSwitcherOpen((open) => {
                     const nextOpen = !open;
@@ -306,12 +306,12 @@ export function TopTabsBar({
                 }}
                 className={workspaceSwitcherButtonClassName}
               >
-                <FolderKanban size={14} className="shrink-0 text-primary" />
+                <FolderKanban size={13} className="shrink-0 text-primary" />
                 <span className="min-w-0 flex-1 truncate text-left font-medium">
                   {selectedWorkspace?.name || "Select workspace"}
                 </span>
                 <ChevronDown
-                  size={13}
+                  size={12}
                   className={`shrink-0 text-muted-foreground transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`}
                 />
               </Button>
@@ -327,7 +327,7 @@ export function TopTabsBar({
               <Button
                 ref={workspaceSwitcherButtonRef}
                 variant={workspaceSwitcherOpen ? "secondary" : "outline"}
-                size="lg"
+                size="default"
                 onClick={() => {
                   setWorkspaceSwitcherOpen((open) => {
                     const nextOpen = !open;
@@ -343,12 +343,12 @@ export function TopTabsBar({
                 }}
                 className={workspaceSwitcherButtonClassName}
               >
-                <FolderKanban size={14} className="shrink-0 text-primary" />
+                <FolderKanban size={13} className="shrink-0 text-primary" />
                 <span className="min-w-0 flex-1 truncate text-left font-medium">
                   {selectedWorkspace?.name || "Select workspace"}
                 </span>
                 <ChevronDown
-                  size={13}
+                  size={12}
                   className={`shrink-0 text-muted-foreground transition-transform ${workspaceSwitcherOpen ? "rotate-180" : ""}`}
                 />
               </Button>
@@ -359,17 +359,17 @@ export function TopTabsBar({
         <div className="hidden lg:block" />
 
         <div
-          className={`${integratedTitleBar ? "window-no-drag " : ""}flex items-center justify-self-end gap-2`}
+          className={`${integratedTitleBar ? "window-no-drag " : ""}flex items-center justify-self-end gap-1.5`}
         >
           {onOpenMarketplace ? (
             <Button
               variant={isMarketplaceActive ? "secondary" : "outline"}
-              size="lg"
+              size="sm"
               aria-label="Marketplace"
               onClick={onOpenMarketplace}
-              className="gap-2 px-3"
+              className="h-7 gap-1.5 px-2 rounded-lg text-xs"
             >
-              <LayoutGrid size={14} />
+              <LayoutGrid size={12} />
               <span className="hidden sm:inline">Marketplace</span>
             </Button>
           ) : null}
@@ -384,7 +384,7 @@ export function TopTabsBar({
           <DropdownMenu>
             <DropdownMenuTrigger
               ref={userButtonRef}
-              render={<Button variant="outline" size="icon-lg" className="relative" />}
+              render={<Button variant="outline" size="icon-sm" className="relative rounded-lg" />}
             >
               <User2 />
               <span
