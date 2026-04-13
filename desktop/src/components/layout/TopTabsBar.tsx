@@ -247,20 +247,20 @@ export function TopTabsBar({
 
   const headerClassName = integratedTitleBar
     ? isWindowsIntegratedTitleBar
-      ? "window-drag relative h-[46px] px-2 pt-0.5 sm:px-3"
-      : "window-drag relative h-[46px] px-2 sm:px-3"
-    : "rounded-xl border border-border bg-card/80 px-2.5 py-1 shadow-md backdrop-blur-sm sm:px-4";
+      ? "window-drag relative h-[42px] px-2 pt-0.5 sm:px-3"
+      : "window-drag relative h-[42px] px-2 sm:px-3"
+    : "rounded-xl border border-border bg-card/80 px-2.5 py-0.5 shadow-md backdrop-blur-sm sm:px-4";
   const headerGridClassName = isWindowsIntegratedTitleBar
-    ? "relative z-10 grid min-w-0 grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-1 lg:h-full lg:grid-cols-[46px_minmax(240px,420px)_minmax(0,1fr)_auto]"
-    : `relative z-10 grid min-w-0 items-center gap-1 sm:gap-2 lg:h-full lg:grid-cols-[minmax(280px,460px)_minmax(0,1fr)_auto] ${
+    ? "relative z-10 grid min-w-0 grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-1 lg:h-full lg:grid-cols-[42px_minmax(220px,400px)_minmax(0,1fr)_auto]"
+    : `relative z-10 grid min-w-0 items-center gap-1 sm:gap-1.5 lg:h-full lg:grid-cols-[minmax(260px,440px)_minmax(0,1fr)_auto] ${
         isMacIntegratedTitleBar ? "pl-20" : ""
       }`;
 
   const windowControlButtonClassName =
-    "window-no-drag flex h-6 w-6 items-center justify-center rounded-[8px] border border-transparent text-muted-foreground/72 transition-colors duration-150 hover:bg-foreground/6 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
+    "window-no-drag flex h-5 w-5 items-center justify-center rounded-[7px] border border-transparent text-muted-foreground/72 transition-colors duration-150 hover:bg-foreground/6 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50";
   const workspaceSwitcherContainerClassName = `${integratedTitleBar ? "window-no-drag " : ""}relative min-w-55 max-w-full`;
   const workspaceSwitcherButtonClassName =
-    "h-8 w-full justify-start gap-1.5 px-2.5 rounded-xl text-[13px]";
+    "h-7 w-full justify-start gap-1.5 px-2 rounded-lg text-xs";
 
   return (
     <header
@@ -273,7 +273,7 @@ export function TopTabsBar({
             <img
               src={holabossLogoUrl}
               alt="Holaboss"
-              className="size-8 shrink-0 rounded-[10px] border border-border overflow-hidden"
+              className="size-7 shrink-0 rounded-[9px] border border-border overflow-hidden"
             />
           </div>
         ) : (
@@ -281,7 +281,7 @@ export function TopTabsBar({
             <img
               src={holabossLogoUrl}
               alt="Holaboss"
-              className="size-8 shrink-0 rounded-[10px] border border-border overflow-hidden"
+              className="size-7 shrink-0 rounded-[9px] border border-border overflow-hidden"
             />
             <div
               ref={workspaceSwitcherRef}
@@ -367,9 +367,9 @@ export function TopTabsBar({
               size="sm"
               aria-label="Marketplace"
               onClick={onOpenMarketplace}
-              className="h-8 gap-1.5 px-2.5 rounded-xl text-[13px]"
+              className="h-7 gap-1.5 px-2 rounded-lg text-xs"
             >
-              <LayoutGrid size={13} />
+              <LayoutGrid size={12} />
               <span className="hidden sm:inline">Marketplace</span>
             </Button>
           ) : null}
@@ -384,7 +384,7 @@ export function TopTabsBar({
           <DropdownMenu>
             <DropdownMenuTrigger
               ref={userButtonRef}
-              render={<Button variant="outline" size="icon" className="relative rounded-xl" />}
+              render={<Button variant="outline" size="icon-sm" className="relative rounded-lg" />}
             >
               <User2 />
               <span

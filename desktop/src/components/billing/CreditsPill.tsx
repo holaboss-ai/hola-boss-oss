@@ -17,10 +17,10 @@ export function CreditsPill({
   return (
     <Button
       type="button"
-      size="default"
+      size="sm"
       variant="outline"
       onClick={onClick}
-      className={`inline-flex h-8 shrink-0 items-center rounded-xl border px-3 text-[13px] transition ${
+      className={`inline-flex h-7 shrink-0 items-center rounded-lg border px-2.5 text-xs transition ${
         isLowBalance
           ? "border-amber-300/40 bg-amber-400/10 text-amber-200 hover:bg-amber-400/14"
           : "border-border/55"
