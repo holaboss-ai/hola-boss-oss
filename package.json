@@ -29,7 +29,12 @@
     "runtime:test": "npm run runtime:state-store:test && npm run runtime:harness-host:test && npm run runtime:api-server:test",
     "sdk:bridge:install": "bun install --cwd sdk/bridge",
     "sdk:bridge:build": "bun --cwd sdk/bridge run build",
-    "sdk:bridge:test": "bun --cwd sdk/bridge test",
-    "sdk:bridge:typecheck": "bun --cwd sdk/bridge run typecheck"
+    "sdk:bridge:test": "bun --cwd sdk/bridge run test",
+    "sdk:bridge:typecheck": "bun --cwd sdk/bridge run typecheck",
+    "sdk:app-sdk:install": "bun install --cwd sdk/app-sdk",
+    "sdk:app-sdk:build": "bun --cwd sdk/app-sdk run build",
+    "sdk:app-sdk:test": "bun --cwd sdk/app-sdk run test",
+    "sdk:app-sdk:typecheck": "bun --cwd sdk/app-sdk run typecheck",
+    "sdk:app-sdk:codegen": "bun --cwd sdk/app-sdk run codegen"
   }
 }

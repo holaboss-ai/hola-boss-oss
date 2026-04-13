@@ -76,10 +76,33 @@ jobs:
         run: bun install --cwd sdk/bridge
 
       - name: Run tests
-        run: bun --cwd sdk/bridge test
+        run: bun --cwd sdk/bridge run test
 
       - name: Build
         run: bun --cwd sdk/bridge run build
+
+  sdk-app-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --cwd sdk/app-sdk
+
+      - name: Typecheck
+        run: bun --cwd sdk/app-sdk run typecheck
+
+      - name: Run tests
+        run: bun --cwd sdk/app-sdk run test
+
+      - name: Build
+        run: bun --cwd sdk/app-sdk run build
 
   runtime-api-server:
     runs-on: ubuntu-latest
