@@ -24,11 +24,11 @@ test("top tabs bar renders custom compact window controls for Windows title bar 
   );
   assert.match(
     source,
-    /px-2 pt-1\.5 sm:px-3/,
+    /h-\[46px\] px-2 pt-0\.5 sm:px-3/,
   );
   assert.match(
     source,
-    /grid-cols-\[44px_minmax\(0,1fr\)_auto\][\s\S]*lg:grid-cols-\[60px_minmax\(276px,476px\)_minmax\(0,1fr\)_auto\]/,
+    /grid-cols-\[36px_minmax\(0,1fr\)_auto\][\s\S]*lg:grid-cols-\[46px_minmax\(240px,420px\)_minmax\(0,1fr\)_auto\]/,
   );
   assert.match(
     source,
@@ -36,7 +36,7 @@ test("top tabs bar renders custom compact window controls for Windows title bar 
   );
   assert.match(
     source,
-    /const workspaceSwitcherButtonClassName =\s*"w-full justify-start gap-2\.5 px-3";/,
+    /const workspaceSwitcherButtonClassName =\s*"h-8 w-full justify-start gap-1\.5 px-2\.5 rounded-xl text-\[13px\]";/,
   );
   assert.match(source, /window\.electronAPI\.ui\.getWindowState\(\)/);
   assert.match(source, /window\.electronAPI\.ui\.minimizeWindow\(\)/);

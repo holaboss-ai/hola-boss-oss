@@ -15834,7 +15834,7 @@ function createMainWindow() {
     process.platform === "darwin"
       ? {
           titleBarStyle: "hiddenInset" as const,
-          trafficLightPosition: { x: 14, y: 30 },
+          trafficLightPosition: { x: 14, y: 25 },
         }
       : process.platform === "win32"
         ? {

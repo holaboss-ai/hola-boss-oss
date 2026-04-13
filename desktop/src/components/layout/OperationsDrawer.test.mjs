@@ -24,6 +24,16 @@ test("operations drawer shows proposal source lane and rationale copy", async ()
   assert.match(source, /Why: \{proposal\.task_generation_rationale\}/);
 });
 
+test("operations drawer keeps local proposals visible while signed out", async () => {
+  const source = await readFile(OPERATIONS_DRAWER_PATH, "utf8");
+
+  assert.match(source, /Backend proposals require sign-in/);
+  assert.match(source, /Sign in for synced proactive controls\./);
+  assert.match(source, /size="xs"/);
+  assert.doesNotMatch(source, /!\s*isSignedIn \?\s*\(\s*<SignedOutInboxNotice/);
+  assert.doesNotMatch(source, /isSignedIn && proposalStatusMessage/);
+});
+
 test("operations drawer session rows expose pointer cursor affordance", async () => {
   const source = await readFile(OPERATIONS_DRAWER_PATH, "utf8");
 

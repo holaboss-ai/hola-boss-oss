@@ -17,10 +17,10 @@ export function CreditsPill({
   return (
     <Button
       type="button"
-      size="lg"
+      size="default"
       variant="outline"
       onClick={onClick}
-      className={`inline-flex h-9 shrink-0 items-center border px-3 text-sm transition ${
+      className={`inline-flex h-8 shrink-0 items-center rounded-xl border px-3 text-[13px] transition ${
         isLowBalance
           ? "border-amber-300/40 bg-amber-400/10 text-amber-200 hover:bg-amber-400/14"
           : "border-border/55"
@@ -28,9 +28,9 @@ export function CreditsPill({
       aria-label="Open credits and billing details"
     >
       {isLoading ? (
-        <Loader2 size={14} className="animate-spin" />
+        <Loader2 size={13} className="animate-spin" />
       ) : (
-        <Sparkles size={14} className="opacity-80" />
+        <Sparkles size={13} className="opacity-80" />
       )}
       <span className="font-medium tabular-nums">
         {isLoading ? "..." : (balance ?? 0).toLocaleString()}

@@ -2061,16 +2061,6 @@ function AppShellContent() {
       return;
     }
 
-    if (!hasLoadedProactiveTaskProposalsPreference) {
-      setIsLoadingTaskProposals(false);
-      return;
-    }
-
-    if (!proactiveTaskProposalsEnabled) {
-      setIsLoadingTaskProposals(false);
-      return;
-    }
-
     let cancelled = false;
 
     const load = async () => {
@@ -2103,12 +2093,7 @@ function AppShellContent() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [
-    hasLoadedProactiveTaskProposalsPreference,
-    proactiveTaskProposalsEnabled,
-    selectedWorkspace,
-    selectedWorkspaceId,
-  ]);
+  }, [selectedWorkspace, selectedWorkspaceId]);
 
   useEffect(() => {
     if (
