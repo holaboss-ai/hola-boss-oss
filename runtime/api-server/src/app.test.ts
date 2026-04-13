@@ -153,6 +153,38 @@ test("healthz returns ok", async () => {
   store.close();
 });
 
+test("error handler preserves Fastify statusCode for client errors", async () => {
+  const root = makeTempDir("hb-runtime-api-error-handler-");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot: path.join(root, "workspace")
+  });
+  const app = buildTestRuntimeApiServer({ store });
+
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/workspaces",
+      headers: { "content-type": "application/json" },
+      payload: "{not json"
+    });
+
+    assert.equal(response.statusCode, 400);
+    const body = response.json() as { code?: string; message?: string };
+    assert.equal(body.code, "FST_ERR_CTP_INVALID_JSON_BODY");
+    assert.ok(typeof body.message === "string" && body.message.length > 0);
+
+    const notFound = await app.inject({
+      method: "GET",
+      url: "/api/v1/does-not-exist"
+    });
+    assert.equal(notFound.statusCode, 404);
+  } finally {
+    await app.close();
+    store.close();
+  }
+});
+
 test("healthz still returns ok when remote bridge is enabled without product auth", async () => {
   const root = makeTempDir("hb-runtime-api-bridge-disabled-");
   const store = new RuntimeStateStore({
