@@ -7,6 +7,28 @@ on:
       - main
 
 jobs:
+  docs-site:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/docs/package-lock.json
+
+      - name: Install docs dependencies
+        run: npm --prefix website/docs ci
+
+      - name: Docs tests
+        run: npm run docs:test
+
+      - name: Docs build
+        run: npm run docs:build
+
   desktop-typecheck:
     runs-on: ubuntu-latest
     steps:

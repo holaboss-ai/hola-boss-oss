@@ -20,6 +20,9 @@ runtime/state-store/node_modules/
 runtime/state-store/dist/
 
 node_modules/
+website/docs/docs/.vitepress/cache/
+website/docs/docs/.vitepress/dist/
+website/docs/.turbo/
 .superpowers
 .worktrees/
 *.p12

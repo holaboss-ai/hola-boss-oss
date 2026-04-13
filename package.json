@@ -4,6 +4,12 @@
   "scripts": {
     "clean": "rm -rf out desktop/build runtime/out",
     "dev": "npm run desktop:dev",
+    "docs:dev": "npm --prefix website/docs run dev",
+    "docs:test": "npm --prefix website/docs run test",
+    "docs:build": "npm --prefix website/docs run build",
+    "docs:preview": "npm --prefix website/docs run preview",
+    "docs:deploy:staging": "npm --prefix website/docs run deploy:staging",
+    "docs:deploy:production": "npm --prefix website/docs run deploy:production",
     "desktop:clean": "rm -rf desktop/out desktop/build",
     "desktop:install": "npm install --prefix desktop",
     "desktop:prepare": "npm install --prefix sdk/app-sdk && npm --prefix sdk/app-sdk run build && npm install --prefix desktop",

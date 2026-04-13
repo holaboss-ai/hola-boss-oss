@@ -1,0 +1,73 @@
+# Runtime Tools
+
+This page covers the tool surface the runtime currently projects into the shipped harness path. Instead of grouping the tools by internal projection layer, this page groups them by the kind of work they help the agent do.
+
+The runtime still chooses which tools appear. The harness does not invent its own environment. But for readers, category is the more useful view than internal tool surface.
+
+## Workspace and Files
+
+| Tool | What it does |
+| --- | --- |
+| `read` | Read file contents or prior outputs without modifying workspace state. |
+| `edit` | Modify workspace files directly. |
+| `bash` | Run shell commands that may inspect or mutate workspace state. |
+| `grep` | Search workspace file contents by pattern. |
+| `glob` | Find files and paths by glob pattern. |
+| `list` | List directory contents and inspect workspace layout. |
+
+## Todo and Coordination
+
+| Tool | What it does |
+| --- | --- |
+| `question` | Pause and ask the user for clarification or confirmation. |
+| `todowrite` | Create or update the current working todo. |
+| `todoread` | Read the current working todo. |
+| `skill` | Consult available embedded or workspace skills when they are relevant. |
+
+## Research
+
+| Tool | What it does |
+| --- | --- |
+| `web_search` | Search the public web for exploratory research, source discovery, and approximate or aggregated answers. |
+
+## Browser
+
+These tools only appear for workspace sessions when the desktop browser bridge is available. Each workspace gets its own dedicated agent browser surface, so the agent does not interfere with the user's own browser space.
+
+| Tool | What it does |
+| --- | --- |
+| `browser_navigate` | Navigate the desktop browser to a URL for direct inspection or interaction on a specific live site when search results are not enough. |
+| `browser_open_tab` | Open a URL in a new desktop browser tab so the agent can inspect or compare specific live pages without losing the current page state. |
+| `browser_get_state` | Read the current desktop browser page, visible interactive elements, and optional screenshot. |
+| `browser_click` | Click an interactive element from `browser_get_state` by index to continue a live browser workflow. |
+| `browser_type` | Type text into an interactive element from `browser_get_state` by index to search, filter, fill inputs, or continue a live browser workflow. |
+| `browser_press` | Send a keyboard key to the currently focused element to submit forms, confirm dialogs, or continue keyboard-driven browser interaction. |
+| `browser_scroll` | Scroll the current page vertically to load, inspect, or reach additional live content that is not yet visible. |
+| `browser_back` | Go back in the active browser tab history while preserving the live browser session state. |
+| `browser_forward` | Go forward in the active browser tab history while preserving the live browser session state. |
+| `browser_reload` | Reload the active browser tab to refresh live page state before re-checking exact details. |
+| `browser_screenshot` | Capture a screenshot of the active browser tab when visual verification or interpretation is needed. |
+| `browser_list_tabs` | List open browser tabs and the active tab id so the agent can manage multi-tab workflows. |
+
+## Onboarding
+
+| Tool | What it does |
+| --- | --- |
+| `holaboss_onboarding_status` | Read the local onboarding status for the current workspace. |
+| `holaboss_onboarding_complete` | Mark local workspace onboarding complete with a summary. |
+
+## Cronjobs
+
+| Tool | What it does |
+| --- | --- |
+| `holaboss_cronjobs_list` | List local cronjobs for the current workspace. |
+| `holaboss_cronjobs_create` | Create a local cronjob for the current workspace. |
+| `holaboss_cronjobs_get` | Read one local cronjob by id. |
+| `holaboss_cronjobs_update` | Update one local cronjob by id. |
+| `holaboss_cronjobs_delete` | Delete one local cronjob by id. |
+
+## Image Generation
+
+| Tool | What it does |
+| --- | --- |
+| `image_generate` | Generate an image file in the current workspace using the configured image generation provider and model. |

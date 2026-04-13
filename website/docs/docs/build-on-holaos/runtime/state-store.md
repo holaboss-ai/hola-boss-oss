@@ -1,0 +1,190 @@
+# Runtime State Store
+
+Use this page when you are changing `runtime.db`, queue behavior, continuity records, or any runtime-owned persistent state.
+
+The source of truth is:
+
+- `runtime/state-store/src/store.ts`
+- `runtime/state-store/src/store.test.ts`
+- `runtime/state-store/src/cli.ts`
+
+## What This Package Owns
+
+`@holaboss/runtime-state-store` is the durable SQLite registry for the runtime.
+
+It does not replace the workspace filesystem or the markdown memory tree. It stores the runtime-owned metadata around them:
+
+- workspace registry and discovery
+- session and harness binding state
+- input and post-run job queues
+- turn results, request snapshots, and compaction boundaries
+- memory registry metadata and vector index entries
+- outputs, app build state, cronjobs, notifications, and proposals
+
+If the runtime needs durable state that is not just a file in the workspace, it usually lands here.
+
+## Where `runtime.db` Lives
+
+`runtimeDbPath()` resolves the database path this way:
+
+- `HOLABOSS_RUNTIME_DB_PATH` if set
+- else `<sandboxRoot>/state/runtime.db`
+
+The store also resolves workspace paths from:
+
+- the workspace registry row
+- the workspace identity file under `.holaboss/workspace_id`
+- fallback discovery under the runtime workspace root
+
+That means the runtime uses both the database and filesystem markers to keep workspace discovery stable.
+
+## Major Record Families
+
+### Workspace and session registry
+
+The store owns:
+
+- `workspaces`
+- `agent_sessions`
+- session-to-harness bindings
+- session runtime state
+
+This is the durable registry that tells the runtime which workspaces and sessions exist, which harness path they use, and whether a session is idle, busy, waiting on user input, or errored.
+
+### Queues and leases
+
+The store owns two queue families:
+
+- `agent_session_inputs`
+- `post_run_jobs`
+
+Both support:
+
+- idempotent enqueue paths through `enqueueInput()` and `enqueuePostRunJob()`
+- worker claiming through `claimInputs()` and `claimPostRunJobs()`
+- `QUEUED` to `CLAIMED` transitions
+- worker lease windows through `claimed_until`
+- expired-claim recovery through `listExpiredClaimedInputs()` and `listExpiredClaimedPostRunJobs()`
+- optional `distinctSessions` claiming so one worker does not take multiple queued items from the same session in one batch
+
+This is the runtime’s queue and lease model. If job pickup or replay behavior is wrong, inspect these records before you patch workers.
+
+### Continuity and replay state
+
+The store persists:
+
+- session messages
+- output events
+- turn results
+- turn request snapshots
+- compaction boundaries
+
+This is the persistent continuity seam between runs. It is how the runtime reconstructs recent context, emits output streams, and restores compacted sessions without relying on the harness to remember everything.
+
+### Memory registry and vector index
+
+The store tracks memory metadata with:
+
+- runtime user profile rows
+- memory entries
+- memory embedding index rows
+
+The package also loads `sqlite-vec` when available so memory recall can use vector search over indexed memory content.
+
+Important distinction:
+
+- the markdown memory documents still live on disk under `memory/`
+- the runtime-state-store keeps the searchable registry and embedding index around those documents
+
+### Workspace-visible product state
+
+The same database also stores:
+
+- output folders and outputs
+- app builds and app port allocation
+- app catalog metadata
+- cronjobs
+- runtime notifications
+- OAuth app config
+- task proposals
+- evolve skill candidates
+- memory update proposals
+
+That is why desktop surfaces such as notifications, outputs, proposals, and cronjobs are runtime-backed rather than renderer-local.
+
+## Queue and Lease Model
+
+The queue behavior is worth treating as a first-class contract.
+
+Current important behavior from `store.ts` and `store.test.ts`:
+
+- queued inputs and post-run jobs are claimed in priority order
+- claims update `claimed_by` and `claimed_until`
+- expired claims can be listed and recovered
+- session runtime state separately tracks `lease_until`, `heartbeat_at`, and `last_error`
+- runtime-state status is normalized to values such as `IDLE`, `BUSY`, `WAITING_USER`, `ERROR`, `QUEUED`, and `PAUSED`
+
+If you change queue semantics, you are changing scheduling behavior for the whole runtime, not just one worker.
+
+## Database vs Filesystem Contract
+
+Do not collapse the persistence model into one place.
+
+The runtime currently uses:
+
+- `runtime.db` for registry, queue, and durable runtime metadata
+- workspace files for authored config and app/template state
+- `memory/` markdown files for durable memory content
+- `.holaboss/` under each workspace for workspace-local runtime state such as the identity marker and harness session mapping
+
+That split is deliberate. The database tracks runtime truth around the workspace; it does not become the workspace.
+
+## Migrations and Compatibility
+
+The store ensures schema and runs compatibility migrations on open.
+
+Current migration seams in `store.ts` include:
+
+- workspace-table migration and workspace-path recovery
+- legacy session-artifact migration into outputs
+- runtime-notification priority normalization
+- cronjob instruction migration
+- sandbox run-token table migration
+- queue/runtime-state lease-column migrations
+
+If you add a new durable record family, you need to think about both schema creation and migration behavior for existing runtimes.
+
+## CLI and Test Seams
+
+The package exposes a CLI entrypoint, `holaboss-state-store`, backed by `runtime/state-store/src/cli.ts`.
+
+That CLI mirrors many store operations, including:
+
+- workspace lookup
+- queue enqueue and claim flows
+- runtime-state inspection
+- outputs, notifications, cronjobs, and proposals
+
+For development, the tests are usually the better executable reference than manual SQL because they lock the intended behavior:
+
+- workspace discovery and migration
+- idempotent enqueue and claim behavior
+- expired-claim handling
+- output and notification behavior
+- proposal and memory-update flows
+
+## Practical Rules
+
+- do not patch queue behavior without tests
+- do not assume the database is the whole persistence model
+- treat lease fields and queue statuses as scheduling contracts
+- keep record normalization stable because desktop and runtime code both depend on it
+- when a change affects replay, compaction, outputs, or recall, trace the state-store consumers before changing column meaning
+
+## Validation
+
+```bash
+npm run runtime:state-store:typecheck
+npm run runtime:state-store:test
+npm run runtime:test
+```

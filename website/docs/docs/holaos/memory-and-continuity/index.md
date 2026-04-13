@@ -1,0 +1,69 @@
+# Memory and Continuity
+
+`holaOS` separates memory into three different jobs:
+
+1. resume the current session safely
+2. remember durable facts, preferences, and identity
+3. keep workspace instructions stable and human-readable
+
+That split is deliberate. It prevents runtime state, long-term memory, and workspace policy from getting mixed together.
+
+## The model at a glance
+
+`holaOS` currently treats memory as four layers:
+
+- session continuity lives in runtime-owned artifacts such as `turn_results` and compaction boundaries in `state/runtime.db`
+- session-memory continuity projections live under `memory/workspace/<workspace-id>/runtime/session-memory/`
+- operational projections live under `memory/workspace/<workspace-id>/runtime/`, including the latest turn, session state, blockers, recent turns, and permission-blocker snapshots
+- durable recalled memory lives under `memory/workspace/<workspace-id>/knowledge/`, `memory/preference/`, and `memory/identity/`
+
+The canonical operator profile also lives in `state/runtime.db`. That profile is runtime-owned identity state, not markdown memory. The runtime also keeps pending user-memory proposals in `state/runtime.db` so the current run can use them ephemerally without promoting them into durable memory yet.
+
+Accepted user-memory proposals are the separate path that promotes user preference memory into `memory/preference/` or updates the runtime profile in `state/runtime.db`. The background evolve path does not create user preference or profile memory on its own.
+
+The easiest way to think about the storage boundary is:
+
+| Layer | Purpose | Durable? |
+| --- | --- | --- |
+| `state/runtime.db` | execution truth, profile state, continuity boundaries | yes |
+| `memory/workspace/<workspace-id>/runtime/` | latest-turn projections, blockers, recent-turn snapshots | no |
+| `memory/workspace/<workspace-id>/runtime/session-memory/` | resume-friendly continuity snapshots | semi-volatile |
+| `memory/workspace/<workspace-id>/knowledge/` | workspace facts, procedures, blockers, reference memories | yes |
+| `memory/preference/` | user preferences | yes |
+| `memory/identity/` | user identity memory | yes |
+
+Runtime files under `runtime/` are meant for inspection and restoration. They are not treated as durable knowledge.
+
+## Source-of-truth boundary
+
+The source-of-truth split is deliberate:
+
+- runtime execution truth lives in `state/runtime.db`
+- canonical operator profile data lives in `state/runtime.db`
+- durable recalled memory lives in markdown under `memory/`
+- standing workspace policy lives in `AGENTS.md`
+
+That is what keeps continuity inspectable without turning workspace policy or durable memory into raw execution logs.
+
+## Read this section
+
+<DocCards>
+  <DocCard
+    title="Runtime Continuity"
+    eyebrow="Resume Layer"
+    href="/holaos/memory-and-continuity/runtime-continuity"
+    description="See how run artifacts, compaction boundaries, and session-memory snapshots let the next run resume cleanly."
+  />
+  <DocCard
+    title="Durable Memory"
+    eyebrow="Recall Layer"
+    href="/holaos/memory-and-continuity/durable-memory"
+    description="See what counts as durable memory, which files own it, and how the runtime keeps it separate from continuity."
+  />
+  <DocCard
+    title="Recall and Evolve"
+    eyebrow="Post-Run Flow"
+    href="/holaos/memory-and-continuity/recall-and-evolve"
+    description="See how writeback, evolve jobs, recall selection, and skill candidates work after each run."
+  />
+</DocCards>
