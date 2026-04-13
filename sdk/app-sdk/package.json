@@ -68,7 +68,7 @@
     "codegen": "kubb generate --config ./kubb.config.ts",
     "test": "vitest run kubb.config.test.ts src/clients/base.test.ts",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "bun run build"
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "holaboss",
@@ -82,8 +82,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/holaboss-ai/holaboss-ai",
+    "url": "git+https://github.com/holaboss-ai/holaOS.git",
     "directory": "sdk/app-sdk"
+  },
+  "homepage": "https://github.com/holaboss-ai/holaOS/tree/main/sdk/app-sdk",
+  "bugs": {
+    "url": "https://github.com/holaboss-ai/holaOS/issues"
   },
   "engines": {
     "node": ">=20"
