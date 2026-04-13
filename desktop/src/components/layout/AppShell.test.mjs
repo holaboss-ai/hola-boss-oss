@@ -376,6 +376,20 @@ test("app shell routes agent-originated browser opens into the agent browser spa
   assert.match(source, /\.setActiveWorkspace\(targetWorkspaceId, "user"\)/);
 });
 
+test("app shell reports active non-browser operator surfaces back to Electron", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /type ReportedOperatorSurfaceContext = \{/);
+  assert.match(source, /function buildReportedOperatorSurfaceContext\(params: \{/);
+  assert.match(source, /surface_id: `editor:\$\{params\.owner\}:\$\{resourceId\}`/);
+  assert.match(source, /surface_type: "editor"/);
+  assert.match(source, /surface_type: "app_surface"/);
+  assert.match(source, /const reportedOperatorSurfaceWorkspaceIdRef = useRef<string \| null>\(null\);/);
+  assert.match(source, /const reportedOperatorSurfaceContext = useMemo\(/);
+  assert.match(source, /window\.electronAPI\.workspace\.setOperatorSurfaceContext\(\s*previousWorkspaceId,\s*null,\s*\)/);
+  assert.match(source, /window\.electronAPI\.workspace\.setOperatorSurfaceContext\(\s*nextWorkspaceId,\s*reportedOperatorSurfaceContext,\s*\)/);
+});
+
 test("app shell polls proactive status for the selected workspace", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 

@@ -196,6 +196,7 @@ function testDeps(params: {
     compilePlan: () => baseCompiledPlan() as never,
     startWorkspaceMcpSidecar: async () => null,
     bootstrapApplications: async () => [],
+    loadOperatorSurfaceContext: async () => null,
     projectAgentRuntimeConfig: () => ({
       provider_id: "openai",
       model_id: "gpt-5.4",
@@ -792,6 +793,7 @@ test("runTsRunnerCli only advertises structured output when the selected harness
       "build_harness_host_request",
       "compile_runtime_plan",
       "load_current_user_context",
+      "load_operator_surface_context",
       "load_pending_user_memory_context",
       "load_recalled_memory_context",
       "load_recent_runtime_context",
@@ -1699,6 +1701,213 @@ test("runTsRunnerCli loads pending user memory proposals into prompt context for
   assert.equal(
     pendingUserMemoryContext.entries[0]?.summary,
     "Do not compress or zip multiple files; deliver them individually."
+  );
+});
+
+test("runTsRunnerCli loads operator surface context into prompt context for the same run", async () => {
+  setTempSandboxRoot("hb-ts-runner-operator-surface-");
+
+  let capturedProjectRequest: Record<string, unknown> | null = null;
+  const exitCode = await runTsRunnerCli(
+    ["--request-base64", encodeRequest(baseRequest())],
+    {
+      deps: {
+        ...testDeps(),
+        loadOperatorSurfaceContext: async () => ({
+          active_surface_id: "browser:user",
+          surfaces: [
+            {
+              surface_id: "browser:user",
+              surface_type: "browser",
+              owner: "user",
+              active: true,
+              mutability: "inspect_only",
+              summary: "User browser surface with 1 open tab.",
+            },
+            {
+              surface_id: "browser:agent",
+              surface_type: "browser",
+              owner: "agent",
+              active: false,
+              mutability: "agent_owned",
+              summary: "Agent browser surface with 2 open tabs.",
+            },
+          ],
+        }),
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" }
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1"
+          };
+        }
+      },
+      io: {
+        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
+        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream
+      }
+    }
+  );
+
+  assert.equal(exitCode, 0);
+  assert.ok(capturedProjectRequest);
+  assert.deepEqual(
+    (capturedProjectRequest as { operator_surface_context: Record<string, unknown> }).operator_surface_context,
+    {
+      active_surface_id: "browser:user",
+      surfaces: [
+        {
+          surface_id: "browser:user",
+          surface_type: "browser",
+          owner: "user",
+          active: true,
+          mutability: "inspect_only",
+          summary: "User browser surface with 1 open tab.",
+        },
+        {
+          surface_id: "browser:agent",
+          surface_type: "browser",
+          owner: "agent",
+          active: false,
+          mutability: "agent_owned",
+          summary: "Agent browser surface with 2 open tabs.",
+        },
+      ],
+    }
+  );
+});
+
+test("runTsRunnerCli loads operator surface context from the desktop browser capability base URL", async () => {
+  const sandboxRoot = setTempSandboxRoot("hb-ts-runner-operator-surface-fetch-");
+  const configPath = path.join(sandboxRoot, "state", "runtime-config.json");
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(
+    configPath,
+    `${JSON.stringify(
+      {
+        capabilities: {
+          desktop_browser: {
+            enabled: true,
+            url: "http://127.0.0.1:3555/api/v1/browser",
+            auth_token: "browser-token",
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  process.env.HOLABOSS_RUNTIME_CONFIG_PATH = configPath;
+
+  let capturedProjectRequest: Record<string, unknown> | null = null;
+  const requests: Array<{ url: string; token: string | null; workspaceId: string | null }> = [];
+  const { loadOperatorSurfaceContext: _ignoredLoadOperatorSurfaceContext, ...baseDeps } = testDeps();
+  globalThis.fetch = (async (input, init) => {
+    requests.push({
+      url: typeof input === "string" ? input : input instanceof URL ? input.toString() : String(input),
+      token:
+        init?.headers && typeof init.headers === "object" && !Array.isArray(init.headers)
+          ? (init.headers as Record<string, string>)["x-holaboss-desktop-token"] ?? null
+          : null,
+      workspaceId:
+        init?.headers && typeof init.headers === "object" && !Array.isArray(init.headers)
+          ? (init.headers as Record<string, string>)["x-holaboss-workspace-id"] ?? null
+          : null,
+    });
+    return new Response(
+      JSON.stringify({
+        active_surface_id: "browser:user",
+        surfaces: [
+          {
+            surface_id: "browser:user",
+            surface_type: "browser",
+            owner: "user",
+            active: true,
+            mutability: "inspect_only",
+            summary: "User browser surface with 1 open tab.",
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }) as typeof fetch;
+
+  const exitCode = await runTsRunnerCli(
+    ["--request-base64", encodeRequest(baseRequest())],
+    {
+      deps: {
+        ...baseDeps,
+        projectAgentRuntimeConfig: (request) => {
+          capturedProjectRequest = request as unknown as Record<string, unknown>;
+          return {
+            provider_id: "openai",
+            model_id: "gpt-5.4",
+            mode: "code",
+            system_prompt: "You are concise.",
+            model_client: {
+              model_proxy_provider: "openai_compatible",
+              api_key: "token",
+              base_url: "http://127.0.0.1:4000/openai/v1",
+              default_headers: { "X-Test": "1" },
+            },
+            tools: { read: true },
+            workspace_tool_ids: [],
+            workspace_skill_ids: [],
+            output_schema_member_id: null,
+            output_format: null,
+            workspace_config_checksum: "checksum-1",
+          };
+        },
+      },
+      io: {
+        stdout: { write() { return true; } } as unknown as NodeJS.WritableStream,
+        stderr: { write() { return true; } } as unknown as NodeJS.WritableStream,
+      },
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.deepEqual(requests, [
+    {
+      url: "http://127.0.0.1:3555/api/v1/browser/operator-surface-context",
+      token: "browser-token",
+      workspaceId: "workspace-1",
+    },
+  ]);
+  assert.ok(capturedProjectRequest);
+  assert.deepEqual(
+    (capturedProjectRequest as { operator_surface_context: Record<string, unknown> }).operator_surface_context,
+    {
+      active_surface_id: "browser:user",
+      surfaces: [
+        {
+          surface_id: "browser:user",
+          surface_type: "browser",
+          owner: "user",
+          active: true,
+          mutability: "inspect_only",
+          summary: "User browser surface with 1 open tab.",
+        },
+      ],
+    },
   );
 });
 

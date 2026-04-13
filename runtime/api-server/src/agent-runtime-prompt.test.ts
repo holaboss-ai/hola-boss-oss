@@ -257,6 +257,57 @@ test("composeBaseAgentPrompt includes current user context when provided", () =>
   assert.match(prompt.contextMessages.join("\n\n"), /Name source: `manual`\./);
 });
 
+test("composeBaseAgentPrompt includes operator surface context when provided", () => {
+  const prompt = composeBaseAgentPrompt("", {
+    defaultTools: ["read"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    operatorSurfaceContext: {
+      active_surface_id: "browser:user",
+      surfaces: [
+        {
+          surface_id: "browser:user",
+          surface_type: "browser",
+          owner: "user",
+          active: true,
+          mutability: "inspect_only",
+          summary: "User browser surface with 1 open tab. Active tab: \"Inbox\" at https://mail.google.com. It shares the workspace browser session and auth state with the other browser surface.",
+        },
+        {
+          surface_id: "browser:agent",
+          surface_type: "browser",
+          owner: "agent",
+          active: false,
+          mutability: "agent_owned",
+          summary: "Agent browser surface with 2 open tabs. Active tab: \"Docs\" at https://docs.example.com. It shares the workspace browser session and auth state with the other browser surface.",
+        },
+      ],
+    },
+  });
+
+  assert.ok(prompt.promptSections.some((section) => section.id === "operator_surface_context"));
+  assert.equal(
+    prompt.promptSections.find((section) => section.id === "operator_surface_context")?.channel,
+    "context_message"
+  );
+  assert.equal(
+    prompt.promptSections.find((section) => section.id === "operator_surface_context")?.precedence,
+    "runtime_context"
+  );
+  assert.equal(prompt.promptLayers.some((layer) => layer.id === "operator_surface_context"), false);
+  assert.doesNotMatch(prompt.systemPrompt, /Operator surface context:/);
+  assert.match(prompt.contextMessages.join("\n\n"), /Operator surface context:/);
+  assert.match(prompt.contextMessages.join("\n\n"), /default referent for deictic questions such as `what am I looking at right now`/i);
+  assert.match(prompt.contextMessages.join("\n\n"), /continue from what they already opened, navigated, selected, or prepared/i);
+  assert.match(prompt.contextMessages.join("\n\n"), /do not answer from browser state just because browser tools are available/i);
+  assert.match(prompt.contextMessages.join("\n\n"), /Current active surface id: `browser:user`\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /\[user\/browser\] `browser:user` \(active, mutability=`inspect_only`\):/);
+  assert.match(prompt.contextMessages.join("\n\n"), /\[agent\/browser\] `browser:agent` \(mutability=`agent_owned`\):/);
+});
+
 test("composeBaseAgentPrompt includes pending user memory context when provided", () => {
   const prompt = composeBaseAgentPrompt("", {
     defaultTools: ["read"],

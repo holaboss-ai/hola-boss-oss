@@ -983,6 +983,34 @@ function latestCompletedTodoEntry(phases: ChatTodoPhase[]) {
   return null;
 }
 
+function phaseHasRemainingTodoTasks(phase: ChatTodoPhase) {
+  return phase.tasks.some(
+    (task) =>
+      task.status === "pending" ||
+      task.status === "in_progress" ||
+      task.status === "blocked",
+  );
+}
+
+function visibleTodoPhases(phases: ChatTodoPhase[]) {
+  const activePhases = phases.filter((phase) => phaseHasRemainingTodoTasks(phase));
+  if (activePhases.length > 0) {
+    return activePhases;
+  }
+
+  const latestCompletedEntry = latestCompletedTodoEntry(phases);
+  if (!latestCompletedEntry) {
+    return phases;
+  }
+
+  const latestCompletedPhaseIndex = phases.findIndex(
+    (phase) => phase.id === latestCompletedEntry.phase.id,
+  );
+  return latestCompletedPhaseIndex < 0
+    ? phases
+    : phases.slice(latestCompletedPhaseIndex, latestCompletedPhaseIndex + 1);
+}
+
 function todoPlanFromToolResult(
   result: unknown,
 ): ChatTodoPlan | null | undefined {
@@ -5360,11 +5388,12 @@ function CurrentTodoPanel({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const totalTaskCount = todoTaskCount(todoPlan.phases);
+  const visiblePhases = visibleTodoPhases(todoPlan.phases);
+  const totalTaskCount = todoTaskCount(visiblePhases);
   const remainingTaskCount = todoRemainingTaskCount(todoPlan.phases);
   const activeEntry = currentTodoEntry(todoPlan.phases);
   const latestCompletedEntry = latestCompletedTodoEntry(todoPlan.phases);
-  const currentTaskPosition = currentTodoPosition(todoPlan.phases);
+  const currentTaskPosition = currentTodoPosition(visiblePhases);
   const summaryLabel = activeEntry
     ? activeEntry.task.content
     : latestCompletedEntry?.task.content ||
@@ -5408,7 +5437,7 @@ function CurrentTodoPanel({
       {expanded ? (
         <div className="border-t border-border/20 px-3 py-3">
           <div className="space-y-3">
-            {todoPlan.phases.map((phase) => {
+            {visiblePhases.map((phase) => {
               const phaseCompletedCount = phase.tasks.filter(
                 (task) =>
                   task.status === "completed" || task.status === "abandoned",

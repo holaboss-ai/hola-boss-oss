@@ -315,6 +315,28 @@ interface BrowserTabListPayload {
   tabCounts: BrowserTabCountsPayload;
 }
 
+type OperatorSurfaceType = "browser" | "editor" | "terminal" | "app_surface";
+type OperatorSurfaceOwner = "user" | "agent";
+type OperatorSurfaceMutability = "inspect_only" | "takeover_allowed" | "agent_owned";
+
+interface OperatorSurfacePayload {
+  surface_id: string;
+  surface_type: OperatorSurfaceType;
+  owner: OperatorSurfaceOwner;
+  active: boolean;
+  mutability: OperatorSurfaceMutability;
+  summary: string;
+}
+
+interface OperatorSurfaceContextPayload {
+  active_surface_id: string | null;
+  surfaces: OperatorSurfacePayload[];
+}
+
+interface ReportedOperatorSurfaceContextPayload extends OperatorSurfaceContextPayload {
+  updated_at: string;
+}
+
 interface BrowserTabRecord {
   view: BrowserView;
   state: BrowserStatePayload;
@@ -580,6 +602,10 @@ let addressSuggestionsState: {
 let activeBrowserWorkspaceId = "";
 let activeBrowserSpaceId: BrowserSpaceId = "user";
 const browserWorkspaces = new Map<string, BrowserWorkspaceState>();
+const reportedOperatorSurfaceContexts = new Map<
+  string,
+  ReportedOperatorSurfaceContextPayload
+>();
 const browserDownloadTrackingPartitions = new Set<string>();
 const appSurfaceViews = new Map<string, BrowserView>();
 let appSurfaceBounds: BrowserBoundsPayload = {
@@ -598,6 +624,8 @@ const filePreviewWatchSubscriptions = new Map<
   }
 >();
 let runtimeProcess: ChildProcessWithoutNullStreams | null = null;
+let appQuitCleanupPromise: Promise<void> | null = null;
+let appQuitCleanupFinished = false;
 let pendingAuthUser: AuthUserPayload | null = null;
 let pendingAuthError: AuthErrorPayload | null = null;
 let runtimeStatus: RuntimeStatusPayload = {
@@ -3491,6 +3519,150 @@ function browserPagePayload(tab: BrowserTabRecord): Record<string, unknown> {
   };
 }
 
+function operatorSurfaceTypeValue(value: unknown): OperatorSurfaceType | null {
+  return value === "browser" ||
+    value === "editor" ||
+    value === "terminal" ||
+    value === "app_surface"
+    ? value
+    : null;
+}
+
+function operatorSurfaceOwnerValue(value: unknown): OperatorSurfaceOwner | null {
+  return value === "user" || value === "agent" ? value : null;
+}
+
+function operatorSurfaceMutabilityValue(
+  value: unknown,
+): OperatorSurfaceMutability | null {
+  return value === "inspect_only" ||
+    value === "takeover_allowed" ||
+    value === "agent_owned"
+    ? value
+    : null;
+}
+
+function normalizeOperatorSurfacePayload(
+  value: unknown,
+): OperatorSurfacePayload | null {
+  const record = runtimeConfigObject(value);
+  const surfaceId = runtimeFirstNonEmptyString(
+    typeof record.surface_id === "string" ? record.surface_id : undefined,
+  );
+  const surfaceType = operatorSurfaceTypeValue(record.surface_type);
+  const owner = operatorSurfaceOwnerValue(record.owner);
+  const mutability = operatorSurfaceMutabilityValue(record.mutability);
+  const summary = runtimeFirstNonEmptyString(
+    typeof record.summary === "string" ? record.summary : undefined,
+  );
+  if (!surfaceId || !surfaceType || !owner || !mutability || !summary) {
+    return null;
+  }
+  return {
+    surface_id: surfaceId,
+    surface_type: surfaceType,
+    owner,
+    active: record.active === true,
+    mutability,
+    summary,
+  };
+}
+
+function normalizeReportedOperatorSurfaceContext(
+  value: unknown,
+): ReportedOperatorSurfaceContextPayload | null {
+  const record = runtimeConfigObject(value);
+  const surfaces = Array.isArray(record.surfaces)
+    ? record.surfaces
+        .map((surface) => normalizeOperatorSurfacePayload(surface))
+        .filter((surface): surface is OperatorSurfacePayload => surface !== null)
+    : [];
+  if (surfaces.length === 0) {
+    return null;
+  }
+  const activeSurfaceId = runtimeFirstNonEmptyString(
+    typeof record.active_surface_id === "string"
+      ? record.active_surface_id
+      : undefined,
+  );
+  return {
+    active_surface_id: activeSurfaceId ?? null,
+    surfaces,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function browserSurfaceSummary(
+  workspaceId: string,
+  space: BrowserSpaceId,
+  visibleInApp: boolean,
+): string {
+  const workspace = browserWorkspaceFromMap(workspaceId);
+  const tabSpace = browserTabSpaceState(workspace, space);
+  const activeTabId = tabSpace?.activeTabId ?? "";
+  if (activeTabId) {
+    syncBrowserState(workspaceId, activeTabId, space);
+  }
+  const refreshedWorkspace = browserWorkspaceFromMap(workspaceId);
+  const refreshedTabSpace = browserTabSpaceState(refreshedWorkspace, space);
+  const tabCount = refreshedTabSpace?.tabs.size ?? 0;
+  const activeTab = activeTabId ? refreshedTabSpace?.tabs.get(activeTabId) ?? null : null;
+  const spaceLabel = space === "user" ? "User browser" : "Agent browser";
+  const tabSummary = `${tabCount} open ${tabCount === 1 ? "tab" : "tabs"}`;
+  const summaryParts = [`${spaceLabel} surface with ${tabSummary}.`];
+  if (activeTab) {
+    const activeTitle = activeTab.state.title?.trim() || activeTab.state.url?.trim() || "Untitled";
+    const activeUrl = activeTab.state.url?.trim();
+    summaryParts.push(`Active tab: "${activeTitle}"${activeUrl ? ` at ${activeUrl}` : ""}.`);
+  } else {
+    summaryParts.push("No active tab is currently selected.");
+  }
+  if (visibleInApp) {
+    summaryParts.push("This surface is currently visible in the app.");
+  }
+  summaryParts.push("It shares the workspace browser session and auth state with the other browser surface.");
+  return summaryParts.join(" ");
+}
+
+function operatorSurfaceContextPayload(workspaceId: string): OperatorSurfaceContextPayload {
+  const normalizedWorkspaceId = workspaceId.trim();
+  const reportedContext =
+    reportedOperatorSurfaceContexts.get(normalizedWorkspaceId) ?? null;
+  const reportedSurfaces = reportedContext?.surfaces ?? [];
+  const activeReportedSurfaceId =
+    reportedContext?.active_surface_id?.trim() || "";
+  const browserSurfaces: OperatorSurfacePayload[] = BROWSER_SPACE_IDS.map(
+    (space): OperatorSurfacePayload => ({
+    surface_id: `browser:${space}`,
+    surface_type: "browser",
+    owner: space === "user" ? "user" : "agent",
+    active:
+      activeReportedSurfaceId.length > 0
+        ? activeReportedSurfaceId === `browser:${space}`
+        : normalizedWorkspaceId === activeBrowserWorkspaceId &&
+          activeBrowserSpaceId === space,
+    mutability: space === "agent" ? "agent_owned" : "inspect_only",
+    summary: browserSurfaceSummary(
+      normalizedWorkspaceId,
+      space,
+      activeReportedSurfaceId.length > 0
+        ? activeReportedSurfaceId === `browser:${space}`
+        : normalizedWorkspaceId === activeBrowserWorkspaceId &&
+          activeBrowserSpaceId === space,
+    ),
+  }),
+  );
+  const activeSurfaceId = activeReportedSurfaceId ||
+    (normalizedWorkspaceId &&
+    normalizedWorkspaceId === activeBrowserWorkspaceId
+      ? `browser:${activeBrowserSpaceId}`
+      : null);
+  return {
+    active_surface_id: activeSurfaceId,
+    surfaces: [...reportedSurfaces, ...browserSurfaces],
+  };
+}
+
 function serializeBrowserEvalResult(value: unknown): unknown {
   if (value === undefined) {
     return null;
@@ -3622,6 +3794,13 @@ async function handleDesktopBrowserServiceRequest(
       }
       syncBrowserState(targetWorkspaceId, activeTab.state.id, "agent");
       writeBrowserServiceJson(response, 200, browserPagePayload(activeTab));
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/v1/browser/operator-surface-context") {
+      await ensureBrowserWorkspace(targetWorkspaceId, "user");
+      await ensureBrowserWorkspace(targetWorkspaceId, "agent");
+      writeBrowserServiceJson(response, 200, operatorSurfaceContextPayload(targetWorkspaceId));
       return;
     }
 
@@ -11445,6 +11624,26 @@ async function stopEmbeddedRuntime() {
   });
 }
 
+async function ensureAppQuitCleanup(): Promise<void> {
+  if (appQuitCleanupFinished) {
+    return;
+  }
+  if (!appQuitCleanupPromise) {
+    // Block the final Electron quit until embedded services have been torn down.
+    appQuitCleanupPromise = Promise.allSettled([
+      stopDesktopBrowserService(),
+      stopEmbeddedRuntime(),
+    ])
+      .then(() => {
+        appQuitCleanupFinished = true;
+      })
+      .finally(() => {
+        appQuitCleanupPromise = null;
+      });
+  }
+  await appQuitCleanupPromise;
+}
+
 async function startEmbeddedRuntime() {
   return withRuntimeLifecycleLock(async () => {
     runtimeStartupInFlight = true;
@@ -16519,6 +16718,25 @@ app.whenReady().then(async () => {
     async (_event, workspaceId: string) => workspaceDirectoryPath(workspaceId),
   );
   handleTrustedIpc(
+    "workspace:setOperatorSurfaceContext",
+    ["main"],
+    async (_event, workspaceId: string, context: unknown) => {
+      const normalizedWorkspaceId = workspaceId.trim();
+      if (!normalizedWorkspaceId) {
+        return;
+      }
+      const normalizedContext = normalizeReportedOperatorSurfaceContext(context);
+      if (!normalizedContext) {
+        reportedOperatorSurfaceContexts.delete(normalizedWorkspaceId);
+        return;
+      }
+      reportedOperatorSurfaceContexts.set(
+        normalizedWorkspaceId,
+        normalizedContext,
+      );
+    },
+  );
+  handleTrustedIpc(
     "workspace:createWorkspace",
     ["main"],
     async (_event, payload: HolabossCreateWorkspacePayload) =>
@@ -17322,7 +17540,12 @@ app.on("window-all-closed", () => {
   }
 });
 
-app.on("before-quit", () => {
-  void stopDesktopBrowserService();
-  void stopEmbeddedRuntime();
+app.on("before-quit", (event) => {
+  if (appQuitCleanupFinished) {
+    return;
+  }
+  event.preventDefault();
+  void ensureAppQuitCleanup().finally(() => {
+    app.quit();
+  });
 });

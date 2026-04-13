@@ -61,6 +61,7 @@ export type HarnessPromptLayerId =
   | "session_policy"
   | "capability_policy"
   | "current_user_context"
+  | "operator_surface_context"
   | "pending_user_memory"
   | "evolve_candidate_context"
   | "memory_recall"

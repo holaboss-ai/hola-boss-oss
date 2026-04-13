@@ -10,6 +10,7 @@ import {
   composeBaseAgentPrompt,
   type AgentCurrentUserContext,
   type AgentEvolveCandidateContext,
+  type AgentOperatorSurfaceContext,
   type AgentPendingUserMemoryContext,
   type AgentRecalledMemoryContext,
   type AgentRecentRuntimeContext,
@@ -46,6 +47,7 @@ export interface AgentRuntimeConfigCliRequest {
   session_resume_context?: AgentSessionResumeContext | null;
   recalled_memory_context?: AgentRecalledMemoryContext | null;
   current_user_context?: AgentCurrentUserContext | null;
+  operator_surface_context?: AgentOperatorSurfaceContext | null;
   pending_user_memory_context?: AgentPendingUserMemoryContext | null;
   evolve_candidate_context?: AgentEvolveCandidateContext | null;
   selected_model?: string | null;
@@ -1189,6 +1191,7 @@ export function projectAgentRuntimeConfig(
     sessionResumeContext: request.session_resume_context ?? null,
     recalledMemoryContext: request.recalled_memory_context ?? null,
     currentUserContext: request.current_user_context ?? null,
+    operatorSurfaceContext: request.operator_surface_context ?? null,
     pendingUserMemoryContext: request.pending_user_memory_context ?? null,
     evolveCandidateContext: request.evolve_candidate_context ?? null,
     capabilityManifest,

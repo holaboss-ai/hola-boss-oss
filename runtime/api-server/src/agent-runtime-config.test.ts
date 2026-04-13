@@ -354,6 +354,71 @@ test("projectAgentRuntimeConfig includes current user context as a context messa
   }
 });
 
+test("projectAgentRuntimeConfig includes operator surface context as a context message", () => {
+  process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
+  try {
+    const result = projectAgentRuntimeConfig({
+      session_id: "session-1",
+      workspace_id: "workspace-1",
+      input_id: "input-1",
+      session_kind: "workspace_session",
+      harness_id: "pi",
+      browser_tools_available: true,
+      browser_tool_ids: ["browser_get_state"],
+      runtime_tool_ids: [],
+      workspace_command_ids: [],
+      runtime_exec_model_proxy_api_key: "hbrt.v1.token",
+      runtime_exec_sandbox_id: "sandbox-1",
+      runtime_exec_run_id: "run-1",
+      operator_surface_context: {
+        active_surface_id: "browser:user",
+        surfaces: [
+          {
+            surface_id: "browser:user",
+            surface_type: "browser",
+            owner: "user",
+            active: true,
+            mutability: "inspect_only",
+            summary: "User browser surface with 1 open tab. Active tab: \"Inbox\" at https://mail.google.com. It shares the workspace browser session and auth state with the other browser surface.",
+          },
+          {
+            surface_id: "browser:agent",
+            surface_type: "browser",
+            owner: "agent",
+            active: false,
+            mutability: "agent_owned",
+            summary: "Agent browser surface with 2 open tabs. Active tab: \"Docs\" at https://docs.example.com. It shares the workspace browser session and auth state with the other browser surface.",
+          },
+        ],
+      },
+      selected_model: null,
+      default_provider_id: "openai",
+      session_mode: "code",
+      workspace_config_checksum: "checksum-1",
+      workspace_skill_ids: [],
+      default_tools: ["read"],
+      extra_tools: ["browser_get_state"],
+      resolved_mcp_tool_refs: [],
+      resolved_output_schemas: {},
+      agent: {
+        id: "workspace.general",
+        model: "gpt-5.4",
+        prompt: "You are concise."
+      }
+    });
+
+    assert.ok(result.prompt_sections?.some((section) => section.id === "operator_surface_context"));
+    assert.equal(result.prompt_layers?.some((layer) => layer.id === "operator_surface_context"), false);
+    assert.equal(result.prompt_sections?.find((section) => section.id === "operator_surface_context")?.channel, "context_message");
+    assert.deepEqual(result.prompt_channel_contents, promptChannelContents(result.prompt_sections ?? []));
+    assert.match(result.context_messages?.join("\n\n") ?? "", /Operator surface context:/);
+    assert.match(result.context_messages?.join("\n\n") ?? "", /Current active surface id: `browser:user`\./);
+    assert.match(result.context_messages?.join("\n\n") ?? "", /mutability=`inspect_only`/);
+  } finally {
+    delete process.env.HOLABOSS_MODEL_PROXY_BASE_URL;
+  }
+});
+
 test("projectAgentRuntimeConfig includes pending user memory context as a context message", () => {
   process.env.HOLABOSS_MODEL_PROXY_BASE_URL = "https://runtime.example/api/v1/model-proxy";
   try {

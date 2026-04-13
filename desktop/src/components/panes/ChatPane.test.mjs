@@ -588,9 +588,27 @@ test("chat pane renders a collapsed current todo panel above the composer", asyn
   assert.match(source, /function CurrentTodoPanel\(/);
   assert.match(source, /function currentTodoPosition\(phases: ChatTodoPhase\[\]\)/);
   assert.match(source, /function latestCompletedTodoEntry\(phases: ChatTodoPhase\[\]\)/);
+  assert.match(source, /function phaseHasRemainingTodoTasks\(phase: ChatTodoPhase\)/);
+  assert.match(source, /function visibleTodoPhases\(phases: ChatTodoPhase\[\]\)/);
   assert.match(source, /const summaryLabel = activeEntry/);
   assert.match(source, /: latestCompletedEntry\?\.task\.content \|\|/);
+  assert.match(source, /const visiblePhases = visibleTodoPhases\(todoPlan\.phases\);/);
+  assert.match(source, /const totalTaskCount = todoTaskCount\(visiblePhases\);/);
+  assert.match(source, /const currentTaskPosition = currentTodoPosition\(visiblePhases\);/);
+  assert.match(
+    source,
+    /const activePhases = phases\.filter\(\(phase\) => phaseHasRemainingTodoTasks\(phase\)\);[\s\S]*if \(activePhases\.length > 0\) \{\s*return activePhases;\s*\}/,
+  );
+  assert.match(
+    source,
+    /return latestCompletedPhaseIndex < 0\s*\? phases\s*: phases\.slice\(latestCompletedPhaseIndex, latestCompletedPhaseIndex \+ 1\);/,
+  );
+  assert.match(
+    source,
+    /return phase\.tasks\.some\(\s*\(task\) =>\s*task\.status === "pending" \|\|\s*task\.status === "in_progress" \|\|\s*task\.status === "blocked",/,
+  );
   assert.match(source, /const progressLabel =\s*totalTaskCount > 0 \? `\$\{currentTaskPosition\}\/\$\{totalTaskCount\}` : "0\/0";/);
+  assert.match(source, /\{visiblePhases\.map\(\(phase\) => \{/);
   assert.match(
     source,
     /<div className="space-y-3">[\s\S]*\{currentTodoPlan \? \(\s*<CurrentTodoPanel[\s\S]*todoPlan=\{currentTodoPlan\}[\s\S]*expanded=\{todoPanelExpanded\}[\s\S]*onToggle=\{\(\) =>[\s\S]*setTodoPanelExpanded\(\(value\) => !value\)[\s\S]*\}\s*\/>\s*\) : null\}[\s\S]*<Composer/,

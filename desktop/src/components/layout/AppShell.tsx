@@ -226,6 +226,153 @@ type WorkspaceOutputNavigationTarget =
       htmlContent?: string | null;
     };
 
+type ReportedOperatorSurfaceContext = {
+  active_surface_id: string | null;
+  surfaces: OperatorSurfacePayload[];
+};
+
+function nonEmptySurfaceText(value: string | null | undefined): string {
+  return (value ?? "").trim();
+}
+
+function surfaceResourceLabel(resourceId: string): string {
+  const normalized = resourceId.replace(/\\/g, "/");
+  const segments = normalized.split("/").filter(Boolean);
+  return segments[segments.length - 1] ?? normalized;
+}
+
+function buildReportedSurfaceFromInternalView(params: {
+  owner: OperatorSurfaceOwner;
+  active: boolean;
+  view: Extract<AgentView, { type: "internal" }> | Extract<SpaceDisplayView, { type: "internal" }>;
+}): OperatorSurfacePayload | null {
+  const resourceId = nonEmptySurfaceText(params.view.resourceId);
+  const ownerLabel = params.owner === "user" ? "User" : "Agent";
+  const mutability: OperatorSurfaceMutability =
+    params.owner === "agent" ? "agent_owned" : "inspect_only";
+
+  if (
+    (params.view.surface === "document" || params.view.surface === "file") &&
+    resourceId
+  ) {
+    const fileName = surfaceResourceLabel(resourceId);
+    return {
+      surface_id: `editor:${params.owner}:${resourceId}`,
+      surface_type: "editor",
+      owner: params.owner,
+      active: params.active,
+      mutability,
+      summary: `${ownerLabel} is currently viewing file "${fileName}" at \`${resourceId}\`.`,
+    };
+  }
+
+  if (params.view.surface === "preview" || params.view.surface === "event") {
+    const normalizedResourceId = resourceId || "current";
+    return {
+      surface_id: `app_surface:${params.owner}:${params.view.surface}:${normalizedResourceId}`,
+      surface_type: "app_surface",
+      owner: params.owner,
+      active: params.active,
+      mutability,
+      summary:
+        params.view.surface === "preview"
+          ? `${ownerLabel} is currently viewing an internal preview surface${resourceId ? ` for \`${resourceId}\`` : ""}.`
+          : `${ownerLabel} is currently viewing an internal event surface${resourceId ? ` for \`${resourceId}\`` : ""}.`,
+    };
+  }
+
+  return null;
+}
+
+function buildReportedSurfaceFromAppView(params: {
+  owner: OperatorSurfaceOwner;
+  active: boolean;
+  view: Extract<AgentView, { type: "app" }> | Extract<SpaceDisplayView, { type: "app" }>;
+}): OperatorSurfacePayload {
+  const resourceId = nonEmptySurfaceText(params.view.resourceId);
+  const viewId = nonEmptySurfaceText(params.view.view);
+  const ownerLabel = params.owner === "user" ? "User" : "Agent";
+  const mutability: OperatorSurfaceMutability =
+    params.owner === "agent" ? "agent_owned" : "inspect_only";
+  return {
+    surface_id: `app_surface:${params.owner}:${params.view.appId}:${resourceId || viewId || "current"}`,
+    surface_type: "app_surface",
+    owner: params.owner,
+    active: params.active,
+    mutability,
+    summary: `${ownerLabel} is currently viewing workspace app \`${params.view.appId}\`${resourceId ? ` resource \`${resourceId}\`` : ""}${viewId ? ` in view \`${viewId}\`` : ""}.`,
+  };
+}
+
+function buildReportedOperatorSurfaceContext(params: {
+  activeLeftRailItem: LeftRailItem;
+  agentView: AgentView;
+  spaceDisplayView: SpaceDisplayView;
+}): ReportedOperatorSurfaceContext | null {
+  const surfaces: OperatorSurfacePayload[] = [];
+
+  if (params.activeLeftRailItem === "space") {
+    if (params.spaceDisplayView.type === "internal") {
+      const surface = buildReportedSurfaceFromInternalView({
+        owner: "user",
+        active: true,
+        view: params.spaceDisplayView,
+      });
+      if (surface) {
+        surfaces.push(surface);
+      }
+    } else if (params.spaceDisplayView.type === "app") {
+      surfaces.push(
+        buildReportedSurfaceFromAppView({
+          owner: "user",
+          active: true,
+          view: params.spaceDisplayView,
+        }),
+      );
+    }
+
+    if (params.agentView.type === "internal") {
+      const surface = buildReportedSurfaceFromInternalView({
+        owner: "agent",
+        active: surfaces.length === 0,
+        view: params.agentView,
+      });
+      if (surface) {
+        surfaces.push(surface);
+      }
+    } else if (params.agentView.type === "app") {
+      surfaces.push(
+        buildReportedSurfaceFromAppView({
+          owner: "agent",
+          active: surfaces.length === 0,
+          view: params.agentView,
+        }),
+      );
+    }
+  } else if (
+    params.activeLeftRailItem === "app" &&
+    params.agentView.type === "app"
+  ) {
+    surfaces.push(
+      buildReportedSurfaceFromAppView({
+        owner: "user",
+        active: true,
+        view: params.agentView,
+      }),
+    );
+  }
+
+  if (surfaces.length === 0) {
+    return null;
+  }
+
+  const activeSurface = surfaces.find((surface) => surface.active) ?? surfaces[0];
+  return {
+    active_surface_id: activeSurface?.surface_id ?? null,
+    surfaces,
+  };
+}
+
 function utilityPaneMinWidth(paneId: UtilityPaneId): number {
   return paneId === "files" ? MIN_FILES_PANE_WIDTH : MIN_BROWSER_PANE_WIDTH;
 }
@@ -977,6 +1124,7 @@ function AppShellContent() {
     useState<RuntimeNotificationRecordPayload[]>([]);
   const utilityPaneHostRef = useRef<HTMLDivElement | null>(null);
   const utilityPaneResizeStateRef = useRef<UtilityPaneResizeState | null>(null);
+  const reportedOperatorSurfaceWorkspaceIdRef = useRef<string | null>(null);
   const filesPaneWidthRef = useRef(filesPaneWidth);
   const browserPaneWidthRef = useRef(browserPaneWidth);
   const spaceVisibilityRef = useRef(spaceVisibility);
@@ -2397,6 +2545,16 @@ function AppShellContent() {
     [],
   );
 
+  const reportedOperatorSurfaceContext = useMemo(
+    () =>
+      buildReportedOperatorSurfaceContext({
+        activeLeftRailItem,
+        agentView,
+        spaceDisplayView,
+      }),
+    [activeLeftRailItem, agentView, spaceDisplayView],
+  );
+
   useEffect(() => {
     if (
       !selectedWorkspaceId ||
@@ -2440,6 +2598,43 @@ function AppShellContent() {
     setSpaceDisplayView(nextDisplayView);
     syncFileExplorerFocusWithDisplayView(nextDisplayView);
   }, [selectedWorkspaceId, syncFileExplorerFocusWithDisplayView]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const previousWorkspaceId =
+      reportedOperatorSurfaceWorkspaceIdRef.current?.trim() || "";
+    const nextWorkspaceId = selectedWorkspaceId?.trim() || "";
+
+    async function syncReportedOperatorSurfaceContext() {
+      try {
+        if (previousWorkspaceId && previousWorkspaceId !== nextWorkspaceId) {
+          await window.electronAPI.workspace.setOperatorSurfaceContext(
+            previousWorkspaceId,
+            null,
+          );
+        }
+        if (nextWorkspaceId) {
+          await window.electronAPI.workspace.setOperatorSurfaceContext(
+            nextWorkspaceId,
+            reportedOperatorSurfaceContext,
+          );
+        }
+        if (!cancelled) {
+          reportedOperatorSurfaceWorkspaceIdRef.current =
+            nextWorkspaceId || null;
+        }
+      } catch {
+        if (!cancelled && !nextWorkspaceId) {
+          reportedOperatorSurfaceWorkspaceIdRef.current = null;
+        }
+      }
+    }
+
+    void syncReportedOperatorSurfaceContext();
+    return () => {
+      cancelled = true;
+    };
+  }, [reportedOperatorSurfaceContext, selectedWorkspaceId]);
 
   const handleOpenWorkspaceOutput = useCallback(
     (output: WorkspaceOutputRecordPayload) => {

@@ -77,6 +77,22 @@ export interface AgentCurrentUserContext {
   name_source?: string | null;
 }
 
+export type AgentOperatorSurfaceType = "browser" | "editor" | "terminal" | "app_surface";
+export type AgentOperatorSurfaceOwner = "user" | "agent";
+export type AgentOperatorSurfaceMutability = "inspect_only" | "takeover_allowed" | "agent_owned";
+
+export interface AgentOperatorSurfaceContext {
+  active_surface_id?: string | null;
+  surfaces?: Array<{
+    surface_id: string;
+    surface_type: AgentOperatorSurfaceType;
+    owner: AgentOperatorSurfaceOwner;
+    active?: boolean | null;
+    mutability?: AgentOperatorSurfaceMutability | null;
+    summary?: string | null;
+  }> | null;
+}
+
 export interface AgentPendingUserMemoryContext {
   entries?: Array<{
     proposal_id: string;
@@ -113,6 +129,7 @@ export interface ComposeBaseAgentPromptRequest {
   sessionResumeContext?: AgentSessionResumeContext | null;
   recalledMemoryContext?: AgentRecalledMemoryContext | null;
   currentUserContext?: AgentCurrentUserContext | null;
+  operatorSurfaceContext?: AgentOperatorSurfaceContext | null;
   pendingUserMemoryContext?: AgentPendingUserMemoryContext | null;
   evolveCandidateContext?: AgentEvolveCandidateContext | null;
   capabilityManifest?: AgentCapabilityManifest | null;
@@ -234,6 +251,52 @@ function currentUserContextPromptSection(context: AgentCurrentUserContext | null
   lines.push(`The current operator name is \`${name}\`.`);
   if (nameSource) {
     lines.push(`Name source: \`${nameSource}\`.`);
+  }
+
+  return linesSection(lines);
+}
+
+function operatorSurfaceContextPromptSection(context: AgentOperatorSurfaceContext | null | undefined): string {
+  const surfaces = Array.isArray(context?.surfaces) ? context.surfaces : [];
+  if (surfaces.length === 0) {
+    return "";
+  }
+
+  const activeSurfaceId = nonEmptyText(context?.active_surface_id);
+  const lines = [
+    "Operator surface context:",
+    "Use these operator-controlled surfaces as continuity anchors when the user refers to `here`, `this page`, `my current tab`, `the file I'm in`, `this terminal`, or similar language.",
+    "Treat the active user-owned surface as the default referent for deictic questions such as `what am I looking at right now`, `what is this`, `what page/file/screen is this`, or `what about now`, unless the user explicitly narrows to browser, tab, site, URL, terminal, editor, or another surface.",
+    "Prefer the active user-owned surface when the user clearly wants you to continue from what they already opened, navigated, selected, or prepared.",
+    "Prefer agent-owned surfaces for exploratory, multi-step, parallel, or potentially disruptive work.",
+    "If the active user-owned surface is not a browser surface, do not answer from browser state just because browser tools are available.",
+    "Do not mutate a user-owned surface unless runtime context or capabilities explicitly allow takeover or direct control.",
+  ];
+
+  if (activeSurfaceId) {
+    lines.push(`Current active surface id: \`${activeSurfaceId}\`.`);
+  }
+
+  lines.push("", "Known operator surfaces:");
+
+  for (const surface of surfaces) {
+    const surfaceId = nonEmptyText(surface?.surface_id);
+    const surfaceType = nonEmptyText(surface?.surface_type);
+    const owner = nonEmptyText(surface?.owner);
+    const summary = nonEmptyText(surface?.summary) || "No summary available.";
+    if (!surfaceId || !surfaceType || !owner) {
+      continue;
+    }
+    const details: string[] = [];
+    if (surface?.active === true) {
+      details.push("active");
+    }
+    const mutability = nonEmptyText(surface?.mutability);
+    if (mutability) {
+      details.push(`mutability=\`${mutability}\``);
+    }
+    const detailSuffix = details.length > 0 ? ` (${details.join(", ")})` : "";
+    lines.push(`- [${owner}/${surfaceType}] \`${surfaceId}\`${detailSuffix}: ${summary}`);
   }
 
   return linesSection(lines);
@@ -561,6 +624,16 @@ export function buildBaseAgentPromptSections(
     priority: 475,
     volatility: "workspace",
     content: currentUserContextPromptSection(request.currentUserContext)
+  });
+
+  pushPromptLayer(promptSections, {
+    id: "operator_surface_context",
+    channel: "context_message",
+    apply_at: "runtime_config",
+    precedence: "runtime_context",
+    priority: 480,
+    volatility: "run",
+    content: operatorSurfaceContextPromptSection(request.operatorSurfaceContext)
   });
 
   pushPromptLayer(promptSections, {
