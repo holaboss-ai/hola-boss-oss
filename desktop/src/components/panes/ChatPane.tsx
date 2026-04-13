@@ -983,6 +983,34 @@ function latestCompletedTodoEntry(phases: ChatTodoPhase[]) {
   return null;
 }
 
+function phaseHasRemainingTodoTasks(phase: ChatTodoPhase) {
+  return phase.tasks.some(
+    (task) =>
+      task.status === "pending" ||
+      task.status === "in_progress" ||
+      task.status === "blocked",
+  );
+}
+
+function visibleTodoPhases(phases: ChatTodoPhase[]) {
+  const activePhases = phases.filter((phase) => phaseHasRemainingTodoTasks(phase));
+  if (activePhases.length > 0) {
+    return activePhases;
+  }
+
+  const latestCompletedEntry = latestCompletedTodoEntry(phases);
+  if (!latestCompletedEntry) {
+    return phases;
+  }
+
+  const latestCompletedPhaseIndex = phases.findIndex(
+    (phase) => phase.id === latestCompletedEntry.phase.id,
+  );
+  return latestCompletedPhaseIndex < 0
+    ? phases
+    : phases.slice(latestCompletedPhaseIndex, latestCompletedPhaseIndex + 1);
+}
+
 function todoPlanFromToolResult(
   result: unknown,
 ): ChatTodoPlan | null | undefined {
@@ -1727,6 +1755,13 @@ interface ChatPaneSessionOpenRequest {
   parentSessionId?: string | null;
 }
 
+interface PendingSessionTarget {
+  requestKey: number;
+  mode: "session" | "draft";
+  sessionId: string | null;
+  parentSessionId: string | null;
+}
+
 interface ChatPaneComposerPrefillRequest {
   text: string;
   requestKey: number;
@@ -1746,7 +1781,7 @@ interface ChatPaneProps {
   onActiveSessionIdChange?: (sessionId: string | null) => void;
   onOpenInbox?: () => void;
   inboxUnreadCount?: number;
-  onRequestCreateSession?: () => void;
+  onRequestCreateSession?: (request: ChatPaneSessionOpenRequest) => void;
 }
 
 export function ChatPane({
@@ -1873,6 +1908,9 @@ export function ChatPane({
   const lastHandledExternalSessionOpenRequestKeyRef = useRef(0);
   const lastHandledLocalSessionOpenRequestKeyRef = useRef(0);
   const lastHandledComposerPrefillRequestKeyRef = useRef(0);
+  const consumedSessionOpenRequestKeysRef = useRef<Set<number>>(new Set());
+  const localSessionOpenRequestRef =
+    useRef<ChatPaneSessionOpenRequest | null>(null);
   const draftParentSessionIdRef = useRef<string | null>(null);
   const liveAssistantTextRef = useRef("");
   const liveThinkingTextRef = useRef("");
@@ -1882,6 +1920,7 @@ export function ChatPane({
   const [activeSessionId, setActiveSessionId] = useState("");
   const effectiveSessionOpenRequest =
     sessionOpenRequest ?? localSessionOpenRequest;
+  localSessionOpenRequestRef.current = localSessionOpenRequest;
   const isExternalSessionOpenRequest = sessionOpenRequest !== null;
 
   function appendStreamTelemetry(
@@ -1926,6 +1965,95 @@ export function ChatPane({
     activeSessionIdRef.current = sessionId;
     setActiveSessionId(sessionId ?? "");
     onActiveSessionIdChange?.(sessionId);
+  }
+
+  function setLocalSessionOpenRequestState(
+    next:
+      | ChatPaneSessionOpenRequest
+      | null
+      | ((
+          current: ChatPaneSessionOpenRequest | null,
+        ) => ChatPaneSessionOpenRequest | null),
+  ) {
+    setLocalSessionOpenRequest((current) => {
+      const resolved =
+        typeof next === "function"
+          ? next(current)
+          : next;
+      localSessionOpenRequestRef.current = resolved;
+      return resolved;
+    });
+  }
+
+  function markSessionOpenRequestConsumed(requestKey: number) {
+    if (!Number.isFinite(requestKey) || requestKey <= 0) {
+      return;
+    }
+    const consumedKeys = consumedSessionOpenRequestKeysRef.current;
+    consumedKeys.add(requestKey);
+    while (consumedKeys.size > 32) {
+      const oldestKey = consumedKeys.values().next().value;
+      if (typeof oldestKey !== "number") {
+        break;
+      }
+      consumedKeys.delete(oldestKey);
+    }
+  }
+
+  function isSessionOpenRequestConsumed(requestKey: number): boolean {
+    if (!Number.isFinite(requestKey) || requestKey <= 0) {
+      return false;
+    }
+    return consumedSessionOpenRequestKeysRef.current.has(requestKey);
+  }
+
+  function consumeSessionOpenRequest(requestKey: number) {
+    markSessionOpenRequestConsumed(requestKey);
+    if (isExternalSessionOpenRequest) {
+      onSessionOpenRequestConsumed?.(requestKey);
+      return;
+    }
+    setLocalSessionOpenRequestState((current) =>
+      current?.requestKey === requestKey ? null : current,
+    );
+  }
+
+  function pendingSessionTargetForSend(): PendingSessionTarget | null {
+    const currentSessionOpenRequest =
+      sessionOpenRequest ?? localSessionOpenRequestRef.current;
+    const requestKey = currentSessionOpenRequest?.requestKey ?? 0;
+    if (requestKey <= 0) {
+      return null;
+    }
+    const requestMode = currentSessionOpenRequest?.mode ?? "session";
+    const requestedSessionId = (
+      currentSessionOpenRequest?.sessionId || ""
+    ).trim();
+    const requestedParentSessionId =
+      currentSessionOpenRequest?.parentSessionId?.trim() || null;
+
+    if (requestMode === "draft") {
+      return {
+        requestKey,
+        mode: "draft",
+        sessionId: null,
+        parentSessionId: requestedParentSessionId,
+      };
+    }
+
+    if (
+      requestedSessionId &&
+      requestedSessionId !== activeSessionIdRef.current
+    ) {
+      return {
+        requestKey,
+        mode: "session",
+        sessionId: requestedSessionId,
+        parentSessionId: null,
+      };
+    }
+
+    return null;
   }
 
   function beginHistoryViewportRestore() {
@@ -2816,11 +2944,14 @@ export function ChatPane({
     const lastHandledSessionOpenRequestKeyRef = isExternalSessionOpenRequest
       ? lastHandledExternalSessionOpenRequestKeyRef
       : lastHandledLocalSessionOpenRequestKeyRef;
-    if (
-      !selectedWorkspaceId ||
-      requestKey <= 0 ||
-      requestKey === lastHandledSessionOpenRequestKeyRef.current
-    ) {
+    if (!selectedWorkspaceId || requestKey <= 0) {
+      return;
+    }
+    if (isSessionOpenRequestConsumed(requestKey)) {
+      consumeSessionOpenRequest(requestKey);
+      return;
+    }
+    if (requestKey === lastHandledSessionOpenRequestKeyRef.current) {
       return;
     }
 
@@ -2847,6 +2978,11 @@ export function ChatPane({
       }
 
       try {
+        if (cancelled || isSessionOpenRequestConsumed(requestKey)) {
+          historyLoaded = true;
+          return;
+        }
+
         if (requestMode === "draft") {
           draftParentSessionIdRef.current = requestedParentSessionId;
           clearSessionView();
@@ -2872,6 +3008,10 @@ export function ChatPane({
           await window.electronAPI.workspace.listRuntimeStates(
             selectedWorkspaceId,
           );
+        if (cancelled || isSessionOpenRequestConsumed(requestKey)) {
+          historyLoaded = true;
+          return;
+        }
         await loadSessionConversation(
           requestedSessionId,
           selectedWorkspaceId,
@@ -2886,18 +3026,12 @@ export function ChatPane({
           setChatErrorMessage(normalizeErrorMessage(error));
         }
       } finally {
-        if (!cancelled && !historyLoaded) {
-          cancelHistoryViewportRestore();
-        }
         if (!cancelled) {
+          if (!historyLoaded) {
+            cancelHistoryViewportRestore();
+          }
           setIsLoadingHistory(false);
-        }
-        if (isExternalSessionOpenRequest) {
-          onSessionOpenRequestConsumed?.(requestKey);
-        } else {
-          setLocalSessionOpenRequest((current) =>
-            current?.requestKey === requestKey ? null : current,
-          );
+          consumeSessionOpenRequest(requestKey);
         }
       }
     }
@@ -3589,11 +3723,29 @@ export function ChatPane({
       );
       return;
     }
-    let targetSessionId = activeSessionIdRef.current;
+    const pendingSessionTarget = pendingSessionTargetForSend();
+    let targetSessionId =
+      pendingSessionTarget?.mode === "session"
+        ? pendingSessionTarget.sessionId
+        : activeSessionIdRef.current;
+
+    if (pendingSessionTarget) {
+      consumeSessionOpenRequest(pendingSessionTarget.requestKey);
+      clearSessionView();
+      if (pendingSessionTarget.mode === "session") {
+        setActiveSession(pendingSessionTarget.sessionId);
+      } else {
+        draftParentSessionIdRef.current = pendingSessionTarget.parentSessionId;
+        setActiveSession(null);
+      }
+    }
+
     if (!targetSessionId && selectedWorkspace) {
       targetSessionId = await createWorkspaceSession(
         selectedWorkspace.id,
-        draftParentSessionIdRef.current,
+        pendingSessionTarget?.mode === "draft"
+          ? pendingSessionTarget.parentSessionId
+          : draftParentSessionIdRef.current,
       );
       if (targetSessionId) {
         draftParentSessionIdRef.current = null;
@@ -4287,23 +4439,21 @@ export function ChatPane({
     ) {
       return;
     }
-    setLocalSessionOpenRequest({
+    setLocalSessionOpenRequestState({
       sessionId: normalizedSessionId,
       requestKey: Date.now(),
     });
   };
 
   const requestDraftSessionFromPicker = () => {
-    if (onRequestCreateSession) {
-      onRequestCreateSession();
-      return;
-    }
-    setLocalSessionOpenRequest({
+    const draftRequest: ChatPaneSessionOpenRequest = {
       sessionId: "",
       mode: "draft",
       parentSessionId: null,
       requestKey: Date.now(),
-    });
+    };
+    setLocalSessionOpenRequestState(draftRequest);
+    onRequestCreateSession?.(draftRequest);
   };
 
   return (
@@ -5194,6 +5344,7 @@ function AssistantTurn({
             collapsedByStepId={collapsedTraceByStepId}
             onToggleStep={onToggleTraceStep}
             live={live}
+            liveOutputStarted={live && Boolean(text)}
           />
         ) : null}
 
@@ -5360,11 +5511,12 @@ function CurrentTodoPanel({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const totalTaskCount = todoTaskCount(todoPlan.phases);
+  const visiblePhases = visibleTodoPhases(todoPlan.phases);
+  const totalTaskCount = todoTaskCount(visiblePhases);
   const remainingTaskCount = todoRemainingTaskCount(todoPlan.phases);
   const activeEntry = currentTodoEntry(todoPlan.phases);
   const latestCompletedEntry = latestCompletedTodoEntry(todoPlan.phases);
-  const currentTaskPosition = currentTodoPosition(todoPlan.phases);
+  const currentTaskPosition = currentTodoPosition(visiblePhases);
   const summaryLabel = activeEntry
     ? activeEntry.task.content
     : latestCompletedEntry?.task.content ||
@@ -5408,7 +5560,7 @@ function CurrentTodoPanel({
       {expanded ? (
         <div className="border-t border-border/20 px-3 py-3">
           <div className="space-y-3">
-            {todoPlan.phases.map((phase) => {
+            {visiblePhases.map((phase) => {
               const phaseCompletedCount = phase.tasks.filter(
                 (task) =>
                   task.status === "completed" || task.status === "abandoned",
@@ -5771,13 +5923,30 @@ function TraceStepGroup({
   collapsedByStepId,
   onToggleStep,
   live = false,
+  liveOutputStarted = false,
 }: {
   steps: ChatTraceStep[];
   collapsedByStepId: Record<string, boolean>;
   onToggleStep: (stepId: string) => void;
   live?: boolean;
+  liveOutputStarted?: boolean;
 }) {
-  const [groupExpanded, setGroupExpanded] = useState(false);
+  const [groupExpanded, setGroupExpanded] = useState(
+    live && !liveOutputStarted,
+  );
+  const previousLiveRef = useRef(live);
+  const previousLiveOutputStartedRef = useRef(liveOutputStarted);
+
+  useEffect(() => {
+    if (live && !previousLiveRef.current) {
+      setGroupExpanded(!liveOutputStarted);
+    }
+    if (live && liveOutputStarted && !previousLiveOutputStartedRef.current) {
+      setGroupExpanded(false);
+    }
+    previousLiveRef.current = live;
+    previousLiveOutputStartedRef.current = liveOutputStarted;
+  }, [live, liveOutputStarted]);
   const runningCount = steps.filter((s) => s.status === "running").length;
   const terminalErrorCount = steps.filter(
     (step) => step.kind === "phase" && step.status === "error",

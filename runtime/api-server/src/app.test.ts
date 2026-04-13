@@ -327,6 +327,11 @@ test("runtime tools capability routes expose local onboarding and cronjob action
       .json()
       .tools.some((tool: { id: string }) => tool.id === "image_generate")
   );
+  assert.ok(
+    capabilityStatus
+      .json()
+      .tools.some((tool: { id: string }) => tool.id === "write_report")
+  );
 
   const onboardingStatus = await app.inject({
     method: "GET",
@@ -387,6 +392,80 @@ test("runtime tools capability routes expose local onboarding and cronjob action
 
   await app.close();
   store.close();
+});
+
+test("runtime write_report tool writes a markdown report and persists it as a session output", async () => {
+  const root = makeTempDir("hb-runtime-api-report-tools-");
+  const workspaceRoot = path.join(root, "workspace");
+  const store = new RuntimeStateStore({
+    dbPath: path.join(root, "runtime.db"),
+    workspaceRoot,
+  });
+  store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  store.ensureRuntimeState({
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    status: "BUSY",
+    currentInputId: "input-1",
+  });
+
+  const app = buildTestRuntimeApiServer({ store });
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/capabilities/runtime-tools/reports",
+      headers: {
+        "x-holaboss-workspace-id": "workspace-1",
+        "x-holaboss-session-id": "session-main",
+        "x-holaboss-input-id": "input-1",
+        "x-holaboss-selected-model": "openai/gpt-5.4",
+      },
+      payload: {
+        title: "Tariff update brief",
+        filename: "tariff-update-brief",
+        summary: "Short research brief on current tariff developments.",
+        content: "# Tariff update brief\n\n- Court challenges are active.\n- Consumer impact remains debated.\n",
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().title, "Tariff update brief");
+    assert.equal(response.json().file_path, "outputs/reports/tariff-update-brief.md");
+    assert.equal(response.json().mime_type, "text/markdown");
+    assert.ok(
+      fs.existsSync(path.join(workspaceRoot, "workspace-1", "outputs/reports/tariff-update-brief.md")),
+    );
+    assert.equal(
+      fs.readFileSync(
+        path.join(workspaceRoot, "workspace-1", "outputs/reports/tariff-update-brief.md"),
+        "utf8",
+      ),
+      "# Tariff update brief\n\n- Court challenges are active.\n- Consumer impact remains debated.\n",
+    );
+
+    const outputs = store.listOutputs({
+      workspaceId: "workspace-1",
+      sessionId: "session-main",
+      inputId: "input-1",
+      limit: 20,
+      offset: 0,
+    });
+    assert.equal(outputs.length, 1);
+    assert.equal(outputs[0].title, "Tariff update brief");
+    assert.equal(outputs[0].filePath, "outputs/reports/tariff-update-brief.md");
+    assert.equal(outputs[0].metadata.artifact_type, "report");
+    assert.equal(outputs[0].metadata.origin_type, "runtime_tool");
+    assert.equal(outputs[0].metadata.tool_id, "write_report");
+    assert.equal(outputs[0].metadata.model, "openai/gpt-5.4");
+  } finally {
+    await app.close();
+    store.close();
+  }
 });
 
 test("runtime image generation tool writes a generated image into the workspace", async () => {
@@ -5247,4 +5326,3 @@ test("POST /apps/install-archive with archive_url downloads and installs", async
     store.close();
   }
 });
-

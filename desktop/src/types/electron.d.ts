@@ -102,6 +102,23 @@ declare global {
   }
 
   type BrowserSpaceId = "user" | "agent";
+  type OperatorSurfaceType = "browser" | "editor" | "terminal" | "app_surface";
+  type OperatorSurfaceOwner = "user" | "agent";
+  type OperatorSurfaceMutability = "inspect_only" | "takeover_allowed" | "agent_owned";
+
+  interface OperatorSurfacePayload {
+    surface_id: string;
+    surface_type: OperatorSurfaceType;
+    owner: OperatorSurfaceOwner;
+    active: boolean;
+    mutability: OperatorSurfaceMutability;
+    summary: string;
+  }
+
+  interface OperatorSurfaceContextPayload {
+    active_surface_id: string | null;
+    surfaces: OperatorSurfacePayload[];
+  }
 
   interface BrowserTabCountsPayload {
     user: number;
@@ -1374,6 +1391,7 @@ declare global {
       finalizeSubmission(submissionId: string): Promise<FinalizeSubmissionResponse>;
       listSubmissions(): Promise<SubmissionListResponse>;
       deleteSubmission(submissionId: string): Promise<{ deleted: boolean }>;
+      setOperatorSurfaceContext(workspaceId: string, context: OperatorSurfaceContextPayload | null): Promise<void>;
       onSessionStreamEvent: (listener: (payload: HolabossSessionStreamEventPayload) => void) => () => void;
     };
     auth: {

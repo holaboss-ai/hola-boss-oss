@@ -356,6 +356,108 @@ test("Pi runtime image generation tool uses an extended timeout budget", async (
   }
 });
 
+test("Pi runtime write_report tool forwards report content and current run headers", async () => {
+  const requests: Array<{
+    method: string;
+    url: string;
+    workspaceId: string;
+    sessionId: string;
+    inputId: string;
+    selectedModel: string;
+    body: string;
+  }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/capabilities/runtime-tools")) {
+      return new Response(JSON.stringify({ available: true }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+
+    const body = init?.body ? String(init.body) : "";
+    requests.push({
+      method: String(init?.method ?? "GET"),
+      url,
+      workspaceId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-workspace-id"] ?? ""),
+      sessionId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-session-id"] ?? ""),
+      inputId: String((init?.headers as Record<string, string> | undefined)?.["x-holaboss-input-id"] ?? ""),
+      selectedModel: String(
+        (init?.headers as Record<string, string> | undefined)?.["x-holaboss-selected-model"] ?? ""
+      ),
+      body,
+    });
+
+    return new Response(JSON.stringify({ file_path: "outputs/reports/tariffs.md" }), {
+      status: 200,
+      headers: { "content-type": "application/json; charset=utf-8" },
+    });
+  };
+
+  const tools = await resolvePiRuntimeToolDefinitions({
+    runtimeApiBaseUrl: "http://127.0.0.1:5060",
+    workspaceId: "workspace-1",
+    sessionId: "session-main",
+    inputId: "input-1",
+    selectedModel: "openai/gpt-5.4",
+    fetchImpl,
+  });
+
+  const writeReportTool = tools.find((tool) => tool.name === "write_report");
+  assert.ok(writeReportTool);
+
+  await writeReportTool.execute(
+    "call-1",
+    {
+      title: "Tariff brief",
+      filename: "tariffs",
+      summary: "Short current tariff summary.",
+      content: "# Tariff brief\n\n- Court cases continue.\n",
+    },
+    undefined,
+    undefined,
+    {} as never,
+  );
+
+  assert.equal(requests.length, 1);
+  assert.equal(
+    requests[0]?.url,
+    "http://127.0.0.1:5060/api/v1/capabilities/runtime-tools/reports",
+  );
+  assert.equal(requests[0]?.method, "POST");
+  assert.equal(requests[0]?.workspaceId, "workspace-1");
+  assert.equal(requests[0]?.sessionId, "session-main");
+  assert.equal(requests[0]?.inputId, "input-1");
+  assert.equal(requests[0]?.selectedModel, "openai/gpt-5.4");
+  assert.deepEqual(JSON.parse(requests[0]?.body ?? "{}"), {
+    title: "Tariff brief",
+    filename: "tariffs",
+    summary: "Short current tariff summary.",
+    content: "# Tariff brief\n\n- Court cases continue.\n",
+  });
+
+  assert.match(
+    (writeReportTool.promptGuidelines ?? []).join("\n"),
+    /Use `write_report` for research summaries, investigations, audits, plans, reviews, comparisons, timelines, and other long or evidence-heavy answers/
+  );
+  assert.match(
+    (writeReportTool.promptGuidelines ?? []).join("\n"),
+    /Do not use `write_report` for a simple fact lookup, definition, brief clarification, current-page answer, or any other reply that is naturally short and self-contained/
+  );
+  assert.match(
+    (writeReportTool.promptGuidelines ?? []).join("\n"),
+    /Prefer `write_report` when you are synthesizing multiple sources, summarizing current or latest developments, or producing findings the user may want to reference later/
+  );
+  assert.match(
+    (writeReportTool.promptGuidelines ?? []).join("\n"),
+    /If the user explicitly asked for research, latest news, analysis, comparison, or a timeline and you gathered findings from multiple sources, call `write_report` before your final answer/
+  );
+  assert.match(
+    (writeReportTool.promptGuidelines ?? []).join("\n"),
+    /A step like 'summarize findings for the user' still means: save the full findings with `write_report`, then keep the chat reply brief/
+  );
+});
+
 test("Pi runtime tools fall back to node http when no fetch implementation is provided", async () => {
   const requests: Array<{
     method: string;

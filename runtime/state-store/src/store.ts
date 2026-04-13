@@ -1537,7 +1537,13 @@ export class RuntimeStateStore {
     return this.getInput(inputId);
   }
 
-  claimInputs(params: { limit: number; claimedBy: string; leaseSeconds: number; distinctSessions?: boolean }): SessionInputRecord[] {
+  claimInputs(params: {
+    limit: number;
+    claimedBy: string;
+    leaseSeconds: number;
+    distinctSessions?: boolean;
+    excludeSessionIds?: string[];
+  }): SessionInputRecord[] {
     const now = new Date();
     const nowIso = now.toISOString();
     const claimedUntilIso =
@@ -1556,7 +1562,13 @@ export class RuntimeStateStore {
 
     const selectedInputIds: string[] = [];
     const seenSessionIds = new Set<string>();
+    const excludedSessionIds = new Set(
+      (params.excludeSessionIds ?? []).map((sessionId) => sessionId.trim()).filter((sessionId) => sessionId.length > 0),
+    );
     for (const row of rows) {
+      if (excludedSessionIds.has(row.session_id)) {
+        continue;
+      }
       if (params.distinctSessions && seenSessionIds.has(row.session_id)) {
         continue;
       }

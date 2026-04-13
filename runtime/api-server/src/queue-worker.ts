@@ -61,7 +61,14 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
   #stopped = false;
   #task: Promise<void> | null = null;
   #wakeResolver: (() => void) | null = null;
-  #activeRuns = new Map<string, { controller: AbortController; record: SessionInputRecord }>();
+  #activeRuns = new Map<
+    string,
+    {
+      controller: AbortController;
+      record: SessionInputRecord;
+      promise: Promise<void>;
+    }
+  >();
 
   constructor(options: RuntimeQueueWorkerOptions) {
     this.#store = options.store;
@@ -103,6 +110,10 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
     const task = this.#task;
     this.#task = null;
     await task;
+    const activePromises = [...this.#activeRuns.values()].map((entry) => entry.promise);
+    if (activePromises.length > 0) {
+      await Promise.allSettled(activePromises);
+    }
   }
 
   async pauseSessionRun(params: { workspaceId: string; sessionId: string }): Promise<{
@@ -147,49 +158,24 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
 
   async processAvailableInputsOnce(): Promise<number> {
     const recovered = this.#recoverExpiredClaims();
+    const availableSlots = Math.max(0, this.#maxConcurrency - this.#activeRuns.size);
+    if (availableSlots === 0) {
+      return recovered;
+    }
+    const blockedSessionIds = [...this.#activeRuns.values()].map((entry) => entry.record.sessionId);
     const claimed = this.#store.claimInputs({
-      limit: this.#maxConcurrency,
+      limit: availableSlots,
       claimedBy: this.#claimedBy,
       leaseSeconds: this.#leaseSeconds,
-      distinctSessions: true
+      distinctSessions: true,
+      excludeSessionIds: blockedSessionIds,
     });
     if (claimed.length === 0) {
       return recovered;
     }
-    await Promise.all(
-      claimed.map(async (record) => {
-        const controller = new AbortController();
-        this.#activeRuns.set(record.inputId, { controller, record });
-        try {
-          await this.#executeClaimedInput(record, { signal: controller.signal });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          this.#logger?.error?.("TS queue worker failed to process claimed input", {
-            inputId: record.inputId,
-            workspaceId: record.workspaceId,
-            sessionId: record.sessionId,
-            error: message
-          });
-          this.#store.updateInput(record.inputId, {
-            status: "FAILED",
-            claimedBy: null,
-            claimedUntil: null
-          });
-          this.#store.updateRuntimeState({
-            workspaceId: record.workspaceId,
-            sessionId: record.sessionId,
-            status: "ERROR",
-            currentInputId: null,
-            currentWorkerId: null,
-            leaseUntil: null,
-            heartbeatAt: null,
-            lastError: { message }
-          });
-        } finally {
-          this.#activeRuns.delete(record.inputId);
-        }
-      })
-    );
+    for (const record of claimed) {
+      this.#startClaimedInput(record);
+    }
     return recovered + claimed.length;
   }
 
@@ -211,6 +197,42 @@ export class RuntimeQueueWorker implements QueueWorkerLike {
       })
     ]);
     this.#wakeResolver = null;
+  }
+
+  #startClaimedInput(record: SessionInputRecord): void {
+    const controller = new AbortController();
+    const promise = (async () => {
+      try {
+        await this.#executeClaimedInput(record, { signal: controller.signal });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.#logger?.error?.("TS queue worker failed to process claimed input", {
+          inputId: record.inputId,
+          workspaceId: record.workspaceId,
+          sessionId: record.sessionId,
+          error: message
+        });
+        this.#store.updateInput(record.inputId, {
+          status: "FAILED",
+          claimedBy: null,
+          claimedUntil: null
+        });
+        this.#store.updateRuntimeState({
+          workspaceId: record.workspaceId,
+          sessionId: record.sessionId,
+          status: "ERROR",
+          currentInputId: null,
+          currentWorkerId: null,
+          leaseUntil: null,
+          heartbeatAt: null,
+          lastError: { message }
+        });
+      } finally {
+        this.#activeRuns.delete(record.inputId);
+        this.wake();
+      }
+    })();
+    this.#activeRuns.set(record.inputId, { controller, record, promise });
   }
 
   #recoverExpiredClaims(): number {

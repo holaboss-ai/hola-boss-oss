@@ -58,9 +58,11 @@ export type HarnessPromptSectionPrecedence =
 export type HarnessPromptLayerId =
   | "runtime_core"
   | "execution_policy"
+  | "response_delivery_policy"
   | "session_policy"
   | "capability_policy"
   | "current_user_context"
+  | "operator_surface_context"
   | "pending_user_memory"
   | "evolve_candidate_context"
   | "memory_recall"

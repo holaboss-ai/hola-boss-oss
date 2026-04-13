@@ -1094,7 +1094,22 @@ export async function processClaimedInput(params: {
           workspaceDir,
           before: workspaceFileManifestBefore
         });
+        const existingOutputPaths = new Set(
+          store
+            .listOutputs({
+              workspaceId: record.workspaceId,
+              sessionId: record.sessionId,
+              inputId: record.inputId,
+              limit: 1000,
+              offset: 0,
+            })
+            .map((output) => output.filePath)
+            .filter((filePath): filePath is string => typeof filePath === "string" && filePath.length > 0),
+        );
         for (const output of fileOutputs) {
+          if (existingOutputPaths.has(output.filePath)) {
+            continue;
+          }
           store.createOutput({
             workspaceId: record.workspaceId,
             outputType: output.outputType,
@@ -1105,6 +1120,7 @@ export async function processClaimedInput(params: {
             inputId: record.inputId,
             metadata: output.metadata
           });
+          existingOutputPaths.add(output.filePath);
         }
       } catch {
         // Output capture is best-effort and should not fail the turn.

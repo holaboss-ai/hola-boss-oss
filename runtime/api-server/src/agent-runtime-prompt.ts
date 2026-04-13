@@ -77,6 +77,22 @@ export interface AgentCurrentUserContext {
   name_source?: string | null;
 }
 
+export type AgentOperatorSurfaceType = "browser" | "editor" | "terminal" | "app_surface";
+export type AgentOperatorSurfaceOwner = "user" | "agent";
+export type AgentOperatorSurfaceMutability = "inspect_only" | "takeover_allowed" | "agent_owned";
+
+export interface AgentOperatorSurfaceContext {
+  active_surface_id?: string | null;
+  surfaces?: Array<{
+    surface_id: string;
+    surface_type: AgentOperatorSurfaceType;
+    owner: AgentOperatorSurfaceOwner;
+    active?: boolean | null;
+    mutability?: AgentOperatorSurfaceMutability | null;
+    summary?: string | null;
+  }> | null;
+}
+
 export interface AgentPendingUserMemoryContext {
   entries?: Array<{
     proposal_id: string;
@@ -113,6 +129,7 @@ export interface ComposeBaseAgentPromptRequest {
   sessionResumeContext?: AgentSessionResumeContext | null;
   recalledMemoryContext?: AgentRecalledMemoryContext | null;
   currentUserContext?: AgentCurrentUserContext | null;
+  operatorSurfaceContext?: AgentOperatorSurfaceContext | null;
   pendingUserMemoryContext?: AgentPendingUserMemoryContext | null;
   evolveCandidateContext?: AgentEvolveCandidateContext | null;
   capabilityManifest?: AgentCapabilityManifest | null;
@@ -185,6 +202,26 @@ function sessionPolicyPromptSection(request: ComposeBaseAgentPromptRequest): str
   return lines.length > 1 ? linesSection(lines) : "";
 }
 
+function responseDeliveryPolicyPromptSection(): string {
+  return linesSection([
+    "Response delivery policy:",
+    "Default to concise chat replies that are optimized for fast comprehension.",
+    "Keep the answer inline for simple lookups, definitions, narrow factual questions, brief clarifications, and other requests that can be answered well in a short paragraph or a few bullets.",
+    "Do not create a report just because you used browser or web search tools. Tool usage alone is not a reason to artifact the answer.",
+    "If `write_report` is available and the full answer would be long, heavily structured, evidence-heavy, or likely to be referenced later, use `write_report` instead of placing the full content in chat.",
+    "If `write_report` is unavailable and you still need a report artifact, write it under `outputs/reports/` instead of placing the full content in chat.",
+    "Treat answers that would naturally require headings, many bullets, tables, long code or log excerpts, or detailed evidence as report candidates.",
+    "Prefer report artifacts for investigations, audits, plans, reviews, comparisons, research summaries, and other multi-step findings.",
+    "When the user explicitly asks you to research, investigate, study, analyze, compare, build a timeline, or summarize current or latest developments across multiple sources, default to writing a report artifact and keep the chat reply to a minimal summary unless the user explicitly asks for inline detail.",
+    "When those research-style conditions apply and `write_report` is available, call `write_report` before your final reply. Do not put the full synthesis in chat.",
+    "For those research-style tasks, a todo step such as 'summarize findings for the user' still means: create the report artifact first, then send only a short user-facing summary in chat.",
+    "When you create a report artifact, keep the chat reply short: state the outcome, mention the report title or path, and include only the most important takeaways.",
+    "For research-style tasks, keep the chat follow-up to one short paragraph or at most 3 concise bullets unless the user explicitly asks for inline detail.",
+    "If you are unsure, choose inline for a short single-answer lookup and choose a report for multi-source synthesis or referenceable findings.",
+    "Only place the full detailed content inline when the user explicitly asks for inline detail or when the answer is naturally short."
+  ]);
+}
+
 function recentRuntimeContextPromptSection(context: AgentRecentRuntimeContext | null | undefined): string {
   if (!context) {
     return "";
@@ -234,6 +271,52 @@ function currentUserContextPromptSection(context: AgentCurrentUserContext | null
   lines.push(`The current operator name is \`${name}\`.`);
   if (nameSource) {
     lines.push(`Name source: \`${nameSource}\`.`);
+  }
+
+  return linesSection(lines);
+}
+
+function operatorSurfaceContextPromptSection(context: AgentOperatorSurfaceContext | null | undefined): string {
+  const surfaces = Array.isArray(context?.surfaces) ? context.surfaces : [];
+  if (surfaces.length === 0) {
+    return "";
+  }
+
+  const activeSurfaceId = nonEmptyText(context?.active_surface_id);
+  const lines = [
+    "Operator surface context:",
+    "Use these operator-controlled surfaces as continuity anchors when the user refers to `here`, `this page`, `my current tab`, `the file I'm in`, `this terminal`, or similar language.",
+    "Treat the active user-owned surface as the default referent for deictic questions such as `what am I looking at right now`, `what is this`, `what page/file/screen is this`, or `what about now`, unless the user explicitly narrows to browser, tab, site, URL, terminal, editor, or another surface.",
+    "Prefer the active user-owned surface when the user clearly wants you to continue from what they already opened, navigated, selected, or prepared.",
+    "Prefer agent-owned surfaces for exploratory, multi-step, parallel, or potentially disruptive work.",
+    "If the active user-owned surface is not a browser surface, do not answer from browser state just because browser tools are available.",
+    "Do not mutate a user-owned surface unless runtime context or capabilities explicitly allow takeover or direct control.",
+  ];
+
+  if (activeSurfaceId) {
+    lines.push(`Current active surface id: \`${activeSurfaceId}\`.`);
+  }
+
+  lines.push("", "Known operator surfaces:");
+
+  for (const surface of surfaces) {
+    const surfaceId = nonEmptyText(surface?.surface_id);
+    const surfaceType = nonEmptyText(surface?.surface_type);
+    const owner = nonEmptyText(surface?.owner);
+    const summary = nonEmptyText(surface?.summary) || "No summary available.";
+    if (!surfaceId || !surfaceType || !owner) {
+      continue;
+    }
+    const details: string[] = [];
+    if (surface?.active === true) {
+      details.push("active");
+    }
+    const mutability = nonEmptyText(surface?.mutability);
+    if (mutability) {
+      details.push(`mutability=\`${mutability}\``);
+    }
+    const detailSuffix = details.length > 0 ? ` (${details.join(", ")})` : "";
+    lines.push(`- [${owner}/${surfaceType}] \`${surfaceId}\`${detailSuffix}: ${summary}`);
   }
 
   return linesSection(lines);
@@ -529,6 +612,16 @@ export function buildBaseAgentPromptSections(
   });
 
   pushPromptLayer(promptSections, {
+    id: "response_delivery_policy",
+    channel: "system_prompt",
+    apply_at: "runtime_config",
+    precedence: "base_runtime",
+    priority: 250,
+    volatility: "stable",
+    content: responseDeliveryPolicyPromptSection()
+  });
+
+  pushPromptLayer(promptSections, {
     id: "session_policy",
     channel: "system_prompt",
     apply_at: "runtime_config",
@@ -561,6 +654,16 @@ export function buildBaseAgentPromptSections(
     priority: 475,
     volatility: "workspace",
     content: currentUserContextPromptSection(request.currentUserContext)
+  });
+
+  pushPromptLayer(promptSections, {
+    id: "operator_surface_context",
+    channel: "context_message",
+    apply_at: "runtime_config",
+    precedence: "runtime_context",
+    priority: 480,
+    volatility: "run",
+    content: operatorSurfaceContextPromptSection(request.operatorSurfaceContext)
   });
 
   pushPromptLayer(promptSections, {

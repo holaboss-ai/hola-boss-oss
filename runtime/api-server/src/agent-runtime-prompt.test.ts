@@ -41,6 +41,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   assert.deepEqual(prompt.promptLayers.map((layer) => layer.id), [
     "runtime_core",
     "execution_policy",
+    "response_delivery_policy",
     "session_policy",
     "capability_policy",
     "workspace_policy",
@@ -48,6 +49,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   assert.deepEqual(prompt.promptSections.map((section) => section.id), [
     "runtime_core",
     "execution_policy",
+    "response_delivery_policy",
     "session_policy",
     "capability_policy",
     "workspace_policy",
@@ -58,9 +60,11 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "system_prompt",
     "system_prompt",
     "system_prompt",
+    "system_prompt",
   ]);
-  assert.deepEqual(prompt.promptSections.map((section) => section.priority), [100, 200, 300, 400, 600]);
+  assert.deepEqual(prompt.promptSections.map((section) => section.priority), [100, 200, 250, 300, 400, 600]);
   assert.deepEqual(prompt.promptSections.map((section) => section.volatility), [
+    "stable",
     "stable",
     "stable",
     "run",
@@ -68,6 +72,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "workspace",
   ]);
   assert.deepEqual(prompt.promptSections.map((section) => section.precedence), [
+    "base_runtime",
     "base_runtime",
     "base_runtime",
     "session_policy",
@@ -80,9 +85,11 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
     "runtime_config",
     "runtime_config",
     "runtime_config",
+    "runtime_config",
   ]);
   assert.match(prompt.systemPrompt, /^Base runtime instructions:/);
   assert.match(prompt.systemPrompt, /Execution doctrine:/);
+  assert.match(prompt.systemPrompt, /Response delivery policy:/);
   assert.match(
     prompt.systemPrompt,
     /If local git is available, treat it as an internal recovery mechanism for the agent rather than a user-facing workflow\./
@@ -110,6 +117,46 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   assert.match(
     prompt.systemPrompt,
     /Block path traversal and cross-workspace access by default, including parent-directory paths, absolute external paths, and symlink escapes\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Keep the answer inline for simple lookups, definitions, narrow factual questions, brief clarifications, and other requests that can be answered well in a short paragraph or a few bullets\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /Do not create a report just because you used browser or web search tools\. Tool usage alone is not a reason to artifact the answer\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /If `write_report` is available and the full answer would be long, heavily structured, evidence-heavy, or likely to be referenced later, use `write_report` instead of placing the full content in chat\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /When the user explicitly asks you to research, investigate, study, analyze, compare, build a timeline, or summarize current or latest developments across multiple sources, default to writing a report artifact and keep the chat reply to a minimal summary unless the user explicitly asks for inline detail\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /When those research-style conditions apply and `write_report` is available, call `write_report` before your final reply\. Do not put the full synthesis in chat\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /For those research-style tasks, a todo step such as 'summarize findings for the user' still means: create the report artifact first, then send only a short user-facing summary in chat\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /If `write_report` is unavailable and you still need a report artifact, write it under `outputs\/reports\/` instead of placing the full content in chat\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /When you create a report artifact, keep the chat reply short: state the outcome, mention the report title or path, and include only the most important takeaways\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /For research-style tasks, keep the chat follow-up to one short paragraph or at most 3 concise bullets unless the user explicitly asks for inline detail\./
+  );
+  assert.match(
+    prompt.systemPrompt,
+    /If you are unsure, choose inline for a short single-answer lookup and choose a report for multi-source synthesis or referenceable findings\./
   );
   assert.match(
     prompt.systemPrompt,
@@ -144,6 +191,7 @@ test("composeBaseAgentPrompt returns ordered runtime prompt layers", () => {
   assert.deepEqual(prompt.promptCacheProfile.cacheable_section_ids, [
     "runtime_core",
     "execution_policy",
+    "response_delivery_policy",
     "workspace_policy",
   ]);
   assert.deepEqual(prompt.promptCacheProfile.volatile_section_ids, [
@@ -255,6 +303,57 @@ test("composeBaseAgentPrompt includes current user context when provided", () =>
   assert.match(prompt.contextMessages.join("\n\n"), /Current user context:/);
   assert.match(prompt.contextMessages.join("\n\n"), /The current operator name is `Jeffrey`\./);
   assert.match(prompt.contextMessages.join("\n\n"), /Name source: `manual`\./);
+});
+
+test("composeBaseAgentPrompt includes operator surface context when provided", () => {
+  const prompt = composeBaseAgentPrompt("", {
+    defaultTools: ["read"],
+    extraTools: [],
+    workspaceSkillIds: [],
+    resolvedMcpToolRefs: [],
+    sessionKind: "workspace_session",
+    sessionMode: "code",
+    operatorSurfaceContext: {
+      active_surface_id: "browser:user",
+      surfaces: [
+        {
+          surface_id: "browser:user",
+          surface_type: "browser",
+          owner: "user",
+          active: true,
+          mutability: "inspect_only",
+          summary: "User browser surface with 1 open tab. Active tab: \"Inbox\" at https://mail.google.com. It shares the workspace browser session and auth state with the other browser surface.",
+        },
+        {
+          surface_id: "browser:agent",
+          surface_type: "browser",
+          owner: "agent",
+          active: false,
+          mutability: "agent_owned",
+          summary: "Agent browser surface with 2 open tabs. Active tab: \"Docs\" at https://docs.example.com. It shares the workspace browser session and auth state with the other browser surface.",
+        },
+      ],
+    },
+  });
+
+  assert.ok(prompt.promptSections.some((section) => section.id === "operator_surface_context"));
+  assert.equal(
+    prompt.promptSections.find((section) => section.id === "operator_surface_context")?.channel,
+    "context_message"
+  );
+  assert.equal(
+    prompt.promptSections.find((section) => section.id === "operator_surface_context")?.precedence,
+    "runtime_context"
+  );
+  assert.equal(prompt.promptLayers.some((layer) => layer.id === "operator_surface_context"), false);
+  assert.doesNotMatch(prompt.systemPrompt, /Operator surface context:/);
+  assert.match(prompt.contextMessages.join("\n\n"), /Operator surface context:/);
+  assert.match(prompt.contextMessages.join("\n\n"), /default referent for deictic questions such as `what am I looking at right now`/i);
+  assert.match(prompt.contextMessages.join("\n\n"), /continue from what they already opened, navigated, selected, or prepared/i);
+  assert.match(prompt.contextMessages.join("\n\n"), /do not answer from browser state just because browser tools are available/i);
+  assert.match(prompt.contextMessages.join("\n\n"), /Current active surface id: `browser:user`\./);
+  assert.match(prompt.contextMessages.join("\n\n"), /\[user\/browser\] `browser:user` \(active, mutability=`inspect_only`\):/);
+  assert.match(prompt.contextMessages.join("\n\n"), /\[agent\/browser\] `browser:agent` \(mutability=`agent_owned`\):/);
 });
 
 test("composeBaseAgentPrompt includes pending user memory context when provided", () => {

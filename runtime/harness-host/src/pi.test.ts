@@ -943,8 +943,123 @@ test("createPiTodoToolDefinitions rejects legacy todo payload aliases", async ()
         undefined,
         {} as never
       ),
-    /Todo phases require a non-empty `name`\./
+    /Todo phases require `name`; use `name` instead of `title`\./
   );
+});
+
+test("createPiTodoToolDefinitions returns repair guidance for hallucinated todo ops", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-todo-repair-"));
+  const stateDir = path.join(root, ".holaboss", "pi-agent");
+  const [, todoWrite] = createPiTodoToolDefinitions({
+    stateDir,
+    sessionId: "session-1",
+  });
+
+  await assert.rejects(
+    () =>
+      todoWrite.execute(
+        "call-invalid-set-status",
+        {
+          ops: [{ op: "set_status", id: "task-1", status: "completed" }],
+        },
+        undefined,
+        undefined,
+        {} as never
+      ),
+    /Unsupported todo op "set_status".*Use `update` to change an existing task's status by task id.*Call `todoread` first if you need the current task ids\./is
+  );
+
+  await assert.rejects(
+    () =>
+      todoWrite.execute(
+        "call-invalid-update-task",
+        {
+          ops: [{ op: "update_task", id: "task-1", status: "completed" }],
+        },
+        undefined,
+        undefined,
+        {} as never
+      ),
+    /Unsupported todo op "update_task".*Use `update` to change an existing task's status by task id\./is
+  );
+
+  await assert.rejects(
+    () =>
+      todoWrite.execute(
+        "call-invalid-replace-all",
+        {
+          ops: [
+            {
+              op: "replace_all",
+              phases: [{ name: "Implementation", tasks: [{ content: "Wire host todo state" }] }],
+            },
+          ],
+        },
+        undefined,
+        undefined,
+        {} as never
+      ),
+    /Unsupported todo op "replace_all".*Use `replace` to replace the entire phased plan\./is
+  );
+});
+
+test("createPiTodoToolDefinitions exposes explicit todo op guidance to the model", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-todo-prompting-"));
+  const stateDir = path.join(root, ".holaboss", "pi-agent");
+  const [todoRead, todoWrite] = createPiTodoToolDefinitions({
+    stateDir,
+    sessionId: "session-1",
+  });
+
+  assert.match(
+    todoRead.description ?? "",
+    /phase ids and task ids needed for later `todowrite` calls/i
+  );
+  assert.match(
+    todoRead.promptSnippet ?? "",
+    /recover the phase\/task ids needed for later `todowrite` mutations/i
+  );
+  assert.match(
+    (todoRead.promptGuidelines ?? []).join("\n"),
+    /recover the exact phase ids and task ids before calling `update`, `add_task`, or `remove_task`/i
+  );
+
+  assert.match(
+    todoWrite.description ?? "",
+    /Valid `op` values are exactly `replace`, `add_phase`, `add_task`, `update`, and `remove_task`/i
+  );
+  assert.match(
+    todoWrite.promptSnippet ?? "",
+    /using only these `op` values: `replace`, `add_phase`, `add_task`, `update`, and `remove_task`/i
+  );
+  const todoWriteGuidelines = (todoWrite.promptGuidelines ?? []).join("\n");
+  assert.match(
+    todoWriteGuidelines,
+    /Do not invent alias op names such as `replace_all`, `update_task`, or `set_status`/i
+  );
+  assert.match(
+    todoWriteGuidelines,
+    /Use `name` for phase titles and `content` for task text; do not use `title` for either/i
+  );
+
+  const todoWriteSchema = todoWrite.parameters as Record<string, unknown>;
+  const opsSchema = (todoWriteSchema.properties as { ops: { description?: string; items?: { anyOf?: Array<Record<string, unknown>> } } }).ops;
+  assert.match(
+    opsSchema.description ?? "",
+    /Valid `op` values are exactly `replace`, `add_phase`, `add_task`, `update`, and `remove_task`/i
+  );
+  assert.match(opsSchema.description ?? "", /Use `name` for phase titles and `content` for task text/i);
+  const updateSchema = opsSchema.items?.anyOf?.find(
+    (entry) => ((entry.properties as Record<string, unknown> | undefined)?.op as { const?: string } | undefined)?.const === "update"
+  );
+  assert.match(
+    (updateSchema?.description as string | undefined) ?? "",
+    /Use this for status changes, content edits, notes, or details/i
+  );
+  const fallbackSchema = opsSchema.items?.anyOf?.find(
+    (entry) => (entry.description as string | undefined)?.includes("Fallback validation branch")
+  );
+  assert.ok(fallbackSchema);
 });
 
 test("buildPiMcpServerBindings converts remote and local MCP payloads into mcporter definitions", () => {
@@ -1791,8 +1906,16 @@ test("buildPiPromptPayload requires todoread first when resuming with persisted 
     });
 
     assert.match(prompt.text, /Resumed session requirement:/);
-    assert.match(prompt.text, /call `todoread` to restore that plan/i);
+    assert.match(prompt.text, /call `todoread` to restore that plan and recover the current phase\/task ids/i);
     assert.match(prompt.text, /Continue from the restored plan, and update it with `todowrite`/i);
+    assert.match(
+      prompt.text,
+      /valid `op` values are exactly `replace`, `add_phase`, `add_task`, `update`, and `remove_task`/i
+    );
+    assert.match(
+      prompt.text,
+      /Do not invent alias op names such as `replace_all`, `update_task`, or `set_status`/i
+    );
   } finally {
     fs.rmSync(workspaceDir, { recursive: true, force: true });
   }

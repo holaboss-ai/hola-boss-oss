@@ -36,8 +36,19 @@ test("top tabs bar renders custom compact window controls for Windows title bar 
   );
   assert.match(
     source,
-    /const workspaceSwitcherButtonClassName =\s*"h-7 w-full justify-start gap-1\.5 px-2 rounded-lg text-xs";/,
+    /const workspaceSwitcherButtonClassName =\s*"h-8 w-full justify-start gap-2 px-2\.5 rounded-lg text-\[13px\]";/,
   );
+  assert.match(
+    source,
+    /const windowControlButtonClassName =\s*"window-no-drag flex h-6 w-6 items-center justify-center rounded-\[8px\]/,
+  );
+  assert.match(source, /className="size-8 shrink-0 rounded-\[10px\] border border-border overflow-hidden"/);
+  assert.match(source, /<FolderKanban size=\{14\} className="shrink-0 text-primary" \/>/);
+  assert.match(source, /<ChevronDown\s+size=\{13\}/);
+  assert.match(source, /size="default"\s+aria-label="Marketplace"/);
+  assert.match(source, /className="gap-2 rounded-lg text-\[13px\]"/);
+  assert.match(source, /<LayoutGrid size=\{13\} \/>/);
+  assert.match(source, /render=\{<Button variant="outline" size="icon" className="relative rounded-lg" \/>\}/);
   assert.match(source, /window\.electronAPI\.ui\.getWindowState\(\)/);
   assert.match(source, /window\.electronAPI\.ui\.minimizeWindow\(\)/);
   assert.match(source, /window\.electronAPI\.ui\.closeWindow\(\)/);

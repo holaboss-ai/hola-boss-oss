@@ -658,6 +658,84 @@ test("claimed input captures file outputs and persists an assistant turn for out
   store.close();
 });
 
+test("claimed input does not duplicate a file output already persisted earlier in the same turn", async () => {
+  const store = makeStore("hb-claimed-input-file-output-dedupe-");
+  const workspace = store.createWorkspace({
+    workspaceId: "workspace-1",
+    name: "Workspace 1",
+    harness: "pi",
+    status: "active",
+  });
+  const queued = store.enqueueInput({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    payload: { text: "write a report artifact" }
+  });
+
+  await processClaimedInput({
+    store,
+    record: queued,
+    executeRunnerRequestFn: async (payload, options = {}) => {
+      const workspaceDir = store.workspaceDir(workspace.id);
+      fs.mkdirSync(path.join(workspaceDir, "outputs", "reports"), { recursive: true });
+      fs.writeFileSync(
+        path.join(workspaceDir, "outputs", "reports", "report.md"),
+        "# Report\n",
+      );
+      store.createOutput({
+        workspaceId: workspace.id,
+        outputType: "document",
+        title: "Report",
+        status: "completed",
+        filePath: "outputs/reports/report.md",
+        sessionId: String(payload.session_id),
+        inputId: String(payload.input_id),
+        metadata: {
+          origin_type: "runtime_tool",
+          change_type: "created",
+          category: "document",
+          artifact_type: "report",
+        },
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 1,
+        event_type: "run_started",
+        payload: {}
+      });
+      await options.onEvent?.({
+        session_id: payload.session_id,
+        input_id: payload.input_id,
+        sequence: 2,
+        event_type: "run_completed",
+        payload: { status: "ok" }
+      });
+      return {
+        events: [],
+        skippedLines: [],
+        stderr: "",
+        returnCode: 0,
+        sawTerminal: true
+      };
+    }
+  });
+
+  const outputs = store.listOutputs({
+    workspaceId: workspace.id,
+    sessionId: "session-main",
+    inputId: queued.inputId,
+    limit: 20,
+    offset: 0
+  });
+
+  assert.equal(outputs.length, 1);
+  assert.equal(outputs[0].filePath, "outputs/reports/report.md");
+  assert.equal(outputs[0].metadata.origin_type, "runtime_tool");
+
+  store.close();
+});
+
 test("claimed input records skill-policy denial audit in tool usage summary", async () => {
   const store = makeStore("hb-claimed-input-skill-policy-denial-");
   const workspace = store.createWorkspace({

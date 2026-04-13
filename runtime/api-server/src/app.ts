@@ -424,6 +424,19 @@ function capabilitySelectedModel(params: {
   );
 }
 
+function capabilityInputId(params: {
+  headers: Record<string, unknown>;
+  query?: Record<string, unknown> | null;
+  body?: Record<string, unknown> | null;
+}): string {
+  return (
+    headerString(params.headers, "x-holaboss-input-id") ||
+    optionalString(params.query?.input_id) ||
+    optionalString(params.body?.input_id) ||
+    ""
+  );
+}
+
 function requiredCronjobDeliveryInput(value: unknown): {
   channel: string;
   mode?: string;
@@ -2827,6 +2840,49 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         return sendError(reply, error.statusCode, error.message);
       }
       return sendError(reply, 400, error instanceof Error ? error.message : "runtime image generation failed");
+    }
+  });
+
+  app.post("/api/v1/capabilities/runtime-tools/reports", async (request, reply) => {
+    if (!isRecord(request.body)) {
+      return sendError(reply, 400, "request body must be an object");
+    }
+    try {
+      const workspaceId = requiredCapabilityWorkspaceId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      const sessionId = capabilitySessionId({
+        headers: request.headers as Record<string, unknown>,
+        body: request.body,
+      });
+      return await runtimeAgentToolsService.writeReport({
+        workspaceId,
+        sessionId: sessionId || null,
+        inputId: resolveOutputInputId({
+          store,
+          workspaceId,
+          sessionId,
+          inputId:
+            capabilityInputId({
+              headers: request.headers as Record<string, unknown>,
+              body: request.body,
+            }) || null,
+        }),
+        selectedModel: capabilitySelectedModel({
+          headers: request.headers as Record<string, unknown>,
+          body: request.body,
+        }),
+        title: nullableString(request.body.title) ?? undefined,
+        filename: nullableString(request.body.filename) ?? undefined,
+        summary: nullableString(request.body.summary) ?? undefined,
+        content: requiredString(request.body.content, "content"),
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAgentToolsServiceError) {
+        return sendError(reply, error.statusCode, error.message);
+      }
+      return sendError(reply, 400, error instanceof Error ? error.message : "runtime report write failed");
     }
   });
 

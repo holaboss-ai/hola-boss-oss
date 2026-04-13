@@ -288,11 +288,23 @@ test("chat pane exposes an in-pane session dropdown for switching agent sessions
 
   assert.match(source, /onOpenInbox\?: \(\) => void;/);
   assert.match(source, /inboxUnreadCount\?: number;/);
-  assert.match(source, /onRequestCreateSession\?: \(\) => void;/);
+  assert.match(
+    source,
+    /onRequestCreateSession\?: \(request: ChatPaneSessionOpenRequest\) => void;/,
+  );
   assert.match(source, /onSessionOpenRequestConsumed\?: \(requestKey: number\) => void;/);
   assert.match(source, /const \[availableSessions, setAvailableSessions\] = useState<ChatSessionOption\[]>\(\s*\[\],\s*\);/);
   assert.match(source, /const \[localSessionOpenRequest, setLocalSessionOpenRequest\] =\s*useState<ChatPaneSessionOpenRequest \| null>\(null\);/);
+  assert.match(
+    source,
+    /const localSessionOpenRequestRef =\s*useRef<ChatPaneSessionOpenRequest \| null>\(null\);/,
+  );
   assert.match(source, /const effectiveSessionOpenRequest =\s*sessionOpenRequest \?\? localSessionOpenRequest;/);
+  assert.match(
+    source,
+    /localSessionOpenRequestRef\.current = localSessionOpenRequest;/,
+  );
+  assert.match(source, /function setLocalSessionOpenRequestState\(/);
   assert.match(source, /function sessionStatusIndicator\(statusLabel: string\)/);
   assert.match(source, /window\.electronAPI\.workspace\.listAgentSessions\(selectedWorkspaceId\)/);
   assert.match(source, /window\.electronAPI\.workspace\.listRuntimeStates\(selectedWorkspaceId\)/);
@@ -307,8 +319,11 @@ test("chat pane exposes an in-pane session dropdown for switching agent sessions
   assert.match(source, /inboxUnreadCount > 0 \? \(/);
   assert.match(source, /onOpenInbox\(\);/);
   assert.match(source, /onSessionOpenRequestConsumed\?\.\(requestKey\);/);
-  assert.match(source, /setLocalSessionOpenRequest\(\{\s*sessionId: normalizedSessionId,\s*requestKey: Date\.now\(\),\s*\}\);/);
-  assert.match(source, /setLocalSessionOpenRequest\(\{\s*sessionId: "",\s*mode: "draft",\s*parentSessionId: null,\s*requestKey: Date\.now\(\),\s*\}\);/);
+  assert.match(source, /setLocalSessionOpenRequestState\(\{\s*sessionId: normalizedSessionId,\s*requestKey: Date\.now\(\),\s*\}\);/);
+  assert.match(
+    source,
+    /const draftRequest: ChatPaneSessionOpenRequest = \{\s*sessionId: "",\s*mode: "draft",\s*parentSessionId: null,\s*requestKey: Date\.now\(\),\s*\};\s*setLocalSessionOpenRequestState\(draftRequest\);\s*onRequestCreateSession\?\.\(draftRequest\);/,
+  );
 });
 
 test("chat pane keeps local picker session requests from overriding a newer shell session request", async () => {
@@ -323,7 +338,46 @@ test("chat pane keeps local picker session requests from overriding a newer shel
   );
   assert.match(
     source,
-    /if \(!cancelled && !historyLoaded\) \{\s*cancelHistoryViewportRestore\(\);\s*\}\s*if \(!cancelled\) \{\s*setIsLoadingHistory\(false\);\s*\}\s*if \(isExternalSessionOpenRequest\) \{\s*onSessionOpenRequestConsumed\?\.\(requestKey\);\s*\} else \{\s*setLocalSessionOpenRequest\(\(current\) =>\s*current\?\.requestKey === requestKey \? null : current,\s*\);\s*\}/,
+    /if \(!cancelled\) \{\s*if \(!historyLoaded\) \{\s*cancelHistoryViewportRestore\(\);\s*\}\s*setIsLoadingHistory\(false\);\s*consumeSessionOpenRequest\(requestKey\);\s*\}/,
+  );
+});
+
+test("chat pane routes immediate sends through the newer pending session request instead of the previously active session", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /const consumedSessionOpenRequestKeysRef = useRef<Set<number>>\(new Set\(\)\);/,
+  );
+  assert.match(source, /function consumeSessionOpenRequest\(requestKey: number\)/);
+  assert.match(source, /function pendingSessionTargetForSend\(\): PendingSessionTarget \| null/);
+  assert.match(
+    source,
+    /const currentSessionOpenRequest =\s*sessionOpenRequest \?\? localSessionOpenRequestRef\.current;/,
+  );
+  assert.match(
+    source,
+    /const pendingSessionTarget = pendingSessionTargetForSend\(\);[\s\S]*let targetSessionId =[\s\S]*pendingSessionTarget\?\.mode === "session"[\s\S]*activeSessionIdRef\.current;/,
+  );
+  assert.match(
+    source,
+    /if \(pendingSessionTarget\) \{\s*consumeSessionOpenRequest\(pendingSessionTarget\.requestKey\);\s*clearSessionView\(\);[\s\S]*setActiveSession\(pendingSessionTarget\.sessionId\);[\s\S]*draftParentSessionIdRef\.current = pendingSessionTarget\.parentSessionId;\s*setActiveSession\(null\);/,
+  );
+  assert.match(
+    source,
+    /if \(!targetSessionId && selectedWorkspace\) \{\s*targetSessionId = await createWorkspaceSession\(\s*selectedWorkspace\.id,\s*pendingSessionTarget\?\.mode === "draft"\s*\?\s*pendingSessionTarget\.parentSessionId\s*:\s*draftParentSessionIdRef\.current,\s*\);/,
+  );
+  assert.match(
+    source,
+    /if \(isSessionOpenRequestConsumed\(requestKey\)\) \{\s*consumeSessionOpenRequest\(requestKey\);\s*return;\s*\}\s*if \(requestKey === lastHandledSessionOpenRequestKeyRef\.current\) \{\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /if \(cancelled \|\| isSessionOpenRequestConsumed\(requestKey\)\) \{\s*historyLoaded = true;\s*return;\s*\}/,
+  );
+  assert.match(
+    source,
+    /if \(isSessionOpenRequestConsumed\(requestKey\)\) \{\s*consumeSessionOpenRequest\(requestKey\);\s*return;\s*\}/,
   );
 });
 
@@ -501,6 +555,31 @@ test("tool trace steps are collapsed by default and first toggle expands them", 
   assert.doesNotMatch(source, /\[step\.id\]: false/);
 });
 
+test("live trace auto-expands during the run and collapses when output starts", async () => {
+  const source = await readFile(sourcePath, "utf8");
+
+  assert.match(
+    source,
+    /function TraceStepGroup\(\{[\s\S]*live = false,[\s\S]*liveOutputStarted = false,/,
+  );
+  assert.match(
+    source,
+    /const \[groupExpanded, setGroupExpanded\] = useState\(\s*live && !liveOutputStarted,\s*\);/,
+  );
+  assert.match(
+    source,
+    /if \(live && !previousLiveRef\.current\) \{\s*setGroupExpanded\(!liveOutputStarted\);\s*\}/,
+  );
+  assert.match(
+    source,
+    /if \(live && liveOutputStarted && !previousLiveOutputStartedRef\.current\) \{\s*setGroupExpanded\(false\);\s*\}/,
+  );
+  assert.match(
+    source,
+    /<TraceStepGroup[\s\S]*live=\{live\}[\s\S]*liveOutputStarted=\{live && Boolean\(text\)\}/,
+  );
+});
+
 test("chat pane can jump to a requested sub-session run", async () => {
   const source = await readFile(sourcePath, "utf8");
 
@@ -588,9 +667,27 @@ test("chat pane renders a collapsed current todo panel above the composer", asyn
   assert.match(source, /function CurrentTodoPanel\(/);
   assert.match(source, /function currentTodoPosition\(phases: ChatTodoPhase\[\]\)/);
   assert.match(source, /function latestCompletedTodoEntry\(phases: ChatTodoPhase\[\]\)/);
+  assert.match(source, /function phaseHasRemainingTodoTasks\(phase: ChatTodoPhase\)/);
+  assert.match(source, /function visibleTodoPhases\(phases: ChatTodoPhase\[\]\)/);
   assert.match(source, /const summaryLabel = activeEntry/);
   assert.match(source, /: latestCompletedEntry\?\.task\.content \|\|/);
+  assert.match(source, /const visiblePhases = visibleTodoPhases\(todoPlan\.phases\);/);
+  assert.match(source, /const totalTaskCount = todoTaskCount\(visiblePhases\);/);
+  assert.match(source, /const currentTaskPosition = currentTodoPosition\(visiblePhases\);/);
+  assert.match(
+    source,
+    /const activePhases = phases\.filter\(\(phase\) => phaseHasRemainingTodoTasks\(phase\)\);[\s\S]*if \(activePhases\.length > 0\) \{\s*return activePhases;\s*\}/,
+  );
+  assert.match(
+    source,
+    /return latestCompletedPhaseIndex < 0\s*\? phases\s*: phases\.slice\(latestCompletedPhaseIndex, latestCompletedPhaseIndex \+ 1\);/,
+  );
+  assert.match(
+    source,
+    /return phase\.tasks\.some\(\s*\(task\) =>\s*task\.status === "pending" \|\|\s*task\.status === "in_progress" \|\|\s*task\.status === "blocked",/,
+  );
   assert.match(source, /const progressLabel =\s*totalTaskCount > 0 \? `\$\{currentTaskPosition\}\/\$\{totalTaskCount\}` : "0\/0";/);
+  assert.match(source, /\{visiblePhases\.map\(\(phase\) => \{/);
   assert.match(
     source,
     /<div className="space-y-3">[\s\S]*\{currentTodoPlan \? \(\s*<CurrentTodoPanel[\s\S]*todoPlan=\{currentTodoPlan\}[\s\S]*expanded=\{todoPanelExpanded\}[\s\S]*onToggle=\{\(\) =>[\s\S]*setTodoPanelExpanded\(\(value\) => !value\)[\s\S]*\}\s*\/>\s*\) : null\}[\s\S]*<Composer/,

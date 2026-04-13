@@ -32,6 +32,10 @@ import {
 import type {
   AgentCurrentUserContext,
   AgentEvolveCandidateContext,
+  AgentOperatorSurfaceMutability,
+  AgentOperatorSurfaceOwner,
+  AgentOperatorSurfaceContext,
+  AgentOperatorSurfaceType,
   AgentPendingUserMemoryContext,
   AgentRecalledMemoryContext,
   AgentRecentRuntimeContext,
@@ -152,6 +156,17 @@ export interface TsRunnerExecutionDeps {
     instruction: string;
     logger?: LoggerLike;
   }) => Promise<AgentRecalledMemoryContext | null>;
+  loadOperatorSurfaceContext: (params: {
+    workspaceId: string;
+    sessionId: string;
+    inputId: string;
+    browserConfig: {
+      desktopBrowserEnabled: boolean;
+      desktopBrowserUrl: string;
+      desktopBrowserAuthToken: string;
+    };
+    logger?: LoggerLike;
+  }) => Promise<AgentOperatorSurfaceContext | null>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -950,6 +965,106 @@ function currentBrowserConfig(): {
   }
 }
 
+function operatorSurfaceType(value: unknown): AgentOperatorSurfaceType | null {
+  return value === "browser" || value === "editor" || value === "terminal" || value === "app_surface"
+    ? value
+    : null;
+}
+
+function operatorSurfaceOwner(value: unknown): AgentOperatorSurfaceOwner | null {
+  return value === "user" || value === "agent" ? value : null;
+}
+
+function operatorSurfaceMutability(value: unknown): AgentOperatorSurfaceMutability | null {
+  return value === "inspect_only" || value === "takeover_allowed" || value === "agent_owned" ? value : null;
+}
+
+function normalizeOperatorSurfaceContext(value: unknown): AgentOperatorSurfaceContext | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const surfaces = Array.isArray(value.surfaces) ? value.surfaces : [];
+  const normalizedSurfaces = surfaces.flatMap((item) => {
+    if (!isRecord(item)) {
+      return [];
+    }
+    const surfaceId = firstNonEmptyString(item.surface_id);
+    const surfaceType = operatorSurfaceType(item.surface_type);
+    const owner = operatorSurfaceOwner(item.owner);
+    if (!surfaceId || !surfaceType || !owner) {
+      return [];
+    }
+    return [
+      {
+        surface_id: surfaceId,
+        surface_type: surfaceType,
+        owner,
+        active: typeof item.active === "boolean" ? item.active : null,
+        mutability: operatorSurfaceMutability(item.mutability),
+        summary: firstNonEmptyString(item.summary) ?? null,
+      },
+    ];
+  });
+  if (normalizedSurfaces.length === 0) {
+    return null;
+  }
+  return {
+    active_surface_id: firstNonEmptyString(value.active_surface_id) ?? null,
+    surfaces: normalizedSurfaces,
+  };
+}
+
+async function loadOperatorSurfaceContext(params: {
+  workspaceId: string;
+  sessionId: string;
+  inputId: string;
+  browserConfig: {
+    desktopBrowserEnabled: boolean;
+    desktopBrowserUrl: string;
+    desktopBrowserAuthToken: string;
+  };
+  logger?: LoggerLike;
+}): Promise<AgentOperatorSurfaceContext | null> {
+  const browserUrl = params.browserConfig.desktopBrowserUrl.trim().replace(/\/+$/, "");
+  const authToken = params.browserConfig.desktopBrowserAuthToken.trim();
+  if (!params.browserConfig.desktopBrowserEnabled || !browserUrl || !authToken) {
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), 1500);
+  try {
+    const response = await fetch(`${browserUrl}/operator-surface-context`, {
+      method: "GET",
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "x-holaboss-desktop-token": authToken,
+        "x-holaboss-workspace-id": params.workspaceId,
+      },
+      signal: controller.signal,
+    });
+    if (response.status === 404 || response.status === 409) {
+      return null;
+    }
+    if (!response.ok) {
+      params.logger?.warn?.(
+        `Failed to load operator surface context workspace_id=${params.workspaceId} session_id=${params.sessionId} input_id=${params.inputId} status=${response.status}`
+      );
+      return null;
+    }
+    return normalizeOperatorSurfaceContext(await response.json());
+  } catch (error) {
+    if (!(error instanceof Error && error.name === "AbortError")) {
+      params.logger?.warn?.(
+        `Failed to load operator surface context workspace_id=${params.workspaceId} session_id=${params.sessionId} input_id=${params.inputId}: ${errorMessage(error)}`
+      );
+    }
+    return null;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
 function buildAgentRuntimeConfigRequest(params: {
   request: TsRunnerRequest;
   harnessId: string;
@@ -966,6 +1081,7 @@ function buildAgentRuntimeConfigRequest(params: {
   sessionResumeContext?: AgentSessionResumeContext | null;
   recalledMemoryContext?: AgentRecalledMemoryContext | null;
   currentUserContext?: AgentCurrentUserContext | null;
+  operatorSurfaceContext?: AgentOperatorSurfaceContext | null;
   pendingUserMemoryContext?: AgentPendingUserMemoryContext | null;
   evolveCandidateContext?: AgentEvolveCandidateContext | null;
 }): AgentRuntimeConfigCliRequest {
@@ -986,6 +1102,7 @@ function buildAgentRuntimeConfigRequest(params: {
     session_resume_context: params.sessionResumeContext ?? undefined,
     recalled_memory_context: params.recalledMemoryContext ?? undefined,
     current_user_context: params.currentUserContext ?? undefined,
+    operator_surface_context: params.operatorSurfaceContext ?? undefined,
     pending_user_memory_context: params.pendingUserMemoryContext ?? undefined,
     evolve_candidate_context: params.evolveCandidateContext ?? undefined,
     selected_model: firstNonEmptyString(params.request.model) ?? undefined,
@@ -1221,6 +1338,7 @@ function defaultExecutionDeps(): TsRunnerExecutionDeps {
     projectAgentRuntimeConfig: (request) => projectAgentRuntimeConfig(request),
     resolveHarnessPlugin: (harness) => requireRuntimeHarnessPlugin(harness),
     runHarnessHost: defaultRunHarnessHost,
+    loadOperatorSurfaceContext,
     loadRecalledMemoryContext,
     startWorkspaceMcpSidecar: async (request) => {
       const result = await startWorkspaceMcpSidecar(request);
@@ -1358,11 +1476,12 @@ export async function executeTsRunnerRequest(
       request,
       bootstrap
     });
+    const browserConfig = currentBrowserConfig();
     const stagedBrowserTools = measureBootstrapStage(bootstrapStageTimingsMs, "stage_browser_tools", () =>
       harnessPlugin.stageBrowserTools({
         workspaceDir: bootstrap.workspaceDir,
         sessionKind: request.session_kind,
-        browserConfig: currentBrowserConfig()
+        browserConfig
       })
     );
     const stagedRuntimeTools = measureBootstrapStage(bootstrapStageTimingsMs, "stage_runtime_tools", () =>
@@ -1509,6 +1628,18 @@ export async function executeTsRunnerRequest(
         logger,
       })
     );
+    const operatorSurfaceContext = await measureBootstrapStageAsync(
+      bootstrapStageTimingsMs,
+      "load_operator_surface_context",
+      async () =>
+        await deps.loadOperatorSurfaceContext({
+          workspaceId: request.workspace_id,
+          sessionId: request.session_id,
+          inputId: request.input_id,
+          browserConfig,
+          logger,
+        })
+    );
     const pendingUserMemoryContext = measureBootstrapStage(
       bootstrapStageTimingsMs,
       "load_pending_user_memory_context",
@@ -1540,6 +1671,7 @@ export async function executeTsRunnerRequest(
           sessionResumeContext,
           recalledMemoryContext,
           currentUserContext,
+          operatorSurfaceContext,
           pendingUserMemoryContext,
           evolveCandidateContext: evolveCandidateContext(request),
         })

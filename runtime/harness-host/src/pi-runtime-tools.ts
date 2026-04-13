@@ -15,6 +15,7 @@ const RUNTIME_TOOLS_ONBOARDING_STATUS_PATH = "/api/v1/capabilities/runtime-tools
 const RUNTIME_TOOLS_ONBOARDING_COMPLETE_PATH = "/api/v1/capabilities/runtime-tools/onboarding/complete";
 const RUNTIME_TOOLS_CRONJOBS_PATH = "/api/v1/capabilities/runtime-tools/cronjobs";
 const RUNTIME_TOOLS_IMAGE_GENERATE_PATH = "/api/v1/capabilities/runtime-tools/images/generate";
+const RUNTIME_TOOLS_REPORTS_PATH = "/api/v1/capabilities/runtime-tools/reports";
 const DEFAULT_RUNTIME_TOOL_TIMEOUT_MS = 30000;
 const IMAGE_GENERATE_RUNTIME_TOOL_TIMEOUT_MS = 180000;
 const CRONJOB_DELIVERY_CHANNELS = ["system_notification", "session_run"] as const;
@@ -43,6 +44,7 @@ export interface PiRuntimeToolOptions {
   runtimeApiBaseUrl: string;
   workspaceId?: string | null;
   sessionId?: string | null;
+  inputId?: string | null;
   selectedModel?: string | null;
   fetchImpl?: typeof fetch;
 }
@@ -58,6 +60,7 @@ function normalizeRuntimeApiBaseUrl(value: unknown): string {
 function runtimeToolHeaders(params: {
   workspaceId?: string | null;
   sessionId?: string | null;
+  inputId?: string | null;
   selectedModel?: string | null;
 }): Record<string, string> {
   const headers: Record<string, string> = {};
@@ -68,6 +71,10 @@ function runtimeToolHeaders(params: {
   const normalizedSessionId = typeof params.sessionId === "string" ? params.sessionId.trim() : "";
   if (normalizedSessionId) {
     headers["x-holaboss-session-id"] = normalizedSessionId;
+  }
+  const normalizedInputId = typeof params.inputId === "string" ? params.inputId.trim() : "";
+  if (normalizedInputId) {
+    headers["x-holaboss-input-id"] = normalizedInputId;
   }
   const normalizedSelectedModel =
     typeof params.selectedModel === "string" ? params.selectedModel.trim() : "";
@@ -264,6 +271,25 @@ function runtimeToolParameters(toolId: RuntimeAgentToolId) {
         },
         { additionalProperties: false },
       );
+    case "write_report":
+      return Type.Object(
+        {
+          title: Type.Optional(
+            Type.String({ description: "Optional report title shown in the artifact list." }),
+          ),
+          filename: Type.Optional(
+            Type.String({ description: "Optional markdown filename stem for the saved report." }),
+          ),
+          summary: Type.Optional(
+            Type.String({ description: "Optional short summary for artifact metadata and follow-up context." }),
+          ),
+          content: Type.String({
+            description:
+              "Full markdown report content to save as an artifact. Put the detailed research findings in this field instead of in chat.",
+          }),
+        },
+        { additionalProperties: false },
+      );
   }
 }
 
@@ -361,12 +387,38 @@ function createImageGenerationBody(toolParams: unknown): Record<string, unknown>
   };
 }
 
+function createWriteReportBody(toolParams: unknown): Record<string, unknown> {
+  const params = isRecord(toolParams) ? toolParams : {};
+  return {
+    content: String(params.content ?? ""),
+    ...(optionalString(params.title) ? { title: optionalString(params.title) } : {}),
+    ...(optionalString(params.filename) ? { filename: optionalString(params.filename) } : {}),
+    ...(optionalString(params.summary) ? { summary: optionalString(params.summary) } : {}),
+  };
+}
+
+function runtimeToolPromptGuidelines(toolId: RuntimeAgentToolId): string[] {
+  if (toolId === "write_report") {
+    return [
+      "Use `write_report` for research summaries, investigations, audits, plans, reviews, comparisons, timelines, and other long or evidence-heavy answers that should be saved as artifacts.",
+      "Do not use `write_report` for a simple fact lookup, definition, brief clarification, current-page answer, or any other reply that is naturally short and self-contained.",
+      "Prefer `write_report` when you are synthesizing multiple sources, summarizing current or latest developments, or producing findings the user may want to reference later.",
+      "If the user explicitly asked for research, latest news, analysis, comparison, or a timeline and you gathered findings from multiple sources, call `write_report` before your final answer.",
+      "A step like 'summarize findings for the user' still means: save the full findings with `write_report`, then keep the chat reply brief.",
+      "After calling `write_report`, keep the chat reply short: mention the report title or path and give only the key takeaways.",
+      "Write the full markdown report in `content` instead of pasting the full report inline in chat.",
+    ];
+  }
+  return [];
+}
+
 async function executeRuntimeTool(params: {
   toolId: RuntimeAgentToolId;
   toolParams: unknown;
   runtimeApiBaseUrl: string;
   workspaceId?: string | null;
   sessionId?: string | null;
+  inputId?: string | null;
   selectedModel?: string | null;
   fetchImpl?: typeof fetch;
   signal: AbortSignal | undefined;
@@ -416,6 +468,11 @@ async function executeRuntimeTool(params: {
       requestPath = RUNTIME_TOOLS_IMAGE_GENERATE_PATH;
       body = createImageGenerationBody(params.toolParams);
       break;
+    case "write_report":
+      method = "POST";
+      requestPath = RUNTIME_TOOLS_REPORTS_PATH;
+      body = createWriteReportBody(params.toolParams);
+      break;
   }
 
   const response = fetchImpl
@@ -427,6 +484,7 @@ async function executeRuntimeTool(params: {
               ...runtimeToolHeaders({
                 workspaceId: params.workspaceId,
                 sessionId: params.sessionId,
+                inputId: params.inputId,
                 selectedModel: params.selectedModel,
               }),
             },
@@ -447,6 +505,7 @@ async function executeRuntimeTool(params: {
           ...runtimeToolHeaders({
             workspaceId: params.workspaceId,
             sessionId: params.sessionId,
+            inputId: params.inputId,
             selectedModel: params.selectedModel,
           }),
         },
@@ -480,6 +539,7 @@ export function createPiRuntimeToolDefinition(
     label: runtimeToolLabel(toolId),
     description,
     promptSnippet: `${toolId}: ${description}`,
+    promptGuidelines: runtimeToolPromptGuidelines(toolId),
     parameters: runtimeToolParameters(toolId),
     execute: async (_toolCallId, toolParams, signal) =>
       await executeRuntimeTool({
@@ -488,6 +548,7 @@ export function createPiRuntimeToolDefinition(
         runtimeApiBaseUrl: options.runtimeApiBaseUrl,
         workspaceId: options.workspaceId,
         sessionId: options.sessionId,
+        inputId: options.inputId,
         selectedModel: options.selectedModel,
         fetchImpl,
         signal,
@@ -500,6 +561,7 @@ export async function resolvePiRuntimeToolDefinitions(
     runtimeApiBaseUrl?: string | null;
     workspaceId?: string | null;
     sessionId?: string | null;
+    inputId?: string | null;
     selectedModel?: string | null;
     fetchImpl?: typeof fetch;
   } = {}
@@ -518,6 +580,7 @@ export async function resolvePiRuntimeToolDefinitions(
             headers: runtimeToolHeaders({
               workspaceId: options.workspaceId,
               sessionId: options.sessionId,
+              inputId: options.inputId,
               selectedModel: options.selectedModel,
             }),
             signal: AbortSignal.timeout(2000),
@@ -534,6 +597,7 @@ export async function resolvePiRuntimeToolDefinitions(
           headers: runtimeToolHeaders({
             workspaceId: options.workspaceId,
             sessionId: options.sessionId,
+            inputId: options.inputId,
             selectedModel: options.selectedModel,
           }),
           signal: AbortSignal.timeout(2000),
@@ -550,6 +614,7 @@ export async function resolvePiRuntimeToolDefinitions(
       runtimeApiBaseUrl,
       workspaceId: options.workspaceId,
       sessionId: options.sessionId,
+      inputId: options.inputId,
       selectedModel: options.selectedModel,
       fetchImpl,
     })

@@ -376,6 +376,20 @@ test("app shell routes agent-originated browser opens into the agent browser spa
   assert.match(source, /\.setActiveWorkspace\(targetWorkspaceId, "user"\)/);
 });
 
+test("app shell reports active non-browser operator surfaces back to Electron", async () => {
+  const source = await readFile(APP_SHELL_PATH, "utf8");
+
+  assert.match(source, /type ReportedOperatorSurfaceContext = \{/);
+  assert.match(source, /function buildReportedOperatorSurfaceContext\(params: \{/);
+  assert.match(source, /surface_id: `editor:\$\{params\.owner\}:\$\{resourceId\}`/);
+  assert.match(source, /surface_type: "editor"/);
+  assert.match(source, /surface_type: "app_surface"/);
+  assert.match(source, /const reportedOperatorSurfaceWorkspaceIdRef = useRef<string \| null>\(null\);/);
+  assert.match(source, /const reportedOperatorSurfaceContext = useMemo\(/);
+  assert.match(source, /window\.electronAPI\.workspace\.setOperatorSurfaceContext\(\s*previousWorkspaceId,\s*null,\s*\)/);
+  assert.match(source, /window\.electronAPI\.workspace\.setOperatorSurfaceContext\(\s*nextWorkspaceId,\s*reportedOperatorSurfaceContext,\s*\)/);
+});
+
 test("app shell polls proactive status for the selected workspace", async () => {
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
@@ -442,17 +456,26 @@ test("app shell passes new session requests into the chat pane selector", async 
   const source = await readFile(APP_SHELL_PATH, "utf8");
 
   assert.match(source, /type ChatSessionOpenRequest = \{\s*sessionId: string;\s*requestKey: number;\s*mode\?: "session" \| "draft";\s*parentSessionId\?: string \| null;\s*\};/);
-  assert.match(source, /const handleCreateSession = useCallback\(\(\) => \{/);
+  assert.match(
+    source,
+    /const handleCreateSession = useCallback\(\s*\(request\?: \{\s*sessionId: string;\s*mode\?: "session" \| "draft";\s*parentSessionId\?: string \| null;\s*requestKey: number;\s*\}\) => \{/,
+  );
   assert.match(source, /const handleChatSessionOpenRequestConsumed = useCallback\(\s*\(requestKey: number\) => \{/);
   assert.match(source, /setChatSessionOpenRequest\(\(current\) =>\s*current\?\.requestKey === requestKey \? null : current,\s*\);/);
-  assert.match(source, /setChatSessionOpenRequest\(\{\s*sessionId: "",\s*mode: "draft",\s*parentSessionId: null,\s*requestKey: nextChatSessionOpenRequestKey\(\),\s*\}\);/);
+  assert.match(
+    source,
+    /setChatSessionOpenRequest\(\s*request \?\? \{\s*sessionId: "",\s*mode: "draft",\s*parentSessionId: null,\s*requestKey: nextChatSessionOpenRequestKey\(\),\s*\},\s*\);/,
+  );
   assert.match(source, /setChatFocusRequestKey\(\(current\) => current \+ 1\);/);
   assert.doesNotMatch(source, /const \[isCreatingSession, setIsCreatingSession\] = useState\(false\);/);
   assert.doesNotMatch(source, /window\.electronAPI\.workspace\.createAgentSession\(\{/);
   assert.match(source, /const handleReturnToChatPane = useCallback\(\(\) => \{/);
   assert.match(source, /aria-label="Return to chat"/);
   assert.match(source, /<OperationsInboxPane[\s\S]*proposals=\{taskProposals\}/);
-  assert.match(source, /onRequestCreateSession=\{\(\) => void handleCreateSession\(\)\}/);
+  assert.match(
+    source,
+    /onRequestCreateSession=\{\(request\) => void handleCreateSession\(request\)\}/,
+  );
   assert.match(source, /onSessionOpenRequestConsumed=\{handleChatSessionOpenRequestConsumed\}/);
 });
 
