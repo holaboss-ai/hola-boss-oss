@@ -8,5 +8,5 @@ test("macOS main window keeps traffic lights aligned with the compact title bar"
   const source = await readFile(MAIN_PATH, "utf8");
 
   assert.match(source, /titleBarStyle: "hiddenInset" as const,/);
-  assert.match(source, /trafficLightPosition: \{ x: 14, y: 25 \},/);
+  assert.match(source, /trafficLightPosition: \{ x: 14, y: 23 \},/);
 });
