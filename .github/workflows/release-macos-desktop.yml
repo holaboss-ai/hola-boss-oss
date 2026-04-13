@@ -131,12 +131,8 @@ jobs:
           cache: npm
           cache-dependency-path: |
             package-lock.json
+            sdk/app-sdk/package-lock.json
             desktop/package-lock.json
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
 
       - name: Build macOS runtime bundle
         run: |
@@ -281,12 +277,8 @@ jobs:
           cache: npm
           cache-dependency-path: |
             package-lock.json
+            sdk/app-sdk/package-lock.json
             desktop/package-lock.json
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
 
       - name: Prepare desktop (build SDK + install desktop deps)
         run: npm run desktop:prepare
@@ -427,12 +419,8 @@ jobs:
           cache: npm
           cache-dependency-path: |
             package-lock.json
+            sdk/app-sdk/package-lock.json
             desktop/package-lock.json
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
 
       - name: Prepare desktop (build SDK + install desktop deps)
         run: npm run desktop:prepare

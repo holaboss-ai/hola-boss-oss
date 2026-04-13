@@ -13,11 +13,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
@@ -25,6 +20,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             package-lock.json
+            sdk/app-sdk/package-lock.json
             desktop/package-lock.json
 
       # Desktop consumes @holaboss/app-sdk via a file: dependency whose
@@ -96,22 +92,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Setup Node
+        uses: actions/setup-node@v6
         with:
-          bun-version: latest
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sdk/app-sdk/package-lock.json
 
       - name: Install dependencies
-        run: bun install --cwd sdk/app-sdk
+        run: npm --prefix sdk/app-sdk ci
 
       - name: Typecheck
-        run: bun --cwd sdk/app-sdk run typecheck
+        run: npm --prefix sdk/app-sdk run typecheck
 
       - name: Run tests
-        run: bun --cwd sdk/app-sdk run test
+        run: npm --prefix sdk/app-sdk run test
 
       - name: Build
-        run: bun --cwd sdk/app-sdk run build
+        run: npm --prefix sdk/app-sdk run build
 
   runtime-api-server:
     runs-on: ubuntu-latest

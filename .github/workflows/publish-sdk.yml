@@ -74,6 +74,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      # bun is still required by bridge whose test script literally runs
+      # `bun test` (bun's own runner). app-sdk uses vitest and works on
+      # pure Node, but we set bun up unconditionally so this workflow can
+      # publish either package without special-casing.
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -81,11 +90,16 @@ jobs:
 
       - name: Install dependencies
         working-directory: ${{ needs.validate.outputs.package_dir }}
-        run: bun install
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            bun install
+          fi
 
       - name: Run tests
         working-directory: ${{ needs.validate.outputs.package_dir }}
-        run: bun run test
+        run: npm run test
 
   build:
     name: Build
@@ -95,24 +109,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Install dependencies
         working-directory: ${{ needs.validate.outputs.package_dir }}
-        run: bun install
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            bun install
+          fi
 
       - name: Build
         working-directory: ${{ needs.validate.outputs.package_dir }}
-        run: bun run build
+        run: npm run build
 
       - name: Verify dist contents
         working-directory: ${{ needs.validate.outputs.package_dir }}
@@ -186,24 +205,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Install dependencies
         working-directory: ${{ needs.validate.outputs.package_dir }}
-        run: bun install
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            bun install
+          fi
 
       - name: Build
         working-directory: ${{ needs.validate.outputs.package_dir }}
-        run: bun run build
+        run: npm run build
 
       - name: Publish
         working-directory: ${{ needs.validate.outputs.package_dir }}
