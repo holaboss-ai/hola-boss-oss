@@ -1,8 +1,6 @@
 import "dotenv/config";
 import * as Sentry from "@sentry/electron/main";
 
-console.log("[Sentry Debug] DSN:", process.env.SENTRY_DSN || "<empty>");
-
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
   enabled: !!process.env.SENTRY_DSN,
