@@ -11,8 +11,8 @@
 ### Task 1: Pass turn context into app MCP requests
 
 **Files:**
-- Modify: `hola-boss-oss/runtime/api-server/src/ts-runner.ts`
-- Test: `hola-boss-oss/runtime/api-server/src/ts-runner.test.ts`
+- Modify: `holaOS/runtime/api-server/src/ts-runner.ts`
+- Test: `holaOS/runtime/api-server/src/ts-runner.test.ts`
 
 **Step 1: Write the failing test**
 
@@ -20,7 +20,7 @@ Assert that `defaultBootstrapApplications()` includes Holaboss session/input/wor
 
 **Step 2: Run test to verify it fails**
 
-Run: `bun run test hola-boss-oss/runtime/api-server/src/ts-runner.test.ts`
+Run: `bun run test holaOS/runtime/api-server/src/ts-runner.test.ts`
 
 Expected: existing app bootstrap test only sees `X-Workspace-Id`.
 
@@ -36,7 +36,7 @@ Keep the existing workspace header if other code still depends on it.
 
 **Step 4: Run test to verify it passes**
 
-Run: `bun run test hola-boss-oss/runtime/api-server/src/ts-runner.test.ts`
+Run: `bun run test holaOS/runtime/api-server/src/ts-runner.test.ts`
 
 Expected: test passes and captured MCP headers include the active turn context.
 
@@ -136,7 +136,7 @@ Run each targeted app test file and confirm artifact publishing is invoked only 
 ### Task 4: Verify runtime and desktop behavior end-to-end
 
 **Files:**
-- Modify: `hola-boss-oss/runtime/api-server/src/app.test.ts`
+- Modify: `holaOS/runtime/api-server/src/app.test.ts`
 - Optionally modify desktop/runtime integration tests if a turn-level artifact assertion already exists
 
 **Step 1: Write the failing test**
@@ -155,7 +155,7 @@ Only add code here if the tests reveal a missing normalization step. Prefer not 
 
 Run:
 
-- `bun run test hola-boss-oss/runtime/api-server/src/app.test.ts`
+- `bun run test holaOS/runtime/api-server/src/app.test.ts`
 - app-level test files for Gmail/Twitter/LinkedIn/Reddit
 
 Expected:
@@ -183,9 +183,9 @@ Run the targeted Vitest commands from Tasks 1-4.
 **Step 3: Commit**
 
 ```bash
-git add hola-boss-oss/runtime/api-server/src/ts-runner.ts \
-  hola-boss-oss/runtime/api-server/src/ts-runner.test.ts \
-  hola-boss-oss/runtime/api-server/src/app.test.ts \
+git add holaOS/runtime/api-server/src/ts-runner.ts \
+  holaOS/runtime/api-server/src/ts-runner.test.ts \
+  holaOS/runtime/api-server/src/app.test.ts \
   hola-boss-apps/gmail/src/server/holaboss-bridge.ts \
   hola-boss-apps/gmail/src/server/app-outputs.ts \
   hola-boss-apps/gmail/src/server/mcp.ts \
@@ -196,6 +196,6 @@ git add hola-boss-oss/runtime/api-server/src/ts-runner.ts \
   hola-boss-apps/linkedin/src/server/mcp.ts \
   hola-boss-apps/reddit/src/server/holaboss-bridge.ts \
   hola-boss-apps/reddit/src/server/mcp.ts \
-  hola-boss-oss/docs/plans/2026-04-06-draft-session-artifact-persistence-plan.md
+  holaOS/docs/plans/2026-04-06-draft-session-artifact-persistence-plan.md
 git commit -m "fix: persist draft app artifacts on session turns"
 ```

@@ -6,6 +6,7 @@
     "dev": "npm run desktop:dev",
     "desktop:clean": "rm -rf desktop/out desktop/build",
     "desktop:install": "npm install --prefix desktop",
+    "desktop:prepare": "npm install --prefix sdk/app-sdk && npm --prefix sdk/app-sdk run build && npm install --prefix desktop",
     "desktop:dev": "npm --prefix desktop run dev",
     "desktop:e2e": "npm --prefix desktop run e2e",
     "desktop:typecheck": "npm --prefix desktop run typecheck",
@@ -29,7 +30,12 @@
     "runtime:test": "npm run runtime:state-store:test && npm run runtime:harness-host:test && npm run runtime:api-server:test",
     "sdk:bridge:install": "bun install --cwd sdk/bridge",
     "sdk:bridge:build": "bun --cwd sdk/bridge run build",
-    "sdk:bridge:test": "bun --cwd sdk/bridge test",
-    "sdk:bridge:typecheck": "bun --cwd sdk/bridge run typecheck"
+    "sdk:bridge:test": "bun --cwd sdk/bridge run test",
+    "sdk:bridge:typecheck": "bun --cwd sdk/bridge run typecheck",
+    "sdk:app-sdk:install": "npm install --prefix sdk/app-sdk",
+    "sdk:app-sdk:build": "npm --prefix sdk/app-sdk run build",
+    "sdk:app-sdk:test": "npm --prefix sdk/app-sdk run test",
+    "sdk:app-sdk:typecheck": "npm --prefix sdk/app-sdk run typecheck",
+    "sdk:app-sdk:codegen": "npm --prefix sdk/app-sdk run codegen"
   }
 }

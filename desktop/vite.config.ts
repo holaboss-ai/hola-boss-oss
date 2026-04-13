@@ -8,7 +8,8 @@ export default defineConfig({
   plugins: [tailwindcss(), react()],
   build: {
     outDir: "out/dist",
-    emptyOutDir: true
+    emptyOutDir: true,
+    sourcemap: "hidden"
   },
   resolve: {
     alias: {

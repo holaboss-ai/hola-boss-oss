@@ -11,7 +11,7 @@
 - TypeScript, Fastify, better-sqlite3, `tar` npm package (runtime)
 - React 18, Electron, Tailwind CSS (desktop)
 
-**Reference spec:** `hola-boss-oss/docs/plans/2026-04-09-desktop-install-app-design.md`
+**Reference spec:** `holaOS/docs/plans/2026-04-09-desktop-install-app-design.md`
 
 ---
 
@@ -641,7 +641,7 @@ Find the `CREATE TABLE IF NOT EXISTS app_ports (...)` block. After its accompany
 - [ ] **Step 3: Verify it compiles**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/state-store
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/state-store
 npx tsc --noEmit
 ```
 Expected: no errors.
@@ -649,7 +649,7 @@ Expected: no errors.
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add runtime/state-store/src/store.ts
 git commit -m "feat(state-store): add app_catalog table and AppCatalogEntryRecord type"
 ```
@@ -664,7 +664,7 @@ git commit -m "feat(state-store): add app_catalog table and AppCatalogEntryRecor
 - [ ] **Step 1: Find the test harness pattern**
 
 ```bash
-grep -n "upsertAppBuild\|app build" /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/state-store/src/store.test.ts | head
+grep -n "upsertAppBuild\|app build" /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/state-store/src/store.test.ts | head
 ```
 Use whatever helper the existing `app_builds` tests use to instantiate a fresh store (likely a function like `createEphemeralStore()` or an inline construction). Reuse that same helper for the new tests below.
 
@@ -767,7 +767,7 @@ test("app_catalog composite PK allows same appId in both sources", () => {
 - [ ] **Step 3: Run the tests — expect failure**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/state-store
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/state-store
 npm test
 ```
 Expected: FAIL with `store.upsertAppCatalogEntry is not a function` or similar.
@@ -775,7 +775,7 @@ Expected: FAIL with `store.upsertAppCatalogEntry is not a function` or similar.
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add runtime/state-store/src/store.test.ts
 git commit -m "test(state-store): add failing tests for app_catalog CRUD"
 ```
@@ -922,7 +922,7 @@ Add this block after `deleteAppPort`:
 - [ ] **Step 2: Run the state-store tests**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/state-store
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/state-store
 npm test
 ```
 Expected: all four new `app_catalog` tests pass; prior tests still pass.
@@ -930,7 +930,7 @@ Expected: all four new `app_catalog` tests pass; prior tests still pass.
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add runtime/state-store/src/store.ts
 git commit -m "feat(state-store): implement app_catalog CRUD methods"
 ```
@@ -947,7 +947,7 @@ git commit -m "feat(state-store): implement app_catalog CRUD methods"
 - [ ] **Step 1: Install tar + types**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server
 npm install --save tar@^7.4.3
 npm install --save-dev @types/tar@^6.1.13
 ```
@@ -962,7 +962,7 @@ Expected: no errors.
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add runtime/api-server/package.json runtime/api-server/package-lock.json
 git commit -m "feat(runtime): add tar dependency for app archive extraction"
 ```
@@ -978,7 +978,7 @@ git commit -m "feat(runtime): add tar dependency for app archive extraction"
 - [ ] **Step 1: Ensure the fixtures directory exists**
 
 ```bash
-mkdir -p /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server/src/__fixtures__
+mkdir -p /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server/src/__fixtures__
 ```
 
 - [ ] **Step 2: Write the fixture builder script**
@@ -1035,7 +1035,7 @@ fs.rmSync(stage, { recursive: true, force: true });
 - [ ] **Step 3: Generate the fixture**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server
 node src/__fixtures__/build-fixture.mjs
 ```
 Expected: `wrote .../minimal-app.tar.gz`. Verify:
@@ -1048,7 +1048,7 @@ Expected: `app.runtime.yaml` and `package.json`.
 - [ ] **Step 4: Commit both files**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add runtime/api-server/src/__fixtures__/build-fixture.mjs \
         runtime/api-server/src/__fixtures__/minimal-app.tar.gz
 git commit -m "test(runtime): add minimal-app fixture tarball"
@@ -1064,7 +1064,7 @@ git commit -m "test(runtime): add minimal-app fixture tarball"
 - [ ] **Step 1: Find the existing test harness**
 
 ```bash
-grep -n "app.inject\|makeApp\|createTestServer\|createAppUnderTest" /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server/src/app.test.ts | head -20
+grep -n "app.inject\|makeApp\|createTestServer\|createAppUnderTest" /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server/src/app.test.ts | head -20
 ```
 Note the helper name (likely `createAppUnderTest` or similar). Reuse it in the new tests below — **replace `createAppUnderTest` with whatever name the existing tests use** if different.
 
@@ -1107,7 +1107,7 @@ test("GET /api/v1/apps/catalog returns entries filtered by source", async () => 
 - [ ] **Step 3: Run the test — expect failure**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server
 npm test
 ```
 Expected: FAIL with 404 on the new test.
@@ -1115,7 +1115,7 @@ Expected: FAIL with 404 on the new test.
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add runtime/api-server/src/app.test.ts
 git commit -m "test(runtime): add failing test for GET /apps/catalog"
 ```
@@ -1178,7 +1178,7 @@ app.get("/api/v1/apps/catalog", async (request) => {
 - [ ] **Step 4: Run the test**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server
 npm test
 ```
 Expected: the new `GET /apps/catalog` test passes.
@@ -1186,7 +1186,7 @@ Expected: the new `GET /apps/catalog` test passes.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add runtime/api-server/src/app.ts
 git commit -m "feat(runtime): add GET /api/v1/apps/catalog route"
 ```
@@ -1257,7 +1257,7 @@ test("POST /api/v1/apps/catalog/sync rejects invalid source", async () => {
 - [ ] **Step 2: Run — expect failure**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server
 npm test
 ```
 Expected: both new tests fail.
@@ -1265,7 +1265,7 @@ Expected: both new tests fail.
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add runtime/api-server/src/app.test.ts
 git commit -m "test(runtime): add failing tests for POST /apps/catalog/sync"
 ```
@@ -1330,7 +1330,7 @@ app.post("/api/v1/apps/catalog/sync", async (request, reply) => {
 - [ ] **Step 2: Run the tests**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server
 npm test
 ```
 Expected: both new tests pass. No regressions.
@@ -1338,7 +1338,7 @@ Expected: both new tests pass. No regressions.
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add runtime/api-server/src/app.ts
 git commit -m "feat(runtime): add POST /api/v1/apps/catalog/sync route"
 ```
@@ -1395,7 +1395,7 @@ test("isAllowedArchivePath accepts tmpdir and rejects arbitrary paths", async ()
 - [ ] **Step 3: Run the test**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server
 npm test
 ```
 Expected: PASS.
@@ -1403,7 +1403,7 @@ Expected: PASS.
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add runtime/api-server/src/app.ts runtime/api-server/src/app.test.ts
 git commit -m "feat(runtime): add isAllowedArchivePath helper with tests"
 ```
@@ -1526,7 +1526,7 @@ test("POST /apps/install-archive rejects re-install when apps/{id} already exist
 - [ ] **Step 3: Run the tests — expect failure**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server
 npm test
 ```
 Expected: the four new install-archive tests fail (404 on the route).
@@ -1534,7 +1534,7 @@ Expected: the four new install-archive tests fail (404 on the route).
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add runtime/api-server/src/app.test.ts
 git commit -m "test(runtime): add failing tests for POST /apps/install-archive"
 ```
@@ -1655,7 +1655,7 @@ app.post("/api/v1/apps/install-archive", async (request, reply) => {
 - [ ] **Step 3: Run install-archive tests**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server
 npm test
 ```
 Expected: all four new install-archive tests pass. The "extracts tarball" test expects `statusCode === 200` regardless of whether `ensureAppRunning` succeeds (the fixture's `lifecycle.start: "true"` should return cleanly).
@@ -1670,7 +1670,7 @@ Expected: all tests green.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add runtime/api-server/src/app.ts
 git commit -m "feat(runtime): add POST /api/v1/apps/install-archive route"
 ```
@@ -1682,7 +1682,7 @@ git commit -m "feat(runtime): add POST /api/v1/apps/install-archive route"
 - [ ] **Step 1: Run the top-level runtime test script**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 npm run runtime:test
 ```
 Expected: all runtime tests (state-store + api-server) green.
@@ -1690,8 +1690,8 @@ Expected: all runtime tests (state-store + api-server) green.
 - [ ] **Step 2: Typecheck both packages**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/api-server && npm run typecheck
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/runtime/state-store && npx tsc --noEmit
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/api-server && npm run typecheck
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/runtime/state-store && npx tsc --noEmit
 ```
 Expected: no errors.
 
@@ -1707,7 +1707,7 @@ Expected: no errors.
 - [ ] **Step 1: Locate existing payload interfaces**
 
 ```bash
-grep -n "AppTemplateMetadata\|InstalledWorkspaceApp\|electronAPI" /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop/src/types/electron.d.ts | head -20
+grep -n "AppTemplateMetadata\|InstalledWorkspaceApp\|electronAPI" /Users/joshua/holaboss-ai/holaboss/holaOS/desktop/src/types/electron.d.ts | head -20
 ```
 Note the line numbers for the `InstalledWorkspaceAppPayload` and the `workspace:` block inside the `electronAPI` surface.
 
@@ -1787,7 +1787,7 @@ installAppFromCatalog: (params: InstallAppFromCatalogRequest) => Promise<Install
 - [ ] **Step 5: Typecheck**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/desktop
 npm run typecheck
 ```
 Expected: no errors.
@@ -1795,7 +1795,7 @@ Expected: no errors.
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add desktop/src/types/electron.d.ts
 git commit -m "feat(desktop): add app catalog and install payload types"
 ```
@@ -1879,7 +1879,7 @@ async function scanLocalAppArchives(): Promise<LocalAppArchiveScanEntry[]> {
 - [ ] **Step 4: Typecheck**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/desktop
 npm run typecheck
 ```
 Expected: no errors.
@@ -1887,7 +1887,7 @@ Expected: no errors.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add desktop/electron/main.ts
 git commit -m "feat(desktop): add local hola-boss-apps dist scanner helpers"
 ```
@@ -1980,7 +1980,7 @@ Verify `os` is imported near the top of the file. If not, add `import * as os fr
 - [ ] **Step 3: Typecheck**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/desktop
 npm run typecheck
 ```
 Expected: no errors.
@@ -1988,7 +1988,7 @@ Expected: no errors.
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add desktop/electron/main.ts
 git commit -m "feat(desktop): add app template fetch and archive download helpers"
 ```
@@ -2146,7 +2146,7 @@ async function syncAppCatalog(params: {
 - [ ] **Step 4: Typecheck**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/desktop
 npm run typecheck
 ```
 Expected: no errors.
@@ -2154,7 +2154,7 @@ Expected: no errors.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add desktop/electron/main.ts
 git commit -m "feat(desktop): add listAppCatalog and syncAppCatalog"
 ```
@@ -2235,7 +2235,7 @@ async function installAppFromCatalog(params: {
 - [ ] **Step 2: Typecheck**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/desktop
 npm run typecheck
 ```
 Expected: no errors.
@@ -2243,7 +2243,7 @@ Expected: no errors.
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add desktop/electron/main.ts
 git commit -m "feat(desktop): add installAppFromCatalog with download + extract flow"
 ```
@@ -2288,7 +2288,7 @@ handleTrustedIpc(
 - [ ] **Step 2: Add preload bindings**
 
 ```bash
-grep -n "workspace:" /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop/electron/preload.ts | head -20
+grep -n "workspace:" /Users/joshua/holaboss-ai/holaboss/holaOS/desktop/electron/preload.ts | head -20
 ```
 Inside the `workspace:` object passed to `contextBridge.exposeInMainWorld("electronAPI", { workspace: { ... } })`, add:
 
@@ -2307,7 +2307,7 @@ installAppFromCatalog: (params: {
 - [ ] **Step 3: Typecheck**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/desktop
 npm run typecheck
 ```
 Expected: no errors.
@@ -2315,7 +2315,7 @@ Expected: no errors.
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add desktop/electron/main.ts desktop/electron/preload.ts
 git commit -m "feat(desktop): expose app catalog and install IPC handlers"
 ```
@@ -2417,7 +2417,7 @@ installAppFromCatalog,
 - [ ] **Step 5: Typecheck**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/desktop
 npm run typecheck
 ```
 Expected: no errors.
@@ -2425,7 +2425,7 @@ Expected: no errors.
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add desktop/src/lib/workspaceDesktop.tsx
 git commit -m "feat(desktop): add app catalog state and installAppFromCatalog to workspaceDesktop"
 ```
@@ -2511,7 +2511,7 @@ export type { AppCardState };
 - [ ] **Step 2: Typecheck**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/desktop
 npm run typecheck
 ```
 Expected: no errors.
@@ -2519,7 +2519,7 @@ Expected: no errors.
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add desktop/src/components/marketplace/AppCatalogCard.tsx
 git commit -m "feat(desktop): add AppCatalogCard component"
 ```
@@ -2677,7 +2677,7 @@ export function AppsGallery() {
 - [ ] **Step 2: Typecheck**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/desktop
 npm run typecheck
 ```
 Expected: no errors.
@@ -2685,7 +2685,7 @@ Expected: no errors.
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add desktop/src/components/marketplace/AppsGallery.tsx
 git commit -m "feat(desktop): add AppsGallery tab body"
 ```
@@ -2770,7 +2770,7 @@ Template for the modified block:
 - [ ] **Step 4: Typecheck**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/desktop
 npm run typecheck
 ```
 Expected: no errors.
@@ -2778,7 +2778,7 @@ Expected: no errors.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 git add desktop/src/components/panes/MarketplacePane.tsx
 git commit -m "feat(desktop): add Templates/Apps sub-tab to MarketplacePane"
 ```
@@ -2790,7 +2790,7 @@ git commit -m "feat(desktop): add Templates/Apps sub-tab to MarketplacePane"
 - [ ] **Step 1: Start the desktop against the local runtime**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 npm run desktop:prepare-runtime:local
 npm run desktop:install
 npm run desktop:dev
@@ -2845,7 +2845,7 @@ If any step failed, fix the underlying task and re-run this smoke test.
 - [ ] **Step 1: Run desktop lint/typecheck/build**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss/desktop
+cd /Users/joshua/holaboss-ai/holaboss/holaOS/desktop
 npm run lint
 npm run typecheck
 npm run build
@@ -2869,7 +2869,7 @@ the normal lifecycle. See `docs/plans/2026-04-09-desktop-install-app-design.md`.
 - [ ] **Step 3: Run the runtime sweep once more**
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 npm run runtime:test
 ```
 Expected: green.
@@ -2927,7 +2927,7 @@ No inconsistencies.
 
 ## Execution Handoff
 
-**Plan complete and saved to `hola-boss-oss/docs/superpowers/plans/2026-04-09-desktop-install-app.md`. Two execution options:**
+**Plan complete and saved to `holaOS/docs/superpowers/plans/2026-04-09-desktop-install-app.md`. Two execution options:**
 
 **1. Subagent-Driven (recommended)** — I dispatch a fresh subagent per task, review between tasks, fast iteration.
 

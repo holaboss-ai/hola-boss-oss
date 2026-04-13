@@ -1,7 +1,7 @@
 # Runtime, Memory, Agent, and Proactive Architecture
 
 Last verified against:
-- `hola-boss-oss-proactive` `feat/proactive` at `61e5aa3`
+- `holaOS-proactive` `feat/proactive` at `61e5aa3`
 - supplemental `../hola-boss-ai` code as checked locally on the same machine
 
 This document describes the current coded behavior of four connected components:

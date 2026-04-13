@@ -33,7 +33,7 @@ Phase 3 does not include:
 
 ## File Structure
 
-### Runtime repo (`hola-boss-oss`)
+### Runtime repo (`holaOS`)
 
 | File | Responsibility |
 |------|---------------|
@@ -878,7 +878,7 @@ git commit -m "feat: add deprecation warning for PLATFORM_INTEGRATION_TOKEN"
 - [ ] Run:
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 
 cd runtime/api-server && node --import tsx --test src/integrations.test.ts
 cd runtime/api-server && node --import tsx --test src/integration-broker.test.ts
@@ -908,7 +908,7 @@ Expected: all builds succeed.
 - [ ] Run:
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss && npm run desktop:prepare-runtime:local
+cd /Users/joshua/holaboss-ai/holaboss/holaOS && npm run desktop:prepare-runtime:local
 ```
 
 Expected: runtime bundle prepares successfully.

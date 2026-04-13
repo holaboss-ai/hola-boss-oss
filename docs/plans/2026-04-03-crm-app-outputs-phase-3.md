@@ -302,7 +302,7 @@ cd ../../hola-boss-apps/gmail
 npx tsx --test test/app-outputs.test.ts test/e2e.test.ts
 cd ../sheets
 npx tsx --test test/app-outputs.test.ts
-cd ../../hola-boss-oss/desktop
+cd ../../holaOS/desktop
 node --test src/components/layout/OperationsDrawer.test.mjs
 ```
 

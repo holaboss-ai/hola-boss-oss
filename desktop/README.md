@@ -92,11 +92,11 @@ GITHUB_TOKEN="$(gh auth token)" npm run prepare:runtime:linux
 GITHUB_TOKEN="$(gh auth token)" npm run prepare:runtime:windows
 ```
 
-For local development against unreleased `hola-boss-oss` runtime changes:
+For local development against unreleased `holaOS` runtime changes:
 
 ```bash
-# optional when your OSS repo is not ../hola-boss-oss
-export HOLABOSS_OSS_ROOT=/absolute/path/to/hola-boss-oss
+# optional when your OSS repo is not ../holaOS
+export HOLABOSS_OSS_ROOT=/absolute/path/to/holaOS
 
 # builds the runtime bundle for the current host platform and stages it into out/runtime-<platform>
 npm run prepare:runtime:local
@@ -150,7 +150,7 @@ Both Windows packaging commands also write `out/holaboss-config.json` from your 
 This produces a Windows NSIS installer `.exe` in `out/release/`.
 
 Output:
-- [Holaboss Workspace.app](/Users/jeffrey/Desktop/hola-boss-oss/desktop/out/release/mac-arm64/Holaboss%20Workspace.app)
+- [Holaboss Workspace.app](/Users/jeffrey/Desktop/holaOS/desktop/out/release/mac-arm64/Holaboss%20Workspace.app)
 
 Run packaged app with endpoint presets:
 

@@ -7,9 +7,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
+import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply } from "fastify";
 import * as tar from "tar";
 import yauzl from "yauzl";
+import * as Sentry from "@sentry/node";
 
 import {
   type AgentSessionRecord,
@@ -1727,6 +1728,39 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
   const bridgeWorker = resolveBridgeWorker(options, app, store, memoryService);
   const recallEmbeddingBackfillWorker = resolveRecallEmbeddingBackfillWorker(options, app, store, memoryService);
 
+  app.setErrorHandler((error: FastifyError, request, reply) => {
+    const statusCode =
+      typeof error.statusCode === "number" && error.statusCode >= 400
+        ? error.statusCode
+        : 500;
+
+    if (statusCode >= 500) {
+      const sentryExtras = (error as { sentryExtras?: Record<string, unknown> })
+        .sentryExtras;
+      Sentry.captureException(error, {
+        extra: {
+          method: request.method,
+          url: request.url,
+          ...(sentryExtras ?? {}),
+        },
+      });
+      app.log.error(error);
+      reply.status(statusCode).send({ error: "Internal Server Error" });
+      return;
+    }
+
+    app.log.warn(
+      { err: error, method: request.method, url: request.url },
+      "client error",
+    );
+    reply.status(statusCode).send({
+      error: error.name ?? "Error",
+      message: error.message,
+      ...(error.code ? { code: error.code } : {}),
+      ...(error.validation ? { validation: error.validation } : {}),
+    });
+  });
+
   // ---------------------------------------------------------------------------
   // App liveness: ensure enabled apps are running + health monitoring
   // ---------------------------------------------------------------------------
@@ -1809,7 +1843,11 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         });
         const afterSetup = store.getAppBuild({ workspaceId, appId });
         if (afterSetup?.status === "failed") {
-          throw new Error(afterSetup.error ?? "setup failed");
+          const setupError = Object.assign(
+            new Error(afterSetup.error ?? "setup failed"),
+            { sentryExtras: { workspaceId, appId } },
+          );
+          throw setupError;
         }
       }
 
@@ -2107,10 +2145,16 @@ export function buildRuntimeApiServer(options: BuildRuntimeApiServerOptions = {}
         if (attempts <= MAX_AUTO_RESTART_ATTEMPTS) {
           app.log.info({ workspaceId: ws.id, appId, attempt: attempts }, "health monitor: restarting unhealthy app");
           void ensureAppRunning(ws.id, appId).catch((err) => {
+            Sentry.captureException(err, {
+              extra: { workspaceId: ws.id, appId },
+            });
             app.log.error({ workspaceId: ws.id, appId, err: err instanceof Error ? err.message : String(err) }, "health monitor: restart failed");
           });
         } else if (attempts === MAX_AUTO_RESTART_ATTEMPTS + 1) {
           app.log.error({ workspaceId: ws.id, appId, attempts: attempts - 1 }, "health monitor: max restart attempts exceeded");
+          Sentry.captureException(new Error(`App ${appId} crashed and failed to recover after ${MAX_AUTO_RESTART_ATTEMPTS} attempts`), {
+            extra: { workspaceId: ws.id, appId, attempts: attempts - 1 },
+          });
           store.upsertAppBuild({
             workspaceId: ws.id,
             appId,

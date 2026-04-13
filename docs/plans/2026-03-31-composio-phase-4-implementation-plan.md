@@ -17,7 +17,7 @@
 
 ## File Structure
 
-### Runtime repo (`hola-boss-oss`)
+### Runtime repo (`holaOS`)
 
 | File | Responsibility |
 |------|---------------|
@@ -1071,7 +1071,7 @@ git commit -m "feat: add managed connect button to integrations pane"
 - [ ] Run:
 
 ```bash
-cd /Users/joshua/holaboss-ai/holaboss/hola-boss-oss
+cd /Users/joshua/holaboss-ai/holaboss/holaOS
 
 cd runtime/api-server && node --import tsx --test src/composio-service.test.ts
 cd runtime/api-server && node --import tsx --test src/integration-broker.test.ts

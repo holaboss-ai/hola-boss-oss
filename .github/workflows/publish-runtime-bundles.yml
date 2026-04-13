@@ -133,6 +133,18 @@ jobs:
         run: |
           bash runtime/deploy/package_macos_runtime.sh "out/${OUTPUT_DIR}"
 
+      - name: Upload Sentry source maps
+        if: ${{ secrets.SENTRY_AUTH_TOKEN != '' }}
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: holaboss-runtime
+          RELEASE_TAG: ${{ needs.ensure-runtime-release.outputs.release_tag }}
+        run: |
+          npx @sentry/cli releases files "${RELEASE_TAG}" \
+            upload-sourcemaps runtime/api-server/dist \
+            --url-prefix "~/"
+
       - name: Archive macOS runtime bundle
         run: |
           tar -C out -czf "out/${RELEASE_ASSET_NAME}" "${OUTPUT_DIR}"
@@ -177,6 +189,18 @@ jobs:
       - name: Build Linux runtime bundle
         run: |
           bash runtime/deploy/package_linux_runtime.sh "out/${OUTPUT_DIR}"
+
+      - name: Upload Sentry source maps
+        if: ${{ secrets.SENTRY_AUTH_TOKEN != '' }}
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: holaboss-runtime
+          RELEASE_TAG: ${{ needs.ensure-runtime-release.outputs.release_tag }}
+        run: |
+          npx @sentry/cli releases files "${RELEASE_TAG}" \
+            upload-sourcemaps runtime/api-server/dist \
+            --url-prefix "~/"
 
       - name: Archive Linux runtime bundle
         run: |

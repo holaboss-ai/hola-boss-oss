@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "@holaboss/bridge@*"
+      - "@holaboss/app-sdk@*"
 
   workflow_dispatch:
     inputs:
@@ -13,6 +14,7 @@ on:
         type: choice
         options:
           - bridge
+          - app-sdk
       dry_run:
         description: "Dry run (skip actual publish)"
         required: false
@@ -72,6 +74,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      # bun is still required by bridge whose test script literally runs
+      # `bun test` (bun's own runner). app-sdk uses vitest and works on
+      # pure Node, but we set bun up unconditionally so this workflow can
+      # publish either package without special-casing.
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -79,11 +90,16 @@ jobs:
 
       - name: Install dependencies
         working-directory: ${{ needs.validate.outputs.package_dir }}
-        run: bun install
+        run: |
+          if [ -f package-lock.json ]; then
+            npm install
+          else
+            bun install
+          fi
 
       - name: Run tests
         working-directory: ${{ needs.validate.outputs.package_dir }}
-        run: bun test
+        run: npm run test
 
   build:
     name: Build
@@ -93,24 +109,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Install dependencies
         working-directory: ${{ needs.validate.outputs.package_dir }}
-        run: bun install
+        run: |
+          if [ -f package-lock.json ]; then
+            npm install
+          else
+            bun install
+          fi
 
       - name: Build
         working-directory: ${{ needs.validate.outputs.package_dir }}
-        run: bun run build
+        run: npm run build
 
       - name: Verify dist contents
         working-directory: ${{ needs.validate.outputs.package_dir }}
@@ -118,13 +139,48 @@ jobs:
           echo "📁 Build output:"
           ls -la dist
 
-          for f in index.js index.cjs index.d.ts index.d.cts; do
-            if [ ! -f "dist/$f" ]; then
-              echo "❌ Missing expected file: $f"
-              exit 1
-            fi
-          done
-          echo "✅ All expected files present"
+          # Walk package.json `exports` and ensure every referenced file exists.
+          # Generic across single-entry (bridge) and multi-entry (app-sdk) packages.
+          node <<'EOF'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          const errors = [];
+          const seen = new Set();
+
+          const walk = (node) => {
+            if (node == null) return;
+            if (typeof node === "string") {
+              if (!node.startsWith("./")) return;
+              if (seen.has(node)) return;
+              seen.add(node);
+              const resolved = path.resolve(node);
+              if (!fs.existsSync(resolved)) {
+                errors.push(node);
+              }
+              return;
+            }
+            if (typeof node === "object") {
+              for (const value of Object.values(node)) walk(value);
+            }
+          };
+
+          walk(pkg.exports);
+          // Also validate main / module / types if present.
+          for (const key of ["main", "module", "types"]) {
+            if (typeof pkg[key] === "string") walk(pkg[key]);
+          }
+
+          console.log(`Checked ${seen.size} referenced files from package.json`);
+          for (const file of seen) console.log("  - " + file);
+
+          if (errors.length > 0) {
+            console.error("\n❌ Missing files referenced by package.json:");
+            for (const file of errors) console.error("  - " + file);
+            process.exit(1);
+          }
+          console.log("\n✅ All referenced files present");
+          EOF
 
       - name: Pack and inspect
         working-directory: ${{ needs.validate.outputs.package_dir }}
@@ -149,24 +205,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Install dependencies
         working-directory: ${{ needs.validate.outputs.package_dir }}
-        run: bun install
+        run: |
+          if [ -f package-lock.json ]; then
+            npm install
+          else
+            bun install
+          fi
 
       - name: Build
         working-directory: ${{ needs.validate.outputs.package_dir }}
-        run: bun run build
+        run: npm run build
 
       - name: Publish
         working-directory: ${{ needs.validate.outputs.package_dir }}

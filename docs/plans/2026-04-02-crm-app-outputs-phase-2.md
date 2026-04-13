@@ -9,7 +9,7 @@
 **Tech Stack:** TanStack Start (Sheets module), Electron desktop renderer (React 19), module-local Holaboss Bridge SDK, node:test
 
 **Repos touched:**
-- `hola-boss-oss/` — desktop output routing
+- `holaOS/` — desktop output routing
 - `hola-boss-apps/` — sheets module + bridge SDK mirror
 
 ---

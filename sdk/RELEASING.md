@@ -2,6 +2,10 @@
 
 This document covers the release process for all `@holaboss/*` npm packages under `sdk/`.
 
+Currently released from this repo:
+- [`@holaboss/bridge`](./bridge) — integration proxy and workspace output helpers for module apps
+- [`@holaboss/app-sdk`](./app-sdk) — generated TypeScript client, TanStack Query hooks, and Zod schemas for the Holaboss product API
+
 ## Prerequisites
 
 - npm org `@holaboss` registered at [npmjs.com](https://www.npmjs.com)
@@ -70,9 +74,9 @@ tag-version-prefix = @holaboss/bridge@
 
 This makes `npm version patch` produce a tag like `@holaboss/bridge@0.1.1` instead of `v0.1.1`.
 
-The `publish-sdk` workflow triggers automatically on tags matching `@holaboss/bridge@*`.
+The `publish-sdk` workflow triggers automatically on tags matching `@holaboss/bridge@*` or `@holaboss/app-sdk@*`.
 
-**Tag format**: `@holaboss/<package>@<semver>` — e.g. `@holaboss/bridge@0.1.0`, `@holaboss/bridge@1.2.3`
+**Tag format**: `@holaboss/<package>@<semver>` — e.g. `@holaboss/bridge@0.1.0`, `@holaboss/app-sdk@0.1.1`
 
 ### Manual release
 

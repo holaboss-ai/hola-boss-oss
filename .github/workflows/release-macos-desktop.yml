@@ -131,6 +131,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             package-lock.json
+            sdk/app-sdk/package-lock.json
             desktop/package-lock.json
 
       - name: Build macOS runtime bundle
@@ -148,8 +149,8 @@ jobs:
             out/runtime-macos/runtime/metadata.json
           if-no-files-found: error
 
-      - name: Install desktop dependencies
-        run: npm run desktop:install
+      - name: Prepare desktop (build SDK + install desktop deps)
+        run: npm run desktop:prepare
 
       - name: Require mac signing credentials
         run: |
@@ -175,6 +176,7 @@ jobs:
           HOLABOSS_PROJECTS_URL: ${{ vars.HOLABOSS_PROJECTS_URL }}
           HOLABOSS_MARKETPLACE_URL: ${{ vars.HOLABOSS_MARKETPLACE_URL }}
           HOLABOSS_PROACTIVE_URL: ${{ vars.HOLABOSS_PROACTIVE_URL }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
           GITHUB_TOKEN: ${{ github.token }}
           CSC_LINK: ${{ env.MAC_CERTIFICATE }}
           CSC_KEY_PASSWORD: ${{ env.MAC_CERTIFICATE_PASSWORD }}
@@ -207,6 +209,18 @@ jobs:
           fi
           app_path="$(cd "$(dirname "${app_path}")" && pwd)/$(basename "${app_path}")"
           echo "app_path=${app_path}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload Sentry source maps
+        if: ${{ secrets.SENTRY_AUTH_TOKEN != '' }}
+        working-directory: desktop
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: holaboss-desktop
+        run: |
+          npx @sentry/cli releases files "${{ env.RELEASE_TAG }}" \
+            upload-sourcemaps out/dist out/dist-electron \
+            --url-prefix "~/"
 
       - name: Validate signed macOS app bundle
         working-directory: desktop
@@ -263,10 +277,11 @@ jobs:
           cache: npm
           cache-dependency-path: |
             package-lock.json
+            sdk/app-sdk/package-lock.json
             desktop/package-lock.json
 
-      - name: Install desktop dependencies
-        run: npm run desktop:install
+      - name: Prepare desktop (build SDK + install desktop deps)
+        run: npm run desktop:prepare
 
       - name: Require mac notarization credentials
         run: |
@@ -404,10 +419,11 @@ jobs:
           cache: npm
           cache-dependency-path: |
             package-lock.json
+            sdk/app-sdk/package-lock.json
             desktop/package-lock.json
 
-      - name: Install desktop dependencies
-        run: npm run desktop:install
+      - name: Prepare desktop (build SDK + install desktop deps)
+        run: npm run desktop:prepare
 
       - name: Download notarized macOS app bundle artifact
         uses: actions/download-artifact@v8
